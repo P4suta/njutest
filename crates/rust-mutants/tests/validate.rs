@@ -10,6 +10,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use njutest_devkit::result::{
+    ResultState::{Refused, Returned},
+    result_state,
+};
 use rust_mutants::cargo::Message;
 use rust_mutants::instrument::{Instrumenting, instrument_file};
 use rust_mutants::rule::Tier;
@@ -62,8 +66,9 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
-    })
-    .expect("instrument");
+    });
+    assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
+    let Ok(file) = file else { return };
     let branch = file.branches[2];
     let messages = vec![
         diagnostic_at(
@@ -100,8 +105,9 @@ fn a_warning_is_not_a_rejection() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
-    })
-    .expect("instrument");
+    });
+    assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
+    let Ok(file) = file else { return };
     let branch = file.branches[0];
     let warning = diagnostic_at(
         "src/lib.rs",
@@ -109,8 +115,12 @@ fn a_warning_is_not_a_rejection() {
         branch.span.end,
         branch.index,
     );
+    assert!(
+        matches!(&warning, Message::CompilerMessage(_)),
+        "a compiler message"
+    );
     let Message::CompilerMessage(mut message) = warning else {
-        panic!("a compiler message");
+        return;
     };
     message.message.level = "warning".to_owned();
     let attributed = attribute(&[file], &[Message::CompilerMessage(message)]);
@@ -121,7 +131,13 @@ fn a_warning_is_not_a_rejection() {
 #[test]
 fn a_tree_that_compiles_is_accepted_whole_in_one_round() {
     let mut scripted = scripted(&[], &[]);
-    let validated = run(&mut scripted).expect("validate");
+    let validated = run(&mut scripted);
+    assert_eq!(
+        result_state(&validated),
+        Returned,
+        "validate: {validated:?}"
+    );
+    let Ok(validated) = validated else { return };
     assert_eq!(validated.rounds, 1);
     assert!(validated.rejections.is_empty());
     assert_eq!(
@@ -142,8 +158,13 @@ fn a_selected_validation_claims_only_the_indices_it_was_asked_about() {
         &selected,
         &mut scripted,
         &validating(&Cancel::new(), &Recorder::disabled()),
-    )
-    .expect("validate the selected candidates");
+    );
+    assert_eq!(
+        result_state(&validated),
+        Returned,
+        "validate the selected candidates: {validated:?}"
+    );
+    let Ok(validated) = validated else { return };
 
     assert_eq!(validated.accepted, [3]);
     assert_eq!(
@@ -178,8 +199,13 @@ fn an_empty_selected_validation_still_compiles_the_pristine_tree_once() {
         &BTreeSet::new(),
         &mut scripted,
         &validating(&Cancel::new(), &Recorder::disabled()),
-    )
-    .expect("the build gate still runs");
+    );
+    assert_eq!(
+        result_state(&validated),
+        Returned,
+        "the build gate still runs: {validated:?}"
+    );
+    let Ok(validated) = validated else { return };
 
     assert!(validated.accepted.is_empty());
     assert!(validated.rejections.is_empty());
@@ -189,7 +215,13 @@ fn an_empty_selected_validation_still_compiles_the_pristine_tree_once() {
 #[test]
 fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
     let mut scripted = scripted(&[1, 4], &[]);
-    let validated = run(&mut scripted).expect("validate");
+    let validated = run(&mut scripted);
+    assert_eq!(
+        result_state(&validated),
+        Returned,
+        "validate: {validated:?}"
+    );
+    let Ok(validated) = validated else { return };
     assert_eq!(validated.rounds, 2, "both are attributed in the same round");
     let rejected: Vec<u32> = validated
         .rejections
@@ -207,10 +239,10 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
     assert_eq!(rejection.code.as_deref(), Some("E0999"));
     assert!(rejection.diagnostic.contains("mutant 1 does not compile"));
     assert_eq!(rejection.path, "src/lib.rs");
-    assert_eq!(
-        rejection.id,
-        scripted.catalog().by_index(1).expect("mutant").id
-    );
+    let mutant = scripted.catalog().by_index(1);
+    assert!(mutant.is_some(), "mutant 1 exists");
+    let Some(mutant) = mutant else { return };
+    assert_eq!(rejection.id, mutant.id.as_str());
     assert_eq!(
         scripted.attempts(),
         [BTreeSet::new(), BTreeSet::from([1, 4])]
@@ -220,7 +252,13 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
 #[test]
 fn an_unattributable_error_is_isolated_by_bisection() {
     let mut scripted = scripted(&[], &[3]);
-    let validated = run(&mut scripted).expect("validate");
+    let validated = run(&mut scripted);
+    assert_eq!(
+        result_state(&validated),
+        Returned,
+        "validate: {validated:?}"
+    );
+    let Ok(validated) = validated else { return };
     let rejected: Vec<u32> = validated
         .rejections
         .iter()
@@ -258,8 +296,13 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
         scripted.catalog(),
         &mut Broken,
         &validating(&Cancel::new(), &Recorder::disabled()),
-    )
-    .unwrap_err();
+    );
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "the pristine failure is refused: {error:?}"
+    );
+    let Err(error) = error else { return };
     assert!(
         matches!(error, ValidateError::NotMutantInduced { .. }),
         "{error}"
@@ -278,8 +321,13 @@ fn a_cancelled_round_ends_validation_with_the_cancellation_code() {
         &catalog,
         &mut scripted,
         &validating(&cancel, &Recorder::disabled()),
-    )
-    .expect_err("a cancelled validation does not finish");
+    );
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "a cancelled validation does not finish: {error:?}"
+    );
+    let Err(error) = error else { return };
     assert_eq!(error.code().code, "RM0001");
     assert_eq!(
         scripted.attempts().len(),
@@ -299,8 +347,13 @@ fn a_cancelled_compilation_condemns_nobody() {
         &catalog,
         &mut scripted,
         &validating(&cancel, &Recorder::disabled()),
-    )
-    .expect_err("a cancelled validation does not finish");
+    );
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "a cancelled validation does not finish: {error:?}"
+    );
+    let Err(error) = error else { return };
     assert!(
         matches!(error, ValidateError::Cancelled),
         "a build nobody waited for is not a build that failed, and reading it as one condemns \
@@ -319,8 +372,9 @@ fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_second
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
-    })
-    .expect("instrument");
+    });
+    assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
+    let Ok(file) = file else { return };
     let branch = file.branches[1];
     let attributed = attribute(
         &[file],
@@ -351,8 +405,9 @@ fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_i
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
-    })
-    .expect("instrument");
+    });
+    assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
+    let Ok(file) = file else { return };
     let branch = file.branches[2];
     let attributed = attribute(
         &[file],
@@ -378,8 +433,9 @@ fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
-    })
-    .expect("instrument");
+    });
+    assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
+    let Ok(file) = file else { return };
     let attributed = attribute(&[file], &[diagnostic_beside("src/lib.rs", 0, 1, 999)]);
     assert!(
         attributed.condemned.is_empty(),
@@ -391,7 +447,13 @@ fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
 #[test]
 fn each_isolated_offender_is_compiled_alone_once_to_capture_its_own_diagnostic() {
     let mut scripted = scripted(&[], &[1, 3]);
-    let validated = run(&mut scripted).expect("validated");
+    let validated = run(&mut scripted);
+    assert_eq!(
+        result_state(&validated),
+        Returned,
+        "validated: {validated:?}"
+    );
+    let Ok(validated) = validated else { return };
     let mut refused: Vec<&rust_mutants::validate::Rejection> =
         validated.rejections.iter().collect();
     refused.sort_by_key(|one| one.index);
@@ -416,7 +478,13 @@ fn each_isolated_offender_is_compiled_alone_once_to_capture_its_own_diagnostic()
 fn an_interaction_of_two_mutants_condemns_the_pair_and_says_so() {
     let mut scripted =
         ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All).interacting(&[1, 3]);
-    let validated = run(&mut scripted).expect("validated");
+    let validated = run(&mut scripted);
+    assert_eq!(
+        result_state(&validated),
+        Returned,
+        "validated: {validated:?}"
+    );
+    let Ok(validated) = validated else { return };
     let mut indices: Vec<u32> = validated.rejections.iter().map(|one| one.index).collect();
     indices.sort_unstable();
     assert_eq!(
@@ -455,12 +523,18 @@ fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
-    })
-    .expect("instrument");
+    });
+    assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
+    let Ok(file) = file else { return };
     let branch = file.branches[0];
     let at = |index: u32| diagnostic_at("src/lib.rs", branch.span.start, branch.span.end, index);
-    let Message::CompilerMessage(mut warning) = at(branch.index) else {
-        panic!("a compiler message");
+    let warning = at(branch.index);
+    assert!(
+        matches!(&warning, Message::CompilerMessage(_)),
+        "a compiler message"
+    );
+    let Message::CompilerMessage(mut warning) = warning else {
+        return;
     };
     warning.message.level = "warning".to_owned();
 

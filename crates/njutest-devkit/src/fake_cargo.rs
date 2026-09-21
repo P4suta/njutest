@@ -25,6 +25,7 @@ pub const SCHEMA: &str = "rust-mutants-fake-cargo-v1";
 
 /// Everything a fake will answer to.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Script {
     /// [`SCHEMA`].
     pub schema: String,
@@ -58,6 +59,7 @@ impl Script {
 
 /// One command the fake answers, and what it answers with.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Invocation {
     /// The file stem of the program: `cargo`, `rustc`, `llvm-profdata`, or the name of a test binary.
     pub program: String,
@@ -165,6 +167,7 @@ impl Invocation {
 
 /// A file the fake writes before it answers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WriteFile {
     /// Where, with the placeholders of [`install`] expanded.
     pub path: String,
@@ -210,9 +213,13 @@ impl Installed {
     #[must_use]
     pub fn answered(&self) -> Vec<usize> {
         std::fs::read_to_string(&self.log)
-            .unwrap_or_default()
+            .expect("the fake cargo answer log")
             .lines()
-            .filter_map(|line| line.trim().parse().ok())
+            .map(|line| {
+                line.trim()
+                    .parse::<usize>()
+                    .expect("the fake writes numeric script indexes")
+            })
             .collect()
     }
 }
@@ -238,12 +245,12 @@ pub fn example(name: &str) -> PathBuf {
     let deps = current.parent().expect("the deps directory");
     let profile = deps.parent().expect("the profile directory");
     let fake = profile.join("examples").join(exe(name));
-    if !fake.is_file() {
+    if !regular_file(&fake).expect("reading the fake cargo example's metadata") {
         static BUILT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         BUILT.get_or_init(|| build_the_example(profile));
     }
     assert!(
-        fake.is_file(),
+        regular_file(&fake).expect("reading the built fake cargo example's metadata"),
         "{name} is not built at {}: run `cargo build --examples -p rust-mutants` first, \
          or drive this suite with a task that does",
         fake.display()
@@ -253,8 +260,8 @@ pub fn example(name: &str) -> PathBuf {
 
 /// Builds the example into the target directory the test binary itself lives in.
 fn build_the_example(profile: &Path) {
-    let target = profile.parent().unwrap_or(profile);
-    let profile_name = profile.file_name().unwrap_or_default();
+    let target = profile.parent().expect("the target directory");
+    let profile_name = profile.file_name().expect("the cargo profile name");
     let cargo_profile = if profile_name == "debug" {
         OsString::from("dev")
     } else {
@@ -270,13 +277,16 @@ fn build_the_example(profile: &Path) {
         .arg("--target-dir")
         .arg(target)
         .output();
-    if let Ok(output) = said
-        && !output.status.success()
-    {
-        eprintln!(
-            "njutest-devkit: building the fake cargo failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    match said {
+        Ok(output) if !output.status.success() => {
+            let stderr = String::from_utf8(output.stderr)
+                .expect("cargo writes UTF-8 diagnostics for its own failed build");
+            eprintln!("njutest-devkit: building the fake cargo failed:\n{stderr}");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("njutest-devkit: starting the fake cargo build failed: {error}");
+        }
     }
 }
 
@@ -333,7 +343,17 @@ fn place(fake: &Path, at: &Path) {
 
 #[cfg(not(unix))]
 fn place(fake: &Path, at: &Path) {
-    let _copied = std::fs::copy(fake, at).expect("the fake in place");
+    let copied = std::fs::copy(fake, at).expect("the fake in place");
+    let expected = std::fs::metadata(fake).expect("the fake's metadata").len();
+    assert_eq!(copied, expected, "the complete fake was copied into place");
+}
+
+fn regular_file(path: &Path) -> std::io::Result<bool> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn exe(name: &str) -> String {

@@ -3,19 +3,47 @@
 
 //! What the seams a run watched say the system does, and who is holding each sentence up.
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a test reports a setup failure by panicking"
+)]
 use njutest_cli::config::Contract;
 use njutest_cli::report::spec::{page, spoken};
-use njutest_cli::report::{Report, RunKind, SeamDecision, SeamRecord};
+use njutest_cli::report::{BuildReport, Report, RunKind, SeamDecision, SeamRecord};
 
 /// A report of a run that watched seams and nothing else.
 fn watched(seams: Vec<SeamRecord>) -> Report {
-    let mut report = Report::new(
-        "20260918T090000Z-aaaaaa",
-        RunKind::Full,
-        Contract::StandardV1,
-    );
-    report.seams = seams;
-    report
+    let mut source = BuildReport::new("source-one", RunKind::Full, Contract::StandardV1);
+    "workspace".clone_into(&mut source.repository.root_name);
+    source.repository.workspace_digest = "b".repeat(64);
+    source.repository.configuration_digest = "c".repeat(64);
+    "rustc 1.98.0".clone_into(&mut source.toolchain.rustc);
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    "2026-01-01T00:00:00Z".clone_into(&mut source.timing.started);
+    "2026-01-01T00:00:00Z".clone_into(&mut source.timing.finished);
+    source
+        .limitations
+        .push(njutest_cli::report::Limitation::new(
+            "git-metadata-unavailable",
+            "the seam fixture is not a git repository",
+        ));
+    source.seams = seams;
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let final_run = rust_mutants::id::RunId::try_from("watched").expect("a canonical run id");
+    let latticed = njutest_cli::report::across::configured(&final_run, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog seam fixture cannot be a shard");
+    };
+    latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion")
 }
 
 /// One question about `POST /orders`, decided as `decision` says.
@@ -51,7 +79,7 @@ fn every_exchange_the_run_watched_is_one_sentence_however_many_questions_it_lice
             },
         ),
     ]);
-    let sentences = spoken(&report);
+    let sentences = spoken(&report).expect("the sentences derive");
     assert_eq!(
         sentences.len(),
         1,
@@ -68,6 +96,7 @@ fn a_sentence_nothing_would_notice_changing_says_so_rather_than_saying_nothing()
         SeamDecision::Unnoticed,
     )]);
     let said = spoken(&report)
+        .expect("the sentences derive")
         .first()
         .map(njutest_cli::report::spec::Sentence::worded)
         .expect("a sentence");
@@ -88,7 +117,11 @@ fn a_question_a_proof_discharged_leaves_the_sentence_neither_held_up_nor_wanting
             proof: "no-body-to-cut".to_owned(),
         },
     )]);
-    let sentence = spoken(&report).into_iter().next().expect("a sentence");
+    let sentence = spoken(&report)
+        .expect("the sentences derive")
+        .into_iter()
+        .next()
+        .expect("a sentence");
     assert!(!sentence.is_guarded(), "no test held it up");
     assert_eq!(
         (sentence.unguarded, sentence.unasked),
@@ -104,7 +137,11 @@ fn a_question_the_run_could_not_put_is_counted_apart_from_one_nothing_noticed() 
         question(0, "status-server-error", SeamDecision::Unnoticed),
         question(0, "stale-response", SeamDecision::Unreached),
     ]);
-    let sentence = spoken(&report).into_iter().next().expect("a sentence");
+    let sentence = spoken(&report)
+        .expect("the sentences derive")
+        .into_iter()
+        .next()
+        .expect("a sentence");
     assert_eq!(
         (sentence.unguarded, sentence.unasked),
         (1, 1),
@@ -137,13 +174,17 @@ fn one_target_that_noticed_several_questions_is_named_once() {
             },
         ),
     ]);
-    let sentence = spoken(&report).into_iter().next().expect("a sentence");
+    let sentence = spoken(&report)
+        .expect("the sentences derive")
+        .into_iter()
+        .next()
+        .expect("a sentence");
     assert_eq!(sentence.guarded_by, vec!["pkg/test/orders".to_owned()]);
 }
 
 #[test]
 fn a_run_that_watched_no_seam_says_it_watched_none_rather_than_printing_a_blank_page() {
-    let said = page(&watched(Vec::new()));
+    let said = page(&watched(Vec::new())).expect("the page derives");
     assert!(
         said.contains("watched no seam"),
         "an empty page reads as a system that does nothing, which is the one thing \
@@ -163,7 +204,7 @@ fn the_page_says_how_many_of_the_sentences_nothing_would_notice_changing() {
             },
         ),
     ]);
-    let said = page(&report);
+    let said = page(&report).expect("the page derives");
     assert!(
         said.contains("2 observed, 1 that nothing would notice changing."),
         "the number a reviewer acts on is the second one: {said}"
@@ -173,7 +214,7 @@ fn the_page_says_how_many_of_the_sentences_nothing_would_notice_changing() {
 #[test]
 fn an_exchange_nothing_was_asked_about_is_not_counted_among_the_ones_nothing_noticed() {
     let report = watched(vec![question(0, "stale-response", SeamDecision::Unreached)]);
-    let said = page(&report);
+    let said = page(&report).expect("the page derives");
     assert!(
         said.contains("0 that nothing would notice changing")
             && said.contains("1 this run established nothing about"),

@@ -16,13 +16,15 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/missing.rs");
+
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root());
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(args.iter().copied())
-            .chain(["--root", root.as_str()])
+            .chain(["--root", root])
             .chain(["--offline", "--locked"])
             .map(OsString::from),
         &environment(fixture),
@@ -69,9 +71,9 @@ fn measured(fixture: &Fixture) {
 fn explain_reads_the_stored_run_and_says_what_it_established() {
     let fixture = Fixture::copy("fixture-simple");
     measured(&fixture);
-    let output = against(&fixture, &["explain", "16b0"]);
+    let output = against(&fixture, &["explain", "f0d2"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     for said in [
         "MUTANT",
         "RULE      gt-to-ge@1 (comparison)",
@@ -98,10 +100,10 @@ fn explain_reads_the_stored_run_and_says_what_it_established() {
 fn the_explanation_validates_against_the_schema_published_with_it() {
     let fixture = Fixture::copy("fixture-simple");
     measured(&fixture);
-    let output = against(&fixture, &["explain", "16b0", "--json"]);
+    let output = against(&fixture, &["explain", "f0d2", "--json"]);
     let document: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("the explanation is JSON");
-    let schema: serde_json::Value = serde_json::from_str(
+        njutest_devkit::strictjson::decode_slice(&output.stdout).expect("the explanation is JSON");
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
             njutest_devkit::paths::workspace_root().join("schema/rust-mutants-explain-v1.json"),
         )
@@ -123,8 +125,8 @@ fn a_file_that_changed_since_the_run_is_said_rather_than_diffed_against() {
     let path = fixture.root().join("src/lib.rs");
     let source = std::fs::read_to_string(&path).expect("the source");
     std::fs::write(&path, format!("// a comment nobody measured\n{source}")).expect("write");
-    let output = against(&fixture, &["explain", "16b0"]);
-    let text = String::from_utf8_lossy(&output.stdout);
+    let output = against(&fixture, &["explain", "f0d2"]);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
         text.contains("DIFF      none: the file has changed since the run"),
         "a diff against a file the run never saw would be a lie: {text}"
@@ -137,14 +139,14 @@ fn a_prefix_that_names_more_than_one_says_what_it_could_have_meant() {
     measured(&fixture);
     let output = against(&fixture, &["explain", ""]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
-    let complaint = String::from_utf8_lossy(&output.stderr);
+    let complaint = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(complaint.contains("13 mutants"), "{complaint}");
 }
 
 #[test]
 fn list_why_skipped_instrument_and_catalog_each_answer_about_one_thing() {
     let fixture = Fixture::copy("fixture-simple");
-    let listed = String::from_utf8_lossy(
+    let listed = njutest_devkit::process::strict_utf8(
         &against(&fixture, &["list", "--tier", "all", "--file", "src/lib.rs"]).stdout,
     )
     .into_owned();
@@ -156,7 +158,7 @@ fn list_why_skipped_instrument_and_catalog_each_answer_about_one_thing() {
         "a file names its own candidates: {listed}"
     );
 
-    let places = String::from_utf8_lossy(
+    let places = njutest_devkit::process::strict_utf8(
         &against(
             &fixture,
             &[
@@ -184,7 +186,7 @@ fn list_why_skipped_instrument_and_catalog_each_answer_about_one_thing() {
         .and_then(|line| line.split_whitespace().next())
         .expect("a gt-to-ge mutant")
         .to_owned();
-    let guard = String::from_utf8_lossy(
+    let guard = njutest_devkit::process::strict_utf8(
         &against(
             &fixture,
             &[
@@ -203,7 +205,7 @@ fn list_why_skipped_instrument_and_catalog_each_answer_about_one_thing() {
     assert!(guard.contains("FORM      C"), "{guard}");
     assert!(guard.contains("::active("), "{guard}");
 
-    let refused = String::from_utf8_lossy(
+    let refused = njutest_devkit::process::strict_utf8(
         &against(
             &fixture,
             &["catalog", "--tier", "all", "--rejections", "--no-verify"],
@@ -229,7 +231,7 @@ fn explain_names_the_tests_a_route_put_the_mutation_to() {
         "{output:?}"
     );
     let document: serde_json::Value =
-        serde_json::from_str(&njutest_devkit::fixture::stored_report(
+        njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
             &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
         ))
         .expect("the report is a document");
@@ -242,7 +244,7 @@ fn explain_names_the_tests_a_route_put_the_mutation_to() {
     let short = narrowed["display_id"].as_str().expect("a short identity");
     let said = against(&fixture, &["explain", short]);
     assert_eq!(said.status.code(), Some(0), "{said:?}");
-    let text = String::from_utf8_lossy(&said.stdout);
+    let text = njutest_devkit::process::strict_utf8(&said.stdout);
     assert!(text.contains("ROUTE     test "), "{text}");
     assert!(
         text.contains("TESTS     fixture-coverage/lib/fixture_coverage: tests::"),
@@ -258,9 +260,9 @@ fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
         listed.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&listed.stderr)
+        njutest_devkit::process::strict_utf8(&listed.stderr)
     );
-    let text = String::from_utf8_lossy(&listed.stdout).into_owned();
+    let text = njutest_devkit::process::strict_utf8(&listed.stdout).into_owned();
     let id = text
         .lines()
         .next()
@@ -268,9 +270,7 @@ fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
         .expect("a candidate")
         .to_owned();
     assert!(
-        !rust_mutants_cli::app::stored::Store::read(fixture.root())
-            .root()
-            .exists(),
+        test_missing(&rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),),
         "nothing has stored a run in this tree"
     );
 
@@ -282,9 +282,9 @@ fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
          from a tree the reader did not ask about would be about a catalog no run used"
     );
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("RM0007"),
+        njutest_devkit::process::strict_utf8(&refused.stderr).contains("RM0007"),
         "and says which report it looked for: {}",
-        String::from_utf8_lossy(&refused.stderr)
+        njutest_devkit::process::strict_utf8(&refused.stderr)
     );
 
     let explained = against(&fixture, &["explain", &id, "--fresh"]);
@@ -293,9 +293,9 @@ fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
         Some(0),
         "`--fresh` is the word for preparing the tree again, which is how a person \
          reading code asks what a mutation is before any run has judged it: {}",
-        String::from_utf8_lossy(&explained.stderr)
+        njutest_devkit::process::strict_utf8(&explained.stderr)
     );
-    let said = String::from_utf8_lossy(&explained.stdout).into_owned();
+    let said = njutest_devkit::process::strict_utf8(&explained.stdout).into_owned();
     assert!(
         said.contains(&id) && said.contains("src/lib.rs"),
         "the explanation is about the mutation that was named, and says where it is: \
@@ -311,7 +311,7 @@ fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
 #[test]
 fn one_guard_is_shown_with_the_line_of_the_file_it_landed_on() {
     let fixture = Fixture::copy("fixture-simple");
-    let listed = String::from_utf8_lossy(
+    let listed = njutest_devkit::process::strict_utf8(
         &against(&fixture, &["list", "--tier", "all", "--file", "src/lib.rs"]).stdout,
     )
     .into_owned();
@@ -322,7 +322,7 @@ fn one_guard_is_shown_with_the_line_of_the_file_it_landed_on() {
         .expect("a gt-to-ge mutant")
         .to_owned();
 
-    let shown = String::from_utf8_lossy(
+    let shown = njutest_devkit::process::strict_utf8(
         &against(
             &fixture,
             &[
@@ -346,7 +346,7 @@ fn one_guard_is_shown_with_the_line_of_the_file_it_landed_on() {
              written in, and where it sits: {named} is missing from {shown}"
         );
     }
-    let rewrite = String::from_utf8_lossy(
+    let rewrite = njutest_devkit::process::strict_utf8(
         &against(
             &fixture,
             &["instrument", "--tier", "all", "--file", "src/lib.rs"],
@@ -376,7 +376,7 @@ fn one_guard_is_shown_with_the_line_of_the_file_it_landed_on() {
 #[test]
 fn a_guard_nothing_answers_to_is_said_rather_than_shown_as_an_empty_one() {
     let fixture = Fixture::copy("fixture-simple");
-    let shown = String::from_utf8_lossy(
+    let shown = njutest_devkit::process::strict_utf8(
         &against(
             &fixture,
             &[
@@ -425,21 +425,21 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
     );
     assert_eq!(named.status.code(), Some(1), "{named:?}");
 
-    let output = against(&fixture, &["explain", "16b0", "--run", "monday"]);
+    let output = against(&fixture, &["explain", "f0d2", "--run", "monday"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("WHERE     src/lib.rs:11:10"),
+        njutest_devkit::process::strict_utf8(&output.stdout).contains("WHERE     src/lib.rs:11:10"),
         "a run a person named is a run they can read one mutant out of: {output:?}"
     );
 
-    let wrong = against(&fixture, &["explain", "16b0", "--run", "tuesday"]);
+    let wrong = against(&fixture, &["explain", "f0d2", "--run", "tuesday"]);
     assert_eq!(
         wrong.status.code(),
         Some(2),
         "and a name nobody stored is refused rather than answered from another run: {}",
-        String::from_utf8_lossy(&wrong.stdout)
+        njutest_devkit::process::strict_utf8(&wrong.stdout)
     );
-    let message = String::from_utf8_lossy(&wrong.stderr);
+    let message = njutest_devkit::process::strict_utf8(&wrong.stderr);
     assert!(
         message.contains("tuesday")
             && message.contains(&format!(

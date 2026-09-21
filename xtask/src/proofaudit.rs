@@ -6,12 +6,15 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
+use std::path::Path;
+
+use sha2::Digest as _;
 
 /// The document a completed run leaves in its directory.
-pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
+pub const REPORT_FILE: &str = "njutest-assurance-report-v2.json";
 
 /// The schema this audit knows how to re-decide.
-pub const SCHEMA: &str = "njutest-assurance-report-v1";
+pub const SCHEMA: &str = "njutest-assurance-report-v2";
 
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;
@@ -20,9 +23,16 @@ const KILLED: &str = "killed";
 const SURVIVED: &str = "survived";
 const UNREACHED: &str = "unreached";
 const REJECTED: &str = "compile-rejected";
-const TIMED_OUT: &str = "timed_out";
+const STEP_LIMIT_REACHED: &str = "step-limit-reached";
+const WAITED: &str = "waited";
+const UNCONFIRMED: &str = "unconfirmed";
+const ERRORED: &str = "errored";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
+const WAITED_MUTANT: &str = "waited-mutant";
+const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
+const FAILING_TEST: &str = "failing-test";
+const TARGET_MISSING: &str = "target-missing";
 const UNMATCHED_ACCEPTANCE: &str = "unmatched-acceptance";
 const EVERYTHING: &str = "all";
 const EQUIVALENT: &str = "equivalent";
@@ -49,6 +59,15 @@ pub enum AuditError {
         #[source]
         source: serde_json::Error,
     },
+    /// The explicitly supplied recording contains a corrupt event.
+    #[error("{path}: not a recording this audit can read: {source}")]
+    MalformedRecording {
+        /// The recording.
+        path: String,
+        /// Which line failed to parse.
+        #[source]
+        source: crate::route::ReadError,
+    },
     /// The document is JSON and calls itself something other than the assurance report.
     #[error("{path}: {schema:?} is not the assurance report this audit re-decides")]
     Unrecognised {
@@ -61,7 +80,6 @@ pub enum AuditError {
 
 /// What the re-decision was able to conclude about one thing it looked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Standing {
     /// The recording contradicts itself, or rests a verdict on evidence it does not hold.
     Violated,
@@ -82,7 +100,6 @@ impl Standing {
 
 /// The part of a recording one re-decision was about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Layer {
     /// The columns of the accounting, against the records they summarise and against the verdict they carry.
     Accounting,
@@ -100,6 +117,8 @@ pub enum Layer {
     Hollow,
     /// The faults a seam recording licensed, re-derived and held to what the run says it put and what nothing noticed.
     Wire,
+    /// Affirmative model answers re-derived from retained generated source and raw Kani JSON.
+    Model,
 }
 
 impl Layer {
@@ -115,6 +134,7 @@ impl Layer {
             Self::Proofs => "proofs",
             Self::Hollow => "hollow",
             Self::Wire => "wire",
+            Self::Model => "model",
         }
     }
 }
@@ -239,19 +259,23 @@ impl<'a> Notes<'a> {
             derived,
             records,
         } = column;
-        match recorded {
-            None => self.unaudited(
+        match (recorded, derived) {
+            (None, _) => self.unaudited(
                 subject,
                 format!("the recording omits this column, so {records} answer to nothing"),
             ),
-            Some(count) if count != derived => self.violated(
+            (Some(_), None) => self.violated(
+                subject,
+                format!("{records} exceed the u64 count the report wire can represent"),
+            ),
+            (Some(count), Some(derived)) if count != derived => self.violated(
                 subject,
                 format!(
                     "the column says {count} and {records} come to {derived}; a report that \
                      contradicts itself is not evidence of anything"
                 ),
             ),
-            Some(_) => {}
+            (Some(_), Some(_)) => {}
         }
     }
 
@@ -291,7 +315,7 @@ impl<'a> Notes<'a> {
 struct Column<'a> {
     subject: &'a str,
     recorded: Option<u64>,
-    derived: u64,
+    derived: Option<u64>,
     records: &'a str,
 }
 
@@ -304,13 +328,21 @@ struct Equation<'a> {
     because: &'a str,
 }
 
-/// What an independent re-decision makes of the recording in `text`.
+/// Re-decides a report and, when `run` is present, re-reads every retained
+/// model-checker artifact from that exact run directory.
 ///
 /// # Errors
-/// [`AuditError::Unparsable`] for a document that is not JSON, and [`AuditError::Unrecognised`] for one that is not the assurance report.
-pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, AuditError> {
+/// [`AuditError::Unparsable`] for a document that is not JSON,
+/// [`AuditError::Unrecognised`] for one that is not the assurance report, and
+/// the corresponding retained-artifact error when `run` cannot be re-read.
+pub fn audit_at(
+    path: &str,
+    text: &str,
+    recorded: Option<(&str, &str)>,
+    run: Option<&Path>,
+) -> Result<Audit, AuditError> {
     let document: serde_json::Value =
-        serde_json::from_str(text).map_err(|source| AuditError::Unparsable {
+        crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
             path: path.to_owned(),
             source,
         })?;
@@ -325,6 +357,22 @@ pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, Au
         });
     }
     let recording = Recording::of(&document);
+    let routing = recorded
+        .map(|(recording_path, text)| {
+            crate::route::read(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()?;
+    let watched = recorded
+        .map(|(recording_path, text)| {
+            crate::wire::read(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()?;
     let mut audit = Audit {
         run_id: recording.run_id.clone(),
         mutants: recording.mutants.len(),
@@ -339,9 +387,10 @@ pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, Au
     findings(&recording, &mut audit);
     acceptances(&recording, &mut audit);
     reuse(&recording, &mut audit);
-    proofs(&recording, recorded, &mut audit);
-    hollow(&recording, recorded, &mut audit);
-    wire(&recording, recorded, &mut audit);
+    proofs(&recording, routing.as_ref(), &mut audit);
+    hollow(&recording, routing.as_ref(), &mut audit);
+    wire(&recording, watched.as_ref(), &mut audit);
+    models(&recording, run, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -359,9 +408,32 @@ struct MutantRow {
     id: String,
     display_id: String,
     outcome: String,
+    acceptance: AcceptanceFact,
     killed_by: Option<String>,
     reused: bool,
     source_run_id: Option<String>,
+}
+
+/// The three distinct facts a report can state about row-local review acceptance.
+///
+/// Keeping the missing case as its own variant prevents an absent field from being
+/// confused with an explicit rejection while the independent audit is re-deriving
+/// answerability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AcceptanceFact {
+    Missing,
+    Rejected,
+    Accepted,
+}
+
+impl AcceptanceFact {
+    fn from_json(value: Option<&serde_json::Value>) -> Self {
+        match value.and_then(serde_json::Value::as_bool) {
+            Some(false) => Self::Rejected,
+            Some(true) => Self::Accepted,
+            None => Self::Missing,
+        }
+    }
 }
 
 impl MutantRow {
@@ -375,11 +447,6 @@ impl MutantRow {
         }
     }
 
-    /// A mutation nothing noticed, whether a test reached it and stayed silent or none reached it at all.
-    fn survived(&self) -> bool {
-        self.outcome == SURVIVED || self.outcome == UNREACHED
-    }
-
     fn answers_to(&self, subject: &str) -> bool {
         subject == self.display_id || subject == self.id
     }
@@ -389,6 +456,827 @@ impl MutantRow {
 struct FindingRow {
     kind: String,
     subject: String,
+}
+
+#[derive(Debug)]
+struct ModelRow {
+    mutant: String,
+    decision: String,
+    evidence: Option<serde_json::Value>,
+    attempt: Option<serde_json::Value>,
+    answer: serde_json::Value,
+    raw: serde_json::Value,
+}
+
+fn models(recording: &Recording<'_>, run: Option<&Path>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Model);
+    let mut identities = BTreeSet::new();
+    if recording.contract != "verified-v1" && !recording.models.is_empty() {
+        notes.violated(
+            "models",
+            format!(
+                "contract {:?} cannot carry verified-v1 model records",
+                recording.contract
+            ),
+        );
+    }
+    for model in &recording.models {
+        audit_model(recording, run, model, (&mut identities, &mut notes));
+    }
+    if recording.contract == "verified-v1" {
+        for mutant in &recording.mutants {
+            if matches!(
+                mutant.outcome.as_str(),
+                SURVIVED | "model-noticed" | "model-proved"
+            ) && !identities.contains(mutant.id.as_str())
+            {
+                notes.violated(
+                    mutant.label(),
+                    "a verified-v1 test survivor has no exactly corresponding model record"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    model_columns(recording, &mut notes);
+}
+
+fn audit_model<'model>(
+    recording: &Recording<'_>,
+    run: Option<&Path>,
+    model: &'model ModelRow,
+    state: (&mut BTreeSet<&'model str>, &mut Notes<'_>),
+) {
+    let (identities, notes) = state;
+    if !model_shape(model, &recording.target) {
+        notes.violated(
+            &model.mutant,
+            "the model record is not the exact closed shape for its decision".to_owned(),
+        );
+        return;
+    }
+    if model.mutant.is_empty() || !identities.insert(model.mutant.as_str()) {
+        notes.violated(
+            &model.mutant,
+            "model records must carry unique, non-empty full mutation identities".to_owned(),
+        );
+        return;
+    }
+    let context = ModelAuditContext { recording, run };
+    match model.decision.as_str() {
+        "noticed" => audit_affirmative(
+            context,
+            model,
+            ("model-noticed", crate::modelaudit::Answer::Noticed),
+            notes,
+        ),
+        "proved" => audit_affirmative(
+            context,
+            model,
+            ("model-proved", crate::modelaudit::Answer::Proved),
+            notes,
+        ),
+        "ineligible" => audit_nonaffirmative(model, model_outcome(recording, model), notes),
+        "undecided" => audit_attempt(context, model, notes),
+        _ => notes.violated(
+            &model.mutant,
+            "the model decision is outside the closed set".to_owned(),
+        ),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ModelAuditContext<'a, 'document> {
+    recording: &'a Recording<'document>,
+    run: Option<&'a Path>,
+}
+
+fn model_outcome<'a>(recording: &'a Recording<'_>, model: &ModelRow) -> Option<&'a str> {
+    recording
+        .mutants
+        .iter()
+        .find(|mutant| mutant.id == model.mutant)
+        .map(|mutant| mutant.outcome.as_str())
+}
+
+fn audit_nonaffirmative(model: &ModelRow, outcome: Option<&str>, notes: &mut Notes<'_>) {
+    if outcome != Some(SURVIVED) {
+        notes.violated(
+            &model.mutant,
+            format!(
+                "a non-affirmative model record must leave a test survivor as survived, not {outcome:?}"
+            ),
+        );
+    }
+}
+
+fn audit_attempt(context: ModelAuditContext<'_, '_>, model: &ModelRow, notes: &mut Notes<'_>) {
+    let outcome = model_outcome(context.recording, model);
+    if outcome != Some(SURVIVED) {
+        audit_nonaffirmative(model, outcome, notes);
+        return;
+    }
+    let Some(attempt) = model.attempt.as_ref() else {
+        notes.violated(
+            &model.mutant,
+            "an undecided model record has no closed attempt".to_owned(),
+        );
+        return;
+    };
+    let (Some(reason), Some(evidence)) = (attempt.get("reason"), attempt.get("evidence")) else {
+        notes.violated(
+            &model.mutant,
+            "an undecided model record lacks its typed reason or attempt evidence".to_owned(),
+        );
+        return;
+    };
+    let Some(run) = context.run else {
+        notes.unaudited(
+            &model.mutant,
+            "the caller supplied no run directory, so retained model attempt artifacts cannot be re-read"
+                .to_owned(),
+        );
+        return;
+    };
+    if let Err(error) = crate::modelaudit::verify_attempt(crate::modelaudit::AttemptInput {
+        run,
+        report_target: &context.recording.target,
+        mutant: &model.mutant,
+        reason,
+        evidence,
+    }) {
+        notes.violated(&model.mutant, error.to_string());
+    }
+}
+
+fn audit_affirmative(
+    context: ModelAuditContext<'_, '_>,
+    model: &ModelRow,
+    expected: (&str, crate::modelaudit::Answer),
+    notes: &mut Notes<'_>,
+) {
+    let (expected_outcome, answer) = expected;
+    let outcome = model_outcome(context.recording, model);
+    if outcome != Some(expected_outcome) {
+        notes.violated(
+            &model.mutant,
+            format!(
+                "the model record says {} and the mutant outcome is {:?}",
+                model.decision, outcome
+            ),
+        );
+        return;
+    }
+    let Some(evidence) = model.evidence.as_ref() else {
+        notes.violated(
+            &model.mutant,
+            "an affirmative model record has no evidence".to_owned(),
+        );
+        return;
+    };
+    let Some(run) = context.run else {
+        notes.unaudited(
+            &model.mutant,
+            "the caller supplied no run directory, so retained model artifacts cannot be re-read"
+                .to_owned(),
+        );
+        return;
+    };
+    let input = crate::modelaudit::Input {
+        run,
+        report_target: &context.recording.target,
+        mutant: &model.mutant,
+        answer,
+        evidence,
+    };
+    if let Err(error) = crate::modelaudit::verify(input) {
+        notes.violated(&model.mutant, error.to_string());
+    }
+}
+
+fn model_shape(model: &ModelRow, report_target: &str) -> bool {
+    if !exact_keys(&model.raw, &["mutant", "answer"]) {
+        return false;
+    }
+    match model.decision.as_str() {
+        "ineligible" => {
+            exact_keys(&model.answer, &["decision", "reason"])
+                && model
+                    .answer
+                    .get("reason")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|reason| {
+                        matches!(
+                            reason,
+                            "source-encoding"
+                                | "source-digest"
+                                | "candidate"
+                                | "identity"
+                                | "source-syntax"
+                                | "enclosing-function"
+                                | "function-shape"
+                                | "no-symbolic-input"
+                                | "argument-pattern"
+                                | "input-type"
+                                | "output-type"
+                                | "effect"
+                                | "mutant-syntax"
+                                | "name-collision"
+                                | "source-span"
+                        )
+                    })
+        }
+        "noticed" | "proved" => {
+            exact_keys(&model.answer, &["decision", "evidence"])
+                && model.evidence.as_ref().is_some_and(|evidence| {
+                    affirmative_evidence_shape(
+                        evidence,
+                        &model.mutant,
+                        report_target,
+                        i64::from(model.decision != "proved"),
+                    )
+                })
+        }
+        "undecided" => {
+            exact_keys(&model.answer, &["decision", "attempt"])
+                && model.attempt.as_ref().is_some_and(|attempt| {
+                    exact_keys(attempt, &["reason", "evidence"])
+                        && uncertainty_shape(attempt.get("reason"))
+                        && attempt.get("evidence").is_some_and(|evidence| {
+                            attempt_evidence_shape(
+                                evidence,
+                                attempt.get("reason"),
+                                &model.mutant,
+                                report_target,
+                            )
+                        })
+                })
+        }
+        _ => false,
+    }
+}
+
+fn affirmative_evidence_shape(
+    evidence: &serde_json::Value,
+    mutant: &str,
+    report_target: &str,
+    exit: i64,
+) -> bool {
+    exact_keys(
+        evidence,
+        &["verifier", "identity", "artifact", "source", "process"],
+    ) && verifier_shape(evidence.get("verifier"), report_target)
+        && identity_shape(evidence.get("identity"), mutant)
+        && artifacts_shape(evidence, mutant, false)
+        && process_shape(evidence.get("process"), Some(exit))
+}
+
+fn attempt_evidence_shape(
+    evidence: &serde_json::Value,
+    reason: Option<&serde_json::Value>,
+    mutant: &str,
+    report_target: &str,
+) -> bool {
+    if !exact_keys(
+        evidence,
+        &[
+            "verifier",
+            "identity",
+            "artifact",
+            "source",
+            "process",
+            "raw_sha256",
+        ],
+    ) || !identity_shape(evidence.get("identity"), mutant)
+        || !artifacts_shape(evidence, mutant, true)
+        || !process_shape(evidence.get("process"), None)
+        || !digest_value(evidence.get("raw_sha256"))
+    {
+        return false;
+    }
+    let verifier = evidence.get("verifier");
+    let artifact = evidence.get("artifact");
+    if verifier.is_some_and(|value| !value.is_null())
+        && (!verifier_shape(verifier, report_target)
+            || artifact.is_none_or(serde_json::Value::is_null))
+    {
+        return false;
+    }
+    let raw = evidence
+        .get("raw_sha256")
+        .and_then(serde_json::Value::as_str);
+    let raw_matches = match artifact.filter(|value| !value.is_null()) {
+        Some(artifact) => artifact.get("sha256").and_then(serde_json::Value::as_str) == raw,
+        None => raw == Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+    };
+    raw_matches && reason_process_shape(reason, evidence.get("process"))
+}
+
+fn verifier_shape(verifier: Option<&serde_json::Value>, report_target: &str) -> bool {
+    let Some(verifier) = verifier else {
+        return false;
+    };
+    if !exact_keys(verifier, &["tool", "backend"])
+        || verifier.get("tool").and_then(serde_json::Value::as_str) != Some("0.68.0")
+    {
+        return false;
+    }
+    let Some(backend) = verifier.get("backend") else {
+        return false;
+    };
+    exact_keys(
+        backend,
+        &[
+            "export_version",
+            "build_mode",
+            "target",
+            "rustc",
+            "cbmc",
+            "goto_cc",
+            "goto_instrument",
+            "solver",
+        ],
+    ) && backend
+        .get("export_version")
+        .and_then(serde_json::Value::as_str)
+        == Some("1.0")
+        && backend
+            .get("build_mode")
+            .and_then(serde_json::Value::as_str)
+            == Some("release")
+        && backend.get("target").and_then(serde_json::Value::as_str) == Some(report_target)
+        && backend.get("rustc").and_then(serde_json::Value::as_str)
+            == Some("rustc 1.100.0-nightly (8925ea358 2026-08-20)")
+        && backend.get("cbmc").and_then(serde_json::Value::as_str) == Some("6.11.0 (cbmc-6.11.0)")
+        && backend.get("goto_cc").and_then(serde_json::Value::as_str)
+            == Some("clang version 21.0.0 (goto-cc 6.11.0 (cbmc-6.11.0))")
+        && backend
+            .get("goto_instrument")
+            .and_then(serde_json::Value::as_str)
+            == Some("6.11.0 (cbmc-6.11.0)")
+        && backend.get("solver").and_then(serde_json::Value::as_str) == Some("cadical")
+}
+
+fn identity_shape(identity: Option<&serde_json::Value>, mutant: &str) -> bool {
+    let Some(identity) = identity else {
+        return false;
+    };
+    let keys = [
+        "harness",
+        "assertion",
+        "unwind",
+        "timeout_ms",
+        "source_sha256",
+        "rendered_sha256",
+        "crate_input",
+        "mutant",
+        "path",
+        "rule",
+        "rule_version",
+        "start_byte",
+        "end_byte",
+        "original_hex",
+        "replacement_hex",
+    ];
+    let expected_harness = format!("__njutest_model_{mutant}");
+    let expected_assertion = format!("njutest-model-v1:{mutant}");
+    if !exact_keys(identity, &keys)
+        || !digest_string(mutant)
+        || identity.get("mutant").and_then(serde_json::Value::as_str) != Some(mutant)
+        || identity.get("harness").and_then(serde_json::Value::as_str)
+            != Some(expected_harness.as_str())
+        || identity
+            .get("assertion")
+            .and_then(serde_json::Value::as_str)
+            != Some(expected_assertion.as_str())
+        || identity
+            .get("unwind")
+            .and_then(serde_json::Value::as_u64)
+            .is_none_or(|value| value == 0 || value > u64::from(u32::MAX))
+        || identity
+            .get("timeout_ms")
+            .and_then(serde_json::Value::as_u64)
+            .is_none_or(|value| value == 0)
+        || !digest_value(identity.get("source_sha256"))
+        || !digest_value(identity.get("rendered_sha256"))
+        || !crate_input_shape(identity.get("crate_input"))
+    {
+        return false;
+    }
+    let Some(input) = mutation_identity_input(identity) else {
+        return false;
+    };
+    match mint_mutant_id(&input.as_mint_input()) {
+        Ok(minted) => minted == mutant,
+        Err(MintMutantIdError::FieldTooLong { .. }) => false,
+    }
+}
+
+struct ParsedMutationIdentity<'a> {
+    path: &'a str,
+    rule: &'a str,
+    rule_version: u32,
+    start: u32,
+    end: u32,
+    source_digest: &'a str,
+    original: Vec<u8>,
+    replacement: Vec<u8>,
+}
+
+impl<'a> ParsedMutationIdentity<'a> {
+    fn as_mint_input(&'a self) -> MutantIdentityInput<'a> {
+        MutantIdentityInput {
+            path: self.path,
+            rule: self.rule,
+            rule_version: self.rule_version,
+            start: self.start,
+            end: self.end,
+            source_digest: self.source_digest,
+            original: &self.original,
+            replacement: &self.replacement,
+        }
+    }
+}
+
+fn mutation_identity_input(identity: &serde_json::Value) -> Option<ParsedMutationIdentity<'_>> {
+    let path = identity.get("path")?.as_str()?;
+    let rule = identity.get("rule")?.as_str()?;
+    let rule_version = u32_value(identity.get("rule_version")?).filter(|value| *value > 0)?;
+    let start = u32_value(identity.get("start_byte")?)?;
+    let end = u32_value(identity.get("end_byte")?)?;
+    let original = canonical_hex(identity.get("original_hex")?.as_str()?)?;
+    let replacement = canonical_hex(identity.get("replacement_hex")?.as_str()?)?;
+    let source_digest = identity.get("source_sha256")?.as_str()?;
+    let original_length = match u64::try_from(original.len()) {
+        Ok(length) => length,
+        Err(_overflow) => return None,
+    };
+    if !canonical_workspace_path(path)
+        || rule.is_empty()
+        || rule.contains(['@', ' ', '\t', '\r', '\n'])
+        || end.checked_sub(start).map(u64::from) != Some(original_length)
+        || original == replacement
+    {
+        return None;
+    }
+    Some(ParsedMutationIdentity {
+        path,
+        rule,
+        rule_version,
+        start,
+        end,
+        source_digest,
+        original,
+        replacement,
+    })
+}
+
+fn crate_input_shape(input: Option<&serde_json::Value>) -> bool {
+    let Some(input) = input else {
+        return false;
+    };
+    exact_keys(
+        input,
+        &[
+            "package",
+            "edition",
+            "source",
+            "offline",
+            "dependency_resolution",
+            "environment",
+            "sha256",
+        ],
+    ) && input.get("package").and_then(serde_json::Value::as_str) == Some("njutest-verified-model")
+        && input.get("edition").and_then(serde_json::Value::as_str) == Some("2024")
+        && input.get("source").and_then(serde_json::Value::as_str) == Some("src/lib.rs")
+        && input.get("offline").and_then(serde_json::Value::as_bool) == Some(true)
+        && input
+            .get("dependency_resolution")
+            .and_then(serde_json::Value::as_str)
+            == Some("empty-lock-offline-v1")
+        && input.get("environment").and_then(serde_json::Value::as_str) == Some("minimal-v1")
+        && digest_value(input.get("sha256"))
+}
+
+fn u32_value(value: &serde_json::Value) -> Option<u32> {
+    let raw = value.as_u64()?;
+    match u32::try_from(raw) {
+        Ok(value) => Some(value),
+        Err(_overflow) => None,
+    }
+}
+
+/// Validates the published cross-platform spelling without consulting the
+/// producer's path normalizer. Every component is already in its final form:
+/// no separator conversion, dot elimination, or volume interpretation remains
+/// for a different host to perform.
+fn canonical_workspace_path(path: &str) -> bool {
+    if path.is_empty()
+        || path.contains(['\0', '\\'])
+        || path.starts_with('/')
+        || matches!(
+            (path.as_bytes().first(), path.as_bytes().get(1)),
+            (Some(letter), Some(b':')) if letter.is_ascii_alphabetic()
+        )
+    {
+        return false;
+    }
+    path.split('/')
+        .all(|component| !component.is_empty() && !matches!(component, "." | ".."))
+}
+
+struct MutantIdentityInput<'a> {
+    path: &'a str,
+    rule: &'a str,
+    rule_version: u32,
+    start: u32,
+    end: u32,
+    source_digest: &'a str,
+    original: &'a [u8],
+    replacement: &'a [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+enum MintMutantIdError {
+    #[error("the {field} identity field exceeds the u32 length prefix")]
+    FieldTooLong { field: &'static str },
+}
+
+fn mint_mutant_id(input: &MutantIdentityInput<'_>) -> Result<String, MintMutantIdError> {
+    let mut hasher = sha2::Sha256::new();
+    let version = input.rule_version.to_string();
+    let start = input.start.to_string();
+    let end = input.end.to_string();
+    let original = digest_bytes(input.original);
+    let replacement = digest_bytes(input.replacement);
+    for (name, field) in [
+        ("domain", "rust-mutants-id-v1"),
+        ("path", input.path),
+        ("rule", input.rule),
+        ("rule-version", version.as_str()),
+        ("start", start.as_str()),
+        ("end", end.as_str()),
+        ("source-digest", input.source_digest),
+        ("original-digest", original.as_str()),
+        ("replacement-digest", replacement.as_str()),
+    ] {
+        let length = u32::try_from(field.len())
+            .map_err(|_overflow| MintMutantIdError::FieldTooLong { field: name })?;
+        hasher.update(length.to_be_bytes());
+        hasher.update(field.as_bytes());
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
+fn artifacts_shape(evidence: &serde_json::Value, mutant: &str, optional_raw: bool) -> bool {
+    let source = evidence.get("source");
+    if !artifact_shape(source, &format!("model/{mutant}.rs"))
+        || source
+            .and_then(|value| value.get("sha256"))
+            .and_then(serde_json::Value::as_str)
+            != evidence
+                .get("identity")
+                .and_then(|value| value.get("rendered_sha256"))
+                .and_then(serde_json::Value::as_str)
+    {
+        return false;
+    }
+    let artifact = evidence.get("artifact");
+    (optional_raw && artifact.is_some_and(serde_json::Value::is_null))
+        || artifact_shape(artifact, &format!("model/{mutant}.json"))
+}
+
+fn artifact_shape(artifact: Option<&serde_json::Value>, expected_path: &str) -> bool {
+    let Some(artifact) = artifact else {
+        return false;
+    };
+    exact_keys(artifact, &["path", "bytes", "sha256"])
+        && artifact.get("path").and_then(serde_json::Value::as_str) == Some(expected_path)
+        && artifact
+            .get("bytes")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|bytes| bytes > 0)
+        && digest_value(artifact.get("sha256"))
+}
+
+fn process_shape(process: Option<&serde_json::Value>, expected_exit: Option<i64>) -> bool {
+    let Some(process) = process else {
+        return false;
+    };
+    let kind = process.get("kind").and_then(serde_json::Value::as_str);
+    match kind {
+        Some("exited") => {
+            exact_keys(process, &["kind", "code"])
+                && process
+                    .get("code")
+                    .and_then(serde_json::Value::as_i64)
+                    .is_some()
+                && expected_exit.is_none_or(|expected| {
+                    process.get("code").and_then(serde_json::Value::as_i64) == Some(expected)
+                })
+        }
+        Some("not-run" | "cutoff" | "cancelled" | "failed") => {
+            expected_exit.is_none() && exact_keys(process, &["kind"])
+        }
+        Some(_) | None => false,
+    }
+}
+
+fn reason_process_shape(
+    reason: Option<&serde_json::Value>,
+    process: Option<&serde_json::Value>,
+) -> bool {
+    let (Some(reason), Some(process)) = (reason, process) else {
+        return false;
+    };
+    let kind = reason.get("kind").and_then(serde_json::Value::as_str);
+    let detail = reason.get("detail").and_then(serde_json::Value::as_str);
+    let process_kind = process.get("kind").and_then(serde_json::Value::as_str);
+    let code = process.get("code").and_then(serde_json::Value::as_i64);
+    match kind {
+        Some("cutoff") => process_kind == Some("cutoff"),
+        Some("cancelled") => process_kind == Some("cancelled"),
+        Some("configuration") if detail == Some("workspace-drift") => true,
+        Some("tool" | "configuration") => process_kind == Some("not-run"),
+        Some("process") => process_kind == Some("failed"),
+        Some("exit-mismatch") => {
+            reason
+                .get("detail")
+                .and_then(|value| value.get("actual"))
+                .and_then(serde_json::Value::as_i64)
+                == code
+        }
+        Some("bound-exhausted" | "protocol" | "property" | "other-failure") => {
+            process_kind == Some("exited") && matches!(code, Some(0 | 1))
+        }
+        Some("artifact") if detail == Some("source-changed") => true,
+        Some("artifact") if detail == Some("already-exists") => process_kind == Some("not-run"),
+        Some("artifact") => process_kind == Some("exited"),
+        Some(_) | None => false,
+    }
+}
+
+fn digest_value(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(digest_string)
+}
+
+fn digest_string(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn canonical_hex(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2)
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return None;
+    }
+    match hex::decode(value) {
+        Ok(bytes) => Some(bytes),
+        Err(_error) => None,
+    }
+}
+
+fn exact_keys(value: &serde_json::Value, expected: &[&str]) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.len() == expected.len() && expected.iter().all(|key| object.contains_key(*key))
+}
+
+fn uncertainty_shape(reason: Option<&serde_json::Value>) -> bool {
+    let Some(reason) = reason else {
+        return false;
+    };
+    let Some(kind) = reason.get("kind").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    match (kind, uncertainty_details(kind)) {
+        ("bound-exhausted" | "cutoff" | "cancelled", None) => exact_keys(reason, &["kind"]),
+        (_, Some(details)) => tagged_detail(reason, details),
+        ("other-failure", None) => {
+            exact_keys(reason, &["kind", "detail"])
+                && reason
+                    .get("detail")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|detail| !detail.is_empty())
+        }
+        ("exit-mismatch", None) => {
+            exact_keys(reason, &["kind", "detail"])
+                && reason.get("detail").is_some_and(|detail| {
+                    exact_keys(detail, &["expected", "actual"])
+                        && matches!(
+                            detail.get("expected").and_then(serde_json::Value::as_str),
+                            Some("proved" | "noticed")
+                        )
+                        && detail
+                            .get("actual")
+                            .and_then(serde_json::Value::as_i64)
+                            .is_some()
+                })
+        }
+        _ => false,
+    }
+}
+
+fn uncertainty_details(kind: &str) -> Option<&'static [&'static str]> {
+    match kind {
+        "configuration" => Some(&[
+            "package",
+            "target",
+            "profile",
+            "compiler-flags",
+            "compiler-environment",
+            "relative-path",
+            "directory",
+            "tree-written",
+            "workspace-drift",
+        ]),
+        "tool" => Some(&[
+            "unavailable",
+            "version-command",
+            "version-banner",
+            "harness-list-command",
+            "harness-list-artifact",
+            "harness-list-schema",
+            "harness-list-match",
+        ]),
+        "process" => Some(&[
+            "not-started",
+            "stopped",
+            "monitor",
+            "wait",
+            "signal",
+            "unknown-exit",
+            "unexpected-exit",
+        ]),
+        "artifact" => Some(&[
+            "already-exists",
+            "missing",
+            "not-file",
+            "too-large",
+            "unreadable",
+            "source-changed",
+        ]),
+        "protocol" => Some(&[
+            "schema",
+            "tool-version",
+            "export-version",
+            "backend",
+            "summary",
+            "harness",
+            "assertion",
+            "contradiction",
+        ]),
+        "property" => Some(&[
+            "failure",
+            "covered",
+            "satisfied",
+            "success",
+            "undetermined",
+            "unknown",
+            "unreachable",
+            "uncovered",
+            "unsatisfiable",
+            "error",
+        ]),
+        _ => None,
+    }
+}
+
+fn tagged_detail(reason: &serde_json::Value, values: &[&str]) -> bool {
+    exact_keys(reason, &["kind", "detail"])
+        && reason
+            .get("detail")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|detail| values.contains(&detail))
+}
+
+fn model_columns(recording: &Recording<'_>, notes: &mut Notes<'_>) {
+    for (column_name, decision) in [("model_noticed", "noticed"), ("model_proved", "proved")] {
+        notes.tally(Column {
+            subject: &format!("accounting.mutants.{column_name}"),
+            recorded: column(recording.document, "mutants", column_name),
+            derived: size(
+                recording
+                    .models
+                    .iter()
+                    .filter(|model| model.decision == decision)
+                    .count(),
+            ),
+            records: "the affirmative model records carrying that decision",
+        });
+    }
 }
 
 /// Whether any layer removed a target that then killed the mutation it removed.
@@ -404,12 +1292,12 @@ struct FindingRow {
 /// anything is a statement about the whole catalog, and a part has seen a
 /// slice: a target silent in this part may have noticed something in another,
 /// and demanding a finding here would demand one the whole would contradict.
-fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
+fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Hollow);
     if recording.shard.is_some() {
         return;
     }
-    let Some(recorded) = recorded else {
+    let Some(routing) = routing else {
         notes.unaudited(
             "executions",
             "the run kept no recording of what it ran, so which targets were put to a \
@@ -418,7 +1306,6 @@ fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
         );
         return;
     };
-    let routing = crate::route::read(recorded);
     if routing.execs.is_empty() {
         notes.unaudited(
             "executions",
@@ -428,41 +1315,34 @@ fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
         );
         return;
     }
-    let mut asked: BTreeMap<&str, (u64, bool)> = BTreeMap::new();
-    for exec in &routing.execs {
-        if !matches!(
-            exec.outcome.as_str(),
-            "killed" | "timed_out" | "survived" | "unreached" | "equivalent" | "compile-rejected"
-        ) {
-            continue;
+    let asked = match asked_targets(routing) {
+        Ok(asked) => asked,
+        Err(overflow) => {
+            notes.violated(
+                overflow.target,
+                "the execution count exceeds the report wire's u64 range".to_owned(),
+            );
+            return;
         }
-        let held = asked.entry(exec.target.as_str()).or_insert((0, false));
-        held.0 = held.0.saturating_add(1);
-        if matches!(exec.outcome.as_str(), "killed" | "timed_out") {
-            held.1 = true;
-        }
-    }
+    };
     let owed: BTreeSet<&str> = asked
         .iter()
         .filter(|(_, (count, noticed))| *count > 0 && !*noticed)
         .map(|(target, _)| *target)
         .collect();
-    let named: BTreeSet<&str> = recording
-        .document
-        .get("findings")
-        .and_then(serde_json::Value::as_array)
-        .map(|findings| {
-            findings
-                .iter()
-                .filter(|one| {
-                    one.get("kind").and_then(serde_json::Value::as_str) == Some("hollow-target")
-                })
-                .filter_map(|one| one.get("subject").and_then(serde_json::Value::as_str))
-                .collect()
-        })
-        .unwrap_or_default();
+    let named = named_hollow_targets(recording);
     for target in owed.difference(&named) {
-        let (count, _) = asked.get(target).copied().unwrap_or((0, false));
+        let count = match asked.get(target) {
+            Some((count, _noticed)) => *count,
+            None => {
+                notes.violated(
+                    target,
+                    "the independently derived hollow-target set lost its execution count"
+                        .to_owned(),
+                );
+                continue;
+            }
+        };
         notes.violated(
             target,
             format!(
@@ -482,24 +1362,73 @@ fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HollowCountOverflow<'a> {
+    target: &'a str,
+}
+
+fn asked_targets(
+    routing: &crate::route::Routing,
+) -> Result<BTreeMap<&str, (u64, bool)>, HollowCountOverflow<'_>> {
+    let mut asked = BTreeMap::new();
+    for exec in &routing.execs {
+        if !matches!(exec.outcome.as_str(), "killed" | "survived") {
+            continue;
+        }
+        let target = exec.target.as_str();
+        let held = asked.entry(target).or_insert((0_u64, false));
+        held.0 = held
+            .0
+            .checked_add(1)
+            .ok_or(HollowCountOverflow { target })?;
+        held.1 |= exec.outcome == KILLED;
+    }
+    Ok(asked)
+}
+
+fn named_hollow_targets<'a>(recording: &'a Recording<'_>) -> BTreeSet<&'a str> {
+    let Some(findings) = recording
+        .document
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return BTreeSet::new();
+    };
+    findings
+        .iter()
+        .filter(|one| one.get("kind").and_then(serde_json::Value::as_str) == Some("hollow-target"))
+        .filter_map(|one| one.get("subject").and_then(serde_json::Value::as_str))
+        .collect()
+}
+
 /// The faults a seam recording licensed, re-derived here and held to what the run says became of them.
 ///
 /// The catalogue is minted again from the exchanges alone, by the rules and
 /// the identity recipe written out in `crate::wire`, so a fault this audit
 /// does not derive is one the run invented and a fault it derives that the
 /// run never put is a question the report is quiet about.
-fn wire(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
+fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Wire);
-    let Some(recorded) = recorded else {
+    let Some(watched) = watched else {
         return;
     };
-    let watched = crate::wire::read(recorded);
     if watched.exchanges.is_empty() && watched.execs.is_empty() {
         return;
     }
     let mut owed: BTreeMap<String, String> = BTreeMap::new();
     for exchange in &watched.exchanges {
-        for (id, rule) in crate::wire::licensed(exchange) {
+        let licensed = match crate::wire::licensed(exchange) {
+            Ok(licensed) => licensed,
+            Err(error) => {
+                let subject = format!("{}:{}", exchange.capability, exchange.seq);
+                notes.violated(
+                    &subject,
+                    format!("the exchange cannot mint its prescribed fault identities: {error}"),
+                );
+                continue;
+            }
+        };
+        for (id, rule) in licensed {
             owed.insert(id, rule);
         }
     }
@@ -593,9 +1522,9 @@ fn gaps(
     }
 }
 
-fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
+fn proofs(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Proofs);
-    let Some(recorded) = recorded else {
+    let Some(routing) = routing else {
         notes.unaudited(
             "route",
             "the run kept no recording of how it routed, so which target each proof removed \
@@ -604,7 +1533,6 @@ fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
         );
         return;
     };
-    let routing = crate::route::read(recorded);
     let removed: BTreeMap<String, BTreeMap<String, String>> = routing
         .routes
         .iter()
@@ -676,7 +1604,7 @@ fn discharges(
     notes: &mut Notes<'_>,
 ) {
     for (mutant, target, outcome) in ran {
-        if outcome != KILLED && outcome != TIMED_OUT {
+        if outcome != KILLED {
             continue;
         }
         let Some(proof) = removed.get(mutant).and_then(|one| one.get(target)) else {
@@ -695,7 +1623,7 @@ fn discharges(
 /// Every kill, against the route that decided which targets would be asked: a layer that drops a target which then finds a defect is unsound, however it dropped it.
 fn kept(routes: &[crate::route::Route], ran: &[(String, String, String)], notes: &mut Notes<'_>) {
     for (mutant, target, outcome) in ran {
-        if outcome != KILLED && outcome != TIMED_OUT {
+        if outcome != KILLED {
             continue;
         }
         let Some(route) = routes
@@ -806,10 +1734,13 @@ fn considered(route: &crate::route::Route, known: &BTreeSet<&str>, notes: &mut N
 struct Recording<'a> {
     document: &'a serde_json::Value,
     run_id: String,
+    contract: String,
     targets: Vec<TargetRow>,
     mutants: Vec<MutantRow>,
     findings: Vec<FindingRow>,
     shard: Option<String>,
+    target: String,
+    models: Vec<ModelRow>,
 }
 
 impl<'a> Recording<'a> {
@@ -817,6 +1748,7 @@ impl<'a> Recording<'a> {
         Self {
             document,
             run_id: field(document, "run_id").unwrap_or_default(),
+            contract: field(document, "contract").unwrap_or_default(),
             targets: rows(document, "targets")
                 .iter()
                 .map(|row| TargetRow {
@@ -827,16 +1759,24 @@ impl<'a> Recording<'a> {
                 .collect(),
             mutants: rows(document, "mutants")
                 .iter()
-                .map(|row| MutantRow {
-                    id: field(row, "id").unwrap_or_default(),
-                    display_id: field(row, "display_id").unwrap_or_default(),
-                    outcome: field(row, "outcome").unwrap_or_default(),
-                    killed_by: field(row, "killed_by"),
-                    reused: row
-                        .get("reused")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or_default(),
-                    source_run_id: field(row, "source_run_id"),
+                .map(|row| {
+                    let decision = row
+                        .get("decision")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let reuse = row.get("reuse").cloned().unwrap_or(serde_json::Value::Null);
+                    MutantRow {
+                        id: field(row, "id").unwrap_or_default(),
+                        display_id: field(row, "display_id").unwrap_or_default(),
+                        outcome: field(&decision, "outcome").unwrap_or_default(),
+                        acceptance: AcceptanceFact::from_json(row.get("accepted")),
+                        killed_by: field(&decision, "killed_by"),
+                        reused: reuse
+                            .get("reused")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or_default(),
+                        source_run_id: field(&reuse, "source_run_id"),
+                    }
                 })
                 .collect(),
             findings: rows(document, "findings")
@@ -849,6 +1789,27 @@ impl<'a> Recording<'a> {
             shard: document
                 .get("scope")
                 .and_then(|scope| field(scope, "shard")),
+            target: document
+                .get("toolchain")
+                .and_then(|toolchain| field(toolchain, "target"))
+                .unwrap_or_default(),
+            models: rows(document, "models")
+                .iter()
+                .map(|row| {
+                    let answer = row
+                        .get("answer")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    ModelRow {
+                        mutant: field(row, "mutant").unwrap_or_default(),
+                        decision: field(&answer, "decision").unwrap_or_default(),
+                        evidence: answer.get("evidence").cloned(),
+                        attempt: answer.get("attempt").cloned(),
+                        answer,
+                        raw: row.clone(),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -897,7 +1858,8 @@ fn mutant_columns(recording: &Recording<'_>, audit: &mut Audit) {
         ("rejected", REJECTED),
         (KILLED, KILLED),
         (SURVIVED, SURVIVED),
-        (TIMED_OUT, TIMED_OUT),
+        ("step_limit_reached", STEP_LIMIT_REACHED),
+        (WAITED, WAITED),
         (UNREACHED, UNREACHED),
         (EQUIVALENT, EQUIVALENT),
     ] {
@@ -908,16 +1870,15 @@ fn mutant_columns(recording: &Recording<'_>, audit: &mut Audit) {
             records: "the mutant records carrying that disposition",
         });
     }
-    let ran = recording
-        .mutants
-        .len()
-        .saturating_sub(recording.dispositions(REJECTED))
-        .saturating_sub(recording.dispositions(UNREACHED))
-        .saturating_sub(recording.dispositions(EQUIVALENT));
+    let excluded = recording
+        .dispositions(REJECTED)
+        .checked_add(recording.dispositions(UNREACHED))
+        .and_then(|count| count.checked_add(recording.dispositions(EQUIVALENT)));
+    let ran = excluded.and_then(|excluded| recording.mutants.len().checked_sub(excluded));
     notes.tally(Column {
         subject: "accounting.mutants.executed",
         recorded: column(recording.document, "mutants", "executed"),
-        derived: size(ran),
+        derived: ran.and_then(size),
         records: "the mutant records the compiler accepted and something reached",
     });
     for (name, outcome) in [("reused_killed", KILLED), ("reused_survived", SURVIVED)] {
@@ -933,13 +1894,36 @@ fn mutant_columns(recording: &Recording<'_>, audit: &mut Audit) {
             records: "the mutant records of that disposition read back from an earlier run",
         });
     }
-    if column(recording.document, "mutants", "accepted").is_some_and(|count| count > 0) {
-        notes.unaudited(
-            "accounting.mutants.accepted",
-            "the recording counts the survivors a reviewer accepted without naming any of them, \
-             so the column has no records to be held to"
-                .to_owned(),
-        );
+    let accepted = recording
+        .mutants
+        .iter()
+        .filter(|mutant| mutant.acceptance == AcceptanceFact::Accepted)
+        .count();
+    notes.tally(Column {
+        subject: "accounting.mutants.accepted",
+        recorded: column(recording.document, "mutants", "accepted"),
+        derived: size(accepted),
+        records: "the mutant rows carrying their own acceptance",
+    });
+    for mutant in &recording.mutants {
+        match mutant.acceptance {
+            AcceptanceFact::Missing => notes.violated(
+                mutant.label(),
+                "the current report row omits its required acceptance fact".to_owned(),
+            ),
+            AcceptanceFact::Accepted
+                if !matches!(mutant.outcome.as_str(), SURVIVED | UNREACHED | EQUIVALENT) =>
+            {
+                notes.violated(
+                    mutant.label(),
+                    format!(
+                        "outcome {} cannot be answered by a review acceptance",
+                        mutant.outcome
+                    ),
+                );
+            }
+            AcceptanceFact::Rejected | AcceptanceFact::Accepted => {}
+        }
     }
 }
 
@@ -981,11 +1965,16 @@ fn equations(recording: &Recording<'_>, audit: &mut Audit) {
         subject: "accounting.mutants.executed",
         relation: Relation::AtMost,
         sides: (
-            sum(&[mutants(KILLED), mutants(SURVIVED), mutants(TIMED_OUT)]),
+            sum(&[
+                mutants(KILLED),
+                mutants(SURVIVED),
+                mutants("step_limit_reached"),
+                mutants(WAITED),
+            ]),
             mutants("executed"),
         ),
-        because: "a mutation a test noticed, one nothing noticed, and one that ran out of time \
-                  were each executed",
+        because: "a mutation a test noticed, one nothing noticed, and each non-verdict \
+                  execution boundary were all executed",
     });
     notes.holds(Equation {
         subject: "accounting.mutants.accepted",
@@ -1097,6 +2086,25 @@ fn assurance(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
             unsupported(&mut notes, &format!("counts no {name} {group}; {because}"));
         }
     }
+    for mutant in &recording.mutants {
+        let answered = matches!(
+            (mutant.outcome.as_str(), mutant.acceptance),
+            (
+                REJECTED | KILLED | "model-noticed" | "model-proved" | EQUIVALENT,
+                AcceptanceFact::Rejected | AcceptanceFact::Accepted
+            ) | (SURVIVED | UNREACHED, AcceptanceFact::Accepted)
+        );
+        if !answered {
+            unsupported(
+                &mut notes,
+                &format!(
+                    "mutation {} ended as {} without a row-local answer",
+                    mutant.label(),
+                    mutant.outcome
+                ),
+            );
+        }
+    }
 }
 
 /// An assurance reaches exactly as far as the run looked, and the recording says how far that was.
@@ -1201,56 +2209,67 @@ fn killers(recording: &Recording<'_>, audit: &mut Audit) {
 
 /// Whether the mutations nothing noticed and the findings that raise them are the same set.
 fn findings(recording: &Recording<'_>, audit: &mut Audit) {
-    let raised: BTreeSet<&str> = recording
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == SURVIVING_MUTANT)
-        .map(|finding| finding.subject.as_str())
-        .collect();
-    let accepted = column(recording.document, "mutants", "accepted");
     let mut notes = Notes::on(audit, Layer::Findings);
-    for mutant in recording.mutants.iter().filter(|mutant| mutant.survived()) {
-        if raised.iter().any(|subject| mutant.answers_to(subject)) {
-            continue;
-        }
-        match accepted {
-            Some(0) => notes.violated(
+    let mutation_kinds = [
+        SURVIVING_MUTANT,
+        WAITED_MUTANT,
+        STEP_LIMIT_REACHED_MUTANT,
+        FAILING_TEST,
+        TARGET_MISSING,
+    ];
+    for mutant in &recording.mutants {
+        let expected = match (mutant.outcome.as_str(), mutant.acceptance) {
+            (_, AcceptanceFact::Missing) => continue,
+            (SURVIVED | UNREACHED, AcceptanceFact::Rejected) => Some(SURVIVING_MUTANT),
+            (STEP_LIMIT_REACHED, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => {
+                Some(STEP_LIMIT_REACHED_MUTANT)
+            }
+            (WAITED, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => Some(WAITED_MUTANT),
+            (UNCONFIRMED, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => {
+                Some(FAILING_TEST)
+            }
+            (ERRORED, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => Some(TARGET_MISSING),
+            (_, AcceptanceFact::Rejected | AcceptanceFact::Accepted) => None,
+        };
+        let tied: Vec<&FindingRow> = recording
+            .findings
+            .iter()
+            .filter(|finding| mutation_kinds.contains(&finding.kind.as_str()))
+            .filter(|finding| mutant.answers_to(&finding.subject))
+            .collect();
+        match expected {
+            Some(kind) if matches!(tied.as_slice(), [finding] if finding.kind == kind) => {}
+            Some(kind) => notes.violated(
                 mutant.label(),
-                "nothing noticed this mutation and no finding names it, while the recording \
-                 counts no acceptance that would explain the silence; a survivor a report does \
-                 not raise is a gap in the tests the report hides"
-                    .to_owned(),
+                format!(
+                    "outcome {} requires exactly one {kind} finding, but {} mutation finding(s) name it",
+                    mutant.outcome,
+                    tied.len()
+                ),
             ),
-            Some(_) => notes.unaudited(
+            None if tied.is_empty() => {}
+            None => notes.violated(
                 mutant.label(),
-                "nothing noticed this mutation and no finding names it; the recording counts the \
-                 acceptances a reviewer made without naming any of them, so whether this is one \
-                 of them cannot be re-decided"
-                    .to_owned(),
-            ),
-            None => notes.unaudited(
-                mutant.label(),
-                "nothing noticed this mutation and no finding names it; the recording omits the \
-                 acceptance column, so whether a reviewer accepted it cannot be re-decided"
-                    .to_owned(),
+                format!(
+                    "outcome {} requires no mutation finding, but {} mutation finding(s) name it",
+                    mutant.outcome,
+                    tied.len()
+                ),
             ),
         }
     }
-    for finding in recording
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == SURVIVING_MUTANT)
-    {
-        if !recording
+    for finding in &recording.findings {
+        if matches!(
+            finding.kind.as_str(),
+            SURVIVING_MUTANT | WAITED_MUTANT | STEP_LIMIT_REACHED_MUTANT
+        ) && !recording
             .mutants
             .iter()
-            .any(|mutant| mutant.survived() && mutant.answers_to(&finding.subject))
+            .any(|mutant| mutant.answers_to(&finding.subject))
         {
             notes.violated(
                 &finding.subject,
-                "the finding names no mutant this run recorded as surviving; a finding a reader \
-                 cannot trace to the evidence under it is a claim without one"
-                    .to_owned(),
+                "the mutation finding names no mutation row in the recording".to_owned(),
             );
         }
     }
@@ -1317,7 +2336,16 @@ fn reuse(recording: &Recording<'_>, audit: &mut Audit) {
                  cannot have read its own answer back"
                     .to_owned(),
             ),
-            (true, Some(_)) => read_back = read_back.saturating_add(1),
+            (true, Some(_)) => match read_back.checked_add(1) {
+                Some(count) => read_back = count,
+                None => {
+                    notes.violated(
+                        "provenance",
+                        "the number of reused dispositions exceeds usize".to_owned(),
+                    );
+                    return;
+                }
+            },
             (false, Some(run)) => notes.violated(
                 mutant.label(),
                 format!(
@@ -1361,11 +2389,14 @@ fn column(document: &serde_json::Value, group: &str, name: &str) -> Option<u64> 
 fn sum(counts: &[Option<u64>]) -> Option<u64> {
     counts
         .iter()
-        .try_fold(0_u64, |total, count| Some(total.saturating_add((*count)?)))
+        .try_fold(0_u64, |total, count| total.checked_add((*count)?))
 }
 
-fn size(count: usize) -> u64 {
-    u64::try_from(count).unwrap_or(u64::MAX)
+fn size(count: usize) -> Option<u64> {
+    match u64::try_from(count) {
+        Ok(count) => Some(count),
+        Err(_outside_wire_range) => None,
+    }
 }
 
 fn plural(count: usize, thing: &str) -> String {

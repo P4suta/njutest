@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Roadmap
 
-**Status: M0 to M11, M13, M14, and E2 to E12, are done.** What remains of
+**Status: M0 to M11, M13, M14, K1, and E2 to E12, are done.** What remains of
 M8 is the tag itself, which is a decision rather than a change: see
 `docs/release.md`. The user's decisions: one workspace, the engine first,
 the engine a standalone product too, every milestone completed, test-driven
@@ -31,10 +31,12 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | M9 ✓ | The contracts and the code, said the same way | a timeout is a finding, an acceptance answers only for a mutation nothing noticed, the infection proof fires, a scoped run builds its own packages, mutations are measured `[execution] jobs` at a time, `replay` puts one finding back to the tests, a mutation nothing reached is unreached only where the evidence says so, a library's documentation is a target | typed `route`/`mutant-exec`/`probe-exec` records, every stage timed, `trace summary` naming the slowest commands and reading the engine's recording, `proofaudit` holding the layers to the kills | every page describes what the code does, and `proofaudit --trace` re-decides a real recording with no violations |
 | M10 ✓ | Equivalent mutants, proved | `[mutation] equivalence`: the compiler renders a mutation identically or it does not, and a run says `equivalent` only where the tests ran the position | `rust-mutants equivalence` over a whole catalog, `fixture-equivalent`, ADR 0013 | a mutation nothing could notice is not a finding, and one in code nothing calls still is |
 | M11 ✓ | The Rust-shaped gaps | fifty-one operators, mutation inside the assertion macros, the files `include!` pastes in, `#![no_std]` crates, a proc-macro crate's own tests, mutations routed to a library's documentation | six fixtures with fate tables, the rule-order guard, the skip reasons that are now emitted rather than named, a target cargo runs rather than the engine | every limitation the docs list is one a report carries |
+| M14 ✓ | Evidence between machines | `--shard K/N`, `njutest merge`, cache collection and expiry, and `--export`/`--import` move answers without moving an unverified build | imported records pass through the same `Store::put` validation as local ones, with merge and cache contract tests | a matrix can reuse only answers the receiving machine would itself retain |
+| K1 ✓ | Model-checked survivors | `verified-v1` asks a closed, side-effect-free Rust fragment whether any input distinguishes a survivor from its original | generated differential harnesses, typed Kani results, parser fuzzing, a scripted checker, real-checker CI and an independent proof audit | every eligible survivor is proved, distinguished, or carries one typed reason no answer was established |
 | E5 ✓ | The engine sees itself | `--trace[=DIR]` on every command, `trace summary`/`check`/`diff`, typed `verify`/`probe-exec`/`witness`/`route` records, sub-phases through `prepare`, `Session::route` as a question anyone can ask, and the byte span and source digest a reader re-mints an identity from | a scripted toolchain the tests drive instead of cargo, the suite cut into an inner loop that starts nothing and a `toolchain_` half that does, `cargo xtask engine-audit` re-deciding a run in nine layers, three committed runs it re-decides, the dogfood ledger and its weekly shard job, and one test per ledger the documentation keeps | every judged mutant leaves one route record, `engine-audit --trace` re-decides three committed runs with no violations, and `mise run test:fast` starts no cargo |
 | E6 ✓ | The contracts and the code (the engine) | a run compiles what it is told to (`[build]`, features, target, profile), it says which test noticed a mutation and what signal a process died from, a tree that reaches outside itself or does not link is refused before any round, a build script's generated code is skipped by name, a `harness = false` target answers by exiting, documented examples are a target a run can switch off, `build.rustflags` is read and put back rather than refusing the measurement, a crate that forbids what the guards allow is skipped whole, a cancelled build is a cancellation, attribution reads every span, bisection names what it isolated and what interacts, the budget is derived from what the target measured, four mutants are measured at once and delivered as they finish, coverage is on by default, a branch or a probe discharges a target that could not have noticed, and a survivor is asked whether the compiler renders it at all | `cargo::config` and `cargo::manifest` read what cargo does not report, `Session::judge`/`describe`/`source`, the driver and the report model in the engine, `Observer` and the worker pool, `prove::discharges` as a pure function, the evidence a run keeps for its own audit, the `proofs` layer that re-derives every discharge, `cache`/`select`/`identical`/`evidence` records, and eight fixtures for eight things nothing measured | `run --jobs 4 --probe` completes on the engine itself and `engine-audit --trace --ledger` re-decides it with no violations |
 | E7 ✓ | Every place says what it is for | eighteen more operators and three more families — a match arm asked what it is for, a jump swapped, a terminal `else` dropped, a literal moved by one — a return type the syntax cannot default stated rather than guessed, every branch of a returned `if` or `match` a return site of its own, and `rust-mutants: skip` and `[[mutation.skip]]` as the two ways an author says what to pass over and why | `Form::M`, the guard written where an arm had none, the census that refuses a place the walk passed over silently, the item path every candidate now carries, locator-form expectations that outlive an edit elsewhere in the file, the `skip-claim` record, the `unmatched-skip` finding, the `sites` audit layer, and `fixture-annotated` | every place a rule targets is a mutant or a skip with a reason, and a claim that hides nothing is a finding rather than a comment nobody notices |
-| E8 ✓ | The engine as a product | a run says what it is doing while it does it and streams `rust-mutants-run-stream-v1` for a program, `--fail-fast` and seven filters narrow it after the catalog, `--dry-run` prices it, `explain` and `replay` answer from what was stored, `doctor` grades thirteen checks and `diagnostics` gathers one run into one directory, `cache`/`merge --runs`/`run --run-id` name what a sharded run leaves, `rules` lists what a team can pin, and a stored run projects into markdown, JUnit, SARIF, a page that shows every survivor in place, and Stryker | the run-stream, explain, doctor, reached and diagnostics schemas, the two-way test between the command-line page and `--help`, the subcommand help golden, the README session recorded from the binary, the terminal browser's five recorded frames, and the ledger that keeps `schema/` and its page equal in both directions | a bug report is one command, every flag is on one page, and the README shows what the tool actually prints |
+| E8 ✓ | The engine as a product | a run says what it is doing while it does it and streams `rust-mutants-run-stream-v2` for a program, `--fail-fast` and seven filters narrow it after the catalog, `--dry-run` prices it, `explain` and `replay` answer from what was stored, `doctor` grades thirteen checks and `diagnostics` gathers one run into one directory, `cache`/`merge --runs`/`run --run-id` name what a sharded run leaves, `rules` lists what a team can pin, and a stored run projects into markdown, JUnit, SARIF, a page that shows every survivor in place, and Stryker | the run-stream, explain, doctor, reached and diagnostics schemas, the two-way test between the command-line page and `--help`, the subcommand help golden, the README session recorded from the binary, the terminal browser's five recorded frames, and the ledger that keeps `schema/` and its page equal in both directions | a bug report is one command, every flag is on one page, and the README shows what the tool actually prints |
 | E9 ✓ | Answering without running | a run is counted in pairs of one mutant and one target rather than in seconds, what removed each pair is named and labelled a proof, a sufficient answer, a remembered one or a narrower question, and a remembered answer is keyed on the sources the build compiled, the manifests that chose its dependencies and the toolchain that compiled it rather than on the digest of a whole tree | `rust_mutants::work::Work` derived from the stored report alone, the `work` audit layer that holds it to the recording, `xtask/work_ceiling.txt` as a ratchet that may shrink and never grow, and the differential harness that runs four fixtures with every layer on and every layer off and holds the two answers to each other | the engine does less for the same question every release, and a test says so |
 | E10 ✓ | The guards are the measurement | reach is recorded by the guards on the run that verifies the baseline, so a mutation goes to the tests that reached it and no coverage build is made | `touched-v1.json` and the audit layer that re-decides from it, `fixture-order-dependent`, `fixture-threaded`, the differential harness over every combination of the two measurements, ADR 0014 | the answer is the one a run with nothing removed gives, and the tests started fall from 46 to 18 on `fixture-coverage` |
 | E11 ✓ | The difference that never was | a guard whose condition the compiler vouched for evaluates both of its branches on the baseline and records where they parted, so `never-infected` is a default layer with no tree, no build and no run of its own | `narrowing` in `touched-v1.json` and the audit layer that re-derives both kinds of discharge from it, the instrumenter reporting which guards it actually wrote the call into, ADR 0015 | eight fixtures stop starting a process for a mutation nothing could have noticed, and the answer is still the one a run with nothing removed gives |
@@ -147,60 +149,102 @@ method moved nothing, because what blocks the question is not *where the
 function lives* — it is that this is a program about paths, source text and
 records, and a symbolic `&Path` is not a thing a checker mints.
 
-So the decision, with the number rather than around it: **K1 is deferred,
-and what would reverse it is stated rather than left to a later mood.**
+Those measurements originally argued against spending the milestone here.
+That decision was superseded by the campaign's stricter completion rule: an
+opt-in assurance contract may be narrow, but it may not be half-built. K1 is
+now complete as `verified-v1`; the 2.1% figure describes its deliberately
+small domain rather than a reason to leave the protocol unaudited.
 
-The observer is sound, and the spike above shows it answering the question
-in six milliseconds. What it is not is *worth the milestone on this
-codebase*: a scripted `fake_kani`, a parser and its fuzz, `fixtures-provable`
-in both directions, a contract, two presentation shapes and an independent
-re-derivation, to reach thirty-three functions. ADR 0004's completion rule is
-what makes that list non-negotiable, and it is the right rule; the
-arithmetic is simply against it here.
+The implementation does not retain the spike's open-ended `askable` guess.
+Eligibility is one exhaustive Rust AST over free functions with at least one
+plain by-value argument. Inputs are closed compositions of primitives,
+arrays, tuples and `Option`; outputs are the same equality domain without
+floats. Calls, methods, globals, references, macros, named fields, unsafe or
+ABI modifiers, configuration attributes, and profile-dependent arithmetic
+are typed refusals. The original and mutant are both checked before a
+harness exists.
 
-It is a fact about this workspace and not about the idea. A crate of
-numeric or parsing logic over primitives would score many times this, and
-**the way to find out costs nothing**: `askable` is built, tested and landed
-independently of the rest of K1, so any project can be asked *would this
-observer reach my code* before anybody pays for the observer. That is the
-piece of the milestone worth having first, and it turns out to be the piece
-that decides whether to want the others.
+Each admitted question first gets a fresh copy of the immutable prepared tree,
+which is re-digested before and after the attempt. Kani does not compile that
+package. The compiler receives a second, exclusively created minimal crate:
+one fixed dependency-free manifest, one fixed lockfile, the original and
+mutant function clones, and the harness. The pristine source is an inert
+hexadecimal record in that generated file, allowing the independent audit to
+re-mint the mutation while keeping `build.rs`, procedural macros, dependencies,
+and unrelated targets out of the proof program. The three crate files are read
+through no-follow directory handles and checked before and after every Kani
+subprocess. Each attempt also reserves a new empty private target directory,
+so a stale or symlinked Cargo cache cannot become a proof input.
+The measured host target is explicit. The isolated crate is always offline.
+Kani 0.68 accepts no Cargo `--locked` option on either proof or catalog
+discovery, so both are instead confined by the exact dependency-free manifest,
+exact empty lockfile, offline environment, and pre/post whole-crate check. The
+report binds those files, the generated source, and the
+closed `minimal-v1` subprocess environment in a domain-separated `crate_input`
+digest which `modelaudit` independently
+recomputes;
+subject feature and profile settings cannot enter the dependency-free proof
+crate. Caller rustflags, profile overrides, compiler selection and wrappers
+are either masked by a higher-precedence empty value or rejected as a typed
+configuration refusal.
 
-K1 is reopened by a number, not by an argument: a project where `askable`
-says a reach worth the list above. This workspace is not it.
+The generated program uses mutation-unique aliases for both the external
+`core` and Kani crates, so names in the subject cannot rewrite the proof
+boundary. It contains no executable subject-package code beyond independently
+named original and mutant clones
+and exactly one tagged equality assertion. Kani 0.68, its two-line version
+banner, export schema 1.0, embedded nightly rustc, CBMC/goto 6.11, solver,
+host target and release build mode are exact protocol values. This is a proof
+under the pinned Kani compiler semantics, not a claim that Kani and the
+measured rustc are byte-identical.
+
+The result is genuinely three-valued. Only every safety/unwind property plus
+the tagged assertion succeeding is `model-proved`; only the tagged assertion
+failing while every sibling succeeds is `model-noticed`. Exhausted unwind,
+outer timeout, cancellation, an unknown property, a protocol mismatch or any
+other failure remains `survived` with one typed `undecided` reason. Raw JSON,
+generated Rust, process exit, backend identity and their SHA-256 identities
+are retained. `modelaudit` decodes the pristine-source record, re-mints the
+mutation, and reconstructs the complete generated proof program, then
+re-parses the raw export without calling the producer, and `proofaudit`
+requires exactly one model record for every `verified-v1` test survivor.
+
+A fake checker fixes argv, environment, timeout and malformed-protocol
+regressions; property tests and `model_result` fuzz arbitrary bytes through
+the strict parser; the pinned real checker compiles both shadowing regressions
+and exercises proved and noticed paths in the gating `kani-verified` CI job.
 
 And a quarter of what is blocked is borrowed bytes — `&str`, `&Path`,
-`&[u8]`, `&String` together. Kani can be given those with a length bound,
-which would move the reach a long way and **must not be spent as a proof**:
-*no input of up to sixty-four bytes distinguishes these* is not *no input
-distinguishes these*, and a layer that removed executions on the first while
-printing the second would be the false proof the bound check above exists to
-refuse. A bounded answer is `Undecided { TooDeep }`, and it stays that way.
+`&[u8]`, `&String` together. `verified-v1` rejects every reference before
+harness generation. Kani could search bounded borrowed data, but such a
+search **must not be spent as a proof**: *no input of up to sixty-four bytes
+distinguishes these* is not *no input distinguishes these*. A future bounded
+search therefore needs a new, non-affirmative typed result rather than a
+wider interpretation of `model-proved`.
 
 `Proved` will not grow a qualifier. A word that sometimes means *within
 sixty-four bytes* is a word every renderer already written is now misusing,
 and **there is no diff for anybody to review** — the damage is invisible
-precisely because nothing changed. `Undecided { TooDeep { bound } }` already
-says the true thing, *this run did not reach it*, and `available()` already
-tells a reader the proof is there to be reached. If *searched to sixty-four
-bytes and found nothing* is ever worth reporting it is a fourth outcome with
-its own name and its own sentence, argued for on its own rather than
-inherited by widening this one. Closing a set is worth doing; the first
-thing to do with a closed set is not to loosen a variant.
+precisely because nothing changed. The current closed reason set has no
+bounded-search variant, so a bounded borrowed-input experiment cannot enter
+an assurance report at all. If *searched to sixty-four bytes and found
+nothing* is ever worth reporting it is a new non-affirmative reason with its
+own name and bound, argued for on its own rather than inherited by widening
+this one. Closing a set is worth doing; the first thing to do with a closed
+set is not to loosen a variant.
 
 Somebody reading 2.1% will want exactly that loosening, which is why the
 refusal is on the same page as the number.
 
-The one that changes the milestone most is the third. A model checker that
-hangs is not a checker that answers slowly, and an observer that could hang
-the run is not one a default contract can hold — which is why it stays behind
-`proved-v1` and why the bound is named in the configuration beside the seam's
-`hold`, for the same reason that one is: how long is too long is a property
-of the code being asked about, not of this tool.
+A model checker that hangs is not a checker that answers slowly. That is why
+`verified-v1` requires both a nonzero unwind bound and a nonzero wall-clock
+cutoff. The process group is supervised; timeout is the typed
+`Undecided::Cutoff`, and a failed unwind assertion is the distinct
+`Undecided::BoundExhausted`. Neither can become an affirmative decision.
 
-So the next thing to make cheaper here is not a fourth layer. It is what the
-measurement above says: the witness pass claims very little on real code, and
-what a widening of it buys is measured rather than assumed.
+Any later widening starts from the measured 2.1% reach, preserves this closed
+decision boundary, and earns its own differential and audit evidence rather
+than silently enlarging the meaning of an existing result.
 
 Speed is a product gate, not a deferred layer. The first focused
 `doctor.rs`/`plan.rs` rerun exposed a preparation bug: although only 94
@@ -349,14 +393,15 @@ run.
 And the measurement said where the layer does not reach yet. A `--dry-run` of
 this repository's own engine — 5,716 mutants against 67 targets — removes
 88.6% of the pairs and 93.8% of the tests, and **every one of them by reach**:
-`discharged=0`. The witness pass claims almost nothing here, because the
-conditions this engine writes compare text, and the sealed trait named the
-primitives alone. It now names `str` and a slice of one of those as well,
-which is sound for the same reason the primitives are; what remains refused is
-a comparison between two *different* types (`Vec<u8>` against `&[u8]`,
-`String` against `&str`), because the witness names one type for both
-operands. That is where the next widening is, and the `witness` note is what
-will say whether it paid.
+`discharged=0`. The witness pass claims almost nothing here even after its type
+boundary was widened, because the conditions this engine writes mostly call
+program code. The sealed trait now names text and standard-library containers
+as well as primitives, and `w_ord<A, B>` asks about the operands independently:
+unlike the first version, it proves heterogeneous comparisons such as
+`Vec<u8>` against `&[u8]` and `String` against `&str`. The toolchain proof suite
+compiles and observes both directions, so that boundary is no longer a
+proposed widening. The `witness` note remains the measurement of whether a
+future closed, effect-free type family would pay for its own expansion.
 
 ## What E10 closed
 

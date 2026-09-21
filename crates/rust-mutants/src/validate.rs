@@ -130,6 +130,12 @@ pub enum ValidateError {
     /// The caller cancelled before validation finished, so nothing it saw says anything about a mutant.
     #[error("{}: validate: cancelled", error::INTERRUPTED.code)]
     Cancelled,
+    /// Validation accounting exceeded the exact counter carried by its trace.
+    #[error("{}: validate: {what} exceeded its exact u32 counter", error::VALIDATE_ATTEMPT_FAILED.code)]
+    AccountingOverflow {
+        /// The counter or arithmetic operation that overflowed.
+        what: &'static str,
+    },
     /// A file could not be instrumented.
     #[error(transparent)]
     Instrument(#[from] InstrumentError),
@@ -145,7 +151,9 @@ impl ValidateError {
         match self {
             Self::NotMutantInduced { .. } => error::VALIDATE_NOT_MUTANT_INDUCED,
             Self::NotIsolated { .. } => error::VALIDATE_NOT_ISOLATED,
-            Self::AttemptFailed { .. } => error::VALIDATE_ATTEMPT_FAILED,
+            Self::AttemptFailed { .. } | Self::AccountingOverflow { .. } => {
+                error::VALIDATE_ATTEMPT_FAILED
+            }
             Self::Cancelled => error::INTERRUPTED,
             Self::Instrument(error) => error.code(),
             Self::Cargo(error) => error.code(),
@@ -311,11 +319,11 @@ fn validate_set(
             return Err(ValidateError::Cancelled);
         }
         let attempt = cancelled_or(compile.attempt(&condemned), cancel)?;
-        rounds = rounds.saturating_add(1);
+        rounds = checked_add(rounds, 1, "validation rounds")?;
         if attempt.success {
             trace.validate_round(ValidateRoundRecord {
                 round: rounds,
-                condemned: u32::try_from(condemned.len()).unwrap_or(u32::MAX),
+                condemned: exact_count(condemned.len(), "condemned mutants")?,
                 success: true,
                 attributed: Vec::new(),
                 unattributed: Vec::new(),
@@ -326,7 +334,7 @@ fn validate_set(
         let attributed = attribute(&attempt.files, &attempt.messages);
         trace.validate_round(ValidateRoundRecord {
             round: rounds,
-            condemned: u32::try_from(condemned.len()).unwrap_or(u32::MAX),
+            condemned: exact_count(condemned.len(), "condemned mutants")?,
             success: false,
             written: attempt.written,
             attributed: attributions(&attributed),
@@ -344,8 +352,8 @@ fn validate_set(
             continue;
         }
         let settled = cancelled_or(settle(compile, all, &condemned, validating), cancel)?;
-        rounds = rounds.saturating_add(settled.rounds);
-        bisections = bisections.saturating_add(settled.attempts);
+        rounds = checked_add(rounds, settled.rounds, "validation rounds")?;
+        bisections = checked_add(bisections, settled.attempts, "bisection attempts")?;
         for (index, entry) in settled.diagnostics {
             diagnostics.entry(index).or_insert(entry);
         }
@@ -379,8 +387,8 @@ fn refusals(
             let mutant = catalog.by_index(index)?;
             Some(Rejection {
                 index,
-                id: mutant.id.clone(),
-                display_id: mutant.display_id.clone(),
+                id: mutant.id.to_string(),
+                display_id: mutant.display_id.to_string(),
                 path: mutant.candidate.path.clone(),
                 span: mutant.candidate.span,
                 rule: mutant.candidate.rule.name.to_owned(),
@@ -410,7 +418,11 @@ fn attributions(attributed: &Attributed) -> Vec<AttributionRecord> {
         .iter()
         .map(|index| AttributionRecord {
             index: *index,
-            code: attributed.codes.get(index).cloned().flatten(),
+            code: attributed
+                .codes
+                .get(index)
+                .cloned()
+                .and_then(std::convert::identity),
             said: attributed
                 .diagnostics
                 .get(index)
@@ -428,7 +440,11 @@ fn first_line(said: &str) -> String {
 /// Keeps the first thing the compiler said about each condemned mutant.
 fn record(attributed: &Attributed, into: &mut BTreeMap<u32, (Option<String>, String)>) {
     for index in &attributed.condemned {
-        let code = attributed.codes.get(index).cloned().flatten();
+        let code = attributed
+            .codes
+            .get(index)
+            .cloned()
+            .and_then(std::convert::identity);
         let said = attributed
             .diagnostics
             .get(index)
@@ -473,7 +489,11 @@ fn settle(
         attempts: 1,
     };
     let offences = isolation.isolate(&live)?;
-    let offenders: Vec<u32> = offences.iter().flatten().copied().collect();
+    let offenders: Vec<u32> = offences
+        .iter()
+        .flat_map(|indices| indices.iter())
+        .copied()
+        .collect();
     let mut settled = Settled {
         condemned: offenders.iter().copied().collect(),
         diagnostics: BTreeMap::new(),
@@ -482,8 +502,39 @@ fn settle(
         unsettled: false,
         interacting: BTreeSet::new(),
     };
+    let diagnosed = diagnose_offences(&mut isolation, &offences, &mut settled)?;
+    let attempts = isolation.attempts;
+    settled.attempts = attempts;
+    trace.bisect(BisectRecord {
+        suspects: exact_count(live.len(), "bisection suspects")?,
+        offenders: offenders.clone(),
+        attempts,
+        diagnosed,
+    });
+    let mut finally = condemned.clone();
+    finally.extend(offenders);
+    let last = compile.attempt(&finally)?;
+    settled.rounds = checked_add(settled.rounds, 1, "settling rounds")?;
+    if last.success {
+        return Ok(settled);
+    }
+    let again = attribute(&last.files, &last.messages);
+    if again.condemned.is_subset(&finally) {
+        settled.unsettled = true;
+        return Ok(settled);
+    }
+    record(&again, &mut settled.diagnostics);
+    settled.condemned.extend(again.condemned);
+    Ok(settled)
+}
+
+fn diagnose_offences(
+    isolation: &mut Isolation<'_>,
+    offences: &[Vec<u32>],
+    settled: &mut Settled,
+) -> Result<u32, ValidateError> {
     let mut diagnosed: u32 = 0;
-    for offence in &offences {
+    for offence in offences {
         let alone = isolation.alone(offence)?;
         for index in offence {
             let said = alone
@@ -497,42 +548,24 @@ fn settle(
                         .cloned()
                         .map(|first| (alone.code.clone(), first))
                 })
-                .filter(|(_, said)| !said.is_empty());
-            if said.is_some() {
-                diagnosed = diagnosed.saturating_add(1);
-            }
-            let (code, words) = said.unwrap_or((None, String::new()));
+                .filter(|(_, words)| !words.is_empty());
+            let (code, words) = match said {
+                Some(said) => {
+                    diagnosed = checked_add(diagnosed, 1, "diagnosed offenders")?;
+                    said
+                }
+                None => (None, String::new()),
+            };
             if offence.len() > 1 {
-                let _added = settled.interacting.insert(*index);
+                settled.interacting.extend(std::iter::once(*index));
             }
-            let _replaced = settled
+            settled
                 .diagnostics
-                .insert(*index, (code, told(offence, *index, &words)));
+                .entry(*index)
+                .or_insert_with(|| (code, told(offence, *index, &words)));
         }
     }
-    let attempts = isolation.attempts;
-    settled.attempts = attempts;
-    trace.bisect(BisectRecord {
-        suspects: u32::try_from(live.len()).unwrap_or(u32::MAX),
-        offenders: offenders.clone(),
-        attempts,
-        diagnosed,
-    });
-    let mut finally = condemned.clone();
-    finally.extend(offenders);
-    let last = compile.attempt(&finally)?;
-    settled.rounds = settled.rounds.saturating_add(1);
-    if last.success {
-        return Ok(settled);
-    }
-    let again = attribute(&last.files, &last.messages);
-    if again.condemned.is_subset(&finally) {
-        settled.unsettled = true;
-        return Ok(settled);
-    }
-    record(&again, &mut settled.diagnostics);
-    settled.condemned.extend(again.condemned);
-    Ok(settled)
+    Ok(diagnosed)
 }
 
 /// What a run says about an offender bisection named, with whatever the compiler said about it.
@@ -587,7 +620,7 @@ impl Isolation<'_> {
         for index in live {
             condemned.remove(index);
         }
-        self.attempts = self.attempts.saturating_add(1);
+        self.attempts = checked_add(self.attempts, 1, "bisection attempts")?;
         self.compile.attempt(&condemned)
     }
 
@@ -630,14 +663,18 @@ impl Isolation<'_> {
 
     /// The smallest part of `suspects` the compiler still refuses, when no half of it is refused alone.
     fn narrow(&mut self, suspects: Vec<u32>) -> Result<Vec<u32>, ValidateError> {
-        let budget = self.attempts.saturating_add(bisect_budget(suspects.len()));
+        let budget = checked_add(
+            self.attempts,
+            bisect_budget(suspects.len())?,
+            "bisection budget",
+        )?;
         let mut candidate = suspects;
         let mut parts = 4;
         while candidate.len() > 1 && self.attempts < budget {
             if parts > candidate.len() {
                 break;
             }
-            let chunks = chunks(&candidate, parts);
+            let chunks = chunks(&candidate, parts)?;
             if let Some(smaller) = self.first_failing(&chunks)? {
                 candidate = smaller;
                 parts = 2;
@@ -648,14 +685,24 @@ impl Isolation<'_> {
                 .map(|chunk| without(&candidate, chunk))
                 .collect();
             if let Some(smaller) = self.first_failing(&complements)? {
-                parts = parts.saturating_sub(1).max(2);
+                parts = parts
+                    .checked_sub(1)
+                    .ok_or(ValidateError::AccountingOverflow {
+                        what: "bisection partitions",
+                    })?
+                    .max(2);
                 candidate = smaller;
                 continue;
             }
             if parts >= candidate.len() {
                 break;
             }
-            parts = parts.saturating_mul(2).min(candidate.len());
+            parts = parts
+                .checked_mul(2)
+                .ok_or(ValidateError::AccountingOverflow {
+                    what: "bisection partitions",
+                })?
+                .min(candidate.len());
         }
         Ok(candidate)
     }
@@ -673,30 +720,54 @@ impl Isolation<'_> {
 }
 
 /// How many compilations narrowing one interaction may cost.
-fn bisect_budget(suspects: usize) -> u32 {
-    u32::try_from(suspects.saturating_mul(8))
-        .unwrap_or(u32::MAX)
-        .max(64)
+fn bisect_budget(suspects: usize) -> Result<u32, ValidateError> {
+    let attempts = suspects
+        .checked_mul(8)
+        .ok_or(ValidateError::AccountingOverflow {
+            what: "bisection budget",
+        })?;
+    Ok(exact_count(attempts, "bisection budget")?.max(64))
 }
 
 /// `values` cut into `parts` pieces, the earlier ones one longer when it does not divide.
-fn chunks(values: &[u32], parts: usize) -> Vec<Vec<u32>> {
+fn chunks(values: &[u32], parts: usize) -> Result<Vec<Vec<u32>>, ValidateError> {
     if parts == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let size = values.len().div_euclid(parts);
     let extra = values.len().rem_euclid(parts);
     let mut found = Vec::new();
     let mut at: usize = 0;
     for part in 0..parts {
-        let take = size.saturating_add(usize::from(part < extra));
-        let end = at.saturating_add(take).min(values.len());
-        if let Some(slice) = values.get(at..end) {
-            found.push(slice.to_vec());
-        }
+        let take = size.checked_add(usize::from(part < extra)).ok_or(
+            ValidateError::AccountingOverflow {
+                what: "bisection chunk size",
+            },
+        )?;
+        let end = at
+            .checked_add(take)
+            .ok_or(ValidateError::AccountingOverflow {
+                what: "bisection chunk boundary",
+            })?
+            .min(values.len());
+        let slice = values
+            .get(at..end)
+            .ok_or(ValidateError::AccountingOverflow {
+                what: "bisection chunk boundary",
+            })?;
+        found.push(slice.to_vec());
         at = end;
     }
-    found
+    Ok(found)
+}
+
+fn checked_add(left: u32, right: u32, what: &'static str) -> Result<u32, ValidateError> {
+    left.checked_add(right)
+        .ok_or(ValidateError::AccountingOverflow { what })
+}
+
+fn exact_count(value: usize, what: &'static str) -> Result<u32, ValidateError> {
+    u32::try_from(value).map_err(|_overflow| ValidateError::AccountingOverflow { what })
 }
 
 /// `values` without anything in `removed`.

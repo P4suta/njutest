@@ -17,7 +17,7 @@ use njutest_cli::cli::Environment;
 use rust_mutants::runner::Cancel;
 
 fn njutest(args: &[&str]) -> Output {
-    let here = std::env::current_dir().unwrap_or_else(|_error| Path::new(".").to_path_buf());
+    let here = std::env::current_dir().expect("the test process has a working directory");
     asked(&environment(&here, &[]), args)
 }
 
@@ -70,7 +70,7 @@ fn version_flag_prints_the_binary_name_and_its_version() {
     let output = njutest(&["--version"]);
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stdout),
         format!("njutest {}\n", njutest_cli::VERSION)
     );
     assert!(output.stderr.is_empty());
@@ -97,7 +97,7 @@ fn an_unknown_subcommand_is_invalid_input_and_exits_3() {
     let output = njutest(&["frobnicate"]);
     assert_eq!(output.status.code(), Some(3));
     assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         stderr.starts_with("njutest: "),
         "diagnostics carry the program prefix: {stderr}"
@@ -112,13 +112,13 @@ fn an_unknown_subcommand_is_invalid_input_and_exits_3() {
 fn an_unknown_flag_is_invalid_input_and_exits_3() {
     let output = njutest(&["--no-such-flag"]);
     assert_eq!(output.status.code(), Some(3));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(stderr.contains("--no-such-flag"), "{stderr}");
 }
 
 /// Every command the top-level help lists, which is every command there is.
 fn subcommands() -> Vec<String> {
-    let help = String::from_utf8_lossy(&njutest(&["--help"]).stdout).into_owned();
+    let help = njutest_devkit::process::strict_utf8(&njutest(&["--help"]).stdout).into_owned();
     let listing = help
         .split_once("Commands:\n")
         .map_or(String::new(), |(_before, rest)| {
@@ -150,7 +150,7 @@ fn every_subcommand_has_its_own_recorded_help() {
             output.status.code(),
             Some(0),
             "{name}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
         njutest_devkit::golden::golden(
             &golden_path(&format!("help-{name}.golden")),
@@ -168,7 +168,7 @@ fn every_command_the_help_lists_is_one_the_program_answers_to() {
             output.status.code(),
             Some(0),
             "the help offers {name} and the program does not take it: {}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
     }
 }
@@ -177,7 +177,7 @@ fn every_command_the_help_lists_is_one_the_program_answers_to() {
 fn a_subcommand_given_a_flag_it_does_not_know_is_invalid_input() {
     let output = njutest(&["init", "--no-such-flag"]);
     assert_eq!(output.status.code(), Some(3));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(stderr.starts_with("njutest: "), "{stderr}");
     assert!(stderr.contains("--no-such-flag"), "{stderr}");
 }
@@ -186,7 +186,7 @@ fn a_subcommand_given_a_flag_it_does_not_know_is_invalid_input() {
 fn doctor_names_every_tool_a_run_needs_and_whether_it_is_there() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let output = asked(&environment(dir.path(), &[]), &["doctor"]);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = njutest_devkit::process::strict_utf8(&output.stdout);
 
     for tool in ["cargo", "rustc", "llvm-profdata", "llvm-cov", "git"] {
         assert!(stdout.contains(tool), "{tool} is not reported: {stdout}");
@@ -212,7 +212,7 @@ fn doctor_reads_the_configuration_a_run_would_read() {
     .expect("a configuration");
 
     let output = asked(&environment(dir.path(), &[]), &["doctor"]);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = njutest_devkit::process::strict_utf8(&output.stdout);
     assert_ne!(
         output.status.code(),
         Some(0),
@@ -249,20 +249,27 @@ fn place_tool(found: &str, bin: &Path, tool: &str) {
 #[cfg(not(unix))]
 fn place_tool(found: &str, bin: &Path, tool: &str) {
     let name = format!("{tool}{}", std::env::consts::EXE_SUFFIX);
-    let _copied = std::fs::copy(found, bin.join(name)).expect("a copy");
+    let copied = std::fs::copy(found, bin.join(name)).expect("a copy");
+    assert!(copied > 0, "the copied tool is not empty");
 }
 
 #[test]
 fn doctor_says_a_run_can_go_ahead_when_only_the_optional_tools_are_missing() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let found = asked(&environment(dir.path(), &[]), &["doctor"]);
-    let bin = only_what_is_required(dir.path(), &String::from_utf8_lossy(&found.stdout));
+    let bin = only_what_is_required(
+        dir.path(),
+        &njutest_devkit::process::strict_utf8(&found.stdout),
+    );
 
     let output = asked(
-        &environment(dir.path(), &[("PATH", &bin.to_string_lossy())]),
+        &environment(
+            dir.path(),
+            &[("PATH", bin.to_str().expect("test protocol paths are UTF-8"))],
+        ),
         &["doctor"],
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = njutest_devkit::process::strict_utf8(&output.stdout);
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -293,9 +300,9 @@ fn doctor_without_a_toolchain_says_so_and_refuses_rather_than_guessing() {
         output.status.code(),
         Some(3),
         "{}",
-        String::from_utf8_lossy(&output.stdout)
+        njutest_devkit::process::strict_utf8(&output.stdout)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(stdout.contains("missing"), "{stdout}");
     assert!(
         stdout.contains("a run cannot go ahead: cargo is missing"),
@@ -312,7 +319,7 @@ fn init_writes_a_skeleton_that_loads_as_exactly_the_defaults() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
 
     let path = dir.path().join(njutest_cli::config::FILE_NAME);
@@ -324,7 +331,8 @@ fn init_writes_a_skeleton_that_loads_as_exactly_the_defaults() {
         "the untouched skeleton is the defaults, written down"
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains(njutest_cli::config::FILE_NAME),
+        njutest_devkit::process::strict_utf8(&output.stdout)
+            .contains(njutest_cli::config::FILE_NAME),
         "it says what it wrote"
     );
 }
@@ -342,7 +350,7 @@ fn init_refuses_to_write_over_a_configuration_somebody_edited() {
         "version = 1\n",
         "refused without touching it"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(stderr.contains("NJ1005"), "{stderr}");
     assert!(
         stderr.contains("--force"),

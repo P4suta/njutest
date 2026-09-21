@@ -94,11 +94,22 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let path = njutest_cli::app::reports::Store::read(&fixture.root)
-        .run_of(njutest_cli::app::reports::Index::Any)
-        .expect("the index names a run")
+    let run =
+        njutest_cli::app::reports::pointed_at(&fixture.root, njutest_cli::app::reports::Index::Any)
+            .expect("the index is readable")
+            .expect("the index names a run");
+    let path = fixture
+        .root
+        .join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(run.as_str())
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
-    serde_json::from_str(&std::fs::read_to_string(&path).expect("the report")).expect("JSON")
+    let whole: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&path).expect("the report"),
+    )
+    .expect("JSON");
+    assert_eq!(whole["document_type"], "complete", "{whole}");
+    whole["report"]["builds"][0]["parts"][0].clone()
 }
 
 fn declaring(fixture: &Fixture) {
@@ -107,7 +118,7 @@ fn declaring(fixture: &Fixture) {
         format!(
             "version = 1\n\n[resources.postgres]\ncommand = [{:?}, \"resource\"]\n\
              timeout = \"10s\"\nenvironment = [\"FAKE_PROVIDER_READY\", \"FAKE_PROVIDER_STOPPED\"]\n",
-            provider().to_string_lossy()
+            provider().to_str().expect("test protocol paths are UTF-8")
         ),
     )
     .expect("write");
@@ -164,7 +175,7 @@ fn a_run_that_cannot_start_what_it_was_told_to_start_does_not_run_the_tests_with
     declaring(&fixture);
 
     let output = verify(&fixture, UNWILLING);
-    let complaint = String::from_utf8_lossy(&output.stderr).into_owned();
+    let complaint = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     assert_eq!(
         output.status.code(),
         Some(3),

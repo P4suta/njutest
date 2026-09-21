@@ -3,6 +3,7 @@
 
 //! The resolved dependency graph: what goes into one package's test binary, and what does not.
 
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::cargo::Metadata;
 
 #[test]
@@ -38,7 +39,9 @@ fn the_closure_of_a_package_is_what_goes_into_its_test_binary() {
         ]
       }
     }"#;
-    let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
+    let metadata = Metadata::parse(document.as_bytes());
+    assert_eq!(result_state(&metadata), Returned, "metadata: {metadata:?}");
+    let Ok(metadata) = metadata else { return };
     let closure = metadata.closure("app 0.1.0 (path+file:///w)");
     assert!(closure.contains(&"app 0.1.0 (path+file:///w)".to_owned()));
     assert!(
@@ -82,7 +85,9 @@ fn a_document_with_no_resolved_graph_keys_on_every_package_it_names() {
           "manifest_path": "/w/Cargo.toml" }
       ]
     }"#;
-    let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
+    let metadata = Metadata::parse(document.as_bytes());
+    assert_eq!(result_state(&metadata), Returned, "metadata: {metadata:?}");
+    let Ok(metadata) = metadata else { return };
     assert!(metadata.resolve.is_none());
     assert_eq!(
         metadata.closure("anything"),

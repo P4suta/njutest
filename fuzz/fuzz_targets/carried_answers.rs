@@ -16,6 +16,10 @@ fn store() -> &'static Store {
     static HELD: OnceLock<(tempfile::TempDir, Store)> = OnceLock::new();
     &HELD
         .get_or_init(|| {
+            #[expect(
+                clippy::expect_used,
+                reason = "without its one process store this fuzz target cannot execute"
+            )]
             let root = tempfile::tempdir().expect("a directory to keep answers in");
             let store = Store::new(root.path(), 1 << 30, Duration::from_secs(3600));
             (root, store)
@@ -25,11 +29,19 @@ fn store() -> &'static Store {
 
 fuzz_target!(|data: &[u8]| {
     let store = store();
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when its own store becomes unreadable"
+    )]
     let before = store.status().expect("the store says what it holds").entries;
     let mut arriving = data;
     let Ok(read) = store.import(&mut arriving) else {
         return;
     };
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when an accepted import corrupts its store"
+    )]
     let after = store.status().expect("the store says what it holds").entries;
     assert!(
         after >= before,
@@ -37,6 +49,10 @@ fuzz_target!(|data: &[u8]| {
     );
 
     let mut carried = Vec::new();
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when a readable store cannot export its own entries"
+    )]
     let written = store
         .export(&mut carried)
         .expect("what a machine holds, written out");

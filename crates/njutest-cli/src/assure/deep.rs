@@ -101,31 +101,37 @@ pub fn interpret(
     spec.env = Some(environment(interpreting));
 
     let ran = run(&spec, watch.cancel);
-    watch.trace.exec(ExecRecord::of(&spec, &ran));
-    let said = String::from_utf8_lossy(&ran.output).into_owned();
-    if ran.error.is_some() || absent(&said) {
+    watch.trace.exec_result(ExecRecord::of(&spec, &ran));
+    let said = std::str::from_utf8(&ran.output).map_err(|source| RunnerError::PhaseOutput {
+        phase: "miri",
+        source,
+    })?;
+    if ran.error().is_some() || absent(said) {
         return Err(RunnerError::MiriMissing {
-            message: absence(&said, ran.error.as_ref()),
+            message: absence(said, ran.error()),
         });
     }
-    if !ran.timed_out
-        && ran.exit_code != 0
-        && let Some(absence) = missing(interpreting, watch)
+    if !ran.timed_out()
+        && ran.conventional_exit_code() != 0
+        && let Some(absence) = missing(interpreting, watch)?
     {
         return Err(RunnerError::MiriMissing { message: absence });
     }
-    let ending = if ran.timed_out {
+    let ending = if ran.timed_out() {
         Ending::TimedOut
-    } else if ran.exit_code == 0 {
+    } else if ran.conventional_exit_code() == 0 {
         Ending::Passed
     } else {
         Ending::Failed
     };
-    Ok(read(&said, ending))
+    Ok(read(said, ending))
 }
 
 /// What the toolchain says when it has no interpreter, asked once the run it was given has failed.
-fn missing(interpreting: &Interpreting<'_>, watch: Watch<'_>) -> Option<String> {
+fn missing(
+    interpreting: &Interpreting<'_>,
+    watch: Watch<'_>,
+) -> Result<Option<String>, RunnerError> {
     let mut spec = Spec::new(
         [
             interpreting.cargo.as_os_str().to_owned(),
@@ -138,22 +144,25 @@ fn missing(interpreting: &Interpreting<'_>, watch: Watch<'_>) -> Option<String> 
     spec.dir = Some(interpreting.root.to_path_buf());
     spec.env = Some(environment(interpreting));
     let asked = run(&spec, watch.cancel);
-    watch.trace.exec(ExecRecord::of(&spec, &asked));
-    if asked.error.is_none() && asked.exit_code == 0 {
-        return None;
+    watch.trace.exec_result(ExecRecord::of(&spec, &asked));
+    if asked.error().is_none() && asked.conventional_exit_code() == 0 {
+        return Ok(None);
     }
-    let said = String::from_utf8_lossy(&asked.output).into_owned();
-    Some(absence(&said, asked.error.as_ref()))
+    let said = std::str::from_utf8(&asked.output).map_err(|source| RunnerError::PhaseOutput {
+        phase: "miri version probe",
+        source,
+    })?;
+    Ok(Some(absence(said, asked.error())))
 }
 
 /// What Miri's own environment is: the run's, plus what the configuration passes to the interpreter.
 fn environment(interpreting: &Interpreting<'_>) -> Vec<(OsString, OsString)> {
     let mut env: BTreeMap<OsString, OsString> = interpreting.env.iter().cloned().collect();
     if !interpreting.flags.is_empty() {
-        let _replaced = env.insert(
+        env.extend(std::iter::once((
             OsString::from("MIRIFLAGS"),
             OsString::from(interpreting.flags.join(" ")),
-        );
+        )));
     }
     env.into_iter().collect()
 }
@@ -188,6 +197,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             kind: FindingKind::UndefinedBehaviour,
             subject: "soundness".to_owned(),
             detail: line,
+            origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
@@ -207,6 +217,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             detail: "the suite was not interpreted whole, so nothing is claimed about the \
                      unsafe it holds"
                 .to_owned(),
+            origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
@@ -217,6 +228,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             kind: FindingKind::FailingTest,
             subject: "soundness".to_owned(),
             detail: "a test fails under the interpreter that passes without it".to_owned(),
+            origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
@@ -237,9 +249,9 @@ fn absent(said: &str) -> bool {
 }
 
 /// What to say about a Miri that is not there.
-fn absence(said: &str, error: Option<&rust_mutants::runner::RunnerError>) -> String {
+fn absence(said: &str, error: Option<rust_mutants::runner::RunFailure<'_>>) -> String {
     error.map_or_else(
         || first_line(said, "error").unwrap_or_else(|| "the toolchain has no miri".to_owned()),
-        ToString::to_string,
+        |failure| failure.to_string(),
     )
 }

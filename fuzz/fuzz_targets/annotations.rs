@@ -32,6 +32,10 @@ fuzz_target!(|source: &[u8]| {
             "no marker hides nothing, so nothing is annotated"
         );
     }
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when the same annotated input has two answers"
+    )]
     let again = discover_file("src/lib.rs", source, &selection).expect("deterministic");
     assert_eq!(discovery, again);
 });

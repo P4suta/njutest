@@ -7,16 +7,42 @@
 
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
     let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
-    let (cancel, signalled) = njutest_cli::interruptible();
+    let (cancel, signalled) = match njutest_cli::interruptible() {
+        Ok(interruptible) => interruptible,
+        Err(error) => {
+            eprintln!("njutest: cannot install the cancellation handlers: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let working_directory = match std::env::current_dir() {
+        Ok(directory) => directory,
+        Err(error) => {
+            eprintln!("njutest: cannot read the working directory: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let program = match std::env::current_exe() {
+        Ok(program) => program,
+        Err(error) => {
+            eprintln!("njutest: cannot locate its executable: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let asked = match njutest_cli::asked(&vars) {
+        Ok(asked) => asked,
+        Err(error) => {
+            eprintln!("njutest: cannot read the terminal environment: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let environment = njutest_cli::cli::Environment {
-        working_directory: std::env::current_dir().unwrap_or_else(|_error| ".".into()),
+        working_directory,
         temp_directory: std::env::temp_dir(),
-        program: std::env::current_exe()
-            .unwrap_or_else(|_error| std::path::PathBuf::from("njutest")),
+        program,
         cache_directory: njutest_cli::cli::Environment::cache_directory_of(&vars),
-        terminal: njutest_cli::presentation::Terminal::of(&njutest_cli::asked(&vars)),
+        terminal: njutest_cli::presentation::Terminal::of(&asked),
         vars,
         cancel,
     };

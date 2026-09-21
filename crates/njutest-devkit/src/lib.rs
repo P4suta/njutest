@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod docs;
 pub mod fake_cargo;
 pub mod fixture;
 pub mod golden;
@@ -13,3 +14,6 @@ pub mod process;
 pub mod repo;
 pub mod report;
 pub mod reproducible;
+pub mod result;
+pub mod strictjson;
+pub mod thread;

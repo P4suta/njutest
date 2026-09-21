@@ -3,12 +3,15 @@
 
 //! What a route means to a report.
 
+pub use rust_mutants::session::Route;
+#[cfg(feature = "testkit")]
 pub use rust_mutants::session::{
-    Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches, Route,
+    Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches,
 };
 
 /// One sentence a reader can act on, for the fallback a route was widened by.
 #[must_use]
+#[cfg(feature = "testkit")]
 pub fn detail(fallback: &str) -> &'static str {
     match fallback {
         "not-measured" => {

@@ -37,7 +37,7 @@ debug = false                  # write debug information; off, because nothing h
 tier = "balanced"              # balanced | strong | all
 operators = []                 # exactly these rules; empty = the tier
 timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
-steps = 50_000_000             # guard takes one mutant may spend; 0 = the bound only
+steps = 50_000_000             # guard takes one mutant may spend; 0 = no step limit
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
 coverage = false               # build once with LLVM coverage and route by its regions as well
@@ -82,23 +82,34 @@ from it would report a different score depending on what else was running. A
 mutation a bound expires on is `waited`, and `waited` establishes nothing —
 neither that the tests noticed nor that they did not.
 
-`steps` is a count of how many times the active mutant's guard is taken. The
-guard sits where the mutation does, so a loop whose condition was mutated takes
-it once an iteration, and the number is the same on every machine at every job
-count under every load. A mutation that spends the allowance is `runaway`, and
-that **is** an answer: the mutation stopped the program terminating, which is a
-behaviour change any observer would meet. It counts as detected, and a run does
-not put it a second time, because a count cannot disagree with itself.
+`steps` is a process-wide count of instrumented workspace boundaries after the
+selected guard first activates: non-const function entries, loop bodies, async
+blocks, and every closure invocation, including expression-body closures called
+back repeatedly by an iterator. Re-evaluating the same guard activates the
+count only once; later boundaries spend it, whichever instrumented source file
+contains them. The number is the same on every machine at every job count under
+every load. Spending the allowance is `step_limit_reached`: an exact execution
+fact, but not proof that the program would never have ended. A long finite
+computation can cross the same number. It is therefore neither a detection nor
+a survival, is excluded from the score, and is never cached as an answer for a
+later run.
+
+The typed scope of that fact is `InstrumentedWorkspaceSource`. Macro expansion
+and dependency bodies are not rewritten. An execution that activates in the
+workspace and then remains inside either has no source boundary to count and
+can still reach the clock as `waited`; that limitation cannot be upgraded into
+`step_limit_reached` or any verdict.
 
 The default of fifty million spends in roughly a second and a half for a loop
 that cannot terminate, which sits well inside the thirty-second floor a derived
 `timeout` never goes below. `0` counts nothing and leaves the clock as the only
-thing that can end a runaway.
+thing that can stop an execution that does not end.
 
 The reason to lower it is a project whose own bound is short: **a bound the
-count cannot beat turns a `runaway` into a `waited`**, and the answer stops
-being about the code. Where the count does not reach at all — a mutation
-outside the loop it stopped ending — is in
+count cannot beat produces `waited` instead of `step_limit_reached`**. Both
+are unresolved, and the latter says exactly which deterministic boundary the
+execution reached. Where the count does not reach at all — a mutation outside
+the loop it stopped ending — is in
 [limitations](../limitations.md).
 
 
@@ -172,10 +183,11 @@ mutation. What that measurement observes is what stands — a bound that
 expires again is `waited`, and anything else leaves the mutation
 `inconclusive`.
 
-A `runaway` buys nothing here and is never put twice. The count that ended it
-is the same number on a quiet machine as on a busy one, so a second reading
-cannot disagree with the first, and asking for one would be spending a
-process to be told what the run already knows.
+`step_limit_reached` buys no clock retry. The count is reproducible, but the
+conclusion is deliberately still open: proving divergence needs a completing
+control with the same target, test and arguments and repeated mutant
+executions reaching the same boundary. The single execution reported here
+does not claim that proof.
 
 Every `[build]` key is what a person would have typed at cargo, passed on
 unchanged to every command a run compiles with: the pristine check, each
@@ -197,7 +209,7 @@ back to true by a flag, because there is no flag that says so.
 [[mutation.expect]]
 id = "b8e3f78d"                # identity, or a prefix that names exactly one
 reason = "the bound is equivalent under the invariant the type carries"
-outcome = "survived"           # survived | killed | runaway | waited
+outcome = "survived"           # survived | killed
 ```
 
 An expectation is a claim, not a suppression: the run resolves the identity,
@@ -280,20 +292,25 @@ the code under it moves is worse than no skip at all.
 ## Reserved environment
 
 A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
-`RUST_MUTANTS_TOUCH`, and `RUST_MUTANTS_STEPS` for every test process it
-starts. Finding any of them already set normally ends the command with
+`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and
+`RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process
+it starts. Finding any of
+them already set normally ends the command with
 `RM0006`: nothing a test process said under an unrelated activation would be
 about this run, and a touch log another run owns is not one this run may
 append to.
 
-`RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken
-before the process stops itself and exits 95. The guard sits where the
-mutation does, so a loop whose condition was mutated takes it once an
-iteration, and a count is the same number on every machine, at every job
-count, under every load — which is why a mutation that will not stop is
-`runaway` and counts as detected, where a bound that expired is `waited` and
-establishes nothing. Unset, or `0`, counts nothing and leaves the clock as the
-only bound.
+`RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken.
+At the first take past it, the runtime atomically publishes a notice carrying
+the fresh nonce, catalog, mutant, allowance and exact `N + 1` count, then
+parks. The supervisor stops its declared platform process set and accepts
+`step_limit_reached` only when every field matches this execution. A missing,
+malformed, mismatched or replayed notice fails closed as a protocol error. No exit status
+is reserved: a test that returns 95 is an ordinary non-zero test failure.
+Unset, or `0`, counts nothing and leaves the clock as the only bound.
+`RUST_MUTANTS_STEP_STATE` names the execution-private state shared by every
+instrumented module and descendant process, so a selected mutation has one
+process-wide allowance rather than one counter per compilation unit.
 
 There is one closed exception for this repository measuring itself. Cargo
 compiles every instrumented tree with an internal

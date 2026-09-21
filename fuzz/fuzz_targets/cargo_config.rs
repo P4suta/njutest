@@ -26,12 +26,21 @@ fuzz_target!(|data: &[u8]| {
             "a flag holding the separator would reach the compiler as two: {flag:?}"
         );
     }
-    let Some(value) = encoded(&[], &found, &[]) else {
+    let Ok(value) = encoded(&[], &found, &[]) else {
+        return;
+    };
+    let Some(value) = value else {
         assert!(found.build.is_empty());
         return;
     };
-    let parts: Vec<String> = value
-        .to_string_lossy()
+    assert!(
+        value.to_str().is_some(),
+        "flags read from UTF-8 TOML encoded as a non-UTF-8 argument"
+    );
+    let Some(encoded) = value.to_str() else {
+        return;
+    };
+    let parts: Vec<String> = encoded
         .split(SEPARATOR)
         .map(ToOwned::to_owned)
         .collect();

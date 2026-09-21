@@ -12,11 +12,7 @@ pub mod sarif;
 pub mod sources;
 pub mod tally;
 
-pub use rust_mutants::report::catalog::{
-    CatalogDocument, MutantDocument, PlatformDocument, RejectionDocument, SelectionDocument,
-    SkipDocument, WorkspaceDocument, document, mutant_document, rejection_documents,
-    selection_document, skip_documents, workspace_document,
-};
+pub(crate) use rust_mutants::report::catalog::{document, selection_document};
 /// The run as a document, as the engine writes it.
 pub use rust_mutants::report::run;
 pub mod stryker;
@@ -30,6 +26,20 @@ use rust_mutants::execute::MutantResult;
 use rust_mutants::session::Session;
 use rust_mutants::syntax::{Position, Skip};
 
+fn candidate_text(
+    mutant: &str,
+    field: &'static str,
+    bytes: &[u8],
+) -> Result<String, crate::error::CliError> {
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|source| crate::error::CliError::CandidateTextNotUtf8 {
+            mutant: mutant.to_owned(),
+            field,
+            source,
+        })
+}
+
 /// `path:line:column`, the spelling every editor and every `::warning` consumer already understands.
 #[must_use]
 pub fn at(path: &str, position: Position) -> String {
@@ -37,88 +47,98 @@ pub fn at(path: &str, position: Position) -> String {
 }
 
 /// The position of a mutant's edit, found by counting the lines of the file it came from.
-#[must_use]
-pub fn position_in(source: &str, offset: u32) -> Position {
-    rust_mutants::syntax::LineIndex::new(source).position(source, offset)
+///
+/// # Errors
+/// Returns the exact source-position invariant that prevents a lossless
+/// one-based position from being represented.
+pub fn position_in(
+    source: &str,
+    offset: u32,
+) -> Result<Position, rust_mutants::syntax::PositionError> {
+    rust_mutants::syntax::LineIndex::new(source)?.position(offset)
 }
 
 /// Every candidate as one document, for a reader who wants them in a program rather than on a screen.
-#[must_use]
+///
+/// # Errors
+/// Returns the candidate identity failure when any proposed mutation cannot be named exactly.
 pub fn candidates(
     discovery: &Discovery,
     sources: &BTreeMap<String, String>,
     file: Option<&str>,
-) -> candidates::CandidatesDocument {
+) -> Result<candidates::CandidatesDocument, crate::error::CliError> {
     let mut listed = Vec::new();
     for located in &discovery.candidates {
         let candidate = &located.found.candidate;
         if file.is_some_and(|wanted| candidate.path != wanted) {
             continue;
         }
-        let id = candidate.id().unwrap_or_default();
-        let position = sources
-            .get(&candidate.path)
-            .map_or(located.found.position, |source| {
-                position_in(source, candidate.span.start)
-            });
+        let id = candidate.id()?;
+        let position = match sources.get(&candidate.path) {
+            Some(source) => position_in(source, candidate.span.start)?,
+            None => located.found.position,
+        };
+        let original = candidate_text(id.as_str(), "original", &candidate.original)?;
+        let replacement = candidate_text(id.as_str(), "replacement", &candidate.replacement)?;
         listed.push(candidates::CandidateDocument {
-            display_id: id
-                .get(..rust_mutants::id::DISPLAY_ID_LENGTH)
-                .unwrap_or(&id)
-                .to_owned(),
-            id,
+            display_id: id.display().into_inner(),
+            id: id.into_inner(),
             path: candidate.path.clone(),
             item: located.found.item.clone(),
             rule: candidate.rule.name.to_owned(),
             line: position.line,
             column: position.byte_column,
-            original: String::from_utf8_lossy(&candidate.original).into_owned(),
-            replacement: String::from_utf8_lossy(&candidate.replacement).into_owned(),
+            original,
+            replacement,
         });
     }
-    candidates::CandidatesDocument {
+    Ok(candidates::CandidatesDocument {
         document_type: candidates::DOCUMENT_TYPE.to_owned(),
         schema_version: candidates::SCHEMA_VERSION,
         tool_version: rust_mutants::VERSION.to_owned(),
-        count: u32::try_from(listed.len()).unwrap_or(u32::MAX),
+        count: listed.len(),
         candidates: listed,
-    }
+    })
 }
 
 /// One line per candidate: what it is, where it is, and what it does.
-#[must_use]
+///
+/// # Errors
+/// Returns the candidate identity failure when any proposed mutation cannot be named exactly.
 pub fn list(
     discovery: &Discovery,
     sources: &BTreeMap<String, String>,
     file: Option<&str>,
-) -> String {
+) -> Result<String, crate::error::CliError> {
     let mut text = String::new();
-    let mut shown = 0_u32;
+    let shown = discovery
+        .candidates
+        .iter()
+        .filter(|located| file.is_none_or(|wanted| located.found.candidate.path == wanted))
+        .count();
     for located in &discovery.candidates {
         let candidate = &located.found.candidate;
         if file.is_some_and(|wanted| candidate.path != wanted) {
             continue;
         }
-        let mutant = discovery
-            .catalog
-            .by_id(&candidate.id().unwrap_or_default())
-            .map(|mutant| mutant.display_id.clone())
-            .unwrap_or_default();
-        let position = sources
-            .get(&candidate.path)
-            .map_or(located.found.position, |source| {
-                position_in(source, candidate.span.start)
-            });
+        let candidate_id = candidate.id()?;
+        let mutant = discovery.catalog.by_id(candidate_id.as_str()).map_or_else(
+            || candidate_id.to_string(),
+            |mutant| mutant.display_id.to_string(),
+        );
+        let position = match sources.get(&candidate.path) {
+            Some(source) => position_in(source, candidate.span.start)?,
+            None => located.found.position,
+        };
         let written = writeln!(
             text,
-            "{mutant}  {rule:<30}  {where_}  {original:?} => {replacement:?}",
+            "{mutant}  {rule:<30}  {where_}  {original} => {replacement}",
             rule = candidate.rule.to_string(),
             where_ = at(&candidate.path, position),
-            original = String::from_utf8_lossy(&candidate.original),
-            replacement = String::from_utf8_lossy(&candidate.replacement),
+            original = rust_mutants::telling::LosslessBytes::new(&candidate.original),
+            replacement = rust_mutants::telling::LosslessBytes::new(&candidate.replacement),
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        shown = shown.saturating_add(1);
     }
     let written = writeln!(
         text,
@@ -126,20 +146,27 @@ pub fn list(
          the compiler accepts, and `--json` here writes them as a document."
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    text
+    Ok(text)
 }
 
 /// The skip tallies, widest reason first.
-#[must_use]
-pub fn why_skipped(skips: &[Skip]) -> String {
-    let mut totals: BTreeMap<&str, (u32, String)> = BTreeMap::new();
+///
+/// # Errors
+/// Returns when the complete skip count cannot be represented exactly.
+pub fn why_skipped(skips: &[Skip]) -> Result<String, crate::error::CliError> {
+    let mut totals: BTreeMap<&str, (u128, String)> = BTreeMap::new();
     for skip in skips {
         let entry = totals
             .entry(skip.reason.name())
             .or_insert_with(|| (0, skip.reason.explanation().to_owned()));
-        entry.0 = entry.0.saturating_add(skip.count);
+        entry.0 = entry.0.checked_add(u128::from(skip.count)).ok_or(
+            crate::error::CliError::ProjectionOverflow {
+                projection: "why-skipped",
+                field: "the total skipped places",
+            },
+        )?;
     }
-    let mut rows: Vec<(&str, u32, String)> = totals
+    let mut rows: Vec<(&str, u128, String)> = totals
         .into_iter()
         .map(|(reason, (count, why))| (reason, count, why))
         .collect();
@@ -152,7 +179,7 @@ pub fn why_skipped(skips: &[Skip]) -> String {
     if text.is_empty() {
         text.push_str("nothing was passed over\n");
     }
-    text
+    Ok(text)
 }
 
 /// Every decision the walk took in one file, in source order.
@@ -213,7 +240,10 @@ pub fn rejections(session: &Session) -> String {
         let written = writeln!(
             text,
             "{} {}  {}\n          {}",
-            rejection.id.get(..20).unwrap_or(&rejection.id),
+            match rejection.id.get(..20) {
+                Some(short) => short,
+                None => &rejection.id,
+            },
             rejection.rule,
             rejection.path,
             rejection.diagnostic.lines().next().unwrap_or_default()
@@ -259,11 +289,10 @@ pub fn catalog(session: &Session) -> String {
                 rejection.display_id,
                 rejection.rule,
                 rejection.path,
-                rejection
-                    .diagnostic
-                    .lines()
-                    .next()
-                    .unwrap_or("no diagnostic"),
+                match rejection.diagnostic.lines().next() {
+                    Some(line) => line,
+                    None => "no diagnostic",
+                },
             );
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
@@ -273,12 +302,12 @@ pub fn catalog(session: &Session) -> String {
 
 fn one_line(mutant: &Mutant) -> String {
     format!(
-        "{}  {:<30}  {}  {:?} => {:?}",
+        "{}  {:<30}  {}  {} => {}",
         mutant.display_id,
         mutant.candidate.rule.to_string(),
         mutant.candidate.path,
-        String::from_utf8_lossy(&mutant.candidate.original),
-        String::from_utf8_lossy(&mutant.candidate.replacement),
+        rust_mutants::telling::LosslessBytes::new(&mutant.candidate.original),
+        rust_mutants::telling::LosslessBytes::new(&mutant.candidate.replacement),
     )
 }
 
@@ -380,7 +409,7 @@ pub fn outcome(result: &MutantResult, mutant: &Mutant) -> String {
         "{} {}  {}  {}\n",
         mutant.display_id,
         mutant.candidate.rule,
-        result.outcome.name(),
+        result.outcome().name(),
         result.target,
     );
     let written = write!(
@@ -407,21 +436,22 @@ pub fn outcome(result: &MutantResult, mutant: &Mutant) -> String {
 pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
     use rust_mutants::outcome::Outcome;
     match outcome {
-        Outcome::Killed | Outcome::Runaway => 0,
+        Outcome::Killed => 0,
         Outcome::Survived => 1,
-        Outcome::NotRun | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => {
-            crate::EXIT_USAGE
-        }
+        Outcome::NotRun
+        | Outcome::StepLimitReached
+        | Outcome::Waited
+        | Outcome::Inconclusive
+        | Outcome::Errored => crate::EXIT_USAGE,
     }
 }
 
 /// The run as lines a person reads: the tally, the score, and every finding.
-#[must_use]
 /// What a whole run would have started, what this one started, and what removed the rest.
-fn work_line(document: &run::RunDocument) -> String {
-    let work = rust_mutants::work::Work::of(document);
+fn work_line(document: &run::RunDocument) -> Result<String, rust_mutants::work::WorkError> {
+    let work = rust_mutants::work::Work::of(document)?;
     if work.whole == 0 {
-        return String::new();
+        return Ok(String::new());
     }
     let removed: Vec<String> = work
         .removed
@@ -433,14 +463,17 @@ fn work_line(document: &run::RunDocument) -> String {
         work.pairs(),
         work.whole,
         work.targets,
-        work.saved() * 100.0
+        work.saved()? * 100.0
     );
-    if work.started > work.pairs() {
+    if let Some(retried) = work
+        .started
+        .checked_sub(work.pairs())
+        .filter(|count| *count > 0)
+    {
         let written = write!(
             line,
-            "\n          {} of those were started twice, because a timeout is confirmed alone \
+            "\n          {retried} of those were started twice, because a timeout is confirmed alone \
              before it is believed",
-            work.started.saturating_sub(work.pairs())
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
@@ -470,12 +503,15 @@ fn work_line(document: &run::RunDocument) -> String {
         line.push_str("\n          this run was asked for less than the whole catalog");
     }
     line.push('\n');
-    line
+    Ok(line)
 }
 
 /// The stored run as the lines a person reads.
-#[must_use]
-pub fn lines(document: &run::RunDocument) -> String {
+///
+/// # Errors
+/// Returns the exact work-ledger refusal when the stored counts cannot be
+/// projected without truncation or overflow.
+pub fn lines(document: &run::RunDocument) -> Result<String, rust_mutants::work::WorkError> {
     let mut text = String::new();
     let written = write!(
         text,
@@ -492,52 +528,57 @@ pub fn lines(document: &run::RunDocument) -> String {
     }
     text.push_str(&survivors(document));
     text.push('\n');
-    text.push_str(&totals(document));
+    text.push_str(&totals(document)?);
     if document.run.interrupted {
         text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
     }
-    text
+    Ok(text)
 }
 
 /// How many separate gaps the survivors are, which is not how many survivors there are.
 fn survivors(document: &run::RunDocument) -> String {
-    let mut folded: BTreeMap<(&str, &str), u32> = BTreeMap::new();
-    let mut alone = 0_u32;
+    let mut folded: BTreeMap<(&str, &str), Vec<&run::RunMutantDocument>> = BTreeMap::new();
+    let mut alone: Vec<&run::RunMutantDocument> = Vec::new();
     for one in &document.mutants {
-        if one.outcome != "survived" || one.expected {
+        if one.outcome != rust_mutants::outcome::Outcome::Survived || one.expected {
             continue;
         }
         if rust_mutants::rule::Registry::canonical()
             .lookup(&one.rule)
             .is_some_and(|rule| rule.survivor_names_an_unexecuted_path())
         {
-            let seen = folded
+            folded
                 .entry((one.path.as_str(), one.rule.as_str()))
-                .or_default();
-            *seen = seen.saturating_add(1);
+                .or_default()
+                .push(one);
         } else {
-            alone = alone.saturating_add(1);
+            alone.push(one);
         }
     }
-    let counted: u32 = folded.values().copied().sum();
-    if counted == 0 && alone == 0 {
+    let counted = folded.values().map(Vec::len).sum::<usize>();
+    if counted == 0 && alone.is_empty() {
         return String::new();
     }
+    let total = document
+        .mutants
+        .iter()
+        .filter(|one| one.outcome == rust_mutants::outcome::Outcome::Survived && !one.expected)
+        .count();
     let mut text = format!(
-        "\nSURVIVORS    {} survivors: {alone} each its own finding, and {counted} that are \
+        "\nSURVIVORS    {total} survivors: {} each its own finding, and {counted} that are \
          {} unexercised paths, named once each below\n",
-        counted.saturating_add(alone),
+        alone.len(),
         folded.len()
     );
-    for ((path, rule), count) in &folded {
-        let written = writeln!(text, "  {count:>4} x {rule:<26} {path}");
+    for ((path, rule), grouped) in &folded {
+        let written = writeln!(text, "  {:>4} x {rule:<26} {path}", grouped.len());
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     text
 }
 
 /// What the run came to, in the four lines a reader takes away from it.
-fn totals(document: &run::RunDocument) -> String {
+fn totals(document: &run::RunDocument) -> Result<String, rust_mutants::work::WorkError> {
     let tally = tally::Tally::of(document);
     let mut text = format!("MUTANTS   {}\n", tally.said());
     let outcomes = tally
@@ -562,6 +603,6 @@ fn totals(document: &run::RunDocument) -> String {
         }
         None => text.push_str("SCORE     none; the run decided nothing\n"),
     }
-    text.push_str(&work_line(document));
-    text
+    text.push_str(&work_line(document)?);
+    Ok(text)
 }

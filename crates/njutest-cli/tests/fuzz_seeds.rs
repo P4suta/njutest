@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking and reads the repository's own files"
 )]
 
@@ -19,7 +20,7 @@ static REGISTRY: Registry = Registry::canonical();
 type Reader = fn(&[u8]) -> bool;
 
 /// Every seed corpus this suite can put to a reader, with the reader the target uses.
-const READERS: [(&str, Reader); 15] = [
+const READERS: [(&str, Reader); 16] = [
     ("annotations", |data| {
         let selection = rust_mutants::syntax::Selection::tier(&REGISTRY, Tier::All);
         rust_mutants::syntax::discover_file("src/lib.rs", data, &selection).is_ok()
@@ -62,10 +63,14 @@ const READERS: [(&str, Reader); 15] = [
         rust_mutants::coverage::parse_export(data).is_ok_and(|files| !files.is_empty())
     }),
     ("libtest_lines", |data| {
-        !rust_mutants::execute::parse_lines(data).is_empty()
+        rust_mutants::execute::parse_lines(data).is_ok_and(|lines| !lines.is_empty())
     }),
     ("libtest_summary", |data| {
-        rust_mutants::execute::parse_summary(data).is_some()
+        rust_mutants::execute::parse_summary(data).is_ok_and(|summary| summary.is_some())
+    }),
+    ("model_result", |data| {
+        njutest_cli::testkit::model_result(data)
+            != njutest_cli::testkit::ModelResultClass::Undecided
     }),
     ("offered_candidates", |data| {
         std::str::from_utf8(data).is_ok_and(|text| {
@@ -92,9 +97,15 @@ fn seeds() -> PathBuf {
 fn corpora() -> BTreeSet<String> {
     std::fs::read_dir(seeds())
         .expect("the seed corpora")
-        .flatten()
+        .map(|entry| entry.expect("every seed-corpus entry is readable"))
         .filter(|entry| entry.path().is_dir())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .expect("test protocol paths are UTF-8")
+                .to_owned()
+        })
         .collect()
 }
 
@@ -104,7 +115,7 @@ fn every_seed_is_a_document_the_reader_it_is_for_accepts() {
         let directory = seeds().join(target);
         let held: Vec<PathBuf> = std::fs::read_dir(&directory)
             .unwrap_or_else(|error| panic!("{target}: {error}"))
-            .flatten()
+            .map(|entry| entry.unwrap_or_else(|error| panic!("{target}: {error}")))
             .map(|entry| entry.path())
             .collect();
         assert!(!held.is_empty(), "{target} has no seeds");

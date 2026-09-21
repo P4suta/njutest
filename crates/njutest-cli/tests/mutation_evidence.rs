@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::disallowed_methods,
     reason = "the helpers that build one run's evidence are not themselves tests, and a store that cannot be written is a setup failure to report by panicking"
 )]
 
@@ -14,7 +15,17 @@ use njutest_cli::assure::mutation::{
     Consulted, Disposition, Evidence, MutationOptions, keep, reuse,
 };
 use njutest_cli::evidence::store::{self, Standing};
+use njutest_cli::report::StepBoundary;
+use rust_mutants::id::HexDigest;
 use rust_mutants::session::{Fallback, Reaches, Route};
+
+fn id(number: u8) -> String {
+    format!("{number:064x}")
+}
+
+fn mutant(number: u8) -> HexDigest {
+    HexDigest::try_from(id(number)).expect("a canonical mutant id")
+}
 
 /// Two targets a run's baseline saw pass, by the identity a route names and the name a reader reads.
 fn evidence(root: &std::path::Path) -> Evidence {
@@ -36,7 +47,6 @@ fn evidence(root: &std::path::Path) -> Evidence {
 
 const fn options(evidence: Option<Evidence>) -> MutationOptions {
     MutationOptions {
-        accepted: std::collections::BTreeSet::new(),
         test_args: Vec::new(),
         evidence,
         jobs: 1,
@@ -51,7 +61,6 @@ fn said(consulted: &Consulted) -> String {
         Consulted::NotKept => "not-kept".to_owned(),
         Consulted::Believed { run_id, .. } => format!("believed {run_id}"),
         Consulted::Refused(refusal) => refusal.name().to_owned(),
-        other => format!("a shape this test does not know: {other:?}"),
     }
 }
 
@@ -69,7 +78,7 @@ fn a_kill_an_earlier_run_recorded_is_read_back_under_the_name_a_reader_reads() {
     store::write(
         dir.path(),
         &store::record(
-            "m1",
+            mutant(1),
             "20260909T000000Z-000001",
             store::Outcome::Killed {
                 target: "id-one".to_owned(),
@@ -79,7 +88,7 @@ fn a_kill_an_earlier_run_recorded_is_read_back_under_the_name_a_reader_reads() {
     )
     .expect("an earlier run's record");
 
-    let consulted = reuse(&options(Some(held)), &reaching(&["core/lib/core"]), "m1");
+    let consulted = reuse(&options(Some(held)), &reaching(&["core/lib/core"]), &id(1));
     let Consulted::Believed {
         disposition,
         run_id,
@@ -109,7 +118,7 @@ fn a_run_that_cannot_resolve_every_target_a_route_names_believes_nothing() {
     store::write(
         dir.path(),
         &store::record(
-            "m1",
+            mutant(1),
             "20260909T000000Z-000001",
             store::Outcome::Survived {
                 targets: BTreeMap::from([("id-one".to_owned(), "k1".repeat(16))]),
@@ -122,7 +131,7 @@ fn a_run_that_cannot_resolve_every_target_a_route_names_believes_nothing() {
         said(&reuse(
             &options(Some(held.clone())),
             &reaching(&["core/lib/core", "core/lib/newcomer"]),
-            "m1",
+            &id(1),
         )),
         "target-unknown",
         "reuse is a claim about a set, and a set this run can only half resolve is one \
@@ -134,7 +143,7 @@ fn a_run_that_cannot_resolve_every_target_a_route_names_believes_nothing() {
         said(&reuse(
             &options(Some(held.clone())),
             &reaching(&["core/lib/core", "core/test/wide"]),
-            "m1",
+            &id(1),
         )),
         "target-entered",
         "and a survival recorded against one target is not a survival against two: the \
@@ -144,7 +153,7 @@ fn a_run_that_cannot_resolve_every_target_a_route_names_believes_nothing() {
         said(&reuse(
             &options(Some(held)),
             &reaching(&["core/lib/core"]),
-            "m1"
+            &id(1)
         )),
         "believed 20260909T000000Z-000001",
         "while the set the earlier run answered for is one this run may believe"
@@ -158,14 +167,17 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
 
     keep(
         &held,
-        "m1",
+        &id(1),
         &reaching(&["core/lib/core"]),
         &Disposition::Killed {
             by: "core/lib/nobody".to_owned(),
         },
-    );
+    )
+    .expect("an ineligible fact writes nothing successfully");
     assert!(
-        store::read(dir.path(), "m1").expect("readable").is_none(),
+        store::read(dir.path(), &mutant(1))
+            .expect("readable")
+            .is_none(),
         "a kill by a target this run's baseline never saw pass is one the next run has \
          no key to check, so it is not written: a record nobody can refuse is a record \
          nobody can believe either"
@@ -173,30 +185,39 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
 
     keep(
         &held,
-        "m2",
+        &id(2),
         &reaching(&["core/lib/core", "core/lib/newcomer"]),
         &Disposition::Survived {
             route: reaching(&["core/lib/core", "core/lib/newcomer"]),
         },
-    );
+    )
+    .expect("an incomplete survival writes nothing successfully");
     assert!(
-        store::read(dir.path(), "m2").expect("readable").is_none(),
+        store::read(dir.path(), &mutant(2))
+            .expect("readable")
+            .is_none(),
         "and a survival over a set this run cannot resolve whole is not written either, \
          for the same reason it would not be believed"
     );
 
     for (mutant, disposition) in [
         (
-            "m3",
+            id(3),
             Disposition::Waited {
                 on: "core/lib/core".to_owned(),
             },
         ),
-        ("m4", Disposition::Unreached),
+        (id(4), Disposition::Unreached),
     ] {
-        keep(&held, mutant, &reaching(&["core/lib/core"]), &disposition);
+        keep(&held, &mutant, &reaching(&["core/lib/core"]), &disposition)
+            .expect("a non-cacheable disposition writes nothing successfully");
         assert!(
-            store::read(dir.path(), mutant).expect("readable").is_none(),
+            store::read(
+                dir.path(),
+                &HexDigest::try_from(mutant).expect("a canonical mutant id"),
+            )
+            .expect("readable")
+            .is_none(),
             "and what a run says about the machine that measured, or about itself, is \
              not recorded at all: a bound expiring says the next machine would have to \
              wait as long, which it is not the one to promise, and one this run routed \
@@ -212,21 +233,23 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     let dir = root;
     keep(
         held,
-        "m5",
+        &id(5),
         &reaching(&["core/lib/core"]),
         &Disposition::Killed {
             by: "core/lib/core".to_owned(),
         },
-    );
+    )
+    .expect("a named kill is preserved");
     keep(
         held,
-        "m6",
+        &id(6),
         &reaching(&["core/lib/core", "core/test/wide"]),
         &Disposition::Survived {
             route: reaching(&["core/lib/core", "core/test/wide"]),
         },
-    );
-    let survival = store::read(dir, "m6")
+    )
+    .expect("a complete survival is preserved");
+    let survival = store::read(dir, &mutant(6))
         .expect("readable")
         .expect("a survival worth keeping");
     assert_eq!(
@@ -243,39 +266,34 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     );
     keep(
         held,
-        "m8",
+        &id(8),
         &reaching(&["core/lib/core"]),
-        &Disposition::Runaway {
+        &Disposition::StepLimitReached {
             on: "core/lib/core".to_owned(),
+            boundary: StepBoundary::new(10, 11).expect("the first count beyond the allowance"),
         },
-    );
-    let ran_away = store::read(dir, "m8")
-        .expect("readable")
-        .expect("a runaway worth keeping");
-    assert_eq!(
-        ran_away.outcome,
-        store::Outcome::Runaway {
-            target: "id-one".to_owned(),
-            key: "k1".repeat(16),
-        },
-        "a count every machine agrees on is a claim about this tree, so it is kept beside \
-         a kill and against the same key. What is not kept is a bound expiring, and the \
-         difference between the two is the whole of why they stopped being one word"
+    )
+    .expect("a finite step boundary writes nothing successfully");
+    assert!(
+        store::read(dir, &mutant(8)).expect("readable").is_none(),
+        "crossing a verified step boundary without a matched control is deliberately not \
+         a verdict, so it can never enter the evidence store"
     );
     keep(
         held,
-        "m7",
+        &id(7),
         &reaching(&[]),
         &Disposition::Survived {
             route: reaching(&[]),
         },
-    );
+    )
+    .expect("an empty survival writes nothing successfully");
     assert!(
-        store::read(dir, "m7").expect("readable").is_none(),
+        store::read(dir, &mutant(7)).expect("readable").is_none(),
         "and a survival over no targets at all is not a survival: nothing ran, so there \
          is nothing for the next run to believe"
     );
-    let kept = store::read(dir, "m5")
+    let kept = store::read(dir, &mutant(5))
         .expect("readable")
         .expect("a kill worth keeping");
     assert_eq!(
@@ -291,6 +309,52 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
 }
 
 #[test]
+fn legacy_runaway_evidence_is_outside_the_current_store() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let legacy = dir.path().join("mutants-v1").join("m1.json");
+    std::fs::create_dir_all(legacy.parent().expect("a parent")).expect("legacy layout");
+    std::fs::write(
+        &legacy,
+        r#"{"schema":"njutest-mutation-evidence-v1","mutant":"m1","run_id":"old","outcome":{"kind":"runaway","target":"id-one","key":"k1k1"}}"#,
+    )
+    .expect("legacy evidence");
+
+    let held = evidence(dir.path());
+    assert_eq!(
+        said(&reuse(
+            &options(Some(held)),
+            &reaching(&["core/lib/core"]),
+            &id(1),
+        )),
+        "nothing-recorded",
+        "a v1 runaway was produced without a matched control, so the v2 reader does not \
+         open that layout and cannot revive it as a detection"
+    );
+}
+
+#[test]
+fn current_evidence_cannot_spell_runaway() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = store::path_of(dir.path(), &mutant(1));
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("current layout");
+    let mutant_id = id(1);
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"schema":"njutest-mutation-evidence-v2","mutant":"{mutant_id}","run_id":"forged","outcome":{{"kind":"runaway","target":"id-one","key":"k1k1"}}}}"#
+        ),
+    )
+    .expect("forged evidence");
+
+    let error = store::read(dir.path(), &mutant(1)).expect_err("runaway is not a v2 outcome");
+    assert_eq!(error.code().code, "NJ8004");
+    assert!(
+        error.to_string().contains("unknown variant `runaway`"),
+        "the closed outcome enum rejects the retired detection spelling: {error}"
+    );
+}
+
+#[test]
 fn a_record_this_run_cannot_read_is_not_a_run_with_no_record() {
     let dir = tempfile::tempdir().expect("tempdir");
     let held = evidence(dir.path());
@@ -298,20 +362,20 @@ fn a_record_this_run_cannot_read_is_not_a_run_with_no_record() {
         said(&reuse(
             &options(Some(held.clone())),
             &reaching(&["core/lib/core"]),
-            "nobody",
+            &id(9),
         )),
         "nothing-recorded",
         "a mutation no earlier run answered for is one this run establishes itself, and \
          says so: a store that was asked and had nothing is not a run that never asked"
     );
 
-    std::fs::create_dir_all(store::path_of(dir.path(), "m1"))
+    std::fs::create_dir_all(store::path_of(dir.path(), &mutant(1)))
         .expect("a directory where a record goes");
     assert_eq!(
         said(&reuse(
             &options(Some(held)),
             &reaching(&["core/lib/core"]),
-            "m1"
+            &id(1)
         )),
         "unreadable",
         "and a record this run cannot read is one it does not believe rather than one \
@@ -327,7 +391,7 @@ fn a_run_with_nowhere_to_read_or_write_evidence_neither_believes_nor_records() {
     let dir = tempfile::tempdir().expect("tempdir");
     let none = options(None);
     assert_eq!(
-        said(&reuse(&none, &reaching(&["core/lib/core"]), "m1")),
+        said(&reuse(&none, &reaching(&["core/lib/core"]), &id(1))),
         "not-kept",
         "a run holding no evidence has nothing to believe, and nothing to refuse either: \
          a run that keeps no store and one whose store refuses everything do the same \
@@ -335,12 +399,13 @@ fn a_run_with_nowhere_to_read_or_write_evidence_neither_believes_nor_records() {
     );
     keep(
         &none,
-        "m1",
+        &id(1),
         &reaching(&["core/lib/core"]),
         &Disposition::Killed {
             by: "core/lib/core".to_owned(),
         },
-    );
+    )
+    .expect("a disabled evidence store writes nothing successfully");
     assert!(
         !dir.path().join("mutants-v1").exists(),
         "and writes nowhere rather than choosing a place nobody asked for"
@@ -379,7 +444,7 @@ fn the_targets_a_route_answers_for_are_the_ones_it_names_whatever_shape_it_is() 
     store::write(
         dir.path(),
         &store::record(
-            "m1",
+            mutant(1),
             "20260909T000000Z-000001",
             store::Outcome::Survived {
                 targets: BTreeMap::from([("id-two".to_owned(), "k2".repeat(16))]),
@@ -388,7 +453,7 @@ fn the_targets_a_route_answers_for_are_the_ones_it_names_whatever_shape_it_is() 
     )
     .expect("an earlier run's record");
     assert_eq!(
-        said(&reuse(&options(Some(held)), &block, "m1")),
+        said(&reuse(&options(Some(held)), &block, &id(1))),
         "believed 20260909T000000Z-000001",
         "and a route that named its targets one way is answered for the same way as one \
          that named them another: what a record is about is the set, not the shape of \
@@ -400,7 +465,13 @@ fn the_targets_a_route_answers_for_are_the_ones_it_names_whatever_shape_it_is() 
 fn measured(name: &str) -> njutest_cli::assure::baseline::Measured {
     njutest_cli::assure::baseline::Measured {
         target: njutest_cli::targets::Target {
-            id: format!("id-{name}"),
+            id: njutest_cli::targets::target_id(
+                "core",
+                njutest_cli::targets::UnitKind::Lib,
+                "core",
+                name,
+            )
+            .expect("the fixture target identity"),
             package: "core".to_owned(),
             unit: njutest_cli::targets::UnitKind::Lib,
             unit_name: "core".to_owned(),
@@ -422,7 +493,7 @@ fn a_kill_is_confirmed_against_the_test_that_found_it_and_not_against_the_rest()
     use njutest_cli::assure::mutation::{narrowed, request_for};
 
     let one = measured("cases::adds");
-    let asked = request_for("m1", Some(&one), &["--nocapture".to_owned()]);
+    let asked = request_for(&id(1), Some(&one), &["--nocapture".to_owned()]);
     assert_eq!(
         asked.target.as_deref(),
         Some("core/lib/core cases::adds"),
@@ -439,14 +510,14 @@ fn a_kill_is_confirmed_against_the_test_that_found_it_and_not_against_the_rest()
          target nobody routed to"
     );
 
-    let suite = request_for("m1", None, &["--quiet".to_owned()]);
+    let suite = request_for(&id(1), None, &["--quiet".to_owned()]);
     assert_eq!(
         (
             suite.target.clone(),
             suite.mutant.clone(),
             suite.args.clone()
         ),
-        (None, "m1".to_owned(), vec!["--quiet".to_owned()]),
+        (None, id(1), vec!["--quiet".to_owned()]),
         "a request with no proof of who could notice runs every target, and still names \
          the mutation and carries what the run was told to pass the harness"
     );

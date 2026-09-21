@@ -5,6 +5,7 @@
 
 /// What one variable of a lease named, and what an interposer would sit in front of.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(feature = "testkit")]
 pub struct Dialled {
     /// The variable the test reads the address out of.
     pub variable: String,
@@ -14,9 +15,11 @@ pub struct Dialled {
     pub upstream: String,
 }
 
+#[cfg(feature = "testkit")]
 impl Dialled {
     /// What `value` names, or nothing where it names no authority to sit in front of.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub fn of(variable: &str, value: &str) -> Option<Self> {
         Some(Self {
             variable: variable.to_owned(),
@@ -33,7 +36,10 @@ impl Dialled {
 /// nobody dials.
 #[must_use]
 pub fn upstream_of(value: &str) -> Option<String> {
-    let (_scheme, rest) = value.split_once("://")?;
+    let (scheme, rest) = value.split_once("://")?;
+    if scheme.is_empty() {
+        return None;
+    }
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = rest.get(..end)?;
     let host = authority.rsplit('@').next().unwrap_or(authority);
@@ -68,9 +74,13 @@ pub fn redirected(value: &str, interposer: &str) -> Option<String> {
 #[derive(Debug)]
 pub struct Watching {
     /// The capability the seam serves, which is what a fault names when it says where to go.
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub capability: String,
     /// The environment the tests are given, with the named variable pointing at the interposer.
     pub environment: Vec<(String, String)>,
+    /// How long a held-up answer is held for, which a run putting that question must wait out.
+    pub held_up: std::time::Duration,
     /// The interposer, which holds what went past.
     pub interposer: super::interpose::Interposer,
 }
@@ -91,15 +101,20 @@ pub fn interposed(
         .iter()
         .find(|(name, _)| name == variable)
         .map(|(_, value)| value.clone())?;
-    let upstream: std::net::SocketAddr = upstream_of(&given)?.parse().ok()?;
-    let interposer = super::interpose::Interposer::start(&super::interpose::Interposing {
+    let upstream = match upstream_of(&given)?.parse::<std::net::SocketAddr>() {
+        Ok(upstream) => upstream,
+        Err(_) => return None,
+    };
+    let interposer = match super::interpose::Interposer::start(&super::interpose::Interposing {
         capability: lease.capability.clone(),
         upstream,
         wire,
         injecting: None,
         held_up,
-    })
-    .ok()?;
+    }) {
+        Ok(interposer) => interposer,
+        Err(_) => return None,
+    };
     let told = redirected(&given, &interposer.address().to_string())?;
     let environment = lease
         .environment
@@ -113,8 +128,11 @@ pub fn interposed(
         })
         .collect();
     Some(Watching {
+        #[cfg(any(test, feature = "testkit"))]
+        #[cfg(feature = "testkit")]
         capability: lease.capability.clone(),
         environment,
+        held_up,
         interposer,
     })
 }

@@ -16,7 +16,7 @@ use crate::report::FindingKind;
 use crate::watch::Watch;
 
 /// What a replay established about the finding it was given.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Outcome {
     /// The finding is still there.
     Reproduced,
@@ -25,9 +25,6 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Both of them, in declaration order.
-    pub const ALL: [Self; 2] = [Self::Reproduced, Self::Resolved];
-
     /// The word a reader sees.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -48,11 +45,7 @@ impl Outcome {
 }
 
 /// What one replay needs.
-#[expect(
-    missing_debug_implementations,
-    reason = "an environment is a handle on the outside world; there is nothing to print about one"
-)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Replaying<'a> {
     /// The tree the finding is about, which is only ever read.
     pub root: &'a Path,
@@ -71,7 +64,7 @@ pub struct Replaying<'a> {
     /// How many guard takes one execution may spend before it is stopped by a count rather than by the bound above.
     pub steps: u64,
     /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
-    pub reports: crate::app::reports::Store,
+    pub reports: crate::config::ReportDirectory,
 }
 
 /// Offers `mutant` to the tests again and says whether `kind` is still observable.
@@ -98,7 +91,7 @@ pub fn replay(
                 .map(std::ffi::OsStr::to_owned),
             env: replaying.environment.vars.clone(),
             temp_directory: replaying.environment.temp_directory.clone(),
-            report_directory: Some(replaying.reports.relative()),
+            report_directory: Some(replaying.reports.as_str().to_owned()),
             exclude: Vec::new(),
             keep_temp: false,
             offline: replaying.cargo.offline,
@@ -125,27 +118,28 @@ pub fn replay(
         .and_then(|found| {
             session
                 .exec(
-                    &ExecRequest::new(found.id.clone()).with_timeout(replaying.timeout),
+                    &ExecRequest::new(found.id.to_string()).with_timeout(replaying.timeout),
                     watch.cancel,
                 )
                 .map_err(RunnerError::from)
         })
-        .map(|result| observed(kind, result.outcome));
+        .map(|result| observed(kind, result.outcome()));
     session.close()?;
     outcome
 }
 
 /// Whether the finding is still what the tests say.
 ///
-/// A bound expiring is the only thing that reproduces one of the two findings
-/// about waiting. A replay that comes back `Runaway` has established something
-/// where the finding said nothing was established, so the finding is resolved
-/// even though the news is a detection — what a reader asks `replay` is
-/// whether the hole is still there, and it is not.
+/// A clock expiry reproduces a clock-expiry finding, and a verified step
+/// boundary reproduces a step-boundary finding. Neither is upgraded into a
+/// mutation verdict merely because the same non-answer happened twice.
 const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
     let still = match kind {
         FindingKind::Timeout | FindingKind::WaitedMutant => {
             matches!(outcome, rust_mutants::outcome::Outcome::Waited)
+        }
+        FindingKind::StepLimitReachedMutant => {
+            matches!(outcome, rust_mutants::outcome::Outcome::StepLimitReached)
         }
         FindingKind::BuildFailure
         | FindingKind::FailingTest

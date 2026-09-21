@@ -23,8 +23,15 @@ fn came_to(decided: &Decided) -> String {
         Decided::Survived => "nothing noticed it".to_owned(),
         Decided::Unreached => "nothing executed it".to_owned(),
         Decided::Equivalent => "a proof says no test could tell the difference".to_owned(),
+        Decided::ModelNoticed => "the model checker found a distinguishing input".to_owned(),
+        Decided::ModelProved => {
+            "the model checker proved equality throughout its closed domain".to_owned()
+        }
         Decided::CompileRejected => "the compiler refused it".to_owned(),
-        Decided::Runaway { on } => format!("it never finished under {on}"),
+        Decided::StepLimitReached { on, boundary } => format!(
+            "{on} crossed its step allowance at {} without a control verdict",
+            boundary.observed()
+        ),
         Decided::Waited { on } => format!("this machine stopped waiting for {on}"),
         Decided::Unconfirmed { on } => format!("{on} did not answer the same way twice"),
         Decided::Errored { on } => format!("{on} could not be measured"),

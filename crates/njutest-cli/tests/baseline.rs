@@ -96,7 +96,7 @@ fn a_proc_macro_in_the_workspace_is_a_limitation_of_the_run_and_not_of_a_target(
 fn a_target_the_engine_built_is_named_by_what_cargo_said_about_it() {
     let built = target("pkg/test/one", TargetKind::Test, &[CUSTOM_HARNESS]);
 
-    let row = target_of(&built);
+    let row = target_of(&built).expect("valid engine target identity");
 
     assert_eq!(row.package, "pkg");
     assert_eq!(row.unit, UnitKind::Test);
@@ -111,7 +111,7 @@ fn a_target_the_engine_built_is_named_by_what_cargo_said_about_it() {
 
 #[test]
 fn a_target_the_session_dropped_is_named_by_its_identity_alone() {
-    let row = named("pkg/test/one");
+    let row = named("pkg/test/one").expect("valid engine target identity");
 
     assert_eq!(row.package, "pkg");
     assert_eq!(row.unit, UnitKind::Test);
@@ -128,7 +128,7 @@ fn a_target_the_session_dropped_is_named_by_its_identity_alone() {
 
 #[test]
 fn an_identity_whose_name_holds_a_slash_keeps_the_whole_name() {
-    let row = named("pkg/test/nested/one");
+    let row = named("pkg/test/nested/one").expect("valid engine target identity");
 
     assert_eq!(
         row.unit_name, "nested/one",
@@ -141,14 +141,10 @@ fn an_identity_whose_name_holds_a_slash_keeps_the_whole_name() {
 }
 
 #[test]
-fn an_identity_naming_a_kind_this_does_not_know_is_a_binary() {
-    let row = named("pkg/fixture/one");
-
-    assert_eq!(
-        row.unit,
-        UnitKind::Bin,
-        "a kind this cannot read is not a reason to drop the row: the finding is that \
-         the target did not pass, and it is still the target that did not pass"
+fn an_identity_naming_a_kind_this_does_not_know_is_refused() {
+    assert!(
+        named("pkg/fixture/one").is_err(),
+        "an unknown kind cannot be silently relabelled as a binary"
     );
 }
 

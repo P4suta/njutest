@@ -30,6 +30,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// What one bundle holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BundleDocument {
     /// [`DOCUMENT_TYPE`].
     pub document_type: String,
@@ -59,16 +60,24 @@ pub enum Part<'a> {
 }
 
 /// Gathers `parts` into `bundle`, answering with what it holds and what was not there.
-#[must_use]
-pub fn gather(bundle: &Path, parts: &[(&str, Part<'_>)]) -> (Vec<String>, Vec<String>) {
+///
+/// # Errors
+/// Returns the first filesystem failure; a partial bundle is never reported as complete.
+pub fn gather(
+    bundle: &Path,
+    parts: &[(&str, Part<'_>)],
+) -> std::io::Result<(Vec<String>, Vec<String>)> {
     let mut held = Vec::new();
     let mut absent = Vec::new();
     for (name, part) in parts {
         let target = bundle.join(name);
         let done = match part {
-            Part::File(from) => copy(from, &target),
-            Part::Tree(from) => copy_tree(from, &target),
-            Part::Text(text) => std::fs::write(&target, text).is_ok(),
+            Part::File(from) => copy(from, &target)?,
+            Part::Tree(from) => copy_tree(from, &target)?,
+            Part::Text(text) => {
+                std::fs::write(&target, text)?;
+                true
+            }
         };
         if done {
             held.push((*name).to_owned());
@@ -76,7 +85,7 @@ pub fn gather(bundle: &Path, parts: &[(&str, Part<'_>)]) -> (Vec<String>, Vec<St
             absent.push((*name).to_owned());
         }
     }
-    (held, absent)
+    Ok((held, absent))
 }
 
 /// The manifest of a gathered bundle.
@@ -103,7 +112,10 @@ pub fn manifest(
 pub fn environment_names(vars: &[(std::ffi::OsString, std::ffi::OsString)]) -> String {
     let mut names: Vec<String> = vars
         .iter()
-        .map(|(name, _value)| name.to_string_lossy().into_owned())
+        .map(|(name, _value)| match name.to_str() {
+            Some(text) => text.to_owned(),
+            None => rust_mutants::telling::LosslessBytes::new(name.as_encoded_bytes()).to_string(),
+        })
         .collect();
     names.sort_unstable();
     names.dedup();
@@ -117,35 +129,65 @@ pub fn environment_names(vars: &[(std::ffi::OsString, std::ffi::OsString)]) -> S
 }
 
 /// Copies one file, answering whether it was there.
-fn copy(from: &Path, to: &PathBuf) -> bool {
+fn copy(from: &Path, to: &Path) -> std::io::Result<bool> {
     if let Some(parent) = to.parent()
-        && std::fs::create_dir_all(parent).is_err()
+        && let Err(error) = std::fs::create_dir_all(parent)
     {
-        return false;
+        return Err(error);
     }
-    std::fs::copy(from, to).is_ok()
+    match std::fs::copy(from, to) {
+        Ok(_bytes) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Copies a directory, answering whether it was there and held anything.
-fn copy_tree(from: &Path, to: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(from) else {
-        return false;
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<bool> {
+    let entries = match std::fs::read_dir(from) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
     };
-    if std::fs::create_dir_all(to).is_err() {
-        return false;
-    }
+    let entries = entries.collect::<std::io::Result<Vec<_>>>()?;
+    std::fs::create_dir_all(to)?;
     let mut copied = false;
-    for entry in entries.flatten() {
+    for entry in entries {
         let target = to.join(entry.file_name());
-        let done = if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            copy_tree(&entry.path(), &target)
-        } else {
-            copy(&entry.path(), &target)
+        let done = match entry.file_type() {
+            Ok(kind) if kind.is_dir() => copy_tree(&entry.path(), &target)?,
+            Ok(kind) if kind.is_file() => copy(&entry.path(), &target)?,
+            Ok(_) => false,
+            Err(error) => return Err(error),
         };
-        copied = copied || done;
+        if !done {
+            discard_tree(to)?;
+            return Ok(false);
+        }
+        copied = true;
     }
     if !copied {
-        let _removed = std::fs::remove_dir_all(to);
+        discard_tree(to)?;
     }
-    copied
+    Ok(copied)
+}
+
+fn discard_tree(path: &Path) -> std::io::Result<()> {
+    let reclaimed = rust_mutants::reclaim::all([path]);
+    if reclaimed.left().is_empty() {
+        return Ok(());
+    }
+    let reason = reclaimed
+        .refused
+        .into_iter()
+        .map(|(path, why)| format!("{}: {why}", path.display()))
+        .chain(
+            reclaimed
+                .unreached
+                .into_iter()
+                .map(|path| format!("{}: cleanup budget exhausted", path.display())),
+        )
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(std::io::Error::other(reason))
 }

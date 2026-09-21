@@ -16,6 +16,9 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/metadata.rs");
+include!("support/missing.rs");
+
 const SECRET: &str = "a-value-nobody-meant-to-publish";
 
 /// What one command said, driven in this process.
@@ -46,7 +49,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Said {
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(args.iter().copied())
-            .chain(["--root", &fixture.root().to_string_lossy()])
+            .chain(["--root", njutest_devkit::paths::utf8(fixture.root())])
             .map(OsString::from),
         &environment,
         &Cancel::new(),
@@ -57,8 +60,8 @@ fn against(fixture: &Fixture, args: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
@@ -79,7 +82,7 @@ fn measured() -> Fixture {
 
 fn manifest(bundle: &Path) -> serde_json::Value {
     let text = std::fs::read_to_string(bundle.join("bundle.json")).expect("the manifest");
-    serde_json::from_str(&text).expect("the manifest is JSON")
+    njutest_devkit::strictjson::decode_str(&text).expect("the manifest is JSON")
 }
 
 fn bundle_of(said: &Said) -> std::path::PathBuf {
@@ -93,21 +96,24 @@ fn a_bundle_holds_the_report_the_evidence_the_recording_and_the_state_of_the_mac
     let gathered = against(&fixture, &["diagnostics"]);
     assert_eq!(gathered.code, 0, "{}{}", gathered.out, gathered.err);
     let bundle = bundle_of(&gathered);
-    assert!(bundle.is_dir(), "{}", bundle.display());
+    assert!(test_metadata(&bundle).is_dir(), "{}", bundle.display());
     for name in [
-        "run-report-v1.json",
+        "run-report-v2.json",
         "doctor-v1.json",
         "toolchain.txt",
         "environment.txt",
         "bundle.json",
     ] {
         assert!(
-            bundle.join(name).is_file(),
+            test_metadata(&bundle.join(name)).is_file(),
             "{name} is not in {}",
             bundle.display()
         );
     }
-    assert!(bundle.join("trace").is_dir(), "the recording travels too");
+    assert!(
+        test_metadata(&bundle.join("trace")).is_dir(),
+        "the recording travels too"
+    );
     let document = manifest(&bundle);
     let held: Vec<&str> = document["held"]
         .as_array()
@@ -115,7 +121,7 @@ fn a_bundle_holds_the_report_the_evidence_the_recording_and_the_state_of_the_mac
         .iter()
         .filter_map(serde_json::Value::as_str)
         .collect();
-    assert!(held.contains(&"run-report-v1.json"), "{held:?}");
+    assert!(held.contains(&"run-report-v2.json"), "{held:?}");
     assert!(held.contains(&"trace"), "{held:?}");
     assert!(document["run_id"].as_str().is_some_and(|it| !it.is_empty()));
 }
@@ -139,7 +145,7 @@ fn what_the_run_did_not_leave_is_named_rather_than_passed_over() {
         "a run that recorded nothing left no recording, and a reader is told so: {absent:?}"
     );
     assert!(gathered.out.contains("absent\ttrace"), "{}", gathered.out);
-    assert!(!bundle.join("trace").exists());
+    assert!(test_missing(&bundle.join("trace")));
 }
 
 #[test]
@@ -153,9 +159,12 @@ fn a_bundle_carries_no_environment_value() {
         "the name a reader needs is there: {names}"
     );
     for entry in walk(&bundle) {
-        let bytes = std::fs::read(&entry).unwrap_or_default();
+        let bytes =
+            std::fs::read(&entry).unwrap_or_else(|error| panic!("{}: {error}", entry.display()));
         assert!(
-            !String::from_utf8_lossy(&bytes).contains(SECRET),
+            !bytes
+                .windows(SECRET.len())
+                .any(|window| window == SECRET.as_bytes()),
             "{} carries a value nobody published",
             entry.display()
         );
@@ -176,7 +185,8 @@ fn the_doctor_a_bundle_carries_validates_against_the_schema_it_answers_to() {
     let gathered = against(&fixture, &["diagnostics"]);
     let text = std::fs::read_to_string(bundle_of(&gathered).join("doctor-v1.json"))
         .expect("the doctor document");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("it is JSON");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("it is JSON");
     checked(&document, "rust-mutants-doctor-v1.json");
 }
 
@@ -186,7 +196,8 @@ fn the_measurement_a_coverage_run_kept_validates_against_the_schema_it_answers_t
     let gathered = against(&fixture, &["diagnostics"]);
     let path = bundle_of(&gathered).join("reached-v1.json");
     let text = std::fs::read_to_string(&path).expect("the measurement");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("it is JSON");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("it is JSON");
     checked(&document, "rust-mutants-reached-v1.json");
 }
 
@@ -204,7 +215,11 @@ fn a_bundle_goes_where_it_was_asked_to_go_and_holds_the_same_thing_there() {
     let elsewhere = fixture.temp().join("to-send");
     let gathered = against(
         &fixture,
-        &["diagnostics", "--output", &elsewhere.to_string_lossy()],
+        &[
+            "diagnostics",
+            "--output",
+            njutest_devkit::paths::utf8(&elsewhere),
+        ],
     );
     assert_eq!(gathered.code, 0, "{}{}", gathered.out, gathered.err);
     assert_eq!(
@@ -215,20 +230,22 @@ fn a_bundle_goes_where_it_was_asked_to_go_and_holds_the_same_thing_there() {
         gathered.out
     );
     assert!(
-        elsewhere.join("bundle.json").is_file() && elsewhere.join("run-report-v1.json").is_file(),
+        test_metadata(&elsewhere.join("bundle.json")).is_file()
+            && test_metadata(&elsewhere.join("run-report-v2.json")).is_file(),
         "and it holds what a bundle holds wherever it is: {}",
         gathered.out
     );
     assert!(
-        !rust_mutants_cli::app::stored::Store::read(fixture.root())
-            .root()
-            .join(
-                manifest(&elsewhere)["run_id"]
-                    .as_str()
-                    .expect("the run it is about")
-            )
-            .join("diagnostics")
-            .exists(),
+        test_missing(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root())
+                .root()
+                .join(
+                    manifest(&elsewhere)["run_id"]
+                        .as_str()
+                        .expect("the run it is about"),
+                )
+                .join("diagnostics"),
+        ),
         "and nothing was written beside the run as well, or the value nobody published \
          is in two places instead of one"
     );
@@ -251,7 +268,7 @@ fn a_bundle_accounts_for_every_part_it_was_gathered_from() {
         })
         .collect();
     for part in [
-        "run-report-v1.json",
+        "run-report-v2.json",
         "catalog-v1.json",
         "reached-v1.json",
         "trace",
@@ -273,7 +290,7 @@ fn a_bundle_accounts_for_every_part_it_was_gathered_from() {
     );
     for name in &named {
         assert_eq!(
-            bundle.join(name).exists(),
+            !test_missing(&bundle.join(name)),
             document["held"]
                 .as_array()
                 .expect("what it holds")
@@ -317,7 +334,7 @@ fn the_run_a_bundle_is_about_is_the_one_that_was_named() {
 }
 
 fn checked(document: &serde_json::Value, name: &str) {
-    let schema: serde_json::Value = serde_json::from_str(
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
             njutest_devkit::paths::workspace_root()
                 .join("schema")
@@ -339,7 +356,8 @@ fn walk(directory: &Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return found;
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.expect("diagnostics directory entry");
         if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             found.extend(walk(&entry.path()));
         } else {
@@ -370,7 +388,7 @@ fn a_part_the_bundle_does_not_hold_is_not_a_directory_in_it_either() {
     );
     for name in &absent {
         assert!(
-            !bundle.join(name).exists(),
+            test_missing(&bundle.join(name)),
             "and nothing of it is in the bundle: a directory that is there beside a \
              manifest that says it is absent is two answers to one question, and the one \
              a person opening the bundle reads first is the directory: {name}"

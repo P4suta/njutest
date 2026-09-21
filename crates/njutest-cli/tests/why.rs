@@ -58,6 +58,7 @@ fn routed_and_killed() -> Vec<Event> {
                     outcome: "killed".to_owned(),
                     duration_ms: 12,
                     alone: false,
+                    step_boundary: None,
                 },
             },
         ),

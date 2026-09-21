@@ -9,8 +9,7 @@ use std::fmt;
 use syn::visit::Visit;
 
 /// What kind of seam a finding is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, njutest_macros::AllVariants)]
 pub enum SeamKind {
     /// `static mut`.
     StaticMut,
@@ -29,16 +28,6 @@ pub enum SeamKind {
 }
 
 impl SeamKind {
-    const ALL: [Self; 7] = [
-        Self::StaticMut,
-        Self::StaticInteriorMutability,
-        Self::ThreadLocal,
-        Self::CfgTestOutsideTestsModule,
-        Self::ProcessEnvironmentRead,
-        Self::ProcessExit,
-        Self::TestkitImport,
-    ];
-
     const fn label(self) -> &'static str {
         match self {
             Self::StaticMut => "static-mut",
@@ -138,10 +127,10 @@ impl Scanner<'_> {
         if self.composition_root || segments.len() < 2 {
             return;
         }
-        let (Some(last), Some(module)) = (
-            segments.last(),
-            segments.get(segments.len().wrapping_sub(2)),
-        ) else {
+        let Some(module_index) = segments.len().checked_sub(2) else {
+            return;
+        };
+        let (Some(last), Some(module)) = (segments.last(), segments.get(module_index)) else {
             return;
         };
         if module == "env" && ENVIRONMENT_READS.contains(&last.as_str()) {

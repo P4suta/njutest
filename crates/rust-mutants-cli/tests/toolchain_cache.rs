@@ -4,10 +4,14 @@
 //! What a run leaves behind, what a later command finds, and what puts one finding back to the tests.
 
 #![expect(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
-    reason = "a test reports a setup failure by panicking and reads a document as a table"
+    clippy::too_many_lines,
+    reason = "a test reports a setup failure by panicking, reads a document as a table, and recounts a fixture the way a reader does"
 )]
 
 use std::ffi::OsString;
@@ -17,8 +21,10 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/metadata.rs");
+
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -49,7 +55,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn said(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 #[test]
@@ -72,10 +78,12 @@ fn a_run_can_be_named_and_its_report_is_called_that() {
     );
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
-        rust_mutants_cli::app::stored::Store::read(fixture.root())
-            .root()
-            .join("monday/run-report-v1.json")
-            .is_file(),
+        test_metadata(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root())
+                .root()
+                .join("monday/run-report-v2.json"),
+        )
+        .is_file(),
         "a run a person named is a run they can find again: {}",
         said(&output)
     );
@@ -85,7 +93,7 @@ fn a_run_can_be_named_and_its_report_is_called_that() {
     );
     assert_eq!(refused.status.code(), Some(2), "{refused:?}");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("--run-id"),
+        njutest_devkit::process::strict_utf8(&refused.stderr).contains("--run-id"),
         "{refused:?}"
     );
 }
@@ -93,7 +101,7 @@ fn a_run_can_be_named_and_its_report_is_called_that() {
 #[test]
 fn cache_says_what_the_store_holds_and_clear_outcomes_empties_it() {
     let fixture = Fixture::copy("fixture-simple");
-    let _measured = against(
+    let measured = against(
         &fixture,
         &[
             "run",
@@ -105,6 +113,10 @@ fn cache_says_what_the_store_holds_and_clear_outcomes_empties_it() {
             "--ui",
             "quiet",
         ],
+    );
+    assert!(
+        measured.status.code().is_some_and(|code| code < 2),
+        "the arranging run reached a mutation verdict: {measured:?}"
     );
     let listed = said(&against(&fixture, &["cache"]));
     assert!(listed.contains("outcomes     "), "{listed}");
@@ -161,7 +173,7 @@ fn a_kept_snapshot_outlives_the_run_and_cache_names_the_run_that_kept_it() {
 #[test]
 fn replaying_a_recorded_outcome_asks_the_question_the_run_asked() {
     let fixture = Fixture::copy("fixture-simple");
-    let _measured = against(
+    let measured = against(
         &fixture,
         &[
             "run",
@@ -174,14 +186,18 @@ fn replaying_a_recorded_outcome_asks_the_question_the_run_asked() {
             "quiet",
         ],
     );
+    assert!(
+        measured.status.code().is_some_and(|code| code < 2),
+        "the arranging run reached a mutation verdict: {measured:?}"
+    );
     let output = against(
         &fixture,
-        &["replay", "--offline", "--locked", "--tier", "all", "16b0"],
+        &["replay", "--offline", "--locked", "--tier", "all", "f0d2"],
     );
     let text = said(&output);
     assert!(
         text.contains(
-            "REPLAY    16b0cd40508fc0785477 survived, which is the proof that \
+            "REPLAY    f0d20edfda2959667ff1 survived, which is the proof that \
                        discharged it holding"
         ),
         "the run proved this mutation cannot be noticed rather than running it, and the \
@@ -193,7 +209,7 @@ fn replaying_a_recorded_outcome_asks_the_question_the_run_asked() {
 #[test]
 fn replaying_a_mutant_a_run_measured_says_whether_the_answer_is_still_the_same() {
     let fixture = Fixture::copy("fixture-simple");
-    let _measured = against(
+    let measured = against(
         &fixture,
         &[
             "run",
@@ -207,23 +223,26 @@ fn replaying_a_mutant_a_run_measured_says_whether_the_answer_is_still_the_same()
             "quiet",
         ],
     );
+    assert!(
+        measured.status.code().is_some_and(|code| code < 2),
+        "the arranging run reached a mutation verdict: {measured:?}"
+    );
     let output = against(
         &fixture,
-        &["replay", "--offline", "--locked", "--tier", "all", "16b0"],
+        &["replay", "--offline", "--locked", "--tier", "all", "f0d2"],
     );
     let text = said(&output);
     assert!(
-        text.contains("REPLAY    16b0cd40508fc0785477 still survived"),
+        text.contains("REPLAY    f0d20edfda2959667ff1 still survived"),
         "a replay says whether the answer is still the same: {text}"
     );
     assert_eq!(output.status.code(), Some(1), "{text}");
 }
 
 /// A run of the fixture, and what it stored.
-fn measured(fixture: &Fixture) -> Output {
+fn measured(fixture: &Fixture) {
     let output = against(fixture, &["run", "--offline", "--locked", "--ui", "quiet"]);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
-    output
 }
 
 /// How many of the run's rows an earlier run answered for.
@@ -231,8 +250,9 @@ fn reused(fixture: &Fixture) -> usize {
     let directory = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     );
-    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("the report is JSON");
+    let text = std::fs::read_to_string(directory.join("run-report-v2.json")).expect("the report");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the report is JSON");
     document["mutants"]
         .as_array()
         .expect("the rows")
@@ -244,7 +264,7 @@ fn reused(fixture: &Fixture) -> usize {
 #[test]
 fn an_edit_to_a_file_no_unit_compiled_leaves_every_outcome_reusable() {
     let fixture = Fixture::copy("fixture-simple");
-    let _first = measured(&fixture);
+    measured(&fixture);
     let rows = reused(&fixture);
     assert_eq!(rows, 0, "the first run had nothing to reuse");
 
@@ -260,7 +280,7 @@ fn an_edit_to_a_file_no_unit_compiled_leaves_every_outcome_reusable() {
     )
     .expect("another one");
 
-    let _again = measured(&fixture);
+    measured(&fixture);
     let warm = reused(&fixture);
     assert!(
         warm > 0,
@@ -271,7 +291,7 @@ fn an_edit_to_a_file_no_unit_compiled_leaves_every_outcome_reusable() {
 #[test]
 fn an_edit_to_a_file_a_target_compiled_is_an_answer_that_stops_answering() {
     let fixture = Fixture::copy("fixture-simple");
-    let _first = measured(&fixture);
+    measured(&fixture);
 
     let path = fixture.root().join("src/lib.rs");
     let source = std::fs::read_to_string(&path).expect("the library");
@@ -281,7 +301,7 @@ fn an_edit_to_a_file_a_target_compiled_is_an_answer_that_stops_answering() {
     )
     .expect("the library changes");
 
-    let _again = measured(&fixture);
+    measured(&fixture);
     assert_eq!(
         reused(&fixture),
         0,
@@ -293,9 +313,12 @@ fn an_edit_to_a_file_a_target_compiled_is_an_answer_that_stops_answering() {
 fn stored(fixture: &Fixture) -> (std::path::PathBuf, serde_json::Value) {
     let path = rust_mutants_cli::app::stored::Store::read(fixture.root())
         .root()
-        .join("monday/run-report-v1.json");
+        .join("monday/run-report-v2.json");
     let text = std::fs::read_to_string(&path).expect("the run this test named");
-    (path, serde_json::from_str(&text).expect("a report is JSON"))
+    (
+        path,
+        njutest_devkit::strictjson::decode_str(&text).expect("a report is JSON"),
+    )
 }
 
 fn rewritten(path: &std::path::Path, document: &serde_json::Value) {
@@ -322,10 +345,62 @@ fn one_with(document: &serde_json::Value, outcome: &str) -> String {
         .to_owned()
 }
 
+/// The document with the accounting and score its rows imply, which is what a reader holds a stored answer to.
+fn refolded(mut document: serde_json::Value) -> serde_json::Value {
+    let rows = document["mutants"].as_array().expect("the rows").clone();
+    let mut counted: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    let (mut unreached, mut discharged, mut expected) = (0u64, 0u64, 0u64);
+    for row in &rows {
+        *counted
+            .entry(row["outcome"].as_str().expect("an outcome"))
+            .or_insert(0) += 1;
+        unreached += u64::from(row["not_run_reason"].as_str() == Some("unreached"));
+        discharged += u64::from(row["not_run_reason"].as_str() == Some("discharged"));
+        expected += u64::from(row["expected"].as_bool().unwrap_or_default());
+    }
+    let rejections = document["rejections"].as_array().map_or(0, Vec::len);
+    {
+        let accounting = document["accounting"]
+            .as_object_mut()
+            .expect("the accounting");
+        for field in [
+            "killed",
+            "survived",
+            "step_limit_reached",
+            "waited",
+            "inconclusive",
+            "errored",
+            "not_run",
+        ] {
+            accounting.insert(
+                field.into(),
+                serde_json::json!(counted.get(field).copied().unwrap_or_default()),
+            );
+        }
+        accounting.insert("unreached".into(), serde_json::json!(unreached));
+        accounting.insert("discharged".into(), serde_json::json!(discharged));
+        accounting.insert("expected".into(), serde_json::json!(expected));
+        let cataloged = u64::try_from(rows.len() + rejections).expect("a count");
+        accounting.insert("cataloged".into(), serde_json::json!(cataloged));
+        accounting.insert(
+            "executed".into(),
+            serde_json::json!(cataloged - counted.get("not_run").copied().unwrap_or_default()),
+        );
+    }
+    let detected = counted.get("killed").copied().unwrap_or_default();
+    let decided = detected + counted.get("survived").copied().unwrap_or_default();
+    document["score"] = if decided > 0 {
+        serde_json::json!({"detected": detected, "decided": decided, "value": detected as f64 / decided as f64})
+    } else {
+        serde_json::Value::Null
+    };
+    document
+}
+
 #[test]
 fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
     let fixture = Fixture::copy("fixture-simple");
-    let _measured = against(
+    let measured = against(
         &fixture,
         &[
             "run",
@@ -340,12 +415,18 @@ fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
             "monday",
         ],
     );
+    assert!(
+        measured.status.code().is_some_and(|code| code < 2),
+        "the named arranging run reached a mutation verdict: {measured:?}"
+    );
     let (path, document) = stored(&fixture);
     let killed = one_with(&document, "killed");
 
     let mut without = document.clone();
     without["mutants"] = serde_json::json!([]);
-    rewritten(&path, &without);
+    without["findings"] = serde_json::json!([]);
+    without["run"]["exit_code"] = serde_json::json!(0);
+    rewritten(&path, &refolded(without));
     let text = said(&against(
         &fixture,
         &["replay", "--offline", "--locked", "--tier", "all", &killed],
@@ -359,7 +440,16 @@ fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
     let mut disagreeing = document;
     let at = row_of(&disagreeing, &killed);
     disagreeing["mutants"][at]["outcome"] = serde_json::json!("survived");
-    rewritten(&path, &disagreeing);
+    disagreeing["findings"]
+        .as_array_mut()
+        .expect("the findings")
+        .push(serde_json::json!({
+            "kind": "surviving-mutant",
+            "mutant": killed,
+            "detail": "no test noticed it"
+        }));
+    disagreeing["run"]["exit_code"] = serde_json::json!(1);
+    rewritten(&path, &refolded(disagreeing.clone()));
     let text = said(&against(
         &fixture,
         &["replay", "--offline", "--locked", "--tier", "all", &killed],
@@ -370,8 +460,18 @@ fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
     );
 
     let mut proven = disagreeing;
+    proven["mutants"][at]["outcome"] = serde_json::json!("not_run");
     proven["mutants"][at]["not_run_reason"] = serde_json::json!("discharged");
-    rewritten(&path, &proven);
+    proven["mutants"][at]["unreached"] = serde_json::json!(false);
+    let findings = proven["findings"].as_array_mut().expect("the findings");
+    findings.retain(|finding| finding["mutant"].as_str() != Some(killed.as_str()));
+    findings.push(serde_json::json!({
+        "kind": "discharged-mutant",
+        "mutant": killed,
+        "detail": "a proof discharged it"
+    }));
+    proven["run"]["exit_code"] = serde_json::json!(1);
+    rewritten(&path, &refolded(proven));
     let output = against(
         &fixture,
         &["replay", "--offline", "--locked", "--tier", "all", &killed],
@@ -388,7 +488,7 @@ fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
 #[test]
 fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_nothing() {
     let fixture = Fixture::copy("fixture-simple");
-    let _measured = against(
+    let measured = against(
         &fixture,
         &[
             "run",
@@ -402,6 +502,10 @@ fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_not
             "--run-id",
             "monday",
         ],
+    );
+    assert!(
+        measured.status.code().is_some_and(|code| code < 2),
+        "the named arranging run reached a mutation verdict: {measured:?}"
     );
     let (path, document) = stored(&fixture);
     let killed = one_with(&document, "killed");
@@ -419,7 +523,7 @@ fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_not
             &killed,
         ],
     );
-    let message = String::from_utf8_lossy(&output.stderr).into_owned();
+    let message = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     assert_eq!(
         output.status.code(),
         Some(2),

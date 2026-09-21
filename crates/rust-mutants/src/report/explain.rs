@@ -3,7 +3,7 @@
 
 //! Everything one run established about one mutant, from what the run stored rather than from a tree it prepares again.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::catalog::{CatalogDocument, MutantDocument};
 use super::run::{RouteDocument, RunDocument, RunMutantDocument};
@@ -12,7 +12,7 @@ use super::run::{RouteDocument, RunDocument, RunMutantDocument};
 pub const DOCUMENT_TYPE: &str = "rust-mutants/explain";
 
 /// Everything known about one mutant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExplainDocument {
     /// Names the shape, so a reader can tell versions apart.
     pub document_type: String,
@@ -23,34 +23,34 @@ pub struct ExplainDocument {
     /// The mutant, as the catalog holds it.
     pub mutant: MutantDocument,
     /// The run this is about, when a stored run answered for the mutant.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
     /// What the compiler refused it with, when it refused it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
     /// What the tests made of it, when a run executed it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<String>,
     /// The target that ran it, when one did.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     /// Every test that failed with it active, which is what noticed it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub killed_by: Vec<String>,
     /// The mutation as a change to the file, when the file is the one it was taken from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<String>,
     /// Why there is no diff, when there is none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     /// Which targets could have noticed it, and which of them ran.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub route: Option<RouteDocument>,
     /// How long every execution of it took together, when a run executed it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     /// Whether a first timeout was retried serially before the outcome was believed.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub retried: bool,
     /// The command that puts this one mutation back to the tests.
     pub reproduce: String,
@@ -76,6 +76,9 @@ pub enum ExplainError {
         /// What it could have meant.
         matches: Vec<String>,
     },
+    /// The mutation's unified diff could not be represented exactly.
+    #[error(transparent)]
+    Diff(#[from] super::diff::DiffError),
 }
 
 /// What an explanation is built from.
@@ -126,14 +129,14 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
         .iter()
         .find(|one| one.id == mutant.id)
         .map(|one| one.diagnostic.clone());
-    let (diff, source) = changed(&mutant, asked.source);
+    let (diff, source) = changed(&mutant, asked.source)?;
     Ok(ExplainDocument {
         document_type: DOCUMENT_TYPE.to_owned(),
         schema_version: 1,
         tool_version: crate::VERSION.to_owned(),
         run_id: asked.run.map(|run| run.run.id.clone()),
         refused,
-        outcome: row.map(|one| one.outcome.clone()),
+        outcome: row.map(|one| one.outcome.to_string()),
         target: row
             .map(|one| one.target.clone())
             .filter(|target| !target.is_empty()),
@@ -150,12 +153,15 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
 }
 
 /// The mutation as a change to the file, or why there is none to show.
-fn changed(mutant: &MutantDocument, source: Option<&str>) -> (Option<String>, Option<String>) {
+fn changed(
+    mutant: &MutantDocument,
+    source: Option<&str>,
+) -> Result<(Option<String>, Option<String>), super::diff::DiffError> {
     let Some(source) = source else {
-        return (None, Some("the tree was not read".to_owned()));
+        return Ok((None, Some("the tree was not read".to_owned())));
     };
     if crate::id::digest(source.as_bytes()) != mutant.source_digest {
-        return (None, Some("the file has changed since the run".to_owned()));
+        return Ok((None, Some("the file has changed since the run".to_owned())));
     }
     let Some(after) = super::diff::mutated(
         source,
@@ -163,15 +169,15 @@ fn changed(mutant: &MutantDocument, source: Option<&str>) -> (Option<String>, Op
         mutant.end_byte,
         &mutant.replacement,
     ) else {
-        return (
+        return Ok((
             None,
             Some("the edit is not a range of this file".to_owned()),
-        );
+        ));
     };
-    (
-        Some(super::diff::unified(&mutant.path, source, &after)),
+    Ok((
+        Some(super::diff::unified(&mutant.path, source, &after)?),
         None,
-    )
+    ))
 }
 
 /// The command that puts one mutation back to the tests. How a reader names this mutation again, which has to hold after they have changed the file.

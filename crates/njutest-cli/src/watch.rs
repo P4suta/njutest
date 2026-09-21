@@ -35,6 +35,7 @@ impl rust_mutants::runner::Watch for Watch<'_> {
     }
 
     fn exec(&self, spec: &rust_mutants::runner::Spec, result: &rust_mutants::runner::RunResult) {
-        self.trace.exec(crate::trace::ExecRecord::of(spec, result));
+        self.trace
+            .exec_result(crate::trace::ExecRecord::of(spec, result));
     }
 }

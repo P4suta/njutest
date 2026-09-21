@@ -6,16 +6,20 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "the helper that copies a fixture is not itself a test, and a copy that fails is a setup failure to report by panicking"
+    clippy::panic,
+    clippy::too_many_lines,
+    clippy::disallowed_methods,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::sync::mpsc::{RecvTimeoutError, channel};
+use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::time::Duration;
 
 use njutest_cli::cli::{EXIT_ERROR, Environment};
 use njutest_devkit::fixture::copy_tree;
+use njutest_devkit::thread::JoinedThread;
 use rust_mutants::runner::Cancel;
 
 /// The longest this test will wait for a round that is not coming.
@@ -48,7 +52,8 @@ impl<'a> Stopping<'a> {
 
 impl Write for Stopping<'_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        self.said.push_str(&String::from_utf8_lossy(buffer));
+        self.said
+            .push_str(&njutest_devkit::process::strict_utf8(buffer));
         if self.stops || self.said.contains("waiting\tfor the next change") {
             self.cancel.cancel();
         }
@@ -88,8 +93,8 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
     let environment = working_in(root.path(), scratch);
 
     let watchdog = environment.cancel.clone();
-    let (done, waited) = channel::<()>();
-    let bound = std::thread::spawn(move || {
+    let (done, waited) = sync_channel::<()>(1);
+    let bound = JoinedThread::launch(move || {
         let expired = waited.recv_timeout(LONGEST) == Err(RecvTimeoutError::Timeout);
         if expired {
             watchdog.cancel();
@@ -168,7 +173,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
         working_directory: root.path().to_owned(),
         temp_directory: occupied,
         program: std::path::PathBuf::from("this test never runs it"),
-        vars: Vec::new(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         cancel: Cancel::new(),
         terminal: njutest_cli::presentation::Terminal::default(),
     };
@@ -181,7 +186,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
         &mut complaints,
     );
 
-    let complained = String::from_utf8_lossy(&complaints);
+    let complained = njutest_devkit::process::strict_utf8(&complaints);
     assert_eq!(
         code, EXIT_ERROR,
         "a run with nowhere to put what it builds has not verified anything, and \
@@ -194,14 +199,14 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
          person can change: {complained}"
     );
     assert!(
-        !String::from_utf8_lossy(&said).contains("VERDICT"),
+        !njutest_devkit::process::strict_utf8(&said).contains("VERDICT"),
         "a run that stopped here reached no verdict, and printing one would be a claim \
          about a workspace it never opened"
     );
 
     let recording = std::fs::read_dir(root.path().join(".njutest/trace"))
         .expect("the trace directory")
-        .flatten()
+        .map(|entry| entry.expect("every trace entry is readable"))
         .map(|entry| entry.path().join(njutest_cli::trace::FILE_NAME))
         .next()
         .expect("one recording");
@@ -211,9 +216,10 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
     .expect("the events read back");
     let phases: Vec<&str> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.as_str()),
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .phase_start()
+                .map(|phase| phase.name.as_str())
         })
         .collect();
     assert_eq!(
@@ -233,9 +239,20 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         .expect("a temporary directory");
     std::fs::write(
         root.path().join("Cargo.toml"),
-        "[workspace]\nmembers = []\n",
+        "[package]\nname = \"told\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
     )
     .expect("a manifest");
+    std::fs::create_dir_all(root.path().join("src")).expect("a source directory");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn one() -> u8 {\n    1\n}\n",
+    )
+    .expect("a library the second run can verify");
+    std::fs::write(
+        root.path().join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"told\"\nversion = \"0.0.0\"\n",
+    )
+    .expect("a lock a locked run may use");
     let empty = root.path().join("empty");
     std::fs::create_dir_all(&empty).expect("a directory with no toolchain in it");
     let scratch = root.path().join("scratch");
@@ -262,7 +279,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         &mut complaints,
     );
 
-    let complained = String::from_utf8_lossy(&complaints);
+    let complained = njutest_devkit::process::strict_utf8(&complaints);
     assert_eq!(
         code, EXIT_ERROR,
         "the only place this run was told to look for a toolchain has none in it, and \
@@ -290,14 +307,18 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
-    let _code = njutest_cli::run_from(
+    let code = njutest_cli::run_from(
         ["njutest", "verify", "--offline", "--locked"].map(OsString::from),
         &told,
         &mut said,
         &mut complaints,
     );
+    assert_ne!(
+        code, EXIT_ERROR,
+        "the configured search path contains the toolchain"
+    );
 
-    let complained = String::from_utf8_lossy(&complaints);
+    let complained = njutest_devkit::process::strict_utf8(&complaints);
     assert!(
         !complained.contains("no search path"),
         "and a run whose environment does name a place to look is told that place: \
@@ -317,17 +338,19 @@ fn stages_of(complained: &str, root: &std::path::Path) {
     assert!(problems.is_empty(), "{problems:?}");
     let recorded: Vec<&str> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.as_str()),
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .phase_start()
+                .map(|phase| phase.name.as_str())
         })
         .collect();
 
     let routed: Vec<&str> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Route { route } => Some(route.mutant.as_str()),
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .route()
+                .map(|route| route.mutant.as_str())
         })
         .collect();
     assert!(
@@ -346,9 +369,10 @@ fn stages_of(complained: &str, root: &std::path::Path) {
     );
     let progressed: Vec<&str> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Progress { progress } => Some(progress.subject.as_str()),
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .progress()
+                .map(|progress| progress.subject.as_str())
         })
         .collect();
     assert!(
@@ -380,9 +404,10 @@ fn stages_of(complained: &str, root: &std::path::Path) {
 fn judged(events: &[njutest_cli::trace::Event]) {
     let phases: Vec<&str> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.as_str()),
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .phase_start()
+                .map(|phase| phase.name.as_str())
         })
         .collect();
     assert!(
@@ -393,10 +418,7 @@ fn judged(events: &[njutest_cli::trace::Event]) {
 
     let routes: Vec<&njutest_cli::trace::RouteRecord> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Route { route } => Some(route),
-            _ => None,
-        })
+        .filter_map(|event| njutest_cli::testkit::payload::of(&event.payload).route())
         .collect();
     let placed = routes
         .iter()
@@ -411,10 +433,7 @@ fn judged(events: &[njutest_cli::trace::Event]) {
 
     let probes: Vec<&njutest_cli::trace::ProbeExecRecord> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::ProbeExec { probe } => Some(probe),
-            _ => None,
-        })
+        .filter_map(|event| njutest_cli::testkit::payload::of(&event.payload).probe_exec())
         .collect();
     let seen = probes
         .iter()
@@ -451,22 +470,70 @@ fn judged(events: &[njutest_cli::trace::Event]) {
 
 /// The report the latest run of `root` wrote, found the way a person finds it.
 fn report_of(root: &std::path::Path) -> serde_json::Value {
-    let directory = njutest_cli::app::reports::Store::read(root)
-        .run_of(njutest_cli::app::reports::Index::Any)
+    let run = njutest_cli::app::reports::pointed_at(root, njutest_cli::app::reports::Index::Any)
+        .expect("the index is readable")
         .expect("the index names a run");
-    serde_json::from_str(
+    let directory = root
+        .join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(run.as_str());
+    njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(directory.join(njutest_cli::app::reports::DOCUMENT_NAME))
             .expect("the report"),
     )
     .expect("the report is JSON")
 }
 
+/// The document the latest run of `root` wrote, found without the index: a run that judged one part of a catalog writes a document and no index naming it.
+fn latest_report_of(root: &std::path::Path) -> serde_json::Value {
+    let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(
+        root.join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+            .join("runs"),
+    )
+    .expect("the runs directory")
+    .map(|entry| entry.expect("every run entry is readable"))
+    .map(|entry| entry.path())
+    .collect();
+    runs.sort();
+    njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(
+            runs.last()
+                .expect("one run")
+                .join(njutest_cli::app::reports::DOCUMENT_NAME),
+        )
+        .expect("the report"),
+    )
+    .expect("the report is JSON")
+}
+
+/// The one part a single-build run measured, where its counts, rows, and timings live.
+fn part_of(report: &serde_json::Value) -> &serde_json::Value {
+    &report["report"]["builds"][0]["parts"][0]
+}
+
+/// The verdict the latest run of `root` reached, read back the way a reader does: the document no longer carries it.
+fn verdict_of(root: &std::path::Path) -> njutest_cli::report::Verdict {
+    let run = njutest_cli::app::reports::pointed_at(root, njutest_cli::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run");
+    let text = std::fs::read_to_string(
+        root.join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+            .join("runs")
+            .join(run.as_str())
+            .join(njutest_cli::app::reports::DOCUMENT_NAME),
+    )
+    .expect("the report");
+    njutest_cli::report::json::parse(&text)
+        .expect("the report reads back")
+        .verdict()
+}
+
 /// What a run whose every measurement was slow exactly once concludes.
 fn once_slow(report: &serde_json::Value) {
     assert_eq!(
         (
-            report["accounting"]["mutants"]["killed"].as_u64(),
-            report["accounting"]["mutants"]["survived"].as_u64(),
+            part_of(report)["accounting"]["mutants"]["killed"].as_u64(),
+            part_of(report)["accounting"]["mutants"]["survived"].as_u64(),
         ),
         (Some(8), Some(1)),
         "every mutation but one is noticed here, and by the second measurement rather \
@@ -475,12 +542,12 @@ fn once_slow(report: &serde_json::Value) {
     );
     assert_eq!(
         (
-            report["accounting"]["mutants"]["waited"].as_u64(),
-            report["accounting"]["mutants"]["runaway"].as_u64(),
+            part_of(report)["accounting"]["mutants"]["waited"].as_u64(),
+            part_of(report)["accounting"]["mutants"]["step_limit_reached"].as_u64(),
         ),
         (Some(0), Some(0)),
         "a bound reached once and not again is not a mutation this machine stopped \
-         waiting for, and nothing here ran away: every measurement was slow the first \
+         waiting for, and no verified step boundary was crossed: every measurement was slow the first \
          time and quick the second. A run that reported them either way would hand a \
          person findings caused by whatever else the machine was doing: {report}"
     );
@@ -490,9 +557,10 @@ fn once_slow(report: &serde_json::Value) {
 fn recorded_stages(root: &std::path::Path) -> Vec<String> {
     events_of(root)
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.clone()),
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .phase_start()
+                .map(|phase| phase.name.clone())
         })
         .collect()
 }
@@ -501,11 +569,10 @@ fn recorded_stages(root: &std::path::Path) -> Vec<String> {
 fn consulted(root: &std::path::Path) -> Vec<(Option<String>, Option<String>)> {
     events_of(root)
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Route { route } => {
-                Some((route.reused.clone(), route.refused.clone()))
-            }
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .route()
+                .map(|route| (route.reused.clone(), route.refused.clone()))
         })
         .collect()
 }
@@ -514,10 +581,7 @@ fn consulted(root: &std::path::Path) -> Vec<(Option<String>, Option<String>)> {
 fn executions(events: &[njutest_cli::trace::Event]) -> Vec<&njutest_cli::trace::MutantExecRecord> {
     events
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::MutantExec { mutant } => Some(mutant),
-            _ => None,
-        })
+        .filter_map(|event| njutest_cli::testkit::payload::of(&event.payload).mutant_exec())
         .collect()
 }
 
@@ -525,7 +589,7 @@ fn executions(events: &[njutest_cli::trace::Event]) -> Vec<&njutest_cli::trace::
 fn events_of(root: &std::path::Path) -> Vec<njutest_cli::trace::Event> {
     let mut recordings: Vec<std::path::PathBuf> = std::fs::read_dir(root.join(".njutest/trace"))
         .expect("the trace directory")
-        .flatten()
+        .map(|entry| entry.expect("every trace entry is readable"))
         .map(|entry| entry.path())
         .collect();
     recordings.sort();
@@ -578,7 +642,10 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
             &mut said,
             &mut complaints,
         );
-        (code, String::from_utf8_lossy(&complaints).into_owned())
+        (
+            code,
+            njutest_devkit::process::strict_utf8(&complaints).into_owned(),
+        )
     };
 
     let (first, complained) = once();
@@ -596,11 +663,11 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
     );
     let established = report_of(&root);
     assert_eq!(
-        established["accounting"]["mutants"]["reused_killed"].as_u64(),
+        part_of(&established)["accounting"]["mutants"]["reused_killed"].as_u64(),
         Some(0),
         "and establishes all of it itself, because there was nothing to read back yet"
     );
-    let run_id = established["run_id"]
+    let run_id = part_of(&established)["run_id"]
         .as_str()
         .expect("the run that established it")
         .to_owned();
@@ -623,13 +690,13 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
 fn read_back(root: &std::path::Path, run_id: &str) {
     let report = report_of(root);
     assert_eq!(
-        report["provenance"]["cached"],
+        report["report"]["provenance"]["cached"],
         serde_json::Value::Bool(false),
         "a tree that changed is a tree this run answered for itself, whatever the file \
          that changed was: {report}"
     );
     assert!(
-        report["accounting"]["mutants"]["reused_killed"]
+        part_of(&report)["accounting"]["mutants"]["reused_killed"]
             .as_u64()
             .is_some_and(|counted| counted > 0),
         "reading back what an earlier run of this exact tree established is the whole \
@@ -645,11 +712,11 @@ fn read_back(root: &std::path::Path, run_id: &str) {
          it: a route that carried both would be a run that believed a record and \
          recorded a reason for not believing it. It said {again:?}"
     );
-    let sources: Vec<&str> = report["mutants"]
+    let sources: Vec<&str> = part_of(&report)["mutants"]
         .as_array()
         .expect("mutants")
         .iter()
-        .filter_map(|one| one["source_run_id"].as_str())
+        .filter_map(|one| one["reuse"]["source_run_id"].as_str())
         .collect();
     assert!(
         !sources.is_empty() && sources.iter().all(|source| *source == run_id),
@@ -700,10 +767,15 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
         &mut said,
         &mut complaints,
     );
-    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+    assert_eq!(
+        code,
+        2,
+        "{}",
+        njutest_devkit::process::strict_utf8(&complaints)
+    );
 
     let report = report_of(&root);
-    let stated = report["limitations"]
+    let stated = part_of(&report)["limitations"]
         .as_array()
         .expect("limitations")
         .iter()
@@ -768,7 +840,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         &mut said,
         &mut complaints,
     );
-    let complained = String::from_utf8_lossy(&complaints).into_owned();
+    let complained = njutest_devkit::process::strict_utf8(&complaints).into_owned();
     assert_eq!(code, 2, "{complained}");
 
     let stages: Vec<&str> = complained
@@ -798,7 +870,7 @@ fn proved_equivalent(root: &std::path::Path) {
     let report = report_of(root);
     if !njutest_devkit::reproducible::builds_the_same_twice() {
         assert_eq!(
-            report["accounting"]["mutants"]["equivalent"].as_u64(),
+            part_of(&report)["accounting"]["mutants"]["equivalent"].as_u64(),
             Some(0),
             "a machine that renders one unchanged tree two ways establishes nothing here, \
              and a run that took its own difference for the mutation's would remove a \
@@ -807,13 +879,13 @@ fn proved_equivalent(root: &std::path::Path) {
         return;
     }
     assert_eq!(
-        report["accounting"]["mutants"]["equivalent"].as_u64(),
+        part_of(&report)["accounting"]["mutants"]["equivalent"].as_u64(),
         Some(1),
         "the compiler renders `n + 0` and `n - 0` identically at this fixture's \
          optimisation level, and the tests run it, so no test could have noticed: that \
          is a finding removed rather than a survivor reported: {report}"
     );
-    let surviving: Vec<&str> = report["findings"]
+    let surviving: Vec<&str> = part_of(&report)["findings"]
         .as_array()
         .expect("findings")
         .iter()
@@ -847,7 +919,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         format!(
             "version = 1\n\n[resources.postgres]\ncommand = [{:?}, \"resource\"]\n\
              timeout = \"10s\"\nenvironment = [\"FAKE_PROVIDER_READY\", \"FAKE_PROVIDER_STOPPED\"]\n",
-            provider.to_string_lossy()
+            provider.to_str().expect("test protocol paths are UTF-8")
         ),
     )
     .expect("a configuration that names a resource");
@@ -890,7 +962,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         &mut said,
         &mut complaints,
     );
-    let complained = String::from_utf8_lossy(&complaints).into_owned();
+    let complained = njutest_devkit::process::strict_utf8(&complaints).into_owned();
     assert_eq!(code, 2, "{complained}");
     let stages: Vec<&str> = complained
         .lines()
@@ -909,7 +981,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
 
 /// What a report says about the one resource a run was told to hold.
 fn leased(report: &serde_json::Value) {
-    let held = report["resources"]
+    let held = part_of(report)["resources"]
         .as_array()
         .expect("resources")
         .first()
@@ -929,7 +1001,7 @@ fn leased(report: &serde_json::Value) {
          document people put in front of each other: {report}"
     );
     assert!(
-        !report["limitations"]
+        !part_of(report)["limitations"]
             .as_array()
             .expect("limitations")
             .iter()
@@ -960,7 +1032,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         format!(
             "version = 1\n\n[generation]\ncommand = [{:?}, \"generation\"]\n\
              environment = [\"FAKE_GENERATOR_OFFERS\", \"FAKE_GENERATOR_ASKED\"]\n",
-            provider.to_string_lossy()
+            provider.to_str().expect("test protocol paths are UTF-8")
         ),
     )
     .expect("a configuration that names a generator");
@@ -1004,9 +1076,14 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         &mut said,
         &mut complaints,
     );
-    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+    assert_eq!(
+        code,
+        2,
+        "{}",
+        njutest_devkit::process::strict_utf8(&complaints)
+    );
 
-    let complained = String::from_utf8_lossy(&complaints).into_owned();
+    let complained = njutest_devkit::process::strict_utf8(&complaints).into_owned();
     let stages: Vec<&str> = complained
         .lines()
         .filter_map(|line| line.strip_prefix("== "))
@@ -1030,7 +1107,8 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
 fn questioned(asked: &std::path::Path) {
     let put = std::fs::read_to_string(asked).expect("what the generator was asked");
     let question: serde_json::Value =
-        serde_json::from_str(put.lines().next().expect("one question")).expect("it is JSON");
+        njutest_devkit::strictjson::decode_str(put.lines().next().expect("one question"))
+            .expect("it is JSON");
     assert_eq!(
         question["finding"]["kind"], "surviving-mutant",
         "and it says what kind of gap it is asking about, because what closes a \
@@ -1055,7 +1133,7 @@ fn questioned(asked: &std::path::Path) {
 
 /// What a run records about a candidate it put to the tests.
 fn offered_and_checked(report: &serde_json::Value, root: &std::path::Path) {
-    let offered = report["candidates"]
+    let offered = part_of(report)["candidates"]
         .as_array()
         .expect("candidates")
         .first()
@@ -1078,12 +1156,12 @@ fn offered_and_checked(report: &serde_json::Value, root: &std::path::Path) {
         "and it stays a proposal: verifying is reading, and the only thing that writes \
          into somebody's tree is being asked to"
     );
+    let kept = std::fs::read_dir(root.join(njutest_cli::repair::STORE))
+        .expect("the candidates this run kept")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("every kept-candidate entry is readable");
     assert!(
-        std::fs::read_dir(root.join(njutest_cli::repair::STORE))
-            .expect("the candidates this run kept")
-            .flatten()
-            .count()
-            > 0,
+        !kept.is_empty(),
         "and what it holds up is kept, because `fix --apply` writes what was checked \
          rather than asking the generator again for something nobody put to the tests"
     );
@@ -1095,7 +1173,11 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
     let blocked = dir.join("fixture-blocked");
     copy_tree(root, &blocked);
     for gone in [".njutest", "reports"] {
-        drop(std::fs::remove_dir_all(blocked.join(gone)));
+        match std::fs::remove_dir_all(blocked.join(gone)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("removing {gone} from the blocked fixture: {error}"),
+        }
     }
     std::fs::create_dir_all(blocked.join(".njutest")).expect("the directory it works in");
     std::fs::write(
@@ -1113,15 +1195,19 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
         ..environment
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
-    let _code = njutest_cli::run_from(
+    let code = njutest_cli::run_from(
         ["njutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
         &elsewhere,
         &mut said,
         &mut complaints,
     );
+    assert_ne!(
+        code, EXIT_ERROR,
+        "failure to retain an optional proposal does not erase the completed run"
+    );
     let report = report_of(&blocked);
     assert!(
-        report["limitations"]
+        part_of(&report)["limitations"]
             .as_array()
             .expect("limitations")
             .iter()
@@ -1131,7 +1217,9 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
          gone: {report}"
     );
     assert!(
-        report["candidates"].as_array().is_some_and(Vec::is_empty),
+        part_of(&report)["candidates"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
         "and it does not record it, because a candidate a reader cannot get back is an \
          offer that cannot be taken up: {report}"
     );
@@ -1145,7 +1233,8 @@ struct Interrupting<'a> {
 
 impl Write for Interrupting<'_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        self.said.push_str(&String::from_utf8_lossy(buffer));
+        self.said
+            .push_str(&njutest_devkit::process::strict_utf8(buffer));
         if self
             .said
             .split_once("== mutation")
@@ -1190,11 +1279,18 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
         cancel: &environment.cancel,
         said: String::new(),
     };
-    let _code = njutest_cli::run_from(
+    let code = njutest_cli::run_from(
         ["njutest", "verify", "--offline", "--locked", "--ui=plain"].map(OsString::from),
         &environment,
         &mut said,
         &mut complaints,
+    );
+    assert_eq!(
+        code, 2,
+        "the cancel lands once the phase has measured everything and started saying so, \
+         so the run carries its verdict out rather than dying between rows: what it \
+         must not do is clear what it established on the way out: {}",
+        complaints.said
     );
 
     left_behind(&environment.cache_directory);
@@ -1205,13 +1301,17 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
 /// What a run that was stopped wrote where its successor will look.
 fn left_behind(cache: &std::path::Path) {
     let kept: Vec<serde_json::Value> =
-        std::fs::read_dir(cache.join("njutest/outcomes-v1/checkpoints"))
+        std::fs::read_dir(cache.join("njutest/outcomes-v2/checkpoints"))
             .expect("the checkpoints directory")
-            .flatten()
-            .filter_map(|entry| {
-                std::fs::read_to_string(entry.path().join(njutest_cli::checkpoint::FILE_NAME)).ok()
+            .map(|entry| entry.expect("every checkpoint entry is readable"))
+            .map(|entry| {
+                std::fs::read_to_string(entry.path().join(njutest_cli::checkpoint::FILE_NAME))
+                    .expect("every checkpoint document is readable")
             })
-            .filter_map(|text| serde_json::from_str(&text).ok())
+            .map(|text| {
+                njutest_devkit::strictjson::decode_str(&text)
+                    .expect("every checkpoint is valid JSON")
+            })
             .collect();
     let state = kept.first().expect("what the stopped run established");
     assert!(
@@ -1226,7 +1326,9 @@ fn left_behind(cache: &std::path::Path) {
             .as_array()
             .expect("mutants")
             .iter()
-            .all(|one| one["killed_by"].as_str().is_some_and(|by| !by.is_empty())),
+            .all(|one| one["disposition"]["by"]
+                .as_str()
+                .is_some_and(|by| !by.is_empty())),
         "and each of them names the target that decided it, because a kill nobody can \
          attribute is not one the next run may carry: the report it ends in has to say \
          which test noticed: {state}"
@@ -1253,10 +1355,15 @@ fn resumed(root: &std::path::Path, environment: Environment) {
         &mut said,
         &mut complaints,
     );
-    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+    assert_eq!(
+        code,
+        2,
+        "{}",
+        njutest_devkit::process::strict_utf8(&complaints)
+    );
     let report = report_of(root);
     assert_eq!(
-        report["provenance"]["cached"],
+        report["report"]["provenance"]["cached"],
         serde_json::Value::Bool(false),
         "and the next run of the same tree establishes it rather than reading back what \
          the stopped one reached. A run that was told to stop stopped: its answer is \
@@ -1264,7 +1371,7 @@ fn resumed(root: &std::path::Path, environment: Environment) {
          next run a partial measurement wearing a whole one's name: {report}"
     );
     assert!(
-        report["limitations"]
+        part_of(&report)["limitations"]
             .as_array()
             .expect("limitations")
             .iter()
@@ -1310,7 +1417,7 @@ fn once(
     assert!(
         matches!(code, 0..=2),
         "{name} reached a verdict rather than a failure: {}",
-        String::from_utf8_lossy(&complaints)
+        njutest_devkit::process::strict_utf8(&complaints)
     );
     report_of(&root)
 }
@@ -1360,6 +1467,16 @@ fn a_run_of_one_tree_says_the_same_thing_however_many_times_and_however_widely_i
     );
 }
 
+/// One shard document, read back from a run that judged part of a catalog.
+fn shard_of(document: &serde_json::Value) -> njutest_cli::report::ShardReport {
+    match njutest_cli::report::json::parse_any(&document.to_string()).expect("a part reads back") {
+        njutest_cli::report::ReportDocument::Shard(shard) => shard,
+        njutest_cli::report::ReportDocument::Complete(_) => {
+            panic!("a sharded run writes one shard document")
+        }
+    }
+}
+
 /// One part of `fixture`'s catalog, judged in this process.
 fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_json::Value {
     let scratch = dir.join(format!("part-{}-scratch", shard.replace('/', "-")));
@@ -1390,8 +1507,13 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
         &mut said,
         &mut complaints,
     );
-    assert_eq!(code, 0, "{shard}: {}", String::from_utf8_lossy(&complaints));
-    report_of(root)
+    assert_eq!(
+        code,
+        0,
+        "{shard}: {}",
+        njutest_devkit::process::strict_utf8(&complaints)
+    );
+    latest_report_of(root)
 }
 
 #[test]
@@ -1410,24 +1532,53 @@ fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have
     );
     let one = part(&root, dir.path(), "1/2");
     let two = part(&root, dir.path(), "2/2");
-    assert_ne!(one["run_id"], two["run_id"], "two runs, two reports");
+    assert_ne!(
+        one["report"]["run_id"], two["report"]["run_id"],
+        "two runs, two reports"
+    );
 
-    let parts: Vec<njutest_cli::report::Report> = [&one, &two]
-        .into_iter()
-        .map(|document| {
-            njutest_cli::report::json::parse(&document.to_string()).expect("a part reads back")
-        })
-        .collect();
-    let merged = njutest_cli::report::merge::merge(&parts).expect("two parts of one catalog");
-    let combined = serde_json::to_value(&merged).expect("the whole is a document");
+    let parts: Vec<njutest_cli::report::ShardReport> =
+        [&one, &two].into_iter().map(shard_of).collect();
+    let final_run =
+        rust_mutants::id::RunId::try_from("the-whole-of-the-parts").expect("a canonical run id");
+    let merged = njutest_cli::report::merge::merge(&final_run, &parts)
+        .expect("two parts of one catalog")
+        .complete_without_models()
+        .expect("the whole needs no model phase");
+    let whole_report =
+        njutest_cli::report::json::parse(&whole.to_string()).expect("the whole reads back");
 
+    let answer = |report: &njutest_cli::report::Report| {
+        let concluded = report.conclusion().expect("the report adds up");
+        (
+            report.verdict(),
+            concluded.accounting.mutants,
+            concluded
+                .mutants
+                .iter()
+                .map(|one| {
+                    (
+                        one.display_id().to_owned(),
+                        (
+                            one.decision(),
+                            one.by_build()
+                                .first()
+                                .and_then(|fact| fact.outcome().decided_by().map(str::to_owned)),
+                        ),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<String, _>>(),
+        )
+    };
     assert_eq!(
-        njutest_devkit::report::normalize(&combined),
-        njutest_devkit::report::normalize(&whole),
+        answer(&merged),
+        answer(&whole_report),
         "dividing the work is not a budget only if the pieces add back up to it. A run \
-         cut in two and put back together has to say what one run of the same tree says \
-         — the same verdict, the same counts, the same row for every mutation — or \
-         --shard is a way of getting a different answer cheaply"
+         cut in two and put back together has to answer what one run of the same tree \
+         answers — the same verdict, the same counts, the same row for every mutation — \
+         or --shard is a way of getting a different answer cheaply. A merged report \
+         keeps one part per shard, so the answer is compared where a reader reads it, \
+         not as bytes"
     );
 }
 
@@ -1454,7 +1605,10 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
         &mut said,
         &mut complaints,
     );
-    (code, String::from_utf8_lossy(&complaints).into_owned())
+    (
+        code,
+        njutest_devkit::process::strict_utf8(&complaints).into_owned(),
+    )
 }
 
 /// Whether this machine has the interpreter the `deep-v1` contract promises.
@@ -1501,17 +1655,17 @@ fn the_contract_that_promises_the_suite_is_interpreted_interprets_it() {
         Some("version = 1\ncontract = \"deep-v1\"\n"),
     );
     assert_eq!(
-        report["contract"], "deep-v1",
+        report["report"]["contract"], "deep-v1",
         "the run answers to the contract it was given: {report}"
     );
     assert_eq!(
-        report["accounting"]["soundness"]["executed"],
+        part_of(&report)["accounting"]["soundness"]["executed"],
         serde_json::Value::Bool(true),
         "and deep-v1 promises the suite is interpreted, so a run of it that did not \
          interpret anything and still reached a verdict would be the promise unkept in \
          the one place nobody looks: {report}"
     );
-    let stated: Vec<&str> = report["limitations"]
+    let stated: Vec<&str> = part_of(&report)["limitations"]
         .as_array()
         .expect("limitations")
         .iter()
@@ -1583,10 +1737,15 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
         &mut said,
         &mut complaints,
     );
-    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+    assert_eq!(
+        code,
+        2,
+        "{}",
+        njutest_devkit::process::strict_utf8(&complaints)
+    );
 
     let report = report_of(&root);
-    let stated: Vec<&str> = report["limitations"]
+    let stated: Vec<&str> = part_of(&report)["limitations"]
         .as_array()
         .expect("limitations")
         .iter()
@@ -1600,7 +1759,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
          {stated:?}"
     );
     assert!(
-        report["findings"]
+        part_of(&report)["findings"]
             .as_array()
             .expect("findings")
             .iter()
@@ -1661,10 +1820,13 @@ fn verified_in_process(
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(args, &environment, &mut said, &mut complaints);
-    let _kept = String::from_utf8_lossy(&said).into_owned();
+    assert!(
+        std::str::from_utf8(&said).is_ok(),
+        "command output is a UTF-8 protocol"
+    );
     (
         code,
-        String::from_utf8_lossy(&complaints).into_owned(),
+        njutest_devkit::process::strict_utf8(&complaints).into_owned(),
         root,
     )
 }
@@ -1731,12 +1893,12 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
         );
     }
     assert!(
-        report["mutants"]
+        part_of(&report)["mutants"]
             .as_array()
             .expect("mutants")
             .iter()
             .filter(|one| expired.contains(one["display_id"].as_str().unwrap_or_default()))
-            .all(|one| one["outcome"] != "waited"),
+            .all(|one| one["decision"]["outcome"] != "waited"),
         "and what the second measurement said is what the mutation is reported as: the \
          first one is how long it took, not what it established: {report}"
     );
@@ -1787,18 +1949,18 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         code,
         2,
         "this fixture has a gap its own tests cannot see: {}\n{}",
-        String::from_utf8_lossy(&said),
-        String::from_utf8_lossy(&complaints)
+        njutest_devkit::process::strict_utf8(&said),
+        njutest_devkit::process::strict_utf8(&complaints)
     );
 
     let report = report_of(&root);
     assert_eq!(
-        report["repository"]["git"]["available"],
+        report["report"]["repository"]["git"]["available"],
         serde_json::Value::Bool(false),
         "a copied fixture is not a repository, and the report says what git answered \
          rather than leaving the question unasked: {report}"
     );
-    let stated: Vec<&str> = report["limitations"]
+    let stated: Vec<&str> = part_of(&report)["limitations"]
         .as_array()
         .expect("limitations")
         .iter()
@@ -1809,7 +1971,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         "and states that it could not name the commit it verified, which is the one \
          thing that would let somebody come back to this tree: {stated:?}"
     );
-    let skipped = report["limitations"]
+    let skipped = part_of(&report)["limitations"]
         .as_array()
         .expect("limitations")
         .iter()
@@ -1825,14 +1987,16 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
          report about this workspace and a report about a corner of it: {skipped}"
     );
 
-    stages_of(&String::from_utf8_lossy(&complaints), &root);
+    stages_of(&njutest_devkit::process::strict_utf8(&complaints), &root);
 
     accounted(&report, &root);
 }
 
 /// What a whole run's report says about the targets and the mutations it judged.
 fn accounted(report: &serde_json::Value, root: &std::path::Path) {
-    let targets = report["targets"].as_array().expect("target records");
+    let targets = part_of(report)["targets"]
+        .as_array()
+        .expect("target records");
     assert!(
         !targets.is_empty(),
         "a run that measured targets says which ones, or the counts it carries are \
@@ -1847,20 +2011,24 @@ fn accounted(report: &serde_json::Value, root: &std::path::Path) {
         "and they are ordered slowest first, which is the order somebody reading for \
          where the time went needs: {durations:?}"
     );
+    let selected = u64::try_from(targets.len()).expect("the fixture target count fits u64");
     assert_eq!(
-        report["accounting"]["targets"]["selected"].as_u64(),
-        u64::try_from(targets.len()).ok(),
+        part_of(report)["accounting"]["targets"]["selected"].as_u64(),
+        Some(selected),
         "the counts and the records are two ways of saying one thing: {report}"
     );
     assert!(
-        report["accounting"]["mutants"]["cataloged"]
+        part_of(report)["accounting"]["mutants"]["cataloged"]
             .as_u64()
             .is_some_and(|counted| counted > 0)
-            && !report["mutants"].as_array().expect("mutants").is_empty(),
+            && !part_of(report)["mutants"]
+                .as_array()
+                .expect("mutants")
+                .is_empty(),
         "and a run that catalogued mutations records what became of each: {report}"
     );
     assert!(
-        report["timing"]["finished"]
+        part_of(report)["timing"]["finished"]
             .as_str()
             .is_some_and(|when| !when.is_empty()),
         "a report that never says when it finished is one nothing can be compared \
@@ -1874,7 +2042,7 @@ fn accounted(report: &serde_json::Value, root: &std::path::Path) {
 fn provenance(report: &serde_json::Value) {
     for named in ["rustc", "cargo", "target", "os", "arch"] {
         assert!(
-            report["toolchain"][named]
+            part_of(report)["toolchain"][named]
                 .as_str()
                 .is_some_and(|said| !said.is_empty()),
             "and it says what built the thing it is about, because the same suite \
@@ -1882,13 +2050,15 @@ fn provenance(report: &serde_json::Value) {
         );
     }
     assert_eq!(
-        report["repository"]["packages"],
+        report["report"]["repository"]["packages"],
         serde_json::json!(["fixture-baseline"]),
         "and which packages the workspace holds, which is the scope every count in it \
          is over: {report}"
     );
     assert!(
-        report["resources"].as_array().is_some_and(Vec::is_empty),
+        part_of(report)["resources"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
         "a run that was given nothing to hold says so rather than leaving the question \
          unasked, because a resource nobody released is one the next run waits for: \
          {report}"
@@ -1897,23 +2067,23 @@ fn provenance(report: &serde_json::Value) {
 
 /// What a whole run of the baseline fixture concludes about the mutations it judged.
 fn concluded(report: &serde_json::Value, root: &std::path::Path) {
-    assert_eq!(report["verdict"], "INSUFFICIENT");
+    assert_eq!(verdict_of(root), njutest_cli::report::Verdict::Insufficient);
     assert_eq!(
         (
-            report["accounting"]["mutants"]["killed"].as_u64(),
-            report["accounting"]["mutants"]["survived"].as_u64(),
-            report["accounting"]["mutants"]["unreached"].as_u64(),
+            part_of(report)["accounting"]["mutants"]["killed"].as_u64(),
+            part_of(report)["accounting"]["mutants"]["survived"].as_u64(),
+            part_of(report)["accounting"]["mutants"]["unreached"].as_u64(),
         ),
         (Some(10), Some(3), Some(1)),
         "and every mutation is in the column it belongs to. A phase that reported them \
          all as unnoticed, or all as something nothing could decide, reaches the same \
          verdict on this fixture by a route that says nothing about the suite: {report}"
     );
-    let named: Vec<&str> = report["mutants"]
+    let named: Vec<&str> = part_of(report)["mutants"]
         .as_array()
         .expect("mutants")
         .iter()
-        .filter_map(|one| one["killed_by"].as_str())
+        .filter_map(|one| one["decision"]["killed_by"].as_str())
         .collect();
     assert_eq!(
         named.len(),
@@ -1926,16 +2096,14 @@ fn concluded(report: &serde_json::Value, root: &std::path::Path) {
 
 /// That the phase counted its mutations off one at a time to whoever was watching.
 fn paced(report: &serde_json::Value, root: &std::path::Path) {
-    let counted = report["accounting"]["mutants"]["cataloged"]
+    let counted = part_of(report)["accounting"]["mutants"]["cataloged"]
         .as_u64()
         .expect("how many were judged");
     let said: Vec<(u64, u64)> = events_of(root)
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Progress { progress } => {
-                Some((progress.done?, progress.total?))
-            }
-            _ => None,
+        .filter_map(|event| {
+            let progress = njutest_cli::testkit::payload::of(&event.payload).progress()?;
+            Some((progress.done?, progress.total?))
         })
         .filter(|(_done, total)| *total == counted)
         .collect();

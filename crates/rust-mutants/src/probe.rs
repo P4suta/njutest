@@ -78,7 +78,6 @@ const fn is_safe_operator(op: &BinOp) -> bool {
 
 /// What a probe asks about one return replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Question {
     /// Whether the value already equals what `Default::default()` would produce.
     Default,

@@ -18,12 +18,12 @@ const EARLIER: &str = "20260905T090000Z-1a2b3c";
 const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 const TARGET: &str = "pkg/test/lib";
-const REPORT: &str = "njutest-assurance-report-v1.json";
+const REPORT: &str = "njutest-assurance-report-v2.json";
 
 fn base() -> serde_json::Value {
     serde_json::json!({
-        "schema": "njutest-assurance-report-v1",
-        "schema_version": 1,
+        "schema": "njutest-assurance-report-v2",
+        "schema_version": 2,
         "run_id": RUN,
         "run_kind": "scoped",
         "contract": "standard-v1",
@@ -36,12 +36,15 @@ fn base() -> serde_json::Value {
                 "executed": 2,
                 "killed": 1,
                 "survived": 1,
-                "timed_out": 0,
+                "step_limit_reached": 0,
+                "waited": 0,
                 "unreached": 0,
                 "equivalent": 0,
                 "accepted": 0,
                 "reused_killed": 0,
-                "reused_survived": 0
+                "reused_survived": 0,
+                "model_noticed": 0,
+                "model_proved": 0
             },
             "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false }
         },
@@ -62,10 +65,11 @@ fn base() -> serde_json::Value {
                 "path": "src/lib.rs",
                 "position": { "line": 7, "column": 9, "character_column": 9 },
                 "rule": "negate-condition@1",
-                "outcome": "killed",
-                "killed_by": TARGET,
-                "reused": false,
-                "source_run_id": null
+                "decision": {
+                    "outcome": "killed", "killed_by": TARGET, "step_boundary": null
+                },
+                "accepted": false,
+                "reuse": { "reused": false, "source_run_id": null }
             },
             {
                 "id": "b".repeat(64),
@@ -73,12 +77,14 @@ fn base() -> serde_json::Value {
                 "path": "src/lib.rs",
                 "position": { "line": 11, "column": 5, "character_column": 5 },
                 "rule": "return-ok-default@1",
-                "outcome": "survived",
-                "killed_by": null,
-                "reused": false,
-                "source_run_id": null
+                "decision": {
+                    "outcome": "survived", "killed_by": null, "step_boundary": null
+                },
+                "accepted": false,
+                "reuse": { "reused": false, "source_run_id": null }
             }
         ],
+        "models": [],
         "findings": [
             {
                 "kind": "surviving-mutant",
@@ -143,7 +149,10 @@ fn without(document: &mut serde_json::Value, group: &str, column: &str) {
         .and_then(|accounting| accounting.get_mut(group))
         .and_then(serde_json::Value::as_object_mut)
         .expect("the accounting group");
-    let _removed = columns.remove(column);
+    assert!(
+        columns.remove(column).is_some(),
+        "the fixture accounting has {group}.{column}"
+    );
 }
 
 fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
@@ -188,8 +197,24 @@ fn audited(document: &serde_json::Value) -> Audit {
 fn recorded(lines: &[serde_json::Value]) -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("a temporary directory");
     let mut stream = String::new();
-    for line in lines {
-        stream.push_str(&line.to_string());
+    for (index, line) in lines.iter().enumerate() {
+        let mut payload = line.as_object().expect("a synthetic event object").clone();
+        let seq = payload
+            .remove("seq")
+            .unwrap_or_else(|| serde_json::json!(index.saturating_add(1)));
+        let timestamp = payload
+            .remove("timestamp")
+            .unwrap_or_else(|| serde_json::json!("2026-09-06T00:00:00Z"));
+        let elapsed_ms = payload
+            .remove("elapsed_ms")
+            .unwrap_or_else(|| serde_json::json!(index));
+        let current = serde_json::json!({
+            "seq": seq,
+            "timestamp": timestamp,
+            "elapsed_ms": elapsed_ms,
+            "payload": serde_json::Value::Object(payload),
+        });
+        stream.push_str(&current.to_string());
         stream.push('\n');
     }
     std::fs::write(directory.path().join("trace.jsonl"), stream).expect("the recording");
@@ -239,6 +264,113 @@ fn a_recording_that_agrees_with_itself_has_nothing_to_report() {
     let audit = audited_with_routes(&base());
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.exit_code(), 0);
+}
+
+#[test]
+fn an_affirmative_model_outcome_is_reparsed_from_retained_artifacts() {
+    let mutant = "b".repeat(64);
+    let document = with(serde_json::json!({
+        "contract": "verified-v1",
+        "accounting": {
+            "mutants": { "survived": 0, "model_proved": 1 }
+        },
+        "findings": [],
+        "models": [{
+            "mutant": mutant,
+            "answer": {
+                "decision": "proved",
+                "evidence": {}
+            }
+        }],
+        "mutants": [
+            {},
+            { "decision": { "outcome": "model-proved" } }
+        ]
+    }));
+    let audit = audited(&document);
+    assert!(
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Model
+                && remark.standing == Standing::Violated
+                && remark
+                    .detail
+                    .contains("exact closed shape for its decision")
+        }),
+        "{audit}"
+    );
+}
+
+#[test]
+fn verified_v1_requires_exactly_one_model_record_for_every_test_survivor() {
+    let survivor = "b".repeat(64);
+
+    let missing = with(serde_json::json!({ "contract": "verified-v1" }));
+    let audit = audited(&missing);
+    assert!(
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Model
+                && remark.standing == Standing::Violated
+                && remark
+                    .detail
+                    .contains("no exactly corresponding model record")
+        }),
+        "{audit}"
+    );
+
+    let duplicate = with(serde_json::json!({
+        "contract": "verified-v1",
+        "models": [
+            {
+                "mutant": survivor,
+                "answer": { "decision": "ineligible", "reason": "effect" }
+            },
+            {
+                "mutant": survivor,
+                "answer": { "decision": "ineligible", "reason": "effect" }
+            }
+        ]
+    }));
+    let audit = audited(&duplicate);
+    assert!(
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Model
+                && remark.standing == Standing::Violated
+                && remark.detail.contains("unique, non-empty")
+        }),
+        "{audit}"
+    );
+}
+
+#[test]
+fn verified_v1_rejects_extra_and_open_shaped_model_records() {
+    let killed = "a".repeat(64);
+    let survivor = "b".repeat(64);
+    let document = with(serde_json::json!({
+        "contract": "verified-v1",
+        "models": [
+            {
+                "mutant": survivor,
+                "answer": { "decision": "ineligible", "reason": "effect" }
+            },
+            {
+                "mutant": killed,
+                "answer": {
+                    "decision": "ineligible",
+                    "reason": "effect",
+                    "untrusted": true
+                }
+            }
+        ]
+    }));
+    let audit = audited(&document);
+    assert!(
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Model
+                && remark.standing == Standing::Violated
+                && remark.detail.contains("exact closed shape")
+        }),
+        "{audit}"
+    );
 }
 
 #[test]
@@ -336,7 +468,7 @@ fn an_acceptance_of_a_mutation_nothing_reached_is_not_a_violation() {
         "accounting": {
             "mutants": { "executed": 1, "survived": 0, "unreached": 1, "accepted": 1 }
         },
-        "mutants": [{}, { "outcome": "unreached" }],
+        "mutants": [{}, { "decision": { "outcome": "unreached" }, "accepted": true }],
         "findings": []
     }));
 
@@ -354,7 +486,7 @@ fn more_acceptances_than_there_are_mutations_to_accept_is_a_violation() {
         "accounting": {
             "mutants": { "executed": 1, "survived": 0, "unreached": 1, "accepted": 2 }
         },
-        "mutants": [{}, { "outcome": "unreached" }],
+        "mutants": [{}, { "decision": { "outcome": "unreached" }, "accepted": true }],
         "findings": []
     }));
 
@@ -433,7 +565,7 @@ fn a_defect_that_names_nothing_a_reader_can_act_on_is_a_violation() {
 fn a_kill_that_names_no_target_at_all_is_a_violation() {
     assert_eq!(
         violations(&with(
-            serde_json::json!({ "mutants": [{ "killed_by": null }] })
+            serde_json::json!({ "mutants": [{ "decision": { "killed_by": null } }] })
         )),
         [KILLED],
         "a kill nobody can name is not a kill a reader can check"
@@ -444,7 +576,7 @@ fn a_kill_that_names_no_target_at_all_is_a_violation() {
 fn a_kill_attributed_to_a_target_the_recording_does_not_carry_is_a_violation() {
     assert_eq!(
         violations(&with(
-            serde_json::json!({ "mutants": [{ "killed_by": "pkg/test/lib somebody_else" }] })
+            serde_json::json!({ "mutants": [{ "decision": { "killed_by": "pkg/test/lib somebody_else" } }] })
         )),
         [KILLED]
     );
@@ -489,15 +621,15 @@ fn a_surviving_mutant_finding_that_names_no_survivor_is_a_violation() {
 }
 
 #[test]
-fn a_survivor_no_finding_names_is_unaudited_where_the_recording_counts_an_acceptance() {
+fn an_aggregate_acceptance_cannot_hide_a_row_the_report_did_not_accept() {
     let document = with(serde_json::json!({
         "findings": [],
         "accounting": { "mutants": { "accepted": 1 } }
     }));
-    assert_eq!(violations(&document), Vec::<String>::new());
     assert!(
-        unaudited(&document).contains(&SURVIVED.to_owned()),
-        "the recording counts acceptances without naming them, so which survivor was accepted cannot be re-decided"
+        violations(&document).contains(&"accounting.mutants.accepted".to_owned())
+            && violations(&document).contains(&SURVIVED.to_owned()),
+        "an aggregate count cannot answer a different row or replace the required row-local fact"
     );
 }
 
@@ -505,7 +637,7 @@ fn a_survivor_no_finding_names_is_unaudited_where_the_recording_counts_an_accept
 fn a_reused_disposition_that_names_no_source_run_is_a_violation() {
     assert_eq!(
         violations(&with(serde_json::json!({
-            "mutants": [{ "reused": true }],
+            "mutants": [{ "reuse": { "reused": true } }],
             "accounting": { "mutants": { "reused_killed": 1 } }
         }))),
         [KILLED],
@@ -517,7 +649,7 @@ fn a_reused_disposition_that_names_no_source_run_is_a_violation() {
 fn a_reused_disposition_that_names_this_run_itself_is_a_violation() {
     assert_eq!(
         violations(&with(serde_json::json!({
-            "mutants": [{ "reused": true, "source_run_id": RUN }],
+            "mutants": [{ "reuse": { "reused": true, "source_run_id": RUN } }],
             "accounting": { "mutants": { "reused_killed": 1 } }
         }))),
         [KILLED],
@@ -529,7 +661,7 @@ fn a_reused_disposition_that_names_this_run_itself_is_a_violation() {
 fn a_source_run_on_a_disposition_this_run_established_is_a_violation() {
     assert_eq!(
         violations(&with(serde_json::json!({
-            "mutants": [{ "reused": false, "source_run_id": EARLIER }]
+            "mutants": [{ "reuse": { "reused": false, "source_run_id": EARLIER } }]
         }))),
         [KILLED]
     );
@@ -538,7 +670,7 @@ fn a_source_run_on_a_disposition_this_run_established_is_a_violation() {
 #[test]
 fn what_a_reused_disposition_rests_on_is_unaudited() {
     let document = with(serde_json::json!({
-        "mutants": [{ "reused": true, "source_run_id": EARLIER }],
+        "mutants": [{ "reuse": { "reused": true, "source_run_id": EARLIER } }],
         "accounting": { "mutants": { "reused_killed": 1 } }
     }));
     assert_eq!(violations(&document), Vec::<String>::new());
@@ -557,6 +689,30 @@ fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
 }
 
 #[test]
+fn an_explicit_recording_that_is_missing_cannot_be_audited() {
+    let run = run_directory(&base());
+    let trace = tempfile::tempdir().expect("a temporary directory");
+    let error = gates::proofaudit(run.path(), Some(trace.path()))
+        .expect_err("an explicitly requested recording must exist");
+    assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
+    assert!(error.to_string().contains("trace.jsonl"), "{error}");
+}
+
+#[test]
+fn a_corrupt_line_rejects_the_entire_explicit_recording() {
+    let run = run_directory(&base());
+    let trace = tempfile::tempdir().expect("a temporary directory");
+    std::fs::write(trace.path().join("trace.jsonl"), "not json\n").expect("the corrupt recording");
+    let error = gates::proofaudit(run.path(), Some(trace.path()))
+        .expect_err("corrupt evidence must not become an empty recording");
+    assert!(
+        matches!(error, AuditError::MalformedRecording { .. }),
+        "{error}"
+    );
+    assert!(error.to_string().contains("line 1"), "{error}");
+}
+
+#[test]
 fn a_report_that_is_not_json_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(directory.path().join(REPORT), "not json").expect("the recording");
@@ -565,8 +721,54 @@ fn a_report_that_is_not_json_cannot_be_audited() {
 }
 
 #[test]
+fn duplicate_report_keys_are_malformed_before_any_redecision() {
+    let root = serde_json::to_string(&base())
+        .expect("report fixture")
+        .replacen(
+            "\"schema\":\"njutest-assurance-report-v2\"",
+            "\"schema\":\"forged\",\"schema\":\"njutest-assurance-report-v2\"",
+            1,
+        );
+
+    let nested = serde_json::to_string(&base())
+        .expect("report fixture")
+        .replacen(
+            "\"outcome\":\"killed\"",
+            "\"outcome\":\"survived\",\"outcome\":\"killed\"",
+            1,
+        );
+
+    let with_model = with(serde_json::json!({
+        "models": [{
+            "mutant": "b".repeat(64),
+            "answer": {
+                "decision": "proved",
+                "evidence": {"verifier": {"tool": "0.68.0"}}
+            }
+        }]
+    }));
+    let model = serde_json::to_string(&with_model)
+        .expect("model report fixture")
+        .replacen(
+            "\"tool\":\"0.68.0\"",
+            "\"tool\":\"forged\",\"tool\":\"0.68.0\"",
+            1,
+        );
+
+    for document in [root, nested, model] {
+        let error = xtask::proofaudit::audit_at("duplicate.json", &document, None, None)
+            .expect_err("duplicate keys never reach proof redecision");
+        assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+        assert!(
+            error.to_string().contains("duplicate JSON object key"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn a_document_of_another_schema_cannot_be_audited() {
-    let document = with(serde_json::json!({ "schema": "njutest-trace-v1" }));
+    let document = with(serde_json::json!({ "schema": "njutest-trace-v2" }));
     let directory = run_directory(&document);
     let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unrecognised { .. }), "{error}");
@@ -836,7 +1038,8 @@ fn disagreeing() -> serde_json::Value {
             "targets": { "selected": 9, "passed": 9, "failed": 9, "skipped": 9, "missing": 9 },
             "mutants": {
                 "cataloged": 9, "rejected": 9, "executed": 9, "killed": 9, "survived": 9,
-                "timed_out": 9, "unreached": 9, "equivalent": 9, "accepted": 9,
+                "step_limit_reached": 9, "waited": 9, "unreached": 9,
+                "equivalent": 9, "accepted": 9,
                 "reused_killed": 9, "reused_survived": 9
             },
             "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false }
@@ -869,7 +1072,10 @@ fn routed(mutant: &str, granularity: &str, route: &serde_json::Value) -> serde_j
     });
     if let (Some(into), Some(from)) = (record.as_object_mut(), route.as_object()) {
         for (key, value) in from {
-            let _replaced = into.insert(key.clone(), value.clone());
+            assert!(
+                into.insert(key.clone(), value.clone()).is_some(),
+                "the route override names a declared field: {key}"
+            );
         }
     }
     serde_json::json!({
@@ -908,8 +1114,9 @@ fn documents() -> Vec<(&'static str, Audit)> {
         "mutants": [{
             "id": "c".repeat(64), "display_id": "cccccccccccccccccccc", "path": "src/lib.rs",
             "position": { "line": 1, "column": 1, "character_column": 1 },
-            "rule": "r@1", "outcome": "killed", "killed_by": null, "reused": false,
-            "source_run_id": null
+            "rule": "r@1",
+            "decision": { "outcome": "killed", "killed_by": null, "step_boundary": null },
+            "reuse": { "reused": false, "source_run_id": null }
         }]
     }));
     vec![
@@ -1033,8 +1240,9 @@ fn concluding() -> Vec<(&'static str, Audit)> {
                     "id": "d".repeat(64), "display_id": "dddddddddddddddddddd",
                     "path": "src/lib.rs",
                     "position": { "line": 1, "column": 1, "character_column": 1 },
-                    "rule": "r@1", "outcome": "killed", "killed_by": TARGET,
-                    "reused": true, "source_run_id": null
+                    "rule": "r@1",
+                    "decision": { "outcome": "killed", "killed_by": TARGET, "step_boundary": null },
+                    "reuse": { "reused": true, "source_run_id": null }
                 }]
             }))),
         ),
@@ -1045,8 +1253,9 @@ fn concluding() -> Vec<(&'static str, Audit)> {
                     "id": "e".repeat(64), "display_id": "eeeeeeeeeeeeeeeeeeee",
                     "path": "src/lib.rs",
                     "position": { "line": 1, "column": 1, "character_column": 1 },
-                    "rule": "r@1", "outcome": "killed", "killed_by": TARGET,
-                    "reused": true, "source_run_id": RUN
+                    "rule": "r@1",
+                    "decision": { "outcome": "killed", "killed_by": TARGET, "step_boundary": null },
+                    "reuse": { "reused": true, "source_run_id": RUN }
                 }]
             }))),
         ),
@@ -1134,7 +1343,8 @@ fn every_column_the_report_carries_is_re_decided_and_not_a_subset_of_them() {
         "accounting.mutants.survived",
         "accounting.mutants.unreached",
         "accounting.mutants.rejected",
-        "accounting.mutants.timed_out",
+        "accounting.mutants.step_limit_reached",
+        "accounting.mutants.waited",
         "accounting.mutants.equivalent",
         "accounting.mutants.reused_killed",
         "accounting.mutants.reused_survived",
@@ -1203,27 +1413,29 @@ fn one_fact_said_twice_is_one_line() {
 }
 
 #[test]
-fn a_timeout_is_a_target_noticing_and_a_proof_may_not_have_removed_it() {
-    let audit = audited_with(
-        &base(),
-        &[
-            routed(
-                KILLED,
-                "block",
-                &serde_json::json!({
-                    "reaching": ["elsewhere"],
-                    "discharged": [{ "target": TARGET, "proof": "branch-never-taken" }]
-                }),
-            ),
-            executed(KILLED, TARGET, "timed_out"),
-        ],
-    );
+fn an_execution_boundary_is_not_a_target_noticing_and_cannot_invalidate_a_proof() {
+    for outcome in ["waited", "step_limit_reached"] {
+        let audit = audited_with(
+            &base(),
+            &[
+                routed(
+                    KILLED,
+                    "block",
+                    &serde_json::json!({
+                        "reaching": ["elsewhere"],
+                        "discharged": [{ "target": TARGET, "proof": "branch-never-taken" }]
+                    }),
+                ),
+                executed(KILLED, TARGET, outcome),
+            ],
+        );
 
-    assert!(
-        proven(&audit).contains(&KILLED.to_owned()),
-        "a confirmed timeout is a behaviour change the tests noticed, so a proof that \
-         removed the target it happened on removed one that found a defect: {audit}"
-    );
+        assert!(
+            !proven(&audit).contains(&KILLED.to_owned()),
+            "{outcome} is a non-verdict, so it cannot be converted into a detection merely \
+             because a proof removed that target: {audit}"
+        );
+    }
 }
 
 #[test]
@@ -1295,7 +1507,11 @@ fn what_a_run_looked_at_decides_which_assurance_it_may_reach() {
         ("scoped", "SCOPE_ASSURED"),
     ] {
         let document = with(serde_json::json!({
-            "run_kind": kind, "verdict": assurance, "findings": []
+            "run_kind": kind,
+            "verdict": assurance,
+            "findings": [],
+            "accounting": { "mutants": { "accepted": 1 } },
+            "mutants": [{}, { "accepted": true }]
         }));
         let reached = audited(&document);
         assert!(
@@ -1344,7 +1560,10 @@ fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
 fn a_field_the_recording_does_not_carry_is_absent_rather_than_fatal() {
     let mut document = base();
     if let Some(object) = document.as_object_mut() {
-        let _removed = object.remove("run_id");
+        assert!(
+            object.remove("run_id").is_some(),
+            "the fixture has a run identifier to remove"
+        );
     }
     let audit = audited(&document);
 
@@ -1458,16 +1677,12 @@ fn an_execution_a_proof_answers_for_does_not_stop_the_search_for_one_nothing_ans
 
 #[test]
 fn two_kills_that_name_no_target_are_both_reported() {
-    let mut document = base();
-    if let Some(mutants) = document
-        .get_mut("mutants")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for mutant in mutants.iter_mut() {
-            mutant["outcome"] = serde_json::json!("killed");
-            mutant["killed_by"] = serde_json::Value::Null;
-        }
-    }
+    let document = with(serde_json::json!({
+        "mutants": [
+            { "decision": { "outcome": "killed", "killed_by": null } },
+            { "decision": { "outcome": "killed", "killed_by": null } }
+        ]
+    }));
     let audit = audited(&document);
     let named: std::collections::BTreeSet<String> = audit
         .remarks
@@ -1485,29 +1700,16 @@ fn two_kills_that_name_no_target_are_both_reported() {
 
 #[test]
 fn a_survivor_a_finding_names_does_not_stop_the_search_for_one_it_does_not() {
-    let mut document = with(serde_json::json!({
-        "accounting": { "mutants": { "killed": 0, "survived": 2, "executed": 2 } }
+    let document = with(serde_json::json!({
+        "accounting": { "mutants": { "killed": 0, "survived": 2, "executed": 2 } },
+        "mutants": [
+            { "decision": { "outcome": "survived", "killed_by": null } },
+            { "decision": { "outcome": "survived", "killed_by": null } }
+        ],
+        "findings": [
+            { "kind": "surviving-mutant", "subject": KILLED, "detail": "d", "position": null }
+        ]
     }));
-    if let Some(mutants) = document
-        .get_mut("mutants")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for mutant in mutants.iter_mut() {
-            mutant["outcome"] = serde_json::json!("survived");
-            mutant["killed_by"] = serde_json::Value::Null;
-        }
-    }
-    let named = document
-        .get("mutants")
-        .and_then(|held| held.get(0))
-        .and_then(|held| held.get("display_id"))
-        .cloned()
-        .expect("a mutant to name");
-    if let Some(findings) = document.get_mut("findings") {
-        *findings = serde_json::json!([
-            { "kind": "surviving-mutant", "subject": named, "detail": "d", "position": null }
-        ]);
-    }
     let audit = audited(&document);
 
     let unnamed = audit
@@ -1918,7 +2120,9 @@ fn as_read() -> xtask::wire::Exchange {
 /// Every question the exchange licenses, put and decided, with `unnoticed` for `gap`.
 fn all_put(gap: &str) -> Vec<serde_json::Value> {
     let mut lines = vec![went_past()];
-    for (id, rule) in xtask::wire::licensed(&as_read()) {
+    for (id, rule) in
+        xtask::wire::licensed(&as_read()).expect("the fixture fields fit the identity recipe")
+    {
         let decision = if rule == gap { "unnoticed" } else { "tests" };
         lines.push(serde_json::json!({
             "type": "wire-exec",

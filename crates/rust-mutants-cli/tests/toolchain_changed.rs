@@ -11,7 +11,7 @@ use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -42,7 +42,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn a_change_set_that_names_no_rust_file_selects_nothing_rather_than_everything()
 fn a_tree_git_cannot_be_asked_about_ends_the_command_rather_than_reading_as_nothing_changed() {
     let fixture = Fixture::copy("fixture-workspace");
     let output = against(&fixture, &["list", "--changed"]);
-    let complaint = String::from_utf8_lossy(&output.stderr).into_owned();
+    let complaint = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(complaint.contains("RM0010"), "{complaint}");
 }
@@ -97,7 +97,7 @@ fn a_revision_git_does_not_know_ends_the_command() {
     let fixture = Fixture::copy("fixture-workspace");
     njutest_devkit::repo::commit_tree(fixture.root());
     let output = against(&fixture, &["list", "--changed-from", "no-such-revision"]);
-    let complaint = String::from_utf8_lossy(&output.stderr).into_owned();
+    let complaint = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(complaint.contains("no-such-revision"), "{complaint}");
 }

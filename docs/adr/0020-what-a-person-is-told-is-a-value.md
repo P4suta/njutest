@@ -19,7 +19,7 @@ repository, the scope and the timing. The gap itself is described and never
 shown: a reader is told `src/lib.rs:8:10 gt-to-ge` and goes to open the file.
 
 That is not an oversight. The terminal output *is* the record stream
-([report-v1](../report-v1.md)): one record per line, tab-separated, the kind
+([report-v2](../report-v2.md)): one record per line, tab-separated, the kind
 first and the verdict last, so `tail -1` is the answer and a filter on the
 first field is a projection. It is an excellent pipe format, and it is
 excellent for the same reason it reads badly — it has no hierarchy, because a

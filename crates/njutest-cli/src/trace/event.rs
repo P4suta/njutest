@@ -6,13 +6,21 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::Contract;
-use crate::report::{Accounting, RunKind};
+use crate::report::{ConclusionAccounting, RunKind};
 
-/// The schema name carried by every `run-start` event. It names the recipe version; a future shape becomes `njutest-trace-v2`.
-pub const SCHEMA: &str = "njutest-trace-v1";
+/// The schema name carried by every current `run-start` event.
+///
+/// Version 2 uses the engine's tagged process termination and carries typed
+/// model records; historical version 1 remains a separate documented
+/// contract.
+#[cfg(any(test, feature = "testkit"))]
+pub const SCHEMA: &str = "njutest-trace-v2";
+#[cfg(not(any(test, feature = "testkit")))]
+pub(super) const SCHEMA: &str = "njutest-trace-v2";
 
 /// One event of a recording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Event {
     /// Monotonic from 1; delivery order is sequence order.
     pub seq: u64,
@@ -20,15 +28,14 @@ pub struct Event {
     pub timestamp: String,
     /// Milliseconds since the recording started.
     pub elapsed_ms: u64,
-    /// The typed record.
-    #[serde(flatten)]
+    /// The typed record, nested so envelope and payload fields cannot collide.
     pub payload: Payload,
 }
 
 /// The typed record of an event, tagged by `type` on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-#[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub enum Payload {
     /// The first event of every recording.
     RunStart {
@@ -85,6 +92,11 @@ pub enum Payload {
         /// The record.
         wire: WireExecRecord,
     },
+    /// One closed model-checking question and its typed answer.
+    Model {
+        /// The same independently auditable record retained in the report.
+        model: Box<crate::report::ModelRecord>,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -113,6 +125,7 @@ impl Payload {
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
             Self::WireExec { .. } => "wire-exec",
+            Self::Model { .. } => "model",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -121,8 +134,9 @@ impl Payload {
 
 /// What the run is: enough to tell two recordings apart without reading them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StartRecord {
-    /// [`SCHEMA`].
+    /// The trace schema this recording claims.
     pub schema: String,
     /// The runner version that recorded.
     pub njutest: String,
@@ -153,23 +167,28 @@ impl StartRecord {
 
 /// One phase boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhaseRecord {
     /// What the phase is called.
     pub name: String,
     /// How long it took, on the end event alone.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub duration_ms: Option<u64>,
 }
 
 /// One executed process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecRecord {
     /// The command line, verbatim.
     pub argv: Vec<String>,
     /// The directory it ran in.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub dir: Option<String>,
     /// The names of the variables it ran with, never the values.
     pub env_names: Vec<String>,
     /// The bound the caller put on it.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub timeout_ms: Option<u64>,
     /// How it came to an end, which is one thing and not a status beside a flag.
     ///
@@ -184,12 +203,15 @@ pub struct ExecRecord {
     /// How much it said.
     pub output_bytes: u64,
     /// The digest of everything it said.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub output_sha256: Option<String>,
     /// Whether the preserved copy was cut.
     pub output_truncated: bool,
     /// Where the preserved copy is, relative to the recording directory.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub output_path: Option<String>,
     /// Why it could not be run, when it could not.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub error: Option<String>,
     /// The capture itself, for a sink that preserves it. Never serialized.
     #[serde(skip)]
@@ -198,44 +220,74 @@ pub struct ExecRecord {
 
 impl ExecRecord {
     /// The record of one supervised run: the spec's command line, directory, environment names, and timeout, and the result's exit code, timeout flag, duration, output, and error.
-    #[must_use]
-    pub fn of(spec: &rust_mutants::runner::Spec, result: &rust_mutants::runner::RunResult) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// A timeout or measured duration does not fit the trace wire exactly, or
+    /// a command, directory, or environment name is not valid UTF-8.
+    pub fn of(
+        spec: &rust_mutants::runner::Spec,
+        result: &rust_mutants::runner::RunResult,
+    ) -> Result<Self, rust_mutants::trace::ExecRecordError> {
+        let timeout_ms = spec
+            .timeout
+            .map(|timeout| {
+                u64::try_from(timeout.as_millis()).map_err(|_overflow| {
+                    rust_mutants::trace::ExecRecordError::MillisecondsOutsideWire {
+                        field: "timeout",
+                    }
+                })
+            })
+            .transpose()?;
+        let duration_ms = u64::try_from(result.duration.as_millis()).map_err(|_overflow| {
+            rust_mutants::trace::ExecRecordError::MillisecondsOutsideWire {
+                field: "measured process",
+            }
+        })?;
+        let trace_text = |value: &std::ffi::OsStr,
+                          field: &'static str|
+         -> Result<String, rust_mutants::trace::ExecRecordError> {
+            value
+                .to_str()
+                .map(str::to_owned)
+                .ok_or(rust_mutants::trace::ExecRecordError::NonUtf8 { field })
+        };
+        Ok(Self {
             argv: spec
                 .argv
                 .iter()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect(),
+                .map(|arg| trace_text(arg, "argument"))
+                .collect::<Result<Vec<_>, _>>()?,
             dir: spec
                 .dir
                 .as_ref()
-                .map(|dir| dir.to_string_lossy().into_owned()),
+                .map(|dir| trace_text(dir.as_os_str(), "working directory"))
+                .transpose()?,
             env_names: spec
                 .env
                 .as_ref()
                 .map(|env| {
                     env.iter()
-                        .map(|(key, _)| key.to_string_lossy().into_owned())
-                        .collect()
+                        .map(|(key, _)| trace_text(key, "environment name"))
+                        .collect::<Result<Vec<_>, _>>()
                 })
+                .transpose()?
                 .unwrap_or_default(),
-            timeout_ms: spec
-                .timeout
-                .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
+            timeout_ms,
             stopped: rust_mutants::execute::Stopped::of(result),
-            duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+            duration_ms,
             output_bytes: 0,
             output_sha256: None,
             output_truncated: false,
             output_path: None,
-            error: result.error.as_ref().map(ToString::to_string),
+            error: result.error().map(|failure| failure.to_string()),
             output: result.output.clone(),
-        }
+        })
     }
 }
 
 /// How far the run had got, as the user interface saw it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProgressRecord {
     /// What was happening, in the words a person watching reads.
     pub message: String,
@@ -244,27 +296,31 @@ pub struct ProgressRecord {
     /// Held apart from the message because the two have different readers: an
     /// audit follows this back to one mutation, and a person watching a run
     /// learns nothing from a digest.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub subject: String,
     /// How many of it are done.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub done: Option<u64>,
     /// How many there are.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub total: Option<u64>,
 }
 
 /// Something the run kept for a person to look at.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ArtifactRecord {
     /// What kind of thing it is.
     pub kind: String,
     /// Where it is.
     pub path: String,
     /// How big it is, when that was measured.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub bytes: Option<u64>,
 }
 
 /// One target a proof removed from a reaching set, beside the proof that removed it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DischargeRecord {
     /// The target that was not run.
     pub target: String,
@@ -278,12 +334,14 @@ pub struct DischargeRecord {
 /// nobody decided it. A record standing for a routing that did not happen
 /// would read as one that did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouteRecord {
     /// The mutant a person types.
     pub mutant: String,
     /// How the route was decided.
     pub granularity: rust_mutants::session::Granularity,
     /// What the measurement could not support, on a route it did not decide on its own. Every one of these widened the route.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub fallback: Option<rust_mutants::session::Fallback>,
     /// The targets to run, cheapest first.
     pub reaching: Vec<String>,
@@ -294,14 +352,16 @@ pub struct RouteRecord {
     /// The measured targets that were asked and did not reach the mutation.
     pub considered: Vec<String>,
     /// The run this disposition was read back from, when it was not established here.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub reused: Option<String>,
     /// Why the answer an earlier run left was not the one this run used, when there was a store to ask.
-    #[serde(default)]
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub refused: Option<String>,
 }
 
 /// Which tests of one target a route puts the mutation to.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AskedRecord {
     /// The target.
     pub target: String,
@@ -311,6 +371,7 @@ pub struct AskedRecord {
 
 /// One mutant run against one target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutantExecRecord {
     /// The mutant a person types.
     pub mutant: String,
@@ -320,6 +381,10 @@ pub struct MutantExecRecord {
     pub args: Vec<String>,
     /// What the run established.
     pub outcome: String,
+    /// The checked step boundary, present exactly when `outcome` is
+    /// `step_limit_reached`.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub step_boundary: Option<crate::report::StepBoundary>,
     /// How long it took.
     pub duration_ms: u64,
     /// Whether the machine was given to this execution, which a run does once when a budget expires.
@@ -328,12 +393,14 @@ pub struct MutantExecRecord {
 
 /// What the probe pass measured for one target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProbeExecRecord {
     /// The target.
     pub target: String,
     /// `measured` when the pass read that target's log, `not-measured` when it did not.
     pub outcome: String,
     /// How many mutants the target infected. A target the pass did not measure carries no facts, and none is not zero.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub infected: Option<u64>,
 }
 
@@ -345,10 +412,9 @@ pub struct ProbeExecRecord {
 /// exactly these, so a recording that spelled one of the other fourteen would
 /// have the audit and the run name the same exchange differently and neither
 /// able to say which was wrong.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Read {
     /// Nothing but the byte counts, because the seam was watched as bytes.
-    #[default]
     Raw,
     /// One HTTP round trip.
     Http {
@@ -363,10 +429,14 @@ pub enum Read {
 
 /// The four fields the recording has always carried, which is the shape rather than what it means.
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PairedRead {
     wire: String,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     method: Option<String>,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     path: Option<String>,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     status: Option<u16>,
 }
 
@@ -424,18 +494,19 @@ impl<'de> Deserialize<'de> for Read {
 }
 
 /// One exchange that went past a seam, as much of it as the wire says to read.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WireExchangeRecord {
     /// The capability the seam serves.
     pub capability: String,
     /// Where it fell in the order on that seam, from zero.
     pub seq: u64,
     /// What the run had running, where it could tell.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub during: Option<String>,
     /// How long the round trip took.
     pub duration_ms: u64,
-    /// How much of it was read, and what that reading found.
-    #[serde(flatten)]
+    /// How much of it was read, and what that reading found, as one closed object.
     pub read: Read,
     /// How many bytes went up.
     pub request_bytes: u64,
@@ -448,9 +519,10 @@ pub struct WireExchangeRecord {
 /// The rule and the decision are the sets the run holds them as, not their
 /// names: a doc comment listing the legal values beside a `String` is a closed
 /// set written in prose, which is the shape the compiler cannot check. The
-/// recording reads the same as it did, because the names are where the naming
-/// belongs.
+/// Current v2 recordings nest the answer so its fields cannot collide with
+/// the fault identity or rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WireExecRecord {
     /// The fault's identity.
     pub fault: String,
@@ -461,12 +533,13 @@ pub struct WireExecRecord {
     /// What it asked the seam to do.
     pub rule: crate::wire::rule::Rule,
     /// Who decided it, and — where somebody did — who that was.
-    #[serde(flatten)]
+    #[serde(rename = "answer")]
     pub decision: crate::report::SeamDecision,
 }
 
 /// A free-form note, for what has no shape of its own yet.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NoteRecord {
     /// What kind of note it is, so a reader can filter.
     pub kind: String,
@@ -476,15 +549,58 @@ pub struct NoteRecord {
 
 /// What the run concluded, and what the recording lost.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunRecord {
     /// The verdict, or what stopped the run from reaching one.
     pub verdict: String,
     /// What the run counted, when it got far enough to count.
-    pub accounting: Option<Accounting>,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub accounting: Option<RunAccounting>,
     /// The error that ended the run, when one did.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub error: Option<String>,
     /// Events the sink kept before this one. A recording cannot count the event it is writing, so this is the honest number rather than a guess that the last one lands.
     pub events_emitted: u64,
     /// Events the sink lost before this one. A recording is honest about its own losses; a reader finds anything lost afterwards as a sequence gap.
     pub events_dropped: u64,
+}
+
+/// Complete-run counts projected from the final build lattice without
+/// collapsing build-qualified soundness evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunAccounting {
+    /// Target rows across all configured builds.
+    pub targets: crate::report::TargetAccounting,
+    /// Final mutation decisions after the cross-build/model lattice.
+    pub mutants: crate::report::MutantAccounting,
+    /// One exact inventory per configured build, in request order.
+    pub soundness_by_build: Vec<BuildSoundnessRecord>,
+}
+
+/// One configured build's independently retained soundness inventory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildSoundnessRecord {
+    /// The canonical configured-build name.
+    pub build: crate::report::BuildName,
+    /// The inventory measured for that build alone.
+    pub accounting: crate::report::SoundnessAccounting,
+}
+
+impl From<ConclusionAccounting> for RunAccounting {
+    fn from(accounting: ConclusionAccounting) -> Self {
+        Self {
+            targets: accounting.targets,
+            mutants: accounting.mutants,
+            soundness_by_build: accounting
+                .soundness_by_build
+                .into_iter()
+                .map(|build| BuildSoundnessRecord {
+                    build: build.build().clone(),
+                    accounting: build.accounting(),
+                })
+                .collect(),
+        }
+    }
 }

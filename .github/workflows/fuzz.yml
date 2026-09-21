@@ -57,6 +57,7 @@ jobs:
           - coverage_export
           - libtest_summary
           - report_document
+          - model_result
           - carried_answers
           - offered_candidates
           - engine_config
@@ -96,10 +97,7 @@ jobs:
           FUZZ_TARGET: ${{ matrix.target }}
         run: |
           budget="-max_total_time=1500"
-          if [ -d "fuzz/seeds/$FUZZ_TARGET" ]; then
-            mkdir -p "fuzz/corpus/$FUZZ_TARGET"
-            cp "fuzz/seeds/$FUZZ_TARGET/"* "fuzz/corpus/$FUZZ_TARGET/"
-          fi
+          bash ../scripts/seed-fuzz-corpus.sh "$FUZZ_TARGET"
           cargo fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- "$budget" -max_len=4096
       - name: Upload crash artifacts
         if: failure()

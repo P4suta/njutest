@@ -16,7 +16,7 @@ use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -34,7 +34,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 }
 
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 fn measured() -> Fixture {
@@ -55,10 +55,10 @@ fn a_stryker_projection_validates_against_the_schema_it_answers_to() {
         projected.status.code().is_some_and(|code| code <= 1),
         "reading a report back answers with the run's own exit code: {projected:?}"
     );
-    let document: serde_json::Value =
-        serde_json::from_str(&stdout(&projected)).expect("the projection is JSON");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(&projected))
+        .expect("the projection is JSON");
 
-    let schema: serde_json::Value = serde_json::from_str(
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
             njutest_devkit::paths::workspace_root()
                 .join("test/vendor/mutation-testing-report-schema.json"),
@@ -78,8 +78,8 @@ fn a_stryker_projection_validates_against_the_schema_it_answers_to() {
 fn a_stryker_projection_counts_columns_in_utf16_as_the_schema_requires() {
     let fixture = measured();
     let projected = against(&fixture, &["report", "--format", "stryker"]);
-    let document: serde_json::Value =
-        serde_json::from_str(&stdout(&projected)).expect("the projection is JSON");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(&projected))
+        .expect("the projection is JSON");
     let files = document["files"].as_object().expect("the files");
     let (path, file) = files.iter().next().expect("one mutated file");
     let source = file["source"].as_str().expect("the source");
@@ -140,7 +140,7 @@ fn a_page_written_to_a_file_says_where_it_put_it() {
             "--format",
             "html",
             "--output",
-            &path.to_string_lossy(),
+            njutest_devkit::paths::utf8(&path),
         ],
     );
     assert!(stdout(&written).contains("report.html"), "{written:?}");
@@ -168,7 +168,7 @@ fn a_page_that_could_not_be_written_is_a_refusal_naming_the_path() {
             "--format",
             "html",
             "--output",
-            &occupied.to_string_lossy(),
+            njutest_devkit::paths::utf8(&occupied),
         ],
     );
     assert_ne!(
@@ -179,10 +179,11 @@ fn a_page_that_could_not_be_written_is_a_refusal_naming_the_path() {
         stdout(&refused)
     );
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("a-directory-where-the-page-goes"),
+        njutest_devkit::process::strict_utf8(&refused.stderr)
+            .contains("a-directory-where-the-page-goes"),
         "and the refusal names the path, because the usual cause is a directory that is \
          not there or one that is: {}",
-        String::from_utf8_lossy(&refused.stderr)
+        njutest_devkit::process::strict_utf8(&refused.stderr)
     );
 }
 
@@ -191,7 +192,7 @@ fn the_doctor_answers_as_a_document_when_it_is_asked_to() {
     let fixture = Fixture::copy("fixture-simple");
     let asked = against(&fixture, &["doctor", "--json"]);
     let document: serde_json::Value =
-        serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
+        njutest_devkit::strictjson::decode_str(&stdout(&asked)).expect("the answer is JSON");
     assert_eq!(document["document_type"], "rust-mutants/doctor");
     assert_eq!(document["schema_version"], 1);
     assert!(document["ok"].is_boolean(), "{document}");
@@ -218,7 +219,7 @@ fn the_doctor_says_the_same_thing_in_lines_and_in_a_document() {
     let document = against(&fixture, &["doctor", "--json"]);
     assert_eq!(lines.status.code(), document.status.code());
     let value: serde_json::Value =
-        serde_json::from_str(&stdout(&document)).expect("the answer is JSON");
+        njutest_devkit::strictjson::decode_str(&stdout(&document)).expect("the answer is JSON");
     for check in value["checks"].as_array().expect("the checks") {
         let name = check["name"].as_str().expect("a name");
         assert!(stdout(&lines).contains(name), "{name}");
@@ -230,8 +231,8 @@ fn the_doctor_document_validates_against_the_schema_it_answers_to() {
     let fixture = Fixture::copy("fixture-simple");
     let asked = against(&fixture, &["doctor", "--json"]);
     let document: serde_json::Value =
-        serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
-    let schema: serde_json::Value = serde_json::from_str(
+        njutest_devkit::strictjson::decode_str(&stdout(&asked)).expect("the answer is JSON");
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
             njutest_devkit::paths::workspace_root().join("schema/rust-mutants-doctor-v1.json"),
         )
@@ -251,7 +252,7 @@ fn the_doctor_answers_about_every_thing_a_run_needs() {
     let fixture = Fixture::copy("fixture-simple");
     let asked = against(&fixture, &["doctor", "--json"]);
     let document: serde_json::Value =
-        serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
+        njutest_devkit::strictjson::decode_str(&stdout(&asked)).expect("the answer is JSON");
     let names: Vec<&str> = document["checks"]
         .as_array()
         .expect("the checks")
@@ -301,7 +302,7 @@ fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
-            .chain(["doctor", "--root", &member.to_string_lossy()])
+            .chain(["doctor", "--root", njutest_devkit::paths::utf8(&member)])
             .map(OsString::from),
         &environment(&fixture),
         &Cancel::new(),
@@ -311,7 +312,7 @@ fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
         },
     );
     let asked = njutest_devkit::process::answered(code, out, err);
-    let text = String::from_utf8_lossy(&asked.stdout).into_owned();
+    let text = njutest_devkit::process::strict_utf8(&asked.stdout).into_owned();
     assert!(text.contains("FAIL workspace"), "{text}");
     assert!(
         text.contains(&fixture.root().display().to_string()),

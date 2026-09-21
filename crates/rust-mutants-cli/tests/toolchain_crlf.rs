@@ -6,7 +6,6 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
-    clippy::panic,
     reason = "the helpers that start the engine are not themselves tests, and a document this \
               test caused to be written is one it may index"
 )]
@@ -17,6 +16,8 @@ use std::path::{Path, PathBuf};
 use njutest_devkit::fixture::{Fate, Fixture};
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
+
+include!("support/metadata.rs");
 
 /// A copy of `fixture-simple` with every source line ending the other way.
 fn crlf_copy() -> Fixture {
@@ -39,18 +40,20 @@ fn rust_sources(root: &Path) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.expect("fixture directory entry");
             let path = entry.path();
-            if path.is_dir() {
+            if test_metadata(&path).is_dir() {
                 if entry.file_name() != "target" {
                     stack.push(path);
                 }
             } else if path.extension().is_some_and(|extension| extension == "rs") {
                 found.push(
-                    path.strip_prefix(root)
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .replace('\\', "/"),
+                    njutest_devkit::paths::utf8(
+                        path.strip_prefix(root)
+                            .expect("a path walked under the fixture stays under its root"),
+                    )
+                    .replace('\\', "/"),
                 );
             }
         }
@@ -61,7 +64,7 @@ fn rust_sources(root: &Path) -> Vec<String> {
 
 /// What one run of a tree establishes, and the full identity of every row.
 fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -80,35 +83,33 @@ fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
-    let mut runs: Vec<PathBuf> = std::fs::read_dir(&directory)
-        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
-        .flatten()
-        .map(|entry| entry.path().join("run-report-v1.json"))
-        .filter(|path| path.is_file())
-        .collect();
-    runs.sort();
-    let document: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(runs.pop().expect("one stored run")).expect("the report"),
+    let newest = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    )
+    .join("run-report-v2.json");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(newest).expect("the report"),
     )
     .expect("the report is a document");
     let rows = document["mutants"].as_array().expect("the rows");
     let mut fates: Vec<Fate> = rows
         .iter()
         .map(|row| Fate {
-            path: row["path"].as_str().unwrap_or_default().to_owned(),
-            line: u32::try_from(row["line"].as_u64().unwrap_or_default()).unwrap_or_default(),
-            column: u32::try_from(row["column"].as_u64().unwrap_or_default()).unwrap_or_default(),
-            rule: row["rule"].as_str().unwrap_or_default().to_owned(),
-            outcome: row["outcome"].as_str().unwrap_or_default().to_owned(),
+            path: row["path"].as_str().expect("a row path").to_owned(),
+            line: u32::try_from(row["line"].as_u64().expect("a row line"))
+                .expect("a row line fits its schema"),
+            column: u32::try_from(row["column"].as_u64().expect("a row column"))
+                .expect("a row column fits its schema"),
+            rule: row["rule"].as_str().expect("a row rule").to_owned(),
+            outcome: row["outcome"].as_str().expect("a row outcome").to_owned(),
         })
         .collect();
     fates.sort();
     let mut ids: Vec<String> = rows
         .iter()
-        .map(|row| row["id"].as_str().unwrap_or_default().to_owned())
+        .map(|row| row["id"].as_str().expect("a row identity").to_owned())
         .collect();
     ids.sort();
     (fates, ids)
@@ -116,8 +117,13 @@ fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
 
 #[test]
 fn a_crlf_tree_reaches_the_same_fates_at_the_same_places() {
-    let (lf, _) = run(&Fixture::copy("fixture-simple"));
-    let (crlf, _) = run(&crlf_copy());
+    let (lf, lf_ids) = run(&Fixture::copy("fixture-simple"));
+    let (crlf, crlf_ids) = run(&crlf_copy());
+    assert_eq!(
+        lf_ids.len(),
+        crlf_ids.len(),
+        "both trees mint one identity per fate"
+    );
     assert_eq!(
         crlf, lf,
         "a file whose lines end the other way is the same program: the same mutations at the \
@@ -128,8 +134,12 @@ fn a_crlf_tree_reaches_the_same_fates_at_the_same_places() {
 
 #[test]
 fn a_crlf_tree_mints_its_own_identities() {
-    let (_, lf) = run(&Fixture::copy("fixture-simple"));
-    let (_, crlf) = run(&crlf_copy());
+    let (lf_fates, lf) = run(&Fixture::copy("fixture-simple"));
+    let (crlf_fates, crlf) = run(&crlf_copy());
+    assert_eq!(
+        lf_fates, crlf_fates,
+        "line endings do not change program fates"
+    );
     assert_eq!(crlf.len(), lf.len(), "the same number of mutations");
     for id in &crlf {
         assert!(
@@ -144,7 +154,8 @@ fn a_crlf_tree_mints_its_own_identities() {
 #[test]
 fn the_fates_a_crlf_tree_reaches_are_the_ones_its_readme_states() {
     let stated = njutest_devkit::fixture::stated_fates("fixture-simple");
-    let (crlf, _) = run(&crlf_copy());
+    let (crlf, ids) = run(&crlf_copy());
+    assert_eq!(crlf.len(), ids.len(), "every fate has one identity");
     assert_eq!(
         crlf, stated.rows,
         "the fates a fixture's README states are about the program, and the line endings are \

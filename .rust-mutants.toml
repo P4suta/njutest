@@ -31,10 +31,12 @@ locked = true
 # `xtask/test/gates` contains assertions about this repository, reached through
 # `env!("CARGO_MANIFEST_DIR")`, which under measurement names the snapshot. The
 # snapshot is this repository as the engine rewrote it, guards and runtime and
-# all, and the runtime carries the one `#[allow]` in the tree, which
-# `cargo xtask lints` exists to refuse. So the gate fails on the instrumentation
-# and would fail on it identically under every mutation. A test whose subject is
-# the tree it is compiled from cannot be measured by copying the tree.
+# all, and each private generated support module carries the exact
+# `#[allow(dead_code, unused_qualifications)]` that its generated boundary
+# needs, while `cargo xtask lints` refuses every `#[allow]` in repository
+# source. So the gate fails on the instrumentation and would fail on it
+# identically under every mutation. A test whose subject is the tree it is
+# compiled from cannot be measured by copying the tree.
 skip_targets = ["xtask/test/gates"]
 
 # The language server reads a report and says what it holds. Four of its

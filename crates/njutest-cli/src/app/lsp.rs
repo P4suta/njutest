@@ -4,24 +4,31 @@
 //! `njutest lsp`: what a completed run found, in the editor the code is being written in.
 
 use std::io::{BufRead, Read as _, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::cli::EXIT_ASSURED;
+use crate::cli::{EXIT_ASSURED, EXIT_ERROR};
 use crate::report::Report;
 
 /// How a client counts the characters of a line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
     /// UTF-16 code units, which is what a client that says nothing means.
-    #[default]
     Utf16,
     /// Bytes, which is what this report already records.
     Utf8,
 }
 
+impl Default for Encoding {
+    fn default() -> Self {
+        Self::PROTOCOL_DEFAULT
+    }
+}
+
 impl Encoding {
+    const PROTOCOL_DEFAULT: Self = Self::Utf16;
+
     /// The name this encoding answers to in `initialize`.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -61,41 +68,54 @@ pub struct Reported {
 }
 
 /// The findings of `report` that name a place in a file, by file.
-#[must_use]
-pub fn diagnostics(report: &Report, root: &Path, encoding: Encoding) -> Vec<Reported> {
+/// # Errors
+/// Returns the report's checked projection failure instead of publishing a
+/// partial diagnostic set.
+pub fn diagnostics(
+    report: &Report,
+    root: &Path,
+    encoding: Encoding,
+) -> Result<Vec<Reported>, crate::report::CountError> {
     let mut by_file: std::collections::BTreeMap<String, Vec<Value>> =
         std::collections::BTreeMap::new();
-    for finding in &report.findings {
-        let Some(mutant) = report
+    let conclusion = report.conclusion()?;
+    for finding in &conclusion.findings {
+        let Some(mutant) = conclusion
             .mutants
             .iter()
-            .find(|one| one.display_id == finding.subject || one.id == finding.subject)
+            .find(|one| one.display_id() == finding.subject || one.id() == finding.subject)
         else {
             continue;
         };
-        let at = finding.position.unwrap_or(mutant.position);
-        let character = column(root, &mutant.path, at, encoding);
+        let at = match finding.position {
+            Some(position) => position,
+            None => mutant.position(),
+        };
+        let character = column(root, mutant.path(), at, encoding);
         let line = at.line.saturating_sub(1);
-        by_file.entry(mutant.path.clone()).or_default().push(json!({
-            "range": {
-                "start": { "line": line, "character": character },
-                "end": { "line": line, "character": character },
-            },
-            "severity": if finding.kind.is_defect() { 1 } else { 2 },
-            "source": "njutest",
-            "code": finding.kind_name(),
-            "message": format!("{}: {}", finding.subject, finding.detail),
-            "data": {
-                "mutant": crate::naming::locator(mutant),
-                "id": mutant.display_id,
-                "rule": mutant.rule,
-            },
-        }));
+        by_file
+            .entry(mutant.path().to_owned())
+            .or_default()
+            .push(json!({
+                "range": {
+                    "start": { "line": line, "character": character },
+                    "end": { "line": line, "character": character },
+                },
+                "severity": if finding.kind.is_defect() { 1 } else { 2 },
+                "source": "njutest",
+                "code": finding.kind_name(),
+                "message": format!("{}: {}", finding.subject, finding.detail),
+                "data": {
+                    "mutant": crate::naming::locator(mutant),
+                    "id": mutant.display_id(),
+                    "rule": mutant.rule(),
+                },
+            }));
     }
-    by_file
+    Ok(by_file
         .into_iter()
         .map(|(path, diagnostics)| Reported { path, diagnostics })
-        .collect()
+        .collect())
 }
 
 /// Where the report's column falls in the units the client counts.
@@ -107,16 +127,25 @@ fn column(root: &Path, path: &str, at: crate::report::Position, encoding: Encodi
     let Ok(text) = std::fs::read_to_string(root.join(path)) else {
         return scalar;
     };
-    let at_line = usize::try_from(at.line.saturating_sub(1)).unwrap_or(usize::MAX);
+    let at_line = match usize::try_from(at.line.saturating_sub(1)) {
+        Ok(line) => line,
+        Err(_) => return scalar,
+    };
     let Some(line) = text.lines().nth(at_line) else {
         return scalar;
     };
     let units: usize = line
         .chars()
-        .take(usize::try_from(scalar).unwrap_or(usize::MAX))
+        .take(match usize::try_from(scalar) {
+            Ok(column) => column,
+            Err(_) => return scalar,
+        })
         .map(char::len_utf16)
         .sum();
-    u32::try_from(units).unwrap_or(scalar)
+    match u32::try_from(units) {
+        Ok(units) => units,
+        Err(_) => scalar,
+    }
 }
 
 /// One message, framed the way the protocol frames them.
@@ -132,7 +161,11 @@ pub fn message(input: &mut dyn BufRead) -> Option<Value> {
     let mut header = String::new();
     loop {
         header.clear();
-        if input.read_line(&mut header).ok()? == 0 {
+        let read = match input.read_line(&mut header) {
+            Ok(read) => read,
+            Err(_) => return None,
+        };
+        if read == 0 {
             return None;
         }
         let line = header.trim_end();
@@ -140,15 +173,21 @@ pub fn message(input: &mut dyn BufRead) -> Option<Value> {
             break;
         }
         if let Some(said) = line.strip_prefix("Content-Length:") {
-            length = said.trim().parse::<u64>().ok();
+            length = match said.trim().parse::<u64>() {
+                Ok(length) => Some(length),
+                Err(_) => return None,
+            };
         }
     }
     let mut arriving = input.take(length?);
     let mut body = Vec::new();
-    let _read = arriving.read_to_end(&mut body).ok()?;
-    (arriving.limit() == 0)
-        .then(|| serde_json::from_slice(&body).ok())
-        .flatten()
+    if arriving.read_to_end(&mut body).is_err() || arriving.limit() != 0 {
+        return None;
+    }
+    match crate::strictjson::decode_slice(&body) {
+        Ok(message) => Some(message),
+        Err(_) => None,
+    }
 }
 
 /// Serves the protocol over `input` and `output` until the client asks it to stop.
@@ -166,25 +205,29 @@ pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8
             .unwrap_or_default()
             .to_owned();
         let id = request.get("id").cloned();
-        match method.as_str() {
+        let answered = match method.as_str() {
             "initialize" => {
                 encoding = Encoding::asked(&request);
-                reply(output, id.as_ref(), &capabilities(encoding));
+                reply(output, id.as_ref(), &capabilities(encoding))
             }
             "initialized" | "textDocument/didOpen" | "textDocument/didSave" => {
-                if !stopping {
-                    publish(output, root, encoding);
+                if stopping {
+                    Ok(())
+                } else {
+                    publish(output, root, encoding)
                 }
             }
-            "textDocument/codeAction" => {
-                reply(output, id.as_ref(), &actions(&request));
-            }
+            "textDocument/codeAction" => reply(output, id.as_ref(), &actions(&request)),
             "shutdown" => {
                 stopping = true;
-                reply(output, id.as_ref(), &Value::Null);
+                reply(output, id.as_ref(), &Value::Null)
             }
             "exit" => break,
             unknown => answer_anyway(output, id.as_ref(), unknown),
+        };
+        match answered {
+            Ok(()) => {}
+            Err(_write_error) => return EXIT_ERROR,
         }
     }
     EXIT_ASSURED
@@ -211,9 +254,11 @@ fn capabilities(encoding: Encoding) -> Value {
 /// an unknown request rather than refusing it. A catch-all over what somebody
 /// else's wire may carry is the handling; a catch-all over a set written in
 /// this repository is the defect.
-fn answer_anyway(output: &mut dyn Write, id: Option<&Value>, _method: &str) {
+fn answer_anyway(output: &mut dyn Write, id: Option<&Value>, _method: &str) -> std::io::Result<()> {
     if id.is_some() {
-        reply(output, id, &Value::Null);
+        reply(output, id, &Value::Null)
+    } else {
+        Ok(())
     }
 }
 
@@ -250,51 +295,81 @@ fn actions(request: &Value) -> Value {
 }
 
 /// Publishes what the latest run found, and clears every file it found nothing in.
-fn publish(output: &mut dyn Write, root: &Path, encoding: Encoding) {
-    let Some(report) = latest(root) else {
-        return;
+fn publish(output: &mut dyn Write, root: &Path, encoding: Encoding) -> std::io::Result<()> {
+    let report = match latest(root) {
+        Ok(Some(report)) => report,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            notify(
+                output,
+                "window/logMessage",
+                &json!({ "type": 1, "message": error.to_string() }),
+            )?;
+            return Ok(());
+        }
     };
-    for reported in diagnostics(&report, root, encoding) {
-        let uri = uri_of(&root.join(&reported.path));
+    let reported = diagnostics(&report, root, encoding).map_err(std::io::Error::other)?;
+    for reported in reported {
+        let uri = uri_of(&root.join(&reported.path)).map_err(std::io::Error::other)?;
         notify(
             output,
             "textDocument/publishDiagnostics",
             &json!({ "uri": uri, "diagnostics": reported.diagnostics }),
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// `path` as the URI an editor holds the document under.
-#[must_use]
-pub fn uri_of(path: &Path) -> String {
-    let text = rust_mutants::id::slashed(path);
+/// # Errors
+/// Returns an error when `path` is not valid UTF-8 and therefore cannot be
+/// represented by the protocol without changing its identity.
+pub fn uri_of(path: &Path) -> Result<String, rust_mutants::id::SlashedPathError> {
+    let text = rust_mutants::id::slashed(path)?;
     if text.starts_with('/') {
-        format!("file://{text}")
+        Ok(format!("file://{text}"))
     } else {
-        format!("file:///{text}")
+        Ok(format!("file:///{text}"))
     }
 }
 
 /// The report of the run that finished last, or nothing when none has.
-fn latest(root: &Path) -> Option<Report> {
-    let path: PathBuf = super::reports::Store::read(root)
-        .run_of(super::reports::Index::Any)?
-        .join(super::reports::DOCUMENT_NAME);
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+fn latest(root: &Path) -> Result<Option<Report>, LatestError> {
+    let Some(run) = super::reports::Store::read(root)?.pointed_run(super::reports::Index::Any)?
+    else {
+        return Ok(None);
+    };
+    let path = run.document_display();
+    let text = run.document()?;
+    crate::strictjson::decode_str(&text)
+        .map(Some)
+        .map_err(|source| LatestError::Parse { path, source })
+}
+
+#[derive(Debug, thiserror::Error)]
+enum LatestError {
+    #[error(transparent)]
+    Store(#[from] super::reports::StoreError),
+    #[error("parsing {path}: {source}")]
+    Parse {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 /// Answers one request.
-fn reply(output: &mut dyn Write, id: Option<&Value>, result: &Value) {
+fn reply(output: &mut dyn Write, id: Option<&Value>, result: &Value) -> std::io::Result<()> {
     let message = json!({ "jsonrpc": "2.0", "id": id, "result": result });
-    drop(output.write_all(framed(&message).as_bytes()));
-    drop(output.flush());
+    output.write_all(framed(&message).as_bytes())?;
+    output.flush()
 }
 
 /// Tells the client something it did not ask for.
-fn notify(output: &mut dyn Write, method: &str, params: &Value) {
+fn notify(output: &mut dyn Write, method: &str, params: &Value) -> std::io::Result<()> {
     let message = json!({ "jsonrpc": "2.0", "method": method, "params": params });
-    drop(output.write_all(framed(&message).as_bytes()));
-    drop(output.flush());
+    output.write_all(framed(&message).as_bytes())?;
+    output.flush()
 }
 
 /// Serves the protocol on this process's own streams.

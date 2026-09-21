@@ -6,6 +6,7 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -122,7 +123,11 @@ fn a_unit_carries_the_environment_cargo_would_have_given_its_process() {
     let names: Vec<String> = unit
         .env
         .iter()
-        .map(|(key, _)| key.to_string_lossy().into_owned())
+        .map(|(key, _)| {
+            key.to_str()
+                .expect("test protocol paths are UTF-8")
+                .to_owned()
+        })
         .collect();
     for name in ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "CARGO_TARGET_DIR"] {
         assert!(
@@ -199,14 +204,14 @@ fn an_instrumented_build_lands_under_the_host_triple_and_writes_a_profile_when_i
     spec.env = Some(env);
     let ran = run(&spec, &Cancel::new());
     assert!(
-        ran.ok(),
+        ran.succeeded(),
         "the fixture's own tests pass: {}",
-        String::from_utf8_lossy(&ran.output)
+        njutest_devkit::process::strict_utf8(&ran.output)
     );
 
     let written: Vec<PathBuf> = std::fs::read_dir(&profiles)
         .expect("the directory")
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .map(|entry| entry.expect("every profile entry is readable").path())
         .collect();
     assert!(
         !written.is_empty(),
@@ -266,15 +271,14 @@ fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_h
         Watch::new(&cancel, &trace),
     )
     .expect("the build runs");
-    trace.run_end("COMPLETED", None, None);
+    trace
+        .run_end("COMPLETED", None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     let exec = events
         .iter()
-        .find_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Exec { exec } => Some(exec),
-            _ => None,
-        })
+        .find_map(|event| njutest_cli::testkit::payload::of(&event.payload).exec())
         .expect("the build was recorded");
     assert!(
         exec.env_names.contains(&"SECRET_TOKEN".to_owned()),

@@ -23,6 +23,3 @@
 # list, so an arm standing for the rest is the handling rather than a default,
 # and neither is a set whose own crate says it may grow: there the compiler
 # asks for the arm and nobody chose it.
-crates/njutest-cli/src/why.rs::mutations over Payload, 1 arm
-crates/rust-mutants/src/cargo/compile.rs::compile over Message, 1 arm
-crates/rust-mutants/src/reach.rs::executables over Message, 1 arm

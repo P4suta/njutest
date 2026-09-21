@@ -83,8 +83,8 @@ fn capture(executable: &Path, output: &Path) -> String {
     assert!(
         answer.status.success(),
         "{}{}",
-        String::from_utf8_lossy(&answer.stdout),
-        String::from_utf8_lossy(&answer.stderr)
+        std::str::from_utf8(&answer.stdout).expect("the fixture writes exact UTF-8"),
+        std::str::from_utf8(&answer.stderr).expect("the fixture writes exact UTF-8")
     );
     std::fs::read_to_string(output).expect("the embedded catalog")
 }

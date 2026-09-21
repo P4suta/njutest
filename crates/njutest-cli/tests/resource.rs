@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use njutest_cli::provider::{ProviderErrorKind, Request, VERSION};
+use njutest_cli::provider::{InstanceId, ProviderErrorKind, Request, VERSION};
 use njutest_cli::resource::{ResourceError, admissible, visible};
 
 #[test]
@@ -19,7 +19,8 @@ fn a_start_request_is_the_document_the_protocol_states() {
 
 #[test]
 fn a_stop_request_names_the_instance_it_stops() {
-    let written = serde_json::to_string(&Request::stop("postgres", "pg-1", 2)).expect("json");
+    let instance = InstanceId::checked("pg-1").expect("instance id");
+    let written = serde_json::to_string(&Request::stop("postgres", &instance, 2)).expect("json");
     assert_eq!(
         written,
         r#"{"version":1,"action":"stop","capability":"postgres","request_id":"resource-000002","instance":"pg-1"}"#
@@ -77,7 +78,11 @@ fn a_provider_sees_the_path_and_exactly_what_its_configuration_names() {
     let seen = visible(&env, &["HOME".to_owned()]);
     let names: Vec<String> = seen
         .iter()
-        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .map(|(name, _)| {
+            name.to_str()
+                .expect("test protocol paths are UTF-8")
+                .to_owned()
+        })
         .collect();
     assert_eq!(names, ["PATH", "HOME"]);
 }

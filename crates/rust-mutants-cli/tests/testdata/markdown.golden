@@ -8,7 +8,7 @@
 | --- | --- |
 | killed | 28 |
 | survived | 1 |
-| runaway | 0 |
+| step_limit_reached | 0 |
 | waited | 0 |
 | inconclusive | 0 |
 | errored | 0 |

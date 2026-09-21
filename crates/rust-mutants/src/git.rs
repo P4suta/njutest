@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::glob::Pattern;
+use crate::glob::{GlobError, Pattern};
 use crate::runner::{Bound, Spec, Watch, run};
 
 /// The revision a change set is computed against when the caller names none.
@@ -87,7 +87,10 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
         Shape::Trimmed,
         &["merge-base", base, "HEAD"],
     );
-    let against = merge_base.as_deref().unwrap_or(base);
+    let against = match merge_base.as_deref() {
+        Some(merge_base) => merge_base,
+        None => base,
+    };
     let committed = ask(
         asking,
         Empty::Accept,
@@ -106,7 +109,8 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect();
-    files.extend(uncommitted.lines().filter_map(porcelain_path));
+    let uncommitted_paths: Option<Vec<String>> = uncommitted.lines().map(porcelain_path).collect();
+    files.extend(uncommitted_paths?);
     files.retain(|path| !is_under(path, asking.excluded));
     files.sort();
     files.dedup();
@@ -118,8 +122,11 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
 }
 
 /// The Rust files a change set names, as the patterns a run mutates within, keeping only what `include` already admits when it admits anything.
-#[must_use]
-pub fn within(change: &Change, include: &[Pattern]) -> Vec<Pattern> {
+/// # Errors
+/// Refuses a changed path which cannot be represented by the mutation glob
+/// language. Silently omitting such a path would make a partial change set
+/// indistinguishable from the complete one the caller asked for.
+pub fn within(change: &Change, include: &[Pattern]) -> Result<Vec<Pattern>, GlobError> {
     let sources: Vec<&String> = change
         .files
         .iter()
@@ -127,13 +134,11 @@ pub fn within(change: &Change, include: &[Pattern]) -> Vec<Pattern> {
         .filter(|path| include.is_empty() || include.iter().any(|pattern| pattern.matches(path)))
         .collect();
     if sources.is_empty() {
-        return Pattern::compile(NOTHING_CHANGED)
-            .map(|pattern| vec![pattern])
-            .unwrap_or_default();
+        return Pattern::compile(NOTHING_CHANGED).map(|pattern| vec![pattern]);
     }
     sources
         .into_iter()
-        .filter_map(|path| Pattern::compile(path).ok())
+        .map(|path| Pattern::compile(path))
         .collect()
 }
 
@@ -164,7 +169,7 @@ fn porcelain_path(line: &str) -> Option<String> {
     if rest.is_empty() {
         return None;
     }
-    let path = rest.rsplit(" -> ").next().unwrap_or(rest);
+    let path = rest.rsplit(" -> ").next()?;
     Some(path.trim_matches('"').to_owned())
 }
 
@@ -222,10 +227,20 @@ fn ask<W: Watch>(
 
     let asked = run(&spec, asking.watch.cancel());
     asking.watch.exec(&spec, &asked);
-    if asked.error.is_some() || asked.exit_code != 0 {
-        return None;
+    match asked.termination {
+        crate::runner::Termination::Exited(crate::runner::ProcessExit::Code(0)) => {}
+        crate::runner::Termination::NotStarted { .. }
+        | crate::runner::Termination::Exited(_)
+        | crate::runner::Termination::TimedOut
+        | crate::runner::Termination::StoppedByMonitor
+        | crate::runner::Termination::MonitorFailed { .. }
+        | crate::runner::Termination::Cancelled { .. }
+        | crate::runner::Termination::WaitFailed { .. } => return None,
     }
-    let raw = String::from_utf8_lossy(&asked.stdout);
+    let raw = match std::str::from_utf8(&asked.stdout) {
+        Ok(raw) => raw,
+        Err(_non_utf8_git_protocol) => return None,
+    };
     let answer = match shape {
         Shape::Trimmed => raw.trim().to_owned(),
         Shape::Verbatim => raw.trim_end_matches('\n').to_owned(),

@@ -12,6 +12,7 @@
 
 use std::fs;
 use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -65,7 +66,7 @@ fn an_exchange_read_as_one_protocol_and_carrying_another_is_not_read_back() {
     for one in [&raw, &http] {
         let written = serde_json::to_string(one).expect("a record is a document");
         let read: njutest_cli::trace::Read =
-            serde_json::from_str(&written).expect("and one it can read back");
+            njutest_devkit::strictjson::decode_str(&written).expect("and one it can read back");
         assert_eq!(&read, one, "the recording is unchanged: {written}");
     }
 
@@ -84,7 +85,7 @@ fn an_exchange_read_as_one_protocol_and_carrying_another_is_not_read_back() {
         ),
     ] {
         let read: Result<njutest_cli::trace::Read, serde_json::Error> =
-            serde_json::from_str(written);
+            njutest_devkit::strictjson::decode_str(written);
         assert!(
             read.is_err(),
             "an exchange {what} is one an audit re-mints a fault identity from, so the run \
@@ -100,14 +101,14 @@ fn the_disabled_recorder_keeps_nothing_and_says_so() {
     assert!(!trace.is_enabled());
     trace.note("phase", "nothing is listening");
     trace.phase("baseline").end();
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
 }
 
 #[test]
 fn a_recording_opens_with_run_start_and_closes_with_run_end() {
     let trace = recording();
     trace.note("note", "in between");
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
 
     let events = trace.events();
     assert_eq!(types(&events), ["run-start", "note", "run-end"]);
@@ -115,7 +116,7 @@ fn a_recording_opens_with_run_start_and_closes_with_run_end() {
         panic!("a run-start first: {:?}", events[0]);
     };
     assert_eq!(start.schema, SCHEMA);
-    assert_eq!(start.schema, "njutest-trace-v1");
+    assert_eq!(start.schema, "njutest-trace-v2");
     assert_eq!(start.njutest, njutest_cli::VERSION);
     assert_eq!(start.rust_mutants, rust_mutants::VERSION);
     assert_eq!(start.run_id, "20260905T081500Z-abcdef");
@@ -135,7 +136,7 @@ fn sequence_numbers_run_from_one_and_the_elapsed_time_is_measured_from_the_start
     let trace = recording();
     trace.note("a", "one");
     trace.note("b", "two");
-    trace.run_end("ERROR", None, None);
+    trace.run_end("ERROR", None, None).expect("trace closes");
 
     let events = trace.events();
     assert_eq!(
@@ -160,8 +161,11 @@ fn a_phase_ends_once_whether_the_caller_ends_it_or_drops_it() {
         let phase = trace.phase("baseline");
         phase.end();
     }
-    drop(trace.phase("mutation"));
-    trace.run_end("INSUFFICIENT", None, None);
+    let mutation_phase = trace.phase("mutation");
+    drop(mutation_phase);
+    trace
+        .run_end("INSUFFICIENT", None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(
@@ -189,7 +193,7 @@ fn phases_nest_and_each_guard_times_its_own() {
     let inner = trace.phase("baseline");
     inner.end();
     outer.end();
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
 
     let events = trace.events();
     assert_eq!(
@@ -205,9 +209,10 @@ fn phases_nest_and_each_guard_times_its_own() {
     );
     let durations: Vec<Option<u64>> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            Payload::PhaseEnd { phase } => Some(phase.duration_ms),
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .phase_end()
+                .map(|phase| phase.duration_ms)
         })
         .collect();
     assert_eq!(durations, [Some(1_000), Some(3_000)]);
@@ -216,9 +221,9 @@ fn phases_nest_and_each_guard_times_its_own() {
 #[test]
 fn a_recording_ends_once_and_keeps_nothing_after() {
     let trace = recording();
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
     trace.note("late", "after the end");
-    trace.run_end("DEFECT", None, None);
+    trace.run_end("DEFECT", None, None).expect("trace closes");
 
     let events = trace.events();
     assert_eq!(types(&events), ["run-start", "run-end"]);
@@ -240,7 +245,9 @@ fn an_exec_event_carries_environment_names_and_never_a_value() {
         ],
         dir: None,
         timeout_ms: None,
-        stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+        stopped: rust_mutants::execute::Stopped::Exited {
+            exit: rust_mutants::runner::ProcessExit::Code(0),
+        },
         duration_ms: 0,
         output_bytes: 0,
         output_sha256: None,
@@ -249,7 +256,7 @@ fn an_exec_event_carries_environment_names_and_never_a_value() {
         error: None,
         output: Vec::new(),
     });
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
 
     let events = trace.events();
     let Payload::Exec { exec } = &events[1].payload else {
@@ -273,7 +280,9 @@ fn an_exec_event_digests_the_output_rather_than_carrying_it() {
         dir: None,
         env_names: Vec::new(),
         timeout_ms: None,
-        stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+        stopped: rust_mutants::execute::Stopped::Exited {
+            exit: rust_mutants::runner::ProcessExit::Code(0),
+        },
         duration_ms: 0,
         output_bytes: 0,
         output_sha256: None,
@@ -282,7 +291,7 @@ fn an_exec_event_digests_the_output_rather_than_carrying_it() {
         error: None,
         output: output.clone(),
     });
-    trace.run_end("DEFECT", None, None);
+    trace.run_end("DEFECT", None, None).expect("trace closes");
 
     let events = trace.events();
     let Payload::Exec { exec } = &events[1].payload else {
@@ -314,7 +323,7 @@ fn a_progress_note_and_an_artifact_are_records_of_their_own() {
         path: "/tmp/njutest-run-abcdef".to_owned(),
         bytes: Some(4_096),
     });
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
 
     assert_eq!(
         types(&trace.events()),
@@ -332,7 +341,7 @@ fn a_full_ring_drops_its_oldest_and_the_run_end_says_how_many() {
     for index in 0..5_u32 {
         trace.note("fill", &index.to_string());
     }
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
 
     let events = trace.events();
     assert_eq!(events.len(), 3, "the newest three");
@@ -362,37 +371,43 @@ fn the_default_ring_holds_the_last_events_of_a_run_that_asked_for_no_trace() {
 }
 
 #[test]
-fn a_sink_that_cannot_write_costs_the_count_and_never_the_run() {
+fn a_requested_trace_that_cannot_write_fails_finalization() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let sink = DirSink::create(&dir.path().join("recording")).expect("the sink");
     sink.close().expect("closed");
 
-    let trace = Recorder::new(Sink::Dir(sink), stepping_clock(), start());
+    let trace = Recorder::new(Sink::required_with_ring(sink), stepping_clock(), start());
     trace.note("note", "into the void");
-    trace.run_end("ASSURED", None, None);
+    let error = trace
+        .run_end("ASSURED", None, None)
+        .expect_err("a requested durable trace may not disappear");
+    assert!(
+        error.to_string().contains("trace sink is closed"),
+        "{error}"
+    );
 }
 
 #[test]
-fn a_tee_keeps_what_one_sink_keeps_when_the_other_cannot() {
+fn a_required_directory_failure_after_start_cannot_be_hidden_by_the_ring() {
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let broken = DirSink::create(&dir.path().join("recording")).expect("the sink");
-    broken.close().expect("closed");
-
-    let trace = Recorder::new(
-        Sink::Tee(vec![
-            Sink::Dir(broken),
-            Sink::Memory(MemorySink::unbounded()),
-        ]),
-        stepping_clock(),
-        start(),
+    let recording = dir.path().join("required");
+    let sink = DirSink::create(&recording).expect("the durable sink");
+    let trace = Recorder::new(Sink::required_with_ring(sink), stepping_clock(), start());
+    trace.fail_durable_writes_for_test();
+    trace.note("after-start", "must be durable");
+    let error = trace
+        .run_end("ASSURED", None, None)
+        .expect_err("the ring is an observer, not durable authority");
+    assert!(
+        error
+            .to_string()
+            .contains("injected durable trace write failure"),
+        "{error}"
     );
-    trace.note("note", "kept by one of them");
-    trace.run_end("ASSURED", None, None);
-
     assert_eq!(
         types(&trace.events()),
         ["run-start", "note", "run-end"],
-        "a full disk must not cost the ring the last thing the run did"
+        "the best-effort ring remains useful without changing the durable result"
     );
 }
 
@@ -401,16 +416,17 @@ fn a_directory_sink_writes_one_json_object_per_line_and_the_reader_reads_it_back
     let dir = tempfile::tempdir().expect("a temporary directory");
     let recording = dir.path().join("trace/20260905T081500Z-1234");
     let sink = DirSink::create(&recording).expect("the sink");
-    let trace = Recorder::new(Sink::Dir(sink), stepping_clock(), start());
+    let trace = Recorder::new(Sink::required_with_ring(sink), stepping_clock(), start());
     trace.phase("baseline").end();
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
 
     let path = recording.join(FILE_NAME);
     let text = fs::read_to_string(&path).expect("the stream");
     assert_eq!(text.lines().count(), 4, "{text}");
     for line in text.lines() {
-        let value: serde_json::Value = serde_json::from_str(line).expect("one object per line");
-        assert!(value.get("type").is_some(), "{line}");
+        let value: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("one object per line");
+        assert!(value["payload"].get("type").is_some(), "{line}");
         assert!(value.get("seq").is_some(), "{line}");
     }
     let events = read_events(io::BufReader::new(
@@ -528,9 +544,142 @@ fn a_blank_line_is_passed_over_and_a_line_that_is_not_an_event_names_itself() {
 }
 
 #[test]
+fn the_reader_rejects_duplicate_keys_at_every_owned_depth() {
+    let one = written();
+    let duplicate_root = one.replacen("\"seq\":1", "\"seq\":1,\"seq\":1", 1);
+    let duplicate_payload = one.replacen(
+        "\"type\":\"run-start\"",
+        "\"type\":\"run-start\",\"type\":\"run-start\"",
+        1,
+    );
+    let duplicate_record = one.replacen(
+        "\"schema\":\"njutest-trace-v2\"",
+        "\"schema\":\"njutest-trace-v2\",\"schema\":\"njutest-trace-v2\"",
+        1,
+    );
+
+    for malformed in [duplicate_root, duplicate_payload, duplicate_record] {
+        assert!(
+            read_events(io::BufReader::new(malformed.as_bytes())).is_err(),
+            "every object owned by the v2 reader rejects duplicate keys: {malformed}"
+        );
+    }
+}
+
+#[test]
+fn the_v2_reader_distinguishes_an_explicit_null_from_a_missing_field() {
+    let event = Event {
+        seq: 1,
+        timestamp: "2027-01-15T08:00:00Z".to_owned(),
+        elapsed_ms: 0,
+        payload: Payload::PhaseStart {
+            phase: njutest_cli::trace::PhaseRecord {
+                name: "baseline".to_owned(),
+                duration_ms: None,
+            },
+        },
+    };
+    let exact = serde_json::to_string(&event).expect("an exact event");
+    assert!(
+        read_events(io::BufReader::new(exact.as_bytes())).is_ok(),
+        "the explicit null is part of the v2 shape"
+    );
+
+    let mut missing = serde_json::to_value(event).expect("an event value");
+    missing["payload"]["phase"]
+        .as_object_mut()
+        .expect("the phase record")
+        .remove("duration_ms");
+    let text = serde_json::to_string(&missing).expect("the malformed event");
+    assert!(
+        read_events(io::BufReader::new(text.as_bytes())).is_err(),
+        "missing and explicitly null are different v2 documents"
+    );
+}
+
+#[test]
+fn the_published_v2_schema_accepts_every_closed_specimen_and_refuses_ambiguity() {
+    fn schema(root: &Path, name: &str) -> serde_json::Value {
+        let path = root.join("schema").join(name);
+        let text = fs::read_to_string(&path).expect("the published schema");
+        njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON")
+    }
+
+    let root = njutest_devkit::paths::workspace_root();
+    let engine = schema(&root, "rust-mutants-trace-v2.json");
+    let report = schema(&root, "njutest-assurance-report-v2.json");
+    let trace = schema(&root, "njutest-trace-v2.json");
+    let registry = jsonschema::Registry::new()
+        .add(
+            "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v2.json",
+            engine,
+        )
+        .expect("the engine trace schema has a canonical URI")
+        .add(
+            "https://github.com/P4suta/njutest/schema/njutest-assurance-report-v2.json",
+            report,
+        )
+        .expect("the report schema has a canonical URI")
+        .prepare()
+        .expect("the referenced schemas prepare");
+    let validator = jsonschema::options()
+        .with_registry(&registry)
+        .build(&trace)
+        .expect("the trace schema compiles offline");
+
+    let documents: Vec<serde_json::Value> = njutest_cli::testkit::every_payload()
+        .into_iter()
+        .enumerate()
+        .map(|(at, payload)| {
+            serde_json::to_value(Event {
+                seq: u64::try_from(at.saturating_add(1)).expect("a small specimen index"),
+                timestamp: "2027-01-15T08:00:00Z".to_owned(),
+                elapsed_ms: 0,
+                payload,
+            })
+            .expect("a trace specimen serializes")
+        })
+        .collect();
+    for document in &documents {
+        let failures: Vec<String> = validator
+            .iter_errors(document)
+            .map(|error| format!("{error} at {}", error.instance_path()))
+            .collect();
+        assert!(failures.is_empty(), "{document}: {failures:?}");
+    }
+
+    let mut missing_nullable = documents
+        .iter()
+        .find(|document| document["payload"]["type"] == "phase-start")
+        .expect("a phase specimen")
+        .clone();
+    missing_nullable["payload"]["phase"]
+        .as_object_mut()
+        .expect("the phase record")
+        .remove("duration_ms");
+
+    let mut extra_nested = documents.first().expect("a run-start specimen").clone();
+    extra_nested["payload"]["start"]["future"] = serde_json::json!(true);
+
+    let mut contradictory_step = documents
+        .iter()
+        .find(|document| document["payload"]["type"] == "mutant-exec")
+        .expect("a mutant execution specimen")
+        .clone();
+    contradictory_step["payload"]["mutant"]["outcome"] = serde_json::json!("killed");
+
+    for malformed in [missing_nullable, extra_nested, contradictory_step] {
+        assert!(
+            !validator.is_valid(&malformed),
+            "the closed schema accepted {malformed}"
+        );
+    }
+}
+
+#[test]
 fn a_recording_that_lost_one_event_says_so_like_any_other() {
     let trace = recording();
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
     let mut events = trace.events();
     let Some(Payload::RunEnd { run }) = events.last_mut().map(|event| &mut event.payload) else {
         panic!("a run-end last");
@@ -577,7 +726,9 @@ fn a_stage_ends_where_the_next_begins_and_the_last_ends_with_the_run() {
 
     trace.stage("open");
     trace.stage("baseline");
-    trace.run_end("INSUFFICIENT", None, None);
+    trace
+        .run_end("INSUFFICIENT", None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(
@@ -594,11 +745,10 @@ fn a_stage_ends_where_the_next_begins_and_the_last_ends_with_the_run() {
     );
     let named: Vec<(&str, Option<u64>)> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            Payload::PhaseStart { phase } | Payload::PhaseEnd { phase } => {
-                Some((phase.name.as_str(), phase.duration_ms))
-            }
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .phase()
+                .map(|phase| (phase.name.as_str(), phase.duration_ms))
         })
         .collect();
     assert_eq!(
@@ -623,13 +773,16 @@ fn a_route_names_every_target_a_proof_discharged_beside_the_proof() {
         outcome: "killed".to_owned(),
         duration_ms: 42,
         alone: false,
+        step_boundary: None,
     });
     trace.probe_exec(ProbeExecRecord {
         target: "core/test/lib fast".to_owned(),
         outcome: "measured".to_owned(),
         infected: Some(3),
     });
-    trace.run_end("INSUFFICIENT", None, None);
+    trace
+        .run_end("INSUFFICIENT", None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(
@@ -664,7 +817,9 @@ fn the_wire_shape_is_the_recorded_one() {
         dir: Some("/w".to_owned()),
         env_names: vec!["CARGO_TARGET_DIR".to_owned()],
         timeout_ms: Some(600_000),
-        stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+        stopped: rust_mutants::execute::Stopped::Exited {
+            exit: rust_mutants::runner::ProcessExit::Code(0),
+        },
         duration_ms: 1_200,
         output_bytes: 0,
         output_sha256: None,
@@ -688,6 +843,7 @@ fn the_wire_shape_is_the_recorded_one() {
         outcome: "killed".to_owned(),
         duration_ms: 42,
         alone: false,
+        step_boundary: None,
     });
     trace.probe_exec(ProbeExecRecord {
         target: "core/test/lib fast".to_owned(),
@@ -695,15 +851,16 @@ fn the_wire_shape_is_the_recorded_one() {
         infected: None,
     });
     trace.note("limitation", "mutation-phase-not-implemented");
-    trace.run_end("INSUFFICIENT", None, None);
+    trace
+        .run_end("INSUFFICIENT", None, None)
+        .expect("trace closes");
 
     let mut lines = Vec::new();
     for event in trace.events() {
         lines.extend_from_slice(serde_json::to_string(&event).expect("one line").as_bytes());
         lines.push(b'\n');
     }
-    let golden =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/trace.golden.jsonl");
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/trace.golden.jsonl");
     njutest_devkit::golden::golden(&golden, &lines).expect("the recorded stream");
 }
 
@@ -714,7 +871,7 @@ fn a_stage_and_the_work_inside_it_do_not_answer_to_one_name() {
     let inner = trace.phase("mutation-judge");
     inner.end();
     trace.stage("equivalence");
-    trace.run_end("ASSURED", None, None);
+    trace.run_end("ASSURED", None, None).expect("trace closes");
     assert!(
         !check(&trace.events())
             .iter()
@@ -728,7 +885,7 @@ fn a_stage_and_the_work_inside_it_do_not_answer_to_one_name() {
     twice.stage("equivalence");
     let same = twice.phase("equivalence");
     same.end();
-    twice.run_end("ASSURED", None, None);
+    twice.run_end("ASSURED", None, None).expect("trace closes");
     let problems = check(&twice.events());
     assert!(
         problems.contains(&Problem::PhaseRepeated {

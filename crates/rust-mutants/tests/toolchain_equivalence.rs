@@ -52,7 +52,7 @@ fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_i
             .candidates
             .iter()
             .find(|found| found.candidate.rule.name == rule)
-            .unwrap_or_else(|| panic!("a {rule} candidate"))
+            .expect("the requested rule has a candidate")
             .candidate
             .clone()
     };

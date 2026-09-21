@@ -9,9 +9,10 @@ use crate::cli::Ui;
 use crate::report::lines::escape;
 
 /// Where a run says what it is doing.
-#[non_exhaustive]
 pub enum Notes<'a> {
     /// Says nothing at all.
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     Silent,
     /// Lines a person reads.
     Plain(&'a mut dyn Write),
@@ -22,10 +23,6 @@ pub enum Notes<'a> {
 }
 
 /// The one line a dashboard keeps, and what it last said.
-#[expect(
-    missing_debug_implementations,
-    reason = "a stream is a handle to the outside; there is nothing to print about one"
-)]
 #[non_exhaustive]
 pub struct Dashboard<'a> {
     /// Where the block goes.
@@ -36,9 +33,21 @@ pub struct Dashboard<'a> {
     pub width: usize,
 }
 
+impl std::fmt::Debug for Dashboard<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Dashboard")
+            .field("phase", &self.phase)
+            .field("width", &self.width)
+            .finish_non_exhaustive()
+    }
+}
+
 impl std::fmt::Debug for Notes<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            #[cfg(any(test, feature = "testkit"))]
+            #[cfg(feature = "testkit")]
             Self::Silent => "Silent",
             Self::Plain(_) => "Plain",
             Self::Jsonl(_) => "Jsonl",
@@ -62,31 +71,46 @@ impl<'a> Notes<'a> {
     }
 
     /// The run is over: the line after a dashboard starts at the left margin, and every other interface has nothing to add.
-    pub fn finish(&mut self) {
-        if let Self::Dashboard(dashboard) = self {
-            dashboard.end();
+    ///
+    /// # Errors
+    /// Returns the output stream's write failure.
+    pub fn finish(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Dashboard(dashboard) => dashboard.end(),
+            #[cfg(any(test, feature = "testkit"))]
+            #[cfg(feature = "testkit")]
+            Self::Silent => Ok(()),
+            Self::Plain(_) | Self::Jsonl(_) => Ok(()),
         }
     }
 
     /// A phase began.
-    pub fn phase(&mut self, name: &str) {
+    ///
+    /// # Errors
+    /// Returns the output stream's write failure.
+    pub fn phase(&mut self, name: &str) -> std::io::Result<()> {
         match self {
-            Self::Silent => {}
+            #[cfg(any(test, feature = "testkit"))]
+            #[cfg(feature = "testkit")]
+            Self::Silent => Ok(()),
             Self::Plain(out) => say(*out, &format!("== {}", escape(name))),
-            Self::Jsonl(out) => {
-                emit(*out, &serde_json::json!({ "type": "phase", "name": name }));
-            }
+            Self::Jsonl(out) => emit(*out, &serde_json::json!({ "type": "phase", "name": name })),
             Self::Dashboard(dashboard) => {
                 dashboard.phase = escape(name);
-                dashboard.redraw("");
+                dashboard.redraw("")
             }
         }
     }
 
     /// One step of a phase finished.
-    pub fn progress(&mut self, message: &str, done: u64, total: u64) {
+    ///
+    /// # Errors
+    /// Returns the output stream's write failure.
+    pub fn progress(&mut self, message: &str, done: u64, total: u64) -> std::io::Result<()> {
         match self {
-            Self::Silent => {}
+            #[cfg(any(test, feature = "testkit"))]
+            #[cfg(feature = "testkit")]
+            Self::Silent => Ok(()),
             Self::Plain(out) => say(*out, &format!("   [{done}/{total}] {}", escape(message))),
             Self::Jsonl(out) => emit(
                 *out,
@@ -98,70 +122,72 @@ impl<'a> Notes<'a> {
                 }),
             ),
             Self::Dashboard(dashboard) => {
-                dashboard.redraw(&format!("{done}/{total} {}", escape(message)));
+                dashboard.redraw(&format!("{done}/{total} {}", escape(message)))
             }
         }
     }
 
     /// Something worth saying that is not progress.
-    pub fn note(&mut self, kind: &str, text: &str) {
+    ///
+    /// # Errors
+    /// Returns the output stream's write failure.
+    pub fn note(&mut self, kind: &str, text: &str) -> std::io::Result<()> {
         match self {
-            Self::Silent => {}
+            #[cfg(any(test, feature = "testkit"))]
+            #[cfg(feature = "testkit")]
+            Self::Silent => Ok(()),
             Self::Plain(out) => say(*out, &format!("   {}: {}", escape(kind), escape(text))),
             Self::Jsonl(out) => emit(
                 *out,
                 &serde_json::json!({ "type": "note", "kind": kind, "detail": text }),
             ),
             Self::Dashboard(dashboard) => {
-                dashboard.aside(&format!("{}: {}", escape(kind), escape(text)));
+                dashboard.aside(&format!("{}: {}", escape(kind), escape(text)))
             }
         }
     }
 }
 
-impl Drop for Notes<'_> {
-    fn drop(&mut self) {
-        self.finish();
-    }
-}
-
 impl Dashboard<'_> {
     /// Rewrites the block where it already wrote, padded to cover whatever was longer before it.
-    fn redraw(&mut self, detail: &str) {
+    fn redraw(&mut self, detail: &str) -> std::io::Result<()> {
         let line = if detail.is_empty() {
             format!("{} ...", self.phase)
         } else {
             format!("{} {detail}", self.phase)
         };
         let padding = self.width.saturating_sub(line.chars().count());
-        let _written = write!(self.out, "\r{line}{: <padding$}\r", "");
-        let _flushed = self.out.flush();
+        write!(self.out, "\r{line}{: <padding$}\r", "")?;
+        self.out.flush()?;
         self.width = line.chars().count();
+        Ok(())
     }
 
     /// Says something the progress line never will, on a line of its own, and puts the block back under it.
-    fn aside(&mut self, text: &str) {
+    fn aside(&mut self, text: &str) -> std::io::Result<()> {
         let padding = self.width;
-        let _written = writeln!(self.out, "\r{text}{: <padding$}", "");
+        writeln!(self.out, "\r{text}{: <padding$}", "")?;
         self.width = 0;
-        self.redraw("");
+        self.redraw("")
     }
 
     /// Ends the block so the next thing written starts at the left margin.
-    fn end(&mut self) {
+    fn end(&mut self) -> std::io::Result<()> {
         if self.width > 0 {
-            let _written = writeln!(self.out);
+            writeln!(self.out)?;
             self.width = 0;
         }
+        Ok(())
     }
 }
 
 /// Writes one JSON object.
-fn emit(out: &mut dyn Write, value: &serde_json::Value) {
-    say(out, &value.to_string());
+fn emit(out: &mut dyn Write, value: &serde_json::Value) -> std::io::Result<()> {
+    say(out, &value.to_string())
 }
 
-/// Writes one line. A closed stream is the reader's choice, not a failure of ours, and never a reason to stop a verification.
-fn say(out: &mut dyn Write, line: &str) {
-    let _written = writeln!(out, "{line}");
+/// Writes one line without deciding whether a broken pipe is success; only the
+/// composition root knows whether the output stream was the command's result.
+fn say(out: &mut dyn Write, line: &str) -> std::io::Result<()> {
+    writeln!(out, "{line}")
 }

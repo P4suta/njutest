@@ -26,14 +26,25 @@ fn tree(targets: &[&str]) -> tempfile::TempDir {
 #[test]
 fn the_targets_a_tree_holds_are_the_rust_files_of_its_fuzz_directory() {
     let dir = tree(&["parse", "decode"]);
-    assert_eq!(targets_of(dir.path()), ["decode", "parse"]);
+    assert_eq!(
+        targets_of(dir.path()).expect("the target directory is readable"),
+        ["decode", "parse"]
+    );
 }
 
 #[test]
 fn a_tree_with_no_fuzz_directory_holds_no_targets() {
     let dir = tempfile::tempdir().expect("tempdir");
-    assert!(targets_of(dir.path()).is_empty());
-    assert!(targets_of(Path::new("/nonexistent")).is_empty());
+    assert!(
+        targets_of(dir.path())
+            .expect("absence is a readable empty target set")
+            .is_empty()
+    );
+    assert!(
+        targets_of(Path::new("/nonexistent"))
+            .expect("absence is a readable empty target set")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -51,7 +62,7 @@ mod driving {
 
     use njutest_cli::assure::fuzz::{Fuzzing, fuzz};
     use njutest_cli::report::FindingKind;
-    use njutest_cli::trace::{Clock, MemorySink, Payload, Recorder, Sink, StartRecord};
+    use njutest_cli::trace::{Clock, MemorySink, Recorder, Sink, StartRecord};
     use njutest_cli::watch::Watch;
     use rust_mutants::runner::Cancel;
 
@@ -102,6 +113,7 @@ mod driving {
             },
             Watch::new(&cancel, &trace),
         )
+        .expect("the fixture fuzz output is valid UTF-8")
     }
 
     fn recording() -> Recorder {
@@ -143,7 +155,8 @@ mod driving {
                 timeout: Some(Duration::from_millis(300)),
             },
             Watch::new(&cancel, &trace),
-        );
+        )
+        .expect("the fixture fuzz output is valid UTF-8");
 
         assert_eq!(
             done.ran,
@@ -272,7 +285,8 @@ mod driving {
                 timeout: Some(Duration::from_secs(30)),
             },
             Watch::new(&cancel, &trace),
-        );
+        )
+        .expect("the fixture fuzz output is valid UTF-8");
 
         assert!(done.ran.is_empty(), "{done:?}");
         assert_eq!(
@@ -303,7 +317,8 @@ mod driving {
                 timeout: Some(Duration::from_secs(30)),
             },
             Watch::new(&cancel, &trace),
-        );
+        )
+        .expect("the fixture fuzz output is valid UTF-8");
 
         assert_eq!(done.ran, ["parse"]);
         assert_eq!(
@@ -312,10 +327,11 @@ mod driving {
         );
         let exec = trace
             .events()
-            .into_iter()
-            .find_map(|event| match event.payload {
-                Payload::Exec { exec } => Some(exec),
-                _ => None,
+            .iter()
+            .find_map(|event| {
+                njutest_cli::testkit::payload::of(&event.payload)
+                    .exec()
+                    .cloned()
             })
             .expect("the fuzz execution in the trace");
         assert_eq!(
@@ -333,8 +349,8 @@ mod driving {
                 "-max_total_time=7"
             ]
         );
-        let expected_directory = dir.path().to_string_lossy();
-        assert_eq!(exec.dir.as_deref(), Some(expected_directory.as_ref()));
+        let expected_directory = dir.path().to_str().expect("test protocol paths are UTF-8");
+        assert_eq!(exec.dir.as_deref(), Some(expected_directory));
         assert_eq!(exec.timeout_ms, Some(30_000));
     }
 
@@ -343,7 +359,11 @@ mod driving {
         let dir = tree(&["parse"]);
         let later = dir.path().join("fuzz/artifacts/parse/z-last");
         let earlier = dir.path().join("fuzz/artifacts/parse/a-first");
-        let mut env = saying("crashed", 77, Some(&later.to_string_lossy()));
+        let mut env = saying(
+            "crashed",
+            77,
+            Some(later.to_str().expect("test protocol paths are UTF-8")),
+        );
         env.push((
             OsString::from("FAKE_CARGO_ARTIFACT_TWO"),
             earlier.into_os_string(),
@@ -376,7 +396,11 @@ mod driving {
         let dir = tree(&["parse"]);
         let artifact = dir.path().join("fuzz/artifacts/parse/nested\\crash-abc");
         let done = driven(
-            saying("crashed", 77, Some(&artifact.to_string_lossy())),
+            saying(
+                "crashed",
+                77,
+                Some(artifact.to_str().expect("test protocol paths are UTF-8")),
+            ),
             dir.path(),
             &[],
         );

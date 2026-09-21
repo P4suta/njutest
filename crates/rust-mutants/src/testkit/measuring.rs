@@ -7,58 +7,55 @@ use crate::rule::Tier;
 use crate::session::PrepareOptions;
 
 /// Which measurements a session is asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Measuring {
-    /// Build once with LLVM coverage instrumentation and route by the regions it exported.
-    pub coverage: bool,
-    /// Ask the guards, on the baseline run, which of each target's tests reached them.
-    pub touch: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Measuring {
+    /// Neither measurement.
+    Nothing,
+    /// Guard touches only.
+    Guards,
+    /// LLVM coverage only.
+    Coverage,
+    /// Both independent measurements.
+    Both,
 }
 
 impl Measuring {
     /// Neither, so every mutant is put to every test of every target: the answer a run with nothing removed gives.
-    pub const NOTHING: Self = Self {
-        coverage: false,
-        touch: false,
-    };
+    pub const NOTHING: Self = Self::Nothing;
     /// The guards alone, which is the default a run makes and costs no build of its own.
-    pub const GUARDS: Self = Self {
-        coverage: false,
-        touch: true,
-    };
+    pub const GUARDS: Self = Self::Guards;
     /// The coverage build alone, which is the second opinion the guards are checked against.
-    pub const COVERAGE: Self = Self {
-        coverage: true,
-        touch: false,
-    };
+    pub const COVERAGE: Self = Self::Coverage;
     /// Both, so a mutation is put to the tests the guards named among the targets the regions placed.
-    pub const BOTH: Self = Self {
-        coverage: true,
-        touch: true,
-    };
+    pub const BOTH: Self = Self::Both;
 
-    /// Every combination, so a test can hold a claim to all of them rather than to the one it thought of.
-    pub const ALL: [Self; 4] = [Self::NOTHING, Self::GUARDS, Self::COVERAGE, Self::BOTH];
+    const fn coverage(self) -> bool {
+        matches!(self, Self::Coverage | Self::Both)
+    }
+
+    const fn touch(self) -> bool {
+        matches!(self, Self::Guards | Self::Both)
+    }
 
     /// The name a failing assertion carries.
     #[must_use]
     pub const fn name(self) -> &'static str {
-        match (self.coverage, self.touch) {
-            (false, false) => "nothing",
-            (false, true) => "guards",
-            (true, false) => "coverage",
-            (true, true) => "both",
+        match self {
+            Self::Nothing => "nothing",
+            Self::Guards => "guards",
+            Self::Coverage => "coverage",
+            Self::Both => "both",
         }
     }
 
     /// The command line a run measuring this way is asked for, so an engine test and a command-line test name one thing one way.
     #[must_use]
     pub const fn flags(self) -> &'static [&'static str] {
-        match (self.coverage, self.touch) {
-            (false, false) => &["--no-coverage", "--no-touch"],
-            (false, true) => &["--no-coverage"],
-            (true, false) => &["--coverage", "--no-touch"],
-            (true, true) => &["--coverage"],
+        match self {
+            Self::Nothing => &["--no-coverage", "--no-touch"],
+            Self::Guards => &["--no-coverage"],
+            Self::Coverage => &["--coverage", "--no-touch"],
+            Self::Both => &["--coverage"],
         }
     }
 
@@ -67,9 +64,9 @@ impl Measuring {
     pub fn options(self, tier: Tier) -> PrepareOptions {
         PrepareOptions {
             tier,
-            coverage: self.coverage,
-            branch_proofs: self.coverage || self.touch,
-            touch: self.touch,
+            coverage: self.coverage(),
+            branch_proofs: self.coverage() || self.touch(),
+            touch: self.touch(),
             ..PrepareOptions::default()
         }
     }

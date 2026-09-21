@@ -13,6 +13,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// Every place the selected rules target, as the walk found them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CandidatesDocument {
     /// [`DOCUMENT_TYPE`].
     pub document_type: String,
@@ -21,13 +22,14 @@ pub struct CandidatesDocument {
     /// The engine that walked the tree.
     pub tool_version: String,
     /// How many candidates the document holds, which is the number `catalog` will rule on.
-    pub count: u32,
+    pub count: usize,
     /// Every candidate, in the order the walk found them.
     pub candidates: Vec<CandidateDocument>,
 }
 
 /// One place a rule targets.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CandidateDocument {
     /// The identity the catalog would give it, when the walk could compute one.
     pub id: String,

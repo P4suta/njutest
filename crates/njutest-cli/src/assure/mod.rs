@@ -8,6 +8,7 @@ pub mod deep;
 pub mod equivalence;
 pub mod fuzz;
 pub mod identity;
+pub(crate) mod model;
 pub mod mutation;
 pub mod repair;
 pub mod replay;

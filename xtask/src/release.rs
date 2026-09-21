@@ -6,7 +6,9 @@
 /// The `[workspace.package].version` of the root manifest, if it has one.
 #[must_use]
 pub fn workspace_version(root_manifest: &str) -> Option<String> {
-    let table = root_manifest.parse::<toml::Table>().ok()?;
+    let Ok(table) = root_manifest.parse::<toml::Table>() else {
+        return None;
+    };
     table
         .get("workspace")?
         .get("package")?

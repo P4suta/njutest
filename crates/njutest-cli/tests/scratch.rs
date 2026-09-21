@@ -4,7 +4,9 @@
 //! Where a run writes, and who it belongs to.
 
 #![expect(
+    clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -12,7 +14,12 @@ use std::fs;
 
 use jiff::Timestamp;
 use njutest_cli::scratch::{DIR_PREFIX, MARKER_SCHEMA, Scratch};
+use rust_mutants::id::RunId;
 use rust_mutants::tempowner;
+
+fn run_id(value: &str) -> RunId {
+    RunId::try_from(value).expect("a canonical writable run id")
+}
 
 /// The real moment, because the sweep judges an unowned directory by its age on the filesystem: a made-up "now" months away from the file times would call every directory a leftover.
 fn now() -> Timestamp {
@@ -23,7 +30,7 @@ fn now() -> Timestamp {
 fn a_scratch_is_named_for_its_run_and_holds_the_places_a_run_writes() {
     let parent = tempfile::tempdir().expect("a temporary root");
     let scratch =
-        Scratch::create(parent.path(), "20260905T081500Z-abcdef", now()).expect("scratch");
+        Scratch::create(parent.path(), &run_id("20260905t081500z-abcdef"), now()).expect("scratch");
 
     assert_eq!(
         scratch
@@ -31,7 +38,7 @@ fn a_scratch_is_named_for_its_run_and_holds_the_places_a_run_writes() {
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
             .expect("a name"),
-        format!("{DIR_PREFIX}20260905T081500Z-abcdef")
+        format!("{DIR_PREFIX}20260905t081500z-abcdef")
     );
     assert!(scratch.build_dir().is_dir(), "the isolated build directory");
     assert!(scratch.profiles_dir().is_dir(), "coverage profiles");
@@ -43,7 +50,7 @@ fn a_scratch_is_named_for_its_run_and_holds_the_places_a_run_writes() {
 fn the_marker_names_the_runner_so_a_sweep_knows_who_left_it() {
     let parent = tempfile::tempdir().expect("a temporary root");
     let started = now();
-    let scratch = Scratch::create(parent.path(), "run", started).expect("scratch");
+    let scratch = Scratch::create(parent.path(), &run_id("run"), started).expect("scratch");
 
     let marker = tempowner::read_marker(scratch.dir()).expect("a marker");
     assert_eq!(MARKER_SCHEMA, "njutest-temp-owner-v1");
@@ -57,7 +64,7 @@ fn the_marker_names_the_runner_so_a_sweep_knows_who_left_it() {
 #[test]
 fn a_round_directory_is_made_under_the_scratch_and_nowhere_else() {
     let parent = tempfile::tempdir().expect("a temporary root");
-    let scratch = Scratch::create(parent.path(), "run", now()).expect("scratch");
+    let scratch = Scratch::create(parent.path(), &run_id("run"), now()).expect("scratch");
 
     let round = scratch.round_dir("baseline-1").expect("a round directory");
     assert!(round.is_dir());
@@ -72,11 +79,14 @@ fn a_round_directory_is_made_under_the_scratch_and_nowhere_else() {
 #[test]
 fn closing_a_scratch_removes_everything_it_made() {
     let parent = tempfile::tempdir().expect("a temporary root");
-    let scratch = Scratch::create(parent.path(), "run", now()).expect("scratch");
+    let scratch = Scratch::create(parent.path(), &run_id("run"), now()).expect("scratch");
     let dir = scratch.dir().to_path_buf();
     fs::write(scratch.build_dir().join("artifact"), b"x").expect("a file in it");
 
-    assert_eq!(scratch.close(), Vec::<std::path::PathBuf>::new());
+    assert_eq!(
+        scratch.close().expect("closed"),
+        Vec::<std::path::PathBuf>::new()
+    );
     assert!(!dir.exists(), "{}", dir.display());
 }
 
@@ -84,7 +94,7 @@ fn closing_a_scratch_removes_everything_it_made() {
 fn dropping_a_scratch_removes_everything_it_made() {
     let parent = tempfile::tempdir().expect("a temporary root");
     let dir = {
-        let scratch = Scratch::create(parent.path(), "run", now()).expect("scratch");
+        let scratch = Scratch::create(parent.path(), &run_id("run"), now()).expect("scratch");
         let dir = scratch.dir().to_path_buf();
         fs::write(scratch.build_dir().join("artifact"), b"x").expect("a file in it");
         dir
@@ -100,10 +110,10 @@ fn dropping_a_scratch_removes_everything_it_made() {
 #[test]
 fn a_kept_scratch_survives_and_says_it_was_kept_on_purpose() {
     let parent = tempfile::tempdir().expect("a temporary root");
-    let scratch = Scratch::create(parent.path(), "run", now()).expect("scratch");
+    let scratch = Scratch::create(parent.path(), &run_id("run"), now()).expect("scratch");
     let dir = scratch.dir().to_path_buf();
 
-    assert_eq!(scratch.keep(), vec![dir.clone()]);
+    assert_eq!(scratch.keep().expect("kept"), vec![dir.clone()]);
     assert!(dir.is_dir(), "a keep is a keep");
     let marker = tempowner::read_marker(&dir).expect("a marker");
     assert!(marker.kept, "so a later sweep leaves it alone");
@@ -120,7 +130,7 @@ fn creating_a_scratch_collects_what_an_earlier_run_abandoned() {
         .expect("and then its holder went away");
     assert!(abandoned.is_dir());
 
-    let scratch = Scratch::create(parent.path(), "later", now()).expect("scratch");
+    let scratch = Scratch::create(parent.path(), &run_id("later"), now()).expect("scratch");
     assert_eq!(scratch.swept().removed.len(), 1, "{:?}", scratch.swept());
     assert!(!abandoned.exists(), "{}", abandoned.display());
 }
@@ -128,11 +138,12 @@ fn creating_a_scratch_collects_what_an_earlier_run_abandoned() {
 #[test]
 fn a_sweep_leaves_alone_what_a_run_kept_on_purpose() {
     let parent = tempfile::tempdir().expect("a temporary root");
-    let kept = Scratch::create(parent.path(), "earlier", now())
+    let kept = Scratch::create(parent.path(), &run_id("earlier"), now())
         .expect("scratch")
-        .keep();
+        .keep()
+        .expect("kept");
 
-    let scratch = Scratch::create(parent.path(), "later", now()).expect("scratch");
+    let scratch = Scratch::create(parent.path(), &run_id("later"), now()).expect("scratch");
     assert_eq!(scratch.swept().kept, 1);
     assert!(kept[0].is_dir(), "{}", kept[0].display());
 }
@@ -146,7 +157,8 @@ fn a_directory_this_run_cannot_claim_costs_the_claim_and_not_the_run() {
         .expect("the lock file opens")
         .expect("nobody else holds it");
 
-    let scratch = Scratch::create(parent.path(), "run", now()).expect("the run still runs");
+    let scratch =
+        Scratch::create(parent.path(), &run_id("run"), now()).expect("the run still runs");
     assert!(!scratch.is_claimed(), "somebody else holds the lock");
     assert!(
         scratch.build_dir().is_dir(),

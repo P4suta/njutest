@@ -3,8 +3,6 @@
 
 //! What a person is told, drawn for a terminal.
 
-use std::fmt::Write as _;
-
 use super::{Diagnostic, Excerpt, Headline, Missing, Place, Site, Style, Telling, Terminal, Told};
 
 /// What a run has to say, drawn for `terminal`.
@@ -43,10 +41,13 @@ fn stated(out: &mut String, told: &Told, terminal: Terminal) {
         let opening = 4;
         let mut lines = super::folded(&said, telling.room(opening)).into_iter();
         if let Some(first) = lines.next() {
-            let _written = writeln!(out, "  {} {first}", telling.frame(telling.strokes().beside));
+            super::line(
+                out,
+                format_args!("  {} {first}", telling.frame(telling.strokes().beside)),
+            );
         }
         for rest in lines {
-            let _written = writeln!(out, "{:opening$}{rest}", "");
+            super::line(out, format_args!("{:opening$}{rest}", ""));
         }
     }
     out.push('\n');
@@ -74,20 +75,20 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
             .iter()
             .filter(|spot| spot.line == *line)
             .collect();
-        let _written = writeln!(
+        super::line(
             out,
-            "{:>gutter$} {} {}",
-            telling.painted(Style::Frame, &line.to_string()),
-            telling.frame(strokes.rule),
-            telling.lit(text, &here)
+            format_args!(
+                "{:>gutter$} {} {}",
+                telling.painted(Style::Frame, &line.to_string()),
+                telling.frame(strokes.rule),
+                telling.lit(text, &here)
+            ),
         );
         for spot in here {
             for marked in telling.spot(spot, gutter, text) {
-                let _written = writeln!(
+                super::line(
                     out,
-                    "{:gutter$} {} {marked}",
-                    "",
-                    telling.frame(strokes.beside)
+                    format_args!("{:gutter$} {} {marked}", "", telling.frame(strokes.beside)),
                 );
             }
         }
@@ -127,11 +128,11 @@ fn heads(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
         .saturating_add(counted.len())
         <= telling.room(0)
     {
-        let _written = writeln!(out, "{named}   {heading}");
+        super::line(out, format_args!("{named}   {heading}"));
     } else {
-        let _written = writeln!(out, "{named}");
+        super::line(out, format_args!("{named}"));
         for folded in super::folded(&heading, telling.room(opening)) {
-            let _written = writeln!(out, "{:opening$}{folded}", "");
+            super::line(out, format_args!("{:opening$}{folded}", ""));
         }
     }
     let Some(instead) = &place.instead else {
@@ -143,20 +144,24 @@ fn heads(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
         .saturating_add(strokes.rule.chars().count());
     let mut lines = super::folded(why, telling.room(opening.saturating_add(1))).into_iter();
     if let Some(first) = lines.next() {
-        let _written = writeln!(
+        super::line(
             out,
-            "{:gutter$} {} {}",
-            "",
-            telling.frame(strokes.rule),
-            telling.painted(Style::Limitation, &first)
+            format_args!(
+                "{:gutter$} {} {}",
+                "",
+                telling.frame(strokes.rule),
+                telling.painted(Style::Limitation, &first)
+            ),
         );
     }
     for rest in lines {
-        let _written = writeln!(
+        super::line(
             out,
-            "{:opening$} {}",
-            "",
-            telling.painted(Style::Limitation, &rest)
+            format_args!(
+                "{:opening$} {}",
+                "",
+                telling.painted(Style::Limitation, &rest)
+            ),
         );
     }
 }
@@ -187,10 +192,10 @@ fn wants(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
             .saturating_add(command.len())
             .saturating_add(opening);
         if together <= telling.room(0) {
-            let _written = writeln!(out, "{head}  {typed}");
+            super::line(out, format_args!("{head}  {typed}"));
         } else {
-            let _written = writeln!(out, "{head}");
-            let _written = writeln!(out, "{:opening$}{typed}", "");
+            super::line(out, format_args!("{head}"));
+            super::line(out, format_args!("{:opening$}{typed}", ""));
         }
     }
 }
@@ -234,18 +239,15 @@ fn said(out: &mut String, diagnostic: &Diagnostic, terminal: Terminal) {
     let opening = super::wide(&severity).saturating_add(1);
     let mut titled = super::folded(&diagnostic.title, telling.room(opening)).into_iter();
     if let Some(first) = titled.next() {
-        let _written = writeln!(
+        super::line(
             out,
-            "{severity} {}",
-            telling.painted(Style::Subject, &first)
+            format_args!("{severity} {}", telling.painted(Style::Subject, &first)),
         );
     }
     for rest in titled {
-        let _written = writeln!(
+        super::line(
             out,
-            "{:opening$}{}",
-            "",
-            telling.painted(Style::Subject, &rest)
+            format_args!("{:opening$}{}", "", telling.painted(Style::Subject, &rest)),
         );
     }
     let gutter = diagnostic
@@ -288,7 +290,10 @@ fn said(out: &mut String, diagnostic: &Diagnostic, terminal: Terminal) {
             under(out, (gutter, written == last), &said, telling);
         } else {
             under(out, (gutter, written == last), &action.said, telling);
-            let _written = writeln!(out, "{:hung$}{}", "", telling.command(&action.command));
+            super::line(
+                out,
+                format_args!("{:hung$}{}", "", telling.command(&action.command)),
+            );
         }
     }
 }
@@ -314,35 +319,42 @@ fn under(out: &mut String, (gutter, last): (usize, bool), text: &str, telling: T
     }
     .into_iter();
     if let Some(first) = lines.next() {
-        let _written = writeln!(out, "{:gutter$} {} {first}", "", telling.frame(corner));
+        super::line(
+            out,
+            format_args!("{:gutter$} {} {first}", "", telling.frame(corner)),
+        );
     }
     for rest in lines {
-        let _written = writeln!(out, "{:opening$} {rest}", "");
+        super::line(out, format_args!("{:opening$} {rest}", ""));
     }
 }
 
 /// Where a diagnostic is, and the line it is on, under a mark.
 fn at(out: &mut String, site: &Site, gutter: usize, telling: Telling) {
     let strokes = telling.strokes();
-    let _written = writeln!(
+    super::line(
         out,
-        "{:gutter$} {}{}",
-        "",
-        telling.frame(strokes.opening),
-        telling.where_at(site)
+        format_args!(
+            "{:gutter$} {}{}",
+            "",
+            telling.frame(strokes.opening),
+            telling.where_at(site)
+        ),
     );
     match &site.excerpt {
         Excerpt::Read(line) => {
             let rule = telling.frame(strokes.rule);
             let beside = telling.frame(strokes.beside);
-            let _written = writeln!(out, "{:gutter$} {rule}", "");
-            let _written = writeln!(
+            super::line(out, format_args!("{:gutter$} {rule}", ""));
+            super::line(
                 out,
-                "{} {rule} {line}",
-                telling.painted(Style::Frame, &site.line.to_string())
+                format_args!(
+                    "{} {rule} {line}",
+                    telling.painted(Style::Frame, &site.line.to_string())
+                ),
             );
             for caret in telling.caret(site, gutter, line) {
-                let _written = writeln!(out, "{:gutter$} {beside} {caret}", "");
+                super::line(out, format_args!("{:gutter$} {beside} {caret}", ""));
             }
         }
         Excerpt::Instead(Missing::Moved) => aside(
@@ -362,12 +374,14 @@ fn at(out: &mut String, site: &Site, gutter: usize, telling: Telling) {
 
 /// Why a line is not being drawn, where a line would have been.
 fn aside(out: &mut String, gutter: usize, why: &str, telling: Telling) {
-    let _written = writeln!(
+    super::line(
         out,
-        "{:gutter$} {} {}",
-        "",
-        telling.frame(telling.strokes().rule),
-        telling.painted(Style::Limitation, why)
+        format_args!(
+            "{:gutter$} {} {}",
+            "",
+            telling.frame(telling.strokes().rule),
+            telling.painted(Style::Limitation, why)
+        ),
     );
 }
 
@@ -379,17 +393,17 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
         killed,
         survived,
         unreached,
-        runaway,
+        step_limit_reached,
         waited,
         duration_ms,
         kept,
         ..
     } = &told.headline;
     let seconds = as_secs(*duration_ms);
-    let ran_away = if *runaway == 0 {
+    let reached_steps = if *step_limit_reached == 0 {
         String::new()
     } else {
-        format!("{runaway} runaway  ")
+        format!("{step_limit_reached} step-limited  ")
     };
     let stopped_waiting = if *waited == 0 {
         String::new()
@@ -400,7 +414,7 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
         Style::Frame,
         &format!(
             "{killed} killed  {survived} survived  {unreached} unreached  \
-             {ran_away}{stopped_waiting}{seconds}"
+             {reached_steps}{stopped_waiting}{seconds}"
         ),
     );
     headed(
@@ -433,10 +447,10 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
 fn headed(out: &mut String, text: &str, telling: Telling) {
     let mut lines = super::folded(text, telling.room(2)).into_iter();
     if let Some(first) = lines.next() {
-        let _written = writeln!(out, "  {first}");
+        super::line(out, format_args!("  {first}"));
     }
     for rest in lines {
-        let _written = writeln!(out, "    {rest}");
+        super::line(out, format_args!("    {rest}"));
     }
 }
 

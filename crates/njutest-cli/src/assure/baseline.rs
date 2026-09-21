@@ -25,6 +25,8 @@ pub struct Measured {
     /// How long it took.
     pub duration_ms: u64,
     /// How many tests it ran, which is what that duration is the cost of.
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub tests: u32,
     /// What it said, when that matters.
     pub message: Option<String>,
@@ -42,10 +44,7 @@ pub struct Baseline {
 }
 
 /// Where a phase says what it is doing, and what it is watched by.
-#[expect(
-    missing_debug_implementations,
-    reason = "a stream is a handle to the outside; there is nothing to print about one"
-)]
+#[derive(Debug)]
 pub struct Reporting<'a, 'b> {
     /// Where progress goes.
     pub notes: &'a mut Notes<'b>,
@@ -82,55 +81,83 @@ impl<'a> Step<'a> {
 
 impl Reporting<'_, '_> {
     /// Says how far a phase has got, to the person watching and to the recording alike.
-    pub fn progress(&mut self, message: &str, done: u64, total: u64) {
-        self.about(Step::of(message), done, total);
+    ///
+    /// # Errors
+    /// Returns the progress stream's write failure.
+    pub fn progress(&mut self, message: &str, done: u64, total: u64) -> std::io::Result<()> {
+        self.about(Step::of(message), done, total)
     }
 
     /// The same, where the step is about something a later command can be given.
-    pub fn about(&mut self, step: Step<'_>, done: u64, total: u64) {
+    ///
+    /// # Errors
+    /// Returns the progress stream's write failure.
+    pub fn about(&mut self, step: Step<'_>, done: u64, total: u64) -> std::io::Result<()> {
         self.watch.trace.progress(ProgressRecord {
             message: step.said.to_owned(),
             subject: step.subject.to_owned(),
             done: Some(done),
             total: Some(total),
         });
-        self.notes.progress(step.said, done, total);
+        self.notes.progress(step.said, done, total)
     }
 }
 
 /// Reads what the session's one verified run of every target came to.
-#[must_use]
-pub fn observe(session: &Session, mut reporting: Reporting<'_, '_>) -> Baseline {
+/// # Errors
+/// Returns a typed target refusal if an engine target name cannot be framed by
+/// the runner's stable identity recipe.
+pub fn observe(
+    session: &Session,
+    mut reporting: Reporting<'_, '_>,
+) -> Result<Baseline, crate::error::RunnerError> {
     let watch = reporting.watch;
-    let _phase = watch.trace.phase("baseline-measure");
+    let phase = watch.trace.phase("baseline-measure");
     let verified = session.verified();
     let mut baseline = Baseline {
         limitations: limitations(session.targets(), &verified.touched.limitations),
         ..Baseline::default()
     };
-    let built = |id: &str| session.targets().iter().find(|one| one.id == id);
+    let built = |id: &str| session.targets().iter().find(|one| one.id.as_str() == id);
     let rows: Vec<(&String, &rust_mutants::session::Baseline)> = verified
         .targets
         .iter()
         .filter(|(id, _observed)| !built(id).is_some_and(unmeasurable))
         .map(|(id, measured)| (id, measured.baseline()))
         .collect();
-    let total = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+    let total = u64::try_from(rows.len())
+        .map_err(|error| crate::targets::TargetError::invalid("baseline target count", error))?;
     for (done, (id, observed)) in rows.into_iter().enumerate() {
         let built = built(id);
-        let target = built.map_or_else(|| named(id), target_of);
-        let done = u64::try_from(done).unwrap_or(u64::MAX).saturating_add(1);
-        reporting.progress(&target.name(), done, total);
+        let target = match built {
+            Some(target) => target_of(target)?,
+            None => named(id)?,
+        };
+        let done = u64::try_from(done)
+            .map_err(|error| crate::targets::TargetError::invalid("baseline progress", error))?
+            .checked_add(1)
+            .ok_or_else(|| {
+                crate::targets::TargetError::invalid(
+                    "baseline progress",
+                    "the progress count overflowed",
+                )
+            })?;
+        reporting.progress(&target.name(), done, total)?;
         let (status, message) = status_of(observed.outcome, observed.ignored, &observed.output);
+        let duration_ms = u64::try_from(observed.duration.as_millis())
+            .map_err(|error| crate::targets::TargetError::invalid(target.name(), error))?;
         baseline.targets.push(Measured {
             target,
             status,
-            duration_ms: u64::try_from(observed.duration.as_millis()).unwrap_or(u64::MAX),
+            duration_ms,
+            #[cfg(any(test, feature = "testkit"))]
+            #[cfg(feature = "testkit")]
             tests: observed.tests,
             message,
         });
     }
-    baseline
+    drop(phase);
+    Ok(baseline)
 }
 
 /// The build failure a refusal to prepare carries, which is a finding rather than an error.
@@ -175,17 +202,22 @@ pub fn limitations(targets: &[TestTarget], touched: &[String]) -> Vec<String> {
         .iter()
         .any(|target| target.kind == rust_mutants::execute::TargetKind::ProcMacro)
     {
-        let _new = named.insert(crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned());
+        named.extend(std::iter::once(
+            crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned(),
+        ));
     }
     named.into_iter().collect()
 }
 
 /// The runner's name for one of the engine's targets.
-#[must_use]
-pub fn target_of(target: &TestTarget) -> Target {
+/// # Errors
+/// Returns a typed refusal if a target field cannot be framed by the stable
+/// identity recipe.
+pub fn target_of(target: &TestTarget) -> Result<Target, crate::targets::TargetError> {
     let unit = UnitKind::of(target.kind);
-    Target {
-        id: target_id(&target.package, unit, &target.name, WHOLE_BINARY),
+    Ok(Target {
+        id: target_id(&target.package, unit, &target.name, WHOLE_BINARY)
+            .map_err(|error| crate::targets::TargetError::invalid(&target.name, error))?,
         package: target.package.clone(),
         unit,
         unit_name: target.name.clone(),
@@ -194,21 +226,37 @@ pub fn target_of(target: &TestTarget) -> Target {
         executable: target.executable.clone(),
         cwd: target.cwd.clone(),
         env: target.cargo_env.clone(),
-    }
+    })
 }
 
 /// The target one identity names, for a target the session dropped and still has a record of.
-#[must_use]
-pub fn named(id: &str) -> Target {
+/// # Errors
+/// Returns a typed refusal when an engine target name is not the exact
+/// `package/kind/name` spelling or cannot be framed as a target identity.
+pub fn named(id: &str) -> Result<Target, crate::targets::TargetError> {
     let mut fields = id.splitn(3, '/');
-    let (package, kind, name) = (
-        fields.next().unwrap_or_default(),
-        fields.next().unwrap_or_default(),
-        fields.next().unwrap_or_default(),
-    );
-    let unit = UnitKind::parse(kind).unwrap_or(UnitKind::Bin);
-    Target {
-        id: target_id(package, unit, name, WHOLE_BINARY),
+    let (Some(package), Some(kind), Some(name)) = (fields.next(), fields.next(), fields.next())
+    else {
+        return Err(crate::targets::TargetError::invalid(
+            id,
+            "engine target identity is not package/kind/name",
+        ));
+    };
+    if package.is_empty() || name.is_empty() {
+        return Err(crate::targets::TargetError::invalid(
+            id,
+            "engine target identity has an empty package or target name",
+        ));
+    }
+    let Some(unit) = UnitKind::parse(kind) else {
+        return Err(crate::targets::TargetError::invalid(
+            id,
+            "engine target identity has an unknown unit kind",
+        ));
+    };
+    Ok(Target {
+        id: target_id(package, unit, name, WHOLE_BINARY)
+            .map_err(|error| crate::targets::TargetError::invalid(id, error))?,
         package: package.to_owned(),
         unit,
         unit_name: name.to_owned(),
@@ -217,7 +265,7 @@ pub fn named(id: &str) -> Target {
         executable: std::path::PathBuf::new(),
         cwd: std::path::PathBuf::new(),
         env: Vec::new(),
-    }
+    })
 }
 
 /// What one target's verified run says became of it.
@@ -229,9 +277,9 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus,
             TargetStatus::Failed,
             Some(failure(output).unwrap_or_else(|| "the target failed".to_owned())),
         ),
-        Outcome::Runaway => (
+        Outcome::StepLimitReached => (
             TargetStatus::Failed,
-            Some("the target took its guard past the run's allowance".to_owned()),
+            Some("the target reached the run's guard-take allowance".to_owned()),
         ),
         Outcome::Waited => (
             TargetStatus::Failed,

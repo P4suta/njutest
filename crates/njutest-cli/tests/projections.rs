@@ -5,15 +5,17 @@
 
 #![expect(
     clippy::assigning_clones,
+    clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a test builds a fixture field by field and reads a document by the names its \
-              own fixture put there"
+    clippy::panic,
+    clippy::too_many_lines,
+    reason = "a test reports a setup failure by panicking"
 )]
 
 use njutest_cli::config::Contract;
 use njutest_cli::report::{
-    Finding, FindingKind, Limitation, MutantRecord, Position, Report, RunKind, TargetAccounting,
-    TargetRecord, TargetStatus, Verdict, html, junit, sarif,
+    BuildReport, Finding, FindingKind, Limitation, MutantAccounting, MutantRecord,
+    ObserverAccounting, Position, Report, RunKind, TargetRecord, TargetStatus, html, junit, sarif,
 };
 
 /// One survivor of `src/lib.rs`, at a line the run knows or at none at all.
@@ -28,25 +30,17 @@ fn found(subject: &str, detail: &str, line: u32) -> Finding {
     finding
 }
 
-fn report() -> Report {
-    let mut report = Report::new(
-        "20260905T081500Z-abcdef",
-        RunKind::Full,
-        Contract::StandardV1,
-    );
-    report.verdict = Verdict::Insufficient;
-    report.repository.root_name = "workspace".to_owned();
-    report.timing.duration_ms = 1500;
-    report.accounting.targets = TargetAccounting {
-        selected: 3,
-        passed: 1,
-        failed: 1,
-        skipped: 1,
-        missing: 0,
-    };
-    report.accounting.mutants.killed = 4;
-    report.accounting.mutants.survived = 1;
-    report.targets = vec![
+fn report_with(findings: Vec<Finding>) -> Report {
+    let mut source = BuildReport::new("fixture-evidence", RunKind::Full, Contract::StandardV1);
+    source.repository.root_name = "workspace".to_owned();
+    source.repository.workspace_digest = "a".repeat(64);
+    source.repository.configuration_digest = "b".repeat(64);
+    source.toolchain.rustc = "rustc 1.98.0".to_owned();
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    source.timing.started = "2026-09-05T08:15:00Z".to_owned();
+    source.timing.finished = "2026-09-05T08:15:01Z".to_owned();
+    source.timing.duration_ms = 1500;
+    source.targets = vec![
         TargetRecord {
             id: "a".to_owned(),
             name: "core/lib/core tests::works".to_owned(),
@@ -72,9 +66,11 @@ fn report() -> Report {
             message: Some("libtest ignored it".to_owned()),
         },
     ];
-    report.mutants = vec![MutantRecord {
+    source.count_targets().expect("one exact target accounting");
+    source.mutants = vec![MutantRecord {
+        catalog_index: njutest_cli::report::CatalogIndex::new(0),
         id: "c".repeat(64),
-        display_id: "cccccccc".to_owned(),
+        display_id: "cccccccccccccccccccc".to_owned(),
         path: "src/lib.rs".to_owned(),
         position: Position {
             line: 12,
@@ -86,25 +82,62 @@ fn report() -> Report {
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
         outcome: njutest_cli::report::Decided::Survived,
+        accepted: false,
         reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
         blind_in: Vec::new(),
         routing: None,
     }];
-    report.findings = vec![
-        found("cccccccc", "no test noticed <this> & that", 12),
+    source.accounting.mutants = MutantAccounting {
+        cataloged: 1,
+        executed: 1,
+        survived: 1,
+        observers: ObserverAccounting {
+            unnoticed: 1,
+            ..ObserverAccounting::default()
+        },
+        ..MutantAccounting::default()
+    };
+    source.findings = findings;
+    source.limitations = vec![
+        Limitation::new("doctests-not-routed", "doctests run once"),
+        Limitation::new(
+            "git-metadata-unavailable",
+            "the fixture is not a git repository",
+        ),
+    ];
+    source.verdict = source.concluded();
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let run =
+        rust_mutants::id::RunId::try_from("20260905t081500z-abcdef").expect("a canonical run id");
+    let latticed = njutest_cli::report::across::configured(&run, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog fixture cannot be a shard");
+    };
+    latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion")
+}
+
+fn report() -> Report {
+    report_with(vec![
+        found("cccccccccccccccccccc", "no test noticed <this> & that", 12),
         found(
             "dddddddd",
             "no measured target reaches mul-to-div@1 at src/lib.rs",
             0,
         ),
-    ];
-    report.limitations = vec![Limitation::new("doctests-not-routed", "doctests run once")];
-    report
+    ])
 }
 
 #[test]
 fn the_page_is_self_contained() {
-    let page = html::document(&report());
+    let page = html::document(&report()).expect("the page renders");
     let outside = njutest_devkit::report::reaches_outside(&page);
     assert!(
         outside.is_empty(),
@@ -123,7 +156,7 @@ fn the_page_is_self_contained() {
 
 #[test]
 fn the_page_leads_with_the_verdict_and_names_what_was_found() {
-    let page = html::document(&report());
+    let page = html::document(&report()).expect("the page renders");
     assert!(
         page.contains("<h1 class=\"not-assured\">Insufficient</h1>"),
         "{page}"
@@ -135,7 +168,7 @@ fn the_page_leads_with_the_verdict_and_names_what_was_found() {
 
 #[test]
 fn nothing_a_test_printed_can_become_markup() {
-    let page = html::document(&report());
+    let page = html::document(&report()).expect("the page renders");
     assert!(
         page.contains("&lt;left&gt;"),
         "a message from a test is text, not markup: {page}"
@@ -146,11 +179,11 @@ fn nothing_a_test_printed_can_become_markup() {
 
 #[test]
 fn the_sarif_log_carries_every_finding_with_a_rule_and_a_place() {
-    let log = sarif::document(&report());
+    let log = sarif::document(&report()).expect("the sarif log derives");
     assert_eq!(log["version"], sarif::VERSION);
     let run = &log["runs"][0];
     assert_eq!(run["tool"]["driver"]["name"], "njutest");
-    assert_eq!(run["automationDetails"]["id"], "20260905T081500Z-abcdef");
+    assert_eq!(run["automationDetails"]["id"], "20260905t081500z-abcdef");
 
     let results = run["results"].as_array().expect("results");
     assert_eq!(results.len(), 2);
@@ -170,12 +203,15 @@ fn the_sarif_log_carries_every_finding_with_a_rule_and_a_place() {
 
 #[test]
 fn a_fault_in_the_code_is_an_error_and_a_gap_is_a_warning() {
-    let mut report = report();
-    report.findings = vec![
+    let report = report_with(vec![
         Finding::new(FindingKind::BuildFailure, "workspace", "mismatched types"),
-        Finding::new(FindingKind::SurvivingMutant, "cccccccc", "nothing noticed"),
-    ];
-    let log = sarif::document(&report);
+        Finding::new(
+            FindingKind::SurvivingMutant,
+            "cccccccccccccccccccc",
+            "nothing noticed",
+        ),
+    ]);
+    let log = sarif::document(&report).expect("the sarif log derives");
     let levels: Vec<&str> = log["runs"][0]["results"]
         .as_array()
         .expect("results")
@@ -187,7 +223,7 @@ fn a_fault_in_the_code_is_an_error_and_a_gap_is_a_warning() {
 
 #[test]
 fn the_sarif_run_carries_the_verdict_and_the_accounting() {
-    let log = sarif::document(&report());
+    let log = sarif::document(&report()).expect("the sarif log derives");
     let properties = &log["runs"][0]["properties"];
     assert_eq!(properties["verdict"], "Insufficient");
     assert_eq!(properties["accounting"]["targets"]["selected"], 3);
@@ -196,10 +232,10 @@ fn the_sarif_run_carries_the_verdict_and_the_accounting() {
 
 #[test]
 fn the_junit_document_counts_what_a_reader_of_it_expects() {
-    let document = junit::document(&report());
+    let document = junit::document(&report()).expect("the junit document renders");
     assert!(document.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
     assert!(
-        document.contains("tests=\"3\" failures=\"1\" skipped=\"1\""),
+        document.contains("tests=\"5\" failures=\"3\" skipped=\"1\""),
         "{document}"
     );
     assert!(
@@ -211,7 +247,7 @@ fn the_junit_document_counts_what_a_reader_of_it_expects() {
 
 #[test]
 fn a_finding_is_a_failing_case_so_it_shows_up_where_people_look() {
-    let document = junit::document(&report());
+    let document = junit::document(&report()).expect("the junit document renders");
     assert!(document.contains("name=\"findings\""), "{document}");
     assert!(
         document.contains("classname=\"surviving-mutant\""),
@@ -221,25 +257,31 @@ fn a_finding_is_a_failing_case_so_it_shows_up_where_people_look() {
 
 #[test]
 fn an_unmatched_acceptance_reaches_the_human_and_machine_projections() {
-    let mut report = report();
-    report.findings = vec![Finding::new(
-        FindingKind::UnmatchedAcceptance,
-        "ffff",
-        "no mutant matches this acceptance",
-    )];
+    let report = report_with(vec![
+        Finding::new(
+            FindingKind::SurvivingMutant,
+            "cccccccccccccccccccc",
+            "no test noticed the edit",
+        ),
+        Finding::new(
+            FindingKind::UnmatchedAcceptance,
+            "ffff",
+            "no mutant matches this acceptance",
+        ),
+    ]);
 
-    let page = html::document(&report);
+    let page = html::document(&report).expect("the page renders");
     assert!(page.contains("unmatched-acceptance"), "{page}");
     assert!(page.contains("ffff"), "{page}");
 
-    let log = sarif::document(&report);
+    let log = sarif::document(&report).expect("the sarif log derives");
     assert_eq!(
         log["runs"][0]["results"][0]["ruleId"],
         "unmatched-acceptance"
     );
     assert_eq!(log["runs"][0]["results"][0]["level"], "warning");
 
-    let cases = junit::document(&report);
+    let cases = junit::document(&report).expect("the junit document renders");
     assert!(
         cases.contains("classname=\"unmatched-acceptance\""),
         "{cases}"
@@ -248,7 +290,7 @@ fn an_unmatched_acceptance_reaches_the_human_and_machine_projections() {
 
 #[test]
 fn nothing_a_test_printed_can_close_a_tag() {
-    let document = junit::document(&report());
+    let document = junit::document(&report()).expect("the junit document renders");
     assert!(document.contains("&lt;left&gt;"), "{document}");
     assert!(document.contains("&quot;right&quot;"), "{document}");
     assert!(document.contains("&apos;x&apos;"), "{document}");
@@ -256,9 +298,9 @@ fn nothing_a_test_printed_can_close_a_tag() {
 
 #[test]
 fn the_identity_a_reader_needs_travels_as_properties() {
-    let document = junit::document(&report());
+    let document = junit::document(&report()).expect("the junit document renders");
     assert!(
-        document.contains("<property name=\"run_id\" value=\"20260905T081500Z-abcdef\"/>"),
+        document.contains("<property name=\"run_id\" value=\"20260905t081500z-abcdef\"/>"),
         "{document}"
     );
     assert!(
@@ -269,7 +311,7 @@ fn the_identity_a_reader_needs_travels_as_properties() {
 
 #[test]
 fn every_place_the_sarif_log_names_is_one_a_reader_of_the_repository_can_open() {
-    let log = sarif::document(&report());
+    let log = sarif::document(&report()).expect("the sarif log derives");
     let run = &log["runs"][0];
     let rules: Vec<&str> = run["tool"]["driver"]["rules"]
         .as_array()
@@ -277,11 +319,13 @@ fn every_place_the_sarif_log_names_is_one_a_reader_of_the_repository_can_open() 
         .iter()
         .filter_map(|rule| rule["id"].as_str())
         .collect();
-    let measured = report();
+    let measured = report()
+        .conclusion()
+        .expect("the checked report has a representable conclusion");
     let paths: Vec<&str> = measured
         .mutants
         .iter()
-        .map(|mutant| mutant.path.as_str())
+        .map(njutest_cli::report::ProjectedMutant::path)
         .collect();
 
     for result in run["results"].as_array().expect("results") {

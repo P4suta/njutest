@@ -119,18 +119,18 @@ fn shaped(block: &syn::Block, ours: &[String]) -> Shape {
 }
 
 /// Every arm that catches everything left of a set this repository closes, by its line.
-#[must_use]
-pub fn shapes(source: &str, ours: &[String]) -> BTreeMap<usize, Waived> {
-    let Ok(parsed) = syn::parse_file(source) else {
-        return BTreeMap::new();
-    };
+///
+/// # Errors
+/// The source is not Rust this compiler version can parse.
+pub fn shapes(source: &str, ours: &[String]) -> Result<BTreeMap<usize, Waived>, syn::Error> {
+    let parsed = syn::parse_file(source)?;
     let mut found = BTreeMap::new();
     let mut scan = Shaping {
         ours,
         found: &mut found,
     };
     scan.visit_file(&parsed);
-    found
+    Ok(found)
 }
 
 /// The walk that collects a shape for every arm the wildcard gate would name.

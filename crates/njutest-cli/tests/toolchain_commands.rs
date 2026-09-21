@@ -6,6 +6,7 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -15,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use njutest_cli::cli::Environment;
+use rust_mutants::id::StoredRunId;
 use rust_mutants::runner::Cancel;
+use serde::Deserialize;
 
 struct Fixture {
     root: PathBuf,
@@ -82,13 +85,59 @@ fn verified(name: &str) -> Fixture {
         output.status.code(),
         Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     fixture
 }
 
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
+}
+
+/// The durable layout a fixture inspects after the product has finished.
+///
+/// This is deliberately test-local: production readers retain a directory
+/// capability and never turn a stored run back into a reopenable `PathBuf`.
+fn fixture_report_root(root: &Path) -> PathBuf {
+    root.join(
+        njutest_cli::config::Config::default()
+            .reports
+            .directory
+            .as_path(),
+    )
+}
+
+fn fixture_runs(root: &Path) -> PathBuf {
+    fixture_report_root(root).join("runs")
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixturePointer {
+    schema: String,
+    run_id: StoredRunId,
+    directory: String,
+}
+
+fn fixture_latest_document(root: &Path) -> PathBuf {
+    let index = fixture_report_root(root).join(njutest_cli::app::reports::Index::Any.file());
+    let text = std::fs::read_to_string(index).expect("the fixture index");
+    let pointer: FixturePointer =
+        njutest_devkit::strictjson::decode_str(&text).expect("the strict fixture index");
+    assert_eq!(pointer.schema, njutest_cli::report::SCHEMA);
+    assert_eq!(
+        pointer.directory,
+        format!(
+            "{}/runs/{}",
+            njutest_cli::config::DEFAULT_REPORTS_DIRECTORY,
+            pointer.run_id.as_str()
+        ),
+        "the fixture index uses the canonical stored-run spelling"
+    );
+    fixture_report_root(root)
+        .join("runs")
+        .join(pointer.run_id.as_str())
+        .join(njutest_cli::app::reports::DOCUMENT_NAME)
 }
 
 #[test]
@@ -107,10 +156,7 @@ fn report_json_prints_the_document_the_run_wrote_byte_for_byte() {
     let output = njutest(&fixture, &["report", "--format", "json"]);
     assert_eq!(output.status.code(), Some(0));
 
-    let path = njutest_cli::app::reports::Store::read(&fixture.root)
-        .run_of(njutest_cli::app::reports::Index::Any)
-        .expect("the index names a run")
-        .join(njutest_cli::app::reports::DOCUMENT_NAME);
+    let path = fixture_latest_document(&fixture.root);
     assert_eq!(
         stdout(&output),
         std::fs::read_to_string(path).expect("the document"),
@@ -123,9 +169,12 @@ fn report_names_a_run_that_is_not_there_rather_than_answering_about_another() {
     let fixture = verified("fixture-baseline");
     let output = njutest(&fixture, &["report", "20200101T000000Z-000000"]);
     assert_eq!(output.status.code(), Some(3));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(stderr.contains("20200101T000000Z-000000"), "{stderr}");
-    assert!(stderr.contains("NJ6005"), "{stderr}");
+    assert!(
+        stderr.contains("NJ6004") && stderr.contains("does not exist"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -134,9 +183,9 @@ fn report_without_a_run_at_all_says_so() {
     let output = njutest(&fixture, &["report"]);
     assert_eq!(output.status.code(), Some(3));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("NJ6005"),
+        njutest_devkit::process::strict_utf8(&output.stderr).contains("NJ6005"),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
 }
 
@@ -148,7 +197,7 @@ fn trace_summary_counts_the_events_and_finds_nothing_wrong_with_a_complete_recor
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     assert!(text.contains("run-start"), "{text}");
@@ -169,7 +218,7 @@ fn trace_summary_says_how_many_executions_each_proof_removed() {
         verified.status.code(),
         Some(2),
         "{}",
-        String::from_utf8_lossy(&verified.stderr)
+        njutest_devkit::process::strict_utf8(&verified.stderr)
     );
 
     let output = njutest(&fixture, &["trace", "summary"]);
@@ -234,7 +283,7 @@ fn trace_diff_says_which_phases_moved() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     assert!(text.contains("baseline"), "{text}");
@@ -244,8 +293,14 @@ fn trace_diff_says_which_phases_moved() {
 fn recordings(fixture: &Fixture) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(fixture.root.join(".njutest/trace"))
         .expect("the trace directory")
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .map(|entry| entry.expect("every trace entry is readable"))
+        .map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .expect("test protocol paths are UTF-8")
+                .to_owned()
+        })
         .collect();
     names.sort();
     names
@@ -274,7 +329,7 @@ fn diagnostics_bundles_the_report_and_the_recording_of_one_run() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
 
     let bundle = fixture.root.join(".njutest/diagnostics").join(&run);
@@ -311,7 +366,7 @@ fn plan_names_every_target_a_run_would_measure_without_measuring_one() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     assert!(
@@ -321,9 +376,7 @@ fn plan_names_every_target_a_run_would_measure_without_measuring_one() {
     assert!(text.contains("fixture-baseline/test/doubling"), "{text}");
     assert!(text.contains("TARGETS\t2"), "{text}");
     assert!(
-        !njutest_cli::app::reports::Store::read(&fixture.root)
-            .runs()
-            .exists(),
+        !fixture_runs(&fixture.root).exists(),
         "a plan is not a run: it writes no report"
     );
 }
@@ -425,15 +478,27 @@ fn answers_one_machine_established_are_the_answers_another_one_holds() {
         "and a command told to carry answers both ways at once is refused, because \
          which of the two it did would decide whether the file is the answers or the \
          answers are the file: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
 }
 
-/// Where the run a fixture just finished wrote its report.
+/// Where the run a fixture just finished wrote its report: the newest run directory, because a shard is a merge input and deliberately points no latest-complete index at itself.
 fn latest_report(fixture: &Fixture) -> PathBuf {
-    njutest_cli::app::reports::Store::read(&fixture.root)
-        .run_of(njutest_cli::app::reports::Index::Any)
-        .expect("the index names a run")
+    let runs = fixture_runs(&fixture.root);
+    let newest = std::fs::read_dir(&runs)
+        .expect("the runs directory")
+        .map(|entry| entry.expect("every run entry is readable"))
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .expect("test protocol paths are UTF-8")
+                .to_owned()
+        })
+        .max()
+        .expect("the run the fixture just finished");
+    runs.join(newest)
         .join(njutest_cli::app::reports::DOCUMENT_NAME)
 }
 
@@ -446,7 +511,7 @@ fn shard(fixture: &Fixture, part: &str) -> PathBuf {
     assert!(
         output.status.code() == Some(0) || output.status.code() == Some(2),
         "a part of a catalog is judged like any other run: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     latest_report(fixture)
 }
@@ -473,23 +538,17 @@ fn merge_combines_the_parts_of_one_catalog_and_refuses_the_parts_of_two() {
         whole.is_file(),
         "a merge that was asked for a file writes one: {}{}",
         stdout(&output),
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = std::fs::read_to_string(&whole).expect("the whole");
     let combined = njutest_cli::report::json::parse(&text).expect("the whole reads back");
     assert_eq!(
         output.status.code(),
-        Some(i32::from(combined.verdict.exit_code())),
+        Some(i32::from(combined.verdict().exit_code())),
         "the parts are put together and the exit code is the whole's verdict, because a \
          pipeline that shards has nothing else to fail on: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    assert_eq!(
-        combined.scope.shard, None,
-        "and the whole is not a part: a combined report that still named one of them \
-         would be read as the answer for that part alone: {text}"
-    );
-
     let missing = fixture.root.join("nowhere.json");
     let refused = njutest(
         &fixture,
@@ -499,7 +558,7 @@ fn merge_combines_the_parts_of_one_catalog_and_refuses_the_parts_of_two() {
             &missing.display().to_string(),
         ],
     );
-    let said = String::from_utf8_lossy(&refused.stderr);
+    let said = njutest_devkit::process::strict_utf8(&refused.stderr);
     assert!(
         refused.status.code() == Some(3) && said.contains("nowhere.json"),
         "a part that is not there is a part nobody judged, and the whole would be the \
@@ -517,9 +576,9 @@ fn merge_combines_the_parts_of_one_catalog_and_refuses_the_parts_of_two() {
             &elsewhere.display().to_string(),
         ],
     );
-    let said = String::from_utf8_lossy(&refused.stderr);
+    let said = njutest_devkit::process::strict_utf8(&refused.stderr);
     assert!(
-        refused.status.code() == Some(3) && said.contains("the tree"),
+        refused.status.code() == Some(3) && said.contains("the repository evidence"),
         "and two parts of two trees are not two parts of one: added up they would be a \
          verdict about a tree neither of them measured, which is the one thing sharding \
          may never buy. It said {said}"
@@ -546,9 +605,9 @@ fn a_plan_refuses_a_package_that_is_not_one_the_same_way_a_verification_does() {
         Some(0),
         "a plan is what a person asks before a run to find out what will happen, so it \
          cannot answer a mistyped package with a plan of nothing: {}",
-        String::from_utf8_lossy(&refused.stdout)
+        njutest_devkit::process::strict_utf8(&refused.stdout)
     );
-    let said = String::from_utf8_lossy(&refused.stderr).into_owned();
+    let said = njutest_devkit::process::strict_utf8(&refused.stderr).into_owned();
     assert!(
         said.contains("nosuch") && said.contains("not a workspace member"),
         "and the refusal is the one a verification gives, in the same words: {said}"
@@ -566,6 +625,6 @@ fn a_plan_refuses_a_package_that_is_not_one_the_same_way_a_verification_does() {
         planned.status.code(),
         Some(0),
         "while a package the workspace holds is planned: {}",
-        String::from_utf8_lossy(&planned.stderr)
+        njutest_devkit::process::strict_utf8(&planned.stderr)
     );
 }

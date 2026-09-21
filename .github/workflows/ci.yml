@@ -86,10 +86,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
-          tools: taplo-cli@0.10.0
+          tools: taplo-cli@0.10.0, typos-cli@1.50.1, actionlint@1.7.12, committed@1.1.11
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -104,20 +105,14 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
       - name: repository gates (seam ratchet, dependency direction, fixtures, release consistency)
         run: cargo xtask all
-      - name: fuzz targets type-check against the API they fuzz
+      - name: fuzz targets satisfy the root Clippy policy
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo check --locked --all-targets
-        working-directory: fuzz
+        run: cargo xtask fuzz-clippy
       - name: typos
-        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1.50.1
+        run: typos
       - name: taplo
         run: taplo fmt --check && taplo lint
-      - name: install actionlint
-        run: |
-          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-            | tar -xz -C "$RUNNER_TEMP" actionlint
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: actionlint
         run: actionlint
       # Dependabot writes the body of a commit as the changelog it copied, and
@@ -130,13 +125,12 @@ jobs:
           github.event_name == 'pull_request'
           && github.event.pull_request.user.login != 'dependabot[bot]'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          curl -fsSL https://github.com/crate-ci/committed/releases/download/v1.1.11/committed-v1.1.11-x86_64-unknown-linux-musl.tar.gz \
-            | tar -xz -C "$RUNNER_TEMP" ./committed
-          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
-          "$RUNNER_TEMP/committed" "$BASE_SHA..$HEAD_SHA" --no-merge-commit
+          git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          committed "origin/${BASE_REF}..${HEAD_SHA}"
 
   deny:
     name: deny
@@ -150,10 +144,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+      - uses: ./.github/actions/setup-rust
         with:
-          command: check
-          arguments: --all-features
+          tools: cargo-deny@0.19.7
+      - run: cargo deny --locked --all-features check
 
   audit:
     name: audit
@@ -287,11 +281,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: install mdbook
-        run: |
-          curl -fsSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
-            | tar -xz -C "$RUNNER_TEMP" mdbook
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-rust
+        with:
+          tools: mdbook@0.5.4
       - name: build the book, which refuses a summary naming a page nobody holds
         run: mdbook build docs
 
@@ -332,6 +324,32 @@ jobs:
           jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' \
             "$RUNNER_TEMP/interpreted/$written"
 
+  kani-verified:
+    name: kani-verified
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+      - name: Install the exact verifier and backend
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: |
+          cargo install --locked kani-verifier --version '=0.68.0'
+          cargo kani setup
+      - name: Prove the production mutation outcome laws
+        run: mise run kani:laws
+      - name: Exercise generated harnesses and the retained-result protocol with real Kani
+        env:
+          NJUTEST_REAL_KANI: "1"
+        run: env -u RUSTFLAGS cargo test --locked -p njutest-cli --lib real_kani_068 -- --test-threads=1
+
   action-smoke:
     name: action-smoke
     runs-on: ubuntu-24.04
@@ -368,7 +386,7 @@ jobs:
     name: ci-success
     if: always()
     needs:
-      [test, lint, deny, audit, coverage, package-install, book, soundness, action-smoke]
+      [test, lint, deny, audit, coverage, package-install, book, soundness, kani-verified, action-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

@@ -83,20 +83,20 @@ run       <run>
 workspace <workspace digest>
 catalog   <catalog digest>
 
-discharged-mutant      every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+discharged-mutant      every target that could have noticed f0d20edfda2959667ff1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 
-MUTANTS   10 mutants were cataloged: 9 executed, 0 refused by the compiler, 2 places that produced no candidate.
-OUTCOMES  killed=9 survived=0 runaway=0 waited=0 inconclusive=0 errored=0 not_run=1
+MUTANTS   10 mutants were cataloged: 9 executed, 0 refused by the compiler, 3 places that produced no candidate.
+OUTCOMES  killed=9 survived=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=1
 OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, survived is 0 expected.
 SCORE     100.0%  (9 detected of 9 decided)
 WORK      started=9 of 30 pairs across 3 targets; 70.0% removed (unreached=20 never-infected=1)
           tests=9 of 30; 70.0% removed
-REPORT    ./reports/mutation/<run>/run-report-v1.json
+REPORT    ./reports/mutation/<run>/run-report-v2.json
 
-$ rust-mutants explain 16b0
+$ rust-mutants explain f0d2
 NAME      src/lib.rs:max:gt-to-ge@11
-MUTANT    16b0cd40508fc0785477d495daa14695fcff4d61ada9eb35a8c2c995eb1f881f
-SHORT     16b0cd40508fc0785477
+MUTANT    f0d20edfda2959667ff19be48ef229cba965a672c7a6e367624a73bc4fcec22f
+SHORT     f0d20edfda2959667ff1
 RULE      gt-to-ge@1 (comparison)
 WHERE     src/lib.rs:11:10
 EDIT      ">" => ">="
@@ -183,6 +183,19 @@ milestone carries its tests, traces, gates, and diagnostics as completion
 criteria. See [CONTRIBUTING.md](CONTRIBUTING.md) for the `mise`-based
 workflow and [`docs/development.md`](docs/development.md) for the test harness,
 the TDD protocol, and the catalog of developer tooling.
+
+The repository enforces its Rust design rules as gates, not review reminders.
+For example, `Box<dyn Trait>`, `Rc<dyn Trait>`, and `Arc<dyn Trait>` — including
+aliases that would hide either half — are rejected across production and test
+source; use an enum for a closed implementation set or a generic parameter for
+an open one. A borrowed `&dyn Trait` remains valid because it does not erase
+owned implementations. String errors, derived enum defaults, `From<()>`
+inventing a domain state, result-discarding walks, and the other
+machine-checked shapes and their narrow test boundaries are kept in the
+exhaustive [`lints` catalogue](docs/development.md#gates).
+Tests may turn failed setup into `expect` or `panic` only through a local
+`#[expect(…, reason = "…")]`; the compiler rejects that expectation once it is
+no longer exercised, while the repository rejects blanket `#[allow]`.
 
 ```console
 ./bootstrap.sh     # mise installs the pinned toolchain and tools, then the git hooks

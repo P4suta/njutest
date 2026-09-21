@@ -12,19 +12,24 @@ use rust_mutants::execute::parse_summary;
 use rust_mutants::outcome::Outcome;
 
 fuzz_target!(|data: &[u8]| {
-    let _parsed = parse_summary(data);
-    let output = String::from_utf8_lossy(data);
+    let Ok(parsed) = parse_summary(data) else {
+        return;
+    };
+    std::hint::black_box(&parsed);
+    let Ok(output) = std::str::from_utf8(data) else {
+        return;
+    };
     for outcome in [
         Outcome::Survived,
         Outcome::Killed,
-        Outcome::Runaway,
+        Outcome::StepLimitReached,
         Outcome::Waited,
         Outcome::Inconclusive,
         Outcome::NotRun,
         Outcome::Errored,
     ] {
         for ignored in [0u32, 1, 4096] {
-            let (status, message) = status_of(outcome, ignored, &output);
+            let (status, message) = status_of(outcome, ignored, output);
             assert_eq!(
                 status == TargetStatus::Passed,
                 outcome == Outcome::Survived,

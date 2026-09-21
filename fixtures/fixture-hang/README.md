@@ -11,9 +11,9 @@ A mutation that never returns, and a test that can be slow exactly once.
 leaves the loop with nothing that ends it, and no test can notice a function
 that does not return. The guard of the active mutant sits where the mutation
 does, so it is taken once an iteration, and the count of takes ends the
-process where a clock used to: the mutation is `runaway`, it counts as
-detected, and it is **not** retried, because a count cannot disagree with
-itself on a second reading. Nothing else in the suite has a mutation like
+process where a clock used to: the mutation is `step_limit_reached`, an exact
+execution boundary but not a detection, and it is **not** retried as a clock
+measurement. Nothing else in the suite has a mutation like
 that, so the step allowance, the status the runtime leaves by, and the
 process tree the runner kills are carried by tests that reach them nowhere
 else.
@@ -37,7 +37,7 @@ the clock stops a mutation the allowance was about to catch and the fate
 table becomes a fact about the machine that generated it — measured here at
 two seconds under load, where fifty million takes cost 1501 ms and one of the
 two non-terminating mutations came back `waited` while the other came back
-`runaway`. They are the same kind of mutation; only the moment differed.
+`step_limit_reached`. Neither is a verdict; only the observed boundary differs.
 
 That pull is the reason the allowance is a separate setting from the bound,
 and the reason to give this fixture a small one rather than a generous
@@ -61,9 +61,9 @@ src/lib.rs:11:11 negate-loop-condition killed
 src/lib.rs:11:16 lt-to-le killed
 src/lib.rs:12:9 delete-compound-assignment killed
 src/lib.rs:12:15 add-assign-to-sub-assign killed
-src/lib.rs:13:9 delete-compound-assignment runaway
+src/lib.rs:13:9 delete-compound-assignment step_limit_reached
 src/lib.rs:13:14 add-assign-to-sub-assign killed
-src/lib.rs:13:17 int-decrement runaway
+src/lib.rs:13:17 int-decrement step_limit_reached
 src/lib.rs:13:17 int-increment killed
 src/lib.rs:15:5 return-default killed
 src/lib.rs:25:5 return-default killed

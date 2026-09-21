@@ -4,57 +4,188 @@
 //! The report model and the invariants a durable report must satisfy.
 
 #![expect(
+    clippy::arithmetic_side_effects,
+    clippy::assigning_clones,
+    clippy::expect_used,
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use njutest_cli::report::audit::{Violation, validate_for_persistence};
 use njutest_cli::report::{
-    Finding, FindingKind, Git, Limitation, MutantAccounting, ObserverAccounting, Position, Report,
-    RunKind, SCHEMA, SeamRecord, TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE,
-    Verdict,
+    BuildReport, Finding, FindingKind, Git, Limitation, MutantAccounting, MutantRecord,
+    ObserverAccounting, Outcome, Position, Report, RunKind, SCHEMA, SeamRecord, TargetAccounting,
+    TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
 };
 
-/// One field of a report, and how to leave it saying nothing.
-type Blank = (&'static str, fn(&mut Report));
+/// One field of a report, the words its refusal names it by, and how to leave it saying nothing.
+type Blank = (&'static str, &'static str, fn(&mut BuildReport));
 
-/// A report that satisfies every invariant, for a test to break one thing in.
-fn sound() -> Report {
-    let mut report = Report::new(
-        "20260905T081500Z-abcdef",
+/// The namespace the one evidence source ran under, distinct from the final answer's.
+const SOURCE_RUN: &str = "20260905t081500z-000000";
+
+/// The namespace the completed answer is issued under.
+const FINAL_RUN: &str = "20260905t081500z-abcdef";
+
+/// Exactly what the report derives from rows, spelled here because the model's own counter is private to it.
+fn counted(rows: &[MutantRecord]) -> MutantAccounting {
+    let mut counts = MutantAccounting {
+        cataloged: u32::try_from(rows.len()).expect("a fixture's rows are countable"),
+        ..MutantAccounting::default()
+    };
+    for row in rows {
+        let outcome = row.outcome.outcome();
+        counts
+            .observers
+            .counted(outcome.decision())
+            .expect("a fixture's rows are countable");
+        if row.accepted {
+            counts.accepted += 1;
+        }
+        match outcome {
+            Outcome::CompileRejected => counts.rejected += 1,
+            Outcome::Killed => {
+                counts.executed += 1;
+                counts.killed += 1;
+                if row.reuse.0.read_back().is_some() {
+                    counts.reused_killed += 1;
+                }
+            }
+            Outcome::Survived => {
+                counts.executed += 1;
+                counts.survived += 1;
+                if row.reuse.0.read_back().is_some() {
+                    counts.reused_survived += 1;
+                }
+            }
+            Outcome::StepLimitReached => {
+                counts.executed += 1;
+                counts.step_limit_reached += 1;
+            }
+            Outcome::Waited => {
+                counts.executed += 1;
+                counts.waited += 1;
+            }
+            Outcome::Unreached => counts.unreached += 1,
+            Outcome::Equivalent => counts.equivalent += 1,
+            Outcome::ModelNoticed => {
+                counts.executed += 1;
+                counts.model_noticed += 1;
+            }
+            Outcome::ModelProved => {
+                counts.executed += 1;
+                counts.model_proved += 1;
+            }
+            Outcome::Unconfirmed | Outcome::Errored => counts.executed += 1,
+        }
+    }
+    counts
+}
+
+/// A report that satisfies every invariant, as the mutable draft a run measures into.
+fn sound_draft() -> BuildReport {
+    let mut source = BuildReport::new(
+        SOURCE_RUN,
         RunKind::Full,
         njutest_cli::config::Contract::StandardV1,
     );
-    report.verdict = Verdict::Assured;
-    report.repository.git = Git::Said(njutest_cli::report::Said {
+    source.repository.git = Git::Said(njutest_cli::report::Said {
         commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         branch: "main".to_owned(),
         dirty: false,
         against: None,
     });
-    report.accounting.targets = TargetAccounting {
-        selected: 3,
-        passed: 2,
-        failed: 0,
-        skipped: 1,
-        missing: 0,
-    };
-    report.accounting.mutants = MutantAccounting {
-        cataloged: 1,
-        executed: 1,
-        killed: 1,
-        observers: ObserverAccounting {
-            tests: 1,
-            ..ObserverAccounting::default()
-        },
-        ..MutantAccounting::default()
-    };
-    report.targets = vec![
+    source.toolchain.rustc = "rustc 1.98.0".to_owned();
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    source.timing.started = "2026-09-05T08:15:00Z".to_owned();
+    source.timing.finished = "2026-09-05T08:15:30Z".to_owned();
+    source.timing.duration_ms = 30_000;
+    source.targets = vec![
         target("a1", "core/lib/core one", TargetStatus::Passed, 30),
         target("b2", "core/lib/core two", TargetStatus::Passed, 20),
         target("c3", "core/test/it three", TargetStatus::Skipped, 10),
     ];
-    report
+    source.count_targets().expect("one exact target accounting");
+    source.mutants = vec![mutant(&"a".repeat(64))];
+    source.accounting.mutants = counted(&source.mutants);
+    source.verdict = source.concluded();
+    source
+}
+
+/// The draft with one thing broken in it, closed through the checked lattice, which is the only way a report exists now.
+#[derive(Debug, thiserror::Error)]
+enum FixtureError {
+    #[error(transparent)]
+    Configured(#[from] njutest_cli::report::across::ConfiguredError),
+    #[error(transparent)]
+    Completion(#[from] njutest_cli::report::CompletionError),
+    #[error("the whole-catalog fixture produced a shard")]
+    UnexpectedShard,
+    #[error("the fixture run identity was refused")]
+    RunId(#[from] rust_mutants::id::RunIdError),
+}
+
+#[test]
+fn a_new_report_names_the_schema_the_run_and_what_it_ran_on() {
+    let report = sound();
+    assert_eq!(SCHEMA, "njutest-assurance-report-v2");
+    let document = serde_json::to_value(&report).expect("a completed report is a document");
+    assert_eq!(document["schema"], SCHEMA);
+    assert_eq!(report.run_id(), "20260905t081500z-abcdef");
+    assert_eq!(report.run_kind(), RunKind::Full);
+    assert_eq!(document["tool"]["njutest"], njutest_cli::VERSION);
+    assert_eq!(document["tool"]["rust_mutants"], rust_mutants::VERSION);
+    let conclusion = report
+        .conclusion()
+        .expect("the checked report has a representable conclusion");
+    assert!(conclusion.limitations.is_empty());
+    assert_eq!(conclusion.mutants.len(), 1);
+    let fresh = BuildReport::new(
+        "r",
+        RunKind::Full,
+        njutest_cli::config::Contract::StandardV1,
+    );
+    assert_eq!(
+        fresh.repository.workspace_digest, UNAVAILABLE,
+        "a report says the tree it is about is unknown until somebody reads the tree: \
+         every phase that learns it overwrites this, and none of them has to remember to \
+         say so when it cannot"
+    );
+    assert_eq!(fresh.provenance.identity, UNAVAILABLE);
+}
+
+/// The draft with one thing broken in it, closed through the checked lattice, which is the only way a report exists now.
+fn completed(vary: impl FnOnce(&mut BuildReport)) -> Result<Report, FixtureError> {
+    let mut source = sound_draft();
+    vary(&mut source);
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .map_err(|refused| {
+        FixtureError::Configured(njutest_cli::report::across::ConfiguredError::Measurements(
+            refused,
+        ))
+    })?;
+    let run = rust_mutants::id::RunId::try_from(FINAL_RUN)?;
+    let latticed = njutest_cli::report::across::configured(&run, &measurements)?;
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        return Err(FixtureError::UnexpectedShard);
+    };
+    Ok(latticed.complete_without_models()?)
+}
+
+/// A report that satisfies every invariant, for a test to read.
+fn sound() -> Report {
+    completed(|_| {}).expect("a report that satisfies every invariant")
+}
+
+/// One judged row at its canonical catalog position, which the dense whole catalog requires.
+fn shelved(index: u32, id: &str) -> MutantRecord {
+    let mut record = mutant(id);
+    record.catalog_index = njutest_cli::report::CatalogIndex::new(index);
+    record
 }
 
 fn target(id: &str, name: &str, status: TargetStatus, duration_ms: u64) -> TargetRecord {
@@ -69,42 +200,10 @@ fn target(id: &str, name: &str, status: TargetStatus, duration_ms: u64) -> Targe
 }
 
 #[test]
-fn a_new_report_names_the_schema_the_run_and_what_it_ran_on() {
-    let report = sound();
-    assert_eq!(SCHEMA, "njutest-assurance-report-v1");
-    assert_eq!(report.schema, SCHEMA);
-    assert_eq!(report.run_id, "20260905T081500Z-abcdef");
-    assert_eq!(report.run_kind, RunKind::Full);
-    assert_eq!(report.tool.njutest, njutest_cli::VERSION);
-    assert_eq!(report.tool.rust_mutants, rust_mutants::VERSION);
-    assert!(report.limitations.is_empty());
-    assert!(report.mutants.is_empty());
-    assert_eq!(
-        RunKind::default(),
-        RunKind::Full,
-        "a run that was not narrowed looked at everything, and the widest assurance is \
-         the one a report of it may claim"
-    );
-
-    let fresh = Report::new(
-        "r",
-        RunKind::Full,
-        njutest_cli::config::Contract::StandardV1,
-    );
-    assert_eq!(
-        fresh.repository.workspace_digest, UNAVAILABLE,
-        "a report says the tree it is about is unknown until somebody reads the tree: \
-         every phase that learns it overwrites this, and none of them has to remember to \
-         say so when it cannot"
-    );
-    assert_eq!(fresh.provenance.identity, UNAVAILABLE);
-}
-
-#[test]
 fn a_position_carries_both_columns_because_one_toolchain_uses_both() {
     let line = "    let γ = 1;";
     let at = line.find('γ').expect("the identifier");
-    let position = Position::of(line, 12, at);
+    let position = Position::of(line, 12, at).expect("a column a diagnostic can name");
     assert_eq!(position.line, 12);
     assert_eq!(
         position.column, 9,
@@ -117,7 +216,7 @@ fn a_position_carries_both_columns_because_one_toolchain_uses_both() {
 
     let wide = "    let 日本語 = 1; let γ = 2;";
     let at = wide.rfind('γ').expect("the second identifier");
-    let position = Position::of(wide, 3, at);
+    let position = Position::of(wide, 3, at).expect("a column a diagnostic can name");
     assert_ne!(
         position.column, position.character_column,
         "the two differ wherever it matters"
@@ -165,228 +264,267 @@ fn a_sound_report_has_nothing_to_report() {
 
 #[test]
 fn a_report_says_who_decided_every_mutation_it_catalogued() {
-    let mut report = sound();
-    report.accounting.mutants.observers = ObserverAccounting::default();
-    let violations = validate_for_persistence(&report);
+    let nobody =
+        completed(|source| source.accounting.mutants.observers = ObserverAccounting::default())
+            .expect_err(
+                "a report that catalogued a mutation and names nobody who decided it is a \
+             verdict with nothing behind it, and there is no way for a reader to tell \
+             that from a run where everything was decided",
+            );
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::DecisionsDoNotAddUp { .. })),
-        "a report that catalogued a mutation and names nobody who decided it is a \
-         verdict with nothing behind it, and there is no way for a reader to tell \
-         that from a run where everything was decided: {violations:?}"
+        nobody
+            .to_string()
+            .contains("mutation accounting that disagrees with its rows"),
+        "the decisions are re-derived from the rows before anything else can read them: {nobody}"
     );
 
-    let mut twice = sound();
-    twice.accounting.mutants.observers.types = 1;
-    let violations = validate_for_persistence(&twice);
-    assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::DecisionsDoNotAddUp { .. })),
+    let twice = completed(|source| source.accounting.mutants.observers.types = 1).expect_err(
         "and one counted in two columns is one counted twice by whichever reader \
-         trusts the wrong column: {violations:?}"
+         trusts the wrong column",
+    );
+    assert!(
+        twice
+            .to_string()
+            .contains("mutation accounting that disagrees with its rows"),
+        "{twice}"
     );
 }
 
 #[test]
 fn the_target_accounting_must_add_up_and_match_the_records() {
-    let mut report = sound();
-    report.accounting.targets.passed = 3;
-    let violations = validate_for_persistence(&report);
+    let summed_wrong = completed(|source| source.accounting.targets.passed = 3)
+        .expect_err("the terminal states must sum to the number selected");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::TargetsDoNotAddUp { .. })),
-        "{violations:?}"
+        summed_wrong
+            .to_string()
+            .contains("target accounting that disagrees with its rows"),
+        "{summed_wrong}"
     );
 
-    let mut report = sound();
-    report.targets.pop();
-    let violations = validate_for_persistence(&report);
+    let lost = completed(|source| {
+        source.targets.pop();
+    })
+    .expect_err("a row the accounting still counts");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::TargetRecordsDisagree { .. })),
-        "{violations:?}"
+        lost.to_string()
+            .contains("target accounting that disagrees with its rows"),
+        "{lost}"
     );
 }
 
 #[test]
 fn a_verdict_must_be_the_one_the_accounting_supports() {
-    let mut report = sound();
-    report.accounting.targets.failed = 1;
-    report.accounting.targets.passed = 1;
-    report.targets[0].status = TargetStatus::Failed;
-    let violations = validate_for_persistence(&report);
+    let failing = completed(|source| {
+        source.targets[0].status = TargetStatus::Failed;
+        source.accounting.targets.passed = 1;
+        source.accounting.targets.failed = 1;
+    })
+    .expect_err("a failing target and an assurance cannot both be true");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
-        "a failing target and an ASSURED verdict cannot both be true: {violations:?}"
+        failing
+            .to_string()
+            .contains("of its targets failed; a failing test is not an assurance"),
+        "the accounting adds up, the records agree, and the verdict is still derived from \
+         what ran: {failing}"
     );
 
-    let mut report = sound();
-    report.accounting.targets.missing = 1;
-    report.accounting.targets.skipped = 0;
-    report.targets[2].status = TargetStatus::Missing;
-    let violations = validate_for_persistence(&report);
+    let missing = completed(|source| {
+        source.targets[2].status = TargetStatus::Missing;
+        source.accounting.targets.skipped = 0;
+        source.accounting.targets.missing = 1;
+    })
+    .expect_err("a target that could not be found is not an assurance");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
-        "a target that could not be found is not an assurance: {violations:?}"
+        missing
+            .to_string()
+            .contains("of its targets could not be found"),
+        "{missing}"
     );
 }
 
 #[test]
 fn targets_are_ordered_slowest_first_and_then_by_name() {
-    let mut report = sound();
-    report.targets.reverse();
-    let violations = validate_for_persistence(&report);
+    let backwards = completed(|source| source.targets.reverse())
+        .expect_err("targets that are not in the canonical order");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::TargetsOutOfOrder { .. })),
-        "{violations:?}"
+        backwards.to_string().contains("out of canonical order"),
+        "{backwards}"
     );
-    report.sort_targets();
-    assert_eq!(validate_for_persistence(&report), Vec::<Violation>::new());
-    let order: Vec<&str> = report.targets.iter().map(|one| one.id.as_str()).collect();
+    let sorted = completed(|source| {
+        source.targets.reverse();
+        source.sort_targets();
+    })
+    .expect("and sorting is what the ledger asks for, so the two agree by construction");
+    assert_eq!(validate_for_persistence(&sorted), Vec::<Violation>::new());
+    let concluded = sorted
+        .conclusion()
+        .expect("the checked report has a representable conclusion");
+    let order: Vec<&str> = concluded
+        .targets
+        .iter()
+        .map(|one| one.id.as_str())
+        .collect();
     assert_eq!(order, ["a1", "b2", "c3"]);
 }
 
 #[test]
 fn a_report_that_says_nothing_ran_cannot_say_it_is_assured() {
-    let mut report = sound();
-    report.accounting.targets = TargetAccounting::default();
-    report.targets.clear();
-    let violations = validate_for_persistence(&report);
-    assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::NothingObserved)),
-        "{violations:?}"
+    let nothing = completed(|source| {
+        source.accounting.targets = TargetAccounting::default();
+        source.targets.clear();
+        source.limitations.push(Limitation::new(
+            "no-targets",
+            "the workspace builds no test target",
+        ));
+    })
+    .expect(
+        "a run that observed nothing still completes, because a reader has to be able to read why",
     );
-    report.verdict = Verdict::Insufficient;
-    report.limitations.push(Limitation::new(
-        "no-targets",
-        "the workspace builds no test target",
-    ));
-    assert_eq!(validate_for_persistence(&report), Vec::<Violation>::new());
+    assert_eq!(
+        nothing.verdict(),
+        Verdict::Insufficient,
+        "a report that says nothing ran cannot say it is assured: the verdict is derived \
+         from what ran, so an empty run is INSUFFICIENT by construction and no audit has \
+         to catch a claim nothing let it make"
+    );
+    assert_eq!(
+        nothing
+            .conclusion()
+            .expect("the checked report has a representable conclusion")
+            .accounting
+            .targets
+            .selected,
+        0
+    );
+    assert_eq!(validate_for_persistence(&nothing), Vec::<Violation>::new());
 }
 
 #[test]
 fn a_report_that_put_no_mutation_to_a_test_cannot_say_it_is_assured() {
-    let mut report = sound();
-    report.accounting.mutants = MutantAccounting::default();
-    let violations = validate_for_persistence(&report);
-    assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
+    let unasked = completed(|source| {
+        source.accounting.mutants = MutantAccounting::default();
+        source.mutants.clear();
+    })
+    .expect(
+        "a catalog of nothing completes, because what it cannot do is claim anything about a suite",
+    );
+    assert_eq!(
+        unasked.verdict(),
+        Verdict::Insufficient,
         "an assurance is the claim that every mutation was noticed; with none put to a \
          test it is a claim about nothing, and the emptiness reads exactly like a suite \
-         that noticed everything: {violations:?}"
+         that noticed everything: the derived verdict is the boundary now"
     );
-
-    report.verdict = Verdict::Insufficient;
-    assert_eq!(validate_for_persistence(&report), Vec::<Violation>::new());
+    assert_eq!(validate_for_persistence(&unasked), Vec::<Violation>::new());
 }
 
 #[test]
 fn an_unavailable_fact_is_a_sentinel_and_never_an_empty_string() {
-    let mut report = sound();
-    report.repository.git = Git::Said(njutest_cli::report::Said {
-        commit: String::new(),
-        branch: "main".to_owned(),
-        dirty: false,
-        against: None,
-    });
-    let violations = validate_for_persistence(&report);
+    let empty = completed(|source| {
+        source.repository.git = Git::Said(njutest_cli::report::Said {
+            commit: String::new(),
+            branch: "main".to_owned(),
+            dirty: false,
+            against: None,
+        });
+    })
+    .expect_err("an empty commit is not an unavailable one");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::EmptyRequiredValue { .. })),
-        "{violations:?}"
+        empty.to_string().contains("repository.git.commit is empty"),
+        "an empty value reads as nothing to say, where the {UNAVAILABLE:?} sentinel reads \
+         as a fact that could not be established: {empty}"
     );
 
-    let mut report = sound();
-    report.repository.git = Git::Unavailable;
-    let violations = validate_for_persistence(&report);
+    let unasked_git = completed(|source| source.repository.git = Git::Unavailable)
+        .expect_err("an unavailable git is a stated limitation");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::MissingLimitation { .. })),
-        "an unavailable git is a stated limitation: {violations:?}"
+        unasked_git.to_string().contains("git-metadata-unavailable"),
+        "{unasked_git}"
     );
-    report.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
-        "git is not available, so the run cannot name what it verified",
-    ));
-    assert_eq!(validate_for_persistence(&report), Vec::<Violation>::new());
+    let stated = completed(|source| {
+        source.repository.git = Git::Unavailable;
+        source.limitations.push(Limitation::new(
+            "git-metadata-unavailable",
+            "git is not available, so the run cannot name what it verified",
+        ));
+    })
+    .expect("a run that says git was unavailable and states it");
+    assert_eq!(validate_for_persistence(&stated), Vec::<Violation>::new());
 }
 
 #[test]
 fn a_violation_says_what_is_wrong_in_words_a_reader_can_act_on() {
-    let mut report = sound();
-    report.accounting.targets.passed = 99;
-    for violation in validate_for_persistence(&report) {
-        let said = violation.to_string();
-        assert!(said.len() > 20, "{said}");
-        assert!(!said.contains("Violation"), "{said}");
-    }
+    let said = completed(|source| source.accounting.targets.passed = 99)
+        .expect_err("counts that cannot be derived from the rows they claim")
+        .to_string();
+    assert!(said.len() > 20, "{said}");
+    assert!(!said.contains("Violation"), "{said}");
 }
 
 #[test]
 fn an_assurance_that_names_a_finding_is_two_claims_at_once() {
-    let mut report = sound();
-    report.findings = vec![Finding::new(
-        FindingKind::SurvivingMutant,
-        "cccccccc",
-        "nothing noticed it",
-    )];
-    let violations = validate_for_persistence(&report);
-    assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::FindingsDisagree { .. })),
-        "{violations:?}"
+    let found = completed(|source| {
+        source.findings = vec![Finding::new(
+            FindingKind::SurvivingMutant,
+            "cccccccc",
+            "nothing noticed it",
+        )];
+    })
+    .expect("a report that found something still completes, and the finding is the claim");
+    assert_eq!(
+        found.verdict(),
+        Verdict::Insufficient,
+        "an assurance is the claim that nothing was found: a report that names a finding \
+         cannot make both claims, and the derived verdict is what cannot make them at once"
     );
-    assert!(
-        violations[0].to_string().contains("nothing was found"),
-        "{}",
-        violations[0]
+    assert_eq!(
+        found
+            .conclusion()
+            .expect("the checked report has a representable conclusion")
+            .findings
+            .len(),
+        1
     );
 }
 
 #[test]
 fn a_defect_a_reader_cannot_see_named_is_not_one_they_can_act_on() {
-    let mut report = sound();
-    report.verdict = Verdict::Defect;
-    let violations = validate_for_persistence(&report);
-    assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::FindingsDisagree { .. })),
-        "{violations:?}"
+    let clean = sound();
+    assert_eq!(
+        clean.verdict(),
+        Verdict::Assured,
+        "a run whose every row was answered and that found nothing cannot claim DEFECT: \
+         the verdict is derived from the findings, so a defect nobody can see named is \
+         one the report cannot say"
     );
+    let named = completed(|source| {
+        source.findings = vec![Finding::new(
+            FindingKind::FailingTest,
+            "a1",
+            "assertion failed",
+        )];
+    })
+    .expect("a defect that names what it found");
+    assert_eq!(named.verdict(), Verdict::Defect);
 }
 
 #[test]
 fn a_defect_that_names_what_it_found_is_sound() {
-    let mut report = sound();
-    report.verdict = Verdict::Defect;
-    report.findings = vec![Finding::new(
-        FindingKind::FailingTest,
-        "a1",
-        "assertion failed",
-    )];
-    assert_eq!(validate_for_persistence(&report), Vec::new());
+    let defect = completed(|source| {
+        source.findings = vec![Finding::new(
+            FindingKind::FailingTest,
+            "a1",
+            "assertion failed",
+        )];
+    })
+    .expect("a defect that names what it found");
+    assert_eq!(defect.verdict(), Verdict::Defect);
+    assert_eq!(validate_for_persistence(&defect), Vec::<Violation>::new());
 }
 
-fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
-    njutest_cli::report::MutantRecord {
+fn mutant(id: &str) -> MutantRecord {
+    MutantRecord {
+        catalog_index: njutest_cli::report::CatalogIndex::new(0),
         id: id.to_owned(),
         display_id: id.get(..20).unwrap_or(id).to_owned(),
         path: "src/lib.rs".to_owned(),
@@ -402,204 +540,375 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
         outcome: njutest_cli::report::Decided::Killed {
             by: "core/lib/core one".to_owned(),
         },
+        accepted: false,
         reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
         blind_in: Vec::new(),
         routing: None,
     }
 }
 
+/// The tampered document a reader is handed: a completed report whose retained source claims one more finding.
+fn document_with(vary: impl FnOnce(&mut BuildReport), finding: Finding) -> String {
+    let report = completed(vary).expect("a document to tamper with");
+    let mut document = serde_json::to_value(njutest_cli::report::ReportDocument::Complete(report))
+        .expect("a report is a document");
+    document["report"]["builds"][0]["parts"][0]["findings"]
+        .as_array_mut()
+        .expect("every retained source carries findings")
+        .push(serde_json::to_value(finding).expect("a finding is a document"));
+    serde_json::to_string(&document).expect("a tampered document is still JSON")
+}
+
+/// An acceptance a retained source claims, spelled as the wire spells it, which only a reader re-derives.
+fn acceptance(subject: &str) -> Finding {
+    Finding {
+        kind: FindingKind::UnmatchedAcceptance,
+        subject: subject.to_owned(),
+        detail: "the acceptance did not resolve".to_owned(),
+        origin: njutest_cli::report::FindingOrigin::Source {
+            build: njutest_cli::report::BuildName::try_from(
+                njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+            )
+            .expect("the default build name"),
+            run_id: rust_mutants::id::RunId::try_from(SOURCE_RUN)
+                .expect("a canonical source namespace"),
+            part: njutest_cli::report::CatalogPart::Whole,
+        },
+        path: None,
+        position: None,
+    }
+}
+
 #[test]
 fn a_whole_report_cannot_call_a_uniquely_resolved_acceptance_unmatched() {
-    let mut report = sound();
-    report.verdict = Verdict::Insufficient;
-    report.mutants = vec![mutant(&"a".repeat(64))];
-    report.findings = vec![Finding::new(
-        FindingKind::UnmatchedAcceptance,
-        "aaaaaaaa",
-        "the acceptance did not resolve",
-    )];
-
-    let violations = validate_for_persistence(&report);
+    let refused = njutest_cli::report::json::parse(&document_with(|_| {}, acceptance("aaaaaaaa")))
+        .expect_err("a document a reader cannot check against the catalog it holds");
     assert!(
-        violations.iter().any(|violation| matches!(
-            violation,
-            Violation::UnmatchedAcceptanceResolved { subject, .. } if subject == "aaaaaaaa"
-        )),
-        "the full catalog proves the finding false: {violations:?}"
+        refused.to_string().contains("uniquely resolves to"),
+        "the full catalog proves the finding false, and the read is where a reader is \
+         protected now that a writer cannot make the document: {refused}"
     );
 }
 
 #[test]
 fn an_invalid_absent_or_ambiguous_acceptance_is_unmatched() {
     for subject in ["A", "cccc", "aaaa"] {
-        let mut report = sound();
-        report.verdict = Verdict::Insufficient;
-        report.mutants = vec![
-            mutant(&"a".repeat(64)),
-            mutant(&format!("aaaa{}", "b".repeat(60))),
-        ];
-        report.findings = vec![Finding::new(
-            FindingKind::UnmatchedAcceptance,
-            subject,
-            "the acceptance did not resolve",
-        )];
-
-        assert!(
-            validate_for_persistence(&report)
-                .iter()
-                .all(|violation| !matches!(
-                    violation,
-                    Violation::UnmatchedAcceptanceResolved { .. }
-                )),
-            "{subject:?} does not resolve to exactly one catalog entry"
-        );
+        let read = njutest_cli::report::json::parse(&document_with(
+            |source| {
+                let rows = vec![
+                    shelved(0, &"a".repeat(64)),
+                    shelved(1, &format!("aaaa{}", "b".repeat(60))),
+                ];
+                source.accounting.mutants = counted(&rows);
+                source.mutants = rows;
+            },
+            acceptance(subject),
+        ));
+        match read {
+            Ok(_document) => {}
+            Err(why) => {
+                panic!("{subject:?} does not resolve to exactly one catalog entry: {why:?}")
+            }
+        }
     }
 }
 
 #[test]
 fn a_shard_leaves_acceptance_resolution_for_the_merged_catalog_to_audit() {
-    let mut report = sound();
-    report.verdict = Verdict::Insufficient;
-    report.scope.shard = Some("1/2".to_owned());
-    report.mutants = vec![mutant(&"a".repeat(64))];
-    report.findings = vec![Finding::new(
+    let mut source = sound_draft();
+    source.scope.shard = Some("1/2".to_owned());
+    source.findings.push(Finding::new(
         FindingKind::UnmatchedAcceptance,
         "aaaaaaaa",
         "the acceptance did not resolve",
-    )];
-
+    ));
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let run = rust_mutants::id::RunId::try_from(FINAL_RUN).expect("a canonical final run id");
+    let latticed = njutest_cli::report::across::configured(&run, &measurements)
+        .expect("one shard does not carry the catalog needed to re-resolve the prefix, and does not pretend to");
     assert!(
-        validate_for_persistence(&report)
-            .iter()
-            .all(|violation| !matches!(violation, Violation::UnmatchedAcceptanceResolved { .. })),
-        "one shard does not carry the catalog needed to re-resolve the prefix"
+        matches!(latticed, njutest_cli::report::LatticedDocument::Shard(_)),
+        "{latticed:?}"
     );
 }
 
 #[test]
 fn a_run_that_looked_at_part_of_a_workspace_does_not_assure_all_of_it() {
-    let mut report = sound();
-    report.run_kind = RunKind::Scoped;
-    let violations = validate_for_persistence(&report);
-    assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
-        "{violations:?}"
+    let scoped = completed(|source| source.run_kind = RunKind::Scoped)
+        .expect("a scoped run completes; what it may claim is scoped");
+    assert_eq!(
+        scoped.verdict(),
+        Verdict::ScopeAssured,
+        "a scoped run assures only what it looked at, which is SCOPE_ASSURED and never \
+         plain ASSURED: the verdict is derived from the run kind, so the two claims are \
+         no longer two fields a writer had to keep together"
     );
-
-    report.verdict = Verdict::ScopeAssured;
-    assert_eq!(validate_for_persistence(&report), Vec::new());
+    assert_eq!(validate_for_persistence(&scoped), Vec::<Violation>::new());
 }
 
 #[test]
 fn one_survivor_nobody_accepted_is_one_too_many() {
-    let mut accepted = sound();
-    accepted.accounting.mutants.cataloged = 1;
-    accepted.accounting.mutants.executed = 1;
-    accepted.accounting.mutants.survived = 1;
-    accepted.accounting.mutants.accepted = 1;
+    let accepted = completed(|source| {
+        source.accounting.mutants = MutantAccounting {
+            cataloged: 1,
+            executed: 1,
+            survived: 1,
+            accepted: 1,
+            observers: ObserverAccounting {
+                unnoticed: 1,
+                ..ObserverAccounting::default()
+            },
+            ..MutantAccounting::default()
+        };
+        source.mutants[0].outcome = njutest_cli::report::Decided::Survived;
+        source.mutants[0].accepted = true;
+    })
+    .expect("a survivor a reviewer accepted with a reason is one the run may still assure around");
+    assert_eq!(accepted.verdict(), Verdict::Assured);
 
-    let mut unaccepted = accepted.clone();
-    unaccepted.accounting.mutants.accepted = 0;
-
-    assert!(
-        !validate_for_persistence(&accepted)
-            .iter()
-            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
-        "a survivor a reviewer accepted with a reason is one the run may still assure \
-         around: {:?}",
-        validate_for_persistence(&accepted)
+    let unaccepted = completed(|source| {
+        source.accounting.mutants = MutantAccounting {
+            cataloged: 1,
+            executed: 1,
+            survived: 1,
+            observers: ObserverAccounting {
+                unnoticed: 1,
+                ..ObserverAccounting::default()
+            },
+            ..MutantAccounting::default()
+        };
+        source.mutants[0].outcome = njutest_cli::report::Decided::Survived;
+        let displayed = source.mutants[0].display_id.clone();
+        source.findings = vec![Finding::new(
+            FindingKind::SurvivingMutant,
+            &displayed,
+            "nothing noticed it",
+        )];
+    })
+    .expect("and the one after it completes too, because what it cannot do is claim assurance");
+    assert_eq!(
+        unaccepted.verdict(),
+        Verdict::Insufficient,
+        "this is the boundary the whole contract turns on, so it is the row itself that \
+         has to be answered and not the count plus room for one: the acceptance belongs \
+         to the row, and the verdict follows the row"
     );
+    assert_eq!(
+        unaccepted
+            .conclusion()
+            .expect("the checked report has a representable conclusion")
+            .findings
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn non_verdict_rows_can_never_be_hidden_behind_assurance_accounting() {
+    let cases = [
+        njutest_cli::report::Decided::StepLimitReached {
+            on: "core/lib/core one".to_owned(),
+            boundary: njutest_cli::report::StepBoundary::new(10, 11)
+                .expect("the first count beyond the allowance"),
+        },
+        njutest_cli::report::Decided::Waited {
+            on: "core/lib/core one".to_owned(),
+        },
+        njutest_cli::report::Decided::Unconfirmed {
+            on: "core/lib/core one".to_owned(),
+        },
+        njutest_cli::report::Decided::Errored {
+            on: "core/lib/core one".to_owned(),
+        },
+    ];
+    for outcome in cases {
+        let name = outcome.name();
+        let refused = completed(move |source| {
+            source.mutants[0].outcome = outcome;
+            let rows = source.mutants.clone();
+            source.accounting.mutants = counted(&rows);
+        })
+        .expect_err("a non-verdict row cannot be turned into an answer by any accounting");
+        assert!(
+            refused.to_string().contains("that row is not an answer"),
+            "aggregate counters copied from a kill cannot turn a {name} row into an \
+             answer: {refused}"
+        );
+        assert!(
+            refused.to_string().contains("requires exactly one"),
+            "the row's required actionable finding cannot disappear: {refused}"
+        );
+    }
+}
+
+#[test]
+fn an_acceptance_answers_only_the_row_that_carries_it() {
+    let unanswered = completed(|source| {
+        let mut accepted_equivalent = mutant(&"b".repeat(64));
+        accepted_equivalent.catalog_index = njutest_cli::report::CatalogIndex::new(1);
+        accepted_equivalent.outcome = njutest_cli::report::Decided::Equivalent;
+        accepted_equivalent.accepted = true;
+        source.mutants[0].outcome = njutest_cli::report::Decided::Survived;
+        let rows = vec![source.mutants[0].clone(), accepted_equivalent];
+        source.accounting.mutants = counted(&rows);
+        source.mutants = rows;
+    })
+    .expect_err("an acceptance on another row cannot supply the finding this one requires");
     assert!(
-        validate_for_persistence(&unaccepted)
-            .iter()
-            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
-        "and the one after it is not: this is the boundary the whole contract turns on, \
-         so it is the count itself that has to be compared and not the count plus room \
-         for one: {:?}",
-        validate_for_persistence(&unaccepted)
+        unanswered
+            .to_string()
+            .contains("requires exactly one surviving-mutant finding"),
+        "the acceptance count is equal to the survivor count, but it belongs to another \
+         row, and the finding is per row: {unanswered}"
+    );
+
+    let answered = completed(|source| {
+        let mut accepted_equivalent = mutant(&"b".repeat(64));
+        accepted_equivalent.catalog_index = njutest_cli::report::CatalogIndex::new(1);
+        accepted_equivalent.outcome = njutest_cli::report::Decided::Equivalent;
+        accepted_equivalent.accepted = true;
+        source.mutants[0].outcome = njutest_cli::report::Decided::Survived;
+        let rows = vec![source.mutants[0].clone(), accepted_equivalent];
+        source.accounting.mutants = counted(&rows);
+        source.mutants = rows;
+        let displayed = source.mutants[0].display_id.clone();
+        source.findings = vec![Finding::new(
+            FindingKind::SurvivingMutant,
+            &displayed,
+            "nothing noticed it",
+        )];
+    })
+    .expect(
+        "with its own finding the survivor is honestly unanswered rather than silently excused",
+    );
+    let counts = answered
+        .conclusion()
+        .expect("the checked report has a representable conclusion")
+        .accounting
+        .mutants;
+    assert_eq!(
+        counts.accepted, 1,
+        "an acceptance is a fact about one row, and only the row that carries it is \
+         counted as answered"
+    );
+    assert_eq!(
+        answered.verdict(),
+        Verdict::Insufficient,
+        "and the survivor the acceptance does not answer is what the verdict follows"
     );
 }
 
 #[test]
 fn a_target_record_that_says_it_failed_is_not_answered_by_an_accounting_that_says_none_did() {
-    let mut report = sound();
-    report.targets[2].status = TargetStatus::Failed;
-
-    let violations = validate_for_persistence(&report);
-
+    let mismatched = completed(|source| source.targets[2].status = TargetStatus::Failed)
+        .expect_err("a record the accounting contradicts");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
+        mismatched
+            .to_string()
+            .contains("target accounting that disagrees with its rows"),
+        "{mismatched}"
+    );
+
+    let agreed = completed(|source| {
+        source.targets[2].status = TargetStatus::Failed;
+        source.accounting.targets.skipped = 0;
+        source.accounting.targets.failed = 1;
+    })
+    .expect_err(
         "the accounting adds up and the records are all there, and one of them still \
-         says it failed while the accounting says none did. A reader who trusts the \
-         counts and a reader who reads the rows would come to two different answers \
-         about the same run: {violations:?}"
+         says it failed",
+    );
+    assert!(
+        agreed
+            .to_string()
+            .contains("of its targets failed; a failing test is not an assurance"),
+        "a reader who trusts the counts and a reader who reads the rows would come to \
+         two different answers about the same run: {agreed}"
     );
 }
 
 #[test]
 fn a_field_a_report_leaves_empty_is_named_by_the_violation_that_refuses_it() {
     let blank: [Blank; 9] = [
-        ("schema", |report: &mut Report| report.schema.clear()),
-        ("run_id", |report: &mut Report| report.run_id.clear()),
-        ("repository.root_name", |report: &mut Report| {
-            report.repository.root_name.clear();
+        ("schema", "schema is empty", |source: &mut BuildReport| {
+            source.schema.clear();
         }),
-        ("repository.workspace_digest", |report: &mut Report| {
-            report.repository.workspace_digest.clear();
-        }),
-        ("repository.configuration_digest", |report: &mut Report| {
-            report.repository.configuration_digest.clear();
-        }),
-        ("repository.git.commit", |report: &mut Report| {
-            if let Git::Said(said) = &mut report.repository.git {
-                said.commit.clear();
-            }
-        }),
-        ("repository.git.branch", |report: &mut Report| {
-            if let Git::Said(said) = &mut report.repository.git {
-                said.branch.clear();
-            }
-        }),
-        ("toolchain.rustc", |report: &mut Report| {
-            report.toolchain.rustc.clear();
-        }),
-        ("provenance.identity", |report: &mut Report| {
-            report.provenance.identity.clear();
-        }),
+        (
+            "run_id",
+            "canonical writable run id",
+            |source: &mut BuildReport| source.run_id.clear(),
+        ),
+        (
+            "repository.root_name",
+            "repository.root_name is empty",
+            |source: &mut BuildReport| source.repository.root_name.clear(),
+        ),
+        (
+            "repository.workspace_digest",
+            "repository.workspace_digest is empty",
+            |source: &mut BuildReport| source.repository.workspace_digest.clear(),
+        ),
+        (
+            "repository.configuration_digest",
+            "repository.configuration_digest is empty",
+            |source: &mut BuildReport| {
+                source.repository.configuration_digest.clear();
+            },
+        ),
+        (
+            "repository.git.commit",
+            "repository.git.commit is empty",
+            |source: &mut BuildReport| {
+                if let Git::Said(said) = &mut source.repository.git {
+                    said.commit.clear();
+                }
+            },
+        ),
+        (
+            "repository.git.branch",
+            "repository.git.branch is empty",
+            |source: &mut BuildReport| {
+                if let Git::Said(said) = &mut source.repository.git {
+                    said.branch.clear();
+                }
+            },
+        ),
+        (
+            "toolchain.rustc",
+            "toolchain.rustc is empty",
+            |source: &mut BuildReport| source.toolchain.rustc.clear(),
+        ),
+        (
+            "provenance.identity",
+            "provenance.identity is empty",
+            |source: &mut BuildReport| source.provenance.identity.clear(),
+        ),
     ];
 
-    for (field, empty) in blank {
-        let mut report = sound();
-        empty(&mut report);
-        let violations = validate_for_persistence(&report);
+    for (field, words, empty) in blank {
+        let refused = completed(empty).expect_err(&format!(
+            "a report that says nothing where {field} goes is one a reader cannot check"
+        ));
         assert!(
-            violations.iter().any(|violation| matches!(
-                violation,
-                Violation::EmptyRequiredValue { field: named } if named == field
-            )),
-            "a report that says nothing where {field} goes is one a reader cannot check, \
-             and a violation that does not name the field leaves them to find it: \
-             {violations:?}"
+            refused.to_string().contains(words),
+            "and a refusal that does not name the field leaves them to find it: {refused}"
         );
     }
 }
 
 #[test]
 fn a_run_that_could_not_ask_git_says_so_and_claims_none_of_its_facts() {
-    let mut report = sound();
-    report.repository.git = Git::Unavailable;
-    let stated = validate_for_persistence(&report);
+    let unasked = completed(|source| source.repository.git = Git::Unavailable)
+        .expect_err("a run that could not name the commit it verified has to state that");
     assert!(
-        stated.iter().any(|violation| matches!(
-            violation,
-            Violation::MissingLimitation { name, .. } if name == "git-metadata-unavailable"
-        )),
-        "a run that could not name the commit it verified has to state that, or a reader \
-         comparing two reports has no way to know which tree either was about: {stated:?}"
+        unasked.to_string().contains("git-metadata-unavailable"),
+        "or a reader comparing two reports has no way to know which tree either was \
+         about: {unasked}"
     );
 
     for (what, available, commit, branch, dirty, merge_base, changed) in [
@@ -652,7 +961,7 @@ fn a_run_that_could_not_ask_git_says_so_and_claims_none_of_its_facts() {
         let written = format!(
             r#"{{"available":{available},"commit":{commit},"branch":{branch},"dirty":{dirty},"merge_base":{merge_base},"changed_files":{changed}}}"#
         );
-        let read: Result<Git, serde_json::Error> = serde_json::from_str(&written);
+        let read: Result<Git, serde_json::Error> = njutest_devkit::strictjson::decode_str(&written);
         assert!(
             read.is_err(),
             "a tree nobody could ask git about that nonetheless has {what} is a document \
@@ -665,43 +974,47 @@ fn a_run_that_could_not_ask_git_says_so_and_claims_none_of_its_facts() {
 
 #[test]
 fn targets_that_took_the_same_time_are_ordered_by_name_and_the_place_is_named() {
-    let mut report = sound();
-    report.targets = vec![
-        target("a1", "core/lib/core one", TargetStatus::Passed, 30),
-        target("c3", "core/test/it three", TargetStatus::Passed, 20),
-        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
-    ];
-
-    let violations = validate_for_persistence(&report);
-
+    let tied_wrongly = completed(|source| {
+        source.targets = vec![
+            target("a1", "core/lib/core one", TargetStatus::Passed, 30),
+            target("c3", "core/test/it three", TargetStatus::Passed, 20),
+            target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+        ];
+        source.count_targets().expect("one exact target accounting");
+    })
+    .expect_err("two targets that took the same time are ordered by identity");
     assert!(
-        violations.iter().any(|violation| matches!(
-            violation,
-            Violation::TargetsOutOfOrder { at } if *at == 2
-        )),
-        "two targets that took the same time are ordered by identity, and the pair that \
-         breaks the order is the second one here: a report that named the first would \
-         send a reader to a pair that is fine: {violations:?}"
+        tied_wrongly.to_string().contains("out of canonical order"),
+        "and the pair that breaks the order is the second one here, which the source \
+         namespace points a reader at: {tied_wrongly}"
     );
-    report.sort_targets();
-    assert_eq!(
-        validate_for_persistence(&report),
-        Vec::<Violation>::new(),
-        "and sorting is what the audit asks for, so the two agree by construction"
-    );
+    let sorted = completed(|source| {
+        source.targets = vec![
+            target("a1", "core/lib/core one", TargetStatus::Passed, 30),
+            target("c3", "core/test/it three", TargetStatus::Passed, 20),
+            target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+        ];
+        source.count_targets().expect("one exact target accounting");
+        source.sort_targets();
+    })
+    .expect("and sorting is what the ledger asks for, so the two agree by construction");
+    assert_eq!(validate_for_persistence(&sorted), Vec::<Violation>::new());
 
-    let mut backwards = sound();
-    backwards.targets = vec![
-        target("a1", "core/lib/core one", TargetStatus::Passed, 10),
-        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
-        target("c3", "core/test/it three", TargetStatus::Passed, 30),
-    ];
-    let counted = validate_for_persistence(&backwards)
-        .into_iter()
-        .filter(|violation| matches!(violation, Violation::TargetsOutOfOrder { .. }))
-        .count();
+    let backwards = completed(|source| {
+        source.targets = vec![
+            target("a1", "core/lib/core one", TargetStatus::Passed, 10),
+            target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+            target("c3", "core/test/it three", TargetStatus::Passed, 30),
+        ];
+        source.count_targets().expect("one exact target accounting");
+    })
+    .expect_err("every list in the wrong order is refused");
     assert_eq!(
-        counted, 1,
+        backwards
+            .to_string()
+            .matches("out of canonical order")
+            .count(),
+        1,
         "every pair of a list in the wrong order is in the wrong order, and saying so \
          once for each would bury the one thing a reader has to do under a count of how \
          long the list is"
@@ -715,7 +1028,7 @@ fn a_document_that_pairs_the_flag_with_a_name_it_cannot_go_with_is_not_read() {
         (
             "a run that established its own facts and also names another",
             "false",
-            r#""20260905T081500Z-000000""#,
+            r#""20260905t081500z-000000""#,
         ),
         (
             "a report read back from an earlier run that names no run",
@@ -729,7 +1042,8 @@ fn a_document_that_pairs_the_flag_with_a_name_it_cannot_go_with_is_not_read() {
             &format!(r#""cached":{cached},"source_run_id":{source}"#),
         );
         assert_ne!(written, sound, "the document under test was composed");
-        let read: Result<Report, serde_json::Error> = serde_json::from_str(&written);
+        let read: Result<Report, serde_json::Error> =
+            njutest_devkit::strictjson::decode_str(&written);
         assert!(
             read.is_err(),
             "{what} is a document a reader cannot check against the run it points at, \
@@ -742,194 +1056,194 @@ fn a_document_that_pairs_the_flag_with_a_name_it_cannot_go_with_is_not_read() {
 
 #[test]
 fn a_run_that_read_its_own_answer_back_is_refused_when_it_is_written() {
-    let mut itself = sound();
-    itself.provenance.facts = njutest_cli::report::Established::ReadBackFrom(itself.run_id.clone());
-
-    let violations = validate_for_persistence(&itself);
+    let itself = completed(|source| {
+        source.provenance.facts =
+            njutest_cli::report::Established::ReadBackFrom(SOURCE_RUN.to_owned());
+    })
+    .expect_err("a namespace cannot have read its own answer back");
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::ProvenanceIncoherent { .. })),
+        itself.to_string().contains("read its own answer back"),
         "this is the one a type cannot refuse, because telling it apart needs the run's \
-         own identity and the value holds only the source's: {violations:?}"
+         own identity and the value holds only the source's: {itself}"
     );
 }
 
-/// Every report this audit refuses, one for each way it refuses one.
-fn refused() -> Vec<Report> {
-    let mut counted = sound();
-    counted.accounting.targets.passed = 99;
-
-    let mut blank = sound();
-    blank.schema.clear();
-
-    let mut failing = sound();
-    failing.accounting.targets.failed = 1;
-    failing.accounting.targets.passed = 1;
-    failing.targets[0].status = TargetStatus::Failed;
-
-    let mut disagreeing = sound();
-    disagreeing.targets[2].status = TargetStatus::Failed;
-
-    let mut found = sound();
-    found.findings = vec![Finding::new(
-        FindingKind::SurvivingMutant,
-        "aaaaaaaaaaaa",
-        "nothing noticed it",
-    )];
-
-    let mut silent = sound();
-    silent.verdict = Verdict::Defect;
-
-    let mut itself = sound();
-    itself.provenance.facts = njutest_cli::report::Established::ReadBackFrom(itself.run_id.clone());
-
-    let mut nameless = sound();
-    nameless.provenance.facts = njutest_cli::report::Established::ReadBackFrom(String::new());
-
-    let mut unasked = sound();
-    unasked.repository.git = Git::Unavailable;
-
-    let mut backwards = sound();
-    backwards.targets.reverse();
-
-    let mut empty = sound();
-    empty.accounting.targets = TargetAccounting::default();
-    empty.targets.clear();
-
+/// Every completion this lattice refuses, one for each way it refuses one.
+fn refused() -> Vec<String> {
     vec![
-        counted,
-        blank,
-        failing,
-        disagreeing,
-        found,
-        silent,
-        itself,
-        nameless,
-        unasked,
-        backwards,
-        empty,
+        completed(|source| source.accounting.targets.passed = 99)
+            .expect_err("counts that do not add up")
+            .to_string(),
+        completed(|source| source.schema.clear())
+            .expect_err("a schema that says nothing")
+            .to_string(),
+        completed(|source| {
+            source.targets[0].status = TargetStatus::Failed;
+            source.accounting.targets.passed = 1;
+            source.accounting.targets.failed = 1;
+        })
+        .expect_err("a failing target")
+        .to_string(),
+        completed(|source| {
+            source.accounting.mutants = MutantAccounting {
+                cataloged: 1,
+                executed: 1,
+                survived: 1,
+                observers: ObserverAccounting {
+                    unnoticed: 1,
+                    ..ObserverAccounting::default()
+                },
+                ..MutantAccounting::default()
+            };
+            source.mutants[0].outcome = njutest_cli::report::Decided::Survived;
+        })
+        .expect_err("a survivor without its finding")
+        .to_string(),
+        completed(|source| source.timing.finished = "2026-09-05T08:14:59Z".to_owned())
+            .expect_err("a source that finished before it started")
+            .to_string(),
+        completed(|source| {
+            source.provenance.facts =
+                njutest_cli::report::Established::ReadBackFrom(SOURCE_RUN.to_owned());
+        })
+        .expect_err("a source that read its own answer back")
+        .to_string(),
+        completed(|source| {
+            source.provenance.facts = njutest_cli::report::Established::ReadBackFrom(String::new());
+        })
+        .expect_err("a source with no name")
+        .to_string(),
+        completed(|source| source.repository.git = Git::Unavailable)
+            .expect_err("git unasked and unstated")
+            .to_string(),
+        completed(|source| source.targets.reverse())
+            .expect_err("targets backwards")
+            .to_string(),
+        completed(|source| {
+            let rows = vec![mutant(&"a".repeat(64)), shelved(1, &"a".repeat(64))];
+            source.accounting.mutants = counted(&rows);
+            source.mutants = rows;
+        })
+        .expect_err("one identity counted twice")
+        .to_string(),
     ]
 }
 
 #[test]
 fn a_report_that_says_it_was_read_back_from_a_run_that_is_not_itself_is_coherent() {
-    let mut cached = sound();
-    cached.provenance.facts =
-        njutest_cli::report::Established::ReadBackFrom("20260905T081500Z-000000".to_owned());
-
-    assert_eq!(
-        validate_for_persistence(&cached),
-        Vec::<Violation>::new(),
+    let cached = completed(|source| {
+        source.provenance.facts =
+            njutest_cli::report::Established::ReadBackFrom("20260905t081500z-999999".to_owned());
+    })
+    .expect(
         "reusing what an earlier run of the same inputs established is the whole of what \
          evidence is for, and an audit that refused it would make every second run write \
-         a report nobody may keep"
+         a report nobody may keep",
     );
+    assert_eq!(validate_for_persistence(&cached), Vec::<Violation>::new());
 }
 
 #[test]
 fn two_records_that_share_an_identity_are_not_blamed_for_being_out_of_order() {
-    let mut twice = sound();
-    twice.targets = vec![
-        target("a1", "core/lib/core one", TargetStatus::Passed, 30),
-        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
-        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
-    ];
-
-    let violations = validate_for_persistence(&twice);
-
+    let twice = completed(|source| {
+        source.targets = vec![
+            target("a1", "core/lib/core one", TargetStatus::Passed, 30),
+            target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+            target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+        ];
+        source.count_targets().expect("one exact target accounting");
+    })
+    .expect_err("the same identity twice");
     assert!(
-        !violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::TargetsOutOfOrder { .. })),
+        twice.to_string().contains("duplicate"),
         "the same identity twice is a report with a problem, and the problem is not the \
-         order: a diagnostic that blamed the order would send a reader to sort a list \
-         that is already sorted: {violations:?}"
+         order: the refusal names duplication, so it does not send a reader to sort a \
+         list that is already sorted: {twice}"
     );
 }
 
 #[test]
 fn every_refusal_is_a_finished_sentence() {
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut kinds = 0u32;
-    for report in refused() {
-        let violations = validate_for_persistence(&report);
-        assert!(!violations.is_empty(), "a report this audit refuses");
-        for violation in violations {
-            kinds = kinds.saturating_add(1);
-            let said = violation.to_string();
-            assert!(
-                !said.contains("  "),
-                "two spaces where a word was: a sentence with a hole in it is one \
-                 somebody wrote and nobody read: {said:?}"
-            );
-            assert!(
-                !said.trim_end().ends_with([';', ':', ',']),
-                "a sentence that stops at its own semicolon promised a reason and gave \
-                 none: {said:?}"
-            );
-            assert!(
-                !said.ends_with(char::is_whitespace),
-                "and one that stops at the space before the reason is the same hole with \
-                 nothing to see: whatever the words around it were, they were written to \
-                 be followed by something: {said:?}"
-            );
-            assert!(
-                said.len() > 20 && !said.contains("Violation"),
-                "what is wrong, in words a reader can act on, and not the name of a \
-                 variant: {said:?}"
-            );
-            let _known = seen.insert(said);
-        }
+    for refused in refused() {
+        assert!(!refused.is_empty(), "a report this lattice refuses");
+        assert!(
+            !refused.contains("  "),
+            "two spaces where a word was: a sentence with a hole in it is one \
+             somebody wrote and nobody read: {refused:?}"
+        );
+        assert!(
+            !refused.trim_end().ends_with([';', ':', ',']),
+            "a sentence that stops at its own semicolon promised a reason and gave \
+             none: {refused:?}"
+        );
+        assert!(
+            !refused.ends_with(char::is_whitespace),
+            "and one that stops at the space before the reason is the same hole with \
+             nothing to see: whatever the words around it were, they were written to \
+             be followed by something: {refused:?}"
+        );
+        assert!(
+            refused.len() > 20 && !refused.contains("Violation"),
+            "what is wrong, in words a reader can act on, and not the name of a \
+             variant: {refused:?}"
+        );
+        seen.insert(refused);
     }
     assert!(
-        kinds >= 11,
+        seen.len() >= 10,
         "one report for each way this refuses one, and every way says something \
-         different: {kinds} refusals, {} of them distinct. This number went down \
+         different: {distinct} of them distinct. This number went down \
          when `report::Established` and `report::Git` made seven of the refusals \
-         unwritable, and down is the direction to want it: a refusal a type has taken over is one no \
-         reader has to be told about. What it must not do is go down because a \
-         refusal stopped being made",
-        seen.len()
+         unwritable, and down again when the derived verdict and the checked build \
+         ledger took over more, and down is the direction to want it: a refusal a \
+         type has taken over is one no reader has to be told about. What it must not \
+         do is go down because a refusal stopped being made",
+        distinct = seen.len()
     );
 }
 
 #[test]
 fn a_seam_finding_that_names_a_question_the_report_does_not_hold_is_refused() {
-    let mut report = Report::new(
-        "20260918T090000Z-aaaaaa",
-        RunKind::Full,
-        njutest_cli::config::Contract::StandardV1,
-    );
-    report.findings.push(Finding::new(
-        FindingKind::WireUnnoticed,
-        &"c".repeat(64),
-        "nothing noticed when the run was told to answer 500",
-    ));
-    let refused = validate_for_persistence(&report);
+    let refused = completed(|source| {
+        source.findings.push(Finding::new(
+            FindingKind::WireUnnoticed,
+            &"c".repeat(64),
+            "nothing noticed when the run was told to answer 500",
+        ));
+    })
+    .expect_err("a seam finding that names a question the report does not hold");
     assert!(
-        refused
-            .iter()
-            .any(|one| matches!(one, Violation::SeamFindingNamesNothing { .. })),
+        refused.to_string().contains("holds no such question"),
         "a reader handed a sixty-four character name with nothing in the report to \
          look it up in has been told nothing they can act on, and ADR 0002 keeps the \
-         thing it stands for off the recording: {refused:?}"
+         thing it stands for off the recording: {refused}"
     );
 
-    report.seams.push(SeamRecord {
-        id: "c".repeat(64),
-        capability: "api".to_owned(),
-        seq: 3,
-        asked: "GET /orders".to_owned(),
-        answered: Some(200),
-        rule: njutest_cli::wire::rule::Rule::StatusServerError,
-        decision: njutest_cli::report::SeamDecision::Unnoticed,
-    });
-    let allowed = validate_for_persistence(&report);
-    assert!(
-        !allowed
-            .iter()
-            .any(|one| matches!(one, Violation::SeamFindingNamesNothing { .. })),
-        "and once the report holds the question, the finding resolves: {allowed:?}"
+    let allowed = completed(|source| {
+        source.findings.push(Finding::new(
+            FindingKind::WireUnnoticed,
+            &"c".repeat(64),
+            "nothing noticed when the run was told to answer 500",
+        ));
+        source.seams.push(SeamRecord {
+            id: "c".repeat(64),
+            capability: "api".to_owned(),
+            seq: 3,
+            asked: "GET /orders".to_owned(),
+            answered: Some(200),
+            rule: njutest_cli::wire::rule::Rule::StatusServerError,
+            decision: njutest_cli::report::SeamDecision::Unnoticed,
+        });
+    })
+    .expect("and once the report holds the question, the finding resolves");
+    assert_eq!(
+        allowed
+            .conclusion()
+            .expect("the checked report has a representable conclusion")
+            .seams
+            .len(),
+        1
     );
+    assert_eq!(validate_for_persistence(&allowed), Vec::<Violation>::new());
 }

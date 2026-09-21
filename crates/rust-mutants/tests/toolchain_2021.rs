@@ -52,8 +52,8 @@ fn an_edition_2021_crate_with_extern_crate_is_measured() {
         .display_id
         .clone();
     let result = session
-        .exec(&Request::new(one), &Cancel::new())
+        .exec(&Request::new(one.to_string()), &Cancel::new())
         .expect("exec");
-    assert_eq!(result.outcome, Outcome::Killed);
+    assert_eq!(result.outcome(), Outcome::Killed);
     session.close().expect("close");
 }

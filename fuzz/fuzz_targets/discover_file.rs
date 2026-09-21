@@ -17,15 +17,30 @@ fuzz_target!(|source: &[u8]| {
         return;
     };
     for found in &discovery.candidates {
+        #[expect(
+            clippy::expect_used,
+            reason = "the fuzzer must crash when discovery produces an invalid candidate"
+        )]
         found.candidate.validate().expect("a candidate validates");
         let span = found.candidate.span;
+        let Ok(start) = usize::try_from(span.start) else {
+            return;
+        };
+        let Ok(end) = usize::try_from(span.end) else {
+            return;
+        };
         assert_eq!(
-            &source[span.start as usize..span.end as usize],
-            found.candidate.original.as_slice()
+            source.get(start..end),
+            Some(found.candidate.original.as_slice()),
+            "a candidate's span names exactly its original bytes"
         );
         let site = found.hint.site;
         assert!(site.start <= span.start && span.end <= site.end);
     }
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when the same discovery input has two answers"
+    )]
     let again = discover_file("src/lib.rs", source, &selection).expect("deterministic");
     assert_eq!(discovery, again);
 });

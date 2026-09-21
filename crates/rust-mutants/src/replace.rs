@@ -15,6 +15,14 @@ pub struct Failure {
     pub source: std::io::Error,
 }
 
+/// Both failures from refusing a replacement and then refusing to remove its staged bytes.
+#[derive(Debug, thiserror::Error)]
+#[error("renaming the staged file failed ({rename}); removing it also failed ({cleanup})")]
+struct RenameCleanup {
+    rename: std::io::Error,
+    cleanup: std::io::Error,
+}
+
 /// Writes `bytes` where `path` is, so that a reader holds the whole of what was there or the whole of this.
 ///
 /// # Errors
@@ -31,7 +39,14 @@ pub fn file(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
         source,
     })?;
     if let Err(source) = std::fs::rename(&staged, path) {
-        drop(std::fs::remove_file(&staged));
+        let source = match std::fs::remove_file(&staged) {
+            Ok(()) => source,
+            Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => source,
+            Err(cleanup) => std::io::Error::other(RenameCleanup {
+                rename: source,
+                cleanup,
+            }),
+        };
         return Err(Failure {
             path: path.to_path_buf(),
             source,

@@ -11,6 +11,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use rust_mutants::cargo::config::ConfigError;
 use rust_mutants::cargo::config::{Configured, SEPARATOR, configured, encoded, home, read};
 use tempfile::TempDir;
 
@@ -152,7 +154,8 @@ fn the_environment_replaces_the_configuration_rather_than_joining_it() {
         build: vec!["--cfg".to_owned(), "tree".to_owned()],
         ..Configured::default()
     };
-    let encoded_flags = encoded(&env(&[("RUSTFLAGS", "--cfg caller")]), &found, &["-Cx"]);
+    let encoded_flags = encoded(&env(&[("RUSTFLAGS", "--cfg caller")]), &found, &["-Cx"])
+        .expect("the flags are UTF-8");
     assert_eq!(
         encoded_flags,
         Some(OsString::from(
@@ -165,7 +168,24 @@ fn the_environment_replaces_the_configuration_rather_than_joining_it() {
 
 #[test]
 fn nothing_configured_and_nothing_asked_for_leaves_the_variable_unset() {
-    assert_eq!(encoded(&env(&[]), &Configured::default(), &[]), None);
+    assert_eq!(encoded(&env(&[]), &Configured::default(), &[]), Ok(None));
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_environment_flags_are_refused_without_lossy_rewriting() {
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let environment = vec![(
+        OsString::from("RUSTFLAGS"),
+        OsString::from_vec(vec![b'-', b'D', 0xff]),
+    )];
+    assert_eq!(
+        encoded(&environment, &Configured::default(), &[]),
+        Err(ConfigError::NonUtf8Environment {
+            variable: "RUSTFLAGS"
+        })
+    );
 }
 
 #[test]

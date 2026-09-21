@@ -3,10 +3,8 @@
 
 //! What the seams a run watched say the system does, and who is holding each sentence up.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
-
 use super::{Report, SeamDecision, SeamRecord};
+use std::collections::BTreeMap;
 
 /// What one exchange the run observed does, and who would notice if it stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,26 +77,33 @@ impl Sentence {
 /// derived this way is always true of the system as it ran, which is what makes
 /// the annotation worth reading: the question is never whether the behaviour is
 /// real, only whether anybody would notice it changing.
-#[must_use]
-pub fn spoken(report: &Report) -> Vec<Sentence> {
+/// # Errors
+/// Returns [`super::CountError`] if one exchange's exact question census
+/// cannot be represented by the v2 sentence counters.
+pub fn spoken(report: &Report) -> Result<Vec<Sentence>, super::CountError> {
     let mut by_exchange: BTreeMap<(&str, u64), Sentence> = BTreeMap::new();
-    for one in &report.seams {
+    let conclusion = report.conclusion()?;
+    for one in &conclusion.seams {
         let sentence = by_exchange
             .entry((one.capability.as_str(), one.seq))
             .or_insert_with(|| began(one));
-        counted(sentence, one);
+        counted(sentence, one)?;
     }
-    by_exchange.into_values().collect()
+    Ok(by_exchange.into_values().collect())
 }
 
 /// The page a person reads, or a line saying the run watched nothing.
-#[must_use]
-pub fn page(report: &Report) -> String {
-    let sentences = spoken(report);
+/// # Errors
+/// Returns the checked projection error instead of shortening a sentence's
+/// question census.
+pub fn page(report: &Report) -> Result<String, super::CountError> {
+    let sentences = spoken(report)?;
     if sentences.is_empty() {
-        return "This run watched no seam, so there is nothing it observed the system \
+        return Ok(
+            "This run watched no seam, so there is nothing it observed the system \
                 doing.\n"
-            .to_owned();
+                .to_owned(),
+        );
     }
     let unguarded = sentences
         .iter()
@@ -110,18 +115,25 @@ pub fn page(report: &Report) -> String {
         report.run_id
     );
     for sentence in &sentences {
-        let _written = writeln!(out, "  {}", sentence.worded());
+        out.push_str("  ");
+        out.push_str(&sentence.worded());
+        out.push('\n');
     }
-    let _written = write!(
-        out,
-        "\n{} observed, {unguarded} that nothing would notice changing",
-        sentences.len()
+    crate::text::append(
+        &mut out,
+        format_args!(
+            "\n{} observed, {unguarded} that nothing would notice changing",
+            sentences.len()
+        ),
     );
     if unasked > 0 {
-        let _written = write!(out, ", {unasked} this run established nothing about");
+        crate::text::append(
+            &mut out,
+            format_args!(", {unasked} this run established nothing about"),
+        );
     }
-    let _written = writeln!(out, ".");
-    out
+    out.push_str(".\n");
+    Ok(out)
 }
 
 /// A sentence about `one`'s exchange, with nothing counted yet.
@@ -142,15 +154,20 @@ fn began(one: &SeamRecord) -> Sentence {
 /// A question a proof discharged holds nothing up and leaves nothing wanting:
 /// nobody could have noticed it, so counting it against the tests would ask
 /// them for something no test can give.
-fn counted(sentence: &mut Sentence, one: &SeamRecord) {
+fn counted(sentence: &mut Sentence, one: &SeamRecord) -> Result<(), super::CountError> {
     match &one.decision {
         SeamDecision::Tests { noticed_by } => {
             if !sentence.guarded_by.contains(noticed_by) {
                 sentence.guarded_by.push(noticed_by.clone());
             }
         }
-        SeamDecision::Unnoticed => sentence.unguarded = sentence.unguarded.saturating_add(1),
-        SeamDecision::Unreached => sentence.unasked = sentence.unasked.saturating_add(1),
+        SeamDecision::Unnoticed => {
+            super::increment("unguarded seam questions", &mut sentence.unguarded)?;
+        }
+        SeamDecision::Unreached => {
+            super::increment("unasked seam questions", &mut sentence.unasked)?;
+        }
         SeamDecision::Proved { .. } => {}
     }
+    Ok(())
 }

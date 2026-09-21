@@ -18,7 +18,11 @@ fuzz_target!(|data: &[u8]| {
             continue;
         };
         for seen in [&touches.reached, &touches.bodies, &touches.infected] {
-            for index in seen.loose.iter().chain(seen.tests.values().flatten()) {
+            for index in seen
+                .loose
+                .iter()
+                .chain(seen.tests.values().flat_map(|indices| indices.iter()))
+            {
                 assert!(
                     *index < count,
                     "an index the catalog does not hold: {index} of {count}"

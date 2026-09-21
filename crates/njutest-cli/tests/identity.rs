@@ -23,12 +23,12 @@ fn asked(root: &str) -> Request {
         root: PathBuf::from(root),
         config: Config::default(),
         build: Config::default().execution.build(),
-        built_as: njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
         packages: Vec::new(),
         test_args: Vec::new(),
         cargo: Cargo::default(),
         keep_temp: false,
-        run_id: "20260909T000000Z-000001".to_owned(),
+        run_id: rust_mutants::id::RunId::try_from("20260909t000000z-000001")
+            .expect("a canonical run identity"),
         started: jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
         engine_trace: rust_mutants::trace::Recorder::disabled(),
         evidence: Evidence::default(),
@@ -54,9 +54,9 @@ fn a_report_says_what_it_is_about_before_it_says_anything_it_found() {
     request.packages = vec!["core".to_owned()];
     request.config.project.exclude = vec!["vendor/**".to_owned()];
 
-    let report = identity(&request);
+    let report = identity(&request).expect("the report before anything has run");
 
-    assert_eq!(report.run_id, "20260909T000000Z-000001");
+    assert_eq!(report.run_id, "20260909t000000z-000001");
     assert_eq!(
         report.timing.started,
         request.started.to_string(),
@@ -69,7 +69,10 @@ fn a_report_says_what_it_is_about_before_it_says_anything_it_found() {
     );
     assert_eq!(
         report.repository.configuration_digest,
-        request.config.digest(),
+        request
+            .config
+            .digest()
+            .expect("a canonical configuration digest"),
         "two runs configured differently asked different questions, and a reader \
          comparing them has no other way to know"
     );
@@ -94,7 +97,8 @@ fn a_report_says_what_it_is_about_before_it_says_anything_it_found() {
 
 #[test]
 fn a_tree_no_number_could_be_read_from_says_so_and_names_no_digest() {
-    let report = identity(&asked("/tmp/somewhere/demo"));
+    let report =
+        identity(&asked("/tmp/somewhere/demo")).expect("the report before anything has run");
 
     assert_eq!(
         report.repository.workspace_digest, UNAVAILABLE,
@@ -127,18 +131,29 @@ fn the_packages_a_report_names_are_the_ones_the_command_line_asked_for() {
     asked_for.packages = vec!["from-the-command-line".to_owned()];
 
     assert_eq!(
-        identity(&configured).scope.requested_packages,
+        identity(&configured)
+            .expect("the report before anything has run")
+            .scope
+            .requested_packages,
         vec!["from-config".to_owned()],
         "a configuration that names packages is what a run with no packages on its \
          command line looked at"
     );
     assert_eq!(
-        identity(&asked_for).scope.requested_packages,
+        identity(&asked_for)
+            .expect("the report before anything has run")
+            .scope
+            .requested_packages,
         vec!["from-the-command-line".to_owned()],
         "and a command line that names one narrows it: the two are not added together, \
          because a person who names a package is asking about that one"
     );
-    assert_eq!(identity(&configured).run_kind, RunKind::Scoped);
+    assert_eq!(
+        identity(&configured)
+            .expect("the report before anything has run")
+            .run_kind,
+        RunKind::Scoped
+    );
 }
 
 #[test]
@@ -147,7 +162,11 @@ fn a_part_of_a_catalog_says_which_part_it_judged() {
     request.shard = Some(rust_mutants::run::Shard::parse("2/5").expect("a part of a catalog"));
 
     assert_eq!(
-        identity(&request).scope.shard.as_deref(),
+        identity(&request)
+            .expect("the report before anything has run")
+            .scope
+            .shard
+            .as_deref(),
         Some("2/5"),
         "a part judged a fifth of the catalog and measured the whole baseline, and a \
          reader handed its report without that number would read a whole run"
@@ -157,7 +176,10 @@ fn a_part_of_a_catalog_says_which_part_it_judged() {
 #[test]
 fn a_workspace_at_the_root_of_a_filesystem_is_still_named() {
     assert_eq!(
-        identity(&asked("/")).repository.root_name,
+        identity(&asked("/"))
+            .expect("the report before anything has run")
+            .repository
+            .root_name,
         UNAVAILABLE,
         "a path with no last component names no workspace, and an empty name would read \
          as one somebody forgot to record"
@@ -172,7 +194,8 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
     request.evidence = known();
     let scratch = njutest_cli::scratch::Scratch::create(
         parent.path(),
-        "20260909T000000Z-000001",
+        &rust_mutants::id::RunId::try_from("20260909t000000z-000001")
+            .expect("a canonical writable run id"),
         request.started,
     )
     .expect("a directory to work in");
@@ -188,13 +211,14 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         terminal: njutest_cli::presentation::Terminal::default(),
     };
 
-    let mut report = identity(&request);
+    let mut report = identity(&request).expect("the report before anything has run");
     opened(
         &mut report,
         &request,
         &environment,
         (&scratch, njutest_cli::watch::Watch::new(&cancel, &trace)),
-    );
+    )
+    .expect("the tree, identity, and repository were read");
 
     assert!(
         report.repository.git.said().is_none(),
@@ -221,13 +245,14 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
 
     std::fs::write(root.path().join("one.rs"), "fn f() {}\n").expect("a file to commit");
     njutest_devkit::repo::commit_tree(root.path());
-    let mut committed = identity(&request);
+    let mut committed = identity(&request).expect("the report before anything has run");
     opened(
         &mut committed,
         &request,
         &environment,
         (&scratch, njutest_cli::watch::Watch::new(&cancel, &trace)),
-    );
+    )
+    .expect("the tree, identity, and repository were read");
 
     assert!(
         committed.repository.git.said().is_some(),
@@ -251,7 +276,8 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
     let request = asked(&root.path().display().to_string());
     let scratch = njutest_cli::scratch::Scratch::create(
         parent.path(),
-        "20260909T000000Z-000001",
+        &rust_mutants::id::RunId::try_from("20260909t000000z-000001")
+            .expect("a canonical writable run id"),
         request.started,
     )
     .expect("a directory to work in");
@@ -267,13 +293,14 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
         terminal: njutest_cli::presentation::Terminal::default(),
     };
 
-    let mut report = identity(&request);
+    let mut report = identity(&request).expect("the report before anything has run");
     opened(
         &mut report,
         &request,
         &environment,
         (&scratch, njutest_cli::watch::Watch::new(&cancel, &trace)),
-    );
+    )
+    .expect("the tree, identity, and repository were read");
 
     assert!(
         report.limitations.len() >= 2,

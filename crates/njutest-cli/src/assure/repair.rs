@@ -15,6 +15,15 @@ use crate::error::RunnerError;
 use crate::repair::Proposal;
 use crate::watch::Watch;
 
+/// Why a candidate could not be installed in its private snapshot.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot write {}: {source}", path.display())]
+struct WriteError {
+    path: std::path::PathBuf,
+    #[source]
+    source: std::io::Error,
+}
+
 /// How many times the patched tree must pass with nothing active.
 pub const STABILITY_RUNS: u32 = 3;
 
@@ -43,7 +52,7 @@ pub struct Checking<'a> {
     /// How long the build may take, which is not how long a measurement may take. `None` is no bound.
     pub build_timeout: Option<Duration>,
     /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
-    pub reports: crate::app::reports::Store,
+    pub reports: crate::config::ReportDirectory,
 }
 
 /// What putting a candidate to the tests established.
@@ -95,7 +104,7 @@ pub fn check(
                 .map(std::ffi::OsStr::to_owned),
             env: checking.environment.vars.clone(),
             temp_directory: checking.environment.temp_directory.clone(),
-            report_directory: Some(checking.reports.relative()),
+            report_directory: Some(checking.reports.as_str().to_owned()),
             exclude: Vec::new(),
             keep_temp: false,
             offline: checking.cargo.offline,
@@ -107,7 +116,7 @@ pub fn check(
     if let Err(refusal) = write(workspace.snapshot_root(), proposal) {
         let closed = workspace.close();
         drop(closed);
-        return Ok(Verdict::refused(0, 0, refusal));
+        return Ok(Verdict::refused(0, 0, refusal.to_string()));
     }
     let session = workspace.prepare(
         &PrepareOptions {
@@ -141,17 +150,17 @@ fn put(
             "the mutant it claims to close is not in the patched tree".to_owned(),
         ));
     };
-    let request = ExecRequest::new(found.id.clone()).with_timeout(Some(timeout));
+    let request = ExecRequest::new(found.id.to_string()).with_timeout(Some(timeout));
     let mut stable = 0;
     for _attempt in 0..STABILITY_RUNS {
-        let ran = session.control(&request, watch.cancel)?;
-        if ran.outcome != rust_mutants::outcome::Outcome::Survived {
+        let ran = session.control_observing(&request, watch.cancel)?;
+        if ran.outcome() != rust_mutants::outcome::Outcome::Survived {
             return Ok(Verdict::refused(
                 stable,
                 0,
                 format!(
                     "the patched tree does not pass with nothing active: {}",
-                    ran.outcome.name()
+                    ran.outcome().name()
                 ),
             ));
         }
@@ -160,13 +169,13 @@ fn put(
     let mut killed = 0;
     for _attempt in 0..KILL_RUNS {
         let ran = session.exec(&request, watch.cancel)?;
-        if !ran.outcome.detected() {
+        if !ran.outcome().detected() {
             return Ok(Verdict::refused(
                 stable,
                 killed,
                 format!(
                     "the patched tree does not notice the mutant: {}",
-                    ran.outcome.name()
+                    ran.outcome().name()
                 ),
             ));
         }
@@ -181,13 +190,10 @@ fn put(
 }
 
 /// Writes one candidate into a snapshot, which is a copy nobody is working in.
-fn write(root: &Path, proposal: &Proposal) -> Result<(), String> {
+fn write(root: &Path, proposal: &Proposal) -> Result<(), WriteError> {
     let path = root.join(&proposal.path);
-    rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| {
-        format!(
-            "cannot write {}: {}",
-            failure.path.display(),
-            failure.source
-        )
+    rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| WriteError {
+        path: failure.path,
+        source: failure.source,
     })
 }

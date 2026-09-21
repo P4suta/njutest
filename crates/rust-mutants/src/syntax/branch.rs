@@ -27,7 +27,6 @@ pub fn is_negating(rule: &str) -> bool {
 
 /// What the compiler must vouch for before a claim becomes a proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum WitnessKind {
     /// Both operands of a comparison are one primitive type that compares without running any of the program's code.
     Ordered,

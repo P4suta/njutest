@@ -3,43 +3,47 @@
 
 //! The report as one self-contained page.
 
-use std::fmt::Write as _;
-
-use super::{Report, TargetStatus};
+use super::{Conclusion, Report, TargetStatus};
 
 /// The report as one HTML document with no external resource of any kind.
-#[must_use]
-pub fn document(report: &Report) -> String {
+/// # Errors
+/// Returns the checked projection error retained by the completed report.
+pub fn document(report: &Report) -> Result<String, super::CountError> {
+    let conclusion = report.conclusion()?;
     let mut out = String::new();
-    let _written = write!(
-        out,
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+    crate::text::append(
+        &mut out,
+        format_args!(
+            "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <title>{verdict} — {root}</title>\n<style>{STYLE}</style>\n</head>\n<body>\n",
-        verdict = escape(&format!("{:?}", report.verdict)),
-        root = escape(&report.repository.root_name),
+            verdict = escape(&format!("{:?}", conclusion.verdict)),
+            root = escape(&report.repository.root_name),
+        ),
     );
-    let _written = write!(
-        out,
-        "<h1 class=\"{class}\">{verdict}</h1>\n<p class=\"identity\">{root} · {run}</p>\n",
-        class = if report.verdict.is_assurance() {
-            "assured"
-        } else {
-            "not-assured"
-        },
-        verdict = escape(&format!("{:?}", report.verdict)),
-        root = escape(&report.repository.root_name),
-        run = escape(&report.run_id),
+    crate::text::append(
+        &mut out,
+        format_args!(
+            "<h1 class=\"{class}\">{verdict}</h1>\n<p class=\"identity\">{root} · {run}</p>\n",
+            class = if conclusion.verdict.is_assurance() {
+                "assured"
+            } else {
+                "not-assured"
+            },
+            verdict = escape(&format!("{:?}", conclusion.verdict)),
+            root = escape(&report.repository.root_name),
+            run = escape(report.run_id.as_str()),
+        ),
     );
 
-    section(&mut out, "Findings", &findings(report));
-    section(&mut out, "Accounting", &accounting(report));
-    section(&mut out, "Targets", &targets(report));
-    section(&mut out, "Mutants", &mutants(report));
-    section(&mut out, "Limitations", &limitations(report));
-    section(&mut out, "Identity", &identity(report));
+    section(&mut out, "Findings", &findings(&conclusion));
+    section(&mut out, "Accounting", &accounting(&conclusion));
+    section(&mut out, "Targets", &targets(&conclusion));
+    section(&mut out, "Mutants", &mutants(&conclusion));
+    section(&mut out, "Limitations", &limitations(&conclusion));
+    section(&mut out, "Identity", &identity(report, &conclusion));
 
     out.push_str("</body>\n</html>\n");
-    out
+    Ok(out)
 }
 
 const STYLE: &str = "body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:60rem;\
@@ -51,10 +55,14 @@ td.survived,td.failed,td.missing{color:#a30}td.killed,td.passed{color:#0a6}\
 p.none{color:#666}";
 
 fn section(out: &mut String, title: &str, body: &str) {
-    let _written = write!(out, "<h2>{}</h2>\n{body}\n", escape(title));
+    out.push_str("<h2>");
+    out.push_str(&escape(title));
+    out.push_str("</h2>\n");
+    out.push_str(body);
+    out.push('\n');
 }
 
-fn findings(report: &Report) -> String {
+fn findings(report: &Conclusion) -> String {
     if report.findings.is_empty() {
         return "<p class=\"none\">Nothing was found.</p>".to_owned();
     }
@@ -73,7 +81,7 @@ fn findings(report: &Report) -> String {
     table(&["Kind", "Subject", "Detail", "At"], rows)
 }
 
-fn accounting(report: &Report) -> String {
+fn accounting(report: &Conclusion) -> String {
     let targets = report.accounting.targets;
     let mutants = report.accounting.mutants;
     let rows = [
@@ -95,7 +103,7 @@ fn accounting(report: &Report) -> String {
     table(&["What", "How many"], rows)
 }
 
-fn targets(report: &Report) -> String {
+fn targets(report: &Conclusion) -> String {
     let rows = report.targets.iter().map(|target| {
         format!(
             "<tr><td class=\"{status}\">{status}</td><td><code>{name}</code></td>\
@@ -109,26 +117,36 @@ fn targets(report: &Report) -> String {
     table(&["Status", "Target", "Took", "Said"], rows)
 }
 
-fn mutants(report: &Report) -> String {
+fn mutants(report: &Conclusion) -> String {
     if report.mutants.is_empty() {
         return "<p class=\"none\">No mutation was measured.</p>".to_owned();
     }
     let rows = report.mutants.iter().map(|mutant| {
+        let decided_by = mutant
+            .by_build()
+            .iter()
+            .filter_map(|fact| {
+                fact.outcome()
+                    .decided_by()
+                    .map(|target| format!("{}: {target}", fact.build()))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "<tr><td class=\"{outcome}\">{outcome}</td><td><code>{id}</code></td>\
              <td><code>{path}:{line}</code></td><td>{rule}</td><td>{by}</td></tr>",
-            outcome = escape(mutant.outcome.name()),
-            id = escape(&mutant.display_id),
-            path = escape(&mutant.path),
-            line = mutant.position.line,
-            rule = escape(&mutant.rule),
-            by = escape(mutant.outcome.decided_by().unwrap_or_default()),
+            outcome = escape(mutant.decision().name()),
+            id = escape(mutant.display_id()),
+            path = escape(mutant.path()),
+            line = mutant.position().line,
+            rule = escape(mutant.rule()),
+            by = escape(&decided_by),
         )
     });
     table(&["Outcome", "Mutant", "Where", "Rule", "Noticed by"], rows)
 }
 
-fn limitations(report: &Report) -> String {
+fn limitations(report: &Conclusion) -> String {
     if report.limitations.is_empty() {
         return "<p class=\"none\">The report claims everything it measured.</p>".to_owned();
     }
@@ -142,22 +160,28 @@ fn limitations(report: &Report) -> String {
     table(&["Name", "What is not claimed"], rows)
 }
 
-fn identity(report: &Report) -> String {
-    let rows = [
+fn identity(report: &Report, conclusion: &Conclusion) -> String {
+    let mut rows = vec![
         ("commit", report.repository.git.commit().to_owned()),
         ("branch", report.repository.git.branch().to_owned()),
         ("dirty", report.repository.git.dirty().to_string()),
-        ("rustc", report.toolchain.rustc.clone()),
-        ("target", report.toolchain.target.clone()),
-        ("started", report.timing.started.clone()),
-        ("took", format!("{} ms", report.timing.duration_ms)),
+        ("started", conclusion.timing.wall().started().to_owned()),
+        (
+            "compute total",
+            format!("{} ms", conclusion.timing.compute_total_ms()),
+        ),
         (
             "configuration",
             report.repository.configuration_digest.clone(),
         ),
-    ]
-    .into_iter()
-    .map(|(name, value)| {
+    ];
+    for build in report.builds() {
+        let baseline = build.baseline();
+        rows.push(("build", build.name.as_str().to_owned()));
+        rows.push(("rustc", baseline.toolchain.rustc.clone()));
+        rows.push(("target", baseline.toolchain.target.clone()));
+    }
+    let rows = rows.into_iter().map(|(name, value)| {
         format!(
             "<tr><td>{}</td><td><code>{}</code></td></tr>",
             escape(name),
@@ -170,7 +194,9 @@ fn identity(report: &Report) -> String {
 fn table(headings: &[&str], rows: impl Iterator<Item = String>) -> String {
     let mut out = String::from("<table>\n<tr>");
     for heading in headings {
-        let _written = write!(out, "<th>{}</th>", escape(heading));
+        out.push_str("<th>");
+        out.push_str(&escape(heading));
+        out.push_str("</th>");
     }
     out.push_str("</tr>\n");
     for row in rows {

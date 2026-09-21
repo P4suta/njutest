@@ -10,7 +10,7 @@ use rust_mutants::glob::Pattern;
 use rust_mutants::session::PrepareOptions;
 use rust_mutants::workspace::OpenOptions;
 
-use crate::config::{Config, ConfigError, FILE_NAME};
+use crate::config::{Config, ConfigError};
 use crate::error::CliError;
 use crate::{Environment, cli};
 
@@ -19,8 +19,6 @@ use crate::{Environment, cli};
 pub struct Settings {
     /// The workspace root.
     pub root: PathBuf,
-    /// The configuration file that was read, when one was.
-    pub source: Option<PathBuf>,
     /// The configuration, with every flag already folded in.
     pub config: Config,
 }
@@ -32,7 +30,7 @@ impl Settings {
     /// Returns what is wrong with the configuration, or with a duration a flag spells.
     pub fn resolve(scope: &cli::Scope, environment: &Environment) -> Result<Self, CliError> {
         let root = environment.rooted(scope.root.as_deref());
-        let (source, mut config) = read(scope, &root)?;
+        let mut config = read(scope, &root)?;
         if let Some(tier) = scope.tier {
             config.mutation.tier = tier.tier();
         }
@@ -72,11 +70,7 @@ impl Settings {
         config.mutation.touch &= !scope.switches.no_touch;
         config.mutation.equivalence |= scope.switches.equivalence;
         config.execution.doctests &= !scope.switches.no_doctests;
-        Ok(Self {
-            root,
-            source,
-            config,
-        })
+        Ok(Self { root, config })
     }
 
     /// How the workspace is opened.
@@ -89,12 +83,14 @@ impl Settings {
         environment: &Environment,
         trace: rust_mutants::trace::Recorder,
     ) -> Result<OpenOptions, EngineError> {
+        let report_directory = rust_mutants::id::slashed(&self.config.reports.directory)
+            .map_err(rust_mutants::workspace::SessionError::from)?;
         Ok(OpenOptions {
             cargo: None,
             search_path: rust_mutants::vars::search_path(&environment.vars),
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
-            report_directory: Some(self.config.reports.directory.to_string_lossy().into_owned()),
+            report_directory: Some(report_directory),
             exclude: compile(&self.config.snapshot.omit)?,
             allow_outside: self
                 .config
@@ -152,18 +148,16 @@ impl Settings {
     }
 }
 
-fn read(scope: &cli::Scope, root: &Path) -> Result<(Option<PathBuf>, Config), ConfigError> {
+fn read(scope: &cli::Scope, root: &Path) -> Result<Config, ConfigError> {
     if scope.no_config {
-        return Ok((None, Config::default()));
+        return Ok(Config::default());
     }
     if let Some(path) = &scope.config {
         let text = std::fs::read_to_string(path)
             .map_err(|error| ConfigError::unreadable(path, error.to_string()))?;
-        return Ok((Some(path.clone()), Config::parse(&text, path)?));
+        return Config::parse(&text, path);
     }
-    let path = root.join(FILE_NAME);
-    let config = Config::load(root)?;
-    Ok((path.is_file().then_some(path), config))
+    Config::load(root)
 }
 
 fn replace(field: &mut Vec<String>, given: &[String]) {

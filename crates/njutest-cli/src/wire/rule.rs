@@ -12,7 +12,18 @@ use serde::{Deserialize, Serialize};
 /// drift: a name added to one and not the other used to leave a question that
 /// went past untouched while the report said it had been put. The fallback
 /// that caught it is gone, because the state it caught cannot be written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Rule {
     /// Cut the answer short, as a connection that died mid-body does.
@@ -32,17 +43,6 @@ pub enum Rule {
 }
 
 impl Rule {
-    /// Every question there is.
-    pub const ALL: [Self; 7] = [
-        Self::TruncateResponse,
-        Self::DelayResponse,
-        Self::DropConnection,
-        Self::ReplayRequest,
-        Self::StaleResponse,
-        Self::StatusServerError,
-        Self::StatusNotFound,
-    ];
-
     /// What any exchange licenses, because putting it needs nothing read.
     pub const UNPARSED: [Self; 4] = [
         Self::TruncateResponse,
@@ -107,6 +107,8 @@ impl Rule {
 
     /// The question of that name, or nothing where it names none.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|one| one.name() == name)
     }

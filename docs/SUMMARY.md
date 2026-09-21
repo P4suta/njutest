@@ -17,9 +17,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Formats
 
-- [Report v1](report-v1.md)
-- [Trace v1](trace-v1.md)
-- [Checkpoint v1](checkpoint-v1.md)
+- [Report v2](report-v2.md)
+- [Trace v2](trace-v2.md)
+- [Historical report v1](report-v1.md)
+- [Historical trace v1](trace-v1.md)
+- [Checkpoint v2](checkpoint-v2.md)
+- [Historical checkpoint v1](checkpoint-v1.md)
 - [Resource protocols](protocols.md)
 
 # The engine

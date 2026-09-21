@@ -20,6 +20,12 @@ const INTERRUPTED: ErrorCode = ErrorCode {
     remedy: "nothing was left half-done; run it again when you are ready",
 };
 
+const OUTPUT_UNWRITABLE: ErrorCode = ErrorCode {
+    code: "NJ0002",
+    summary: "the command's output stream could not be written",
+    remedy: "check the destination is writable and has space; a composition root may treat a deliberately closed pipe as success",
+};
+
 /// Declares one error code. There is no form without a remedy, on purpose.
 macro_rules! code {
     ($name:ident, $code:literal, $summary:literal, $remedy:literal) => {
@@ -200,6 +206,24 @@ code!(
     "`rustup +nightly component add miri`, or ask for a contract that does not promise interpretation"
 );
 code!(
+    MODEL_PHASE_FAILED,
+    "NJ7002",
+    "the verified model-checking phase could not preserve its own evidence",
+    "the message names the internal source or artifact boundary that failed; fix its permissions or report the invariant failure"
+);
+code!(
+    SCHEDULER_UNUSABLE,
+    "NJ7003",
+    "the run could not schedule measurements without trusting interrupted state",
+    "run it again; a worker panic or poisoned coordination lock is never recovered as ordinary state"
+);
+code!(
+    PHASE_OUTPUT_UNREADABLE,
+    "NJ7004",
+    "an assurance phase printed output that is not valid UTF-8",
+    "the named tool violated its text-output contract; fix or replace that tool before trusting its result"
+);
+code!(
     GENERATION_PROTOCOL,
     "NJ5006",
     "a generation provider said something this version does not understand",
@@ -231,6 +255,13 @@ pub enum RunnerError {
     /// The caller cancelled the operation before it completed.
     #[error("the operation was interrupted before it completed")]
     Interrupted,
+    /// The command's output stream stopped accepting its result.
+    #[error("{}: cannot write command output: {source}", OUTPUT_UNWRITABLE.code)]
+    Output {
+        /// The write or flush failure.
+        #[from]
+        source: std::io::Error,
+    },
     /// The configuration could not be used.
     #[error(transparent)]
     Config(#[from] crate::config::ConfigError),
@@ -243,17 +274,62 @@ pub enum RunnerError {
     /// The store of earlier answers could not be used.
     #[error(transparent)]
     Cache(#[from] crate::cache::store::CacheError),
+    /// Scheduling state from an interrupted run could not be preserved or trusted.
+    #[error(transparent)]
+    Checkpoint(#[from] crate::checkpoint::CheckpointError),
+    /// Per-mutant evidence could not be preserved.
+    #[error(transparent)]
+    MutationEvidence(#[from] crate::evidence::store::StoreError),
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
     /// A provider could not be used.
     #[error(transparent)]
     Provider(#[from] crate::provider::ProviderError),
+    /// A selected environment entry cannot be represented in the run identity.
+    #[error("{}: {source}", CONFIG_INVALID.code)]
+    IdentityEnvironment {
+        /// The exact environment encoding refusal.
+        #[source]
+        source: crate::assure::identity::EnvironmentError,
+    },
+    /// A mutation's source bytes cannot be represented as report text.
+    #[error("{}: {source}", REPORT_UNSOUND.code)]
+    MutationText {
+        /// Which source half violated the UTF-8 invariant.
+        #[from]
+        source: crate::assure::mutation::MutationTextError,
+    },
     /// The toolchain has no Miri, and the contract promises interpretation.
     #[error("{}: {message}", MIRI_MISSING.code)]
     MiriMissing {
         /// What the toolchain said.
         message: String,
+    },
+    /// An assurance phase printed bytes that its text protocol cannot represent.
+    #[error("{}: {phase} output is not valid UTF-8: {source}", PHASE_OUTPUT_UNREADABLE.code)]
+    PhaseOutput {
+        /// The phase whose process printed the bytes.
+        phase: &'static str,
+        /// Why the bytes cannot be decoded exactly.
+        #[source]
+        source: std::str::Utf8Error,
+    },
+    /// The model phase could not preserve the source or artifact it must audit.
+    #[error("{}: {message}", MODEL_PHASE_FAILED.code)]
+    Model {
+        /// The typed internal failure, rendered only at this outer error boundary.
+        message: String,
+    },
+    /// Measurements could not be scheduled without trusting state interrupted by a panic.
+    #[error(transparent)]
+    Schedule(#[from] crate::assure::schedule::ScheduleError),
+    /// Equivalence answers could not be correlated without ambiguity.
+    #[error("{}: {source}", REPORT_UNSOUND.code)]
+    Equivalence {
+        /// The exact ledger inconsistency.
+        #[from]
+        source: crate::assure::equivalence::EquivalenceError,
     },
     /// A resource could not be leased.
     #[error(transparent)]
@@ -261,6 +337,27 @@ pub enum RunnerError {
     /// A report could not be written or read.
     #[error(transparent)]
     Report(#[from] crate::report::json::ReportError),
+    /// A derived report projection exceeded the v2 exact counter range.
+    #[error("{}: {source}", REPORT_UNSOUND.code)]
+    ReportCount {
+        /// The exact counter relation that could not be represented.
+        #[from]
+        source: crate::report::CountError,
+    },
+    /// A measured run fact could not be represented exactly.
+    #[error("{}: {source}", REPORT_UNSOUND.code)]
+    RunInvariant {
+        /// The exact failed invariant.
+        #[from]
+        source: crate::assure::run::RunInvariantError,
+    },
+    /// An observed seam could not be given the exact v1 fault identity.
+    #[error("{}: {source}", REPORT_UNSOUND.code)]
+    WireIdentity {
+        /// The closed identity-recipe failure.
+        #[from]
+        source: crate::wire::derive::DeriveError,
+    },
     /// The run has nowhere to work.
     #[error(transparent)]
     Scratch(#[from] crate::scratch::ScratchError),
@@ -278,13 +375,25 @@ impl RunnerError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Interrupted => INTERRUPTED,
+            Self::Output { .. } => OUTPUT_UNWRITABLE,
             Self::Config(error) => error.code(),
             Self::Target(error) => error.code(),
             Self::Evidence(error) => error.code(),
             Self::Cache(error) => error.code(),
+            Self::Checkpoint(error) => error.code(),
+            Self::MutationEvidence(error) => error.code(),
             Self::Coverage(error) => error.code(),
             Self::Provider(error) => error.code(),
+            Self::IdentityEnvironment { .. } => CONFIG_INVALID,
+            Self::MutationText { .. }
+            | Self::Equivalence { .. }
+            | Self::ReportCount { .. }
+            | Self::RunInvariant { .. }
+            | Self::WireIdentity { .. } => REPORT_UNSOUND,
             Self::MiriMissing { .. } => MIRI_MISSING,
+            Self::PhaseOutput { .. } => PHASE_OUTPUT_UNREADABLE,
+            Self::Model { .. } => MODEL_PHASE_FAILED,
+            Self::Schedule(_) => SCHEDULER_UNUSABLE,
             Self::Resource(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
@@ -309,9 +418,11 @@ impl RunnerError {
 
 /// Every code the runner can report, in code order.
 #[must_use]
+#[cfg(feature = "testkit")]
 pub const fn error_codes() -> &'static [ErrorCode] {
     &[
         INTERRUPTED,
+        OUTPUT_UNWRITABLE,
         CONFIG_UNREADABLE,
         CONFIG_UNPARSABLE,
         CONFIG_INVALID,
@@ -339,12 +450,23 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_NOT_KEPT,
         RUN_NOT_FOUND,
         MIRI_MISSING,
+        MODEL_PHASE_FAILED,
+        SCHEDULER_UNUSABLE,
+        PHASE_OUTPUT_UNREADABLE,
         SCRATCH_UNUSABLE,
         CACHE_UNUSABLE,
         CACHE_CORRUPT,
         WIRE_CANNOT_LISTEN,
         MERGE_REFUSED,
     ]
+}
+
+impl From<crate::assure::model::ModelError> for RunnerError {
+    fn from(source: crate::assure::model::ModelError) -> Self {
+        Self::Model {
+            message: source.to_string(),
+        }
+    }
 }
 
 impl From<rust_mutants::coverage::CoverageError> for RunnerError {

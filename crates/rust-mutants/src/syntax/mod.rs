@@ -21,7 +21,7 @@ use crate::rule::{Registry, Rule, RuleError, Tier};
 use crate::span::Span;
 use crate::trace::{DiscoverFileRecord, SiteRecord, SkipCount};
 
-pub use position::{LineIndex, Position};
+pub use position::{LineIndex, Position, PositionError};
 pub use rules::respell_int;
 
 /// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
@@ -67,8 +67,6 @@ pub struct SiteHint {
     pub site_text: String,
     /// How many `super::` segments separate the site's inline module from the file root, where the runtime module lives.
     pub super_depth: u32,
-    /// The byte offset of the innermost enclosing `fn` item, where the allow attribute goes so a guard's own lint noise never trips a crate's deny policy. `None` outside any function.
-    pub allow_at: Option<u32>,
 }
 
 /// One candidate plus where a human would look for it.
@@ -91,7 +89,19 @@ pub struct Found {
 }
 
 /// Why a place produced no candidate. Declared in rank order, which is the order skips are reported in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum SkipReason {
     /// A constant context: a `const` or `static` initializer, a `const fn` body, a `const` block, an array length, an enum discriminant.
@@ -133,28 +143,6 @@ pub enum SkipReason {
 }
 
 impl SkipReason {
-    /// Every reason, in rank order.
-    pub const ALL: [Self; 18] = [
-        Self::ConstContext,
-        Self::MacroInvocation,
-        Self::CfgAttribute,
-        Self::TestCode,
-        Self::UnsupportedSite,
-        Self::Excluded,
-        Self::TestOnlyFile,
-        Self::NoStdCrate,
-        Self::IncludedExpression,
-        Self::GeneratedOutsideWorkspace,
-        Self::ForbiddenLints,
-        Self::ConstFnBody,
-        Self::LetCondition,
-        Self::OpenRange,
-        Self::UnstatedReturnType,
-        Self::LoopValue,
-        Self::Annotated,
-        Self::Configured,
-    ];
-
     /// The kebab-case name used in reports and on the command line.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -246,6 +234,7 @@ impl SkipReason {
 
 /// How many candidates one reason suppressed in one file. Ordered by (reason rank, path).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Skip {
     /// The reason.
     pub reason: SkipReason,
@@ -274,6 +263,7 @@ pub struct Decision {
 
 /// One `rust-mutants: skip` marker, and whether it hid anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Claim {
     /// The 1-based line the marker sits on.
     pub line: u32,
@@ -315,11 +305,19 @@ pub struct Include {
 
 impl FileDiscovery {
     /// The trace record of this discovery.
-    #[must_use]
-    pub fn trace_record(&self) -> DiscoverFileRecord {
-        DiscoverFileRecord {
+    ///
+    /// # Errors
+    /// Returns the exact candidate count when it does not fit the trace's u32
+    /// counter; no saturated trace record is produced.
+    pub fn trace_record(&self) -> Result<DiscoverFileRecord, TraceRecordError> {
+        let candidates =
+            u32::try_from(self.candidates.len()).map_err(|_overflow| TraceRecordError {
+                path: self.path.clone(),
+                count: self.candidates.len(),
+            })?;
+        Ok(DiscoverFileRecord {
             path: self.path.clone(),
-            candidates: u32::try_from(self.candidates.len()).unwrap_or(u32::MAX),
+            candidates,
             sites: self
                 .decisions
                 .iter()
@@ -340,8 +338,18 @@ impl FileDiscovery {
                     count: skip.count,
                 })
                 .collect(),
-        }
+        })
     }
+}
+
+/// A discovery whose exact candidate count does not fit the trace schema.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{path} yielded {count} candidates, beyond the trace counter")]
+pub struct TraceRecordError {
+    /// The source file.
+    pub path: String,
+    /// The exact in-memory count that was refused.
+    pub count: usize,
 }
 
 /// The rules discovery applies, drawn from a registry.
@@ -434,9 +442,9 @@ pub enum SyntaxError {
         /// The path.
         path: String,
         /// The 1-based line of the first error.
-        line: u32,
+        line: usize,
         /// The 1-based character column.
-        column: u32,
+        column: usize,
         /// The parser's message.
         message: String,
     },
@@ -476,27 +484,19 @@ pub fn discover_file(
         });
     }
     let source_digest = hex::encode(Sha256::digest(source));
-    let (base, parsed) = strip_prefix(text);
-    let file: syn::File = syn::parse_str(parsed).map_err(|error| {
-        let start = error.span().start();
-        SyntaxError::Parse {
-            path: path.to_owned(),
-            line: u32::try_from(start.line).unwrap_or(u32::MAX),
-            column: u32::try_from(start.column.saturating_add(1)).unwrap_or(u32::MAX),
-            message: error.to_string(),
-        }
+    let (base, parsed) = strip_prefix(text).map_err(|_prefix| SyntaxError::TooLarge {
+        path: path.to_owned(),
     })?;
-    let index = LineIndex::new(text);
-    let stream: proc_macro2::TokenStream = syn::parse_str(parsed).map_err(|error| {
-        let start = error.span().start();
-        SyntaxError::Parse {
-            path: path.to_owned(),
-            line: u32::try_from(start.line).unwrap_or(u32::MAX),
-            column: u32::try_from(start.column.saturating_add(1)).unwrap_or(u32::MAX),
-            message: error.to_string(),
-        }
+    let file: syn::File = syn::parse_str(parsed).map_err(|error| parse_error(path, &error))?;
+    let index = LineIndex::new(text).map_err(|_position| SyntaxError::TooLarge {
+        path: path.to_owned(),
     })?;
+    let stream: proc_macro2::TokenStream =
+        syn::parse_str(parsed).map_err(|error| parse_error(path, &error))?;
     let markers = annotate::markers(text, base, &stream, &index).map_err(|error| match error {
+        annotate::MarkerError::SourceBounds => SyntaxError::TooLarge {
+            path: path.to_owned(),
+        },
         annotate::MarkerError::WithoutReason { line } => SyntaxError::AnnotationWithoutReason {
             path: path.to_owned(),
             line,
@@ -513,7 +513,7 @@ pub fn discover_file(
         path,
         digest: &source_digest,
     };
-    let mut walker = walk::Walker::new(input, selection, &index);
+    let mut walker = walk::Walker::new(input, selection, index);
     walker.annotate(markers);
     let no_std = walker.walk_file(&file);
     let walk::Walked {
@@ -522,7 +522,9 @@ pub fn discover_file(
         mut decisions,
         includes,
         annotations,
-    } = walker.finish();
+    } = walker.finish().map_err(|_bounds| SyntaxError::TooLarge {
+        path: path.to_owned(),
+    })?;
 
     let position = |name: &str| selection.registry().position(name).unwrap_or(usize::MAX);
     candidates.sort_by_key(|found| {
@@ -545,6 +547,21 @@ pub fn discover_file(
     })
 }
 
+fn parse_error(path: &str, error: &syn::Error) -> SyntaxError {
+    let start = error.span().start();
+    let Some(column) = start.column.checked_add(1) else {
+        return SyntaxError::TooLarge {
+            path: path.to_owned(),
+        };
+    };
+    SyntaxError::Parse {
+        path: path.to_owned(),
+        line: start.line,
+        column,
+        message: error.to_string(),
+    }
+}
+
 /// The skip tallies of one file, in reason order.
 fn tally(path: &str, counts: BTreeMap<SkipReason, u32>) -> Vec<Skip> {
     counts
@@ -558,16 +575,36 @@ fn tally(path: &str, counts: BTreeMap<SkipReason, u32>) -> Vec<Skip> {
 }
 
 /// Strips what `syn::parse_file` would strip — a byte order mark and a shebang line — and returns the byte offset the remainder starts at, so every span can be made absolute. The shebang's newline is kept, which keeps the parser's line numbers equal to the file's.
-fn strip_prefix(text: &str) -> (u32, &str) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a {bytes}-byte Rust source prefix does not fit its u32 offset")]
+pub(crate) struct PrefixError {
+    bytes: usize,
+}
+
+/// Removes the parser prefixes while retaining their exact byte offset.
+///
+/// # Errors
+/// Returns an exact-size error if the prefix does not fit the span schema.
+pub(crate) fn strip_prefix(text: &str) -> Result<(u32, &str), PrefixError> {
     const BOM: &str = "\u{feff}";
-    let mut rest = text.strip_prefix(BOM).unwrap_or(text);
+    let mut rest = match text.strip_prefix(BOM) {
+        Some(rest) => rest,
+        None => text,
+    };
     if rest.starts_with("#!") && !rest.trim_start_matches("#!").trim_start().starts_with('[') {
-        rest = rest
-            .find('\n')
-            .map_or("", |newline| rest.get(newline..).unwrap_or_default());
+        rest = match rest.find('\n') {
+            Some(newline) => rest
+                .get(newline..)
+                .ok_or(PrefixError { bytes: text.len() })?,
+            None => "",
+        };
     }
-    let base = text.len().saturating_sub(rest.len());
-    (u32::try_from(base).unwrap_or(u32::MAX), rest)
+    let base = text
+        .len()
+        .checked_sub(rest.len())
+        .ok_or(PrefixError { bytes: text.len() })?;
+    let base = u32::try_from(base).map_err(|_overflow| PrefixError { bytes: base })?;
+    Ok((base, rest))
 }
 
 /// The workspace-relative path of `literal` read from beside `including`, with forward slashes, when it stays inside the tree.

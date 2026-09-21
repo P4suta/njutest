@@ -59,7 +59,13 @@ pub enum SpliceError {
         /// `source` or `spliced source`.
         what: &'static str,
         /// The length.
-        bytes: u64,
+        bytes: u128,
+    },
+    /// Internal offset arithmetic contradicted the invariants established by validation.
+    #[error("validated splice-map invariant failed: {detail}")]
+    Invariant {
+        /// The invariant that failed closed.
+        detail: &'static str,
     },
     /// A span to map starts or ends inside replaced bytes.
     #[error("span {span} {} inside replaced bytes", if *at_end { "ends" } else { "starts" })]
@@ -88,6 +94,8 @@ struct Edit {
     out_end: u32,
 }
 
+type OrderedSplice<'a> = (usize, &'a Splice);
+
 /// Translates byte offsets between a source and its spliced output, in both directions.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OffsetMap {
@@ -103,29 +111,39 @@ pub struct OffsetMap {
 /// or overlaps another, or an output past the offset limit.
 pub fn apply(src: &[u8], splices: &[Splice]) -> Result<(Vec<u8>, OffsetMap), SpliceError> {
     let (src_len, order) = validate(src, splices)?;
-    let mut grown = i64::from(src_len);
+    let mut grown = u128::from(src_len);
     for splice in splices {
-        let added = i64::try_from(splice.replacement.len()).unwrap_or(i64::MAX);
+        let added = exact_size(splice.replacement.len())?;
         grown = grown
-            .saturating_add(added)
-            .saturating_sub(i64::from(splice.span.len()));
+            .checked_add(added)
+            .and_then(|sum| sum.checked_sub(u128::from(splice.span.len())))
+            .ok_or(SpliceError::Invariant {
+                detail: "replacement length arithmetic is exact",
+            })?;
     }
-    if u32::try_from(grown).is_err() {
+    if grown > u128::from(u32::MAX) {
         return Err(SpliceError::TooLarge {
             what: "spliced source",
-            bytes: u64::try_from(grown).unwrap_or(u64::MAX),
+            bytes: grown,
         });
     }
 
-    let mut out: Vec<u8> = Vec::with_capacity(usize::try_from(grown).unwrap_or(0));
+    let capacity = usize::try_from(grown).map_err(|_overflow| SpliceError::TooLarge {
+        what: "spliced source for this platform",
+        bytes: grown,
+    })?;
+    let mut out: Vec<u8> = Vec::with_capacity(capacity);
     let mut edits = Vec::with_capacity(order.len());
     let mut cursor = 0usize;
-    for index in order {
-        let Some(splice) = splices.get(index) else {
-            continue;
-        };
-        let start = usize::try_from(splice.span.start).unwrap_or(usize::MAX);
-        out.extend_from_slice(src.get(cursor..start).unwrap_or_default());
+    for (_index, splice) in order {
+        let start =
+            usize::try_from(splice.span.start).map_err(|_overflow| SpliceError::Invariant {
+                detail: "a validated source offset fits usize",
+            })?;
+        let unchanged = src.get(cursor..start).ok_or(SpliceError::Invariant {
+            detail: "validated splices preserve a forward source cursor",
+        })?;
+        out.extend_from_slice(unchanged);
         let out_start = output_offset(out.len())?;
         out.extend_from_slice(&splice.replacement);
         edits.push(Edit {
@@ -134,9 +152,14 @@ pub fn apply(src: &[u8], splices: &[Splice]) -> Result<(Vec<u8>, OffsetMap), Spl
             out_start,
             out_end: output_offset(out.len())?,
         });
-        cursor = usize::try_from(splice.span.end).unwrap_or(usize::MAX);
+        cursor = usize::try_from(splice.span.end).map_err(|_overflow| SpliceError::Invariant {
+            detail: "a validated source offset fits usize",
+        })?;
     }
-    out.extend_from_slice(src.get(cursor..).unwrap_or_default());
+    let tail = src.get(cursor..).ok_or(SpliceError::Invariant {
+        detail: "the final validated source cursor is in range",
+    })?;
+    out.extend_from_slice(tail);
     let out_len = output_offset(out.len())?;
     Ok((
         out,
@@ -149,17 +172,28 @@ pub fn apply(src: &[u8], splices: &[Splice]) -> Result<(Vec<u8>, OffsetMap), Spl
 }
 
 fn output_offset(len: usize) -> Result<u32, SpliceError> {
+    let bytes = exact_size(len)?;
     u32::try_from(len).map_err(|_overflow| SpliceError::TooLarge {
         what: "spliced source",
-        bytes: u64::try_from(len).unwrap_or(u64::MAX),
+        bytes,
+    })
+}
+
+fn exact_size(len: usize) -> Result<u128, SpliceError> {
+    u128::try_from(len).map_err(|_overflow| SpliceError::Invariant {
+        detail: "usize converts losslessly to u128",
     })
 }
 
 /// Checks every splice against `src` and returns the source length with the indices of the splices in application order.
-fn validate(src: &[u8], splices: &[Splice]) -> Result<(u32, Vec<usize>), SpliceError> {
+fn validate<'a>(
+    src: &[u8],
+    splices: &'a [Splice],
+) -> Result<(u32, Vec<OrderedSplice<'a>>), SpliceError> {
+    let source_bytes = exact_size(src.len())?;
     let src_len = u32::try_from(src.len()).map_err(|_overflow| SpliceError::TooLarge {
         what: "source",
-        bytes: u64::try_from(src.len()).unwrap_or(u64::MAX),
+        bytes: source_bytes,
     })?;
     for (index, splice) in splices.iter().enumerate() {
         let covered = splice
@@ -175,22 +209,14 @@ fn validate(src: &[u8], splices: &[Splice]) -> Result<(u32, Vec<usize>), SpliceE
             });
         }
     }
-    let mut order: Vec<usize> = (0..splices.len()).collect();
-    order.sort_by_key(|&index| {
-        splices
-            .get(index)
-            .map(|splice| splice.span)
-            .unwrap_or_default()
-    });
+    let mut order: Vec<OrderedSplice<'_>> = splices.iter().enumerate().collect();
+    order.sort_by_key(|(_index, splice)| splice.span);
 
     let mut reach = 0u32;
-    let mut reach_index: Option<usize> = None;
+    let mut reaching: Option<(usize, Span)> = None;
     let mut previous: Option<(usize, Span)> = None;
-    for &index in &order {
-        let current = splices
-            .get(index)
-            .map(|splice| splice.span)
-            .unwrap_or_default();
+    for &(index, splice) in &order {
+        let current = splice.span;
         if let Some((previous_index, previous_span)) = previous {
             if current == previous_span {
                 return Err(SpliceError::Overlap {
@@ -201,14 +227,11 @@ fn validate(src: &[u8], splices: &[Splice]) -> Result<(u32, Vec<usize>), SpliceE
                 });
             }
             if current.start < reach
-                && let Some(first) = reach_index
+                && let Some((first, first_span)) = reaching
             {
                 return Err(SpliceError::Overlap {
                     first,
-                    first_span: splices
-                        .get(first)
-                        .map(|splice| splice.span)
-                        .unwrap_or_default(),
+                    first_span,
                     second: index,
                     second_span: current,
                 });
@@ -216,7 +239,7 @@ fn validate(src: &[u8], splices: &[Splice]) -> Result<(u32, Vec<usize>), SpliceE
         }
         if current.end >= reach {
             reach = current.end;
-            reach_index = Some(index);
+            reaching = Some((index, current));
         }
         previous = Some((index, current));
     }
@@ -253,12 +276,14 @@ fn quote_bytes(bytes: &[u8]) -> String {
 }
 
 /// `offset + plus - minus`, which callers have established is in range.
-fn shift(offset: u32, plus: u32, minus: u32) -> u32 {
+fn shift(offset: u32, plus: u32, minus: u32) -> Option<u32> {
     i64::from(offset)
         .checked_add(i64::from(plus))
         .and_then(|value| value.checked_sub(i64::from(minus)))
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(0)
+        .and_then(|value| match u32::try_from(value) {
+            Ok(value) => Some(value),
+            Err(_) => None,
+        })
 }
 
 impl OffsetMap {
@@ -288,9 +313,39 @@ impl OffsetMap {
         }
         let position = self.edits.partition_point(|edit| edit.orig_end <= offset);
         match self.edits.get(position) {
-            None => (shift(offset, self.out_len, self.src_len), true),
+            None => match shift(offset, self.out_len, self.src_len) {
+                Some(shifted) => (shifted, true),
+                None => (self.out_len, false),
+            },
             Some(edit) if edit.orig_start < offset => (edit.out_start, false),
-            Some(edit) => (shift(offset, edit.out_start, edit.orig_start), true),
+            Some(edit) => match shift(offset, edit.out_start, edit.orig_start) {
+                Some(shifted) => (shifted, true),
+                None => (edit.out_start, false),
+            },
+        }
+    }
+
+    /// Translates an original endpoint to the output immediately before an
+    /// insertion at that exact endpoint. Replacements ending there are still
+    /// included. This is the right affinity for the exclusive end of a
+    /// nonempty source span.
+    fn to_output_before_insertion(&self, offset: u32) -> (u32, bool) {
+        if offset > self.src_len {
+            return (self.out_len, false);
+        }
+        let position = self.edits.partition_point(|edit| {
+            edit.orig_end < offset || (edit.orig_end == offset && edit.orig_start < edit.orig_end)
+        });
+        match self.edits.get(position) {
+            None => match shift(offset, self.out_len, self.src_len) {
+                Some(shifted) => (shifted, true),
+                None => (self.out_len, false),
+            },
+            Some(edit) if edit.orig_start < offset => (edit.out_start, false),
+            Some(edit) => match shift(offset, edit.out_start, edit.orig_start) {
+                Some(shifted) => (shifted, true),
+                None => (edit.out_start, false),
+            },
         }
     }
 
@@ -302,9 +357,15 @@ impl OffsetMap {
         }
         let position = self.edits.partition_point(|edit| edit.out_end <= offset);
         match self.edits.get(position) {
-            None => (shift(offset, self.src_len, self.out_len), true),
+            None => match shift(offset, self.src_len, self.out_len) {
+                Some(shifted) => (shifted, true),
+                None => (self.src_len, false),
+            },
             Some(edit) if edit.out_start < offset => (edit.orig_start, false),
-            Some(edit) => (shift(offset, edit.orig_start, edit.out_start), true),
+            Some(edit) => match shift(offset, edit.orig_start, edit.out_start) {
+                Some(shifted) => (shifted, true),
+                None => (edit.orig_start, false),
+            },
         }
     }
 
@@ -329,7 +390,11 @@ impl OffsetMap {
                 at_end: false,
             });
         }
-        let (end, exact) = self.to_output(span.end);
+        let (end, exact) = if span.is_empty() {
+            self.to_output(span.end)
+        } else {
+            self.to_output_before_insertion(span.end)
+        };
         if !exact {
             return Err(SpliceError::Straddles { span, at_end: true });
         }

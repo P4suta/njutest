@@ -154,6 +154,11 @@ pub enum DiscoverError {
         /// The root.
         root: String,
     },
+    /// A source path has no exact UTF-8 spelling for the durable catalog.
+    PathNotUtf8 {
+        /// The path which cannot be represented without changing bytes.
+        path: PathBuf,
+    },
     /// The catalog could not be built.
     Catalog(#[from] BuildError),
     /// A candidate was incoherent.
@@ -162,6 +167,13 @@ pub enum DiscoverError {
     UnknownPackage {
         /// The name.
         name: String,
+    },
+    /// One file yielded more candidates than the durable skip counter can represent.
+    CandidateCountTooLarge {
+        /// The workspace-relative source path.
+        path: String,
+        /// The exact in-memory count that was refused.
+        count: usize,
     },
 }
 
@@ -174,10 +186,19 @@ impl std::fmt::Display for DiscoverError {
             Self::OutsideRoot { path, root } => {
                 write!(f, "{path} lies outside the workspace root {root}")
             }
+            Self::PathNotUtf8 { path } => {
+                write!(f, "{} has no exact UTF-8 catalog path", path.display())
+            }
             Self::Catalog(error) => write!(f, "{error}"),
             Self::Candidate(error) => write!(f, "{error}"),
             Self::UnknownPackage { name } => {
                 write!(f, "package {name:?} is not a workspace member")
+            }
+            Self::CandidateCountTooLarge { path, count } => {
+                write!(
+                    f,
+                    "{path} yielded {count} candidates, beyond the report counter"
+                )
             }
         }
     }
@@ -190,8 +211,10 @@ impl DiscoverError {
         match self {
             Self::Unreadable { .. } => error::DISCOVER_FILE_UNREADABLE,
             Self::Parse(error) => error.code(),
-            Self::OutsideRoot { .. } => error::DISCOVER_OUTSIDE_ROOT,
-            Self::Catalog(_) | Self::Candidate(_) => error::DISCOVER_CATALOG_FAILED,
+            Self::OutsideRoot { .. } | Self::PathNotUtf8 { .. } => error::DISCOVER_OUTSIDE_ROOT,
+            Self::Catalog(_) | Self::Candidate(_) | Self::CandidateCountTooLarge { .. } => {
+                error::DISCOVER_CATALOG_FAILED
+            }
             Self::UnknownPackage { .. } => error::DISCOVER_UNKNOWN_PACKAGE,
         }
     }
@@ -273,10 +296,10 @@ pub fn discover(
             Role::TestOnly => Some(SkipReason::TestOnlyFile),
         };
         if role.is_none() {
-            configure(&mut discovery, &options.skips, &mut configured);
+            configure(&mut discovery, &options.skips, &mut configured)?;
         }
-        let report = report(&discovery, &assignment.package, role);
-        trace.discover_file(record(&discovery, &report));
+        let report = report(&discovery, &assignment.package, role)?;
+        trace.discover_file(record(&discovery, &report)?);
         if role.is_none() {
             claimed(path, &discovery.annotations, trace, &mut claims);
             decisions.extend(discovery.decisions.iter().map(|one| Decided {
@@ -318,10 +341,13 @@ fn assigned<'a>(
     options: &DiscoverOptions<'_>,
 ) -> Result<Assigner<'a>, DiscoverError> {
     let members = selected_members(input.metadata, &options.packages)?;
+    let physical_root = match crate::canonical::canonical(input.root) {
+        Ok(physical_root) => physical_root,
+        Err(_root_has_no_physical_spelling) => input.root.to_path_buf(),
+    };
     let mut assigner = Assigner {
         root: input.root,
-        physical_root: crate::canonical::canonical(input.root)
-            .unwrap_or_else(|_error| input.root.to_path_buf()),
+        physical_root,
         units: input.units,
         workspace_manifest: input
             .metadata
@@ -346,9 +372,13 @@ fn configured_claims(
     into: &mut Vec<SkipClaim>,
 ) {
     for (rule, matched) in rules.iter().zip(matched) {
+        let line = match rule.lines {
+            Some((from, _to)) => from,
+            None => 0,
+        };
         let claim = SkipClaim {
             path: rule.path.to_string(),
-            line: rule.lines.map_or(0, |(from, _)| from),
+            line,
             reason: rule.reason.clone(),
             matched: *matched,
         };
@@ -363,40 +393,46 @@ fn configured_claims(
 }
 
 /// Takes out of one file's walk what a `[[mutation.skip]]` entry speaks about.
-fn configure(discovery: &mut FileDiscovery, rules: &[SkipRule], matched: &mut [bool]) {
+fn configure(
+    discovery: &mut FileDiscovery,
+    rules: &[SkipRule],
+    matched: &mut [bool],
+) -> Result<(), DiscoverError> {
     if rules.is_empty() {
-        return;
+        return Ok(());
     }
-    let mut hidden = 0u32;
+    let candidate_count = discovery.candidates.len();
+    let mut hidden = Some(0u32);
     let path = discovery.path.clone();
     discovery.candidates.retain(|found| {
-        let Some(at) = rules
+        let Some((at, rule)) = rules
             .iter()
-            .position(|rule| rule.covers(&path, found.position.line, &found.item))
+            .enumerate()
+            .find(|(_at, rule)| rule.covers(&path, found.position.line, &found.item))
         else {
             return true;
         };
         if let Some(claimed) = matched.get_mut(at) {
             *claimed = true;
         }
-        hidden = hidden.saturating_add(1);
+        hidden = hidden.and_then(|count| count.checked_add(1));
         for decision in &mut discovery.decisions {
             if decision.offset == found.candidate.span.start
                 && decision.rule == found.candidate.rule.name
             {
                 decision.form = None;
                 decision.skip = Some(SkipReason::Configured);
-                decision.note = Some(
-                    rules
-                        .get(at)
-                        .map_or_else(String::new, |rule| rule.reason.clone()),
-                );
+                decision.note = Some(rule.reason.clone());
             }
         }
         false
     });
+    let hidden = hidden.ok_or_else(|| DiscoverError::CandidateCountTooLarge {
+        path: path.clone(),
+        count: candidate_count,
+    })?;
     if hidden == 0 {
-        return;
+        return Ok(());
     }
     discovery.skips.push(Skip {
         reason: SkipReason::Configured,
@@ -404,6 +440,7 @@ fn configure(discovery: &mut FileDiscovery, rules: &[SkipRule], matched: &mut [b
         count: hidden,
     });
     discovery.skips.sort_by_key(|skip| skip.reason);
+    Ok(())
 }
 
 /// The markers of one file the run measures, recorded and kept.
@@ -432,7 +469,10 @@ fn claimed(
 /// Every file another file pastes in where an expression goes.
 fn pasted_in(read: &[(&String, Result<FileDiscovery, DiscoverError>)]) -> BTreeSet<String> {
     read.iter()
-        .filter_map(|(_, discovery)| discovery.as_ref().ok())
+        .filter_map(|(_, discovery)| match discovery {
+            Ok(discovery) => Some(discovery),
+            Err(_) => None,
+        })
         .flat_map(|discovery| discovery.includes.iter())
         .filter(|include| !include.at_item)
         .map(|include| include.path.clone())
@@ -460,12 +500,14 @@ fn whole_file(path: &str, package: &str, reason: SkipReason) -> FileReport {
 }
 
 /// The name a report calls a file a build script wrote outside the tree.
-fn generated_name(source: &Path) -> String {
-    let name = source.file_name().map_or_else(
-        || "unnamed".to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    format!("{GENERATED_DIR}/{name}")
+fn generated_name(source: &Path) -> Result<String, DiscoverError> {
+    let name = source
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| DiscoverError::PathNotUtf8 {
+            path: source.to_path_buf(),
+        })?;
+    Ok(format!("{GENERATED_DIR}/{name}"))
 }
 
 /// The members to discover in: every member, or the named ones.
@@ -522,22 +564,31 @@ impl Assigner<'_> {
             .flat_map(|unit| unit.sources.iter().map(PathBuf::as_path))
             .collect();
         let crate_root = relative(self.root, &self.physical_root, &target.src_path)?;
-        let own_root = non_test.iter().any(|path| {
-            relative(self.root, &self.physical_root, path).is_ok_and(|rel| rel == crate_root)
-        });
+        let mut own_root = false;
+        for path in &non_test {
+            match relative(self.root, &self.physical_root, path) {
+                Ok(rel) if rel == crate_root => own_root = true,
+                Ok(_) | Err(DiscoverError::OutsideRoot { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
         let no_std =
-            own_root && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
+            own_root && crate_root_is_freestanding(self.root, &crate_root, &target.edition)?;
         let forbidden = crate::cargo::manifest::forbidden(
             &package.manifest_path,
             Some(&self.workspace_manifest),
         );
-        let forbids = crate_root_forbids_guard_noise(self.root, &crate_root, &forbidden);
+        let forbids = crate_root_forbids_guard_noise(self.root, &crate_root, &forbidden)?;
         for unit in &compiled {
             for source in &unit.sources {
-                let Ok(path) = relative(self.root, &self.physical_root, source) else {
-                    self.generated
-                        .insert(generated_name(source), package.name.clone());
-                    continue;
+                let path = match relative(self.root, &self.physical_root, source) {
+                    Ok(path) => path,
+                    Err(DiscoverError::OutsideRoot { .. }) => {
+                        self.generated
+                            .insert(generated_name(source)?, package.name.clone());
+                        continue;
+                    }
+                    Err(error) => return Err(error),
                 };
                 let role = if forbids {
                     Role::Forbidden
@@ -575,11 +626,17 @@ impl Assigner<'_> {
 }
 
 /// Whether the crate at `rel`, or the manifest that builds it, forbids a lint the guards fire.
-fn crate_root_forbids_guard_noise(root: &Path, rel: &str, forbidden: &[String]) -> bool {
-    forbids_guard_noise(
-        &std::fs::read_to_string(root.join(rel)).unwrap_or_default(),
-        forbidden,
-    )
+fn crate_root_forbids_guard_noise(
+    root: &Path,
+    rel: &str,
+    forbidden: &[String],
+) -> Result<bool, DiscoverError> {
+    let source =
+        std::fs::read_to_string(root.join(rel)).map_err(|source| DiscoverError::Unreadable {
+            path: rel.to_owned(),
+            source,
+        })?;
+    Ok(forbids_guard_noise(&source, forbidden))
 }
 
 /// Whether a crate compiled this way forbids a lint the guards' own attribute turns off.
@@ -587,36 +644,68 @@ fn crate_root_forbids_guard_noise(root: &Path, rel: &str, forbidden: &[String]) 
 pub fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
     if forbidden
         .iter()
-        .any(|lint| crate::instrument::GUARD_NOISE_LINTS.contains(&lint.as_str()))
+        .any(|lint| crate::instrument::GENERATED_MODULE_CONFLICTING_LINTS.contains(&lint.as_str()))
     {
         return true;
     }
     let Ok(file) = syn::parse_file(source) else {
         return false;
     };
-    file.attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("forbid"))
-        .any(|attr| {
-            let mut names = false;
-            let _parsed = attr.parse_nested_meta(|meta| {
-                let path = meta
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.to_string())
-                    .collect::<Vec<_>>()
-                    .join("::");
-                names |= crate::instrument::GUARD_NOISE_LINTS.contains(&path.as_str());
-                Ok(())
-            });
-            names
-        })
+    file.attrs.iter().any(
+        |attribute| match generated_module_forbidden_by(&attribute.meta) {
+            Ok(forbidden) => forbidden,
+            Err(_) => true,
+        },
+    )
 }
 
-/// Whether the crate at `rel` is one this host cannot lend `std` to. A root that does not parse is answered `false` here; the walk reports the parse failure.
-fn crate_root_is_freestanding(root: &Path, rel: &str, edition: &str) -> bool {
-    std::fs::read_to_string(root.join(rel)).is_ok_and(|text| freestanding(&text, edition))
+/// Whether one crate attribute, including a conditional attribute, forbids a
+/// lint the generated support module must allow.
+fn generated_module_forbidden_by(meta: &syn::Meta) -> Result<bool, syn::Error> {
+    let syn::Meta::List(list) = meta else {
+        return Ok(false);
+    };
+    if list.path.is_ident("forbid") {
+        let nested = list.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        )?;
+        return Ok(nested.iter().any(|entry| {
+            let name = entry
+                .path()
+                .segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::");
+            crate::instrument::GENERATED_MODULE_CONFLICTING_LINTS.contains(&name.as_str())
+        }));
+    }
+    if !list.path.is_ident("cfg_attr") {
+        return Ok(false);
+    }
+    let nested = list.parse_args_with(
+        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+    )?;
+    for attribute in nested.iter().skip(1) {
+        if generated_module_forbidden_by(attribute)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the crate at `rel` is one this host cannot lend `std` to.
+fn crate_root_is_freestanding(
+    root: &Path,
+    rel: &str,
+    edition: &str,
+) -> Result<bool, DiscoverError> {
+    let text =
+        std::fs::read_to_string(root.join(rel)).map_err(|source| DiscoverError::Unreadable {
+            path: rel.to_owned(),
+            source,
+        })?;
+    Ok(freestanding(&text, edition))
 }
 
 /// Whether a crate root's own text says the host cannot lend it `std`.
@@ -658,16 +747,20 @@ fn relative(root: &Path, physical_root: &Path, path: &Path) -> Result<String, Di
         path: path.display().to_string(),
         root: root.display().to_string(),
     };
-    let rel = if let Ok(rel) = path.strip_prefix(root) {
-        rel.to_path_buf()
-    } else {
-        let physical_path = crate::canonical::canonical(path).map_err(|_error| outside())?;
-        physical_path
-            .strip_prefix(physical_root)
-            .map(Path::to_path_buf)
-            .map_err(|_error| outside())?
+    let rel = match path.strip_prefix(root) {
+        Ok(rel) => rel.to_path_buf(),
+        Err(_not_under_logical_root) => {
+            let physical_path = crate::canonical::canonical(path).map_err(|_error| outside())?;
+            physical_path
+                .strip_prefix(physical_root)
+                .map(Path::to_path_buf)
+                .map_err(|_error| outside())?
+        }
     };
-    normalize_path(&rel.to_string_lossy()).map_err(|_error| outside())
+    let rel = rel
+        .to_str()
+        .ok_or_else(|| DiscoverError::PathNotUtf8 { path: rel.clone() })?;
+    normalize_path(rel).map_err(|_error| outside())
 }
 
 fn walk(
@@ -687,31 +780,52 @@ fn selected_by_patterns(path: &str, options: &DiscoverOptions<'_>) -> bool {
     included && !options.exclude.iter().any(|p| p.matches(path))
 }
 
-fn report(discovery: &FileDiscovery, package: &str, whole_file: Option<SkipReason>) -> FileReport {
-    let (candidates, skips) = whole_file.map_or_else(
-        || (discovery.candidates.len(), discovery.skips.clone()),
-        |reason| {
+fn report(
+    discovery: &FileDiscovery,
+    package: &str,
+    whole_file: Option<SkipReason>,
+) -> Result<FileReport, DiscoverError> {
+    let (candidates, skips) = match whole_file {
+        None => (discovery.candidates.len(), discovery.skips.clone()),
+        Some(reason) => {
+            let count =
+                u32::try_from(discovery.candidates.len()).map_err(|_outside_report_counter| {
+                    DiscoverError::CandidateCountTooLarge {
+                        path: discovery.path.clone(),
+                        count: discovery.candidates.len(),
+                    }
+                })?;
             let hidden = vec![Skip {
                 reason,
                 path: discovery.path.clone(),
-                count: u32::try_from(discovery.candidates.len()).unwrap_or(u32::MAX),
+                count,
             }];
             (0, hidden)
-        },
-    );
-    FileReport {
+        }
+    };
+    Ok(FileReport {
         path: discovery.path.clone(),
         package: package.to_owned(),
         candidates,
         skips,
         whole_file,
-    }
+    })
 }
 
 /// The trace record: the walk's decisions for a mutable file, the one whole-file tally otherwise.
-fn record(discovery: &FileDiscovery, report: &FileReport) -> DiscoverFileRecord {
-    match report.whole_file {
-        None => discovery.trace_record(),
+fn record(
+    discovery: &FileDiscovery,
+    report: &FileReport,
+) -> Result<DiscoverFileRecord, DiscoverError> {
+    Ok(match report.whole_file {
+        None => {
+            discovery
+                .trace_record()
+                .map_err(|overflow| DiscoverError::CandidateCountTooLarge {
+                    path: overflow.path,
+                    count: overflow.count,
+                })?
+        }
         Some(_) => DiscoverFileRecord {
             path: report.path.clone(),
             candidates: 0,
@@ -725,5 +839,5 @@ fn record(discovery: &FileDiscovery, report: &FileReport) -> DiscoverFileRecord 
                 })
                 .collect(),
         },
-    }
+    })
 }

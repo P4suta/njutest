@@ -14,28 +14,52 @@ use crate::report::FindingKind;
 use crate::trace::Recorder;
 use crate::watch::Watch;
 
+/// Why a finding prefix does not select exactly one stored finding.
+#[derive(Debug, thiserror::Error)]
+enum SelectionError {
+    /// The stored run or its report could not be read.
+    #[error(transparent)]
+    Run(#[from] runs::RunError),
+    /// The completed report could not reproduce its exact projection.
+    #[error(transparent)]
+    Count(#[from] crate::report::CountError),
+    /// No finding has the requested prefix.
+    #[error(
+        "{}: no finding of {run} starts with {prefix}",
+        crate::error::RUN_NOT_FOUND.code
+    )]
+    Missing { run: String, prefix: String },
+    /// More than one finding has the requested prefix.
+    #[error(
+        "{}: {prefix} names {count} findings: {matches}",
+        crate::error::RUN_NOT_FOUND.code
+    )]
+    Ambiguous {
+        prefix: String,
+        count: usize,
+        matches: String,
+    },
+}
+
 /// Puts one finding back to the tests.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = &environment.working_directory;
     let found = match selected(arguments, environment) {
         Ok(found) => found,
-        Err(message) => {
-            super::diagnose(stderr, &message);
-            return EXIT_ERROR;
-        }
-    };
-    let config = match Config::load(root) {
-        Ok(config) => config,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::diagnose(stderr, &error.to_string())?;
+            return Ok(EXIT_ERROR);
         }
     };
+    let config = found.config.clone();
     let build = config.execution.build();
     let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
@@ -53,7 +77,7 @@ pub fn run(
             skip_targets: config.execution.skip_targets,
             timeout: None,
             steps: config.execution.steps,
-            reports: crate::app::reports::Store::of(root, &config.reports.directory),
+            reports: config.reports.directory,
         },
         &found.subject,
         found.kind,
@@ -69,12 +93,12 @@ pub fn run(
                     crate::report::lines::escape(&found.named),
                     outcome.name()
                 ),
-            );
-            said(outcome)
+            )?;
+            Ok(said(outcome))
         }
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            EXIT_ERROR
+            super::complain(stderr, &error, error.code())?;
+            Ok(EXIT_ERROR)
         }
     }
 }
@@ -89,19 +113,21 @@ struct Selected {
     subject: String,
     kind: FindingKind,
     named: String,
+    config: Config,
 }
 
 /// The finding the arguments name, from the run they name.
-fn selected(arguments: &Arguments, environment: &Environment) -> Result<Selected, String> {
+fn selected(arguments: &Arguments, environment: &Environment) -> Result<Selected, SelectionError> {
     let root = &environment.working_directory;
-    let run = runs::resolve(root, arguments.run.as_deref()).map_err(|error| error.to_string())?;
-    let report = runs::report(root, &run).map_err(|error| error.to_string())?;
-    let every: Vec<&crate::report::MutantRecord> = report.mutants.iter().collect();
+    let run = runs::resolve(root, arguments.run.as_deref())?;
+    let report = runs::report(&run)?;
+    let conclusion = report.conclusion()?;
+    let every: Vec<&crate::report::ProjectedMutant> = conclusion.mutants.iter().collect();
     let named: Vec<&str> = crate::naming::matching(&every, &arguments.finding)
         .iter()
-        .map(|mutant| mutant.display_id.as_str())
+        .map(|mutant| mutant.display_id())
         .collect();
-    let matching: Vec<&crate::report::Finding> = report
+    let matching: Vec<&crate::report::Finding> = conclusion
         .findings
         .iter()
         .filter(|finding| {
@@ -114,22 +140,20 @@ fn selected(arguments: &Arguments, environment: &Environment) -> Result<Selected
             subject: only.subject.clone(),
             kind: only.kind,
             named: only.kind_name(),
+            config: run.config().clone(),
         }),
-        [] => Err(format!(
-            "{}: no finding of {run} starts with {}",
-            crate::error::RUN_NOT_FOUND.code,
-            arguments.finding
-        )),
-        several => Err(format!(
-            "{}: {} names {} findings: {}",
-            crate::error::RUN_NOT_FOUND.code,
-            arguments.finding,
-            several.len(),
-            several
+        [] => Err(SelectionError::Missing {
+            run: run.id().to_string(),
+            prefix: arguments.finding.clone(),
+        }),
+        several => Err(SelectionError::Ambiguous {
+            prefix: arguments.finding.clone(),
+            count: several.len(),
+            matches: several
                 .iter()
                 .map(|one| format!("{} ({})", one.subject, one.kind_name()))
                 .collect::<Vec<String>>()
-                .join(", ")
-        )),
+                .join(", "),
+        }),
     }
 }

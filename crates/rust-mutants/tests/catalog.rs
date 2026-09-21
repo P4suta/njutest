@@ -11,10 +11,9 @@
 )]
 
 use rust_mutants::catalog::{
-    BuildError, Builder, CATALOG_DOMAIN, Candidate, CandidateError, Catalog, DisplayCollisionError,
-    DuplicateReason, PrefixError,
+    Builder, CATALOG_DOMAIN, Candidate, CandidateError, Catalog, DuplicateReason, PrefixError,
 };
-use rust_mutants::id::{IdentityError, digest};
+use rust_mutants::id::{DISPLAY_ID_LENGTH, DisplayId, IdentityError, digest};
 use rust_mutants::rule::{Family, Registry, Rule, RuleError, Tier};
 use rust_mutants::span::Span;
 
@@ -53,8 +52,8 @@ fn b() -> Candidate {
 
 #[test]
 fn a_candidate_hashes_to_the_recipe_identity() {
-    assert_eq!(a().id().expect("valid"), ID_A);
-    assert_eq!(b().id().expect("valid"), ID_B);
+    assert_eq!(a().id().expect("valid").as_str(), ID_A);
+    assert_eq!(b().id().expect("valid").as_str(), ID_B);
     let identity = a().identity();
     assert_eq!(identity.original_digest, digest(b"<"));
     assert_eq!(identity.replacement_digest, digest(b"<="));
@@ -162,8 +161,8 @@ fn the_catalog_is_a_pure_function_of_the_candidate_set() {
     assert_eq!(ids, [ID_A, ID_B], "canonical order: by path bytes");
     let indices: Vec<u32> = catalog.mutants().iter().map(|m| m.index).collect();
     assert_eq!(indices, [0, 1], "dense indices from zero");
-    assert_eq!(catalog.mutants()[0].display_id, DISPLAY_A);
-    assert_eq!(catalog.display_length(), 20);
+    assert_eq!(catalog.mutants()[0].display_id.as_str(), DISPLAY_A);
+    assert_eq!(Catalog::display_length(), 20);
     assert_eq!(CATALOG_DOMAIN, "rust-mutants-catalog-v1");
     assert_eq!(
         catalog.digest(),
@@ -264,44 +263,18 @@ fn the_same_edit_from_two_rules_is_won_by_the_earlier_table_row() {
 }
 
 #[test]
-fn a_display_id_collision_is_a_diagnosable_error_not_a_panic() {
-    let mut builder = Builder::new().with_display_length(1);
-    for start in 0..40u32 {
-        builder
-            .add(candidate((
-                "crates/a/src/a.rs",
-                "true-to-false",
-                (start, start + 4),
-                b"true",
-                b"false",
-            )))
-            .expect("valid");
+fn display_ids_have_one_canonical_width_and_belong_to_their_full_identity() {
+    let mut builder = Builder::new();
+    builder.add(a()).expect("candidate");
+    let catalog = builder.build().expect("catalog");
+    let mutant = &catalog.mutants()[0];
+    assert_eq!(Catalog::display_length(), DISPLAY_ID_LENGTH);
+    assert_eq!(mutant.display_id.as_str().len(), DISPLAY_ID_LENGTH);
+    assert!(mutant.display_id.belongs_to(&mutant.id));
+
+    for malformed in ["a", "A1234567890123456789", "a12345678901234567890"] {
+        assert!(DisplayId::try_from(malformed).is_err(), "{malformed:?}");
     }
-    let error = builder
-        .build()
-        .expect_err("forty ids cannot share sixteen one-character prefixes");
-    let BuildError::DisplayCollision(DisplayCollisionError { length, collisions }) = error else {
-        panic!("expected a display collision, got {error:?}");
-    };
-    assert_eq!(length, 1);
-    assert!(!collisions.is_empty());
-    let shorts: Vec<&str> = collisions.iter().map(|c| c.display_id.as_str()).collect();
-    let mut sorted = shorts.clone();
-    sorted.sort_unstable();
-    assert_eq!(shorts, sorted, "collisions are sorted by short form");
-    for collision in &collisions {
-        assert!(collision.ids.len() >= 2);
-        assert!(
-            collision.ids.windows(2).all(|w| w[0] < w[1]),
-            "ids are sorted"
-        );
-    }
-    let out_of_range = Builder::new().with_display_length(0);
-    assert_eq!(
-        out_of_range.build().expect("empty").display_length(),
-        20,
-        "falls back to the default"
-    );
 }
 
 #[test]
@@ -328,25 +301,38 @@ fn resolve_prefix_refuses_to_guess() {
         b"true",
         b"false",
     ));
-    assert_eq!(&first.id().expect("valid")[..4], "6d62");
-    assert_eq!(&second.id().expect("valid")[..4], "6d62");
+    let first_id = first.id().expect("valid");
+    let second_id = second.id().expect("valid");
+    assert_eq!(first_id.as_str().get(..4), Some("6d62"));
+    assert_eq!(second_id.as_str().get(..4), Some("6d62"));
     let mut builder = Builder::new();
     builder
         .add_all([first.clone(), second, b()])
         .expect("valid");
     let catalog = builder.build().expect("builds");
 
-    assert_eq!(catalog.resolve_prefix(ID_B).expect("full id").id, ID_B);
     assert_eq!(
-        catalog
-            .resolve_prefix(&ID_B[..4])
-            .expect("unique prefix")
-            .id,
+        catalog.resolve_prefix(ID_B).expect("full id").id.as_str(),
         ID_B
     );
     assert_eq!(
         catalog
-            .resolve_prefix(&first.id().expect("valid")[..5])
+            .resolve_prefix(&ID_B[..4])
+            .expect("unique prefix")
+            .id
+            .as_str(),
+        ID_B
+    );
+    assert_eq!(
+        catalog
+            .resolve_prefix(
+                first
+                    .id()
+                    .expect("valid")
+                    .as_str()
+                    .get(..5)
+                    .expect("five ASCII identity bytes"),
+            )
             .expect("five characters disambiguate")
             .candidate,
         first
@@ -369,11 +355,13 @@ fn resolve_prefix_refuses_to_guess() {
         catalog.resolve_prefix("ffff"),
         Err(PrefixError::NotFound { .. })
     ));
-    let Err(PrefixError::Ambiguous { matches, .. }) = catalog.resolve_prefix("6d62") else {
-        panic!(
-            "expected an ambiguous prefix, got {:?}",
-            catalog.resolve_prefix("6d62")
-        );
+    let ambiguous = catalog.resolve_prefix("6d62");
+    assert!(
+        matches!(ambiguous, Err(PrefixError::Ambiguous { .. })),
+        "expected an ambiguous prefix, got {ambiguous:?}"
+    );
+    let Err(PrefixError::Ambiguous { matches, .. }) = ambiguous else {
+        return;
     };
     assert_eq!(matches.len(), 2);
     assert!(matches.iter().all(|m| m.starts_with("6d62")));
@@ -389,11 +377,9 @@ fn rule_names() -> Vec<&'static str> {
 }
 
 /// One rule of the table, by a number a generator produced.
-fn rule_at(names: &[&'static str], which: usize) -> &'static str {
-    names
-        .get(which.checked_rem(names.len()).unwrap_or_default())
-        .copied()
-        .unwrap_or("lt-to-le")
+fn rule_at(names: &[&'static str], which: usize) -> Option<&'static str> {
+    let at = which.checked_rem(names.len())?;
+    names.get(at).copied()
 }
 
 proptest::proptest! {
@@ -407,15 +393,17 @@ proptest::proptest! {
         let mut candidates = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         for (at, which) in picks {
-            let start = u32::try_from(at.saturating_mul(2)).unwrap_or_default();
+            let Some(at) = at.checked_mul(2) else { return Ok(()) };
+            let Ok(start) = u32::try_from(at) else { return Ok(()) };
             if !seen.insert((start, which)) {
                 continue;
             }
-            let name = rule_at(&names, which);
+            let Some(name) = rule_at(&names, which) else { return Ok(()) };
+            let Some(end) = start.checked_add(1) else { return Ok(()) };
             candidates.push(candidate((
                 "crates/a/src/a.rs",
                 name,
-                (start, start.saturating_add(1)),
+                (start, end),
                 b"<",
                 b"<=",
             )));
@@ -423,12 +411,13 @@ proptest::proptest! {
         let build = |order: &[Candidate]| {
             let mut builder = Builder::new();
             for one in order {
-                let _added = builder.add(one.clone());
+                builder.add(one.clone())?;
             }
             builder.build()
         };
         let mut rotated = candidates.clone();
-        rotated.rotate_left(rotation.checked_rem(candidates.len()).unwrap_or_default());
+        let Some(rotation) = rotation.checked_rem(candidates.len()) else { return Ok(()) };
+        rotated.rotate_left(rotation);
         let (Ok(one), Ok(other)) = (build(&candidates), build(&rotated)) else {
             return Ok(());
         };
@@ -444,22 +433,30 @@ proptest::proptest! {
         let names = rule_names();
         let mut builder = Builder::new();
         for (which, at) in picks.into_iter().enumerate() {
-            let start = u32::try_from(at.saturating_mul(3)).unwrap_or_default();
-            let name = rule_at(&names, which);
-            let _added = builder.add(candidate((
+            let Some(at) = at.checked_mul(3) else { return Ok(()) };
+            let Ok(start) = u32::try_from(at) else { return Ok(()) };
+            let Some(name) = rule_at(&names, which) else { return Ok(()) };
+            let Some(end) = start.checked_add(1) else { return Ok(()) };
+            if builder
+                .add(candidate((
                 "crates/a/src/a.rs",
                 name,
-                (start, start.saturating_add(1)),
+                (start, end),
                 b"<",
                 b"<=",
-            )));
+            )))
+                .is_err()
+            {
+                return Ok(());
+            }
         }
         let Ok(catalog) = builder.build() else {
             return Ok(());
         };
         let mutants = catalog.mutants();
         let indices: Vec<u32> = mutants.iter().map(|one| one.index).collect();
-        let dense: Vec<u32> = (0..u32::try_from(mutants.len()).unwrap_or_default()).collect();
+        let Ok(limit) = u32::try_from(mutants.len()) else { return Ok(()) };
+        let dense: Vec<u32> = (0..limit).collect();
         proptest::prop_assert_eq!(indices, dense, "the indices the guards name are dense from zero");
         let ids: std::collections::BTreeSet<&str> =
             mutants.iter().map(|one| one.id.as_str()).collect();
@@ -481,7 +478,7 @@ fn a_catalog_round_trips_through_json_with_its_indices_and_digest() {
     builder.add(b()).expect("b");
     let catalog = builder.build().expect("built");
     let text = serde_json::to_string(&catalog).expect("a catalog serialises");
-    let again: Catalog = serde_json::from_str(&text).expect("and reads back");
+    let again: Catalog = njutest_devkit::strictjson::decode_str(&text).expect("and reads back");
     assert_eq!(again, catalog);
     assert_eq!(again.digest(), catalog.digest());
     assert_eq!(
@@ -507,11 +504,13 @@ fn a_catalog_naming_a_rule_this_release_does_not_know_is_one_it_cannot_read() {
     let catalog = builder.build().expect("built");
     let text = serde_json::to_string(&catalog).expect("a catalog serialises");
     let unknown = text.replace("lt-to-le", "lt-to-nothing");
-    let error = serde_json::from_str::<Catalog>(&unknown).expect_err("a rule nobody defines");
+    let error = njutest_devkit::strictjson::decode_str::<Catalog>(&unknown)
+        .expect_err("a rule nobody defines");
     assert!(error.to_string().contains("lt-to-nothing"), "{error}");
 
     let moved = text.replace("\"version\":1", "\"version\":9");
-    let error = serde_json::from_str::<Catalog>(&moved).expect_err("a version nobody minted");
+    let error = njutest_devkit::strictjson::decode_str::<Catalog>(&moved)
+        .expect_err("a version nobody minted");
     assert!(
         error.to_string().contains("version"),
         "every identity in it was minted from the version it names: {error}"

@@ -8,10 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, ERRORED_MUTANT, ID_DOMAIN,
+    Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, ERRORED, ERRORED_MUTANT, ID_DOMAIN,
     INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN, NOT_RUN_MUTANT, Notes, Report,
-    Row, STALE, STALE_EXPECTATION, STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, TIMED_OUT, UNMATCHED,
-    UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT, UNSELECTED, count,
+    Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED, STEP_LIMIT_REACHED_MUTANT, STOPPED_EARLY,
+    SURVIVED, SURVIVING_MUTANT, UNMATCHED, UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT,
+    UNSELECTED, WAITED, WAITED_MUTANT, count,
 };
 
 /// Every identity re-minted from the row that carries it.
@@ -35,7 +36,13 @@ pub(super) fn identity(report: &Report, audit: &mut Audit) {
             );
             continue;
         }
-        let minted = mint(row);
+        let Ok(minted) = mint(row) else {
+            notes.violated(
+                row.label(),
+                "one identity field is too large for the four-byte identity framing".to_owned(),
+            );
+            continue;
+        };
         if minted != row.id {
             notes.violated(
                 row.label(),
@@ -62,28 +69,12 @@ pub(super) fn identity(report: &Report, audit: &mut Audit) {
 
 /// The indices of the accepted and the refused together, which are the whole catalog.
 fn dense(report: &Report, notes: &mut Notes<'_>) {
-    let mut indices: Vec<u64> = Vec::new();
-    let mut missing = false;
-    for index in report
+    let mut indices: Vec<u64> = report
         .mutants
         .iter()
         .map(|row| row.index)
         .chain(report.rejections.iter().map(|one| one.index))
-    {
-        match index {
-            Some(at) => indices.push(at),
-            None => missing = true,
-        }
-    }
-    if missing {
-        notes.unaudited(
-            "index",
-            "a row carries no catalog index, so whether the catalog lost anything cannot be \
-             re-derived"
-                .to_owned(),
-        );
-        return;
-    }
+        .collect();
     indices.sort_unstable();
     let expected: Vec<u64> = (0..count(indices.len())).collect();
     if indices != expected {
@@ -100,11 +91,11 @@ fn dense(report: &Report, notes: &mut Notes<'_>) {
 }
 
 /// One identity, minted the way the engine mints one.
-fn mint(row: &Row) -> String {
+fn mint(row: &Row) -> Result<String, IdentityWidthError> {
     let mut hasher = Sha256::new();
-    let version = row.rule_version.unwrap_or_default().to_string();
-    let start = row.start_byte.unwrap_or_default().to_string();
-    let end = row.end_byte.unwrap_or_default().to_string();
+    let version = row.rule_version.to_string();
+    let start = row.start_byte.to_string();
+    let end = row.end_byte.to_string();
     let original = digest(row.original.as_bytes());
     let replacement = digest(row.replacement.as_bytes());
     for field in [
@@ -118,12 +109,15 @@ fn mint(row: &Row) -> String {
         &original,
         &replacement,
     ] {
-        let length = u32::try_from(field.len()).unwrap_or(u32::MAX);
+        let length = u32::try_from(field.len()).map_err(|_overflow| IdentityWidthError)?;
         hasher.update(length.to_be_bytes());
         hasher.update(field.as_bytes());
     }
-    hex::encode(hasher.finalize())
+    Ok(hex::encode(hasher.finalize()))
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IdentityWidthError;
 
 /// The lowercase hex SHA-256 of `bytes`.
 fn digest(bytes: &[u8]) -> String {
@@ -136,14 +130,26 @@ pub(super) fn accounting(report: &Report, audit: &mut Audit) {
     for (name, derived) in [
         (KILLED, report.counted(KILLED)),
         (SURVIVED, report.counted(SURVIVED)),
-        (TIMED_OUT, report.counted(TIMED_OUT)),
+        (STEP_LIMIT_REACHED, report.counted(STEP_LIMIT_REACHED)),
+        (WAITED, report.counted(WAITED)),
         (INCONCLUSIVE, report.counted(INCONCLUSIVE)),
+        (ERRORED, report.counted(ERRORED)),
         (NOT_RUN, report.counted(NOT_RUN)),
         ("cataloged", count(report.mutants.len())),
         ("refused", count(report.rejections.len())),
         (
             UNREACHED,
             count(report.mutants.iter().filter(|row| row.unreached).count()),
+        ),
+        (
+            DISCHARGED,
+            count(
+                report
+                    .mutants
+                    .iter()
+                    .filter(|row| row.not_run(DISCHARGED))
+                    .count(),
+            ),
         ),
         (
             "expected",
@@ -165,16 +171,119 @@ pub(super) fn accounting(report: &Report, audit: &mut Audit) {
             Some(_) => {}
         }
     }
+    skipped(report, &mut notes);
+    step_notices(report, &mut notes);
     equations(report, &mut notes);
+}
+
+/// The skipped-place column is the checked sum of every skip record.
+fn skipped(report: &Report, notes: &mut Notes<'_>) {
+    let mut derived = 0u64;
+    for count in &report.skip_counts {
+        let Some(next) = derived.checked_add(*count) else {
+            notes.violated(
+                "skipped",
+                "the skip-record sum exceeds the report's integer width".to_owned(),
+            );
+            return;
+        };
+        derived = next;
+    }
+    match report.column("skipped") {
+        Some(recorded) if recorded != derived => notes.violated(
+            "skipped",
+            format!(
+                "the skip records come to {derived} and the accounting says {recorded}; every \
+                 skipped place belongs to exactly one record"
+            ),
+        ),
+        None => notes.unaudited(
+            "skipped",
+            "the report omits its skipped-place accounting column".to_owned(),
+        ),
+        Some(_) => {}
+    }
+}
+
+/// A step-limit outcome is licensed only by a notice internally bound to this row and run.
+fn step_notices(report: &Report, notes: &mut Notes<'_>) {
+    for row in &report.mutants {
+        match (row.outcome.as_str(), &row.step_notice) {
+            (STEP_LIMIT_REACHED, None) => notes.violated(
+                row.label(),
+                "the row reached its step limit and carries no verified runtime notice".to_owned(),
+            ),
+            (STEP_LIMIT_REACHED, Some(notice)) => {
+                if notice.nonce.len() != 32
+                    || !notice
+                        .nonce
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    notes.violated(
+                        row.label(),
+                        "the step notice nonce is not 16 lowercase hexadecimal bytes".to_owned(),
+                    );
+                }
+                if notice.catalog != report.catalog_digest {
+                    notes.violated(
+                        row.label(),
+                        "the step notice names another catalog".to_owned(),
+                    );
+                }
+                if notice.mutant != row.id {
+                    notes.violated(
+                        row.label(),
+                        "the step notice names another mutant".to_owned(),
+                    );
+                }
+                if Some(notice.limit) != report.mutant_steps {
+                    notes.violated(
+                        row.label(),
+                        "the step notice allowance is not the allowance this run selected"
+                            .to_owned(),
+                    );
+                }
+                if notice.limit.checked_add(1) != Some(notice.observed) {
+                    notes.violated(
+                        row.label(),
+                        "the step notice observed count is not exactly one past its allowance"
+                            .to_owned(),
+                    );
+                }
+            }
+            (_, Some(_)) => notes.violated(
+                row.label(),
+                "the row carries a step notice without a step-limit outcome".to_owned(),
+            ),
+            (_, None) => {}
+        }
+    }
 }
 
 /// The equations the outcome columns stand in to each other.
 fn equations(report: &Report, notes: &mut Notes<'_>) {
-    let sum = [KILLED, SURVIVED, TIMED_OUT, INCONCLUSIVE, "errored"]
-        .into_iter()
-        .try_fold(0u64, |total, name| {
-            report.column(name).map(|one| total.saturating_add(one))
-        });
+    let sum = match column_sum(
+        report,
+        &[
+            KILLED,
+            SURVIVED,
+            STEP_LIMIT_REACHED,
+            WAITED,
+            INCONCLUSIVE,
+            ERRORED,
+        ],
+    ) {
+        ColumnSum::Complete(total) => Some(total),
+        ColumnSum::Missing => None,
+        ColumnSum::Overflow => {
+            notes.violated(
+                "executed",
+                "the outcome-column sum exceeds the report's integer width".to_owned(),
+            );
+            None
+        }
+    };
     match (sum, report.column("executed")) {
         (Some(outcomes), Some(executed)) if outcomes != executed => notes.violated(
             "executed",
@@ -194,23 +303,24 @@ fn equations(report: &Report, notes: &mut Notes<'_>) {
         report.column(NOT_RUN),
         report.column("cataloged"),
     ) {
-        (Some(executed), Some(not_run), Some(cataloged))
-            if executed.saturating_add(not_run) != cataloged =>
-        {
-            notes.violated(
+        (Some(executed), Some(not_run), Some(cataloged)) => match executed.checked_add(not_run) {
+            None => notes.violated(
+                "cataloged",
+                "executed plus not-run exceeds the report's integer width".to_owned(),
+            ),
+            Some(total) if total != cataloged => notes.violated(
                 "cataloged",
                 format!(
-                    "{executed} executed and {not_run} not run come to \
-                     {} where the catalog holds {cataloged}; every mutant is one or the other",
-                    executed.saturating_add(not_run)
+                    "{executed} executed and {not_run} not run come to {total} where the catalog \
+                     holds {cataloged}; every mutant is one or the other"
                 ),
-            );
-        }
+            ),
+            Some(_) => {}
+        },
         (None, _, _) | (_, None, _) | (_, _, None) => notes.unaudited(
             "cataloged",
             "the report omits a column this equation is over".to_owned(),
         ),
-        _ => {}
     }
     if let (Some(unreached), Some(not_run)) = (report.column(UNREACHED), report.column(NOT_RUN))
         && unreached > not_run
@@ -225,22 +335,44 @@ fn equations(report: &Report, notes: &mut Notes<'_>) {
     }
 }
 
+enum ColumnSum {
+    Complete(u64),
+    Missing,
+    Overflow,
+}
+
+fn column_sum(report: &Report, names: &[&str]) -> ColumnSum {
+    let mut total = 0u64;
+    for name in names {
+        let Some(value) = report.column(name) else {
+            return ColumnSum::Missing;
+        };
+        let Some(next) = total.checked_add(value) else {
+            return ColumnSum::Overflow;
+        };
+        total = next;
+    }
+    ColumnSum::Complete(total)
+}
+
 /// The score, against the columns it is a ratio over.
 pub(super) fn score(report: &Report, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Score);
-    let (Some(killed), Some(timed_out), Some(survived)) = (
-        report.column(KILLED),
-        report.column(TIMED_OUT),
-        report.column(SURVIVED),
-    ) else {
+    let (Some(killed), Some(survived)) = (report.column(KILLED), report.column(SURVIVED)) else {
         notes.unaudited(
             "score",
             "the report omits a column the score is a ratio over".to_owned(),
         );
         return;
     };
-    let detected = killed.saturating_add(timed_out);
-    let decided = detected.saturating_add(survived);
+    let detected = killed;
+    let Some(decided) = killed.checked_add(survived) else {
+        notes.violated(
+            "score",
+            "killed plus survived exceeds the report's integer width".to_owned(),
+        );
+        return;
+    };
     match (decided > 0, report.score) {
         (false, Some(_)) => notes.violated(
             "score",
@@ -280,26 +412,28 @@ fn ratio(detected: u64, decided: u64) -> f64 {
     if decided == 0 {
         return 0.0;
     }
-    let (detected, decided) = (
-        u32::try_from(detected).unwrap_or(u32::MAX),
-        u32::try_from(decided).unwrap_or(u32::MAX),
-    );
-    f64::from(detected) / f64::from(decided)
+    widen(detected) / widen(decided)
+}
+
+fn widen(value: u64) -> f64 {
+    let bytes = value.to_be_bytes();
+    let high = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let low = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    f64::from(high).mul_add(4_294_967_296.0, f64::from(low))
 }
 
 /// The findings against the rows: every kind is a set equality in both directions.
 pub(super) fn findings(report: &Report, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Findings);
-    let interrupted = report.interrupted == Some(true);
+    let interrupted = report.interrupted;
     let raises = |kind: &str, row: &Row| match kind {
         SURVIVING_MUTANT => row.outcome == SURVIVED && !row.expected,
+        STEP_LIMIT_REACHED_MUTANT => row.outcome == STEP_LIMIT_REACHED,
+        WAITED_MUTANT => row.outcome == WAITED,
         UNREACHED_MUTANT => row.outcome == NOT_RUN && row.unreached,
         DISCHARGED_MUTANT => row.outcome == NOT_RUN && row.not_run(DISCHARGED),
         INCONCLUSIVE_MUTANT => row.outcome == INCONCLUSIVE,
-        ERRORED_MUTANT => !matches!(
-            row.outcome.as_str(),
-            SURVIVED | INCONCLUSIVE | NOT_RUN | KILLED | TIMED_OUT
-        ),
+        ERRORED_MUTANT => row.outcome == ERRORED,
         NOT_RUN_MUTANT => {
             row.outcome == NOT_RUN
                 && !row.unreached
@@ -312,6 +446,8 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) {
     };
     for kind in [
         SURVIVING_MUTANT,
+        STEP_LIMIT_REACHED_MUTANT,
+        WAITED_MUTANT,
         UNREACHED_MUTANT,
         DISCHARGED_MUTANT,
         INCONCLUSIVE_MUTANT,
@@ -328,10 +464,11 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) {
             .findings
             .iter()
             .filter(|finding| finding.kind == kind)
-            .map(|finding| {
-                report
-                    .row(&finding.mutant)
-                    .map_or(finding.mutant.as_str(), Row::label)
+            .filter_map(|finding| {
+                finding
+                    .mutant
+                    .as_deref()
+                    .map(|mutant| report.row(mutant).map_or(mutant, Row::label))
             })
             .collect();
         if reported != derived {
@@ -348,13 +485,21 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) {
         if finding.kind == STALE_EXPECTATION || finding.kind == UNMATCHED_EXPECTATION {
             continue;
         }
-        if report.row(&finding.mutant).is_none() {
+        let Some(mutant) = finding.mutant.as_deref() else {
             notes.violated(
-                &finding.kind,
+                finding.kind.as_str(),
+                "this mutant finding names no mutant; a finding about nothing establishes \
+                 nothing"
+                    .to_owned(),
+            );
+            continue;
+        };
+        if report.row(mutant).is_none() {
+            notes.violated(
+                finding.kind.as_str(),
                 format!(
-                    "the finding names {} and no row of this run does; a finding about a \
-                     mutant the run does not hold names nothing",
-                    finding.mutant
+                    "the finding names {mutant} and no row of this run does; a finding about a \
+                     mutant the run does not hold names nothing"
                 ),
             );
         }
@@ -386,7 +531,16 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) {
                         );
                     }
                     let seen = met.entry(row.label().to_owned()).or_default();
-                    *seen = seen.saturating_add(1);
+                    let Some(next) = seen.checked_add(1) else {
+                        notes.violated(
+                            row.label(),
+                            "the number of matching claims exceeds this platform's address \
+                             space"
+                                .to_owned(),
+                        );
+                        return;
+                    };
+                    *seen = next;
                 }
             },
             STALE => {
@@ -444,7 +598,7 @@ fn accounted(report: &Report, met: &BTreeMap<String, usize>, notes: &mut Notes<'
         .findings
         .iter()
         .filter(|finding| finding.kind == STALE_EXPECTATION)
-        .map(|finding| finding.mutant.as_str())
+        .filter_map(|finding| finding.mutant.as_deref())
         .collect();
     let stale: BTreeSet<&str> = report
         .expectations
@@ -463,23 +617,19 @@ fn accounted(report: &Report, met: &BTreeMap<String, usize>, notes: &mut Notes<'
 /// The exit code, against what the run found.
 pub(super) fn exit(report: &Report, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Exit);
-    let Some(recorded) = report.exit_code else {
-        notes.unaudited(
-            "exit_code",
-            "the report omits the code the run exited with".to_owned(),
-        );
-        return;
-    };
-    let infrastructure = report
-        .findings
-        .iter()
-        .any(|finding| finding.kind == ERRORED_MUTANT || finding.kind == NOT_RUN_MUTANT);
-    let derived = if report.interrupted == Some(true) {
+    let recorded = report.exit_code;
+    let infrastructure = report.findings.iter().any(|finding| {
+        matches!(
+            finding.kind.as_str(),
+            ERRORED_MUTANT | NOT_RUN_MUTANT | STEP_LIMIT_REACHED_MUTANT | WAITED_MUTANT
+        )
+    });
+    let derived = if report.interrupted {
         130
     } else if infrastructure {
         2
     } else {
-        u64::from(!report.findings.is_empty())
+        u8::from(!report.findings.is_empty())
     };
     if recorded != derived {
         notes.violated(

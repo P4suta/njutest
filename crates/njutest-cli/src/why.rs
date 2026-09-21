@@ -190,12 +190,33 @@ fn mutation(id: &str, events: &[Event]) -> Why {
                 });
                 came_to = crate::report::Outcome::parse(&mutant.outcome)
                     .and_then(|outcome| {
-                        Decided::of(outcome, Some(mutant.target.clone()))
-                            .or_else(|| Decided::of(outcome, None))
+                        Decided::of(outcome, Some(mutant.target.clone()), mutant.step_boundary)
+                            .or_else(|| Decided::of(outcome, None, mutant.step_boundary))
                     })
                     .or(came_to);
             }
-            _ => {}
+            Payload::Model { model } if model.mutant() == id => {
+                came_to = match model.answer() {
+                    crate::report::ModelDecision::Noticed { .. } => Some(Decided::ModelNoticed),
+                    crate::report::ModelDecision::Proved { .. } => Some(Decided::ModelProved),
+                    crate::report::ModelDecision::Ineligible { .. }
+                    | crate::report::ModelDecision::Undecided { .. } => came_to,
+                };
+            }
+            Payload::RunStart { .. }
+            | Payload::PhaseStart { .. }
+            | Payload::PhaseEnd { .. }
+            | Payload::Exec { .. }
+            | Payload::Progress { .. }
+            | Payload::Artifact { .. }
+            | Payload::Route { .. }
+            | Payload::MutantExec { .. }
+            | Payload::ProbeExec { .. }
+            | Payload::WireExchange { .. }
+            | Payload::WireExec { .. }
+            | Payload::Model { .. }
+            | Payload::Note { .. }
+            | Payload::RunEnd { .. } => {}
         }
     }
     match came_to {
@@ -259,12 +280,23 @@ fn mutations(events: &[Event]) -> usize {
     for event in events {
         match &event.payload {
             Payload::Route { route } => {
-                let _known = seen.insert(route.mutant.as_str());
+                seen.extend(std::iter::once(route.mutant.as_str()));
             }
             Payload::MutantExec { mutant } => {
-                let _known = seen.insert(mutant.mutant.as_str());
+                seen.extend(std::iter::once(mutant.mutant.as_str()));
             }
-            _ => {}
+            Payload::RunStart { .. }
+            | Payload::PhaseStart { .. }
+            | Payload::PhaseEnd { .. }
+            | Payload::Exec { .. }
+            | Payload::Progress { .. }
+            | Payload::Artifact { .. }
+            | Payload::ProbeExec { .. }
+            | Payload::WireExchange { .. }
+            | Payload::WireExec { .. }
+            | Payload::Model { .. }
+            | Payload::Note { .. }
+            | Payload::RunEnd { .. } => {}
         }
     }
     seen.len()
@@ -275,7 +307,7 @@ fn seams(events: &[Event]) -> usize {
     let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for event in events {
         if let Payload::WireExec { wire: exec } = &event.payload {
-            let _known = seen.insert(exec.fault.as_str());
+            seen.extend(std::iter::once(exec.fault.as_str()));
         }
     }
     seen.len()

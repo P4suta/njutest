@@ -4,15 +4,16 @@
 //! What each disposition makes a reader act on, and what an acceptance can answer for.
 
 #![expect(
+    clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a phase built from one disposition raises one finding, and no finding where this reads one is the failure it is here to report"
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use njutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed, tail};
 use njutest_cli::assure::route::{BRANCH_NEVER_TAKEN, Discharge, NEVER_INFECTED, Reaches, Route};
-use njutest_cli::report::{Decision, FindingKind, Position};
+use njutest_cli::report::{Decision, FindingKind, Position, StepBoundary};
 
 fn discharge(target: &str, proof: rust_mutants::session::Proof) -> Discharge {
     Discharge {
@@ -25,6 +26,7 @@ const MUTANT: &str = "aaaaaaaaaaaaaaaaaaaa";
 
 fn judged(disposition: Disposition) -> Judged {
     Judged {
+        catalog_index: 0,
         id: "a".repeat(64),
         display_id: MUTANT.to_owned(),
         path: "src/lib.rs".to_owned(),
@@ -64,7 +66,7 @@ fn a_mutation_that_ran_out_of_time_is_a_gap_the_run_reports() {
         "a timeout is not a proof about the mutant, so it is not something a run passes over"
     );
     let raised = findings.first().expect("the finding a timeout raises");
-    assert_eq!(raised.kind, FindingKind::Timeout);
+    assert_eq!(raised.kind, FindingKind::WaitedMutant);
     assert!(
         !raised.kind.is_defect(),
         "an expired budget says nothing about the code under test"
@@ -323,6 +325,7 @@ fn a_survivor_some_tests_ran_and_others_were_removed_from_says_the_tests_ran() {
 
 fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
     Judged {
+        catalog_index: 0,
         id: display_id.repeat(4),
         display_id: display_id.to_owned(),
         path: "src/lib.rs".to_owned(),
@@ -367,8 +370,10 @@ fn all_of_them() -> Mutation {
             ),
             of(
                 "dddd",
-                Disposition::Runaway {
+                Disposition::StepLimitReached {
                     on: "one".to_owned(),
+                    boundary: StepBoundary::new(10, 11)
+                        .expect("the first count beyond the allowance"),
                 },
                 false,
             ),
@@ -497,7 +502,17 @@ fn the_outcome_a_disposition_records_is_one_the_report_can_say_who_decided() {
         );
         seen.push(outcome);
     }
-    for outcome in njutest_cli::report::Outcome::ALL.map(njutest_cli::report::Outcome::name) {
+    for outcome in njutest_cli::report::Outcome::ALL
+        .into_iter()
+        .filter(|outcome| {
+            !matches!(
+                outcome,
+                njutest_cli::report::Outcome::ModelNoticed
+                    | njutest_cli::report::Outcome::ModelProved
+            )
+        })
+        .map(njutest_cli::report::Outcome::name)
+    {
         assert!(
             seen.contains(&outcome),
             "every outcome the report can record is one this test exercises, and \
@@ -511,7 +526,9 @@ fn the_outcome_a_disposition_records_is_one_the_report_can_say_who_decided() {
 fn every_disposition_is_counted_once_in_the_columns_it_belongs_to() {
     let accepted = BTreeSet::from(["gggg".repeat(4), "iiii".repeat(4), "jjjj".repeat(4)]);
 
-    let counts = all_of_them().accounting(&accepted);
+    let counts = all_of_them()
+        .accounting(&accepted)
+        .expect("the small fixture fits the durable counters");
 
     assert_eq!(counts.cataloged, 13, "one row for every mutation judged");
     assert_eq!(counts.rejected, 1);
@@ -523,11 +540,13 @@ fn every_disposition_is_counted_once_in_the_columns_it_belongs_to() {
          refused, what nothing reached, and what the compiler rendered identically"
     );
     assert_eq!(counts.killed, 2);
-    assert_eq!(counts.runaway, 1);
+    assert_eq!(counts.step_limit_reached, 1);
     assert_eq!(counts.waited, 1);
     assert_eq!(counts.survived, 3);
     assert_eq!(counts.unreached, 2);
     assert_eq!(counts.equivalent, 1);
+    assert_eq!(counts.model_noticed, 0);
+    assert_eq!(counts.model_proved, 0);
     assert_eq!(
         counts.reused_killed, 1,
         "and a run says how much of what it reports it established itself"
@@ -643,6 +662,7 @@ fn each_column_counts_its_own_kind_and_not_whatever_makes_the_total_come_out() {
             ("cccc", killed(), false),
         ])
         .accounting(&none)
+        .expect("the small fixture fits the durable counters")
         .reused_killed,
         1,
         "a run says how many of its kills it read back rather than establishing, so the \
@@ -657,6 +677,7 @@ fn each_column_counts_its_own_kind_and_not_whatever_makes_the_total_come_out() {
             ("oooo", Disposition::Survived { route: route() }, false),
         ])
         .accounting(&none)
+        .expect("the small fixture fits the durable counters")
         .reused_survived,
         1,
         "and how many survivals"
@@ -668,6 +689,7 @@ fn each_column_counts_its_own_kind_and_not_whatever_makes_the_total_come_out() {
             ("ffff", Disposition::Survived { route: route() }, false),
         ])
         .accounting(&first("dddd"))
+        .expect("the small fixture fits the durable counters")
         .accepted,
         1,
         "and how many of its survivors a reviewer answered for, which is the ones the \
@@ -680,6 +702,7 @@ fn each_column_counts_its_own_kind_and_not_whatever_makes_the_total_come_out() {
             ("iiii", Disposition::Unreached, false),
         ])
         .accounting(&first("gggg"))
+        .expect("the small fixture fits the durable counters")
         .accepted,
         1,
         "and the same of the mutations nothing reached"
@@ -691,6 +714,7 @@ fn each_column_counts_its_own_kind_and_not_whatever_makes_the_total_come_out() {
             ("llll", Disposition::Equivalent { route: route() }, false),
         ])
         .accounting(&first("jjjj"))
+        .expect("the small fixture fits the durable counters")
         .accepted,
         1,
         "and of the ones the compiler rendered identically"

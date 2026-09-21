@@ -22,9 +22,10 @@ fn run_named(id: &str) -> cli::Command {
             .into_iter()
             .map(std::ffi::OsString::from),
     )
-    .unwrap_or_else(|_usage| panic!("`run` with nothing else on it parses"));
-    if let cli::Command::Run { run_id, .. } = &mut parsed.command {
-        *run_id = Some(id.to_owned());
+    .unwrap_or_else(|usage| panic!("`run` with nothing else on it parses: {usage:?}"));
+    match &mut parsed.command {
+        cli::Command::Run { run_id, .. } => *run_id = Some(id.to_owned()),
+        _ => panic!("the parser returned a non-run command for the literal `run`"),
     }
     parsed.command
 }
@@ -57,7 +58,7 @@ proptest! {
             return Ok(());
         };
         let parts: Vec<std::path::Component<'_>> =
-            std::path::Path::new(&accepted).components().collect();
+            std::path::Path::new(accepted.as_str()).components().collect();
         prop_assert_eq!(
             parts.len(),
             1,
@@ -83,16 +84,22 @@ proptest! {
         first in 0i64..4_000_000_000,
         gap in 1i64..1_000_000_000,
     ) {
-        let earlier = jiff::Timestamp::from_second(first).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
-        let later = jiff::Timestamp::from_second(first.saturating_add(gap))
-            .unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+        let earlier = jiff::Timestamp::from_second(first)
+            .unwrap_or_else(|error| panic!("the generated earlier timestamp is valid: {error}"));
+        let later_seconds = first
+            .checked_add(gap)
+            .unwrap_or_else(|| panic!("the bounded generated seconds fit i64"));
+        let later = jiff::Timestamp::from_second(later_seconds)
+            .unwrap_or_else(|error| panic!("the generated later timestamp is valid: {error}"));
         prop_assume!(earlier < later);
+        let earlier_id = stored::run_id(earlier).expect("canonical timestamp");
+        let later_id = stored::run_id(later).expect("canonical timestamp");
         prop_assert!(
-            stored::run_id(earlier) < stored::run_id(later),
+            earlier_id < later_id,
             "a directory listing is how the runs are read back, so the name has to sort \
              the way they ran: {} then {}",
-            stored::run_id(earlier),
-            stored::run_id(later)
+            earlier_id,
+            later_id
         );
     }
 
@@ -101,7 +108,8 @@ proptest! {
     fn bytes_as_a_person_reads_them_never_say_there_is_more_than_there_is(
         bytes in 0u64..u64::MAX,
     ) {
-        let said = rendered_bytes(bytes);
+        let said = rendered_bytes(bytes)
+            .unwrap_or_else(|error| panic!("every u64 byte count is renderable: {error}"));
         let (value, unit) = said
             .split_once(' ')
             .unwrap_or_else(|| panic!("a rendering is a number and a unit: {said}"));
@@ -109,15 +117,22 @@ proptest! {
             .iter()
             .position(|named| *named == unit)
             .unwrap_or_else(|| panic!("a unit a reader knows: {said}"));
-        let scale = 1024u128.pow(u32::try_from(power).unwrap_or(0));
+        let exponent = u32::try_from(power)
+            .unwrap_or_else(|error| panic!("the five-unit table fits u32: {error}"));
+        let scale = 1024u128.pow(exponent);
         let (whole, tenths) = value.split_once('.').unwrap_or((value, "0"));
-        let whole: u128 = whole.parse().unwrap_or(0);
-        let tenths: u128 = tenths.parse().unwrap_or(0);
+        let whole: u128 = whole
+            .parse::<u128>()
+            .unwrap_or_else(|error| panic!("the rendered whole number is numeric: {error}"));
+        let tenths: u128 = tenths
+            .parse::<u128>()
+            .unwrap_or_else(|error| panic!("the rendered tenths are numeric: {error}"));
 
         let floor = whole
-            .saturating_mul(10)
-            .saturating_add(tenths)
-            .saturating_mul(scale)
+            .checked_mul(10)
+            .and_then(|scaled| scaled.checked_add(tenths))
+            .and_then(|scaled| scaled.checked_mul(scale))
+            .unwrap_or_else(|| panic!("the rendered bounded byte count fits u128"))
             / 10;
         prop_assert!(
             floor <= u128::from(bytes),
@@ -135,12 +150,27 @@ proptest! {
     #[test]
     fn every_share_a_dry_run_prints_is_between_none_of_it_and_all_of_it(
         cataloged in 0u64..10_000,
-        selected in 0u64..10_000,
-        pairs in 0u64..100_000,
-        tests in 0u64..100_000,
+        selected_seed in 0u64..10_000,
+        pair_seed in 0u64..100_000,
+        test_seed in 0u64..100_000,
         tests_whole in 0u64..100_000,
         targets in 0u64..64,
     ) {
+        let selected_bound = cataloged.checked_add(1).expect("the bounded catalog count");
+        let selected = selected_seed
+            .checked_rem(selected_bound)
+            .expect("the catalog bound is nonzero");
+        let whole_pairs = cataloged
+            .checked_mul(targets)
+            .expect("the bounded pair count");
+        let pair_bound = whole_pairs.checked_add(1).expect("the bounded pair count");
+        let pairs = pair_seed
+            .checked_rem(pair_bound)
+            .expect("the pair bound is nonzero");
+        let test_bound = tests_whole.checked_add(1).expect("the bounded test count");
+        let tests = test_seed
+            .checked_rem(test_bound)
+            .expect("the test bound is nonzero");
         let counted = Estimated {
             cataloged: cataloged.into(),
             selected: selected.into(),
@@ -149,11 +179,13 @@ proptest! {
             tests_whole: tests_whole.into(),
             ..Estimated::default()
         };
-        let said = counted.said(targets.into());
+        let said = counted
+            .said(targets.into())
+            .unwrap_or_else(|error| panic!("the bounded generated estimate is exact: {error}"));
         for share in said
             .split_whitespace()
             .filter_map(|word| word.strip_suffix("%"))
-            .filter_map(|number| number.parse::<f64>().ok())
+            .map(|number| number.parse::<f64>().expect("a rendered percentage"))
         {
             prop_assert!(
                 (0.0..=100.0).contains(&share),

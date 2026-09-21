@@ -11,6 +11,10 @@
 
 use njutest_cli::soundness::{Item, Kind, inventory, of_source};
 
+fn package_directory(root: &std::path::Path) -> std::path::PathBuf {
+    rust_mutants::canonical::canonical(root).expect("the package directory is in one spelling")
+}
+
 fn kinds(source: &str) -> Vec<Kind> {
     of_source("src/lib.rs", source)
         .expect("the source parses")
@@ -104,7 +108,7 @@ fn an_inventory_of_a_tree_names_the_package_each_item_belongs_to() {
 
     let taken = inventory(
         repo.root(),
-        &[("demo".to_owned(), repo.root().to_path_buf())],
+        &[("demo".to_owned(), package_directory(repo.root()))],
     )
     .expect("the tree reads");
     assert_eq!(taken.items.len(), 1, "{taken:?}");
@@ -124,7 +128,7 @@ fn a_file_the_inventory_cannot_read_is_named_rather_than_passed_over() {
 
     let taken = inventory(
         repo.root(),
-        &[("demo".to_owned(), repo.root().to_path_buf())],
+        &[("demo".to_owned(), package_directory(repo.root()))],
     )
     .expect("the tree reads");
     assert_eq!(

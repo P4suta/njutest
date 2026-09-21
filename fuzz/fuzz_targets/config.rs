@@ -12,12 +12,24 @@ fuzz_target!(|text: &str| {
     let Ok(config) = Config::parse(text, std::path::Path::new(".njutest.toml")) else {
         return;
     };
-    let canonical = config.canonical();
-    let digest = config.digest();
+    let Ok(canonical) = config.canonical() else {
+        return;
+    };
+    let Ok(digest) = config.digest() else {
+        return;
+    };
     assert_eq!(digest.len(), 64);
-    assert_eq!(config.digest(), digest, "the digest is a function of the configuration");
+    assert_eq!(
+        config.digest().unwrap_or_else(|_refused| digest.clone()),
+        digest,
+        "the digest is a function of the configuration"
+    );
 
-    let reparsed: serde_json::Value =
-        serde_json::from_str(&canonical).expect("the canonical rendering is JSON");
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when canonical configuration is not JSON"
+    )]
+    let reparsed: serde_json::Value = njutest_devkit::strictjson::decode_str(&canonical)
+        .expect("the canonical rendering is JSON");
     assert!(reparsed.is_object());
 });

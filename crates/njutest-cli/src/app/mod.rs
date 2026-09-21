@@ -28,21 +28,26 @@ use std::io::Write;
 use crate::cli::{Command, EXIT_ASSURED, EXIT_ERROR, Environment, PROGRAM, Request};
 
 /// Runs what the command line asked for and answers with the exit code.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     request: &Request,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     match &request.command {
         Command::Init(arguments) => init::run(*arguments, environment, stdout, stderr),
         Command::Cache(arguments) => cache::run(arguments, environment, stdout, stderr),
         Command::Merge(arguments) => merge::run(arguments, stdout, stderr),
         Command::Watch(arguments) => watch::run(arguments, environment, stdout, stderr),
-        Command::Lsp(arguments) => lsp::run(arguments, environment),
-        Command::Doctor(arguments) => exit(doctor::run(*arguments, environment, stdout, stderr)),
+        Command::Lsp(arguments) => Ok(lsp::run(arguments, environment)),
+        Command::Doctor(arguments) => {
+            doctor::run(*arguments, environment, stdout, stderr).map(exit)
+        }
         Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
-        Command::Plan(arguments) => exit(plan::run(arguments, environment, stdout, stderr)),
+        Command::Plan(arguments) => plan::run(arguments, environment, stdout, stderr).map(exit),
         Command::Report(arguments) => show::run(arguments, environment, stdout, stderr),
         Command::Explain(arguments) => explain::run(arguments, environment, stdout, stderr),
         Command::Why(arguments) => why::run(arguments, environment, stdout, stderr),
@@ -73,21 +78,30 @@ const fn exit(result: Completion) -> u8 {
 }
 
 /// Writes one diagnostic the way every njutest diagnostic is written: the program name, then what happened.
-pub fn diagnose(stderr: &mut dyn Write, message: &str) {
-    let _written = writeln!(stderr, "{PROGRAM}: {message}");
+///
+/// # Errors
+/// Returns the diagnostic stream's write failure.
+pub fn diagnose(stderr: &mut dyn Write, message: &str) -> std::io::Result<()> {
+    writeln!(stderr, "{PROGRAM}: {message}")
 }
 
 /// Writes one failure and the next step it carries.
+///
+/// # Errors
+/// Returns the diagnostic stream's write failure.
 pub fn complain(
     stderr: &mut dyn Write,
     error: &impl std::fmt::Display,
     code: crate::error::ErrorCode,
-) {
-    diagnose(stderr, &error.to_string());
-    let _written = writeln!(stderr, "        try: {}", code.remedy);
+) -> std::io::Result<()> {
+    diagnose(stderr, &error.to_string())?;
+    writeln!(stderr, "        try: {}", code.remedy)
 }
 
 /// Writes one line of output.
-pub fn say(stdout: &mut dyn Write, line: &str) {
-    let _written = writeln!(stdout, "{line}");
+///
+/// # Errors
+/// Returns the output stream's write failure.
+pub fn say(stdout: &mut dyn Write, line: &str) -> std::io::Result<()> {
+    writeln!(stdout, "{line}")
 }

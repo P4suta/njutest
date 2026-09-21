@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Names the shape of the document.
 pub const DOCUMENT_TYPE: &str = "rust-mutants/doctor";
@@ -14,7 +14,7 @@ pub const DOCUMENT_TYPE: &str = "rust-mutants/doctor";
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// What a run would find in this environment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DoctorDocument {
     /// [`DOCUMENT_TYPE`].
     pub document_type: String,
@@ -29,25 +29,19 @@ pub struct DoctorDocument {
 }
 
 /// One thing a run needs, and whether it is here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Check {
     /// What was checked.
     pub name: String,
     /// Whether it is as a run needs it, which `warn` also is.
     pub ok: bool,
     /// How it stands: `ok`, `warn`, or `fail`.
-    #[serde(default = "well")]
     pub status: String,
     /// What was found.
     pub detail: String,
     /// What to do about it, when it is not as a run needs it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub remedy: Option<String>,
-}
-
-/// The standing of a check nothing said otherwise about.
-fn well() -> String {
-    Standing::Ok.name().to_owned()
 }
 
 /// How one check stands.

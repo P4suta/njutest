@@ -3,7 +3,7 @@
 
 //! The run as the paragraph a person puts in a pull request or a job summary.
 
-use std::fmt::Write as _;
+use rust_mutants::outcome::Outcome;
 
 use super::run::{RunDocument, RunMutantDocument};
 
@@ -11,10 +11,12 @@ use super::run::{RunDocument, RunMutantDocument};
 #[must_use]
 pub fn document(document: &RunDocument) -> String {
     let mut out = String::new();
-    let _written = writeln!(
-        out,
-        "# Mutation report — {} {}\n",
-        document.workspace.root_name, document.run.id
+    crate::text::line(
+        &mut out,
+        format_args!(
+            "# Mutation report — {} {}\n",
+            document.workspace.root_name, document.run.id
+        ),
     );
     score(&mut out, document);
     accounting(&mut out, document);
@@ -35,17 +37,17 @@ fn score(out: &mut String, document: &RunDocument) {
             )
         },
     );
-    let _written = writeln!(out, "{said}\n");
+    crate::text::line(out, format_args!("{said}\n"));
 }
 
 fn accounting(out: &mut String, document: &RunDocument) {
     let tally = super::tally::Tally::of(document);
-    let _written = writeln!(out, "{}\n", tally.said());
+    crate::text::line(out, format_args!("{}\n", tally.said()));
     out.push_str("| outcome | how many |\n| --- | --- |\n");
     for (name, count) in &tally.parts {
-        let _written = writeln!(out, "| {name} | {count} |");
+        crate::text::line(out, format_args!("| {name} | {count} |"));
     }
-    let _written = writeln!(out, "\n{}\n", tally.within_said());
+    crate::text::line(out, format_args!("\n{}\n", tally.within_said()));
 }
 
 fn findings(out: &mut String, document: &RunDocument) {
@@ -55,7 +57,10 @@ fn findings(out: &mut String, document: &RunDocument) {
         return;
     }
     for finding in &document.findings {
-        let _written = writeln!(out, "- **{}** — {}", finding.kind, cell(&finding.detail));
+        crate::text::line(
+            out,
+            format_args!("- **{}** — {}", finding.kind, cell(&finding.detail)),
+        );
     }
     out.push('\n');
 }
@@ -64,24 +69,26 @@ fn survivors(out: &mut String, document: &RunDocument) {
     let rows: Vec<&RunMutantDocument> = document
         .mutants
         .iter()
-        .filter(|mutant| mutant.outcome == "survived" && !mutant.expected)
+        .filter(|mutant| mutant.outcome == Outcome::Survived && !mutant.expected)
         .collect();
-    let _written = writeln!(out, "## Survivors ({})\n", rows.len());
+    crate::text::line(out, format_args!("## Survivors ({})\n", rows.len()));
     if rows.is_empty() {
         out.push_str("Every mutant the run decided, the tests noticed.\n");
         return;
     }
     out.push_str("| where | rule | change | id |\n| --- | --- | --- | --- |\n");
     for mutant in rows {
-        let _written = writeln!(
+        crate::text::line(
             out,
-            "| `{path}:{line}:{column}` | `{rule}` | {change} | `{id}` |",
-            path = cell(&mutant.path),
-            line = mutant.line,
-            column = mutant.column,
-            rule = cell(&mutant.rule),
-            change = change(mutant),
-            id = cell(&mutant.display_id),
+            format_args!(
+                "| `{path}:{line}:{column}` | `{rule}` | {change} | `{id}` |",
+                path = cell(&mutant.path),
+                line = mutant.line,
+                column = mutant.column,
+                rule = cell(&mutant.rule),
+                change = change(mutant),
+                id = cell(&mutant.display_id),
+            ),
         );
     }
     out.push_str(

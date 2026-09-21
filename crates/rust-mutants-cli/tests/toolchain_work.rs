@@ -17,6 +17,8 @@ use rust_mutants::runner::Cancel;
 use rust_mutants::work::Work;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/directory.rs");
+
 /// One line of the ceiling: a fixture, and what a whole run and this engine start of each unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Ceiling {
@@ -43,10 +45,10 @@ fn ceilings() -> Vec<Ceiling> {
             );
             Ceiling {
                 fixture: fields[0].to_owned(),
-                whole: fields[1].parse().expect("a count"),
-                started: fields[2].parse().expect("a count"),
-                tests_whole: fields[3].parse().expect("a count"),
-                tests_started: fields[4].parse().expect("a count"),
+                whole: fields[1].parse::<u64>().expect("a count"),
+                started: fields[2].parse::<u64>().expect("a count"),
+                tests_whole: fields[3].parse::<u64>().expect("a count"),
+                tests_started: fields[4].parse::<u64>().expect("a count"),
             }
         })
         .collect()
@@ -54,7 +56,7 @@ fn ceilings() -> Vec<Ceiling> {
 
 fn measured(name: &str) -> Work {
     let fixture = Fixture::copy(name);
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -77,10 +79,10 @@ fn measured(name: &str) -> Work {
     let directory = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     );
-    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let text = std::fs::read_to_string(directory.join("run-report-v2.json")).expect("the report");
     let document: rust_mutants::report::run::RunDocument =
-        serde_json::from_str(&text).expect("the report reads back");
-    Work::of(&document)
+        njutest_devkit::strictjson::decode_str(&text).expect("the report reads back");
+    Work::of(&document).expect("valid work ledger")
 }
 
 #[test]
@@ -92,7 +94,7 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
     for ceiling in ceilings() {
         let work = measured(&ceiling.fixture);
         assert!(
-            work.balances(),
+            work.balances().expect("exact balance arithmetic"),
             "{}: a pair nothing accounts for is work nobody can explain: {work:?}",
             ceiling.fixture
         );
@@ -148,7 +150,7 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
         "nothing here was filtered, so this run answers for the whole catalog: {work:?}"
     );
     assert!(
-        work.saved() > 0.5,
+        work.saved().expect("exact skipped count") > 0.5,
         "a fixture built to hold code no test reaches should cost less than half a whole run: \
          {work:?}"
     );
@@ -166,7 +168,7 @@ const CARGO_CEILING: u64 = 6;
 /// How many times a run started each program, read back from its own recording.
 fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {
     let fixture = Fixture::copy(name);
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -186,19 +188,22 @@ fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u6
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let directory =
         std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
             .expect("the run stored a report")
-            .flatten()
+            .map(|entry| entry.expect("stored run directory entry"))
             .map(|entry| entry.path())
-            .find(|path| path.join("trace").is_dir())
+            .find(|path| test_directory(&path.join("trace")))
             .expect("a recording");
     let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
         .expect("the recording");
     let events = rust_mutants::trace::read_events(text.as_bytes()).expect("it reads back");
-    rust_mutants::trace::summary::summarize(&events, 1).invocations
+    match rust_mutants::trace::summary::summarize(&events, 1) {
+        Ok(summary) => summary.invocations,
+        Err(error) => panic!("the fixture trace must summarize exactly: {error}"),
+    }
 }
 
 #[test]
@@ -228,7 +233,7 @@ fn a_second_run_of_a_tree_nothing_changed_measures_it_again_no_harder_than_the_f
 fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
     let fixture = Fixture::copy("fixture-coverage");
     let started = |fixture: &Fixture| -> u64 {
-        let root = fixture.root().to_string_lossy().into_owned();
+        let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = rust_mutants_cli::run_from(
             std::iter::once("rust-mutants")
@@ -254,21 +259,25 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
         let directory =
             std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
                 .expect("the run stored a report")
-                .flatten()
+                .map(|entry| entry.expect("stored run directory entry"))
                 .map(|entry| entry.path())
-                .filter(|path| path.join("trace").is_dir())
+                .filter(|path| test_directory(&path.join("trace")))
                 .max()
                 .expect("the newest recording");
         let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
             .expect("the recording");
         let events =
             rust_mutants::trace::read_events(text.as_bytes()).expect("the recording reads back");
-        rust_mutants::trace::summary::summarize(&events, 1)
+        let summary = match rust_mutants::trace::summary::summarize(&events, 1) {
+            Ok(summary) => summary,
+            Err(error) => panic!("the fixture trace must summarize exactly: {error}"),
+        };
+        summary
             .invocations
             .get("cargo")
             .copied()
@@ -288,7 +297,7 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
 fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
     let fixture = Fixture::copy("fixture-coverage");
     let run = |fixture: &Fixture| -> u64 {
-        let root = fixture.root().to_string_lossy().into_owned();
+        let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = rust_mutants_cli::run_from(
             std::iter::once("rust-mutants")
@@ -314,21 +323,25 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
         let directory =
             std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
                 .expect("the run stored a report")
-                .flatten()
+                .map(|entry| entry.expect("stored run directory entry"))
                 .map(|entry| entry.path())
-                .filter(|path| path.join("trace").is_dir())
+                .filter(|path| test_directory(&path.join("trace")))
                 .max()
                 .expect("the newest recording");
         let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
             .expect("the recording");
         let events =
             rust_mutants::trace::read_events(text.as_bytes()).expect("the recording reads back");
-        rust_mutants::trace::summary::summarize(&events, 1)
+        let summary = match rust_mutants::trace::summary::summarize(&events, 1) {
+            Ok(summary) => summary,
+            Err(error) => panic!("the fixture trace must summarize exactly: {error}"),
+        };
+        summary
             .invocations
             .get("cargo")
             .copied()

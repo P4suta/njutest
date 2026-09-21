@@ -70,20 +70,25 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
 }
 
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 fn survivor(fixture: &Fixture) -> String {
-    let report: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            njutest_cli::app::reports::Store::read(&fixture.root)
-                .run_of(njutest_cli::app::reports::Index::Any)
-                .expect("the index names a run")
-                .join(njutest_cli::app::reports::DOCUMENT_NAME),
-        )
-        .expect("the document"),
+    let run =
+        njutest_cli::app::reports::pointed_at(&fixture.root, njutest_cli::app::reports::Index::Any)
+            .expect("the index is readable")
+            .expect("the index names a run");
+    let document = fixture
+        .root
+        .join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(run.as_str())
+        .join(njutest_cli::app::reports::DOCUMENT_NAME);
+    let whole: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(document).expect("the document"),
     )
     .expect("JSON");
+    let report = whole["report"]["builds"][0]["parts"][0].clone();
     report["findings"]
         .as_array()
         .expect("the findings")
@@ -101,7 +106,7 @@ fn verified(name: &str) -> Fixture {
         output.status.code(),
         Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     fixture
 }
@@ -117,7 +122,7 @@ fn replaying_a_finding_nothing_has_answered_reproduces_it() {
     assert!(
         said.contains("REPRODUCED"),
         "the mutation is still one nothing notices: {said} {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     assert_eq!(output.status.code(), Some(1), "{said}");
 }
@@ -150,7 +155,7 @@ fn replaying_a_finding_the_tests_now_answer_resolves_it() {
     assert!(
         said.contains("RESOLVED"),
         "a test now notices the mutation the finding was about: {said} {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     assert_eq!(output.status.code(), Some(0), "{said}");
 }
@@ -162,7 +167,7 @@ fn replaying_something_no_finding_names_says_so() {
     let output = njutest(&fixture, &["replay", "ffffffffffffffffffff"]);
 
     assert_eq!(output.status.code(), Some(3));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(stderr.contains("ffffffffffffffffffff"), "{stderr}");
 }
 

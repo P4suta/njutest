@@ -43,6 +43,8 @@ pub struct Metadata {
     /// The resolved dependency graph, when cargo produced one.
     #[serde(default)]
     pub resolve: Option<Resolve>,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// The resolved dependency graph.
@@ -54,6 +56,8 @@ pub struct Resolve {
     /// The root package, for a single-package workspace.
     #[serde(default)]
     pub root: Option<String>,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// One package's edges in the resolved graph.
@@ -64,6 +68,8 @@ pub struct Node {
     /// What it depends on.
     #[serde(default)]
     pub deps: Vec<NodeDep>,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// One edge of the resolved graph.
@@ -74,6 +80,8 @@ pub struct NodeDep {
     /// How it is depended on. A dependency may be several kinds at once.
     #[serde(default)]
     pub dep_kinds: Vec<DepKind>,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// One way one package depends on another.
@@ -82,6 +90,8 @@ pub struct DepKind {
     /// `null` for a normal dependency, `"dev"` or `"build"` otherwise.
     #[serde(default)]
     pub kind: Option<String>,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl DepKind {
@@ -139,6 +149,8 @@ pub struct Package {
     /// What its manifest says it depends on, before anything is resolved.
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// One dependency, as the manifest declares it.
@@ -152,6 +164,8 @@ pub struct Dependency {
     /// The directory it is read from, for a path dependency.
     #[serde(default)]
     pub path: Option<PathBuf>,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Dependency {
@@ -194,6 +208,8 @@ pub struct Target {
     /// Whether the target uses the libtest harness.
     #[serde(default = "yes")]
     pub harness: bool,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 const fn yes() -> bool {
@@ -275,7 +291,7 @@ impl Metadata {
     /// # Errors
     /// [`CargoErrorKind::MetadataUnparsable`].
     pub fn parse(json: &[u8]) -> Result<Self, CargoError> {
-        serde_json::from_slice(json).map_err(|source| {
+        crate::strictjson::decode_slice(json).map_err(|source| {
             CargoError::new(
                 CargoErrorKind::MetadataUnparsable,
                 "cargo metadata did not print its document",
@@ -312,8 +328,8 @@ impl Metadata {
             .command(driver.dir, metadata_arguments(options, no_deps));
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
         let result = run(&spec, driver.cancel);
-        driver.trace.exec(ExecRecord::of(&spec, &result));
-        if !result.ok() {
+        driver.trace.exec_result(ExecRecord::of(&spec, &result));
+        if !result.succeeded() {
             return Err(command_failed(&spec, &result));
         }
         if result.stdout_truncated {
@@ -370,5 +386,23 @@ impl Metadata {
     #[must_use]
     pub fn package(&self, id: &str) -> Option<&Package> {
         self.packages.iter().find(|package| package.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use njutest_devkit::result::{ResultState::Returned, result_state};
+
+    #[test]
+    fn a_new_metadata_field_is_captured_instead_of_disappearing() {
+        let parsed = crate::strictjson::decode_str::<super::Metadata>(
+            r#"{"version":1,"workspace_root":"/demo","target_directory":"/demo/target","workspace_members":[],"packages":[],"future_cargo_field":true}"#,
+        );
+        assert_eq!(result_state(&parsed), Returned, "metadata: {parsed:?}");
+        let Ok(metadata) = parsed else { return };
+        assert_eq!(
+            metadata.external_fields.get("future_cargo_field"),
+            Some(&serde_json::Value::Bool(true))
+        );
     }
 }

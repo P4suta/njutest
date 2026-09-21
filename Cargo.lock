@@ -381,6 +381,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "compiler-surfaces"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "clap",
+ "getrandom 0.3.4",
+ "hex",
+ "jiff",
+ "njutest-devkit",
+ "njutest-macros",
+ "proc-macro2",
+ "proptest",
+ "ratatui",
+ "rust-mutants",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "signal-hook 0.4.4",
+ "syn 3.0.5",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml",
+ "toml_edit",
+ "unicode-width",
+ "walkdir",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1234,6 +1263,7 @@ dependencies = [
 name = "njutest"
 version = "0.1.0"
 dependencies = [
+ "njutest-devkit",
  "njutest-macros",
  "trybuild",
 ]
@@ -1244,11 +1274,13 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "criterion",
+ "getrandom 0.3.4",
  "hex",
  "jiff",
  "jsonschema",
  "njutest-cli",
  "njutest-devkit",
+ "njutest-macros",
  "proc-macro2",
  "proptest",
  "rust-mutants",
@@ -1283,6 +1315,7 @@ name = "njutest-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
+ "quote",
  "syn 3.0.5",
 ]
 
@@ -1924,10 +1957,12 @@ name = "rust-mutants"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "getrandom 0.3.4",
  "hex",
  "jiff",
  "jsonschema",
  "njutest-devkit",
+ "njutest-macros",
  "proc-macro2",
  "proptest",
  "rust-mutants",
@@ -1951,9 +1986,11 @@ dependencies = [
  "jiff",
  "jsonschema",
  "njutest-devkit",
+ "njutest-macros",
  "proptest",
  "ratatui",
  "rust-mutants",
+ "rust-mutants-cli",
  "rustix",
  "serde",
  "serde_json",
@@ -2819,7 +2856,10 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "hex",
+ "njutest-devkit",
+ "njutest-macros",
  "proc-macro2",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2828,6 +2868,7 @@ dependencies = [
  "thiserror 2.0.20",
  "toml",
  "walkdir",
+ "xtask",
 ]
 
 [[package]]

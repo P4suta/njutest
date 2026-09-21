@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Outcomes: the default is "not run", the wire names are stable, and what caught a mutant is said in one place.
+//! Outcomes: the wire names are stable, and what caught a mutant is said in one place.
 
 use rust_mutants::outcome::Outcome;
-
-#[test]
-fn the_default_outcome_is_not_run_so_a_forgotten_record_never_reads_as_a_kill() {
-    assert_eq!(Outcome::default(), Outcome::NotRun);
-    assert!(!Outcome::default().detected());
-}
 
 #[test]
 fn wire_names_are_stable_snake_case_and_round_trip() {
@@ -20,7 +14,7 @@ fn wire_names_are_stable_snake_case_and_round_trip() {
             "not_run",
             "killed",
             "survived",
-            "runaway",
+            "step_limit_reached",
             "waited",
             "inconclusive",
             "errored"
@@ -41,15 +35,14 @@ fn wire_names_are_stable_snake_case_and_round_trip() {
 }
 
 #[test]
-fn a_clock_cannot_catch_a_mutant_and_a_count_can() {
+fn neither_a_clock_nor_a_step_limit_proves_detection() {
     let detected: Vec<Outcome> = Outcome::ALL.into_iter().filter(|o| o.detected()).collect();
     assert_eq!(
         detected,
-        [Outcome::Killed, Outcome::Runaway],
-        "a bound expiring is a fact about the machine that watched, so two runs of one \
-         catalogue on one commit would disagree about the score by how loaded each machine \
-         was. A guard taken more times than the run allowed is a number every machine agrees \
-         on, and it establishes that the mutation stopped the program terminating"
+        [Outcome::Killed],
+        "a bound expiring is a fact about the machine that watched, and reaching a finite \
+         guard-take allowance establishes only where this execution stopped. Neither proves \
+         that the mutation cannot terminate, so neither is a detection"
     );
 }
 

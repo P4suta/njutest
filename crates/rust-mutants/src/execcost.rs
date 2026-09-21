@@ -3,8 +3,105 @@
 
 //! What it costs to run a file that has just been written.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use crate::runner::{MonitorFailure, ProcessExit, RunnerError};
+
+/// Why the cost of executing a newly written program could not be measured.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ExecCostError {
+    /// The directory that holds the fresh copy could not be made.
+    #[error("{} could not be made: {source}", path.display())]
+    CreateDirectory {
+        /// The directory that was requested.
+        path: PathBuf,
+        /// What the filesystem said.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The program could not be copied to its fresh name.
+    #[error("{} could not be copied to {}: {source}", from.display(), to.display())]
+    CopyProgram {
+        /// The program being copied.
+        from: PathBuf,
+        /// Its fresh name.
+        to: PathBuf,
+        /// What the filesystem said.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The probe completed, but its temporary directory could not be removed.
+    #[error("{} could not be removed after the probe: {source}", path.display())]
+    Cleanup {
+        /// The temporary directory.
+        path: PathBuf,
+        /// What the filesystem said.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Both the probe and the cleanup failed; neither failure is hidden.
+    #[error(
+        "the probe failed ({measurement}); removing {} also failed ({cleanup})",
+        path.display()
+    )]
+    CleanupAfterFailure {
+        /// The temporary directory.
+        path: PathBuf,
+        /// What stopped the probe.
+        #[source]
+        measurement: Box<Self>,
+        /// What stopped cleanup.
+        cleanup: std::io::Error,
+    },
+    /// The runner could not start or collect the program.
+    #[error("{} could not be run: {source}", path.display())]
+    Runner {
+        /// The program being measured.
+        path: PathBuf,
+        /// The runner failure.
+        #[source]
+        source: RunnerError,
+    },
+    /// A monitor failed even though this probe did not configure one.
+    #[error("{} had an unexpected monitor failure: {source}", path.display())]
+    Monitor {
+        /// The program being measured.
+        path: PathBuf,
+        /// The monitor failure.
+        #[source]
+        source: MonitorFailure,
+    },
+    /// The program exceeded the deliberately generous probe bound.
+    #[error("{} did not finish within {seconds} seconds, which is itself the answer", path.display())]
+    TimedOut {
+        /// The program being measured.
+        path: PathBuf,
+        /// The probe bound in seconds.
+        seconds: u64,
+    },
+    /// An execution monitor stopped a probe that has no monitor.
+    #[error("{} was stopped by an unexpected execution monitor", path.display())]
+    StoppedByMonitor {
+        /// The program being measured.
+        path: PathBuf,
+    },
+    /// The caller cancelled the probe.
+    #[error("{} was cancelled", path.display())]
+    Cancelled {
+        /// The program being measured.
+        path: PathBuf,
+    },
+    /// The program ran but did not return success.
+    #[error("{} exited {exit:?} rather than doing nothing successfully", path.display())]
+    Unsuccessful {
+        /// The program being measured.
+        path: PathBuf,
+        /// How it ended.
+        exit: ProcessExit,
+    },
+}
 
 /// How long a probe may take before the measurement is abandoned.
 ///
@@ -28,55 +125,86 @@ pub const PROBE_LIMIT: Duration = Duration::from_secs(600);
 /// # Errors
 /// What stopped the measurement, which is itself a thing to be told: a silence
 /// here reads as a machine that is well.
-pub fn exec_twice(temp: &Path, program: &Path) -> Result<(Duration, Duration), String> {
+pub fn exec_twice(temp: &Path, program: &Path) -> Result<(Duration, Duration), ExecCostError> {
     let dir = temp.join(format!(
         "{}exec-{}",
         crate::workspace::SCRATCH_DIR_PREFIX,
         std::process::id()
     ));
     let measured = made(&dir, program);
-    drop(std::fs::remove_dir_all(&dir));
-    measured
+    let cleaned = std::fs::remove_dir_all(&dir);
+    match (measured, cleaned) {
+        (answer, Ok(())) => answer,
+        (answer, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => answer,
+        (Ok(_answer), Err(source)) => Err(ExecCostError::Cleanup { path: dir, source }),
+        (Err(measurement), Err(cleanup)) => Err(ExecCostError::CleanupAfterFailure {
+            path: dir,
+            measurement: Box::new(measurement),
+            cleanup,
+        }),
+    }
 }
 
 /// The two runs, or what stopped them, which is a thing to be told rather than a silence.
-fn made(dir: &Path, program: &Path) -> Result<(Duration, Duration), String> {
-    std::fs::create_dir_all(dir)
-        .map_err(|why| format!("{} could not be made: {why}", dir.display()))?;
+fn made(dir: &Path, program: &Path) -> Result<(Duration, Duration), ExecCostError> {
+    std::fs::create_dir_all(dir).map_err(|source| ExecCostError::CreateDirectory {
+        path: dir.to_path_buf(),
+        source,
+    })?;
     let path = dir.join(if cfg!(windows) { "probe.exe" } else { "probe" });
-    std::fs::copy(program, &path).map_err(|why| {
-        format!(
-            "{} could not be copied to {}: {why}",
-            program.display(),
-            path.display()
-        )
+    std::fs::copy(program, &path).map_err(|source| ExecCostError::CopyProgram {
+        from: program.to_path_buf(),
+        to: path.clone(),
+        source,
     })?;
     Ok((timed(&path)?, timed(&path)?))
 }
 
 /// How long one run of `path` took, or nothing when it could not be started or would not finish.
-fn timed(path: &Path) -> Result<Duration, String> {
+fn timed(path: &Path) -> Result<Duration, ExecCostError> {
     let spec = crate::runner::Spec::new(
         [path.as_os_str().to_owned(), "--version".into()],
         crate::runner::Bound::After(PROBE_LIMIT),
     );
     let result = crate::runner::run(&spec, &crate::runner::Cancel::new());
-    if let Some(why) = result.error {
-        return Err(format!("{} would not start: {why}", path.display()));
+    let duration = result.duration;
+    match result.termination {
+        crate::runner::Termination::NotStarted { error }
+        | crate::runner::Termination::WaitFailed { error } => {
+            return Err(ExecCostError::Runner {
+                path: path.to_path_buf(),
+                source: error,
+            });
+        }
+        crate::runner::Termination::MonitorFailed { failure } => {
+            return Err(ExecCostError::Monitor {
+                path: path.to_path_buf(),
+                source: failure,
+            });
+        }
+        crate::runner::Termination::TimedOut => {
+            return Err(ExecCostError::TimedOut {
+                path: path.to_path_buf(),
+                seconds: PROBE_LIMIT.as_secs(),
+            });
+        }
+        crate::runner::Termination::StoppedByMonitor => {
+            return Err(ExecCostError::StoppedByMonitor {
+                path: path.to_path_buf(),
+            });
+        }
+        crate::runner::Termination::Cancelled { .. } => {
+            return Err(ExecCostError::Cancelled {
+                path: path.to_path_buf(),
+            });
+        }
+        crate::runner::Termination::Exited(ProcessExit::Code(0)) => {}
+        crate::runner::Termination::Exited(exit) => {
+            return Err(ExecCostError::Unsuccessful {
+                path: path.to_path_buf(),
+                exit,
+            });
+        }
     }
-    if result.timed_out {
-        return Err(format!(
-            "{} did not finish within {} seconds, which is itself the answer",
-            path.display(),
-            PROBE_LIMIT.as_secs()
-        ));
-    }
-    if result.exit_code != 0 {
-        return Err(format!(
-            "{} exited {} rather than doing nothing successfully",
-            path.display(),
-            result.exit_code
-        ));
-    }
-    Ok(result.duration)
+    Ok(duration)
 }

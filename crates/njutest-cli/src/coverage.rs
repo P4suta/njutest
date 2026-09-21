@@ -5,13 +5,17 @@
 
 use crate::error::{self, ErrorCode};
 
+#[cfg(feature = "testkit")]
+pub use rust_mutants::coverage::{Block, Point};
+#[cfg(feature = "testkit")]
 pub use rust_mutants::coverage::{
-    Block, FileRegions, INSTRUMENT_FLAG, PROFILE_ENV, Point, REGION_KIND_CODE, Region, Tools,
-    covered, instrumented, parse_export, profile_pattern, written_profiles,
+    FileRegions, INSTRUMENT_FLAG, REGION_KIND_CODE, Region, covered, instrumented, parse_export,
+    profile_pattern, written_profiles,
 };
+pub use rust_mutants::coverage::{PROFILE_ENV, Tools};
 
 /// The failure modes of coverage, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum CoverageErrorKind {
     /// A coverage export could not be read.
     Unreadable,
@@ -24,14 +28,6 @@ pub enum CoverageErrorKind {
 }
 
 impl CoverageErrorKind {
-    /// Every kind, in code order.
-    pub const ALL: [Self; 4] = [
-        Self::Unreadable,
-        Self::ToolsMissing,
-        Self::ToolFailed,
-        Self::NothingWritten,
-    ];
-
     /// The stable code of this failure.
     #[must_use]
     pub const fn code(self) -> ErrorCode {
@@ -67,6 +63,8 @@ pub struct CoverageError {
 impl CoverageError {
     /// The failure mode.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub const fn kind(&self) -> CoverageErrorKind {
         self.kind
     }

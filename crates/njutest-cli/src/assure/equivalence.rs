@@ -9,7 +9,6 @@ use crate::assure::route::Route;
 
 /// Why a mutation the compiler renders identically is still not one this run calls equivalent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Refused {
     /// No test executed the position, so identical artifacts say the code is untested rather than that the mutation is unobservable.
     NothingReached,
@@ -116,6 +115,17 @@ pub struct Decided {
     pub detail: String,
 }
 
+/// Why equivalence answers could not be correlated with the mutation ledger.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EquivalenceError {
+    /// Two answers claimed the same canonical display identity.
+    #[error("equivalence produced two answers for {display_id}")]
+    DuplicateDecision {
+        /// The duplicated display identity.
+        display_id: String,
+    },
+}
+
 /// Asks the compiler about every mutation whose premises hold, and says what it answered about each.
 ///
 /// # Errors
@@ -182,14 +192,16 @@ pub fn prove(
 
 /// What a mutation whose premises do not hold is decided as, without a build.
 fn refused(one: &Asked, unsafe_packages: &BTreeSet<String>, tree_written: bool) -> Decided {
-    let why = askable(Standing {
+    let why = match askable(Standing {
         route: &one.route,
         package: &one.package,
         unsafe_packages,
         tree_written,
         withdrawn: false,
-    })
-    .err();
+    }) {
+        Ok(()) => None,
+        Err(why) => Some(why),
+    };
     Decided {
         display_id: one.display_id.clone(),
         equivalent: false,
@@ -227,14 +239,27 @@ pub fn asked(
 }
 
 /// Turns every survival the compiler renders identically into an equivalence, and records what the layer said about each.
+///
+/// # Errors
+/// Returns [`EquivalenceError::DuplicateDecision`] when the proof ledger is
+/// not a function from display identity to decision.
 pub fn settle(
     judged: &mut [crate::assure::mutation::Judged],
     decided: &[Decided],
     watch: crate::watch::Watch<'_>,
-) {
+) -> Result<(), EquivalenceError> {
     let mut answers: BTreeMap<&str, &Decided> = BTreeMap::new();
     for answer in decided {
-        let _first = answers.entry(answer.display_id.as_str()).or_insert(answer);
+        match answers.entry(answer.display_id.as_str()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(answer);
+            }
+            std::collections::btree_map::Entry::Occupied(first) => {
+                return Err(EquivalenceError::DuplicateDecision {
+                    display_id: (*first.key()).to_owned(),
+                });
+            }
+        }
     }
     for one in judged.iter_mut() {
         let Some(answer) = answers.get(one.display_id.as_str()) else {
@@ -253,4 +278,5 @@ pub fn settle(
             };
         }
     }
+    Ok(())
 }

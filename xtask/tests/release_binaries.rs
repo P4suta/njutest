@@ -169,7 +169,10 @@ fn every_benchmark_the_workspace_declares_is_one_the_task_runs() {
             else {
                 continue;
             };
-            let _added = declared.insert((package.to_owned(), name.to_owned()));
+            assert!(
+                declared.insert((package.to_owned(), name.to_owned())),
+                "{package}/{name} is declared only once"
+            );
         }
     }
     assert!(

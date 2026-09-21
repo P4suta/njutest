@@ -3,7 +3,8 @@
 #
 # cargo-fuzz targets for the engine's fail-closed parsers and byte
 # transformations. Standalone (not a workspace member): fuzzing needs nightly
-# and a sanitizer, and the root lint set does not apply to harness code.
+# and a sanitizer. `cargo xtask fuzz-clippy` derives the root workspace's
+# rustc and Clippy policy and applies it to every target without copying it here.
 
 [package]
 name = "rust-mutants-fuzz"
@@ -18,7 +19,8 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
-njutest-cli = { path = "../crates/njutest-cli" }
+njutest-devkit = { path = "../crates/njutest-devkit" }
+njutest-cli = { path = "../crates/njutest-cli", features = ["testkit"] }
 rust-mutants = { path = "../crates/rust-mutants" }
 rust-mutants-cli = { path = "../crates/rust-mutants-cli" }
 serde_json = "1"
@@ -184,6 +186,13 @@ bench = false
 [[bin]]
 name = "duration"
 path = "fuzz_targets/duration.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model_result"
+path = "fuzz_targets/model_result.rs"
 test = false
 doc = false
 bench = false

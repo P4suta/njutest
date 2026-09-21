@@ -4,10 +4,71 @@
 //! `njutest accept`: record that a reviewer looked at a surviving mutant.
 
 use std::io::Write;
+use std::str::FromStr;
 
 use crate::app::runs;
 use crate::cli::{Accept as Arguments, EXIT_ASSURED, EXIT_ERROR, Environment};
 use crate::config;
+
+/// Why the acceptance ledger cannot be opened for a checked edit.
+#[derive(Debug, thiserror::Error)]
+enum LedgerError {
+    /// The existing configuration could not be read.
+    #[error(
+        "{}: reading {}: {source}",
+        crate::error::CONFIG_UNREADABLE.code,
+        path.display()
+    )]
+    Read {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// The existing configuration is not TOML.
+    #[error(
+        "{}: {}: {source}",
+        crate::error::CONFIG_UNPARSABLE.code,
+        path.display()
+    )]
+    Parse {
+        path: std::path::PathBuf,
+        #[source]
+        source: toml_edit::TomlError,
+    },
+}
+
+/// Why the requested acceptance does not resolve to one acceptable mutation.
+#[derive(Debug, thiserror::Error)]
+enum ResolveError {
+    /// The stored run or its report could not be read.
+    #[error(transparent)]
+    Run(#[from] runs::RunError),
+    /// The completed report could not reproduce its exact projection.
+    #[error(transparent)]
+    Count(#[from] crate::report::CountError),
+    /// The prefix names one mutation, but its outcome is not accept-able.
+    #[error(
+        "{}: {mutant} is {outcome}, and only a mutation nothing noticed is a decision to accept",
+        crate::error::CONFIG_INVALID.code
+    )]
+    Outcome { mutant: String, outcome: String },
+    /// No mutation has the requested prefix.
+    #[error(
+        "{}: no mutant of {run} starts with {prefix}",
+        crate::error::RUN_NOT_FOUND.code
+    )]
+    Missing { run: String, prefix: String },
+    /// More than one mutation has the requested prefix.
+    #[error(
+        "{}: {prefix} names {count} mutants: {matches}",
+        crate::error::RUN_NOT_FOUND.code
+    )]
+    Ambiguous {
+        prefix: String,
+        count: usize,
+        matches: String,
+    },
+}
 
 /// Appends an acceptance to the configuration, keeping its comments.
 /// The locator an acceptance is written as, so it holds through the next edit to the file.
@@ -66,44 +127,38 @@ fn written(arguments: &Arguments, locator: Option<&Written>, identity: &str) -> 
 }
 
 /// Records one surviving mutation as accepted, with the reason a reader gave.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = &environment.working_directory;
     let found = match resolve(root, arguments) {
         Ok(found) => found,
-        Err(message) => {
-            super::diagnose(stderr, &message);
-            return EXIT_ERROR;
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    let identity = found.id.clone();
-    let locator = (!found.item.is_empty() && !found.path.is_empty()).then(|| Written {
-        path: found.path.clone(),
-        item: found.item.clone(),
-        rule: found.rule.clone(),
-        original: found.original.clone(),
-        line: found.position.line,
+    let identity = found.id().to_owned();
+    let locator = (!found.item().is_empty() && !found.path().is_empty()).then(|| Written {
+        path: found.path().to_owned(),
+        item: found.item().to_owned(),
+        rule: found.rule().to_owned(),
+        original: found.original().to_owned(),
+        line: found.position().line,
     });
 
     let path = root.join(config::FILE_NAME);
-    let existing =
-        std::fs::read_to_string(&path).unwrap_or_else(|_error| String::from("version = 1\n"));
-    let mut document = match existing.parse::<toml_edit::DocumentMut>() {
+    let mut document = match ledger(&path) {
         Ok(document) => document,
         Err(error) => {
-            super::diagnose(
-                stderr,
-                &format!(
-                    "{}: {}: {error}",
-                    crate::error::CONFIG_UNPARSABLE.code,
-                    path.display()
-                ),
-            );
-            return EXIT_ERROR;
+            super::diagnose(stderr, &error.to_string())?;
+            return Ok(EXIT_ERROR);
         }
     };
 
@@ -117,15 +172,15 @@ pub fn run(
                 "{}: the configuration's acceptance is not a list of tables",
                 crate::error::CONFIG_INVALID.code
             ),
-        );
-        return EXIT_ERROR;
+        )?;
+        return Ok(EXIT_ERROR);
     };
     if array
         .iter()
         .any(|table| already(table, &identity, locator.as_ref()))
     {
-        super::say(stdout, &format!("{identity} was already accepted"));
-        return EXIT_ASSURED;
+        super::say(stdout, &format!("{identity} was already accepted"))?;
+        return Ok(EXIT_ASSURED);
     }
 
     array.push(written(arguments, locator.as_ref(), &identity));
@@ -138,55 +193,75 @@ pub fn run(
                 crate::error::CONFIG_UNREADABLE.code,
                 path.display()
             ),
-        );
-        return EXIT_ERROR;
+        )?;
+        return Ok(EXIT_ERROR);
     }
     super::say(
         stdout,
         &format!("accepted {identity} in {}", config::FILE_NAME),
-    );
-    EXIT_ASSURED
+    )?;
+    Ok(EXIT_ASSURED)
+}
+
+fn ledger(path: &std::path::Path) -> Result<toml_edit::DocumentMut, LedgerError> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::from("version = 1\n"),
+        Err(source) => {
+            return Err(LedgerError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    toml_edit::DocumentMut::from_str(&existing).map_err(|source| LedgerError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// The full identity a prefix names, from the run that measured it.
 fn resolve(
     root: &std::path::Path,
     arguments: &Arguments,
-) -> Result<crate::report::MutantRecord, String> {
-    let run = runs::resolve(root, arguments.run.as_deref()).map_err(|error| error.to_string())?;
-    let report = runs::report(root, &run).map_err(|error| error.to_string())?;
-    let every: Vec<&crate::report::MutantRecord> = report.mutants.iter().collect();
+) -> Result<crate::report::ProjectedMutant, ResolveError> {
+    let run = runs::resolve(root, arguments.run.as_deref())?;
+    let report = runs::report(&run)?;
+    let conclusion = report.conclusion()?;
+    let every: Vec<&crate::report::ProjectedMutant> = conclusion.mutants.iter().collect();
     let matching = crate::naming::matching(&every, &arguments.mutant);
     match matching.as_slice() {
         [only]
             if matches!(
-                only.outcome.outcome(),
-                crate::report::Outcome::Survived | crate::report::Outcome::Unreached
+                only.decision(),
+                crate::report::Decision::Unnoticed | crate::report::Decision::Unreached
             ) =>
         {
             Ok((*only).clone())
         }
-        [only] => Err(format!(
-            "{}: {} is {}, and only a mutation nothing noticed is a decision to accept",
-            crate::error::CONFIG_INVALID.code,
-            only.display_id,
-            only.outcome.name()
-        )),
-        [] => Err(format!(
-            "{}: no mutant of {run} starts with {}",
-            crate::error::RUN_NOT_FOUND.code,
-            arguments.mutant
-        )),
-        several => Err(format!(
-            "{}: {} names {} mutants: {}",
-            crate::error::RUN_NOT_FOUND.code,
-            arguments.mutant,
-            several.len(),
-            several
+        [only] => Err(ResolveError::Outcome {
+            mutant: only.display_id().to_owned(),
+            outcome: only.decision().name().to_owned(),
+        }),
+        [] => Err(ResolveError::Missing {
+            run: run.id().to_string(),
+            prefix: arguments.mutant.clone(),
+        }),
+        several => Err(ResolveError::Ambiguous {
+            prefix: arguments.mutant.clone(),
+            count: several.len(),
+            matches: several
                 .iter()
-                .map(|one| format!("{} at {}:{}", one.display_id, one.path, one.position.line))
+                .map(|one| {
+                    format!(
+                        "{} at {}:{}",
+                        one.display_id(),
+                        one.path(),
+                        one.position().line
+                    )
+                })
                 .collect::<Vec<String>>()
-                .join(", ")
-        )),
+                .join(", "),
+        }),
     }
 }

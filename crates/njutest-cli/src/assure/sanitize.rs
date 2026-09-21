@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use rust_mutants::runner::{Spec, run};
 
+use crate::error::RunnerError;
 use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
 use crate::watch::Watch;
@@ -66,8 +67,10 @@ pub struct Sanitized {
 }
 
 /// Runs the suite once under each sanitizer the configuration asked for.
-#[must_use]
-pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Sanitized {
+/// # Errors
+/// Returns [`RunnerError::PhaseOutput`] when a sanitizer or its inherited
+/// flags are not valid UTF-8 and therefore cannot be interpreted exactly.
+pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Result<Sanitized, RunnerError> {
     let mut done = Sanitized::default();
     if !sanitizing.sanitizers.is_empty() {
         done.limitations.push(Limitation::new(
@@ -80,14 +83,19 @@ pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Sanitized {
             .iter()
             .take_while(|_| !watch.cancel.is_cancelled())
         {
-            one(&mut done, sanitizing, sanitizer, watch);
+            one(&mut done, sanitizing, sanitizer, watch)?;
         }
     }
-    done
+    Ok(done)
 }
 
 /// Runs the suite once under one sanitizer.
-fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch: Watch<'_>) {
+fn one(
+    done: &mut Sanitized,
+    sanitizing: &Sanitizing<'_>,
+    sanitizer: &str,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
     let mut argv: Vec<OsString> = vec![
         sanitizing.cargo.as_os_str().to_owned(),
         OsString::from("+nightly"),
@@ -117,18 +125,21 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
         ),
     );
     spec.dir = Some(sanitizing.root.to_path_buf());
-    spec.env = Some(instrumenting(&sanitizing.env, sanitizer));
+    spec.env = Some(instrumenting(&sanitizing.env, sanitizer)?);
 
     let ran = run(&spec, watch.cancel);
-    watch.trace.exec(ExecRecord::of(&spec, &ran));
-    let said = String::from_utf8_lossy(&ran.output).into_owned();
-    if ran.error.is_some() || UNAVAILABLE.iter().any(|marker| said.contains(marker)) {
+    watch.trace.exec_result(ExecRecord::of(&spec, &ran));
+    let said = std::str::from_utf8(&ran.output).map_err(|source| RunnerError::PhaseOutput {
+        phase: "sanitizer",
+        source,
+    })?;
+    if ran.error().is_some() || UNAVAILABLE.iter().any(|marker| said.contains(marker)) {
         refuse(done, sanitizer, "the toolchain would not run it");
-        return;
+        return Ok(());
     }
-    if ran.timed_out {
+    if ran.timed_out() {
         refuse(done, sanitizer, "it ran out of time");
-        return;
+        return Ok(());
     }
     done.ran.push(sanitizer.to_owned());
     if let Some(line) = FOUND.iter().find_map(|marker| {
@@ -140,18 +151,21 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
             kind: FindingKind::UndefinedBehaviour,
             subject: format!("sanitizer:{sanitizer}"),
             detail: line,
+            origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
-    } else if ran.exit_code != 0 {
+    } else if ran.conventional_exit_code() != 0 {
         done.findings.push(Finding {
             kind: FindingKind::FailingTest,
             subject: format!("sanitizer:{sanitizer}"),
             detail: format!("a test fails under {sanitizer} that passes without it"),
+            origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
     }
+    Ok(())
 }
 
 /// A sanitizer that was asked for and could not be run: a gap somebody asked to close, stated as one.
@@ -166,26 +180,34 @@ fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
         detail: format!(
             "the suite was not run under {sanitizer}, which the configuration asks for"
         ),
+        origin: crate::report::FindingOrigin::Global,
         path: None,
         position: None,
     });
 }
 
 /// The environment one sanitizer run adds: the flag, and nothing else the caller did not already have.
-fn instrumenting(base: &[(OsString, OsString)], sanitizer: &str) -> Vec<(OsString, OsString)> {
+fn instrumenting(
+    base: &[(OsString, OsString)],
+    sanitizer: &str,
+) -> Result<Vec<(OsString, OsString)>, RunnerError> {
     let mut env: BTreeMap<OsString, OsString> = base.iter().cloned().collect();
-    let mut flags: Vec<String> = env
-        .get(OsStr::new("RUSTFLAGS"))
-        .map(|value| {
-            value
-                .to_string_lossy()
-                .split_whitespace()
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-    let _dropped = env.remove(OsStr::new("CARGO_ENCODED_RUSTFLAGS"));
+    let mut flags: Vec<String> = match env.get(OsStr::new("RUSTFLAGS")) {
+        Some(value) => std::str::from_utf8(value.as_encoded_bytes())
+            .map_err(|source| RunnerError::PhaseOutput {
+                phase: "sanitizer RUSTFLAGS",
+                source,
+            })?
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect(),
+        None => Vec::new(),
+    };
+    env.retain(|name, _value| name != OsStr::new("CARGO_ENCODED_RUSTFLAGS"));
     flags.push(format!("-Zsanitizer={sanitizer}"));
-    let _replaced = env.insert(OsString::from("RUSTFLAGS"), OsString::from(flags.join(" ")));
-    env.into_iter().collect()
+    env.extend(std::iter::once((
+        OsString::from("RUSTFLAGS"),
+        OsString::from(flags.join(" ")),
+    )));
+    Ok(env.into_iter().collect())
 }

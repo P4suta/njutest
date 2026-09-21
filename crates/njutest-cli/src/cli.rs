@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 
 use rust_mutants::runner::Cancel;
 
-use std::fmt::Write as _;
-
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// The code every verdict that establishes something earns; [`exit_codes`] says which.
@@ -51,17 +49,17 @@ pub fn exit_codes() -> String {
         if code == EXIT_ERROR {
             line.push_str(", invalid input, or an infrastructure failure");
         }
-        let _written = write!(said, "\n  {code:<4} {line}");
+        crate::text::append(&mut said, format_args!("\n  {code:<4} {line}"));
     }
-    let _written = write!(
-        said,
-        "\n  {EXIT_INTERRUPTED:<4} interrupted\n  {EXIT_TERMINATED:<4} terminated"
+    crate::text::append(
+        &mut said,
+        format_args!("\n  {EXIT_INTERRUPTED:<4} interrupted\n  {EXIT_TERMINATED:<4} terminated"),
     );
     said
 }
 
 /// What the machine is, as an argument.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Environment {
     /// The whole environment, as names and values.
     pub vars: Vec<(OsString, OsString)>,
@@ -473,11 +471,10 @@ pub enum TraceCommand {
 }
 
 /// What a run, stored or just finished, is written out as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum Format {
     /// The record stream.
-    #[default]
     Lines,
     /// The canonical document, exactly as the run wrote it.
     Json,
@@ -489,17 +486,36 @@ pub enum Format {
     Agent,
 }
 
+impl Format {
+    const DEFAULT_OUTPUT: Self = Self::Lines;
+}
+
+impl Default for Format {
+    fn default() -> Self {
+        Self::DEFAULT_OUTPUT
+    }
+}
+
 /// How a run writes what it is doing while it does it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum Ui {
     /// Lines a person reads.
-    #[default]
     Plain,
     /// One JSON object per line, for a program.
     Jsonl,
     /// One block that says where the run is, rewritten in place.
     Dashboard,
+}
+
+impl Ui {
+    const DEFAULT_PRESENTATION: Self = Self::Plain;
+}
+
+impl Default for Ui {
+    fn default() -> Self {
+        Self::DEFAULT_PRESENTATION
+    }
 }
 
 /// A command line that could not be parsed, or a request to print help or the version, rendered for the stream it belongs on.
@@ -520,7 +536,8 @@ fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
         .and_then(|name| Path::new(name).file_stem())
         .is_some_and(|stem| stem == "cargo-njutest");
     if called_by_cargo && args.get(1).is_some_and(|word| word == "njutest") {
-        let _repeated = args.remove(1);
+        let repeated = args.remove(1);
+        assert_eq!(repeated, "njutest", "the guarded cargo alias is exact");
     }
     args
 }

@@ -9,59 +9,77 @@ use crate::app::runs;
 use crate::cli::{EXIT_ASSURED, EXIT_ERROR, Environment, Format, Report as Arguments};
 use crate::report::lines;
 
+#[derive(Debug, thiserror::Error)]
+enum ProjectionError {
+    #[error(transparent)]
+    Store(#[from] crate::app::reports::StoreError),
+    #[error("{}: {source}", crate::error::REPORT_UNSOUND.code)]
+    Count {
+        #[from]
+        source: crate::report::CountError,
+    },
+}
+
 /// One stored run, in the shape whoever asked for it wants.
 fn projected(
     shape: Format,
     report: &crate::report::Report,
-    stored: (&std::path::Path, &str),
+    stored: &runs::ResolvedRun,
     environment: &Environment,
-) -> String {
-    let (root, run) = stored;
-    let store = crate::app::reports::Store::read(root);
-    let document = store.run(run).join(crate::app::reports::DOCUMENT_NAME);
-    let said = store.said(&document);
+) -> Result<String, ProjectionError> {
+    let root = &environment.working_directory;
+    let said = stored.said_document();
     if shape == Format::Lines {
-        return lines::kept(report, &said);
+        return Ok(lines::kept(report, said)?);
     }
-    let sources = crate::presentation::Sources::read(root, report);
-    let told = crate::presentation::Told::of(report, &sources, &said);
+    let sources = crate::presentation::Sources::read(root, report)?;
+    let told = crate::presentation::Told::of(report, &sources, said)?;
     if shape == Format::Agent {
-        return crate::presentation::agent::brief(&told);
+        return Ok(crate::presentation::agent::brief(&told));
     }
-    crate::presentation::human::draw(&told, environment.terminal)
+    Ok(crate::presentation::human::draw(
+        &told,
+        environment.terminal,
+    ))
 }
 
 /// Prints a run's report.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = &environment.working_directory;
     let run = match runs::resolve(root, arguments.run.as_deref()) {
         Ok(run) => run,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
     let text = match arguments.format {
-        Format::Json => runs::document(root, &run).map_err(|error| error.to_string()),
+        Format::Json => runs::document(&run).map_err(|error| error.to_string()),
         shape @ (Format::Lines | Format::Spec | Format::Human | Format::Agent) => {
-            runs::report(root, &run)
-                .map(|report| projected(shape, &report, (root, &run), environment))
-                .map_err(|error| error.to_string())
+            match runs::report(&run) {
+                Ok(report) => {
+                    projected(shape, &report, &run, environment).map_err(|error| error.to_string())
+                }
+                Err(error) => Err(error.to_string()),
+            }
         }
     };
     match text {
         Ok(text) => {
-            let _written = stdout.write_all(text.as_bytes());
-            EXIT_ASSURED
+            stdout.write_all(text.as_bytes())?;
+            Ok(EXIT_ASSURED)
         }
         Err(message) => {
-            super::diagnose(stderr, &message);
-            EXIT_ERROR
+            super::diagnose(stderr, &message)?;
+            Ok(EXIT_ERROR)
         }
     }
 }

@@ -31,6 +31,8 @@ pub(super) struct Marker {
 /// A marker the engine cannot read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum MarkerError {
+    /// Parser/source offsets could not be represented or contradicted the source bounds.
+    SourceBounds,
     /// The marker names no reason.
     WithoutReason {
         /// The 1-based line.
@@ -47,28 +49,29 @@ pub(super) enum MarkerError {
 
 /// The file a scan reads markers out of.
 #[derive(Debug, Clone, Copy)]
-struct Source<'a> {
+struct Source<'text, 'index> {
     /// The whole text, byte order mark and shebang included.
-    text: &'a str,
+    text: &'text str,
     /// The byte offset the parsed remainder starts at, which is what token spans are relative to.
     base: usize,
     /// The lines of the whole text.
-    index: &'a LineIndex,
+    index: &'index LineIndex<'text>,
 }
 
 /// Every marker in one file, in source order.
 ///
 /// # Errors
-/// Returns the first marker that names no reason or an unknown directive.
-pub(super) fn markers(
-    text: &str,
+/// Returns the first marker that names no reason or an unknown directive, or
+/// a parser/source offset that cannot be represented exactly.
+pub(super) fn markers<'text>(
+    text: &'text str,
     base: u32,
     stream: &TokenStream,
-    index: &LineIndex,
+    index: &LineIndex<'text>,
 ) -> Result<Vec<Marker>, MarkerError> {
     let source = Source {
         text,
-        base: usize::try_from(base).unwrap_or(usize::MAX),
+        base: usize::try_from(base).map_err(|_overflow| MarkerError::SourceBounds)?,
         index,
     };
     let mut covered = Vec::new();
@@ -76,7 +79,10 @@ pub(super) fn markers(
     covered.sort_unstable();
     let mut found = Vec::new();
     let mut cursor = 0usize;
-    let last = text.len().saturating_sub(source.base);
+    let last = text
+        .len()
+        .checked_sub(source.base)
+        .ok_or(MarkerError::SourceBounds)?;
     for (start, end) in covered {
         if start > cursor {
             read_gap(source, cursor..start, &mut found)?;
@@ -115,30 +121,35 @@ fn collect(stream: &TokenStream, into: &mut Vec<(usize, usize)>) {
 
 /// The markers in one stretch of text no token covers.
 fn read_gap(
-    source: Source<'_>,
+    source: Source<'_, '_>,
     range: std::ops::Range<usize>,
     into: &mut Vec<Marker>,
 ) -> Result<(), MarkerError> {
-    let from = source.base.saturating_add(range.start);
-    let to = source.base.saturating_add(range.end).min(source.text.len());
-    let Some(gap) = source.text.get(from..to) else {
-        return Ok(());
-    };
+    let from = source
+        .base
+        .checked_add(range.start)
+        .ok_or(MarkerError::SourceBounds)?;
+    let to = source
+        .base
+        .checked_add(range.end)
+        .ok_or(MarkerError::SourceBounds)?
+        .min(source.text.len());
+    let gap = source.text.get(from..to).ok_or(MarkerError::SourceBounds)?;
     let mut at = 0usize;
     while at < gap.len() {
-        let rest = gap.get(at..).unwrap_or_default();
+        let rest = gap.get(at..).ok_or(MarkerError::SourceBounds)?;
         if let Some(body) = rest.strip_prefix("//") {
             let length = body.find('\n').unwrap_or(body.len());
-            let content = body.get(..length).unwrap_or_default();
-            read_marker(source, from.saturating_add(at), content, into)?;
-            at = at.saturating_add(2).saturating_add(length);
+            let content = body.get(..length).ok_or(MarkerError::SourceBounds)?;
+            read_marker(source, checked_add(from, at)?, content, into)?;
+            at = checked_add(checked_add(at, 2)?, length)?;
         } else if let Some(body) = rest.strip_prefix("/*") {
             let length = body.find("*/").unwrap_or(body.len());
-            let content = body.get(..length).unwrap_or_default();
-            read_marker(source, from.saturating_add(at), content, into)?;
-            at = at.saturating_add(4).saturating_add(length);
+            let content = body.get(..length).ok_or(MarkerError::SourceBounds)?;
+            read_marker(source, checked_add(from, at)?, content, into)?;
+            at = checked_add(checked_add(at, 4)?, length)?;
         } else {
-            at = at.saturating_add(rest.chars().next().map_or(1, char::len_utf8));
+            at = checked_add(at, rest.chars().next().map_or(1, char::len_utf8))?;
         }
     }
     Ok(())
@@ -146,7 +157,7 @@ fn read_gap(
 
 /// One comment, which is a marker when it opens with the word.
 fn read_marker(
-    source: Source<'_>,
+    source: Source<'_, '_>,
     at: usize,
     content: &str,
     into: &mut Vec<Marker>,
@@ -154,8 +165,12 @@ fn read_marker(
     let Some(rest) = content.trim_start().strip_prefix(PREFIX) else {
         return Ok(());
     };
-    let offset = u32::try_from(at).unwrap_or(u32::MAX);
-    let line = source.index.position(source.text, offset).line;
+    let offset = u32::try_from(at).map_err(|_overflow| MarkerError::SourceBounds)?;
+    let line = source
+        .index
+        .position(offset)
+        .map_err(|_position| MarkerError::SourceBounds)?
+        .line;
     let said = rest.trim();
     let (directive, reason) = said.split_once(char::is_whitespace).unwrap_or((said, ""));
     if directive != DIRECTIVE {
@@ -180,16 +195,21 @@ fn read_marker(
                 .map_or(Some(before), |(_, last)| Some(last))
         })
         .is_some_and(|last| last.trim().is_empty());
+    let scope = if own_line {
+        line.checked_add(1).ok_or(MarkerError::SourceBounds)?
+    } else {
+        line
+    };
     into.push(Marker {
         offset,
         line,
-        scope: if own_line {
-            line.saturating_add(1)
-        } else {
-            line
-        },
+        scope,
         own_line,
         reason: reason.to_owned(),
     });
     Ok(())
+}
+
+fn checked_add(left: usize, right: usize) -> Result<usize, MarkerError> {
+    left.checked_add(right).ok_or(MarkerError::SourceBounds)
 }

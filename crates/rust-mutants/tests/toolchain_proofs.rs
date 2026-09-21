@@ -241,7 +241,7 @@ fn exec_never_discharges_and_keeps_its_coverage_narrowing() {
     let route = session.route(discharging);
     let ran = session
         .exec(
-            &rust_mutants::session::Request::new(discharging.display_id.clone()),
+            &rust_mutants::session::Request::new(discharging.display_id.to_string()),
             &Cancel::new(),
         )
         .expect("exec");
@@ -345,13 +345,7 @@ fn measuring(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::
 #[test]
 fn a_target_that_never_entered_the_body_is_discharged_without_a_coverage_build() {
     let fixture = Fixture::copy("fixture-coverage");
-    let session = measuring(
-        &fixture,
-        Measuring {
-            coverage: false,
-            touch: true,
-        },
-    );
+    let session = measuring(&fixture, Measuring::GUARDS);
     let mut proofs = Vec::new();
     for mutant in session.catalog().mutants() {
         for one in session.route(mutant).discharged() {
@@ -474,7 +468,12 @@ fn a_condition_the_compiler_takes_is_one_the_pass_vouches_for() {
     )
     .expect("the workspace opens");
     let mut sources = std::collections::BTreeMap::new();
-    drop(sources.insert(path.to_owned(), source.into_bytes()));
+    assert!(
+        sources
+            .insert(path.to_owned(), source.into_bytes())
+            .is_none(),
+        "the fixture source path is unique"
+    );
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -549,9 +548,10 @@ mod tests {
     );
 
     let cancel = Cancel::new();
-    let recorder = rust_mutants::trace::Recorder::wall(rust_mutants::trace::Sink::Memory(
-        rust_mutants::trace::MemorySink::unbounded(),
-    ));
+    let recorder = rust_mutants::trace::Recorder::wall(
+        rust_mutants::trace::Sink::Memory(rust_mutants::trace::MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
     let workspace = Workspace::open(
         fixture.root(),
         rust_mutants::workspace::OpenOptions {
@@ -562,7 +562,12 @@ mod tests {
     )
     .expect("the workspace opens");
     let mut sources = std::collections::BTreeMap::new();
-    drop(sources.insert(path.to_owned(), source.as_bytes().to_vec()));
+    assert!(
+        sources
+            .insert(path.to_owned(), source.as_bytes().to_vec())
+            .is_none(),
+        "the fixture source path is unique"
+    );
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -635,16 +640,30 @@ fn established_over(
     files: &[(&str, &str)],
     holding: &[&str],
 ) -> rust_mutants::prove::Established {
-    recorded_over(fixture, files, holding).0
+    refused_over(fixture, files, holding)
+        .0
+        .expect("the pass runs")
 }
 
-/// [`established_over`], with the recording the pass left.
+/// [`established_over`], with the refusal the pass may answer a missing source with.
+fn refused_over(
+    fixture: &Fixture,
+    files: &[(&str, &str)],
+    holding: &[&str],
+) -> (
+    Result<rust_mutants::prove::Established, rust_mutants::EngineError>,
+    rust_mutants::trace::Recorder,
+) {
+    recorded_over(fixture, files, holding)
+}
+
+/// [`established_over`], with the refusal the pass may answer instead, and the recording it left.
 fn recorded_over(
     fixture: &Fixture,
     files: &[(&str, &str)],
     holding: &[&str],
 ) -> (
-    rust_mutants::prove::Established,
+    Result<rust_mutants::prove::Established, rust_mutants::EngineError>,
     rust_mutants::trace::Recorder,
 ) {
     for (path, source) in files {
@@ -663,12 +682,18 @@ fn recorded_over(
     let mut sources = std::collections::BTreeMap::new();
     for (path, source) in files {
         if holding.contains(path) {
-            drop(sources.insert((*path).to_owned(), source.as_bytes().to_vec()));
+            assert!(
+                sources
+                    .insert((*path).to_owned(), source.as_bytes().to_vec())
+                    .is_none(),
+                "the fixture source path is unique"
+            );
         }
     }
-    let recorder = rust_mutants::trace::Recorder::wall(rust_mutants::trace::Sink::Memory(
-        rust_mutants::trace::MemorySink::unbounded(),
-    ));
+    let recorder = rust_mutants::trace::Recorder::wall(
+        rust_mutants::trace::Sink::Memory(rust_mutants::trace::MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -682,8 +707,7 @@ fn recorded_over(
         },
         &cancel,
         &recorder,
-    )
-    .expect("the pass runs");
+    );
     workspace.close().expect("close");
     (established, recorder)
 }
@@ -716,7 +740,7 @@ pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
 }
 
 #[test]
-fn a_file_the_pass_cannot_read_does_not_stop_it_writing_the_others() {
+fn a_file_the_pass_cannot_read_stops_it_rather_than_being_read_as_silence() {
     let refusable = "\
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
@@ -765,12 +789,20 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         "the second file holds a comparison the syntax offers and the compiler will refuse, \
          which is what makes the difference visible at all"
     );
-    let established = established_over(&fixture, &files, &["src/lib.rs"]);
+    let (refused, _) = refused_over(&fixture, &files, &["src/lib.rs"]);
+    let error = refused.expect_err(
+        "a file with a claim and no source held for it is a question nobody put, and a \
+         pass that carried on would read the compiler's silence over a pristine tree as \
+         vouching for the rest",
+    );
     assert!(
-        established.comparable.is_empty(),
-        "the first file has no source to write, and a pass that stopped there would leave the \
-         second unwritten too - so the compiler would see a pristine tree, say nothing, and \
-         every claim of it would be granted on a question nobody put: {established:?}"
+        matches!(
+            error,
+            rust_mutants::EngineError::Session(
+                rust_mutants::workspace::SessionError::SelectionSourceMissing { .. }
+            )
+        ),
+        "the pass fails closed rather than granting claims it never asked about: {error}"
     );
 }
 
@@ -801,11 +833,13 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         .find("if a <= b {")
         .map_or(0, |at| at + "if a <= b ".len());
     let closing = source.rfind("    }\n}\n").map_or(0, |at| at + "    ".len());
-    let index = rust_mutants::syntax::LineIndex::new(source);
+    let index = rust_mutants::syntax::LineIndex::new(source).expect("bounded source index");
     assert_eq!(
         (proof.body_start.line, proof.body_start.byte_column),
         {
-            let at = index.position(source, u32::try_from(opening).unwrap_or(0));
+            let at = index
+                .position(u32::try_from(opening).expect("fixture offset fits u32"))
+                .expect("fixture position");
             (at.line, at.byte_column)
         },
         "the body starts at its opening brace, which is where a coverage region beginning \
@@ -814,7 +848,9 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     assert_eq!(
         (proof.body_end.line, proof.body_end.byte_column),
         {
-            let at = index.position(source, u32::try_from(closing).unwrap_or(0));
+            let at = index
+                .position(u32::try_from(closing).expect("fixture offset fits u32"))
+                .expect("fixture position");
             (at.line, at.byte_column)
         },
         "and ends at its closing brace, which the region the compiler emits for what follows \
@@ -826,7 +862,10 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         .expect("the compiler took a marker in this body");
     assert_eq!(
         marker.at,
-        u32::try_from(opening).unwrap_or(0).saturating_add(1),
+        u32::try_from(opening)
+            .expect("fixture offset fits u32")
+            .checked_add(1)
+            .expect("fixture marker offset fits u32"),
         "and the call sits on the byte after the opening brace, so entering the body is what \
          records it rather than reaching the branch"
     );
@@ -870,7 +909,8 @@ pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
         .iter()
         .filter(|found| found.found.branch.is_some() || found.found.comparable.is_some())
         .count();
-    let (_established, recorder) = recorded_over(&fixture, &files, &["src/lib.rs"]);
+    let (established, recorder) = recorded_over(&fixture, &files, &["src/lib.rs", "src/other.rs"]);
+    drop(established);
     let said = recorder
         .events()
         .iter()
@@ -922,7 +962,12 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     std::fs::create_dir_all(&held).expect("a place nothing may write a file to");
     let mut sources = std::collections::BTreeMap::new();
     for (path, text) in files {
-        drop(sources.insert(path.to_owned(), text.as_bytes().to_vec()));
+        assert!(
+            sources
+                .insert(path.to_owned(), text.as_bytes().to_vec())
+                .is_none(),
+            "the fixture source path is unique"
+        );
     }
     let asked = rust_mutants::prove::Asking {
         workspace: &workspace,
@@ -936,7 +981,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     };
     let refused =
         rust_mutants::prove::establish(&asked, &cancel, &rust_mutants::trace::Recorder::disabled());
-    drop(std::fs::remove_dir(&held));
+    std::fs::remove_dir(&held).expect("remove the temporary write obstacle");
 
     let error = refused.expect_err(
         "a tree the pass could not write into is one it must not carry on with: the witnesses \
@@ -953,9 +998,11 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
          {error}"
     );
     for (path, source) in sources.iter().filter(|(path, _)| *path != "src/other.rs") {
+        let restored = std::fs::read(workspace.snapshot_root().join(path));
+        assert!(restored.is_ok(), "{path} was restored: {restored:?}");
+        let Ok(restored) = restored else { return };
         assert_eq!(
-            std::fs::read(workspace.snapshot_root().join(path)).unwrap_or_default(),
-            *source,
+            restored, *source,
             "and every file it did write is put back before it reports, because a tree left \
              witnessed is one every later phase would be about the wrong program"
         );
@@ -964,7 +1011,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 }
 
 #[test]
-fn a_file_no_source_is_held_for_does_not_stop_the_pass_vouching_for_the_rest() {
+fn a_file_no_source_is_held_for_is_named_in_the_refusal_rather_than_skipped() {
     let takeable = "\
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
@@ -980,17 +1027,14 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 ";
     let fixture = Fixture::copy("fixture-ignored");
     let files = [("src/gone.rs", takeable), ("src/lib.rs", takeable)];
-    let established = established_over(&fixture, &files, &["src/lib.rs"]);
-    assert!(
-        !established.comparable.is_empty(),
-        "the first file has claims and no source, and reading what the compiler took is a walk \
-         over every file that has one: stopping at the first without would leave a tree the \
-         compiler did take unvouched for: {established:?}"
+    let (refused, _) = refused_over(&fixture, &files, &["src/lib.rs"]);
+    let error = refused.expect_err(
+        "a file with claims and no source held for it is one the pass was never given, and \
+         a pass that answered anyway would vouch for a question nobody put",
     );
     assert!(
-        established.comparable.len() < 2,
-        "and the file it could not write vouches for nothing, which is the other half of the \
-         same rule: {established:?}"
+        error.to_string().contains("src/gone.rs"),
+        "the refusal names the file it was never given: {error}"
     );
 }
 
@@ -1028,7 +1072,12 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     std::fs::create_dir_all(&held).expect("a place nothing may write a file to");
     let mut sources = std::collections::BTreeMap::new();
     for (path, text) in files {
-        drop(sources.insert(path.to_owned(), text.as_bytes().to_vec()));
+        assert!(
+            sources
+                .insert(path.to_owned(), text.as_bytes().to_vec())
+                .is_none(),
+            "the fixture source path is unique"
+        );
     }
     let answered = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
@@ -1044,7 +1093,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         &cancel,
         &rust_mutants::trace::Recorder::disabled(),
     );
-    drop(std::fs::remove_dir(&held));
+    std::fs::remove_dir(&held).expect("remove the temporary write obstacle");
 
     assert!(
         answered.is_err(),
@@ -1095,7 +1144,12 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     )
     .expect("the workspace opens");
     let mut sources = std::collections::BTreeMap::new();
-    drop(sources.insert(path.to_owned(), held.as_bytes().to_vec()));
+    assert!(
+        sources
+            .insert(path.to_owned(), held.as_bytes().to_vec())
+            .is_none(),
+        "the fixture source path is unique"
+    );
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -1152,7 +1206,12 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     std::fs::remove_file(&held).expect("the snapshot holds it");
     std::fs::create_dir_all(&held).expect("a place nothing may write a file to");
     let mut sources = std::collections::BTreeMap::new();
-    drop(sources.insert(path.to_owned(), claimed.as_bytes().to_vec()));
+    assert!(
+        sources
+            .insert(path.to_owned(), claimed.as_bytes().to_vec())
+            .is_none(),
+        "the fixture source path is unique"
+    );
     let answered = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -1167,7 +1226,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         &cancel,
         &rust_mutants::trace::Recorder::disabled(),
     );
-    drop(std::fs::remove_dir(&held));
+    std::fs::remove_dir(&held).expect("remove the temporary write obstacle");
 
     let Err(refused) = answered else {
         panic!(
@@ -1210,7 +1269,12 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     )
     .expect("the workspace opens");
     let mut sources = std::collections::BTreeMap::new();
-    drop(sources.insert(path.to_owned(), claimed.as_bytes().to_vec()));
+    assert!(
+        sources
+            .insert(path.to_owned(), claimed.as_bytes().to_vec())
+            .is_none(),
+        "the fixture source path is unique"
+    );
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -1232,8 +1296,9 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     );
 
     let own = workspace.target_dir().join("witness");
+    let own_metadata = std::fs::metadata(&own);
     assert!(
-        own.is_dir(),
+        matches!(own_metadata, Ok(ref metadata) if metadata.is_dir()),
         "the tree the check is about is not the tree the run measures, and both name the same \
          crates, so one target directory would hold whichever was compiled last: {}",
         own.display()
@@ -1269,7 +1334,12 @@ pub fn both(a: i32, b: i32, c: i32, d: i32) -> i32 {
     )
     .expect("the workspace opens");
     let mut sources = std::collections::BTreeMap::new();
-    drop(sources.insert(path.to_owned(), claimed.as_bytes().to_vec()));
+    assert!(
+        sources
+            .insert(path.to_owned(), claimed.as_bytes().to_vec())
+            .is_none(),
+        "the fixture source path is unique"
+    );
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -1369,8 +1439,18 @@ pub mod b;
     )
     .expect("the workspace opens");
     let mut sources = std::collections::BTreeMap::new();
-    drop(sources.insert("src/a.rs".to_owned(), held.as_bytes().to_vec()));
-    drop(sources.insert("src/b.rs".to_owned(), refused.as_bytes().to_vec()));
+    assert!(
+        sources
+            .insert("src/a.rs".to_owned(), held.as_bytes().to_vec())
+            .is_none(),
+        "the first fixture source path is unique"
+    );
+    assert!(
+        sources
+            .insert("src/b.rs".to_owned(), refused.as_bytes().to_vec())
+            .is_none(),
+        "the second fixture source path is unique"
+    );
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,

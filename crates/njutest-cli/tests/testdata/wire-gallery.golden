@@ -3,7 +3,7 @@ Written by crates/njutest-cli/tests/wire_gallery.rs; UPDATE_GOLDEN=1 rewrites it
 
 === a suite that holds nothing up — the specification
 
-What 20260918T090000Z-aaaaaa did, as the seams this run watched saw it.
+What 20260918t090000z-aaaaaa did, as the seams this run watched saw it.
 
   exchange 0 of cache — nobody holds this up; 4 question(s) nothing noticed
   POST /orders on payments answers 201 — nobody holds this up; 6 question(s) nothing noticed
@@ -33,7 +33,7 @@ What 20260918T090000Z-aaaaaa did, as the seams this run watched saw it.
 
 === a suite that holds every seam up — the specification
 
-What 20260918T090000Z-aaaaaa did, as the seams this run watched saw it.
+What 20260918t090000z-aaaaaa did, as the seams this run watched saw it.
 
   exchange 0 of cache — held up by payments/test/orders
   POST /orders on payments answers 201 — held up by payments/test/orders
@@ -63,7 +63,7 @@ What 20260918T090000Z-aaaaaa did, as the seams this run watched saw it.
 
 === a run that could not put its questions — the specification
 
-What 20260918T090000Z-aaaaaa did, as the seams this run watched saw it.
+What 20260918t090000z-aaaaaa did, as the seams this run watched saw it.
 
   exchange 0 of cache — nobody holds this up; 4 question(s) the run could not put
   POST /orders on payments answers 201 — nobody holds this up; 6 question(s) the run could not put
@@ -93,7 +93,7 @@ What 20260918T090000Z-aaaaaa did, as the seams this run watched saw it.
 
 === one seam held up and one not — the specification
 
-What 20260918T090000Z-aaaaaa did, as the seams this run watched saw it.
+What 20260918t090000z-aaaaaa did, as the seams this run watched saw it.
 
   exchange 0 of cache — nobody holds this up; 4 question(s) nothing noticed
   POST /orders on payments answers 201 — held up by payments/test/orders

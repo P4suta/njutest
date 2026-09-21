@@ -6,7 +6,9 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a test reports a setup failure by panicking, and an answer that is not where the protocol puts it is the failure this is here to report"
+    clippy::panic,
+    clippy::too_many_lines,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use std::io::Write;
@@ -14,19 +16,41 @@ use std::process::{Command, Stdio};
 
 use njutest_cli::app::lsp::{framed, message};
 use njutest_cli::config::Contract;
-use njutest_cli::report::{Finding, FindingKind, MutantRecord, Position, Report, RunKind};
+use njutest_cli::report::{
+    BuildReport, Finding, FindingKind, MutantAccounting, MutantRecord, ObserverAccounting,
+    Position, RunKind, Timing,
+};
+use njutest_devkit::process::SupervisedChild;
+use rust_mutants::id::RunId;
 use serde_json::{Value, json};
+
+fn run_id(value: &str) -> RunId {
+    RunId::try_from(value).expect("a canonical run id")
+}
 
 /// A workspace whose last run found one surviving mutation in `src/lib.rs`.
 fn verified(root: &std::path::Path) -> String {
-    let mut report = Report::new(
-        "20260909T000000Z-000001",
+    let mut source = BuildReport::new(
+        "20260909t000000z-000001",
         RunKind::Full,
         Contract::StandardV1,
     );
-    report.mutants.push(MutantRecord {
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    source.timing = Timing {
+        started: "2026-09-09T00:00:00Z".to_owned(),
+        finished: "2026-09-09T00:00:00Z".to_owned(),
+        duration_ms: 1,
+    };
+    source
+        .limitations
+        .push(njutest_cli::report::Limitation::new(
+            "git-metadata-unavailable",
+            "the LSP fixture is not a git repository",
+        ));
+    source.mutants.push(MutantRecord {
+        catalog_index: njutest_cli::report::CatalogIndex::new(0),
         id: "b".repeat(64),
-        display_id: "bbbbbbbbbbbb".to_owned(),
+        display_id: "b".repeat(20),
         path: "src/lib.rs".to_owned(),
         position: Position {
             line: 1,
@@ -38,34 +62,73 @@ fn verified(root: &std::path::Path) -> String {
         original: ">".to_owned(),
         replacement: String::new(),
         outcome: njutest_cli::report::Decided::Survived,
+        accepted: false,
         reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
         blind_in: Vec::new(),
         routing: None,
     });
-    report.findings.push(Finding {
+    source.accounting.mutants = MutantAccounting {
+        cataloged: 1,
+        executed: 1,
+        survived: 1,
+        observers: ObserverAccounting {
+            unnoticed: 1,
+            ..ObserverAccounting::default()
+        },
+        ..MutantAccounting::default()
+    };
+    source.findings.push(Finding {
         kind: FindingKind::SurvivingMutant,
-        subject: "bbbbbbbbbbbb".to_owned(),
+        subject: "b".repeat(20),
         detail: "no test noticed gt-to-ge@1".to_owned(),
+        origin: njutest_cli::report::FindingOrigin::Global,
         path: None,
         position: None,
     });
-    let store = njutest_cli::app::reports::Store::read(root);
-    std::fs::create_dir_all(store.run("one")).expect("mkdir");
+    let one = run_id("one");
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let latticed = njutest_cli::report::across::configured(&one, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog LSP fixture cannot be a shard");
+    };
+    let report = latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion");
+    let run = root
+        .join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(one.as_str());
+    std::fs::create_dir_all(&run).expect("mkdir");
     std::fs::create_dir_all(root.join("src")).expect("mkdir");
     std::fs::write(root.join("src/lib.rs"), "fn f() {}\n").expect("the file it is in");
     std::fs::write(
-        store
-            .run("one")
-            .join(njutest_cli::app::reports::DOCUMENT_NAME),
+        run.join(njutest_cli::app::reports::DOCUMENT_NAME),
         serde_json::to_string(&report).expect("a report"),
     )
     .expect("the report");
     std::fs::write(
-        store.index(njutest_cli::app::reports::Index::Any),
-        json!({ "directory": store.named("one"), "run_id": report.run_id }).to_string(),
+        root.join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+            .join(njutest_cli::app::reports::Index::Any.file()),
+        json!({
+            "schema": njutest_cli::report::SCHEMA,
+            "directory": format!(
+                "{}/runs/{}",
+                njutest_cli::config::DEFAULT_REPORTS_DIRECTORY,
+                one.as_str()
+            ),
+            "run_id": one.as_str(),
+        })
+        .to_string(),
     )
     .expect("the pointer a reader follows");
     njutest_cli::app::lsp::uri_of(&root.join("src/lib.rs"))
+        .expect("the fixture path is valid UTF-8")
 }
 
 #[test]
@@ -85,17 +148,16 @@ fn an_editor_that_starts_this_server_is_told_what_the_last_run_found() {
     .map(framed)
     .collect();
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_njutest"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_njutest"));
+    command
         .args(["lsp", "--directory", &dir.path().display().to_string()])
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the server starts");
+        .stderr(Stdio::piped());
+    let mut child = SupervisedChild::launch(&mut command).expect("the server starts");
     child
-        .stdin
-        .take()
+        .take_stdin()
         .expect("a pipe")
         .write_all(asked.as_bytes())
         .expect("the client writes");
@@ -106,7 +168,7 @@ fn an_editor_that_starts_this_server_is_told_what_the_last_run_found() {
     assert!(
         output.status.success(),
         "reading a report is not a verdict: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     assert_eq!(
         answered[0]["result"]["capabilities"]["positionEncoding"], "utf-16",

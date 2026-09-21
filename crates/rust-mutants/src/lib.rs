@@ -38,6 +38,8 @@ pub mod session;
 pub mod snapshot;
 pub mod span;
 pub mod splice;
+#[doc(hidden)]
+pub mod strictjson;
 pub mod syntax;
 pub mod telling;
 pub mod tempowner;

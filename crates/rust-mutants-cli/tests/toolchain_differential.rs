@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 
 use njutest_devkit::fixture::Fixture;
+use rust_mutants::outcome::Outcome;
 use rust_mutants::report::run::{RunDocument, RunMutantDocument};
+use rust_mutants::run::NotRunReason;
 use rust_mutants::runner::Cancel;
 use rust_mutants::testkit::measuring::Measuring;
 use rust_mutants::work::Work;
@@ -37,7 +39,7 @@ struct Established {
 
 fn established(name: &str, extra: &[&str]) -> Established {
     let fixture = Fixture::copy(name);
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -57,15 +59,16 @@ fn established(name: &str, extra: &[&str]) -> Established {
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name} {extra:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let directory = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     );
-    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
-    let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
+    let text = std::fs::read_to_string(directory.join("run-report-v2.json")).expect("the report");
+    let document: RunDocument =
+        njutest_devkit::strictjson::decode_str(&text).expect("the report reads back");
     Established {
-        work: Work::of(&document),
+        work: Work::of(&document).expect("valid work ledger"),
         rows: document
             .mutants
             .into_iter()
@@ -75,9 +78,11 @@ fn established(name: &str, extra: &[&str]) -> Established {
 }
 
 /// What a run that removed nothing would have said about a mutant a proof removed.
-fn claimed(row: &RunMutantDocument) -> &str {
-    match (row.outcome.as_str(), row.not_run_reason.as_deref()) {
-        ("not_run", Some("unreached" | "discharged")) => "survived",
+const fn claimed(row: &RunMutantDocument) -> Outcome {
+    match (row.outcome, row.not_run_reason) {
+        (Outcome::NotRun, Some(NotRunReason::Unreached | NotRunReason::Discharged)) => {
+            Outcome::Survived
+        }
         (outcome, _) => outcome,
     }
 }
@@ -106,10 +111,10 @@ fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
                 let Some(other) = whole.rows.get(id) else {
                     panic!("{name} by {mode}: {id} is in the proved run and not in the whole one");
                 };
-                if row.outcome == "inconclusive" || other.outcome == "inconclusive" {
+                if row.outcome == Outcome::Inconclusive || other.outcome == Outcome::Inconclusive {
                     continue;
                 }
-                if row.outcome == "not_run" && claimed(row) != row.outcome.as_str() {
+                if row.outcome == Outcome::NotRun && claimed(row) != row.outcome {
                     claims = claims.saturating_add(1);
                 }
                 assert_eq!(
@@ -139,9 +144,9 @@ fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
 
 /// What a row says happened to it, as a sentence a failing assertion can carry.
 fn describe(row: &RunMutantDocument) -> String {
-    match (row.outcome.as_str(), row.not_run_reason.as_deref()) {
-        ("not_run", Some(reason)) => format!("not run ({reason})"),
-        (outcome, _) => outcome.to_owned(),
+    match (row.outcome, row.not_run_reason) {
+        (Outcome::NotRun, Some(reason)) => format!("not run ({})", reason.as_str()),
+        (outcome, _) => outcome.to_string(),
     }
 }
 
@@ -196,7 +201,7 @@ fn the_guards_put_a_mutation_to_fewer_tests_than_routing_by_target_can() {
     );
     for (id, row) in &guards.rows {
         let other = whole.rows.get(id).expect("the same catalog");
-        if row.outcome == "inconclusive" || other.outcome == "inconclusive" {
+        if row.outcome == Outcome::Inconclusive || other.outcome == Outcome::Inconclusive {
             continue;
         }
         assert_eq!(
@@ -214,7 +219,7 @@ fn the_guards_put_a_mutation_to_fewer_tests_than_routing_by_target_can() {
 fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
     let fixture = Fixture::copy("fixture-coverage");
     let report = |fixture: &Fixture, extra: &[&str]| -> BTreeMap<String, String> {
-        let root = fixture.root().to_string_lossy().into_owned();
+        let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = rust_mutants_cli::run_from(
             std::iter::once("rust-mutants")
@@ -234,14 +239,15 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
         let directory = njutest_devkit::fixture::newest_run(
             &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
         );
         let text =
-            std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
-        let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
+            std::fs::read_to_string(directory.join("run-report-v2.json")).expect("the report");
+        let document: RunDocument =
+            njutest_devkit::strictjson::decode_str(&text).expect("the report reads back");
         document
             .mutants
             .into_iter()
@@ -255,7 +261,7 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
             .collect()
     };
     let fresh = report(&fixture, &[]);
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")

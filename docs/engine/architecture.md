@@ -360,10 +360,14 @@ and says whether the answer is still the same.
 
 Four forms. **Form C** for a position that is syntactically boolean (an
 `if` or `while` condition, an operand of `&&`/`||`, a match guard):
-`__rm::active(3) && (a >= b) || !(__rm::active(3)) && (a > b)`. **Form E**
-for any expression in value position, in parentheses:
-`(if __rm::active(5) { a - b } else { a + b })` — both branches unify to one
-type, so `Default::default()` is inferred from the original. **Form S** for
+`__rm::value!(__rm::active(3) && __rm::value!(a >= b) ||
+!__rm::active(3) && a > b)`. **Form E** for any expression in value
+position:
+`__rm::value!(if __rm::active(5) { a - b } else { a + b })` — both branches
+unify to one type, so `Default::default()` is inferred from the original.
+`value!` expands to exactly its expression: it gives the parser one grouped
+expression without a function-call type-inference boundary, a temporary
+scope, or lint-producing parentheses. **Form S** for
 a statement: `if __rm::active(7) { x -= step; } else { x += step; }`, the
 original bytes in the `else` so lines are kept. **Form M** for a match arm
 that has no guard, which is the one shape that adds syntax rather than
@@ -376,8 +380,12 @@ escalates to its parent expression, then to the statement.
 
 The runtime is a private `mod __rm` appended after the last line of each
 instrumented file ([ADR 0011](../adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md)).
-A guarded function gets `#[allow(warnings)]` on the same line as its first
-token, so the warnings guards provoke never trip a `#![deny(warnings)]`.
+No lint attribute is put on user code. The private generated support module
+has one exact `#[allow(dead_code, unused_qualifications)]`: one shared runtime
+serves files that use different subsets of it, and its collision-proof
+standard-library paths are deliberately fully qualified. A crate that
+`forbid`s either lint (or its `unused`/`warnings` group) is refused before
+instrumentation because Rust does not permit the module to lower a `forbid`.
 
 ### What instrumentation writes
 
@@ -387,9 +395,9 @@ become nested guards composed children first, and only the branch that keeps
 the original carries the guards inside it. Each alternative is folded onto
 one line and the original branch keeps its bytes, so a guard holds exactly
 as many line breaks as the bytes it replaced and every byte stays on its
-line. `#[allow(warnings)]` goes on the signature line of the innermost
-function that holds a guard, so a crate's deny policy is untouched
-elsewhere. The runtime reads `RUST_MUTANTS_ACTIVE` once per process; a
+line. Guards are lint-clean macro expressions and the user's lint policy
+applies to every alternative exactly as it applies to a standalone edit.
+The runtime reads `RUST_MUTANTS_ACTIVE` once per process; a
 `RUST_MUTANTS_CATALOG` that is not the one the tree was built from ends the
 process with exit 97, and an identity this file does not know activates
 nothing here because it belongs to another file.
@@ -499,21 +507,43 @@ this run put its temporary files rather than which file was passed over.
 A test binary is started directly, never through `cargo test`, with the
 environment cargo would give it, `RUST_MUTANTS_*` stripped and set, a
 scratch `TMPDIR`, and the libtest arguments verbatim. The outer supervisor
-owns the timeout and the process tree; exit status is read in this order —
-start failure → `errored`; a bound expired → `waited`; killed by us →
-`not_run`; 97 → `errored` (stale catalog, never a kill); 95 → `runaway`;
-non-zero → `killed`; zero → `survived`. A libtest run that matched no test is
-green and says so: `tests_run` carries the count the summary line reported.
+owns the timeout and the platform's declared process set; exit status is read in this order —
+start or wait failure → `errored`; cancellation → `not_run`; a bound expired
+→ `waited`; a verified monitor notice → `step_limit_reached`; a signal or
+non-zero status → `killed`; zero → `survived`. The runner represents those as
+one closed `Termination`, so a result cannot be both timed out and exited.
+A libtest run that matched no test is inconclusive and says so:
+`tests_run` carries the count the summary line reported.
 
-A runaway leaves by a status of its own rather than a signal, because the
-fact it reports is its own: the process was stopped by a number every machine
-agrees on, where a bound is a clock only this machine saw. The guard of the
-active mutant sits where the mutation does, so a loop whose condition was
-mutated takes it once an iteration and the count rises as the mutation runs;
-past the allowance the process says what it spent and exits 95. Reading 95
-**before** the rung below it is what the two names rest on — 95 is non-zero,
-and a run that read the rungs the other way round would call every mutation
-that cannot stop a kill by the tests.
+The step runtime does not claim an exit status. The selected guard activates
+one process-wide state, and subsequent non-const function entries, loop bodies,
+async blocks and closure invocations in every rewritten workspace file advance
+it. At the first boundary past the allowance it writes an atomic side-channel
+record containing a fresh 128-bit nonce, the catalog and mutant identities, the
+allowance and `N + 1`, then parks. The supervisor kills its declared process set
+only after the final file appears; the execution layer validates every field
+before reporting the step fact. A stale, partial or mismatched record becomes
+`errored`, and the reserved protocol-failure status follows that typed failure
+path rather than a mutation verdict.
+
+`StepBoundaryScope::InstrumentedWorkspaceSource` states the exact limitation:
+macro expansions and dependencies are not rewritten. Expression-body closures
+are wrapped so an external iterator calling back into workspace source still
+advances the state. A loop that remains wholly inside an expansion or dependency
+has no such boundary and may reach only the clock (`waited`), never a fabricated
+step fact. The fresh nonce is a correlation token passed to the subject process,
+not authentication material; exclusive scratch, no-follow state access, exact
+structural binding and fail-closed parsing provide the protocol boundary.
+
+`SupervisionBoundary` states the platform containment limit separately. Windows
+uses an inescapable Job Object (`ContainedTree`). POSIX uses an inherited process
+group (`InheritedProcessGroup`): descendants remain supervised unless they
+deliberately call `setsid` or `setpgid` to leave it. The leader remains waitable
+until the group has been forcefully signalled, so its numeric process-group id
+cannot be recycled into an unrelated process before supervision is released.
+This POSIX boundary establishes forceful signalling, not kernel quiescence: a
+member in an uninterruptible kernel wait may remain until the kernel can finish
+it. Windows Job Objects provide the stronger contained-tree lifetime boundary.
 
 ### The scratch a test process is given
 

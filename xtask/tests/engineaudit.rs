@@ -8,10 +8,12 @@
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking and reads as a table"
 )]
+#![recursion_limit = "256"]
 
 use std::path::Path;
 
-use xtask::engineaudit::{Audit, AuditError, EXIT_UNREADABLE, Layer, Standing};
+use njutest_devkit::result::{ResultState, result_state};
+use xtask::engineaudit::{Audit, AuditError, EXIT_UNREADABLE, Evidence, Layer, Source, Standing};
 use xtask::gates;
 
 const RUN: &str = "20260906T101500000Z";
@@ -26,10 +28,14 @@ fn short(id: &str) -> String {
 }
 
 /// A run of three candidates: one killed, one accepted survivor, one the compiler refused.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the strict run-report specimen stays inline so every authenticated field is visible to the independent audit test"
+)]
 fn base() -> serde_json::Value {
     serde_json::json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 1,
+        "schema_version": 2,
         "tool_version": "0.1.0",
         "run": {
             "id": RUN,
@@ -37,7 +43,8 @@ fn base() -> serde_json::Value {
             "finished_at": "2026-09-06T10:15:02Z",
             "duration_ms": 2000,
             "interrupted": false,
-            "exit_code": 0
+            "exit_code": 0,
+            "shard": null
         },
         "workspace": {
             "root_name": "demo",
@@ -47,46 +54,61 @@ fn base() -> serde_json::Value {
             "platform": { "os": "linux", "arch": "x86_64", "target": "x86_64-unknown-linux-gnu" }
         },
         "selection": {
-            "tier": "balanced", "operators": [], "include": [], "exclude": [], "packages": []
+            "tier": "balanced", "operators": [], "include": [], "exclude": [], "packages": [],
+            "build": [], "mutant_steps": 50_000_000
         },
-        "targets": [{ "id": TARGET, "kind": "lib", "harness": true }],
+        "targets": [{
+            "id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []
+        }],
+        "established_tests": 0,
         "accounting": {
             "cataloged": 2, "refused": 1, "skipped": 0, "executed": 2,
-            "killed": 1, "survived": 1, "timed_out": 0, "inconclusive": 0,
-            "errored": 0, "not_run": 0, "unreached": 0, "expected": 1
+            "killed": 1, "survived": 1, "step_limit_reached": 0, "waited": 0,
+            "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0,
+            "discharged": 0, "expected": 1
         },
         "score": { "detected": 1, "decided": 2, "value": 0.5 },
         "mutants": [
             {
                 "index": 0, "id": KILLED, "display_id": short(KILLED),
                 "path": "src/lib.rs", "package": "demo",
-                "family": "comparison", "rule": "gt-to-ge", "rule_version": 1,
+                "family": "comparison", "rule": "gt-to-ge", "item": "larger",
+                "rule_version": 1,
                 "line": 11, "column": 8,
                 "start_byte": 100, "end_byte": 101, "source_digest": SOURCE,
                 "original": ">", "replacement": ">=",
                 "outcome": "killed", "target": TARGET, "exit_code": 101,
-                "duration_ms": 7, "tests_run": 2, "retried": false,
-                "route": {"granularity": "block", "reaching": [TARGET], "executed": [TARGET]},
-                "expected": false, "unreached": false, "source_run_id": null
+                "duration_ms": 7, "tests_run": 2, "killed_by": ["larger_works"],
+                "signal": null, "step_notice": null, "retried": false,
+                "not_run_reason": null,
+                "route": {"granularity": "block", "fallback": null,
+                    "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
+                "identical": null, "expected": false, "unreached": false,
+                "source_run_id": null
             },
             {
                 "index": 1, "id": SURVIVED, "display_id": short(SURVIVED),
                 "path": "src/lib.rs", "package": "demo",
-                "family": "return-replacement", "rule": "return-default", "rule_version": 1,
+                "family": "return-replacement", "rule": "return-default", "item": "larger",
+                "rule_version": 1,
                 "line": 20, "column": 5,
                 "start_byte": 200, "end_byte": 225, "source_digest": SOURCE,
                 "original": "if a > b { a } else { b }", "replacement": "Default::default()",
                 "outcome": "survived", "target": TARGET, "exit_code": 0,
-                "duration_ms": 5, "tests_run": 2, "retried": false,
-                "route": {"granularity": "block", "reaching": [TARGET], "executed": [TARGET]},
-                "expected": true, "unreached": false, "source_run_id": null
+                "duration_ms": 5, "tests_run": 2, "killed_by": [], "signal": null,
+                "step_notice": null, "retried": false, "not_run_reason": null,
+                "route": {"granularity": "block", "fallback": null,
+                    "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
+                "identical": null, "expected": true, "unreached": false,
+                "source_run_id": null
             }
         ],
         "rejections": [
             {
                 "index": 2, "id": REFUSED, "display_id": short(REFUSED),
                 "path": "src/lib.rs", "rule": "add-to-sub",
-                "code": "E0369", "diagnostic": "error[E0369]: cannot subtract"
+                "code": "E0369", "diagnostic": "error[E0369]: cannot subtract",
+                "isolated": true
             }
         ],
         "skips": [],
@@ -94,6 +116,7 @@ fn base() -> serde_json::Value {
             {
                 "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
                 "outcome": "survived", "mutant": SURVIVED,
+                "locator": null, "covered": null,
                 "standing": "met", "actual": "survived", "why": null
             }
         ],
@@ -105,7 +128,7 @@ fn base() -> serde_json::Value {
 fn recording() -> Vec<serde_json::Value> {
     let mut events = vec![
         serde_json::json!({"seq":1,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
-            "type":"run-start","schema":"rust-mutants-trace-v1","engine":"0.1.0"}),
+            "type":"run-start","schema":"rust-mutants-trace-v2","engine":"0.1.0"}),
         serde_json::json!({"seq":2,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
             "type":"phase-start","phase":{"name":"prepare"}}),
         serde_json::json!({"seq":3,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":10,
@@ -180,7 +203,7 @@ fn with(overrides: serde_json::Value) -> serde_json::Value {
 fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(
-        directory.path().join("run-report-v1.json"),
+        directory.path().join("run-report-v2.json"),
         document.to_string(),
     )
     .expect("the report");
@@ -191,7 +214,17 @@ fn recorded(events: &[serde_json::Value]) -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("a temporary directory");
     let mut stream = String::new();
     for event in events {
-        stream.push_str(&event.to_string());
+        let mut envelope = event.as_object().expect("a synthetic event object").clone();
+        let seq = envelope.remove("seq").expect("event sequence");
+        let timestamp = envelope.remove("timestamp").expect("event timestamp");
+        let elapsed_ms = envelope.remove("elapsed_ms").expect("event elapsed time");
+        let current = serde_json::json!({
+            "seq": seq,
+            "timestamp": timestamp,
+            "elapsed_ms": elapsed_ms,
+            "payload": serde_json::Value::Object(envelope),
+        });
+        stream.push_str(&current.to_string());
         stream.push('\n');
     }
     std::fs::write(directory.path().join("trace.jsonl"), stream).expect("the recording");
@@ -253,21 +286,19 @@ fn an_id_that_does_not_re_mint_from_its_own_fields_is_a_violation() {
 }
 
 #[test]
-fn a_row_without_byte_offsets_leaves_identity_unaudited() {
+fn a_row_without_byte_offsets_is_not_a_report() {
     let mut document = base();
     let row = document["mutants"][0]
         .as_object_mut()
         .expect("the first row");
-    let _removed = row.remove("start_byte");
-    let audit = audited(&document);
-    assert_eq!(violations(&audit, Layer::Identity), Vec::<String>::new());
     assert!(
-        audit
-            .of(Layer::Identity)
-            .iter()
-            .any(|remark| remark.standing == Standing::Unaudited),
-        "{audit}"
+        row.remove("start_byte").is_some(),
+        "the fixture has an offset"
     );
+    let run = run_directory(&document);
+    let error = gates::engine_audit(&asked(run.path(), None, None))
+        .expect_err("a report missing an identity input must fail at the boundary");
+    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
 }
 
 #[test]
@@ -290,6 +321,23 @@ fn the_outcome_columns_must_add_up_to_executed() {
     let found = violations(&audit, Layer::Accounting);
     assert!(
         found.iter().any(|remark| remark.contains("executed")),
+        "{audit}"
+    );
+}
+
+#[test]
+fn the_skipped_column_is_the_checked_sum_of_skip_records() {
+    let audit = audited(&with(serde_json::json!({
+        "skips": [{
+            "reason": "test-code", "path": "src/lib.rs", "count": 2,
+            "explanation": "the code measures itself"
+        }]
+    })));
+    let found = violations(&audit, Layer::Accounting);
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("skip records come to 2")),
         "{audit}"
     );
 }
@@ -322,6 +370,82 @@ fn a_score_that_is_not_the_ratio_of_its_own_columns_is_a_violation() {
         "score": { "detected": 1, "decided": 2, "value": 0.9 }
     })));
     assert_eq!(violations(&audit, Layer::Score).len(), 1, "{audit}");
+}
+
+#[test]
+fn a_step_limit_is_accounted_for_but_never_counted_as_detected() {
+    let document = with(serde_json::json!({
+        "run": { "exit_code": 2 },
+        "selection": { "mutant_steps": 10 },
+        "accounting": {
+            "killed": 0, "survived": 1, "step_limit_reached": 1, "waited": 0,
+            "inconclusive": 0, "errored": 0
+        },
+        "score": { "detected": 0, "decided": 1, "value": 0.0 },
+        "mutants": [{
+            "outcome": "step_limit_reached", "expected": false,
+            "step_notice": {
+                "nonce": "00000000000000000000000000000000",
+                "catalog": "c".repeat(64), "mutant": KILLED, "limit": 10, "observed": 11
+            }
+        }, {}],
+        "findings": [{
+            "kind": "step-limit-reached-mutant", "mutant": short(KILLED),
+            "detail": "the verified count was reached"
+        }]
+    }));
+    let audit = audited(&document);
+    assert!(violations(&audit, Layer::Accounting).is_empty(), "{audit}");
+    assert!(violations(&audit, Layer::Score).is_empty(), "{audit}");
+    assert!(violations(&audit, Layer::Findings).is_empty(), "{audit}");
+    assert!(violations(&audit, Layer::Exit).is_empty(), "{audit}");
+}
+
+#[test]
+fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
+    let document = with(serde_json::json!({
+        "run": { "exit_code": 2 },
+        "selection": { "mutant_steps": 10 },
+        "accounting": {
+            "killed": 0, "survived": 1, "step_limit_reached": 1, "waited": 0,
+            "inconclusive": 0, "errored": 0
+        },
+        "score": { "detected": 0, "decided": 1, "value": 0.0 },
+        "mutants": [{
+            "outcome": "step_limit_reached", "expected": false,
+            "step_notice": {
+                "nonce": "not-a-nonce", "catalog": "another-catalog",
+                "mutant": SURVIVED, "limit": 9, "observed": 9
+            }
+        }, {}],
+        "findings": [{
+            "kind": "step-limit-reached-mutant", "mutant": short(KILLED), "detail": "bad"
+        }]
+    }));
+    let audit = audited(&document);
+    assert_eq!(violations(&audit, Layer::Accounting).len(), 5, "{audit}");
+}
+
+#[test]
+fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
+    let document = with(serde_json::json!({
+        "run": { "exit_code": 2 },
+        "accounting": {
+            "killed": 0, "survived": 1, "step_limit_reached": 0, "waited": 1,
+            "inconclusive": 0, "errored": 0
+        },
+        "score": { "detected": 0, "decided": 1, "value": 0.0 },
+        "mutants": [{ "outcome": "waited", "retried": true, "expected": false }, {}],
+        "findings": [{
+            "kind": "waited-mutant", "mutant": short(KILLED),
+            "detail": "the wall-clock bound expired twice"
+        }]
+    }));
+    let audit = audited(&document);
+    assert!(violations(&audit, Layer::Accounting).is_empty(), "{audit}");
+    assert!(violations(&audit, Layer::Score).is_empty(), "{audit}");
+    assert!(violations(&audit, Layer::Findings).is_empty(), "{audit}");
+    assert!(violations(&audit, Layer::Exit).is_empty(), "{audit}");
 }
 
 #[test]
@@ -378,7 +502,7 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
     let run = run_directory(&base());
     let other = with(serde_json::json!({ "mutants": [{ "index": 0 }] }));
     let part = tempfile::tempdir().expect("a temporary directory");
-    let path = part.path().join("run-report-v1.json");
+    let path = part.path().join("run-report-v2.json");
     std::fs::write(&path, other.to_string()).expect("the part");
     let audit = gates::engine_audit(&gates::EngineRun {
         run: run.path(),
@@ -439,7 +563,10 @@ fn a_recording_that_dropped_events_is_a_violation() {
 #[test]
 fn a_recording_that_never_ended_is_a_violation() {
     let mut events = recording();
-    let _dropped = events.pop();
+    assert!(
+        events.pop().is_some(),
+        "the fixture has a run-end to remove"
+    );
     let audit = audited_with(&base(), &events);
     let found = violations(&audit, Layer::Trace);
     assert!(
@@ -451,7 +578,8 @@ fn a_recording_that_never_ended_is_a_violation() {
 #[test]
 fn a_phase_the_recording_never_closed_is_a_violation() {
     let mut events = recording();
-    let _closed = events.remove(6);
+    let closed = events.remove(6);
+    assert_eq!(closed["type"], "phase-end", "the fixture removes the close");
     let audit = audited_with(&base(), &events);
     let found = violations(&audit, Layer::Trace);
     assert!(
@@ -639,17 +767,236 @@ fn a_directory_without_a_report_is_neither_clean_nor_broken() {
 }
 
 #[test]
+fn every_explicit_evidence_path_must_be_readable() {
+    let run = run_directory(&base());
+    let missing = run.path().join("missing");
+
+    let error = gates::engine_audit(&asked(run.path(), Some(&missing), None))
+        .expect_err("an explicitly requested recording must exist");
+    assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
+
+    let shards = [missing.clone()];
+    let error = gates::engine_audit(&gates::EngineRun {
+        run: run.path(),
+        trace: None,
+        shards: &shards,
+        ledger: None,
+        sites: false,
+    })
+    .expect_err("an explicitly requested shard must exist");
+    assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
+
+    let error = gates::engine_audit(&asked(run.path(), None, Some(&missing)))
+        .expect_err("an explicitly requested ledger must exist");
+    assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
+}
+
+#[test]
+fn malformed_explicit_evidence_is_neither_absent_nor_unaudited() {
+    let run = run_directory(&base());
+    let trace = tempfile::tempdir().expect("a temporary directory");
+    std::fs::write(trace.path().join("trace.jsonl"), "not json\n").expect("the corrupt recording");
+    let error = gates::engine_audit(&asked(run.path(), Some(trace.path()), None))
+        .expect_err("corrupt recording evidence must fail closed");
+    assert!(
+        matches!(error, AuditError::MalformedRecording { .. }),
+        "{error}"
+    );
+
+    let shard = run.path().join("shard.json");
+    std::fs::write(&shard, "not json").expect("the corrupt shard");
+    let shards = [shard];
+    let error = gates::engine_audit(&gates::EngineRun {
+        run: run.path(),
+        trace: None,
+        shards: &shards,
+        ledger: None,
+        sites: false,
+    })
+    .expect_err("a corrupt shard must fail closed");
+    assert!(
+        matches!(error, AuditError::MalformedEvidence { .. }),
+        "{error}"
+    );
+
+    let ledger = run.path().join("ledger.toml");
+    std::fs::write(&ledger, "[[").expect("the corrupt ledger");
+    let error = gates::engine_audit(&asked(run.path(), None, Some(&ledger)))
+        .expect_err("a corrupt ledger must fail closed");
+    assert!(
+        matches!(error, AuditError::MalformedLedger { .. }),
+        "{error}"
+    );
+}
+
+#[test]
+fn optional_run_evidence_is_optional_only_when_not_found() {
+    let run = run_directory(&base());
+    std::fs::write(run.path().join("reached-v1.json"), "not json")
+        .expect("the corrupt optional evidence");
+    let error = gates::engine_audit(&asked(run.path(), None, None))
+        .expect_err("present but corrupt optional evidence must fail closed");
+    assert!(
+        matches!(error, AuditError::MalformedEvidence { .. }),
+        "{error}"
+    );
+
+    std::fs::write(run.path().join("reached-v1.json"), "{}").expect("replace the corrupt evidence");
+    std::fs::write(run.path().join("probe"), "not a directory")
+        .expect("the unreadable probe directory");
+    let error = gates::engine_audit(&asked(run.path(), None, None))
+        .expect_err("a present probe path that cannot be traversed must fail closed");
+    assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
+}
+
+#[test]
 fn a_document_that_is_not_a_run_report_is_refused_by_name() {
     let directory = tempfile::tempdir().expect("a temporary directory");
+    let document = with(serde_json::json!({
+        "document_type": "rust-mutants/catalog"
+    }));
     std::fs::write(
-        directory.path().join("run-report-v1.json"),
-        serde_json::json!({ "document_type": "rust-mutants/catalog" }).to_string(),
+        directory.path().join("run-report-v2.json"),
+        document.to_string(),
     )
     .expect("the document");
     let error = gates::engine_audit(&asked(directory.path(), None, None))
         .expect_err("a document that is not a run report");
     assert!(
         error.to_string().contains("rust-mutants/catalog"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_historical_report_is_not_silently_read_as_the_current_contract() {
+    let document = with(serde_json::json!({ "schema_version": 1 }));
+    let run = run_directory(&document);
+    let error = gates::engine_audit(&asked(run.path(), None, None))
+        .expect_err("v1 and v2 assign different meanings to outcome columns");
+    assert!(
+        matches!(error, AuditError::UnsupportedVersion { .. }),
+        "{error}"
+    );
+    assert!(error.to_string().contains("Some(1)"), "{error}");
+}
+
+#[test]
+fn the_report_boundary_rejects_unknown_fields_and_closed_state_values() {
+    let mut unknown = base();
+    unknown["mutants"][0]["outocme"] = serde_json::json!("killed");
+    let run = run_directory(&unknown);
+    let error = gates::engine_audit(&asked(run.path(), None, None))
+        .expect_err("an unknown field must not look like ignored evidence");
+    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+
+    let mut open_state = base();
+    open_state["mutants"][0]["outcome"] = serde_json::json!("probably-killed");
+    let run = run_directory(&open_state);
+    let error = gates::engine_audit(&asked(run.path(), None, None))
+        .expect_err("an outcome outside the closed contract must not enter the audit");
+    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+}
+
+#[test]
+fn the_report_boundary_rejects_duplicate_keys() {
+    let encoded = base().to_string();
+    let duplicated = encoded.replacen(
+        "\"schema_version\":2",
+        "\"schema_version\":2,\"schema_version\":2",
+        1,
+    );
+    let error = xtask::engineaudit::audit("duplicate.json", &duplicated, &Evidence::default())
+        .expect_err("a duplicate key must not silently choose a winner");
+    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+}
+
+#[test]
+fn nullable_report_fields_are_required_even_when_their_value_is_null() {
+    let mut missing_score = base();
+    assert!(
+        missing_score
+            .as_object_mut()
+            .expect("the report object")
+            .remove("score")
+            .is_some(),
+        "the fixture has a nullable score"
+    );
+    let error = xtask::engineaudit::audit(
+        "missing-score.json",
+        &missing_score.to_string(),
+        &Evidence::default(),
+    )
+    .expect_err("a missing nullable key is different from an explicit null");
+    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+
+    let mut missing_route = base();
+    assert!(
+        missing_route["mutants"][0]
+            .as_object_mut()
+            .expect("the mutant object")
+            .remove("route")
+            .is_some(),
+        "the fixture has a nullable route"
+    );
+    let error = xtask::engineaudit::audit(
+        "missing-route.json",
+        &missing_route.to_string(),
+        &Evidence::default(),
+    )
+    .expect_err("a missing route cannot be silently read as no route");
+    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+}
+
+#[test]
+fn owned_evidence_is_exact_after_the_duplicate_key_boundary() {
+    let report = base().to_string();
+    for (path, reached, touched) in [
+        (
+            "reached-v1.json",
+            Some(r#"{"targets":{},"limitations":[]}"#),
+            None,
+        ),
+        (
+            "touched-v1.json",
+            None,
+            Some(r#"{"targets":{},"limitations":[],"rogue":true}"#),
+        ),
+        (
+            "touched-null.json",
+            None,
+            Some(r#"{"targets":{},"limitations":[],"narrowing":null}"#),
+        ),
+    ] {
+        let evidence = Evidence {
+            recorded: None,
+            shards: Vec::new(),
+            ledger: None,
+            sites: false,
+            reached: reached.map(|text| Source { path, text }),
+            catalog: None,
+            probe_logs: Vec::new(),
+            touched: touched.map(|text| Source { path, text }),
+        };
+        let error = xtask::engineaudit::audit("report.json", &report, &evidence)
+            .expect_err("an owned evidence document must match its exact schema");
+        assert!(
+            matches!(error, AuditError::MalformedEvidence { .. }),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_historical_trace_is_not_silently_read_as_the_current_contract() {
+    let run = run_directory(&base());
+    let mut events = recording();
+    events[0]["schema"] = serde_json::json!("rust-mutants-trace-v1");
+    let trace = recorded(&events);
+    let error = gates::engine_audit(&asked(run.path(), Some(trace.path()), None))
+        .expect_err("v1 and v2 assign different meanings to execution outcomes");
+    assert!(
+        matches!(error, AuditError::UnsupportedTrace { .. }),
         "{error}"
     );
 }
@@ -759,9 +1106,9 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
 
 /// The runs of three fixtures, recorded by the engine and committed beside this test.
 const SAMPLES: [(&str, usize, usize); 3] = [
-    ("engine-run-simple", 6, 0),
-    ("engine-run-rejected", 8, 4),
-    ("engine-run-unreached", 4, 0),
+    ("engine-run-simple", 13, 0),
+    ("engine-run-rejected", 16, 4),
+    ("engine-run-unreached", 8, 0),
 ];
 
 fn sample(name: &str) -> std::path::PathBuf {
@@ -775,8 +1122,16 @@ fn every_committed_run_re_decides_with_nothing_the_audit_disagrees_with() {
     for (name, mutants, rejections) in SAMPLES {
         let run = sample(name);
         let trace = run.join("trace");
-        let audit = gates::engine_audit(&asked(&run, Some(&trace), None))
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let audited = gates::engine_audit(&asked(&run, Some(&trace), None));
+        assert_eq!(
+            result_state(&audited),
+            ResultState::Returned,
+            "{name}: {audited:?}"
+        );
+        let audit = match audited {
+            Ok(audit) => audit,
+            Err(_already_reported) => continue,
+        };
         assert_eq!(audit.mutants, mutants, "{name}: {audit}");
         assert_eq!(audit.rejections, rejections, "{name}: {audit}");
         assert_eq!(audit.violations(), 0, "{name}: {audit}");
@@ -800,7 +1155,8 @@ fn a_committed_run_whose_recording_lost_a_line_is_a_violation() {
     let run = sample("engine-run-simple");
     let recorded = std::fs::read_to_string(run.join("trace/trace.jsonl")).expect("the recording");
     let mut lines: Vec<&str> = recorded.lines().collect();
-    let _lost = lines.remove(lines.len() / 2);
+    let lost = lines.remove(lines.len() / 2);
+    assert!(!lost.is_empty(), "the fixture removes a non-empty event");
     let trace = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(trace.path().join("trace.jsonl"), lines.join("\n"))
         .expect("the shortened recording");
@@ -824,12 +1180,15 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
         "mutants": [{}, {}, {
             "index": 3, "id": "c".repeat(64), "display_id": "c".repeat(20),
             "path": "src/lib.rs", "package": "demo",
-            "family": "comparison", "rule": "gt-to-ge", "rule_version": 1,
+            "family": "comparison", "rule": "gt-to-ge", "item": "larger",
+            "rule_version": 1,
             "line": 30, "column": 8,
             "start_byte": 300, "end_byte": 301, "source_digest": SOURCE,
             "original": ">", "replacement": ">=",
             "outcome": "not_run", "target": "", "exit_code": 0,
-            "duration_ms": 0, "tests_run": null, "retried": false,
+            "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
+            "step_notice": null, "retried": false, "not_run_reason": "interrupted",
+            "route": null, "identical": null,
             "expected": false, "unreached": false, "source_run_id": null
         }]
     }));
@@ -922,7 +1281,7 @@ fn a_discharge_the_run_re_derives_is_silent() {
 
 #[test]
 fn a_target_discharged_by_a_branch_that_ran_the_body_is_a_violation() {
-    let (report, _reached, catalog) = discharging();
+    let (report, _, catalog) = discharging();
     let ran = serde_json::json!({
         "targets": { TARGET: [{ "file": "src/lib.rs", "start": { "line": 11, "column": 9 },
                                 "end": { "line": 11, "column": 20 } }] },
@@ -940,7 +1299,7 @@ fn a_target_discharged_by_a_branch_that_ran_the_body_is_a_violation() {
 
 #[test]
 fn a_branch_discharge_without_the_evidence_it_rests_on_is_unaudited() {
-    let (report, _reached, _catalog) = discharging();
+    let (report, ..) = discharging();
     let audit = audited(&report);
     assert_eq!(violations(&audit, Layer::Proofs), Vec::<String>::new());
     assert!(
@@ -1022,6 +1381,36 @@ fn a_file_passed_over_whole_is_silent_on_the_census() {
     assert!(
         violations(&audit, Layer::Sites).is_empty(),
         "a file nothing walked has no decisions to account for: {audit}"
+    );
+}
+
+#[test]
+fn a_whole_file_skip_must_name_at_least_one_hidden_place() {
+    let mut events = recording();
+    events.insert(
+        1,
+        serde_json::json!({
+            "seq": 0,
+            "timestamp": "2026-01-01T00:00:01Z",
+            "elapsed_ms": 1,
+            "type": "discover-file",
+            "discover": {
+                "path": "src/testutil.rs",
+                "candidates": 0,
+                "sites": [],
+                "skips": [{ "reason": "test-only-file", "count": 0 }]
+            }
+        }),
+    );
+    for (at, event) in events.iter_mut().enumerate() {
+        event["seq"] = serde_json::json!(at.saturating_add(1));
+    }
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Sites)
+            .iter()
+            .any(|remark| remark.contains("names no skipped place")),
+        "an empty whole-file exception must not bypass the census: {audit}"
     );
 }
 
@@ -1245,8 +1634,8 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
     let mut document = routed_by_test();
     let other = "demo/test/parity";
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2},
-        {"id": other, "kind": "test", "harness": true, "tests": 1}
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
+        {"id": other, "kind": "test", "harness": true, "tests": 1, "limitations": []}
     ]);
     document["mutants"][0]["route"]["reaching"] = serde_json::json!([TARGET, other]);
     let mut recorded = record();
@@ -1264,8 +1653,9 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
 fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violation() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2},
-        {"id": "demo/test/parity", "kind": "test", "harness": true, "tests": 1}
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
+        {"id": "demo/test/parity", "kind": "test", "harness": true, "tests": 1,
+         "limitations": []}
     ]);
     let audit = with_record(&document, &record());
     let said = violations(&audit, Layer::Touch);
@@ -1280,8 +1670,9 @@ fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violati
 fn a_target_the_record_excuses_is_accounted_for_rather_than_unnamed() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2},
-        {"id": "demo/doc/demo", "kind": "doc", "harness": true, "tests": 1}
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
+        {"id": "demo/doc/demo", "kind": "doc", "harness": true, "tests": 1,
+         "limitations": []}
     ]);
     let mut recorded = record();
     recorded["limitations"] = serde_json::json!(["touch-not-recorded:demo/doc/demo"]);
@@ -1467,8 +1858,8 @@ fn record_of_three() -> serde_json::Value {
 #[test]
 fn a_route_the_guards_narrowed_by_a_comparison_is_re_decided_from_it() {
     let mut document = routed_by_test();
-    document["targets"] =
-        serde_json::json!([{ "id": TARGET, "kind": "lib", "harness": true, "tests": 3 }]);
+    document["targets"] = serde_json::json!([{ "id": TARGET, "kind": "lib", "harness": true, "tests": 3,
+                             "limitations": [] }]);
     document["mutants"][1]["route"]["tests"][TARGET] =
         serde_json::json!(["tests::max_picks_the_larger"]);
     let recorded = record_of_three();
@@ -1545,7 +1936,8 @@ fn a_mutant_a_filter_left_out_is_accounted_for_rather_than_reported_as_a_hole() 
     document["accounting"]["discharged"] = serde_json::json!(0);
     document["mutants"][1]["not_run_reason"] = serde_json::json!("unselected");
     document["mutants"][1]["route"] = serde_json::json!({
-        "granularity": "all", "reaching": [], "executed": []
+        "granularity": "all", "fallback": null, "reaching": [], "discharged": [],
+        "executed": [], "tests": {}
     });
     document["findings"] = serde_json::json!([]);
     let audit = with_record(&document, &record_of_a_comparison(&[0]));
@@ -1561,8 +1953,8 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
     let mut document = base();
     document["accounting"] = serde_json::json!({
         "cataloged": 2, "refused": 1, "skipped": 0, "executed": 1,
-        "killed": 1, "survived": 0, "timed_out": 0, "inconclusive": 0,
-        "errored": 0, "not_run": 1, "unreached": 0, "discharged": 0,
+        "killed": 1, "survived": 0, "step_limit_reached": 0, "waited": 0,
+        "inconclusive": 0, "errored": 0, "not_run": 1, "unreached": 0, "discharged": 0,
         "expected": 0
     });
     document["score"] = serde_json::json!({"detected": 1, "decided": 1, "value": 1.0});

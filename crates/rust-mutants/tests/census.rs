@@ -24,7 +24,7 @@ fn decided(source: &str) -> (usize, usize, usize) {
     let skipped: usize = found
         .skips
         .iter()
-        .map(|skip| usize::try_from(skip.count).unwrap_or(usize::MAX))
+        .map(|skip| usize::try_from(skip.count).expect("a test fixture count fits usize"))
         .sum();
     (found.decisions.len(), found.candidates.len(), skipped)
 }
@@ -148,7 +148,11 @@ fn each_branch_of_a_returned_if_or_match_is_a_return_site_and_the_whole_keeps_it
         .candidates
         .iter()
         .filter(|one| one.candidate.rule.name == "return-default")
-        .map(|one| String::from_utf8_lossy(&one.candidate.original).into_owned())
+        .map(|one| {
+            std::str::from_utf8(&one.candidate.original)
+                .expect("the Rust fixture is exact UTF-8")
+                .to_owned()
+        })
         .collect();
     assert_eq!(
         replaced,
@@ -163,7 +167,7 @@ fn each_branch_of_a_returned_if_or_match_is_a_return_site_and_the_whole_keeps_it
         .find(|one| one.candidate.original.starts_with(b"if "))
         .expect("the whole expression");
     assert_eq!(
-        whole.candidate.id().expect("an identity"),
+        whole.candidate.id().expect("an identity").as_str(),
         "eefdf186018442c99e227fe3f7b7e825030a4913ec558f25746d9a1652b66caa",
         "an identity is minted from the bytes an edit replaces, and those bytes have not moved"
     );

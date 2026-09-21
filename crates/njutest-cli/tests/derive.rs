@@ -3,9 +3,21 @@
 
 //! The faults a recording of a seam licenses, and the ones it does not.
 
+#![expect(
+    clippy::panic,
+    reason = "a test names what minted identities it refused to"
+)]
+
 use njutest_cli::wire::derive::{ID_DOMAIN, derive};
 use njutest_cli::wire::rule::Rule;
 use njutest_cli::wire::{Exchange, Spoken};
+
+fn derived(observed: &[Exchange]) -> Vec<njutest_cli::wire::derive::Fault> {
+    match derive(observed) {
+        Ok(faults) => faults,
+        Err(error) => panic!("the bounded fixture must mint exact fault identities: {error}"),
+    }
+}
 
 fn http(seq: u64, path: &str, status: u16) -> Exchange {
     Exchange {
@@ -41,7 +53,7 @@ fn raw(seq: u64) -> Exchange {
 #[test]
 fn nothing_is_derived_for_a_seam_nobody_spoke_to() {
     assert!(
-        derive(&[]).is_empty(),
+        derived(&[]).is_empty(),
         "a catalogue is derived from what a run observed, and a run that observed \
          nothing licenses no question about anything"
     );
@@ -49,7 +61,7 @@ fn nothing_is_derived_for_a_seam_nobody_spoke_to() {
 
 #[test]
 fn every_fault_names_the_exchange_it_was_derived_from() {
-    let faults = derive(&[http(0, "/orders", 200)]);
+    let faults = derived(&[http(0, "/orders", 200)]);
     assert!(
         !faults.is_empty(),
         "an observed exchange licenses questions"
@@ -69,7 +81,7 @@ fn every_fault_names_the_exchange_it_was_derived_from() {
 
 #[test]
 fn a_protocol_nothing_parsed_licenses_no_question_about_its_answer() {
-    let faults = derive(&[raw(0)]);
+    let faults = derived(&[raw(0)]);
     let named: Vec<&str> = faults.iter().map(|fault| fault.rule.name()).collect();
     assert!(
         !named.iter().any(|rule| rule.contains("status")),
@@ -86,7 +98,7 @@ fn a_protocol_nothing_parsed_licenses_no_question_about_its_answer() {
 
 #[test]
 fn an_answer_that_was_read_licenses_a_question_about_the_answer() {
-    let faults = derive(&[http(0, "/orders", 200)]);
+    let faults = derived(&[http(0, "/orders", 200)]);
     let named: Vec<&str> = faults.iter().map(|fault| fault.rule.name()).collect();
     assert!(
         named.contains(&"status-server-error"),
@@ -97,10 +109,10 @@ fn an_answer_that_was_read_licenses_a_question_about_the_answer() {
 
 #[test]
 fn two_seams_that_said_the_same_thing_are_two_different_faults() {
-    let one = derive(&[http(0, "/orders", 200)]);
+    let one = derived(&[http(0, "/orders", 200)]);
     let mut elsewhere = http(0, "/orders", 200);
     elsewhere.capability = "other".to_owned();
-    let two = derive(&[elsewhere]);
+    let two = derived(&[elsewhere]);
 
     let ids: Vec<&str> = one.iter().map(|fault| fault.id.as_str()).collect();
     for fault in &two {
@@ -115,8 +127,8 @@ fn two_seams_that_said_the_same_thing_are_two_different_faults() {
 
 #[test]
 fn an_identity_is_a_function_of_the_exchange_and_the_rule_alone() {
-    let first = derive(&[http(0, "/orders", 200)]);
-    let again = derive(&[http(0, "/orders", 200)]);
+    let first = derived(&[http(0, "/orders", 200)]);
+    let again = derived(&[http(0, "/orders", 200)]);
     assert_eq!(
         first.iter().map(|one| one.id.clone()).collect::<Vec<_>>(),
         again.iter().map(|one| one.id.clone()).collect::<Vec<_>>(),
@@ -143,7 +155,7 @@ fn the_identity_of_a_question_is_the_one_the_recipe_states_and_not_this_implemen
             status_line: "HTTP/1.1 200 OK".to_owned(),
         },
     }];
-    let minted = derive(&observed);
+    let minted = derived(&observed);
     let asked = minted
         .iter()
         .find(|one| one.rule == Rule::StatusServerError)
@@ -164,7 +176,7 @@ fn the_identity_of_a_question_is_the_one_the_recipe_states_and_not_this_implemen
 #[test]
 fn the_first_exchange_on_a_seam_licenses_no_question_about_what_came_before_it() {
     let observed = vec![http(0, "/orders", 200), http(1, "/orders/1", 200)];
-    let minted = derive(&observed);
+    let minted = derived(&observed);
     let stale: Vec<u64> = minted
         .iter()
         .filter(|one| one.rule == Rule::StaleResponse)

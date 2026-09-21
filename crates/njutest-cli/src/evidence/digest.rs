@@ -32,20 +32,22 @@ impl Fields {
         self
     }
 
-    /// Adds a named list, in the order given. A caller for whom order is not a fact sorts first.
+    /// Adds a named list, in the order given. A caller for whom order is not a
+    /// fact sorts first. The list is owned before hashing so its exact,
+    /// allocation-bounded length is a value rather than an overflowable
+    /// counter over an adversarial iterator.
     pub fn list<I, S>(&mut self, name: &str, values: I) -> &mut Self
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        let values: Vec<S> = values.into_iter().collect();
         write(&mut self.hasher, name);
-        let mut count = 0u32;
         let mut items = Sha256::new();
-        for value in values {
+        for value in &values {
             write(&mut items, value.as_ref());
-            count = count.saturating_add(1);
         }
-        write(&mut self.hasher, &count.to_string());
+        write(&mut self.hasher, &values.len().to_string());
         write(&mut self.hasher, &hex::encode(items.finalize()));
         self
     }
@@ -64,7 +66,6 @@ fn write(hasher: &mut Sha256, value: &str) {
 
 /// How much of the workspace a run looked at. It is part of the identity: a run that looked at one package established less than one that looked at everything, and the two must never share a cached answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Mode {
     /// The whole workspace.
     Full,
@@ -165,5 +166,6 @@ const fn contract_name(contract: Contract) -> &'static str {
     match contract {
         Contract::StandardV1 => "standard-v1",
         Contract::DeepV1 => "deep-v1",
+        Contract::VerifiedV1 => "verified-v1",
     }
 }

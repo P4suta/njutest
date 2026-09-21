@@ -484,23 +484,6 @@ impl Command {
             | Self::Cache { .. } => None,
         }
     }
-
-    /// The workspace root the command names, when it names one.
-    #[must_use]
-    pub const fn root(&self) -> Option<&PathBuf> {
-        match self {
-            Self::Init { root, .. }
-            | Self::Doctor { root, .. }
-            | Self::Report { root, .. }
-            | Self::Cache { root, .. }
-            | Self::Diagnostics { root, .. }
-            | Self::Merge { root, .. } => root.as_ref(),
-            _ => match self.scope() {
-                Some(scope) => scope.root.as_ref(),
-                None => None,
-            },
-        }
-    }
 }
 
 /// A command that could not be parsed, or a request to print help or the version, rendered for the stream it belongs on.
@@ -521,7 +504,10 @@ fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
         .and_then(|name| std::path::Path::new(name).file_stem())
         .is_some_and(|stem| stem == "cargo-rust-mutants");
     if called_by_cargo && args.get(1).is_some_and(|word| word == "rust-mutants") {
-        let _repeated = args.remove(1);
+        let repeated = args.remove(1);
+        if repeated != "rust-mutants" {
+            args.insert(1, repeated);
+        }
     }
     args
 }

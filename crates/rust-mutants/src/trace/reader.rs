@@ -5,6 +5,8 @@
 
 use std::io::{self, BufRead};
 
+use serde::Deserialize as _;
+
 use super::event::{Event, Payload};
 
 /// Why a stream could not be read. Fail-closed: a malformed line is an error naming the line, never an event skipped in silence.
@@ -51,7 +53,11 @@ pub fn read_events(reader: impl BufRead) -> Result<Vec<Event>, ReadError> {
         if line.trim().is_empty() {
             continue;
         }
-        let event = serde_json::from_str(&line).map_err(|source| ReadError::Malformed {
+        let value = crate::strictjson::from_str(&line).map_err(|source| ReadError::Malformed {
+            line: index.saturating_add(1),
+            source,
+        })?;
+        let event = Event::deserialize(value).map_err(|source| ReadError::Malformed {
             line: index.saturating_add(1),
             source,
         })?;
@@ -125,14 +131,36 @@ fn unbalanced_phases(events: &[Event]) -> Vec<Problem> {
             Payload::PhaseEnd { phase } => {
                 match open.iter().rposition(|name| *name == phase.name) {
                     Some(at) => {
-                        let _closed = open.remove(at);
+                        let closed = open.remove(at);
+                        debug_assert_eq!(closed, phase.name);
                     }
                     None => problems.push(Problem::UnbalancedPhase {
                         name: phase.name.clone(),
                     }),
                 }
             }
-            _ => {}
+            Payload::RunStart { .. }
+            | Payload::Open { .. }
+            | Payload::Snapshot { .. }
+            | Payload::Exec { .. }
+            | Payload::DiscoverFile { .. }
+            | Payload::Instrument { .. }
+            | Payload::ValidateRound { .. }
+            | Payload::Bisect { .. }
+            | Payload::Build { .. }
+            | Payload::Verify { .. }
+            | Payload::Touch { .. }
+            | Payload::Witness { .. }
+            | Payload::SkipClaim { .. }
+            | Payload::Kept { .. }
+            | Payload::Route { .. }
+            | Payload::Cache { .. }
+            | Payload::Select { .. }
+            | Payload::Identical { .. }
+            | Payload::Evidence { .. }
+            | Payload::MutantExec { .. }
+            | Payload::Note { .. }
+            | Payload::RunEnd { .. } => {}
         }
     }
     problems.extend(open.into_iter().map(|name| Problem::UnbalancedPhase {

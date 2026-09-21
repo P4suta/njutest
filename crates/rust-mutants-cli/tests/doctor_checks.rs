@@ -56,16 +56,16 @@ fn asked(environment: &Environment, args: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
 /// The document `doctor --json` answers with, for the tree `environment` names.
 fn document(environment: &Environment) -> serde_json::Value {
-    let root = environment.working_directory.to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(&environment.working_directory).to_owned();
     let said = asked(environment, &["doctor", "--json", "--root", &root]);
-    serde_json::from_str(&said.out).unwrap_or_else(|error| {
+    njutest_devkit::strictjson::decode_str(&said.out).unwrap_or_else(|error| {
         panic!(
             "the doctor answers as a document, and this one did not: {error}\n{}{}",
             said.out, said.err
@@ -143,7 +143,7 @@ fn a_doctor_names_every_check_a_run_needs_and_the_lines_say_what_the_document_do
         );
     }
 
-    let root = environment.working_directory.to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(&environment.working_directory).to_owned();
     let lines = asked(&environment, &["doctor", "--root", &root]);
     for check in checks {
         let name = check["name"].as_str().expect("a check has a name");
@@ -194,7 +194,7 @@ fn a_reserved_variable_that_is_already_set_is_a_failure_that_names_it() {
         "a document is well only when every check is"
     );
 
-    let root = environment.working_directory.to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(&environment.working_directory).to_owned();
     let said = asked(&environment, &["doctor", "--root", &root]);
     assert_eq!(
         said.code,
@@ -296,7 +296,11 @@ fn a_configuration_nobody_can_read_is_a_failure_carrying_the_code_it_refused_wit
 fn a_tree_with_no_configuration_is_told_what_writes_one() {
     let fixture = Fixture::copy("fixture-simple");
     let path = fixture.root().join(rust_mutants_cli::config::FILE_NAME);
-    drop(std::fs::remove_file(&path));
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("the fixture configuration can be removed: {error}"),
+    }
 
     let document = document(&environment(&fixture));
     assert_eq!(standing(&document, "config"), "ok");
@@ -489,11 +493,11 @@ fn what_a_doctor_is_asked_about_is_the_root_it_was_given_and_not_the_directory_i
             "doctor",
             "--json",
             "--root",
-            &fixture.root().join("crates").join("core").to_string_lossy(),
+            njutest_devkit::paths::utf8(&fixture.root().join("crates").join("core")),
         ],
     );
-    let document: serde_json::Value =
-        serde_json::from_str(&named.out).expect("the doctor answers as a document");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&named.out)
+        .expect("the doctor answers as a document");
     assert_eq!(
         standing(&document, "workspace"),
         "fail",
@@ -512,7 +516,7 @@ fn a_reserved_variable_whose_value_is_empty_is_not_one_that_is_set() {
         .vars
         .push((OsString::from("RUST_MUTANTS_ACTIVE"), OsString::new()));
 
-    let root = environment.working_directory.to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(&environment.working_directory).to_owned();
     let said = asked(&environment, &["doctor", "--root", &root]);
     assert!(
         said.code <= rust_mutants_cli::EXIT_USAGE,
@@ -548,7 +552,7 @@ fn a_root_spelled_as_a_relative_path_is_relative_to_where_the_command_was_told_i
     environment.working_directory = fixture.root().to_path_buf();
 
     let said = asked(&environment, &["doctor", "--json", "--root", "crates/core"]);
-    let document: serde_json::Value = serde_json::from_str(&said.out)
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&said.out)
         .unwrap_or_else(|error| panic!("the doctor answers as a document: {error}\n{}", said.err));
     assert_eq!(
         standing(&document, "workspace"),

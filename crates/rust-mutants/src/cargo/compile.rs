@@ -18,10 +18,9 @@ use crate::trace::ExecRecord;
 const MESSAGE_OUTPUT_LIMIT: usize = 256 << 20;
 
 /// Which command compiles the tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompileKind {
     /// `cargo check --all-targets`: every type question, no code generated.
-    #[default]
     Check,
     /// `cargo test --all-targets --no-run`: the binaries a run executes, and every refusal that only happens once code is generated.
     Tests,
@@ -119,7 +118,7 @@ impl BuildConfig {
 }
 
 /// Configures [`compile`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CompileOptions {
     /// Which command to run.
     pub kind: CompileKind,
@@ -139,23 +138,47 @@ pub struct CompileOptions {
     pub build: BuildConfig,
 }
 
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self {
+            kind: CompileKind::Check,
+            target_dir: None,
+            locked: false,
+            offline: false,
+            timeout: None,
+            env: Vec::new(),
+            packages: Vec::new(),
+            build: BuildConfig::default(),
+        }
+    }
+}
+
 /// The whole command line one compilation runs, which is what a person would have typed.
 #[must_use]
-pub fn compile_arguments(options: &CompileOptions) -> Vec<String> {
-    let mut args = arguments(options.kind, &options.packages);
-    args.push("--message-format=json".to_owned());
+pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
+    let mut args: Vec<OsString> = arguments(options.kind, &options.packages)
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    args.push(OsString::from("--message-format=json"));
     if options.locked {
-        args.push("--locked".to_owned());
+        args.push(OsString::from("--locked"));
     }
     if options.offline {
-        args.push("--offline".to_owned());
+        args.push(OsString::from("--offline"));
     }
     if let Some(target_dir) = &options.target_dir {
-        args.push("--target-dir".to_owned());
-        args.push(target_dir.to_string_lossy().into_owned());
+        args.push(OsString::from("--target-dir"));
+        args.push(target_dir.as_os_str().to_owned());
     }
-    args.extend(options.build.arguments());
-    args.extend(options.build.without_debug_information());
+    args.extend(options.build.arguments().into_iter().map(OsString::from));
+    args.extend(
+        options
+            .build
+            .without_debug_information()
+            .into_iter()
+            .map(OsString::from),
+    );
     args
 }
 
@@ -189,15 +212,28 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
     spec.structured_stdout = Some(MESSAGE_OUTPUT_LIMIT);
     spec.timeout = options.timeout;
     let result = run(&spec, driver.cancel);
-    driver.trace.exec(ExecRecord::of(&spec, &result));
+    driver.trace.exec_result(ExecRecord::of(&spec, &result));
     if driver.cancel.is_cancelled() {
         return Err(CargoError::new(
             CargoErrorKind::Cancelled,
             "the compilation was cancelled",
         ));
     }
-    if result.error.is_some() || result.timed_out {
-        return Err(command_failed(&spec, &result));
+    match &result.termination {
+        crate::runner::Termination::Exited(_) => {}
+        crate::runner::Termination::Cancelled { .. } => {
+            return Err(CargoError::new(
+                CargoErrorKind::Cancelled,
+                "the compilation was cancelled",
+            ));
+        }
+        crate::runner::Termination::NotStarted { .. }
+        | crate::runner::Termination::TimedOut
+        | crate::runner::Termination::StoppedByMonitor
+        | crate::runner::Termination::MonitorFailed { .. }
+        | crate::runner::Termination::WaitFailed { .. } => {
+            return Err(command_failed(&spec, &result));
+        }
     }
     if result.stdout_truncated {
         return Err(CargoError::new(
@@ -211,10 +247,13 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         .rev()
         .find_map(|message| match message {
             Message::BuildFinished { success } => Some(*success),
-            _ => None,
+            Message::CompilerArtifact(_)
+            | Message::CompilerMessage(_)
+            | Message::BuildScriptExecuted(_)
+            | Message::Other { .. } => None,
         })
         .unwrap_or(false);
-    if !success && result.ok() {
+    if !success && result.succeeded() {
         return Err(CargoError::new(
             CargoErrorKind::MessageUnparsable,
             "the compiler exited 0 without reporting a finished build",

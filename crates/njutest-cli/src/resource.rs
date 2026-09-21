@@ -5,12 +5,14 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+#[cfg(feature = "testkit")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::config::Resource;
 use crate::error::{self, ErrorCode};
-use crate::provider::{Process, ProviderError, Request};
+use crate::provider::{InstanceId, Process, ProviderError, Request};
 
 /// The variables a run composes for itself, which a provider may therefore not offer.
 pub const RESERVED_NAMES: [&str; 6] = [
@@ -43,6 +45,23 @@ pub enum ResourceError {
         /// The variable it offered.
         name: String,
     },
+    /// The primary resource failure and the failure to clean up its provider.
+    #[error("{primary}; cleanup also failed: {cleanup}")]
+    CleanupAfterFailure {
+        /// The failure that caused the resource operation to stop.
+        primary: Box<Self>,
+        /// Why the provider could not then be ended safely.
+        cleanup: ProviderError,
+    },
+    /// Starting one resource failed, then releasing resources already started
+    /// for the same run also produced one or more failures.
+    #[error("{primary}; releasing earlier resources also failed: {cleanup:?}")]
+    ReleaseAfterFailure {
+        /// The failure that prevented the requested resource from starting.
+        primary: Box<Self>,
+        /// Every failure from the bounded reverse-order release.
+        cleanup: Vec<Self>,
+    },
 }
 
 impl ResourceError {
@@ -52,6 +71,8 @@ impl ResourceError {
         match self {
             Self::Provider(inner) => inner.code(),
             Self::EnvironmentRefused { .. } => error::RESOURCE_ENVIRONMENT_REFUSED,
+            Self::CleanupAfterFailure { primary, .. }
+            | Self::ReleaseAfterFailure { primary, .. } => primary.code(),
         }
     }
 }
@@ -62,7 +83,7 @@ pub struct Lease {
     /// The capability the resource provides.
     pub capability: String,
     /// The instance the provider named.
-    pub instance: String,
+    pub instance: InstanceId,
     /// What the tests of this run see, in name order.
     pub environment: Vec<(String, String)>,
 }
@@ -111,7 +132,10 @@ impl Drop for Manager {
     /// nothing naming it, and a build that fails leaves one behind per
     /// attempt.
     fn drop(&mut self) {
-        let _refusals = self.release();
+        let refusals = self.release();
+        for refusal in refusals {
+            drop(refusal);
+        }
     }
 }
 
@@ -126,14 +150,20 @@ impl Manager {
         }
     }
 
-    /// Whether anything is held.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.live.is_empty()
+    fn next_sequence(&mut self) -> Result<u32, ProviderError> {
+        self.sequence = self.sequence.checked_add(1).ok_or_else(|| {
+            ProviderError::new(
+                crate::provider::ProviderErrorKind::Protocol,
+                "the provider request sequence is exhausted",
+            )
+        })?;
+        Ok(self.sequence)
     }
 
     /// What every test of this run sees because of the resources it holds, in name order.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn environment(&self) -> Vec<(String, String)> {
         let mut all: BTreeMap<String, String> = BTreeMap::new();
         for live in &self.live {
@@ -173,30 +203,38 @@ impl Manager {
                 ))
             });
         }
-        self.sequence = self.sequence.saturating_add(1);
+        let sequence = self.next_sequence()?;
         let mut process = Process::start(
             &resource.command,
             &self.place.dir,
             &visible(&self.place.env, &resource.environment),
         )?;
-        let answered = process.ask(&Request::start(capability, self.sequence), resource.timeout);
+        let answered = process.ask(&Request::start(capability, sequence), resource.timeout);
         let answered = match answered {
             Ok(answered) => answered,
             Err(refusal) => {
-                process.end(resource.timeout);
-                return Err(refusal.into());
+                return match process.end(resource.timeout) {
+                    Ok(()) => Err(refusal.into()),
+                    Err(cleanup) => Err(refusal.with_cleanup(cleanup).into()),
+                };
             }
         };
-        let environment = match admissible(capability, &answered.environment) {
+        let (instance, offered) = answered.into_parts();
+        let environment = match admissible(capability, &offered) {
             Ok(environment) => environment,
             Err(refusal) => {
-                process.end(resource.timeout);
-                return Err(refusal);
+                return match process.end(resource.timeout) {
+                    Ok(()) => Err(refusal),
+                    Err(cleanup) => Err(ResourceError::CleanupAfterFailure {
+                        primary: Box::new(refusal),
+                        cleanup,
+                    }),
+                };
             }
         };
         let lease = Lease {
             capability: capability.to_owned(),
-            instance: answered.instance.unwrap_or_default(),
+            instance,
             environment,
         };
         self.live.push(Live {
@@ -227,7 +265,9 @@ impl Manager {
                     ),
                 )));
                 let Live { process, .. } = live;
-                process.end(Duration::ZERO);
+                if let Err(refusal) = process.end(Duration::ZERO) {
+                    refusals.push(refusal.into());
+                }
                 continue;
             }
             let Live {
@@ -235,14 +275,20 @@ impl Manager {
                 lease,
                 timeout,
             } = live;
-            self.sequence = self.sequence.saturating_add(1);
-            if let Err(refusal) = process.ask(
-                &Request::stop(&lease.capability, &lease.instance, self.sequence),
-                timeout,
-            ) {
+            match self.next_sequence() {
+                Ok(sequence) => {
+                    if let Err(refusal) = process.ask(
+                        &Request::stop(&lease.capability, &lease.instance, sequence),
+                        timeout,
+                    ) {
+                        refusals.push(refusal.into());
+                    }
+                }
+                Err(refusal) => refusals.push(refusal.into()),
+            }
+            if let Err(refusal) = process.end(timeout) {
                 refusals.push(refusal.into());
             }
-            process.end(timeout);
         }
         refusals
     }
@@ -290,6 +336,7 @@ pub fn admissible(
 
 /// Where providers run when a run has a scratch of its own.
 #[must_use]
+#[cfg(feature = "testkit")]
 pub fn place(dir: &Path, env: &[(OsString, OsString)]) -> Where {
     Where {
         dir: dir.to_path_buf(),

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! One document per disposition the published schema declares, because a schema with nine shapes had only ever been shown one.
+//! One document per disposition the published schema declares, because a schema with many shapes had only ever been shown one.
 
 #![expect(
     clippy::expect_used,
@@ -14,9 +14,9 @@ use serde_json::{Value, json};
 /// The published schema, compiled.
 fn validator() -> jsonschema::Validator {
     let path =
-        njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v1.json");
+        njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v2.json");
     let text = std::fs::read_to_string(&path).expect("the published schema");
-    let schema: Value = serde_json::from_str(&text).expect("the schema is JSON");
+    let schema: Value = njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON");
     jsonschema::validator_for(&schema).expect("the schema compiles")
 }
 
@@ -28,7 +28,7 @@ fn problems(document: &Value) -> Vec<String> {
         .collect()
 }
 
-/// The recorded document, with one mutation carrying `outcome` and `killed_by`.
+/// The recorded document, with one mutation carrying a closed decision object.
 ///
 /// Built from the golden rather than from the model on purpose: the model
 /// writes whichever disposition the run it is given reaches, so a suite that
@@ -44,19 +44,27 @@ fn recorded(outcome: &str, killed_by: Value) -> Value {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/report.golden.json");
     let text = std::fs::read_to_string(&path).expect("the recorded document");
-    let mut document: Value = serde_json::from_str(&text).expect("the recorded document is JSON");
+    let mut document: Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the recorded document is JSON");
 
-    let mutation = &mut document["mutants"][0];
-    mutation["outcome"] = json!(outcome);
-    mutation["killed_by"] = killed_by;
+    let decision = &mut document["report"]["builds"][0]["parts"][0]["mutants"][0]["decision"];
+    decision["outcome"] = json!(outcome);
+    decision["killed_by"] = killed_by;
+    if outcome == "step-limit-reached" {
+        decision["step_boundary"] = json!({ "limit": 10, "observed": 11 });
+    } else {
+        decision["step_boundary"] = Value::Null;
+    }
     document
 }
 
 /// Every disposition the schema declares, and whether it names a target.
-const DISPOSITIONS: [(&str, bool); 9] = [
+const DISPOSITIONS: [(&str, bool); 11] = [
     ("compile-rejected", false),
     ("killed", true),
-    ("runaway", true),
+    ("model-noticed", false),
+    ("model-proved", false),
+    ("step-limit-reached", true),
     ("waited", true),
     ("survived", false),
     ("unreached", false),
@@ -103,19 +111,50 @@ fn a_disposition_that_names_a_target_is_not_one_that_names_nobody() {
 }
 
 #[test]
-fn the_two_that_used_to_be_one_are_told_apart_by_their_shape() {
-    let runaway = recorded("runaway", json!("0123456789abcdef"));
+fn a_verified_step_boundary_is_distinct_from_waiting_and_from_retired_spellings() {
+    let limited = recorded("step-limit-reached", json!("0123456789abcdef"));
     let waited = recorded("waited", json!("0123456789abcdef"));
-    assert!(problems(&runaway).is_empty() && problems(&waited).is_empty());
+    assert!(problems(&limited).is_empty() && problems(&waited).is_empty());
     assert_ne!(
-        runaway["mutants"][0]["outcome"], waited["mutants"][0]["outcome"],
+        limited["report"]["builds"][0]["parts"][0]["mutants"][0]["decision"]["outcome"],
+        waited["report"]["builds"][0]["parts"][0]["mutants"][0]["decision"]["outcome"],
         "a name that meant two things now means neither, and the two documents \
          differ in the one place a reader looks"
     );
+    for retired in ["runaway", "timed_out"] {
+        assert!(
+            !problems(&recorded(retired, json!("0123456789abcdef"))).is_empty(),
+            "the retired {retired} spelling is refused rather than reinterpreted"
+        );
+    }
+}
+
+#[test]
+fn only_a_step_limit_record_carries_one_verified_boundary() {
+    let mut missing = recorded("step-limit-reached", json!("0123456789abcdef"));
+    missing["report"]["builds"][0]["parts"][0]["mutants"][0]["decision"]
+        .as_object_mut()
+        .expect("a typed decision")
+        .remove("step_boundary");
     assert!(
-        !problems(&recorded("timed_out", json!("0123456789abcdef"))).is_empty(),
-        "and the name that meant both is refused rather than read as whichever \
-         of the two a reader guesses, because a fate table that re-reads as one \
-         of them is how it starts lying"
+        !problems(&missing).is_empty(),
+        "a bare outcome name cannot stand in for the nonce-verified boundary"
+    );
+
+    let mut extraneous = recorded("waited", json!("0123456789abcdef"));
+    extraneous["report"]["builds"][0]["parts"][0]["mutants"][0]["decision"]["step_boundary"] =
+        json!({ "limit": 10, "observed": 11 });
+    assert!(
+        !problems(&extraneous).is_empty(),
+        "the boundary belongs to the typed step-limit arm and no other outcome"
+    );
+
+    let mut mismatched = recorded("step-limit-reached", json!("0123456789abcdef"));
+    mismatched["report"]["builds"][0]["parts"][0]["mutants"][0]["step_boundary"]["observed"] =
+        json!(12);
+    assert!(
+        serde_json::from_value::<njutest_cli::report::Report>(mismatched).is_err(),
+        "the Rust wire type proves observed is exactly limit + 1 even though JSON Schema \
+         cannot express cross-field arithmetic"
     );
 }

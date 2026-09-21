@@ -3,8 +3,6 @@
 
 //! What a run has to say to something that will act on it without a terminal.
 
-use std::fmt::Write as _;
-
 use super::{Blindness, Place, Spot, Standing, Told, Unsettled};
 
 /// What a run found, as a briefing something can act on.
@@ -28,7 +26,10 @@ pub fn brief(told: &Told) -> String {
     if !told.limitations.is_empty() {
         out.push_str("\n## What this run could not establish\n\n");
         for limitation in &told.limitations {
-            let _written = writeln!(out, "- `{}` — {}", limitation.name, limitation.detail);
+            super::line(
+                &mut out,
+                format_args!("- `{}` — {}", limitation.name, limitation.detail),
+            );
         }
         out.push_str(
             "\nThese are not gaps in the tests. They bound what the verdict above claims.\n",
@@ -41,17 +42,21 @@ pub fn brief(told: &Told) -> String {
 fn heading(out: &mut String, told: &Told) {
     let spots: usize = told.places.iter().map(|place| place.spots.len()).sum();
     let head = &told.headline;
-    let _written = writeln!(
+    super::line(
         out,
-        "# njutest: {} — {spots} place{} the tests do not see\n",
-        head.verdict.name(),
-        if spots == 1 { "" } else { "s" }
+        format_args!(
+            "# njutest: {} — {spots} place{} the tests do not see\n",
+            head.verdict.name(),
+            if spots == 1 { "" } else { "s" }
+        ),
     );
-    let _written = writeln!(
+    super::line(
         out,
-        "A mutation run changed the code in {} places and ran the tests each time. \
-         {} of those changes were noticed and {} were not.\n",
-        head.cataloged, head.killed, spots
+        format_args!(
+            "A mutation run changed the code in {} places and ran the tests each time. \
+             {} of those changes were noticed and {} were not.\n",
+            head.cataloged, head.killed, spots
+        ),
     );
     if spots == 0 {
         out.push_str("There is nothing to do.\n");
@@ -72,13 +77,19 @@ fn heading(out: &mut String, told: &Told) {
 
 /// One place the tests do not see, with everything needed to close it.
 fn gap(out: &mut String, place: &Place, at: usize) {
-    let _written = writeln!(out, "\n## {at}. `{}` in `{}`\n", place.item, place.path);
+    super::line(
+        out,
+        format_args!("\n## {at}. `{}` in `{}`\n", place.item, place.path),
+    );
     if let Some(instead) = &place.instead {
-        let _written = writeln!(out, "The source cannot be shown: {}\n", instead.told());
+        super::line(
+            out,
+            format_args!("The source cannot be shown: {}\n", instead.told()),
+        );
     } else {
         out.push_str("```rust\n");
         for (line, text) in &place.excerpt {
-            let _written = writeln!(out, "{line:>4} | {text}");
+            super::line(out, format_args!("{line:>4} | {text}"));
         }
         out.push_str("```\n");
     }
@@ -100,21 +111,25 @@ fn one(out: &mut String, spot: &Spot) {
         format!("`{}` became `{}`", spot.was.trim(), spot.now.trim())
     };
     let named = &spot.locator;
-    let _written = writeln!(
+    super::line(
         out,
-        "\n### `{named}` at line {}\n\nOn line {}, {asked}, and {}.\n",
-        spot.line,
-        spot.line,
-        came(spot.standing)
+        format_args!(
+            "\n### `{named}` at line {}\n\nOn line {}, {asked}, and {}.\n",
+            spot.line,
+            spot.line,
+            came(spot.standing)
+        ),
     );
     disagreed(out, spot);
-    let _written = write!(
+    super::append(
         out,
-        "{}",
-        match spot.standing {
-            Standing::Blind(blindness) => close(blindness, named),
-            Standing::Unsettled(unsettled) => settle(unsettled, named),
-        }
+        format_args!(
+            "{}",
+            match spot.standing {
+                Standing::Blind(blindness) => close(blindness, named),
+                Standing::Unsettled(unsettled) => settle(unsettled, named),
+            }
+        ),
     );
 }
 
@@ -132,14 +147,16 @@ fn disagreed(out: &mut String, spot: &Spot) {
     if kinds.all(|standing| standing == first) {
         return;
     }
-    let _written = writeln!(
+    super::line(
         out,
-        "The builds did not agree about it. {}.\n",
-        spot.blind_in
-            .iter()
-            .map(|one| format!("`{}`: {}", one.build, one.standing.asks()))
-            .collect::<Vec<String>>()
-            .join("; ")
+        format_args!(
+            "The builds did not agree about it. {}.\n",
+            spot.blind_in
+                .iter()
+                .map(|one| format!("`{}`: {}", one.build, one.standing.asks()))
+                .collect::<Vec<String>>()
+                .join("; ")
+        ),
     );
 }
 
@@ -191,6 +208,10 @@ fn close(blindness: Blindness, named: &str) -> String {
 /// succeeded at something it did not do.
 fn settle(unsettled: Unsettled, named: &str) -> String {
     let (explains, look) = match unsettled {
+        Unsettled::StepLimitReached => (
+            "the verified step boundary and the target that reached it",
+            "Run the same target under a matched control before treating the count as mutation-caused divergence.",
+        ),
         Unsettled::Waited => (
             "what ran, and how long it ran for",
             "Find out why nothing finished — a mutation that does not terminate, a bound that \
@@ -223,6 +244,9 @@ const fn came(standing: Standing) -> &'static str {
         }
         Standing::Unsettled(Unsettled::Waited) => {
             "nothing finished, so the run established nothing about it"
+        }
+        Standing::Unsettled(Unsettled::StepLimitReached) => {
+            "the step boundary was reached without a control comparison, so the run established no mutation verdict"
         }
         Standing::Unsettled(Unsettled::Errored) => {
             "nothing could be measured, so the run established nothing about it"

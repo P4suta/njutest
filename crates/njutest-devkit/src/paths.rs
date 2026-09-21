@@ -28,6 +28,49 @@ pub fn cargo_binary() -> PathBuf {
     std::env::var_os("CARGO").map_or_else(|| PathBuf::from("cargo"), PathBuf::from)
 }
 
+/// Borrows the exact UTF-8 spelling of a path used by a textual test protocol.
+///
+/// # Panics
+/// The path is not UTF-8. A test that passed replacement characters to the
+/// subject would exercise a different path and could not support its claim.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "non-UTF-8 fixture paths are protocol failures at this test-only boundary"
+)]
+pub fn utf8(path: &Path) -> &str {
+    match path.to_str() {
+        Some(text) => text,
+        None => panic!(
+            "test protocol path is not UTF-8; encoded bytes: {}",
+            hex::encode(path.as_os_str().as_encoded_bytes())
+        ),
+    }
+}
+
+/// Owns the exact UTF-8 spelling of a filesystem name used by a textual test
+/// protocol.
+///
+/// # Panics
+/// The name is not UTF-8. Replacing bytes would let two filesystem entries
+/// become one test-oracle value.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "non-UTF-8 fixture names are protocol failures at this test-only boundary"
+)]
+pub fn owned_utf8(name: std::ffi::OsString) -> String {
+    match name.into_string() {
+        Ok(text) => text,
+        Err(name) => panic!(
+            "test protocol name is not UTF-8; encoded bytes: {}",
+            hex::encode(name.as_encoded_bytes())
+        ),
+    }
+}
+
 /// A directory beside `root` for what a run puts in the temporary directory.
 ///
 /// # Errors
@@ -51,13 +94,22 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 }
 
 /// `path`, escaped the way a JSON string escapes its contents, without the quotes.
+///
+/// # Panics
+/// A test fixture path is not UTF-8. Fixture paths enter textual Cargo and
+/// JSON protocols, so accepting a lossy spelling would test a different path.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "a test fixture path must be UTF-8 and JSON string serialization cannot fail"
+)]
 pub fn in_json(path: &Path) -> String {
-    let quoted = serde_json::to_string(&path.to_string_lossy()).unwrap_or_default();
+    let text = utf8(path);
+    let quoted = serde_json::to_string(text).expect("a string serializes to JSON");
     quoted
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
-        .unwrap_or_default()
+        .expect("a serialized JSON string has quotes")
         .to_owned()
 }
 
@@ -190,6 +242,14 @@ fn cargo_llvm_cov_owns(name: &std::ffi::OsStr) -> bool {
 #[must_use]
 pub fn command(program: &Path) -> std::process::Command {
     let mut command = std::process::Command::new(program);
-    let _configured = command.env_remove("LLVM_PROFILE_FILE");
+    remove_environment(&mut command, "LLVM_PROFILE_FILE");
     command
+}
+
+#[expect(
+    unused_results,
+    reason = "Command's infallible builder API returns self; this unit helper is the explicit boundary"
+)]
+fn remove_environment(command: &mut std::process::Command, name: &str) {
+    command.env_remove(name);
 }

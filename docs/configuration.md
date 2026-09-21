@@ -21,7 +21,7 @@ yields exactly the defaults.
 
 ```toml
 version = 1
-contract = "standard-v1"        # "standard-v1" | "deep-v1"
+contract = "standard-v1"        # "standard-v1" | "deep-v1" | "verified-v1"
 
 [project]
 packages = []                   # cargo package names; empty = every workspace member
@@ -49,6 +49,10 @@ target = ""                     # target triple; empty = the host
 
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
+
+[verification]                  # verified-v1 only; both keys are mandatory and nonzero
+# unwind = 8                    # maximum loop unwind for every proof harness
+# timeout = "2m"               # wall-clock ceiling for one checker process
 
 [cache]
 max_bytes = 5368709120          # 5 GiB
@@ -93,6 +97,11 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`[verification]` belongs only to `contract = "verified-v1"`. Both
+`unwind` (the nonzero loop-unwind bound) and `timeout` (the verifier process
+ceiling, representable as at least one whole millisecond) are mandatory there; the other contracts reject the section
+instead of silently ignoring proof settings.
+
 `timeout` and `steps` can both stop a mutation that stops a program ending,
 and they are not interchangeable. `timeout` is a clock, and what a clock
 measures is partly the machine: two runs of one catalogue on one commit can
@@ -101,14 +110,15 @@ bound expires on is `waited`, which establishes nothing — neither that the
 tests noticed nor that they did not — so it is not counted in the score.
 `steps` is how many times the mutation's own guard may be taken; the guard sits
 where the mutation is, so a loop whose condition was mutated takes it once an
-iteration and the number is the same everywhere. A mutation that spends the
-allowance is `runaway`, which **is** an answer: the mutation stopped the
-program terminating, it counts as detected, and the run does not put it a
-second time because a count cannot disagree with itself. `0` counts nothing and
-leaves the clock as the only thing that can end a runaway. The reason to lower
-it rather than raise it is a project whose own `timeout` is short — a bound the
-count cannot beat turns a `runaway` back into a `waited`, and the answer stops
-being about the code.
+iteration and the number is the same everywhere. Crossing the allowance is
+`step-limit-reached`: a nonce-correlated fact that this execution reached the
+first count outside the configured bound. It is **not** a detection. A finite
+computation on the original code can cross the same count, so without a
+matched control the run has established neither that the mutation diverges nor
+that it survives. It is therefore non-verdict, non-score, non-cacheable and
+cannot be accepted. `0` counts nothing and leaves the clock as the only bound.
+Lowering the count can surface a deterministic place to investigate sooner;
+it cannot turn the bound itself into evidence about the mutation.
 
 `build_max_bytes` and `build_dir` were removed from `[cache]`. Remove those
 keys when upgrading: configuration is strict, so keeping either one is an

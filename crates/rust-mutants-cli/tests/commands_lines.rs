@@ -44,8 +44,8 @@ fn asked(fixture: &Fixture, args: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 

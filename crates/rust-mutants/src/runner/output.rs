@@ -3,9 +3,9 @@
 
 //! Capped capture of a child's combined output, keeping the tail.
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
-/// How many bytes of combined output [`super::run`] keeps when the spec does not say. One mebibyte is far more than a readable test failure needs and far less than a runaway logger can produce.
+/// How many bytes of combined output [`super::run`] keeps when the spec does not say. One mebibyte is far more than a readable test failure needs and far less than an unbounded logger can produce.
 pub const DEFAULT_OUTPUT_LIMIT: usize = 1 << 20;
 
 /// The smallest cap honoured. The truncation notice has to fit inside the budget for `output.len() <= limit` to hold.
@@ -27,6 +27,20 @@ struct TailState {
     total: u64,
 }
 
+/// Why a bounded output capture cannot continue or be read faithfully.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum OutputError {
+    /// A capture callback panicked while it was changing the buffer.
+    #[error("the output capture state is poisoned")]
+    StatePoisoned,
+    /// The exact byte count cannot be represented by the durable counter.
+    #[error("output byte count overflowed its u64 counter")]
+    ByteCountOverflow,
+    /// The buffer's internal size relation was violated.
+    #[error("the bounded output buffer violated its capacity invariant")]
+    CapacityInvariant,
+}
+
 impl TailBuffer {
     /// A buffer keeping `limit` bytes, raised to [`MIN_OUTPUT_LIMIT`].
     #[must_use]
@@ -43,45 +57,85 @@ impl TailBuffer {
         self.limit
     }
 
-    /// Appends `bytes`, keeping only the tail. Never fails: a capture that could error would make the child's own writes fail.
-    pub fn write(&self, bytes: &[u8]) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+    /// Appends `bytes`, keeping only the tail.
+    ///
+    /// # Errors
+    /// Refuses a poisoned capture state or a byte count that no longer fits
+    /// the durable counter.
+    pub fn write(&self, bytes: &[u8]) -> Result<(), OutputError> {
+        let written =
+            u64::try_from(bytes.len()).map_err(|_overflow| OutputError::ByteCountOverflow)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_poisoned| OutputError::StatePoisoned)?;
         state.total = state
             .total
-            .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+            .checked_add(written)
+            .ok_or(OutputError::ByteCountOverflow)?;
         if bytes.len() >= self.limit {
             state.buf.clear();
-            state.buf.extend_from_slice(
-                bytes
-                    .get(bytes.len().saturating_sub(self.limit)..)
-                    .unwrap_or(bytes),
-            );
-            return;
+            let start = bytes
+                .len()
+                .checked_sub(self.limit)
+                .ok_or(OutputError::CapacityInvariant)?;
+            let tail = bytes.get(start..).ok_or(OutputError::CapacityInvariant)?;
+            state.buf.extend_from_slice(tail);
+            drop(state);
+            return Ok(());
         }
         state.buf.extend_from_slice(bytes);
-        if state.buf.len() > self.limit.saturating_mul(2) {
-            let drop_count = state.buf.len().saturating_sub(self.limit);
+        if state.buf.len() > self.limit {
+            let drop_count = state
+                .buf
+                .len()
+                .checked_sub(self.limit)
+                .ok_or(OutputError::CapacityInvariant)?;
             state.buf.drain(..drop_count);
         }
+        drop(state);
+        Ok(())
     }
 
     /// The output as a result carries it: the bytes as written when nothing was lost, otherwise the truncation notice followed by as much of the tail as the remaining budget allows. `capture().len() <= limit` always.
-    #[must_use]
-    pub fn capture(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    /// Refuses a poisoned capture state or an internal size relation that no
+    /// longer preserves the configured cap.
+    pub fn capture(&self) -> Result<Vec<u8>, OutputError> {
         let (total, buf) = {
-            let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let state = self
+                .state
+                .lock()
+                .map_err(|_poisoned| OutputError::StatePoisoned)?;
             (state.total, state.buf.clone())
         };
-        if total <= u64::try_from(self.limit).unwrap_or(u64::MAX) {
-            return buf;
+        let limit =
+            u64::try_from(self.limit).map_err(|_overflow| OutputError::CapacityInvariant)?;
+        if total <= limit {
+            return Ok(buf);
         }
         let notice = truncation_notice(total);
-        let keep = self.limit.saturating_sub(notice.len());
-        let tail = buf.get(buf.len().saturating_sub(keep)..).unwrap_or(&buf);
-        let mut out = Vec::with_capacity(notice.len().saturating_add(tail.len()));
+        let keep = self
+            .limit
+            .checked_sub(notice.len())
+            .ok_or(OutputError::CapacityInvariant)?;
+        let start = if buf.len() > keep {
+            buf.len()
+                .checked_sub(keep)
+                .ok_or(OutputError::CapacityInvariant)?
+        } else {
+            0
+        };
+        let tail = buf.get(start..).ok_or(OutputError::CapacityInvariant)?;
+        let capacity = notice
+            .len()
+            .checked_add(tail.len())
+            .ok_or(OutputError::CapacityInvariant)?;
+        let mut out = Vec::with_capacity(capacity);
         out.extend_from_slice(notice.as_bytes());
         out.extend_from_slice(tail);
-        out
+        Ok(out)
     }
 }
 
@@ -122,24 +176,44 @@ impl HeadBuffer {
     }
 
     /// Appends `bytes`, keeping what still fits.
-    pub fn write(&self, bytes: &[u8]) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+    ///
+    /// # Errors
+    /// Refuses a poisoned capture state, an exhausted byte counter, or a
+    /// broken capacity invariant.
+    pub fn write(&self, bytes: &[u8]) -> Result<(), OutputError> {
+        let written =
+            u64::try_from(bytes.len()).map_err(|_overflow| OutputError::ByteCountOverflow)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_poisoned| OutputError::StatePoisoned)?;
         state.total = state
             .total
-            .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
-        let room = self.limit.saturating_sub(state.buf.len());
+            .checked_add(written)
+            .ok_or(OutputError::ByteCountOverflow)?;
+        let room = self
+            .limit
+            .checked_sub(state.buf.len())
+            .ok_or(OutputError::CapacityInvariant)?;
         if bytes.len() > room {
             state.truncated = true;
         }
-        state
-            .buf
-            .extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
+        let take = room.min(bytes.len());
+        let kept = bytes.get(..take).ok_or(OutputError::CapacityInvariant)?;
+        state.buf.extend_from_slice(kept);
+        drop(state);
+        Ok(())
     }
 
     /// The kept bytes, whether anything was cut, and the total written.
-    #[must_use]
-    pub fn capture(&self) -> (Vec<u8>, bool, u64) {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        (state.buf.clone(), state.truncated, state.total)
+    ///
+    /// # Errors
+    /// Refuses a poisoned capture state.
+    pub fn capture(&self) -> Result<(Vec<u8>, bool, u64), OutputError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_poisoned| OutputError::StatePoisoned)?;
+        Ok((state.buf.clone(), state.truncated, state.total))
     }
 }

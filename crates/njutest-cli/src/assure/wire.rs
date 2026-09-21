@@ -38,20 +38,25 @@ pub struct Measured {
 /// `run` takes the behaviour that starts the seam again with one fault in
 /// place and measures the suite, which is an argument rather than something
 /// this reaches for, as ADR 0001 requires.
-#[must_use]
-pub fn measure<R>(measuring: &Measuring<'_>, mut run: R, watch: Watch<'_>) -> Measured
+/// # Errors
+/// Returns the closed fault-identity error rather than clipping its recipe.
+pub fn measure<R>(
+    measuring: &Measuring<'_>,
+    mut run: R,
+    watch: Watch<'_>,
+) -> Result<Measured, crate::wire::derive::DeriveError>
 where
     R: FnMut(&Fault) -> Vec<Answered>,
 {
-    let faults = derive(measuring.observed);
+    let faults = derive(measuring.observed)?;
     if faults.is_empty() {
-        return Measured::default();
+        return Ok(Measured::default());
     }
     let mut done = Measured {
         executed: true,
         ..Measured::default()
     };
-    let mut unput = 0_u32;
+    let mut unput = Vec::new();
     for fault in &faults {
         if watch.cancel.is_cancelled() {
             break;
@@ -71,25 +76,26 @@ where
         });
         match &decision {
             SeamDecision::Tests { .. } | SeamDecision::Proved { .. } => {}
-            SeamDecision::Unreached => unput = unput.saturating_add(1),
+            SeamDecision::Unreached => unput.push(()),
             SeamDecision::Unnoticed => {
                 done.findings.push(unnoticed(fault, measuring.observed));
             }
         }
         asked_about(&mut done, measuring, (fault, decision));
     }
-    if unput > 0 {
+    if !unput.is_empty() {
         done.findings.push(Finding::new(
             FindingKind::NotMeasured,
             NOT_PUT,
             &format!(
-                "{unput} question(s) this run derived from what went past a seam were \
+                "{} question(s) this run derived from what went past a seam were \
                  put to no test, so it says nothing about whether anything would have \
-                 noticed them"
+                 noticed them",
+                unput.len()
             ),
         ));
     }
-    done
+    Ok(done)
 }
 
 /// Writes down one question and what became of it, so a finding that names it can be looked up.
@@ -165,8 +171,15 @@ fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
 /// not put this question* about a run that had lost track of its own seam —
 /// two facts under one sentence, and the one a reader would act on is the
 /// wrong one.
-#[must_use]
-pub fn asking<R>(seams: &Seams, baseline: &Baseline, mut run: R, watch: Watch<'_>) -> Measured
+/// # Errors
+/// Returns the closed fault-identity error rather than returning a partial
+/// catalogue.
+pub fn asking<R>(
+    seams: &Seams,
+    baseline: &Baseline,
+    mut run: R,
+    watch: Watch<'_>,
+) -> Result<Measured, crate::wire::derive::DeriveError>
 where
     R: FnMut() -> Vec<Answered>,
 {
@@ -190,7 +203,7 @@ where
                 }
             },
             watch,
-        );
+        )?;
         done.executed |= measured.executed;
         done.findings.extend(measured.findings);
         done.limitations.extend(measured.limitations);
@@ -199,7 +212,7 @@ where
     for one in &seams.watching {
         one.interposer.putting(None);
     }
-    done
+    Ok(done)
 }
 
 /// One exchange as the recording writes it down, which is what an audit re-derives the catalogue from.
@@ -243,13 +256,17 @@ fn recorded(exchange: &Exchange) -> crate::trace::WireExchangeRecord {
 /// Recording a seam is the half of the phase a release has; putting the
 /// questions back to the suite is the half it does not, and a run that said
 /// nothing would leave a reader thinking a watched seam had been measured.
-#[must_use]
-pub fn licensing(observed: &[Exchange]) -> Option<Limitation> {
-    let derived = derive(observed).len();
+/// # Errors
+/// Returns the closed fault-identity error rather than understating the
+/// licensed catalogue.
+pub fn licensing(
+    observed: &[Exchange],
+) -> Result<Option<Limitation>, crate::wire::derive::DeriveError> {
+    let derived = derive(observed)?.len();
     if derived == 0 {
-        return None;
+        return Ok(None);
     }
-    Some(Limitation::new(
+    Ok(Some(Limitation::new(
         NOT_PUT,
         &format!(
             "{} exchange(s) went past the seams this run watched, licensing {derived} \
@@ -257,7 +274,7 @@ pub fn licensing(observed: &[Exchange]) -> Option<Limitation> {
              to the tests",
             observed.len()
         ),
-    ))
+    )))
 }
 
 /// What went past every watched seam while the program was the one the tests are about.
@@ -278,6 +295,8 @@ pub struct Baseline {
 impl Baseline {
     /// Every exchange every seam saw, in the order the seams were started.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn all(&self) -> Vec<Exchange> {
         self.per_seam.concat()
     }

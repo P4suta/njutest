@@ -28,6 +28,10 @@ On lease release njutest sends a `stop` action with the same fields plus
 and the process must exit. Startup and shutdown are timeout- and
 process-tree-bounded. Returned environment cannot override toolchain,
 temporary-directory, `NJUTEST_*`, `RUST_MUTANTS_*`, or `CARGO_*` variables.
+The three response shapes are closed: `ready` requires exactly `version`,
+`instance`, and `environment`; `stopped` requires exactly `version` and the
+same `instance`; `error` requires exactly `version` and a `message`. Missing,
+extra, duplicate, unknown-status, unframed, and invalid UTF-8 input is refused.
 
 `shared=true` reuses one live instance while leases exist. `exclusive=true`
 serializes the capability and constrains mutation jobs.

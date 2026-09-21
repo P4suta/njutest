@@ -71,13 +71,16 @@ pub fn compare_golden(path: &Path, got: &[u8], update: bool) -> Result<(), Golde
 }
 
 fn render_diff(want: &[u8], got: &[u8]) -> String {
-    if let (Ok(want_text), Ok(got_text)) = (std::str::from_utf8(want), std::str::from_utf8(got)) {
-        let diff = similar::TextDiff::from_lines(want_text, got_text);
-        return diff
-            .unified_diff()
-            .context_radius(3)
-            .header("golden", "recorded")
-            .to_string();
+    match (std::str::from_utf8(want), std::str::from_utf8(got)) {
+        (Ok(want_text), Ok(got_text)) => {
+            let diff = similar::TextDiff::from_lines(want_text, got_text);
+            return diff
+                .unified_diff()
+                .context_radius(3)
+                .header("golden", "recorded")
+                .to_string();
+        }
+        (Err(_), _) | (_, Err(_)) => {}
     }
     let offset = want
         .iter()

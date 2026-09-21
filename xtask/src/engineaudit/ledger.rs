@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use super::{Audit, Layer, MET, Notes, Report, SURVIVING_MUTANT, UNREACHED_MUTANT};
 
-pub(super) fn ledger(report: &Report, ledger: Option<&str>, audit: &mut Audit) {
+pub(super) fn ledger(report: &Report, ledger: Option<&toml::Table>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Ledger);
     let Some(ledger) = ledger else {
         notes.unaudited(
@@ -21,8 +21,9 @@ pub(super) fn ledger(report: &Report, ledger: Option<&str>, audit: &mut Audit) {
     let entries = accepted(ledger);
     for finding in &report.findings {
         if finding.kind == SURVIVING_MUTANT || finding.kind == UNREACHED_MUTANT {
+            let subject = finding.mutant.as_deref().unwrap_or(finding.kind.as_str());
             notes.violated(
-                &finding.mutant,
+                subject,
                 "no test noticed this mutation and the ledger does not accept it; a survivor \
                  is either killed or accepted with a reason"
                     .to_owned(),
@@ -57,10 +58,7 @@ pub(super) fn ledger(report: &Report, ledger: Option<&str>, audit: &mut Audit) {
 }
 
 /// Every mutant the ledger accepts, by the identity it names.
-fn accepted(ledger: &str) -> BTreeSet<String> {
-    let Ok(document) = ledger.parse::<toml::Table>() else {
-        return BTreeSet::new();
-    };
+fn accepted(document: &toml::Table) -> BTreeSet<String> {
     document
         .get("mutation")
         .and_then(toml::Value::as_table)

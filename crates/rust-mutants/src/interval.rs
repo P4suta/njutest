@@ -41,7 +41,6 @@ impl<T> Default for Forest<T> {
 
 /// Why an item could not be placed in the forest. Surfaced verbatim as a skip reason, beside the reasons discovery produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Reason {
     /// The item straddles the boundary of a site already in the forest.
     PartialOverlap,

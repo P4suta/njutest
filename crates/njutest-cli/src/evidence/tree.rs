@@ -42,19 +42,21 @@ pub struct Excluded(Vec<String>);
 
 impl Excluded {
     /// The directories a project that keeps its reports at `reports` does not verify.
-    #[must_use]
-    pub fn beside(reports: &Path) -> Self {
+    ///
+    /// # Errors
+    /// Refuses a report directory whose exact platform spelling cannot enter
+    /// the UTF-8 evidence and git-exclusion protocols.
+    pub fn beside(reports: &Path) -> Result<Self, ScanError> {
+        let report = exact_path(reports)?;
         let mut names: Vec<String> = EXCLUDED_DIRECTORIES
             .iter()
             .map(|name| (*name).to_owned())
-            .chain(std::iter::once(
-                reports.to_string_lossy().replace('\\', "/"),
-            ))
+            .chain(std::iter::once(report))
             .filter(|name| !name.is_empty())
             .collect();
         names.sort();
         names.dedup();
-        Self(names)
+        Ok(Self(names))
     }
 
     /// Every one of them, as a git command wants them.
@@ -139,6 +141,35 @@ pub enum ScanError {
         /// What is wrong with it.
         message: String,
     },
+    /// The exact tree census did not fit the durable evidence counters.
+    #[error(
+        "{}: the verified tree's {field} exceed the evidence format",
+        error::EVIDENCE_UNREADABLE.code
+    )]
+    CensusOverflow {
+        /// Which exact counter could not represent the tree.
+        field: &'static str,
+    },
+    /// Two walk entries normalized to the same evidence identity.
+    #[error(
+        "{}: more than one tree entry normalizes to {path:?}",
+        error::EVIDENCE_UNREADABLE.code
+    )]
+    DuplicatePath {
+        /// The ambiguous normalized path.
+        path: String,
+    },
+    /// A platform path cannot be represented byte-for-byte by the UTF-8
+    /// evidence protocol.
+    #[error(
+        "{}: path {} is not valid UTF-8",
+        error::EVIDENCE_UNREADABLE.code,
+        path.display()
+    )]
+    PathNotUtf8 {
+        /// The exact platform path that was refused.
+        path: PathBuf,
+    },
 }
 
 impl ScanError {
@@ -149,7 +180,11 @@ impl ScanError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::Unreadable { .. } | Self::Malformed { .. } => Self::CODE,
+            Self::Unreadable { .. }
+            | Self::Malformed { .. }
+            | Self::CensusOverflow { .. }
+            | Self::DuplicatePath { .. }
+            | Self::PathNotUtf8 { .. } => Self::CODE,
         }
     }
 }
@@ -190,10 +225,10 @@ where
         elsewhere,
         excluded,
     } = *within;
-    let written: Vec<String> = elsewhere
-        .iter()
-        .filter_map(|path| relative_to(root, path))
-        .collect();
+    let mut written = Vec::new();
+    for path in elsewhere {
+        push_relative_to(root, path, &mut written)?;
+    }
     let mut pending = vec![(root.to_path_buf(), String::new())];
     while let Some((directory, prefix)) = pending.pop() {
         let entries = std::fs::read_dir(&directory).map_err(|source| ScanError::Unreadable {
@@ -205,7 +240,12 @@ where
                 path: directory.clone(),
                 source,
             })?;
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|name| ScanError::PathNotUtf8 {
+                    path: directory.join(name),
+                })?;
             let relative = if prefix.is_empty() {
                 name
             } else {
@@ -221,10 +261,8 @@ where
                     path: path.clone(),
                     source,
                 })?;
-                visit(
-                    &relative,
-                    Entry::Link(target.to_string_lossy().into_owned()),
-                )?;
+                let target = exact_path(&target)?;
+                visit(&relative, Entry::Link(target))?;
                 continue;
             }
             if kind.is_dir() {
@@ -259,10 +297,24 @@ pub fn scan(root: &Path, within: &Bounds<'_>) -> Result<Scan, ScanError> {
     walk(root, within, |relative, entry| {
         match entry {
             Entry::Link(target) => {
-                let _replaced = tree.insert(relative.to_owned(), format!("link:{target}"));
+                if tree
+                    .insert(relative.to_owned(), format!("link:{target}"))
+                    .is_some()
+                {
+                    return Err(ScanError::DuplicatePath {
+                        path: relative.to_owned(),
+                    });
+                }
             }
             Entry::Irregular => {
-                let _replaced = tree.insert(relative.to_owned(), "irregular".to_owned());
+                if tree
+                    .insert(relative.to_owned(), "irregular".to_owned())
+                    .is_some()
+                {
+                    return Err(ScanError::DuplicatePath {
+                        path: relative.to_owned(),
+                    });
+                }
             }
             Entry::File(path) => {
                 let content = std::fs::read(&path).map_err(|source| ScanError::Unreadable {
@@ -271,12 +323,26 @@ pub fn scan(root: &Path, within: &Bounds<'_>) -> Result<Scan, ScanError> {
                 })?;
                 let value = hex::encode(Sha256::digest(&content));
                 if relative.starts_with(CORPUS_DIRECTORY) {
-                    let _replaced = corpus.insert(relative.to_owned(), value);
+                    if corpus.insert(relative.to_owned(), value).is_some() {
+                        return Err(ScanError::DuplicatePath {
+                            path: relative.to_owned(),
+                        });
+                    }
                     return Ok(());
                 }
-                files = files.saturating_add(1);
-                bytes = bytes.saturating_add(u64::try_from(content.len()).unwrap_or(u64::MAX));
-                let _replaced = tree.insert(relative.to_owned(), value);
+                files = files
+                    .checked_add(1)
+                    .ok_or(ScanError::CensusOverflow { field: "files" })?;
+                let file_bytes = u64::try_from(content.len())
+                    .map_err(|_too_large| ScanError::CensusOverflow { field: "bytes" })?;
+                bytes = bytes
+                    .checked_add(file_bytes)
+                    .ok_or(ScanError::CensusOverflow { field: "bytes" })?;
+                if tree.insert(relative.to_owned(), value).is_some() {
+                    return Err(ScanError::DuplicatePath {
+                        path: relative.to_owned(),
+                    });
+                }
             }
         }
         Ok(())
@@ -304,14 +370,23 @@ pub fn dependencies(lock: &str) -> Result<String, ScanError> {
             .unwrap_or_default()
             .to_owned(),
     })?;
-    let mut resolved: BTreeMap<String, String> = BTreeMap::new();
-    for package in document.package {
+    let LockFile { version, package } = document;
+    let mut resolved: BTreeMap<String, String> =
+        BTreeMap::from([("@lock-version".to_owned(), version.to_string())]);
+    for package in package.unwrap_or_default() {
+        let LockPackage {
+            name,
+            version,
+            source,
+            checksum,
+            dependencies: _dependencies,
+        } = package;
         resolved.insert(
-            format!("{}@{}", package.name, package.version),
+            format!("{name}@{version}"),
             format!(
                 "{}#{}",
-                package.source.unwrap_or_default(),
-                package.checksum.unwrap_or_default()
+                source.unwrap_or_default(),
+                checksum.unwrap_or_default()
             ),
         );
     }
@@ -334,17 +409,20 @@ pub fn dependencies_of(root: &Path) -> Result<String, ScanError> {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LockFile {
-    #[serde(default)]
-    package: Vec<LockPackage>,
+    version: u32,
+    package: Option<Vec<LockPackage>>,
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LockPackage {
     name: String,
     version: String,
     source: Option<String>,
     checksum: Option<String>,
+    dependencies: Option<Vec<String>>,
 }
 
 fn fold(domain: &str, entries: &BTreeMap<String, String>) -> String {
@@ -359,25 +437,51 @@ fn fold(domain: &str, entries: &BTreeMap<String, String>) -> String {
 }
 
 /// `path` as a slash-separated path relative to `root`, whether it was given absolute or relative, or `None` when it is not under `root` at all.
-fn relative_to(root: &Path, path: &Path) -> Option<String> {
+fn push_relative_to(
+    root: &Path,
+    path: &Path,
+    relative_paths: &mut Vec<String>,
+) -> Result<(), ScanError> {
     let relative = if path.is_absolute() {
-        let root = root
-            .canonicalize()
-            .unwrap_or_else(|_error| root.to_path_buf());
-        let path = path
-            .canonicalize()
-            .unwrap_or_else(|_error| path.to_path_buf());
-        path.strip_prefix(&root).ok()?.to_path_buf()
+        let root = match root.canonicalize() {
+            Ok(root) => root,
+            Err(_unavailable_physical_spelling) => root.to_path_buf(),
+        };
+        let path = match path.canonicalize() {
+            Ok(path) => path,
+            Err(_unavailable_physical_spelling) => path.to_path_buf(),
+        };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            return Ok(());
+        };
+        relative.to_path_buf()
     } else {
         path.to_path_buf()
     };
     let mut parts = Vec::new();
     for component in relative.components() {
         match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::Normal(part) => {
+                let part = part.to_str().ok_or_else(|| ScanError::PathNotUtf8 {
+                    path: relative.clone(),
+                })?;
+                parts.push(part.to_owned());
+            }
             Component::CurDir => {}
-            _ => return None,
+            _ => return Ok(()),
         }
     }
-    (!parts.is_empty()).then(|| parts.join("/"))
+    if !parts.is_empty() {
+        relative_paths.push(parts.join("/"));
+    }
+    Ok(())
+}
+
+fn exact_path(path: &Path) -> Result<String, ScanError> {
+    path.as_os_str()
+        .to_str()
+        .map(|text| text.replace('\\', "/"))
+        .ok_or_else(|| ScanError::PathNotUtf8 {
+            path: path.to_path_buf(),
+        })
 }

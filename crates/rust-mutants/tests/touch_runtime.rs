@@ -8,9 +8,14 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::collections::BTreeSet;
-use std::process::Command;
+use std::collections::{BTreeMap, BTreeSet};
+use std::process::{Child, Command};
+use std::time::{Duration, Instant};
 
+use rust_mutants::instrument::{
+    ACTIVE_ENV, Instrumenting, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
+    STEP_STATE_SCHEMA, STEPS_ENV, instrument_file,
+};
 use rust_mutants::instrument::{CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, render};
 use rust_mutants::rule::Tier;
 use rust_mutants::testkit::compile::ScriptedCompile;
@@ -21,6 +26,74 @@ const SOURCE: &str = "pub fn one(a: i32) -> i32 { a + 1 }\n\
                       pub fn three(a: i32) -> i32 { a * 2 }\n";
 
 const CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn exact_output(bytes: &[u8]) -> &str {
+    std::str::from_utf8(bytes).expect("the generated fixture writes exact UTF-8")
+}
+
+/// Owns one hostile fixture process until it has been forcibly reaped.
+struct FixtureChild {
+    child: Option<Child>,
+}
+
+impl FixtureChild {
+    fn launch(command: &mut Command) -> std::io::Result<Self> {
+        Ok(Self {
+            child: Some(command.spawn()?),
+        })
+    }
+
+    fn terminate(mut self) -> std::io::Result<()> {
+        let Some(mut child) = self.child.take() else {
+            return Err(std::io::Error::other(
+                "the fixture process was already reaped",
+            ));
+        };
+        child.kill()?;
+        child.wait()?;
+        Ok(())
+    }
+}
+
+impl Drop for FixtureChild {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let killed = child.kill();
+        let waited = child.wait();
+        if killed.is_err() || waited.is_err() {
+            std::process::abort();
+        }
+    }
+}
+
+fn remove_if_present(path: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn regular_file_present(path: &std::path::Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
+        Ok(_) => Err(std::io::Error::other(
+            "the notice path is not a regular file",
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn read_optional_text(path: &std::path::Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
 
 /// The runtime module of a file whose mutants are the ones `SOURCE` yields, named `__rm`.
 fn module() -> (String, u32) {
@@ -34,8 +107,37 @@ fn module() -> (String, u32) {
         placements,
         markers: &[],
         newline: "\n",
-    });
+    })
+    .expect("a nonempty small catalog has a representable runtime window");
     (rendered, count)
+}
+
+/// Two file-local runtimes naming the same catalog, plus one selected identity.
+fn step_modules() -> (String, String, String) {
+    let scripted = ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All);
+    let placements = scripted.placements();
+    let selected = placements
+        .first()
+        .expect("the source yields a mutant")
+        .id
+        .clone();
+    let one = render(&Rendering {
+        module: "__rm_one",
+        catalog_digest: CATALOG,
+        placements,
+        markers: &[],
+        newline: "\n",
+    })
+    .expect("the first runtime renders");
+    let two = render(&Rendering {
+        module: "__rm_two",
+        catalog_digest: CATALOG,
+        placements,
+        markers: &[],
+        newline: "\n",
+    })
+    .expect("the second runtime renders");
+    (one, two, selected)
 }
 
 /// Builds a program around the runtime, runs it, and returns what it wrote to the touch log.
@@ -52,13 +154,9 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
         .arg(&source)
         .output()
         .expect("rustc runs");
-    assert!(
-        built.status.success(),
-        "{}",
-        String::from_utf8_lossy(&built.stderr)
-    );
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
     let log = dir.join(format!("{name}.touch"));
-    drop(std::fs::remove_file(&log));
+    remove_if_present(&log).expect("remove old touch log");
     let mut command = Command::new(dir.join(name));
     command.env_remove("RUST_MUTANTS_ACTIVE");
     command.env(CATALOG_ENV, CATALOG);
@@ -68,12 +166,285 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
         command.env_remove(TOUCH_ENV);
     }
     let output = command.output().expect("the program runs");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert!(output.status.success(), "{}", exact_output(&output.stderr));
+    match read_optional_text(&log).expect("read touch log") {
+        Some(text) => text,
+        None => String::new(),
+    }
+}
+
+#[test]
+fn one_allowance_spans_file_modules_and_repeated_guard_checks_do_not_spend_twice() {
+    let (one, two, selected) = step_modules();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join("global_steps.rs");
+    let notice = dir.join("step.notice");
+    let state = dir.join("step.state");
+    let continued = dir.join("continued");
+    let nonce = "0123456789abcdef0123456789abcdef";
+    std::fs::write(
+        &state,
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t2\tdormant\t0\n"),
+    )
+    .expect("initial state");
+    let program = format!(
+        "{one}\n{two}\nfn main() {{\n\
+         \x20   let worker = std::thread::spawn(|| {{\n\
+         \x20       assert!(__rm_one::active(0));\n\
+         \x20       assert!(__rm_one::active(0));\n\
+         \x20       __rm_two::checkpoint();\n\
+         \x20       std::fs::write({continued:?}, b\"continued\").expect(\"marker\");\n\
+         \x20       __rm_two::checkpoint();\n\
+         \x20   }});\n\
+         \x20   for _ in 0..2_000 {{\n\
+         \x20       let settled = std::fs::read_to_string({state:?})\n\
+         \x20           .map(|text| text.contains(\"stopping\"))\n\
+         \x20           .unwrap_or(false);\n\
+         \x20       if settled {{ break; }}\n\
+         \x20       if worker.is_finished() {{ panic!(\"publisher stopped before settling\"); }}\n\
+         \x20       std::thread::sleep(std::time::Duration::from_millis(1));\n\
+         \x20   }}\n\
+         \x20   assert!(std::fs::metadata({notice:?}).is_ok(), \"notice was published\");\n\
+         }}\n"
     );
-    std::fs::read_to_string(&log).unwrap_or_default()
+    std::fs::write(&source, program).expect("write program");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let run = Command::new(dir.join("global_steps"))
+        .env(ACTIVE_ENV, &selected)
+        .env(CATALOG_ENV, CATALOG)
+        .env(STEPS_ENV, "2")
+        .env(STEP_NONCE_ENV, nonce)
+        .env(STEP_NOTICE_ENV, &notice)
+        .env(STEP_STATE_ENV, &state)
+        .output()
+        .expect("program runs");
+    assert!(run.status.success(), "{}", exact_output(&run.stderr));
+    assert_eq!(std::fs::read(&continued).expect("continued"), b"continued");
+    assert_eq!(
+        std::fs::read_to_string(&notice).expect("notice"),
+        format!("rust-mutants-step-notice-v1\t{nonce}\t{CATALOG}\t{selected}\t2\t3\n")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&state).expect("state"),
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t2\tstopping\t3\n")
+    );
+}
+
+#[test]
+fn publication_failure_never_persists_a_stopping_state_without_a_final_notice() {
+    let (module, _, selected) = step_modules();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join("publication_failure.rs");
+    let notice = dir.join("step.notice");
+    let partial = dir.join("step.notice.partial");
+    let state = dir.join("step.state");
+    let nonce = "0123456789abcdef0123456789abcdef";
+    std::fs::write(
+        &state,
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1\tdormant\t0\n"),
+    )
+    .expect("initial state");
+    std::fs::write(&partial, b"occupied").expect("block publication");
+    std::fs::write(
+        &source,
+        format!(
+            "{module}\nfn main() {{ assert!(__rm_one::active(0)); __rm_one::checkpoint(); }}\n"
+        ),
+    )
+    .expect("write program");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let configured = |command: &mut Command| {
+        command
+            .env(ACTIVE_ENV, &selected)
+            .env(CATALOG_ENV, CATALOG)
+            .env(STEPS_ENV, "1")
+            .env(STEP_NONCE_ENV, nonce)
+            .env(STEP_NOTICE_ENV, &notice)
+            .env(STEP_STATE_ENV, &state);
+    };
+    let mut first = Command::new(dir.join("publication_failure"));
+    configured(&mut first);
+    let failed = first.output().expect("first process runs");
+    assert_eq!(failed.status.code(), Some(STEP_PROTOCOL_EXIT));
+    assert_eq!(
+        std::fs::read_to_string(&state).expect("recoverable state"),
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1\tactive\t1\n")
+    );
+    assert!(matches!(
+        std::fs::symlink_metadata(&notice),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ));
+
+    std::fs::remove_file(&partial).expect("unblock publication");
+    let mut second = Command::new(dir.join("publication_failure"));
+    configured(&mut second);
+    let child = FixtureChild::launch(&mut second).expect("second process starts");
+    let wanted = format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1\tstopping\t2\n");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let observed = std::fs::read_to_string(&state).expect("inspect state");
+        if observed == wanted {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the recoverable publisher did not reach its stopping state: {observed:?}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        regular_file_present(&notice).expect("the notice publication preceded the stopping state"),
+    );
+    child.terminate().expect("second process is reaped");
+    assert_eq!(
+        std::fs::read_to_string(&state).expect("stopping state"),
+        wanted
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_generated_runtime_refuses_a_step_state_symlink_without_touching_its_target() {
+    use std::os::unix::fs::symlink;
+
+    let (module, _, selected) = step_modules();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join("state_symlink.rs");
+    let state = dir.join("step.state");
+    let target = dir.join("must-not-change");
+    let notice = dir.join("step.notice");
+    let nonce = "0123456789abcdef0123456789abcdef";
+    std::fs::write(&target, b"sentinel").expect("target");
+    symlink(&target, &state).expect("state symlink");
+    std::fs::write(
+        &source,
+        format!("{module}\nfn main() {{ assert!(__rm_one::active(0)); }}\n"),
+    )
+    .expect("write program");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let run = Command::new(dir.join("state_symlink"))
+        .env(ACTIVE_ENV, &selected)
+        .env(CATALOG_ENV, CATALOG)
+        .env(STEPS_ENV, "2")
+        .env(STEP_NONCE_ENV, nonce)
+        .env(STEP_NOTICE_ENV, &notice)
+        .env(STEP_STATE_ENV, &state)
+        .output()
+        .expect("program runs");
+    assert_eq!(run.status.code(), Some(STEP_PROTOCOL_EXIT));
+    assert_eq!(std::fs::read(&target).expect("target"), b"sentinel");
+    assert!(matches!(
+        std::fs::symlink_metadata(&notice),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ));
+}
+
+#[test]
+fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_allowance() {
+    let source = "fn main() { let _never = std::iter::repeat(()).position(|_| true); }\n";
+    let scripted = ScriptedCompile::from_source("src/main.rs", source, Tier::All);
+    let selected = scripted
+        .placements()
+        .iter()
+        .find(|placement| placement.original == b"true" && placement.replacement == b"false")
+        .expect("the closure boolean yields the hostile mutant");
+    let comparable = BTreeSet::new();
+    let probed = BTreeMap::new();
+    let instrumented = instrument_file(&Instrumenting {
+        path: "src/main.rs",
+        source: source.as_bytes(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &comparable,
+        probed: &probed,
+        catalog_digest: scripted.catalog().digest(),
+    })
+    .expect("instrument expression closure");
+    assert!(
+        instrumented.text.contains("|_| { ")
+            && instrumented.text.contains("::checkpoint(); ")
+            && instrumented.text.contains("::value!(if "),
+        "the expression body is a charged block around the guarded expression: {}",
+        instrumented.text
+    );
+
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let path = dir.join("expression_closure.rs");
+    let notice = dir.join("step.notice");
+    let state = dir.join("step.state");
+    let nonce = "0123456789abcdef0123456789abcdef";
+    std::fs::write(
+        &state,
+        format!(
+            "{STEP_STATE_SCHEMA}\t{nonce}\t{}\t{}\t2\tdormant\t0\n",
+            scripted.catalog().digest(),
+            selected.id
+        ),
+    )
+    .expect("initial state");
+    std::fs::write(&path, &instrumented.text).expect("write instrumented source");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&path)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let mut command = Command::new(dir.join("expression_closure"));
+    command
+        .env(ACTIVE_ENV, &selected.id)
+        .env(CATALOG_ENV, scripted.catalog().digest())
+        .env(STEPS_ENV, "2")
+        .env(STEP_NONCE_ENV, nonce)
+        .env(STEP_NOTICE_ENV, &notice)
+        .env(STEP_STATE_ENV, &state);
+    let child = FixtureChild::launch(&mut command).expect("program starts");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if regular_file_present(&notice).expect("inspect notice") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the expression closure escaped the allowance"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    child.terminate().expect("fixture process is reaped");
+    assert_eq!(
+        std::fs::read_to_string(&notice).expect("notice"),
+        format!(
+            "rust-mutants-step-notice-v1\t{nonce}\t{}\t{}\t2\t3\n",
+            scripted.catalog().digest(),
+            selected.id
+        )
+    );
 }
 
 fn set(indices: &[u32]) -> BTreeSet<u32> {
@@ -231,13 +602,9 @@ fn a_process_built_from_another_catalog_writes_nothing_into_this_run_s_record() 
         .arg(&source)
         .output()
         .expect("rustc runs");
-    assert!(
-        built.status.success(),
-        "{}",
-        String::from_utf8_lossy(&built.stderr)
-    );
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
     let log = dir.join("foreign.touch");
-    drop(std::fs::remove_file(&log));
+    remove_if_present(&log).expect("remove old touch log");
     let output = Command::new(dir.join("foreign"))
         .env_remove("RUST_MUTANTS_ACTIVE")
         .env(TOUCH_ENV, &log)
@@ -248,10 +615,13 @@ fn a_process_built_from_another_catalog_writes_nothing_into_this_run_s_record() 
         output.status.success(),
         "a binary of another catalog is not this run's to refuse, only its record to stay out \
          of: {}",
-        String::from_utf8_lossy(&output.stderr)
+        exact_output(&output.stderr)
     );
     assert!(
-        !log.exists(),
+        matches!(
+            std::fs::symlink_metadata(&log),
+            Err(ref error) if error.kind() == std::io::ErrorKind::NotFound
+        ),
         "a record is about one catalog, and a process built from another writing into it is what \
          makes the whole of it unreadable: {:?}",
         std::fs::read_to_string(&log)
@@ -367,7 +737,7 @@ fn recording_costs_a_crate_neither_its_prelude_nor_its_ban_on_unsafe_code() {
         assert!(
             output.status.success(),
             "{prefix}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            exact_output(&output.stderr)
         );
     }
 }

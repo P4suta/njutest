@@ -3,26 +3,54 @@
 
 //! What earlier runs established about individual mutants of this exact tree.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::id::HexDigest;
 use crate::outcome::Outcome;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "rust-mutants-outcome-v1";
+pub const SCHEMA: &str = "rust-mutants-outcome-v2";
 
 /// The directory records live in, below the user's cache directory.
-pub const LAYOUT: &str = "rust-mutants/outcomes-v1";
+pub const LAYOUT: &str = "rust-mutants/outcomes-v2";
 
 /// Bumped when a rule changes what it writes, so a record about the old edit stops answering.
 pub const RULE_ABI: u32 = 1;
 
 /// Bumped when a guard changes shape, so a record about the old instrumentation stops answering.
-pub const INSTRUMENTATION_ABI: u32 = 1;
+pub const INSTRUMENTATION_ABI: u32 = 2;
+
+/// Bumped when the policy interpreting a finite step allowance changes. A step limit is an execution bound in this ABI, never a detected mutant.
+pub const STEP_POLICY_ABI: u32 = 1;
 
 /// Bumped when a record changes what it holds, or when the recipe changes what a key is computed from.
-pub const CACHE_ABI: u32 = 3;
+pub const CACHE_ABI: u32 = 6;
+
+/// An outcome strong enough to answer a later identical run.
+///
+/// Keeping this set separate from [`Outcome`] makes an inconclusive execution,
+/// a finite bound, or a harness failure impossible to put in the cache through
+/// the typed API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheOutcome {
+    /// A test failed with the mutant active.
+    Killed,
+    /// Every selected test passed with the mutant active.
+    Survived,
+}
+
+impl From<CacheOutcome> for Outcome {
+    fn from(outcome: CacheOutcome) -> Self {
+        match outcome {
+            CacheOutcome::Killed => Self::Killed,
+            CacheOutcome::Survived => Self::Survived,
+        }
+    }
+}
 
 /// What one earlier run established about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,9 +59,9 @@ pub struct Record {
     /// [`SCHEMA`].
     pub schema: String,
     /// The mutant's content-addressed identity.
-    pub mutant: String,
+    pub mutant: HexDigest,
     /// What the run established.
-    pub outcome: String,
+    pub outcome: CacheOutcome,
     /// The target that ran.
     pub target: String,
     /// How many tests ran, when the harness said.
@@ -58,6 +86,8 @@ pub struct Keyed {
     pub args: Vec<String>,
     /// The budget one execution may take, as the configuration spells it: `auto`, or a duration.
     pub timeout: String,
+    /// How many times an active guard may be entered before the execution is stopped. Zero disables the bound.
+    pub steps: u64,
     /// The cargo arguments the tree was compiled with, because the same tree compiled two ways is two programs.
     pub build: Vec<String>,
 }
@@ -71,35 +101,56 @@ impl Keyed {
 
     /// The key one mutant's record is filed under.
     #[must_use]
-    pub fn key(&self, mutant: &str) -> String {
+    pub fn key(&self, mutant: &HexDigest) -> HexDigest {
         let mut hasher = Sha256::new();
         for field in [
             SCHEMA,
             &RULE_ABI.to_string(),
             &INSTRUMENTATION_ABI.to_string(),
+            &STEP_POLICY_ABI.to_string(),
             &CACHE_ABI.to_string(),
             &self.closure,
             &self.manifests,
             &self.toolchain,
-            mutant,
+            mutant.as_str(),
             &self.timeout,
+            &self.steps.to_string(),
         ] {
-            hasher.update(u32::try_from(field.len()).unwrap_or(u32::MAX).to_be_bytes());
+            hash_length(&mut hasher, field.len());
             hasher.update(field.as_bytes());
         }
         for list in [&self.args, &self.build] {
-            hasher.update(u32::try_from(list.len()).unwrap_or(u32::MAX).to_be_bytes());
+            hash_length(&mut hasher, list.len());
             for argument in list {
-                hasher.update(
-                    u32::try_from(argument.len())
-                        .unwrap_or(u32::MAX)
-                        .to_be_bytes(),
-                );
+                hash_length(&mut hasher, argument.len());
                 hasher.update(argument.as_bytes());
             }
         }
-        hex::encode(hasher.finalize())
+        HexDigest::finish(hasher)
     }
+}
+
+/// Why a durable outcome could not be read or written exactly.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum StoreError {
+    /// The filesystem refused the operation.
+    #[error("{}: {source}", path.display())]
+    Io {
+        /// The entry being used.
+        path: PathBuf,
+        /// The operating system's reason.
+        #[source]
+        source: io::Error,
+    },
+    /// The entry exists but is not the typed record its name promises.
+    #[error("{}: {message}", path.display())]
+    Corrupt {
+        /// The entry being used.
+        path: PathBuf,
+        /// What is wrong with it.
+        message: String,
+    },
 }
 
 /// The records earlier runs left.
@@ -124,53 +175,119 @@ impl Store {
     }
 
     /// What an earlier run established for `key`, when a record is there and is the record it claims to be.
-    #[must_use]
-    pub fn get(&self, key: &str, mutant: &str) -> Option<(Outcome, Record)> {
-        let text = std::fs::read_to_string(self.entry(key)).ok()?;
-        let record: Record = serde_json::from_str(&text).ok()?;
-        if record.schema != SCHEMA || record.mutant != mutant {
-            return None;
+    ///
+    /// # Errors
+    /// Returns every I/O or decoding failure; a corrupt cache entry is not an
+    /// absent one.
+    pub fn get(
+        &self,
+        key: &HexDigest,
+        mutant: &HexDigest,
+    ) -> Result<Option<(Outcome, Record)>, StoreError> {
+        let path = self.entry(key);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(StoreError::Io { path, source }),
+        };
+        let record: Record =
+            crate::strictjson::decode_str(&text).map_err(|error| StoreError::Corrupt {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+        if record.schema != SCHEMA || &record.mutant != mutant {
+            return Err(StoreError::Corrupt {
+                path,
+                message: format!(
+                    "record schema {:?} and mutant {} do not match {SCHEMA:?} and {mutant}",
+                    record.schema, record.mutant
+                ),
+            });
         }
-        Outcome::parse(&record.outcome).map(|outcome| (outcome, record))
+        Ok(Some((record.outcome.into(), record)))
     }
 
-    /// Records what this run established. A failure to write is a run that will do the work again, which is not a reason to stop.
-    pub fn put(&self, key: &str, record: &Record) {
-        let Ok(text) = serde_json::to_string(record) else {
-            return;
-        };
-        drop(crate::replace::file(&self.entry(key), text.as_bytes()));
+    /// Records what this run established.
+    ///
+    /// # Errors
+    /// Returns serialization and filesystem failures rather than silently
+    /// turning a durable result into a cache miss on the next run.
+    pub fn put(&self, key: &HexDigest, record: &Record) -> Result<PathBuf, StoreError> {
+        let path = self.entry(key);
+        let text = serde_json::to_string(record).map_err(|error| StoreError::Corrupt {
+            path: path.clone(),
+            message: error.to_string(),
+        })?;
+        crate::replace::file(&path, text.as_bytes()).map_err(|failure| StoreError::Io {
+            path: failure.path,
+            source: failure.source,
+        })?;
+        Ok(path)
     }
 
     /// How many records the store holds, and how many bytes they take.
-    #[must_use]
-    pub fn size(&self) -> (u32, u64) {
-        let Ok(entries) = std::fs::read_dir(&self.root) else {
-            return (0, 0);
+    ///
+    /// # Errors
+    /// Returns the operating-system error when the store cannot be enumerated completely.
+    pub fn size(&self) -> io::Result<(u32, u64)> {
+        let entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((0, 0)),
+            Err(error) => return Err(error),
         };
         let mut count = 0u32;
         let mut bytes = 0u64;
-        for entry in entries.flatten() {
-            if let Ok(metadata) = entry.metadata()
-                && metadata.is_file()
-            {
-                count = count.saturating_add(1);
-                bytes = bytes.saturating_add(metadata.len());
+        for entry in entries {
+            let entry = entry?;
+            let metadata = std::fs::symlink_metadata(entry.path())?;
+            if metadata.is_file() {
+                count = count.checked_add(1).ok_or_else(|| {
+                    io::Error::other("outcome entry count does not fit its u32 ledger")
+                })?;
+                bytes = bytes.checked_add(metadata.len()).ok_or_else(|| {
+                    io::Error::other("outcome byte count does not fit its u64 ledger")
+                })?;
             }
         }
-        (count, bytes)
+        Ok((count, bytes))
     }
 
     /// Removes every record, and says what is still there afterwards.
-    #[must_use]
-    pub fn clear(&self) -> (u32, u64) {
-        let (held, bytes) = self.size();
-        drop(std::fs::remove_dir_all(&self.root));
-        let (left, left_bytes) = self.size();
-        (held.saturating_sub(left), bytes.saturating_sub(left_bytes))
+    ///
+    /// # Errors
+    /// Returns the operating-system error when the store cannot be enumerated or removed wholly.
+    pub fn clear(&self) -> io::Result<(u32, u64)> {
+        let (held, bytes) = self.size()?;
+        match std::fs::remove_dir_all(&self.root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        let (left, left_bytes) = self.size()?;
+        let removed = held.checked_sub(left).ok_or_else(|| {
+            io::Error::other("outcome store grew while its removal was being measured")
+        })?;
+        let removed_bytes = bytes.checked_sub(left_bytes).ok_or_else(|| {
+            io::Error::other("outcome store gained bytes while its removal was being measured")
+        })?;
+        Ok((removed, removed_bytes))
     }
 
-    fn entry(&self, key: &str) -> PathBuf {
+    fn entry(&self, key: &HexDigest) -> PathBuf {
         self.root.join(format!("{key}.json"))
     }
+}
+
+/// Hashes an address-space length as one platform-independent 128-bit frame.
+///
+/// `usize` cannot hold a value wider than the language's widest integer. The
+/// zero-extension is expressed bytewise so neither a cast nor a truncating
+/// fallback can weaken that invariant on a different target width.
+fn hash_length(hasher: &mut Sha256, length: usize) {
+    let native = length.to_be_bytes();
+    let mut canonical = [0u8; size_of::<u128>()];
+    for (destination, source) in canonical.iter_mut().rev().zip(native.iter().rev()) {
+        *destination = *source;
+    }
+    hasher.update(canonical);
 }

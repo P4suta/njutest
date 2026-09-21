@@ -8,10 +8,11 @@ use std::collections::BTreeMap;
 use super::{Blind, Decision, Finding, FindingKind, MutantRecord};
 
 /// How many mutations one target answered, and whether it ever noticed one.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct Answering {
-    /// How many mutations it gave an answer to.
-    answered: u32,
+    /// One witness for every mutation it gave an answer to.  The count is the
+    /// allocation's exact length, not an independently maintained integer.
+    answered: Vec<()>,
     /// Whether it ever noticed one.
     noticed: bool,
 }
@@ -47,7 +48,7 @@ pub fn found(records: &[MutantRecord]) -> Vec<Finding> {
                 continue;
             }
             let held = answering.entry(answered.target.as_str()).or_default();
-            held.answered = held.answered.saturating_add(1);
+            held.answered.push(());
             if decision == Decision::Tests {
                 held.noticed = true;
             }
@@ -55,15 +56,15 @@ pub fn found(records: &[MutantRecord]) -> Vec<Finding> {
     }
     answering
         .into_iter()
-        .filter(|(_, held)| held.answered > 0 && !held.noticed)
+        .filter(|(_, held)| !held.answered.is_empty() && !held.noticed)
         .map(|(target, held)| {
             Finding::new(
                 FindingKind::HollowTarget,
                 target,
                 &format!(
                     "{target} answered about {} mutation{} and noticed none of them",
-                    held.answered,
-                    if held.answered == 1 { "" } else { "s" }
+                    held.answered.len(),
+                    if held.answered.len() == 1 { "" } else { "s" }
                 ),
             )
         })

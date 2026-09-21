@@ -36,6 +36,75 @@ pub(super) struct Sweeping<'a> {
     pub(super) cache_dir: Option<&'a Path>,
 }
 
+/// Everything the cache command reports after both collectors have finished.
+struct CacheSummary<'a> {
+    parent: &'a Path,
+    verb: &'a str,
+    caches: &'a tempowner::SweepResult,
+    snapshots: &'a tempowner::SweepResult,
+    records: u32,
+    bytes: u64,
+    store: &'a Path,
+    measurements: &'a str,
+}
+
+impl CacheSummary<'_> {
+    fn render(&self) -> Result<String, CliError> {
+        let failures = self
+            .snapshots
+            .failures
+            .len()
+            .checked_add(self.caches.failures.len())
+            .ok_or(CliError::ProjectionOverflow {
+                projection: "cache",
+                field: "the temporary-directory cleanup failure count",
+            })?;
+        let never_inspected = self
+            .snapshots
+            .unreached
+            .checked_add(self.caches.unreached)
+            .ok_or(CliError::ProjectionOverflow {
+                projection: "cache",
+                field: "the uninspected temporary-directory count",
+            })?;
+        let mut text = format!(
+            "temp         {}\ncaches       {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots    {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes     {} records, {} bytes, at {}\nmeasurements {}\nfailures     {}\n",
+            self.parent.display(),
+            self.caches.removed.len(),
+            self.verb,
+            self.caches.removed_bytes,
+            self.caches.live,
+            self.caches.cached,
+            self.snapshots.removed.len(),
+            self.verb,
+            self.snapshots.removed_bytes,
+            self.snapshots.live,
+            self.snapshots.kept,
+            self.records,
+            self.bytes,
+            self.store.display(),
+            self.measurements,
+            failures,
+        );
+        for failure in self
+            .snapshots
+            .failures
+            .iter()
+            .chain(self.caches.failures.iter())
+        {
+            let written = writeln!(
+                text,
+                "             {}: {}",
+                failure.dir.display(),
+                failure.source
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        text.push_str(&unreached(never_inspected));
+        Ok(text)
+    }
+}
+
 pub(super) fn cache(
     asked: &Sweeping<'_>,
     environment: &Environment,
@@ -48,7 +117,9 @@ pub(super) fn cache(
             .unwrap_or(environment.cache_directory.as_path()),
     );
     if asked.clear_outcomes {
-        let (records, bytes) = store.clear();
+        let (records, bytes) = store
+            .clear()
+            .map_err(|source| cache_unreadable(store.root(), source))?;
         write(
             stdout,
             &format!(
@@ -56,7 +127,7 @@ pub(super) fn cache(
                 records,
                 store.root().display()
             ),
-        );
+        )?;
         return Ok(0);
     }
     let now = Timestamp::now();
@@ -79,43 +150,32 @@ pub(super) fn cache(
     };
     let left = left.map_err(|source| CliError::writing(parent, source))?;
     let taken = taken.map_err(|source| CliError::writing(parent, source))?;
-    let (records, bytes) = store.size();
-    let mut text = String::new();
+    let (records, bytes) = store
+        .size()
+        .map_err(|source| cache_unreadable(store.root(), source))?;
+    let measurements = measurements(environment)?;
     let verb = if asked.gc { "removed" } else { "reclaimable" };
-    let written = write!(
-        text,
-        "temp         {}\ncaches       {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots    {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes     {} records, {} bytes, at {}\nmeasurements {}\nfailures     {}\n",
-        parent.display(),
-        taken.removed.len(),
+    let text = CacheSummary {
+        parent,
         verb,
-        taken.removed_bytes,
-        taken.live,
-        taken.cached,
-        left.removed.len(),
-        verb,
-        left.removed_bytes,
-        left.live,
-        left.kept,
+        caches: &taken,
+        snapshots: &left,
         records,
         bytes,
-        store.root().display(),
-        measurements(environment),
-        left.failures.len().saturating_add(taken.failures.len()),
-    );
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    for failure in left.failures.iter().chain(taken.failures.iter()) {
-        let written = writeln!(
-            text,
-            "             {}: {}",
-            failure.dir.display(),
-            failure.source
-        );
-        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        store: store.root(),
+        measurements: &measurements,
     }
-    text.push_str(&unreached(left.unreached.saturating_add(taken.unreached)));
-    write(stdout, &text);
-    write(stdout, &preserved(asked, environment)?);
+    .render()?;
+    write(stdout, &text)?;
+    write(stdout, &preserved(asked, environment)?)?;
     Ok(0)
+}
+
+fn cache_unreadable(path: &Path, source: std::io::Error) -> CliError {
+    CliError::CacheUnreadable {
+        path: path.to_path_buf(),
+        source,
+    }
 }
 
 /// What a sweep that spent its budget says, which is what it did not look at rather than what it failed to remove.
@@ -132,21 +192,51 @@ fn unreached(count: usize) -> String {
 }
 
 /// What measuring trees established, which a run of an unchanged tree reads instead of measuring again.
-fn measurements(environment: &Environment) -> String {
+fn measurements(environment: &Environment) -> Result<String, CliError> {
     let directory = environment
         .cache_directory
         .join(rust_mutants::reach::remembered::LAYOUT);
-    let Ok(entries) = std::fs::read_dir(&directory) else {
-        return format!("none yet, at {}", directory.display());
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(format!("none yet, at {}", directory.display()));
+        }
+        Err(source) => {
+            return Err(CliError::CacheUnreadable {
+                path: directory,
+                source,
+            });
+        }
     };
     let (mut held, mut bytes) = (0_u64, 0_u64);
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|source| CliError::CacheUnreadable {
+            path: directory.clone(),
+            source,
+        })?;
         if entry.path().extension().is_some_and(|one| one == "json") {
-            held = held.saturating_add(1);
-            bytes = bytes.saturating_add(entry.metadata().map_or(0, |it| it.len()));
+            held = held.checked_add(1).ok_or(CliError::ProjectionOverflow {
+                projection: "cache",
+                field: "the remembered-measurement record count",
+            })?;
+            let metadata = entry
+                .metadata()
+                .map_err(|source| CliError::CacheUnreadable {
+                    path: entry.path(),
+                    source,
+                })?;
+            bytes = bytes
+                .checked_add(metadata.len())
+                .ok_or(CliError::ProjectionOverflow {
+                    projection: "cache",
+                    field: "the remembered-measurement byte count",
+                })?;
         }
     }
-    format!("{held} records, {bytes} bytes, at {}", directory.display())
+    Ok(format!(
+        "{held} records, {bytes} bytes, at {}",
+        directory.display()
+    ))
 }
 
 /// The directories runs were asked to keep, listed or removed.
@@ -174,7 +264,11 @@ fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, 
         }
         return Ok(text);
     }
-    let ledger = crate::kept::Ledger::read(&directory);
+    let ledger =
+        crate::kept::Ledger::read(&directory).map_err(|source| CliError::KeptLedgerUnreadable {
+            path: directory.join(crate::kept::FILE_NAME),
+            source,
+        })?;
     let mut text = format!("kept         {}\n", ledger.kept.len());
     for entry in &ledger.kept {
         let written = writeln!(

@@ -17,7 +17,7 @@ use njutest_cli::assure::run::{
 use njutest_cli::config::{Acceptance, Config};
 use njutest_cli::report::{FindingKind, RunKind, TargetStatus};
 use rust_mutants::catalog::{Builder, Candidate};
-use rust_mutants::id::digest;
+use rust_mutants::id::{RunId, digest};
 use rust_mutants::rule::Registry;
 use rust_mutants::span::Span;
 
@@ -56,7 +56,6 @@ fn request(config: Config, packages: &[&str]) -> Request {
         configuration: ".njutest.toml".to_owned(),
         root: std::path::PathBuf::from("/nowhere"),
         build: config.execution.build(),
-        built_as: njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
         config,
         packages: packages.iter().map(|name| (*name).to_owned()).collect(),
         test_args: Vec::new(),
@@ -65,7 +64,7 @@ fn request(config: Config, packages: &[&str]) -> Request {
             locked: true,
         },
         keep_temp: false,
-        run_id: "20260909T000000Z-000001".to_owned(),
+        run_id: RunId::try_from("20260909t000000z-000001").expect("a canonical run identity"),
         started: jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
         engine_trace: rust_mutants::trace::Recorder::disabled(),
         evidence: njutest_cli::assure::identity::Evidence::default(),
@@ -81,18 +80,21 @@ fn only_an_unexpired_acceptance_that_uniquely_names_this_catalog_is_honoured() {
     let first = candidate("crates/a/src/a.rs", (39, 43));
     let second = candidate("crates/a/src/a.rs", (200, 204));
     assert_eq!(
-        first.id().expect("an identity").get(..4),
+        first.id().expect("an identity").as_str().get(..4),
         Some("6d62"),
         "the fixture pins the ambiguous prefix"
     );
     assert_eq!(
-        second.id().expect("an identity").get(..4),
+        second.id().expect("an identity").as_str().get(..4),
         Some("6d62"),
         "the fixture pins the ambiguous prefix"
     );
     let unique = candidate("crates/a/src/unique.rs", (0, 4));
     let unique_id = unique.id().expect("an identity");
-    let unique_prefix = unique_id.get(..8).expect("eight characters");
+    let unique_prefix = unique_id
+        .as_str()
+        .get(..8)
+        .expect("eight identity characters");
     let mut builder = Builder::new();
     builder
         .add_all([first, second, unique])
@@ -103,7 +105,7 @@ fn only_an_unexpired_acceptance_that_uniquely_names_this_catalog_is_honoured() {
 
     let resolved = resolve_acceptances(
         &catalog,
-        &|_locator| Err(String::from("this test writes no locators")),
+        &|_locator| Err(rust_mutants::session::LocateError::Nothing),
         &[
             acceptance(unique_prefix, None),
             acceptance("not-hex", None),
@@ -114,7 +116,10 @@ fn only_an_unexpired_acceptance_that_uniquely_names_this_catalog_is_honoured() {
         now,
     );
 
-    assert_eq!(resolved.ids, std::collections::BTreeSet::from([unique_id]));
+    assert_eq!(
+        resolved.ids,
+        std::collections::BTreeSet::from([unique_id.to_string()])
+    );
     let subjects: Vec<&str> = resolved
         .findings
         .iter()
@@ -132,11 +137,13 @@ fn only_an_unexpired_acceptance_that_uniquely_names_this_catalog_is_honoured() {
 }
 
 fn measured(name: &str, status: TargetStatus) -> Measured {
+    let unit = njutest_cli::targets::UnitKind::Lib;
     Measured {
         target: njutest_cli::targets::Target {
-            id: format!("id-{name}"),
+            id: njutest_cli::targets::target_id("core", unit, "core", name)
+                .expect("the fixture target identity"),
             package: "core".to_owned(),
-            unit: njutest_cli::targets::UnitKind::Lib,
+            unit,
             unit_name: "core".to_owned(),
             path: name.to_owned(),
             ignored: false,
@@ -483,7 +490,8 @@ fn a_build_that_failed_without_saying_anything_is_still_reported_as_one() {
 fn planned(unit: njutest_cli::targets::UnitKind, tests: usize, ignored: usize) -> Planned {
     Planned {
         target: njutest_cli::targets::Target {
-            id: "id-1".to_owned(),
+            id: njutest_cli::targets::target_id("demo", unit, "demo", "whole binary")
+                .expect("the fixture target identity"),
             package: "demo".to_owned(),
             unit,
             unit_name: "demo".to_owned(),
@@ -503,7 +511,7 @@ fn a_plan_names_a_binary_and_says_what_put_it_there_only_when_asked() {
     let ordinary = planned(njutest_cli::targets::UnitKind::Lib, 7, 2);
     assert_eq!(
         line(&ordinary, false),
-        format!("TARGET\tid-1\t{}", ordinary.target.name()),
+        format!("TARGET\t{}\t{}", ordinary.target.id, ordinary.target.name()),
         "a plan nobody asked to explain itself names the binary by its identity and by \
          the name a person reads, and stops: the identity is what a report joins on and \
          the name is what a person recognises"

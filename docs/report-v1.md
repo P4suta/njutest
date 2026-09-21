@@ -5,8 +5,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance report v1
 
-**Status: implemented** (`njutest_cli::report`) — the model, its audit, and
-all five projections.
+**Status: historical.** This page describes stored
+`njutest-assurance-report-v1` artifacts. Current runs write v2 and are
+documented in [report v2](report-v2.md); none of the v1 outcome semantics are
+used to interpret a current report.
 
 The first public report contract is `njutest-assurance-report-v1`. The
 schema value names the toolchain so a reader never confuses it with goatest's

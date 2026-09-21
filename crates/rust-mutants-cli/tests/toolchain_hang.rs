@@ -26,29 +26,25 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
         command.env(name, value);
     }
     command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
+    command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
     command.args(["--tier", "all", "--offline", "--locked"]);
     command.output().expect("rust-mutants runs")
 }
 
 /// The row of the mutation one rule proposed at one line.
 fn row(fixture: &Fixture, rule: &str, line: u64) -> serde_json::Value {
-    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
-    let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(&directory)
-        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
-        .flatten()
-        .map(|entry| entry.path().join("run-report-v1.json"))
-        .filter(|path| path.is_file())
-        .collect();
-    runs.sort();
-    let newest = runs.pop().expect("one stored run");
+    let newest = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    )
+    .join("run-report-v2.json");
     read(&newest, rule, line)
 }
 
 fn read(report: &Path, rule: &str, line: u64) -> serde_json::Value {
-    let document: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(report).expect("the report"))
-            .expect("the report is a document");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(report).expect("the report"),
+    )
+    .expect("the report is a document");
     document["mutants"]
         .as_array()
         .expect("the rows")
@@ -63,17 +59,23 @@ fn a_mutant_that_never_returns_is_stopped_by_a_count_and_not_asked_again() {
     let fixture = Fixture::copy("fixture-hang");
     let output = run(&fixture, &[]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output.status.code() == Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let stopped = row(&fixture, "delete-compound-assignment", 13);
     assert_eq!(
         stopped["outcome"].as_str(),
-        Some("runaway"),
-        "deleting what ends the loop leaves a function that does not return, and the guard \
-         at the mutation's own site is taken once an iteration until the allowance is \
-         spent: {stopped}"
+        Some("step_limit_reached"),
+        "deleting what ends the loop reaches the guard allowance. The report preserves \
+         that execution fact without claiming it proved nontermination: {stopped}"
+    );
+    assert_eq!(stopped["step_notice"]["limit"], 100);
+    assert!(
+        stopped["step_notice"]["observed"]
+            .as_u64()
+            .is_some_and(|observed| observed > 100),
+        "the boundary names the first count beyond the allowance: {stopped}"
     );
     assert_eq!(
         stopped["retried"].as_bool(),
@@ -100,15 +102,15 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
         &[
             (
                 "FIXTURE_HANG_MARKER",
-                markers.to_string_lossy().into_owned(),
+                njutest_devkit::paths::utf8(&markers).to_owned(),
             ),
             ("FIXTURE_HANG_PAUSE_MS", "4000".to_owned()),
         ],
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output.status.code() == Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let undecided = row(&fixture, "gt-to-ge", 25);
     assert_eq!(
@@ -117,7 +119,7 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
         "a mutation that was slow once and quick again is one the run cannot decide: {undecided}"
     );
     assert_eq!(undecided["retried"].as_bool(), Some(true), "{undecided}");
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
         text.contains("inconclusive-mutant"),
         "a run that could not decide says so: {text}"
@@ -129,10 +131,9 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
     let still = row(&fixture, "delete-compound-assignment", 13);
     assert_eq!(
         still["outcome"].as_str(),
-        Some("runaway"),
-        "a mutation that never returns is not a slow one, and the two are told apart by \
-         what ended them: a count nobody can argue with, against a bound this machine \
-         reached once and not again: {still}"
+        Some("step_limit_reached"),
+        "the finite count and clock facts remain distinct without turning either into a \
+         proof that the mutation cannot terminate: {still}"
     );
 }
 
@@ -141,13 +142,13 @@ fn a_mutation_that_never_returns_is_stopped_rather_than_left_running() {
     let fixture = Fixture::copy("fixture-hang");
     let output = run(&fixture, &[]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output.status.code() == Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
-        text.contains("runaway=2") && text.contains("waited=0"),
+        text.contains("step_limit_reached=2") && text.contains("waited=0"),
         "the run ends rather than waiting on the process it started, and what ended it is \
          a count rather than this machine's clock: {text}"
     );

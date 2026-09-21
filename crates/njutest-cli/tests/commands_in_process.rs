@@ -6,7 +6,9 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     clippy::too_many_lines,
+    clippy::disallowed_methods,
     reason = "the helpers that copy a fixture and run one verification are not themselves \
               tests, a setup that fails is reported by panicking, and a test reads a \
               document by the names the run it drove put there"
@@ -15,7 +17,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use njutest_cli::app::reports::Store;
+use njutest_cli::app::reports::Index;
 use njutest_cli::cli::Environment;
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::runner::Cancel;
@@ -24,8 +26,19 @@ use rust_mutants::runner::Cancel;
 struct Verified {
     root: PathBuf,
     run: String,
-    store: Store,
     _dir: tempfile::TempDir,
+}
+
+/// Where the runs of one workspace live, spelled as the documented default.
+fn runs_root(root: &Path) -> PathBuf {
+    root.join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+}
+
+/// Where one index lives, spelled as the documented default.
+fn index_path(root: &Path, index: Index) -> PathBuf {
+    root.join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join(index.file())
 }
 
 /// What one command said, driven in this process.
@@ -61,8 +74,8 @@ fn ask(root: &Path, args: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
@@ -86,20 +99,14 @@ fn verified() -> Verified {
         "this fixture has a gap its own tests cannot see: {}{}",
         said.out, said.err
     );
-    let store = Store::read(&root);
-    let index: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(store.index(njutest_cli::app::reports::Index::Any))
-            .expect("the index"),
-    )
-    .expect("the index is JSON");
-    let run = index["run_id"]
+    let run = njutest_cli::app::reports::pointed_at(&root, Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run")
         .as_str()
-        .expect("the run the index names")
         .to_owned();
     Verified {
         root,
         run,
-        store,
         _dir: dir,
     }
 }
@@ -123,9 +130,9 @@ fn every_command_that_reads_a_run_reads_the_one_that_ran() {
     let document = ask(&it.root, &["report", "--format", "json"]);
     assert_eq!(document.code, 0, "{}", document.err);
     let parsed: serde_json::Value =
-        serde_json::from_str(&document.out).expect("the report is a document");
+        njutest_devkit::strictjson::decode_str(&document.out).expect("the report is a document");
     assert_eq!(
-        parsed["run_id"].as_str(),
+        parsed["report"]["run_id"].as_str(),
         Some(it.run.as_str()),
         "and the document names the same run the lines did: two commands over one \
          directory answering about two runs is a report nobody can act on"
@@ -156,7 +163,8 @@ fn every_command_that_reads_a_run_reads_the_one_that_ran() {
 /// What `report` says about a run directory whose document is not one.
 fn unreadable(it: &Verified) {
     let hollow = "20270101T000000Z-hollow";
-    std::fs::create_dir_all(it.store.run(hollow)).expect("a run directory with nothing in it");
+    std::fs::create_dir_all(runs_root(&it.root).join(hollow))
+        .expect("a run directory with nothing in it");
     let empty = ask(&it.root, &["report", hollow]);
     assert!(
         empty.code == 3 && empty.err.contains(hollow),
@@ -168,7 +176,7 @@ fn unreadable(it: &Verified) {
     );
 
     let broken = "20270101T000000Z-broken";
-    let directory = it.store.run(broken);
+    let directory = runs_root(&it.root).join(broken);
     std::fs::create_dir_all(&directory).expect("a run directory");
     std::fs::write(
         directory.join(njutest_cli::app::reports::DOCUMENT_NAME),
@@ -198,7 +206,7 @@ fn unreadable(it: &Verified) {
 
 /// What a run leaves in its own directory, and where the pointers point.
 fn kept(it: &Verified) {
-    let directory = it.store.run(&it.run);
+    let directory = runs_root(&it.root).join(&it.run);
     for name in [
         njutest_cli::app::reports::DOCUMENT_NAME,
         njutest_cli::app::reports::HTML_NAME,
@@ -215,9 +223,10 @@ fn kept(it: &Verified) {
         );
     }
 
-    for index in njutest_cli::app::reports::Index::BOTH {
-        let text = std::fs::read_to_string(it.store.index(index)).expect("the index");
-        let pointer: serde_json::Value = serde_json::from_str(&text).expect("the index is JSON");
+    for index in Index::ALL {
+        let text = std::fs::read_to_string(index_path(&it.root, index)).expect("the index");
+        let pointer: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(&text).expect("the index is JSON");
         assert_eq!(
             pointer["run_id"].as_str(),
             Some(it.run.as_str()),
@@ -234,12 +243,12 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
     let it = verified();
     let document = ask(&it.root, &["report", "--format", "json"]);
     let parsed: serde_json::Value =
-        serde_json::from_str(&document.out).expect("the report is a document");
-    let mutant = parsed["mutants"][0]["display_id"]
+        njutest_devkit::strictjson::decode_str(&document.out).expect("the report is a document");
+    let mutant = parsed["report"]["builds"][0]["parts"][0]["mutants"][0]["display_id"]
         .as_str()
         .expect("a mutant the run judged")
         .to_owned();
-    let full = parsed["mutants"][0]["id"]
+    let full = parsed["report"]["builds"][0]["parts"][0]["mutants"][0]["id"]
         .as_str()
         .expect("the full identity")
         .to_owned();
@@ -275,11 +284,11 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
         "the full identity and its display prefix name exactly the same mutation"
     );
 
-    let killed = parsed["mutants"]
+    let killed = parsed["report"]["builds"][0]["parts"][0]["mutants"]
         .as_array()
         .expect("mutants")
         .iter()
-        .find(|one| one["outcome"] == "killed")
+        .find(|one| one["decision"]["outcome"] == "killed")
         .and_then(|one| one["display_id"].as_str())
         .expect("a mutation the tests noticed")
         .to_owned();
@@ -336,7 +345,7 @@ fn placed_and_ruled(said: &std::collections::BTreeMap<&str, &str>, whole: &str) 
         "where it is, as a file and a line and a column, which is what an editor takes: \
          {placed:?}"
     );
-    for named in ["RULE", "OUTCOME"] {
+    for named in ["RULE", "DECISION"] {
         assert!(
             said.get(named).is_some_and(|it| !it.is_empty()),
             "and what was done to the code and what came of it: {named} is not in\n{whole}"
@@ -346,7 +355,7 @@ fn placed_and_ruled(said: &std::collections::BTreeMap<&str, &str>, whole: &str) 
 
 /// What an explanation says about a survivor, before a reviewer looks at it and after.
 fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
-    let survivor = parsed["findings"]
+    let survivor = parsed["report"]["builds"][0]["parts"][0]["findings"]
         .as_array()
         .expect("findings")
         .iter()
@@ -421,8 +430,8 @@ fn an_acceptance_is_written_where_the_next_run_reads_it() {
     let it = verified();
     let document = ask(&it.root, &["report", "--format", "json"]);
     let parsed: serde_json::Value =
-        serde_json::from_str(&document.out).expect("the report is a document");
-    let survivor = parsed["findings"]
+        njutest_devkit::strictjson::decode_str(&document.out).expect("the report is a document");
+    let survivor = parsed["report"]["builds"][0]["parts"][0]["findings"]
         .as_array()
         .expect("findings")
         .iter()
@@ -503,12 +512,12 @@ fn an_acceptance_is_written_where_the_next_run_reads_it() {
 fn refusals(it: &Verified, survivor: &str) {
     let document = ask(&it.root, &["report", "--format", "json"]);
     let parsed: serde_json::Value =
-        serde_json::from_str(&document.out).expect("the report is a document");
-    let killed = parsed["mutants"]
+        njutest_devkit::strictjson::decode_str(&document.out).expect("the report is a document");
+    let killed = parsed["report"]["builds"][0]["parts"][0]["mutants"]
         .as_array()
         .expect("mutants")
         .iter()
-        .find(|one| one["outcome"] == "killed")
+        .find(|one| one["decision"]["outcome"] == "killed")
         .and_then(|one| one["display_id"].as_str())
         .expect("a mutation the tests noticed")
         .to_owned();
@@ -521,7 +530,7 @@ fn refusals(it: &Verified, survivor: &str) {
          one that is: {}{}",
         refused.out, refused.err
     );
-    assert!(refused.err.contains("killed"), "{}", refused.err);
+    assert!(refused.err.contains("tests"), "{}", refused.err);
 
     let nobody = ask(&it.root, &["accept", "ffffffffffff", "--reason", "why not"]);
     assert_eq!(
@@ -552,7 +561,7 @@ fn refusals(it: &Verified, survivor: &str) {
         wrong.out, wrong.err
     );
     assert!(
-        wrong.err.contains("acceptance is not a list of tables"),
+        wrong.err.contains("acceptance") && wrong.err.contains("expected a sequence"),
         "the field with the wrong shape is named: {}",
         wrong.err
     );
@@ -582,7 +591,7 @@ fn refusals(it: &Verified, survivor: &str) {
     let unwritable = ask(&it.root, &["accept", survivor, "--reason", "reviewed"]);
     assert_eq!(unwritable.code, 3, "{}{}", unwritable.out, unwritable.err);
     assert!(
-        unwritable.err.contains("writing")
+        unwritable.err.contains("unsafe store entry")
             && unwritable.err.contains(njutest_cli::config::FILE_NAME),
         "an acceptance that cannot be persisted names the file and is an error: {}",
         unwritable.err
@@ -601,7 +610,7 @@ fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
     );
 
     let run = "20260101T000000Z-broken";
-    std::fs::create_dir_all(Store::read(dir.path()).run(run))
+    std::fs::create_dir_all(runs_root(dir.path()).join(run))
         .expect("a run directory without a report");
     let unreadable = ask(
         dir.path(),
@@ -651,7 +660,7 @@ fn bundled(it: &Verified) {
          {manifest:?}"
     );
     let described: serde_json::Value =
-        serde_json::from_str(&manifest).expect("the manifest is a document");
+        njutest_devkit::strictjson::decode_str(&manifest).expect("the manifest is a document");
     assert_eq!(
         described["run_id"].as_str(),
         Some(it.run.as_str()),
@@ -766,11 +775,17 @@ fn stored(it: &Verified) {
 fn preserved_and_named(it: &Verified) {
     let preserved = it.root.join("kept-snapshot");
     std::fs::create_dir_all(&preserved).expect("a directory a run preserved");
-    let _written = njutest_cli::kept::record(
+    let written = njutest_cli::kept::record(
         &it.root,
         &it.run,
         jiff::Timestamp::now(),
         std::slice::from_ref(&preserved),
+    )
+    .expect("the kept-directory ledger is written");
+    assert_eq!(
+        written,
+        njutest_cli::kept::path(&it.root),
+        "the ledger is written at the path the reader uses"
     );
     let listed = ask(&it.root, &["cache"]);
     assert!(
@@ -976,17 +991,26 @@ fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
 #[test]
 fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused() {
     let it = verified();
-    let one = it
-        .store
-        .run(&it.run)
-        .join(njutest_cli::app::reports::DOCUMENT_NAME);
+    let one = sharded(&it, "1/2");
+    let two = sharded(&it, "2/2");
 
-    let whole = ask(&it.root, &["merge", &one.display().to_string()]);
-    let combined =
-        njutest_cli::report::json::parse(&whole.out).expect("the whole is a report a reader takes");
+    let whole = ask(
+        &it.root,
+        &[
+            "merge",
+            &one.display().to_string(),
+            &two.display().to_string(),
+        ],
+    );
+    let combined = njutest_cli::report::json::parse(&whole.out).unwrap_or_else(|error| {
+        panic!(
+            "the whole is a report a reader takes: {error}\n{}{}",
+            whole.out, whole.err
+        )
+    });
     assert_eq!(
         whole.code,
-        combined.verdict.exit_code(),
+        combined.verdict().exit_code(),
         "with nowhere named to write it, the whole goes to the stream a pipe reads, and \
          the code is the verdict's: {}",
         whole.err
@@ -998,6 +1022,7 @@ fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused()
         &[
             "merge",
             &one.display().to_string(),
+            &two.display().to_string(),
             "--output",
             &elsewhere.display().to_string(),
         ],
@@ -1031,19 +1056,65 @@ fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused()
         refused.err
     );
 
-    two_trees_and_nowhere_to_write(&it, &one);
+    two_trees_and_nowhere_to_write(&it, &one, &two);
+}
+
+/// Where one shard of this workspace's catalog wrote its document.
+fn sharded(it: &Verified, shard: &str) -> PathBuf {
+    let before = run_names(&it.root);
+    let said = ask(
+        &it.root,
+        &[
+            "verify",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--ui=plain",
+            "--shard",
+            shard,
+        ],
+    );
+    assert_eq!(said.code, 2, "{}{}", said.out, said.err);
+    let fresh = run_names(&it.root)
+        .into_iter()
+        .find(|name| !before.contains(name))
+        .expect("a sharded run writes its own directory");
+    runs_root(&it.root)
+        .join(fresh)
+        .join(njutest_cli::app::reports::DOCUMENT_NAME)
+}
+
+/// The run directories this workspace currently holds.
+fn run_names(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(runs_root(root))
+        .expect("the runs directory")
+        .map(|entry| {
+            entry
+                .expect("a run entry is readable")
+                .file_name()
+                .into_string()
+                .unwrap_or_else(|spelling| {
+                    panic!(
+                        "test protocol paths are UTF-8: {}",
+                        njutest_devkit::paths::utf8(Path::new(&spelling))
+                    )
+                })
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 /// The two things `merge` refuses that a pipeline actually meets.
-fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path) {
+fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path, two: &Path) {
     let elsewhere = it.root.join("elsewhere.json");
-    let mut other =
-        njutest_cli::report::json::parse(&std::fs::read_to_string(one).expect("the part"))
+    let mut other: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&std::fs::read_to_string(two).expect("the part"))
             .expect("a part");
-    other.repository.workspace_digest = "c".repeat(64);
+    other["report"]["repository"]["workspace_digest"] = serde_json::json!("c".repeat(64));
     std::fs::write(
         &elsewhere,
-        njutest_cli::report::json::document(&other).expect("a report a reader takes"),
+        serde_json::to_string_pretty(&other).expect("a report a reader takes"),
     )
     .expect("a part of another tree");
     let two_trees = ask(
@@ -1055,7 +1126,7 @@ fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path) {
         ],
     );
     assert!(
-        two_trees.code == 3 && two_trees.err.contains("the tree"),
+        two_trees.code == 3 && two_trees.err.contains("the repository evidence"),
         "two parts of two trees are not two parts of one: added up they would be a \
          verdict about a tree neither of them measured, which is the one thing sharding \
          may never buy: {}{}",
@@ -1069,6 +1140,7 @@ fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path) {
         &[
             "merge",
             &one.display().to_string(),
+            &two.display().to_string(),
             "--output",
             &nowhere.display().to_string(),
         ],

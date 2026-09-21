@@ -15,7 +15,7 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{Request, Session};
+use rust_mutants::session::{Reachability, Request, Session};
 use rust_mutants::testkit::measuring::Measuring;
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::Workspace;
@@ -76,7 +76,7 @@ fn a_session_that_measured_neither_way_proves_nothing_about_reach() {
     assert!(!session.reached().measured());
     assert!(!session.touched().measured());
     let one = mutant(&session, "gt-to-ge", 11);
-    assert_eq!(session.reaches(one), None);
+    assert_eq!(session.reaches(one), Reachability::Unmeasured);
     session.close().expect("close");
 }
 
@@ -92,7 +92,7 @@ fn the_guards_prove_reach_with_no_coverage_build_at_all() {
     let one = mutant(&session, "gt-to-ge", 11);
     assert_eq!(
         session.reaches(one),
-        Some(true),
+        Reachability::Reached,
         "the tests run this line, and the guards on it said so"
     );
     session.close().expect("close");
@@ -119,8 +119,8 @@ fn each_target_reaches_the_code_its_own_tests_run_and_no_more() {
 
     let max = mutant(&session, "gt-to-ge", 11);
     let even = mutant(&session, "eq-to-neq", 16);
-    assert_eq!(session.reaches(max), Some(true));
-    assert_eq!(session.reaches(even), Some(true));
+    assert_eq!(session.reaches(max), Reachability::Reached);
+    assert_eq!(session.reaches(even), Reachability::Reached);
     let covering = |one: &rust_mutants::catalog::Mutant| -> Vec<String> {
         let position = session.position(one).expect("a position");
         reached
@@ -151,13 +151,13 @@ fn a_mutant_no_measured_target_reached_is_not_run_at_all() {
     let session = prepared(&fixture, true);
     assert!(session.reached().measured());
     let alone = only(&session, "add-to-sub");
-    assert_eq!(session.reaches(alone), Some(false));
+    assert_eq!(session.reaches(alone), Reachability::Unreached);
 
     let result = session
-        .exec(&Request::new(alone.id.clone()), &Cancel::new())
+        .exec(&Request::new(alone.id.to_string()), &Cancel::new())
         .expect("exec");
     assert_eq!(
-        result.outcome,
+        result.outcome(),
         Outcome::NotRun,
         "a mutant nothing reached is not run against everything to find that out again"
     );

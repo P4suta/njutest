@@ -7,6 +7,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and spells the encoding it checks the decoder against"
 )]
 
@@ -92,7 +93,8 @@ fn a_candidate_that_creates_a_test_file_is_read_whole() {
 fn nothing_a_provider_says_reaches_the_tree() {
     let dir = tree();
     let said = answer(&patch("tests/closes.rs", None, "#[test]\nfn t() {}\n"));
-    let _taken = take(&said, dir.path(), &patterns()).expect("taken");
+    let taken = take(&said, dir.path(), &patterns()).expect("taken");
+    assert_eq!(taken.len(), 1, "the provider offered one candidate");
     assert!(
         !dir.path().join("tests/closes.rs").exists(),
         "a candidate is a proposal, never a change"

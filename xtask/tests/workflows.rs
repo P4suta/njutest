@@ -17,7 +17,7 @@ fn workflows() -> Vec<PathBuf> {
         .join(".github/workflows");
     let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
-        .flatten()
+        .map(|entry| entry.unwrap_or_else(|error| panic!("entry under {}: {error}", dir.display())))
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|one| one == "yml"))
         .collect();
@@ -70,8 +70,8 @@ fn a_step_that_can_run_on_windows_says_which_shell_it_is_written_for() {
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         let file = path
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or_else(|| panic!("a workflow file name is not UTF-8: {}", path.display()));
         for (job, body) in jobs(&source) {
             if !body.contains("windows-") {
                 continue;
@@ -104,4 +104,48 @@ fn a_step_that_can_run_on_windows_says_which_shell_it_is_written_for() {
          could have been reported as a pass. Say `shell: bash`, which every runner has. \
          {silent:?}"
     );
+}
+
+#[test]
+fn the_real_kani_job_installs_one_exact_locked_version() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/ci.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let body = jobs(&source)
+        .into_iter()
+        .find_map(|(name, body)| (name == "kani-verified").then_some(body))
+        .unwrap_or_else(|| panic!("{} has no kani-verified job", path.display()));
+    assert!(
+        body.contains("cargo install --locked kani-verifier --version '=0.68.0'"),
+        "the proof job must make Cargo's exact-version intent machine-readable"
+    );
+}
+
+#[test]
+fn executable_tools_use_the_commit_pinned_installer_and_exact_versions() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/ci.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    for tool in [
+        "actionlint@1.7.12",
+        "committed@1.1.11",
+        "mdbook@0.5.4",
+        "typos-cli@1.50.1",
+        "cargo-deny@0.19.7",
+    ] {
+        assert!(
+            source.contains(tool),
+            "CI no longer installs {tool} through the pinned setup action: {source}"
+        );
+    }
+    for unverified in ["curl ", "wget ", "Invoke-WebRequest", "| tar"] {
+        assert!(
+            !source.contains(unverified),
+            "CI downloads an executable without an independently pinned digest ({unverified:?}): {source}"
+        );
+    }
 }

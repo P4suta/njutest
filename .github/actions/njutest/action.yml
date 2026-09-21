@@ -88,7 +88,7 @@ runs:
         if [ -n "${report}" ]; then
           {
             echo "report=${report}"
-            echo "sarif=${report%njutest-assurance-report-v1.json}njutest-assurance-report-v1.sarif"
+            echo "sarif=${report%njutest-assurance-report-v2.json}njutest-assurance-report-v2.sarif"
           } >> "${GITHUB_OUTPUT}"
         fi
         {

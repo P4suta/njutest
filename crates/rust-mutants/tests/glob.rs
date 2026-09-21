@@ -9,6 +9,10 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use njutest_devkit::result::{
+    ResultState::{Refused, Returned},
+    result_state,
+};
 use proptest::prelude::*;
 use rust_mutants::glob::{GlobError, Pattern};
 
@@ -72,17 +76,23 @@ fn double_star_is_special_only_as_a_complete_element() {
 
 #[test]
 fn a_pattern_that_took_exponential_time_by_backtracking_is_still_fast() {
-    let pattern = Pattern::compile("**/**/**/**/**/**/**/**/*a").expect("compiles");
+    let pattern = Pattern::compile("**/**/**/**/**/**/**/**/*a");
+    assert_eq!(result_state(&pattern), Returned, "pattern: {pattern:?}");
+    let Ok(pattern) = pattern else { return };
     let path = format!("{}b", "b/".repeat(40));
     assert!(!pattern.matches(&path));
-    let stars = Pattern::compile("a*a*a*a*a*a*a*a*a*a*b").expect("compiles");
+    let stars = Pattern::compile("a*a*a*a*a*a*a*a*a*a*b");
+    assert_eq!(result_state(&stars), Returned, "pattern: {stars:?}");
+    let Ok(stars) = stars else { return };
     assert!(!stars.matches(&"a".repeat(200)));
     assert!(stars.matches(&format!("{}b", "a".repeat(30))));
 }
 
 #[test]
 fn malformed_paths_match_nothing() {
-    let pattern = Pattern::compile("**").expect("compiles");
+    let pattern = Pattern::compile("**");
+    assert_eq!(result_state(&pattern), Returned, "pattern: {pattern:?}");
+    let Ok(pattern) = pattern else { return };
     assert!(!pattern.matches(""));
     assert!(!pattern.matches("a//b"));
     assert!(!pattern.matches("/a"));
@@ -98,7 +108,9 @@ fn rejected_patterns_name_the_offending_column() {
         ("a//b", 3, "empty path element"),
     ];
     for (pattern, column, message) in cases {
-        let error = Pattern::compile(pattern).expect_err(pattern);
+        let error = Pattern::compile(pattern);
+        assert_eq!(result_state(&error), Refused, "{pattern:?}: {error:?}");
+        let Err(error) = error else { continue };
         assert_eq!(error.pattern, pattern);
         assert_eq!(error.column, column, "{pattern:?}");
         assert!(
@@ -108,18 +120,20 @@ fn rejected_patterns_name_the_offending_column() {
         );
         assert!(error.to_string().contains("(column "), "{error}");
     }
-    let typed: GlobError = Pattern::compile("").expect_err("typed error");
+    let typed = Pattern::compile("");
+    assert_eq!(result_state(&typed), Refused, "typed error: {typed:?}");
+    let Err(typed): Result<_, GlobError> = typed else {
+        return;
+    };
     assert_eq!(typed.column, 1);
 }
 
 #[test]
 fn a_pattern_renders_as_it_was_compiled() {
-    assert_eq!(
-        Pattern::compile("crates/**/*.rs")
-            .expect("compiles")
-            .to_string(),
-        "crates/**/*.rs"
-    );
+    let pattern = Pattern::compile("crates/**/*.rs");
+    assert_eq!(result_state(&pattern), Returned, "pattern: {pattern:?}");
+    let Ok(pattern) = pattern else { return };
+    assert_eq!(pattern.to_string(), "crates/**/*.rs");
 }
 
 /// A naive, obviously correct reference: backtracking over elements and bytes.
@@ -158,7 +172,9 @@ proptest! {
     ) {
         let pattern_text = pattern_elements.join("/");
         let path_text = path_elements.join("/");
-        let pattern = Pattern::compile(&pattern_text).expect("elements are non-empty");
+        let pattern = Pattern::compile(&pattern_text);
+        prop_assert_eq!(result_state(&pattern), Returned, "pattern: {:?}", pattern);
+        let Ok(pattern) = pattern else { return Ok(()) };
         let want = reference(&pattern_elements.iter().map(String::as_str).collect::<Vec<_>>(), &path_elements.iter().map(String::as_str).collect::<Vec<_>>());
         prop_assert_eq!(pattern.matches(&path_text), want, "pattern {} path {}", pattern_text, path_text);
     }

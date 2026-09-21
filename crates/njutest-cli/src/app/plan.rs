@@ -13,28 +13,64 @@ use crate::watch::Watch;
 
 use super::Completion;
 
+/// Why a plan could not be constructed from the requested workspace.
+#[derive(Debug, thiserror::Error)]
+enum PlanError {
+    /// The project configuration is invalid or unreadable.
+    #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
+    /// Cargo or its metadata boundary could not be used.
+    #[error(transparent)]
+    Cargo(#[from] rust_mutants::cargo::CargoError),
+    /// The private planning workspace could not be created.
+    #[error(transparent)]
+    Scratch(#[from] crate::scratch::ScratchError),
+    /// The generated run name did not satisfy the filesystem-component invariant.
+    #[error(transparent)]
+    RunId(#[from] rust_mutants::id::RunIdError),
+    /// The selected workspace could not be built.
+    #[error(transparent)]
+    Build(#[from] crate::build::BuildError),
+    /// A built target could not enumerate its tests.
+    #[error(transparent)]
+    Target(#[from] crate::targets::TargetError),
+    /// A target identity could not be framed by the stable recipe.
+    #[error(transparent)]
+    TargetIdentity(#[from] crate::targets::TargetIdError),
+    /// A requested package is not a workspace member.
+    #[error(transparent)]
+    Discovery(#[from] rust_mutants::discover::DiscoverError),
+    /// Cargo completed normally but reported a compilation failure.
+    #[error(
+        "{}: the workspace does not compile, so there is nothing to plan:\n{failure}",
+        crate::error::BUILD_FAILED.code
+    )]
+    Compilation { failure: String },
+}
+
 /// Says what a run would measure.
 pub(super) fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> Completion {
-    match planned(arguments, environment, stdout) {
-        Ok(()) => Completion::Assured,
-        Err(message) => {
-            super::diagnose(stderr, &message);
-            Completion::Error
+) -> std::io::Result<Completion> {
+    match planned(arguments, environment) {
+        Ok(lines) => {
+            for line in lines {
+                super::say(stdout, &line)?;
+            }
+            Ok(Completion::Assured)
+        }
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string())?;
+            Ok(Completion::Error)
         }
     }
 }
 
 /// Writes a complete plan or returns the one reason no plan can be made.
-fn planned(
-    arguments: &Arguments,
-    environment: &Environment,
-    stdout: &mut dyn Write,
-) -> Result<(), String> {
+fn planned(arguments: &Arguments, environment: &Environment) -> Result<Vec<String>, PlanError> {
     let root = environment.rooted(arguments.directory.as_deref());
     let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
@@ -50,10 +86,10 @@ fn planned(
     let (toolchain, metadata) = locate(&root, environment, cargo, &cancel)?;
 
     if let Some(refusal) = unknown_package(&packages, &metadata.packages) {
-        return Err(refusal);
+        return Err(refusal.into());
     }
 
-    let scratch = workplace(environment).map_err(|error| error.to_string())?;
+    let scratch = workplace(environment)?;
     let options = BuildOptions {
         root,
         selection,
@@ -64,37 +100,32 @@ fn planned(
         cargo,
         timeout: None,
     };
-    let built = build(&toolchain, &metadata.packages, &options, watch)
-        .map_err(|error| error.to_string())?;
+    let built = build(&toolchain, &metadata.packages, &options, watch)?;
     if let Some(failure) = &built.failure {
-        return Err(format!(
-            "{}: the workspace does not compile, so there is nothing to plan:\n{failure}",
-            crate::error::BUILD_FAILED.code,
-        ));
+        return Err(PlanError::Compilation {
+            failure: failure.clone(),
+        });
     }
 
+    let selected = selected(&built.units, watch)?;
+    let mut lines = Vec::new();
     if arguments.why {
-        super::say(stdout, &format!("SCOPE\t{}", scope(arguments, &packages)));
+        lines.push(format!("SCOPE\t{}", scope(arguments, &packages)));
     }
-
-    let selected = selected(&built.units, watch).map_err(|error| error.to_string())?;
     for target in &selected {
-        super::say(stdout, &line(target, arguments.why));
+        lines.push(line(target, arguments.why));
     }
-    super::say(stdout, &format!("TARGETS\t{}", selected.len()));
-    Ok(())
+    lines.push(format!("TARGETS\t{}", selected.len()));
+    Ok(lines)
 }
 
 /// Every binary a run would measure, and how many tests each of them holds.
-fn selected(
-    units: &[crate::targets::Unit],
-    watch: Watch<'_>,
-) -> Result<Vec<Planned>, crate::targets::TargetError> {
+fn selected(units: &[crate::targets::Unit], watch: Watch<'_>) -> Result<Vec<Planned>, PlanError> {
     let mut selected = Vec::new();
     for unit in units {
         let held = enumerate(unit, watch)?;
         selected.push(Planned {
-            target: crate::targets::whole_binary(unit),
+            target: crate::targets::whole_binary(unit)?,
             tests: held.iter().filter(|one| !one.ignored).count(),
             ignored: held.iter().filter(|one| one.ignored).count(),
         });
@@ -114,15 +145,14 @@ pub struct Planned {
 }
 
 /// Where a plan builds.
-fn workplace(
-    environment: &Environment,
-) -> Result<crate::scratch::Scratch, crate::scratch::ScratchError> {
+fn workplace(environment: &Environment) -> Result<crate::scratch::Scratch, PlanError> {
     let now = jiff::Timestamp::now();
     crate::scratch::Scratch::create(
         &environment.temp_directory,
-        &crate::run_id::mint(now, std::process::id()),
+        &crate::run_id::mint(now, std::process::id())?,
         now,
     )
+    .map_err(PlanError::from)
 }
 
 /// The toolchain and what it says the workspace holds.
@@ -136,7 +166,7 @@ fn locate(
         rust_mutants::cargo::Toolchain,
         rust_mutants::cargo::Metadata,
     ),
-    String,
+    rust_mutants::cargo::CargoError,
 > {
     let toolchain = rust_mutants::cargo::Toolchain::locate(
         &rust_mutants::cargo::LocateOptions {
@@ -146,8 +176,7 @@ fn locate(
         },
         root,
         cancel,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let metadata = rust_mutants::cargo::Metadata::load(
         &rust_mutants::cargo::Driver {
             toolchain: &toolchain,
@@ -159,8 +188,7 @@ fn locate(
             locked: cargo.locked,
             offline: cargo.offline,
         },
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     Ok((toolchain, metadata))
 }
 
@@ -189,8 +217,11 @@ pub fn line(planned: &Planned, why: bool) -> String {
 ///
 /// # Errors
 /// Returns the configuration's own refusal, rendered.
-pub fn compiled(root: &std::path::Path, arguments: &Arguments) -> Result<Selection, String> {
-    let config = crate::config::Config::load(root).map_err(|error| error.to_string())?;
+pub fn compiled(
+    root: &std::path::Path,
+    arguments: &Arguments,
+) -> Result<Selection, crate::config::ConfigError> {
+    let config = crate::config::Config::load(root)?;
     Ok(Selection {
         packages: if arguments.packages.is_empty() {
             config.project.packages
@@ -217,11 +248,12 @@ fn scope(arguments: &Arguments, packages: &[String]) -> String {
 }
 
 /// The first package named that is no member of the workspace, if one is.
-fn unknown_package(named: &[String], members: &[rust_mutants::cargo::Package]) -> Option<String> {
+fn unknown_package(
+    named: &[String],
+    members: &[rust_mutants::cargo::Package],
+) -> Option<rust_mutants::discover::DiscoverError> {
     named
         .iter()
         .find(|name| !members.iter().any(|member| member.name == **name))
-        .map(|name| {
-            rust_mutants::discover::DiscoverError::UnknownPackage { name: name.clone() }.to_string()
-        })
+        .map(|name| rust_mutants::discover::DiscoverError::UnknownPackage { name: name.clone() })
 }

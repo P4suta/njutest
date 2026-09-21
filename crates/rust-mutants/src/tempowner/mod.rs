@@ -25,12 +25,11 @@ pub const MARKER_NAME: &str = "owner.json";
 pub const LEGACY_MAX_AGE: Duration = Duration::from_hours(24);
 
 /// What a claimed directory is for. A scratch belongs to one run and goes away with it; a cache is meant to outlive the run that filled it, which is what makes a second run fast.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Role {
     /// One run's working tree. A sweep reclaims it as soon as nobody holds its lock.
-    #[default]
     Scratch,
     /// A build cache. A sweep spares it however old it is; only a caller that asks for it by name reclaims it.
     Cache,
@@ -49,11 +48,16 @@ pub struct Marker {
     /// Whether the directory was preserved on purpose and is not an orphan.
     pub kept: bool,
     /// What the directory is for. Absent in a marker written before roles existed, which means a scratch.
-    #[serde(default)]
+    #[serde(default = "scratch_role")]
     pub role: Role,
     /// The tree a cache is keyed to, so a sweep can tell a cache a run will look up from one nothing can name again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyed_to: Option<String>,
+}
+
+/// The meaning of an absent role in the historical v1 marker shape.
+const fn scratch_role() -> Role {
+    Role::Scratch
 }
 
 /// The lock file inside `dir`.
@@ -70,7 +74,6 @@ pub fn marker_path(dir: &Path) -> PathBuf {
 
 /// Why a directory could not be claimed.
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum ClaimError {
     /// The directory's lock is held by another process: it is theirs, not the caller's to remove.
     #[error("{dir} is already owned by another process")]
@@ -246,7 +249,10 @@ impl Owner {
     /// # Errors
     /// Returns the unlock or close failure.
     pub fn release(&mut self) -> io::Result<()> {
-        self.lock.take().map_or(Ok(()), |mut lock| lock.release())
+        match self.lock.take() {
+            Some(mut lock) => lock.release(),
+            None => Ok(()),
+        }
     }
 
     /// Records that the directory was preserved on purpose and releases the lock, so that a later [`sweep`] reads the marker rather than finding a lock nobody holds and concluding the directory was abandoned.
@@ -319,7 +325,7 @@ pub fn read_marker(dir: &Path) -> Result<Marker, MarkerError> {
             });
         }
     };
-    serde_json::from_slice(&raw).map_err(|source| MarkerError::Malformed {
+    crate::strictjson::decode_slice(&raw).map_err(|source| MarkerError::Malformed {
         dir: dir.to_path_buf(),
         source,
     })
@@ -430,12 +436,6 @@ struct Pass<'a> {
 }
 
 fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
-    let Pass {
-        prefixes,
-        now,
-        remove,
-        caches_too,
-    } = *pass;
     let entries = match fs::read_dir(parent) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(SweepResult::default()),
@@ -443,61 +443,138 @@ fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
     };
     let mut result = SweepResult::default();
     let started = std::time::Instant::now();
+    let collecting = Collecting {
+        parent,
+        pass,
+        started: &started,
+    };
     for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(source) => {
-                result.failures.push(SweepFailure {
-                    dir: parent.to_path_buf(),
-                    source,
-                });
-                continue;
-            }
-        };
-        let name = entry.file_name();
-        let is_prefixed = name.to_str().is_some_and(|name| {
-            prefixes
-                .iter()
-                .any(|prefix| !prefix.is_empty() && name.starts_with(prefix))
-        });
-        if !is_prefixed || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            continue;
-        }
-        if started.elapsed() >= SWEEP_BUDGET {
-            result.unreached = result.unreached.saturating_add(1);
-            continue;
-        }
-        let dir = parent.join(&name);
-        let verdict = match judge(&dir, &entry, now) {
-            Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(&dir)) {
-                Ok(None) => Ok(Verdict::Live),
-                Ok(Some(mut lock)) => match lock.release() {
-                    Ok(()) => Ok(Verdict::Abandoned),
-                    Err(source) => Err(source),
-                },
-                Err(source) => Err(source),
-            },
-            other => other,
-        };
-        match verdict {
-            Ok(Verdict::Live) => result.live = result.live.saturating_add(1),
-            Ok(Verdict::Kept) => result.kept = result.kept.saturating_add(1),
-            Ok(Verdict::Cache) => result.cached = result.cached.saturating_add(1),
-            Ok(Verdict::Spared) => {}
-            Ok(Verdict::Abandoned) => {
-                let size = directory_size(&dir);
-                match remove(&dir) {
-                    Ok(()) => {
-                        result.removed.push(dir);
-                        result.removed_bytes = result.removed_bytes.saturating_add(size);
-                    }
-                    Err(source) => result.failures.push(SweepFailure { dir, source }),
-                }
-            }
-            Err(source) => result.failures.push(SweepFailure { dir, source }),
-        }
+        collect_entry(entry, &collecting, &mut result)?;
     }
     Ok(result)
+}
+
+struct Collecting<'a, 'pass> {
+    parent: &'a Path,
+    pass: &'a Pass<'pass>,
+    started: &'a std::time::Instant,
+}
+
+fn collect_entry(
+    entry: io::Result<fs::DirEntry>,
+    collecting: &Collecting<'_, '_>,
+    result: &mut SweepResult,
+) -> io::Result<()> {
+    let parent = collecting.parent;
+    let pass = collecting.pass;
+    let started = collecting.started;
+    let entry = match entry {
+        Ok(entry) => entry,
+        Err(source) => {
+            result.failures.push(SweepFailure {
+                dir: parent.to_path_buf(),
+                source,
+            });
+            return Ok(());
+        }
+    };
+    let name = entry.file_name();
+    let is_prefixed = name.to_str().is_some_and(|name| {
+        pass.prefixes
+            .iter()
+            .any(|prefix| !prefix.is_empty() && name.starts_with(prefix))
+    });
+    if !is_prefixed {
+        return Ok(());
+    }
+    let entry_type = match entry.file_type() {
+        Ok(entry_type) => entry_type,
+        Err(source) => {
+            result.failures.push(SweepFailure {
+                dir: entry.path(),
+                source,
+            });
+            return Ok(());
+        }
+    };
+    if !entry_type.is_dir() {
+        return Ok(());
+    }
+    if started.elapsed() >= SWEEP_BUDGET {
+        result.unreached = checked_count(result.unreached, "unreached directories")?;
+        return Ok(());
+    }
+    let dir = parent.join(name);
+    let verdict = cache_verdict(judge(&dir, &entry, pass.now), &dir, pass.caches_too);
+    record_verdict(result, verdict, dir, pass.remove)
+}
+
+fn cache_verdict(
+    verdict: io::Result<Verdict>,
+    dir: &Path,
+    caches_too: bool,
+) -> io::Result<Verdict> {
+    match verdict {
+        Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(dir)) {
+            Ok(None) => Ok(Verdict::Live),
+            Ok(Some(mut lock)) => match lock.release() {
+                Ok(()) => Ok(Verdict::Abandoned),
+                Err(source) => Err(source),
+            },
+            Err(source) => Err(source),
+        },
+        other => other,
+    }
+}
+
+fn record_verdict(
+    result: &mut SweepResult,
+    verdict: io::Result<Verdict>,
+    dir: PathBuf,
+    remove: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    match verdict {
+        Ok(Verdict::Live) => result.live = checked_count(result.live, "live directories")?,
+        Ok(Verdict::Kept) => result.kept = checked_count(result.kept, "kept directories")?,
+        Ok(Verdict::Cache) => {
+            result.cached = checked_count(result.cached, "cached directories")?;
+        }
+        Ok(Verdict::Spared) => {}
+        Ok(Verdict::Abandoned) => remove_abandoned(result, dir, remove)?,
+        Err(source) => result.failures.push(SweepFailure { dir, source }),
+    }
+    Ok(())
+}
+
+fn remove_abandoned(
+    result: &mut SweepResult,
+    dir: PathBuf,
+    remove: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let size = match directory_size(&dir) {
+        Ok(size) => size,
+        Err(source) => {
+            result.failures.push(SweepFailure { dir, source });
+            return Ok(());
+        }
+    };
+    match remove(&dir) {
+        Ok(()) => {
+            result.removed.push(dir);
+            result.removed_bytes = result
+                .removed_bytes
+                .checked_add(size)
+                .ok_or_else(|| io::Error::other("removed-byte accounting overflowed"))?;
+        }
+        Err(source) => result.failures.push(SweepFailure { dir, source }),
+    }
+    Ok(())
+}
+
+fn checked_count(count: usize, subject: &str) -> io::Result<usize> {
+    count
+        .checked_add(1)
+        .ok_or_else(|| io::Error::other(format!("{subject} count overflowed")))
 }
 
 /// What the sweep decided about one directory. Only `Abandoned` removes.
@@ -518,7 +595,7 @@ fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict
     match read_marker(dir) {
         Ok(marker) if marker.kept => return Ok(Verdict::Kept),
         Ok(marker) if marker.role == Role::Cache => {
-            if !orphaned(marker.keyed_to.as_deref()) {
+            if !orphaned(marker.keyed_to.as_deref())? {
                 return Ok(Verdict::Cache);
             }
         }
@@ -535,8 +612,15 @@ fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict
 }
 
 /// Whether a cache is keyed to a tree that is no longer there.
-fn orphaned(keyed_to: Option<&str>) -> bool {
-    keyed_to.is_some_and(|tree| !Path::new(tree).exists())
+fn orphaned(keyed_to: Option<&str>) -> io::Result<bool> {
+    let Some(tree) = keyed_to else {
+        return Ok(false);
+    };
+    match fs::symlink_metadata(Path::new(tree)) {
+        Ok(_metadata) => Ok(false),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(source) => Err(source),
+    }
 }
 
 /// A directory with no marker at all: one created before this convention, or one whose marker was lost. Age is the only evidence there is, and a young one is left alone because it may be a run in progress.
@@ -547,8 +631,10 @@ fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
         Err(error) => return Err(error),
     };
     let modified = Timestamp::try_from(modified).map_err(io::Error::other)?;
-    let age = now.as_second().saturating_sub(modified.as_second());
-    let max_age = i64::try_from(LEGACY_MAX_AGE.as_secs()).unwrap_or(i64::MAX);
+    let Some(age) = now.as_second().checked_sub(modified.as_second()) else {
+        return Ok(Verdict::Spared);
+    };
+    let max_age = i64::try_from(LEGACY_MAX_AGE.as_secs()).map_err(io::Error::other)?;
     if age < max_age {
         Ok(Verdict::Spared)
     } else {
@@ -556,27 +642,48 @@ fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     }
 }
 
-/// Adds up the regular files under `dir`, best effort.
-#[must_use]
-pub fn directory_size(dir: &Path) -> u64 {
+/// Adds up the regular files under `dir`.
+///
+/// A path which vanishes while it is being counted contributes nothing. That is
+/// the normal race with another collector. Every other read failure is reported
+/// rather than producing a smaller, apparently exact count.
+///
+/// # Errors
+/// Returns an I/O error when the directory cannot be enumerated completely.
+pub fn directory_size(dir: &Path) -> io::Result<u64> {
     let mut total = 0u64;
     let mut pending = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&current) else {
-            continue;
+        let entries = match fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
         };
-        for entry in entries.flatten() {
-            let Ok(kind) = entry.file_type() else {
-                continue;
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            let kind = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
             };
             if kind.is_dir() {
                 pending.push(entry.path());
-            } else if kind.is_file()
-                && let Ok(metadata) = entry.metadata()
-            {
-                total = total.saturating_add(metadata.len());
+            } else if kind.is_file() {
+                match entry.metadata() {
+                    Ok(metadata) => {
+                        total = total.checked_add(metadata.len()).ok_or_else(|| {
+                            io::Error::other("directory-size accounting overflowed")
+                        })?;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
             }
         }
     }
-    total
+    Ok(total)
 }

@@ -12,10 +12,9 @@ use rust_mutants::run::{Judged, NotRunReason, Observer};
 use rust_mutants::trace::{Event, Payload};
 
 /// How much a run says while it is happening.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Ui {
     /// A terminal gets the overwriting tally, anything else gets the plain lines.
-    #[default]
     Auto,
     /// One line per phase and per mutant, and a tally every ten and at the end.
     Plain,
@@ -23,16 +22,37 @@ pub enum Ui {
     Quiet,
 }
 
+impl Default for Ui {
+    fn default() -> Self {
+        Self::DEFAULT_MODE
+    }
+}
+
+impl Ui {
+    /// The mode selected when neither configuration nor a flag chooses one.
+    const DEFAULT_MODE: Self = Self::Auto;
+}
+
 /// Whether a stream is written in colour.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Color {
     /// Colour a terminal that has not asked to go without.
-    #[default]
     Auto,
     /// Always.
     Always,
     /// Never.
     Never,
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self::DEFAULT_MODE
+    }
+}
+
+impl Color {
+    /// The colour policy selected when neither configuration nor a flag chooses one.
+    const DEFAULT_MODE: Self = Self::Auto;
 }
 
 /// What the stream a command writes to will take.
@@ -75,7 +95,7 @@ pub const TALLY_EVERY: u32 = 10;
 struct Tally {
     killed: u32,
     survived: u32,
-    runaway: u32,
+    step_limit_reached: u32,
     waited: u32,
     inconclusive: u32,
     errored: u32,
@@ -93,7 +113,7 @@ impl Tally {
         let slot = match judged.outcome {
             rust_mutants::outcome::Outcome::Killed => &mut self.killed,
             rust_mutants::outcome::Outcome::Survived => &mut self.survived,
-            rust_mutants::outcome::Outcome::Runaway => &mut self.runaway,
+            rust_mutants::outcome::Outcome::StepLimitReached => &mut self.step_limit_reached,
             rust_mutants::outcome::Outcome::Waited => &mut self.waited,
             rust_mutants::outcome::Outcome::Inconclusive => &mut self.inconclusive,
             rust_mutants::outcome::Outcome::NotRun => &mut self.not_run,
@@ -104,11 +124,11 @@ impl Tally {
 
     fn line(&self, elapsed: Duration, remaining: Option<Duration>) -> String {
         let mut text = format!(
-            "          killed {}  survived {}  runaway {}  waited {}  inconclusive {}  \
+            "          killed {}  survived {}  step_limit_reached {}  waited {}  inconclusive {}  \
              errored {}  not_run {}   elapsed {}",
             self.killed,
             self.survived,
-            self.runaway,
+            self.step_limit_reached,
             self.waited,
             self.inconclusive,
             self.errored,
@@ -132,10 +152,6 @@ pub fn clock(duration: Duration) -> String {
 }
 
 /// The lines a run prints while it is happening.
-#[expect(
-    missing_debug_implementations,
-    reason = "a display holds a stream, which is a handle to the outside"
-)]
 pub struct Display<'a> {
     stream: &'a mut dyn Write,
     ui: Ui,
@@ -144,6 +160,13 @@ pub struct Display<'a> {
     total: u32,
     started: Option<std::time::Instant>,
     tally: Tally,
+    failure: Option<crate::error::CliError>,
+}
+
+impl std::fmt::Debug for Display<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Display").finish_non_exhaustive()
+    }
 }
 
 impl<'a> Display<'a> {
@@ -157,6 +180,18 @@ impl<'a> Display<'a> {
             total: 0,
             started: None,
             tally: Tally::default(),
+            failure: None,
+        }
+    }
+
+    /// Returns the first output failure observed by an infallible observer callback.
+    ///
+    /// # Errors
+    /// Returns the first output failure retained by the observer.
+    pub fn finish(self) -> Result<(), crate::error::CliError> {
+        match self.failure {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
 
@@ -164,8 +199,12 @@ impl<'a> Display<'a> {
         if self.ui == Ui::Quiet {
             return;
         }
-        let _written = self.stream.write_all(text.as_bytes());
-        let _flushed = self.stream.flush();
+        if self.failure.is_some() {
+            return;
+        }
+        if let Err(error) = crate::app::write(self.stream, text) {
+            self.failure = Some(error);
+        }
     }
 
     /// What is left, from what the run has done so far.
@@ -176,7 +215,10 @@ impl<'a> Display<'a> {
             return None;
         }
         let each = started.elapsed().checked_div(completed)?;
-        let jobs = u32::try_from(self.jobs.max(1)).unwrap_or(1);
+        let jobs = match u32::try_from(self.jobs.max(1)) {
+            Ok(jobs) => jobs,
+            Err(_unrepresentable) => return None,
+        };
         each.checked_mul(left)?.checked_div(jobs)
     }
 }
@@ -281,19 +323,28 @@ pub fn phases(events: &Receiver<Event>) -> String {
 const LOOKING: Duration = Duration::from_millis(200);
 
 /// Writes each phase as it ends, for as long as `working` says there is work.
-pub fn watch(events: &Receiver<Event>, stream: &mut dyn Write, working: &dyn Fn() -> bool) {
+///
+/// # Errors
+/// Returns the first output failure; no later event is claimed to have been written.
+pub fn watch<F>(
+    events: &Receiver<Event>,
+    stream: &mut dyn Write,
+    working: &F,
+) -> Result<(), crate::error::CliError>
+where
+    F: Fn() -> bool,
+{
     loop {
         match events.recv_timeout(LOOKING) {
             Ok(event) => {
                 if let Some(line) = phase_line(&event) {
-                    let _written = stream.write_all(line.as_bytes());
-                    let _flushed = stream.flush();
+                    crate::app::write(stream, &line)?;
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if !working() {
-                    return;
+                    return Ok(());
                 }
             }
         }

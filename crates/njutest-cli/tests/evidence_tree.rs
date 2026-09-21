@@ -30,7 +30,13 @@ fn within<'a>(exclude: &'a [rust_mutants::glob::Pattern], elsewhere: &'a [&'a Pa
 
 /// What no verification reads, for a project that has said nothing about where it writes.
 static EXCLUDED: std::sync::LazyLock<Excluded> = std::sync::LazyLock::new(|| {
-    Excluded::beside(&njutest_cli::config::Config::default().reports.directory)
+    Excluded::beside(
+        njutest_cli::config::Config::default()
+            .reports
+            .directory
+            .as_path(),
+    )
+    .expect("the default report path is valid UTF-8")
 });
 
 /// Where such a project writes, as a path inside it.
@@ -40,7 +46,7 @@ fn written(name: &str) -> String {
         njutest_cli::config::Config::default()
             .reports
             .directory
-            .display()
+            .as_str()
     )
 }
 
@@ -234,5 +240,16 @@ version = \"0.1.0\"
     assert_eq!(
         dependencies("version = 4\n").expect("a lock file with no packages"),
         dependencies("version = 4\n").expect("again")
+    );
+    assert!(
+        dependencies("version = 4\nunknown = true\n").is_err(),
+        "an unknown top-level Cargo.lock field must not disappear from the dependency identity"
+    );
+    assert!(
+        dependencies(
+            "version = 4\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\nunknown = true\n"
+        )
+        .is_err(),
+        "an unknown package field must not disappear from the dependency identity"
     );
 }

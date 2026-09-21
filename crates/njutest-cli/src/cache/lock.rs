@@ -21,17 +21,10 @@ pub fn timed_out(elapsed: Duration, within: Duration) -> bool {
 /// An exclusive claim on one cache entry, held while a run establishes it.
 #[derive(Debug)]
 pub struct Lease {
-    path: PathBuf,
     lock: Option<Lock>,
 }
 
 impl Lease {
-    /// Where the claim is recorded.
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     /// Releases the claim. Idempotent, and never removes anything.
     ///
     /// # Errors
@@ -43,7 +36,9 @@ impl Lease {
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        drop(self.release());
+        if self.release().is_err() {
+            std::process::abort();
+        }
     }
 }
 
@@ -91,10 +86,7 @@ pub fn try_claim(path: &Path) -> Result<Option<Lease>, LeaseError> {
         path: path.to_path_buf(),
         source,
     })?;
-    Ok(lock.map(|lock| Lease {
-        path: path.to_path_buf(),
-        lock: Some(lock),
-    }))
+    Ok(lock.map(|lock| Lease { lock: Some(lock) }))
 }
 
 /// Takes the claim on `path`, waiting for whoever has it. `waiting` is called once, the first time the claim is contended, so a command line can say what it is waiting for.

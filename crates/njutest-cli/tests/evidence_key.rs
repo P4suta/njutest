@@ -10,10 +10,11 @@
 
 use std::collections::BTreeMap;
 
+use njutest_cli::assure::identity::{Evidence, Keying};
 use njutest_cli::evidence::key::{
-    Common, Linked, Reading, behaviour, linked_by, reads_directories_under,
+    Common, Linked, Reading, behaviour, continuation_identity, linked_by, reads_directories_under,
 };
-use njutest_cli::evidence::tree::scan;
+use njutest_cli::evidence::tree::{Scan, scan};
 use njutest_devkit::repo::Repo;
 use rust_mutants::cargo::Metadata;
 
@@ -24,15 +25,20 @@ fn common() -> Common {
         environment: vec![("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned())],
         contract: "standard-v1".to_owned(),
         test_args: vec!["--test-threads=1".to_owned()],
-        build: vec!["--features".to_owned(), "a".to_owned()],
+        build: rust_mutants::cargo::BuildConfig {
+            features: vec!["a".to_owned()],
+            ..rust_mutants::cargo::BuildConfig::default()
+        }
+        .selection(),
         timeout_ms: 600_000,
+        steps: 50_000_000,
         versions: vec!["njutest 0.1.0".to_owned(), "rust-mutants 0.1.0".to_owned()],
         corpus: "c".repeat(64),
     }
 }
 
 #[test]
-fn the_key_is_over_the_build_cargo_was_told_to_make_and_not_over_how_fast() {
+fn the_key_is_over_the_typed_build_selection_and_separate_machine_inputs() {
     let config = njutest_cli::config::Configuration {
         name: "release".to_owned(),
         all_features: true,
@@ -41,26 +47,187 @@ fn the_key_is_over_the_build_cargo_was_told_to_make_and_not_over_how_fast() {
         target: Some("wasm32-unknown-unknown".to_owned()),
         features: vec!["a".to_owned()],
     };
-    let spelled = config.build().arguments();
-    for flag in [
-        "--all-features",
-        "--no-default-features",
-        "--features",
-        "--profile",
-        "--target",
-    ] {
-        assert!(
-            spelled.iter().any(|one| one == flag),
-            "everything that decides which program cargo produces is in the key, or \
-             two runs of two different programs read each other's answers back: \
-             {flag} is not in {spelled:?}"
+    let mut shared = common();
+    shared.build = config.build().selection();
+    assert_ne!(
+        behaviour(&linked(), &shared),
+        behaviour(&linked(), &common()),
+        "the cache key binds the build selection as typed fields rather than trusting an \
+         argument spelling assembled elsewhere"
+    );
+}
+
+#[test]
+fn every_build_selection_field_separates_cache_and_continuation_state() {
+    let base = rust_mutants::cargo::BuildConfig::default();
+    let base_input = base.selection();
+    let base_behaviour = {
+        let mut common = common();
+        common.build = base_input.clone();
+        behaviour(&linked(), &common)
+    };
+    let base_continuation = continuation_identity(&"a".repeat(64), &base_input);
+
+    let changed: [(&str, rust_mutants::cargo::BuildConfig); 7] = [
+        (
+            "features",
+            rust_mutants::cargo::BuildConfig {
+                features: vec!["one".to_owned()],
+                ..base.clone()
+            },
+        ),
+        (
+            "all_features",
+            rust_mutants::cargo::BuildConfig {
+                all_features: true,
+                ..base.clone()
+            },
+        ),
+        (
+            "no_default_features",
+            rust_mutants::cargo::BuildConfig {
+                no_default_features: true,
+                ..base.clone()
+            },
+        ),
+        (
+            "profile",
+            rust_mutants::cargo::BuildConfig {
+                profile: Some("release".to_owned()),
+                ..base.clone()
+            },
+        ),
+        (
+            "target",
+            rust_mutants::cargo::BuildConfig {
+                target: Some("wasm32-unknown-unknown".to_owned()),
+                ..base.clone()
+            },
+        ),
+        (
+            "jobs",
+            rust_mutants::cargo::BuildConfig {
+                jobs: Some(2),
+                ..base.clone()
+            },
+        ),
+        (
+            "debug",
+            rust_mutants::cargo::BuildConfig {
+                debug: true,
+                ..base
+            },
+        ),
+    ];
+
+    for (field, build) in changed {
+        let input = build.selection();
+        let mut common = common();
+        common.build = input.clone();
+        assert_ne!(
+            behaviour(&linked(), &common),
+            base_behaviour,
+            "changing only BuildConfig::{field} must make an earlier build's mutation answer unusable"
+        );
+        assert_ne!(
+            continuation_identity(&"a".repeat(64), &input),
+            base_continuation,
+            "changing only BuildConfig::{field} must make an earlier build's checkpoint unusable"
         );
     }
-    assert!(
-        !spelled.iter().any(|one| one == "--jobs"),
-        "and how many jobs cargo may run at once decides nothing about the program, \
-         so it stays out: a key that moved with it would throw away every answer a \
-         busier machine had already established: {spelled:?}"
+}
+
+#[test]
+fn equivalent_feature_sets_and_identical_configured_builds_share_one_key() {
+    let first = rust_mutants::cargo::BuildConfig {
+        features: vec!["b".to_owned(), "a".to_owned(), "b".to_owned()],
+        ..rust_mutants::cargo::BuildConfig::default()
+    };
+    let second = rust_mutants::cargo::BuildConfig {
+        features: vec!["a".to_owned(), "b".to_owned()],
+        ..rust_mutants::cargo::BuildConfig::default()
+    };
+    let first = first.selection();
+    let second = second.selection();
+    assert_eq!(first, second, "Cargo feature selection is a set");
+
+    let mut first_common = common();
+    first_common.build = first.clone();
+    let mut second_common = common();
+    second_common.build = second.clone();
+    assert_eq!(
+        behaviour(&linked(), &first_common),
+        behaviour(&linked(), &second_common)
+    );
+    assert_eq!(
+        continuation_identity(&"a".repeat(64), &first),
+        continuation_identity(&"a".repeat(64), &second)
+    );
+
+    let default = rust_mutants::cargo::BuildConfig::default().selection();
+    let configured_default = njutest_cli::config::Configuration::default()
+        .build()
+        .selection();
+    assert_eq!(
+        default, configured_default,
+        "the default build and an additional build with the same selected fields must share cache input"
+    );
+}
+
+#[test]
+fn rebinding_one_configured_request_changes_only_its_build_local_keys() {
+    let mut shared = common();
+    shared.build = rust_mutants::cargo::BuildConfig::default().selection();
+    let evidence = Evidence {
+        identity: "a".repeat(64),
+        tree: "b".repeat(64),
+        keying: Some(Keying {
+            scan: Scan {
+                tree: "b".repeat(64),
+                corpus: "c".repeat(64),
+                files: 0,
+                bytes: 0,
+                entries: BTreeMap::new(),
+            },
+            dependencies: "d".repeat(64),
+            common: shared,
+        }),
+    };
+    let release_build = rust_mutants::cargo::BuildConfig {
+        profile: Some("release".to_owned()),
+        ..rust_mutants::cargo::BuildConfig::default()
+    };
+    let default = evidence.for_build(&rust_mutants::cargo::BuildConfig::default());
+    let release = evidence.for_build(&release_build);
+
+    assert_eq!(
+        default.identity, release.identity,
+        "configured builds belong to one run-wide report identity"
+    );
+    assert_eq!(default.tree, release.tree);
+    assert_ne!(
+        default.continuation_identity(),
+        release.continuation_identity(),
+        "but a release build must not resume the default build's killed checkpoint"
+    );
+    let default_key = behaviour(
+        &linked(),
+        &default.keying.as_ref().expect("known evidence").common,
+    );
+    let release_key = behaviour(
+        &linked(),
+        &release.keying.as_ref().expect("known evidence").common,
+    );
+    assert_ne!(
+        default_key, release_key,
+        "and it must not read back the default build's killed or survived evidence"
+    );
+
+    let same = evidence.for_build(&rust_mutants::cargo::BuildConfig::default());
+    assert_eq!(
+        default.continuation_identity(),
+        same.continuation_identity(),
+        "two named builds with one Cargo selection and the same machine inputs may share prior work"
     );
 }
 
@@ -102,7 +269,7 @@ fn a_key_covers_everything_that_could_change_what_the_target_does() {
     one.dependencies = "e".repeat(64);
     cases.push(("what the lock file resolved", one, common()));
 
-    let changes: [Shared; 13] = [
+    let changes: [Shared; 14] = [
         ("the toolchain", |c| {
             c.toolchain = "rustc 1.99.0".to_owned();
         }),
@@ -114,20 +281,43 @@ fn a_key_covers_everything_that_could_change_what_the_target_does() {
         }),
         ("the contract", |c| c.contract = "deep-v1".to_owned()),
         ("the harness arguments", |c| c.test_args.clear()),
-        ("the features", |c| c.build.push("--features=b".to_owned())),
+        ("the features", |c| {
+            c.build = rust_mutants::cargo::BuildConfig {
+                features: vec!["b".to_owned()],
+                ..rust_mutants::cargo::BuildConfig::default()
+            }
+            .selection();
+        }),
         ("all features", |c| {
-            c.build.push("--all-features".to_owned());
+            c.build = rust_mutants::cargo::BuildConfig {
+                all_features: true,
+                ..rust_mutants::cargo::BuildConfig::default()
+            }
+            .selection();
         }),
         ("no default features", |c| {
-            c.build.push("--no-default-features".to_owned());
+            c.build = rust_mutants::cargo::BuildConfig {
+                no_default_features: true,
+                ..rust_mutants::cargo::BuildConfig::default()
+            }
+            .selection();
         }),
         ("the profile", |c| {
-            c.build.push("--profile=release".to_owned());
+            c.build = rust_mutants::cargo::BuildConfig {
+                profile: Some("release".to_owned()),
+                ..rust_mutants::cargo::BuildConfig::default()
+            }
+            .selection();
         }),
         ("the target", |c| {
-            c.build.push("--target=wasm32-unknown-unknown".to_owned());
+            c.build = rust_mutants::cargo::BuildConfig {
+                target: Some("wasm32-unknown-unknown".to_owned()),
+                ..rust_mutants::cargo::BuildConfig::default()
+            }
+            .selection();
         }),
         ("the timeout", |c| c.timeout_ms = 1),
+        ("the step bound", |c| c.steps = 1),
         ("the versions", |c| {
             c.versions.push("something 9".to_owned());
         }),
@@ -246,7 +436,8 @@ fn what_a_target_links_is_read_from_the_resolved_graph() {
             dependencies: &dependencies,
         },
         &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
-    );
+    )
+    .expect("the package links were read");
     assert_eq!(linked.packages, ["demo@0.1.0", "far@1.0.0"]);
     assert!(
         linked.sources.contains_key("demo@0.1.0"),
@@ -306,8 +497,12 @@ fn within() -> njutest_cli::evidence::tree::Bounds<'static> {
     static EXCLUDED: std::sync::LazyLock<njutest_cli::evidence::tree::Excluded> =
         std::sync::LazyLock::new(|| {
             njutest_cli::evidence::tree::Excluded::beside(
-                &njutest_cli::config::Config::default().reports.directory,
+                njutest_cli::config::Config::default()
+                    .reports
+                    .directory
+                    .as_path(),
             )
+            .expect("the default reports directory can be excluded")
         });
     njutest_cli::evidence::tree::Bounds {
         exclude: &[],
@@ -346,7 +541,8 @@ fn keyed(repo: &Repo) -> String {
             dependencies: &dependencies,
         },
         &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
-    );
+    )
+    .expect("the package links were read");
     linked
         .sources
         .get("demo@0.1.0")
@@ -491,7 +687,8 @@ fn every_package_of_a_closure_is_reached_whatever_the_ones_before_it_were() {
             dependencies: &dependencies,
         },
         &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
-    );
+    )
+    .expect("the package links were read");
 
     assert!(
         linked

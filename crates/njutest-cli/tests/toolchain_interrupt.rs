@@ -7,10 +7,12 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use njutest_devkit::fixture::copy_tree;
+use njutest_devkit::process::SupervisedChild;
 use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -22,20 +24,30 @@ fn in_group(group: u32) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return found;
     };
-    for entry in entries.filter_map(Result::ok) {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+    for entry in entries.map(|entry| entry.expect("read a /proc entry")) {
+        let Ok(pid) = entry
+            .file_name()
+            .to_str()
+            .expect("test protocol paths are UTF-8")
+            .parse::<u32>()
+        else {
             continue;
         };
         let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
             continue;
         };
-        let Some((_name, after)) = stat.rsplit_once(')') else {
+        let Some((name, after)) = stat.rsplit_once(')') else {
             continue;
         };
+        if name.is_empty() {
+            continue;
+        }
         let fields: Vec<&str> = after.split_whitespace().collect();
-        if fields.get(2).and_then(|value| value.parse::<u32>().ok()) == Some(group)
-            && fields.first() != Some(&"Z")
-        {
+        let parsed_group = fields.get(2).and_then(|value| match value.parse::<u32>() {
+            Ok(group) => Some(group),
+            Err(_) => None,
+        });
+        if parsed_group == Some(group) && fields.first() != Some(&"Z") {
             found.push(pid);
         }
     }
@@ -53,7 +65,7 @@ fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
         &root,
     );
     let mut child = verify_in(&root, &[]);
-    let pid = child.id();
+    let pid = child.id().expect("the child is live");
 
     measuring(&mut child);
     rustix::process::kill_process(
@@ -98,8 +110,8 @@ fn a_terminated_verification_exits_143_and_leaves_no_process_behind() {
 }
 
 /// Waits until `child` says it has begun measuring.
-fn measuring(child: &mut std::process::Child) {
-    let mut reader = BufReader::new(child.stderr.take().expect("stderr is piped"));
+fn measuring(child: &mut SupervisedChild) {
+    let mut reader = BufReader::new(child.take_stderr().expect("stderr is piped"));
     let mut line = String::new();
     let deadline = Instant::now()
         .checked_add(Duration::from_secs(300))
@@ -115,10 +127,11 @@ fn measuring(child: &mut std::process::Child) {
     }
 }
 
-fn verify_in(root: &Path, extra: &[&str]) -> std::process::Child {
+fn verify_in(root: &Path, extra: &[&str]) -> SupervisedChild {
     let mut args = vec!["verify", "--offline", "--locked", "--ui=plain"];
     args.extend_from_slice(extra);
-    Command::new(env!("CARGO_BIN_EXE_njutest"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_njutest"));
+    command
         .args(args)
         .current_dir(root)
         .env_clear()
@@ -133,9 +146,8 @@ fn verify_in(root: &Path, extra: &[&str]) -> std::process::Child {
         )
         .envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]))
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("njutest starts")
+        .stderr(Stdio::piped());
+    SupervisedChild::launch(&mut command).expect("njutest starts")
 }
 
 #[test]
@@ -152,20 +164,22 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
 
     let checkpoints = njutest_devkit::paths::cache_beside(&root)
         .expect("a cache directory")
-        .join("njutest/outcomes-v1/checkpoints");
+        .join("njutest/outcomes-v2/checkpoints");
     let seeded = checkpoints.join("an-earlier-run");
     std::fs::create_dir_all(&seeded).expect("mkdir");
     std::fs::write(
-        seeded.join("checkpoint-v1.json"),
+        seeded.join("checkpoint-v2.json"),
         serde_json::to_string(&serde_json::json!({
-            "schema": "njutest-assurance-checkpoint-v1",
+            "schema": "njutest-assurance-checkpoint-v2",
             "identity": "an-earlier-run",
             "attempts": 1,
             "targets": [],
             "mutants": [{
                 "id": "0f7b4d7472329894e9b3",
-                "disposition": "killed",
-                "killed_by": "fixture-assured/lib/fixture_assured",
+                "disposition": {
+                    "kind": "killed",
+                    "by": "fixture-assured/lib/fixture_assured"
+                },
                 "duration_ms": 1,
             }],
         }))
@@ -174,7 +188,7 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
     .expect("write");
 
     let mut interrupted = verify_in(&root, &[]);
-    let pid = interrupted.id();
+    let pid = interrupted.id().expect("the child is live");
     measuring(&mut interrupted);
     rustix::process::kill_process(
         rustix::process::Pid::from_raw(pid.try_into().expect("a pid fits")).expect("a live pid"),
@@ -190,10 +204,11 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
          one established would make an interrupt cost the whole run — which is the \
          opposite of what a checkpoint is for: {states:?}"
     );
-    let state: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&states[0]).expect("the state"))
-            .expect("the state is a document");
-    assert_eq!(state["schema"], "njutest-assurance-checkpoint-v1");
+    let state: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&states[0]).expect("the state"),
+    )
+    .expect("the state is a document");
+    assert_eq!(state["schema"], "njutest-assurance-checkpoint-v2");
     assert!(
         !state["mutants"].as_array().expect("mutants").is_empty(),
         "the mutants an earlier run judged are still there: {state}"
@@ -206,8 +221,8 @@ fn written_states(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return found;
     };
-    for entry in entries.flatten() {
-        let path = entry.path().join("checkpoint-v1.json");
+    for entry in entries.map(|entry| entry.expect("every checkpoint entry is readable")) {
+        let path = entry.path().join("checkpoint-v2.json");
         if path.is_file() {
             found.push(path);
         }

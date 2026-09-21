@@ -6,13 +6,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use rust_mutants::id::HexDigest;
 use serde::{Deserialize, Serialize};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "njutest-mutation-evidence-v1";
+pub const SCHEMA: &str = "njutest-mutation-evidence-v2";
 
 /// The directory records live in, below the store of answers.
-pub const LAYOUT: &str = "mutants-v1";
+pub const LAYOUT: &str = "mutants-v2";
 
 /// What one earlier run established about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,7 +22,7 @@ pub struct Record {
     /// [`SCHEMA`].
     pub schema: String,
     /// The mutant's content-addressed identity.
-    pub mutant: String,
+    pub mutant: HexDigest,
     /// The run that established it.
     pub run_id: String,
     /// What it established.
@@ -31,24 +32,10 @@ pub struct Record {
 /// What an earlier run established about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[non_exhaustive]
 pub enum Outcome {
     /// One named target noticed it, and that target had this behaviour key.
     Killed {
         /// The target that noticed.
-        target: String,
-        /// That target's behaviour key.
-        key: String,
-    },
-    /// It stopped the program terminating while this target ran it, and that target had this behaviour key.
-    ///
-    /// Kept for the same reason a kill is: a count every machine agrees on is
-    /// a claim about this tree, so the next run of a tree these targets still
-    /// behave the same in may believe it. A bound expiring is not kept, and
-    /// must not be — that is a fact about the machine that measured, and the
-    /// next machine is not that one (ADR 0023).
-    Runaway {
-        /// The target it was running under.
         target: String,
         /// That target's behaviour key.
         key: String,
@@ -62,7 +49,6 @@ pub enum Outcome {
 
 /// Why a record could not be believed. A run says which so a reader can tell "nothing was recorded" from "what was recorded no longer describes this tree".
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Refusal {
     /// Nothing was ever recorded about this mutant.
     Nothing,
@@ -150,7 +136,7 @@ impl Record {
         standing: &Standing,
     ) -> Result<(), Refusal> {
         match &self.outcome {
-            Outcome::Killed { target, key } | Outcome::Runaway { target, key } => {
+            Outcome::Killed { target, key } => {
                 if !reaching.contains(target) {
                     return Err(Refusal::NotRouted {
                         target: target.clone(),
@@ -212,7 +198,7 @@ impl StoreError {
 
 /// Where one mutant's record lives under `root`.
 #[must_use]
-pub fn path_of(root: &Path, mutant: &str) -> PathBuf {
+pub fn path_of(root: &Path, mutant: &HexDigest) -> PathBuf {
     root.join(LAYOUT).join(format!("{mutant}.json"))
 }
 
@@ -222,24 +208,25 @@ pub fn path_of(root: &Path, mutant: &str) -> PathBuf {
 /// [`StoreError::Corrupt`] when a record is there and is not about the mutant
 /// it is filed under. A record that describes something else is not a record
 /// this run may quietly ignore: it is one somebody wrote wrong.
-pub fn read(root: &Path, mutant: &str) -> Result<Option<Record>, StoreError> {
+pub fn read(root: &Path, mutant: &HexDigest) -> Result<Option<Record>, StoreError> {
     let path = path_of(root, mutant);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(StoreError::Unusable { path, source }),
     };
-    let record: Record = serde_json::from_str(&text).map_err(|error| StoreError::Corrupt {
-        path: path.clone(),
-        message: error.to_string(),
-    })?;
+    let record: Record =
+        crate::strictjson::decode_str(&text).map_err(|error| StoreError::Corrupt {
+            path: path.clone(),
+            message: error.to_string(),
+        })?;
     if record.schema != SCHEMA {
         return Err(StoreError::Corrupt {
             path,
             message: format!("says it is {:?} and not {SCHEMA:?}", record.schema),
         });
     }
-    if record.mutant != mutant {
+    if &record.mutant != mutant {
         return Err(StoreError::Corrupt {
             path,
             message: format!("is about {} and was read for {mutant}", record.mutant),
@@ -269,10 +256,10 @@ pub fn write(root: &Path, record: &Record) -> Result<PathBuf, StoreError> {
 
 /// A record of what `run_id` established about `mutant`.
 #[must_use]
-pub fn record(mutant: &str, run_id: &str, outcome: Outcome) -> Record {
+pub fn record(mutant: HexDigest, run_id: &str, outcome: Outcome) -> Record {
     Record {
         schema: SCHEMA.to_owned(),
-        mutant: mutant.to_owned(),
+        mutant,
         run_id: run_id.to_owned(),
         outcome,
     }

@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use rust_mutants::id::{StoredRunId, StoredRunIdError};
+
 use crate::app::reports;
 use crate::error::{self, ErrorCode};
 use crate::report::{Report, json};
@@ -19,6 +21,16 @@ pub enum RunError {
         /// What was looked for and where.
         message: String,
     },
+    /// A requested or indexed run name is not one canonical path component.
+    #[error("{}: {source}", error::RUN_NOT_FOUND.code)]
+    InvalidName {
+        /// Why the name is unsafe or ambiguous.
+        #[source]
+        source: StoredRunIdError,
+    },
+    /// The configured report store or one of its indexes could not be read exactly.
+    #[error(transparent)]
+    Store(#[from] reports::StoreError),
     /// The run is there and its report cannot be read.
     #[error("{}: the report of {run} could not be read: {source}", error::RUN_NOT_FOUND.code)]
     Unreadable {
@@ -35,8 +47,48 @@ impl RunError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::NotFound { .. } | Self::Unreadable { .. } => error::RUN_NOT_FOUND,
+            Self::NotFound { .. } | Self::InvalidName { .. } | Self::Unreadable { .. } => {
+                error::RUN_NOT_FOUND
+            }
+            Self::Store(error) => error.code(),
         }
+    }
+}
+
+/// One stored run whose report directory remains bound to the held store
+/// capability that selected it.
+#[derive(Debug)]
+pub(crate) struct ResolvedRun {
+    stored: reports::StoredRun,
+    config: crate::config::Config,
+}
+
+impl ResolvedRun {
+    /// The canonical run identity.
+    #[must_use]
+    pub(crate) const fn id(&self) -> &StoredRunId {
+        self.stored.id()
+    }
+
+    /// The canonical workspace-relative document spelling for presentation.
+    #[must_use]
+    pub(crate) fn said_document(&self) -> &str {
+        self.stored.said_document()
+    }
+
+    /// Reads one optional closed file through the held run directory.
+    ///
+    /// # Errors
+    /// Returns the capability-backed store refusal.
+    pub(crate) fn read(&self, file: reports::StoredFile) -> Result<Option<String>, RunError> {
+        self.stored.read(file).map_err(RunError::from)
+    }
+
+    /// The configuration read through the same held workspace capability
+    /// that selected this run.
+    #[must_use]
+    pub(crate) const fn config(&self) -> &crate::config::Config {
+        &self.config
     }
 }
 
@@ -44,49 +96,41 @@ impl RunError {
 ///
 /// # Errors
 /// [`RunError::NotFound`] when there is no such run, or none at all.
-pub fn resolve(root: &Path, named: Option<&str>) -> Result<String, RunError> {
-    let Some(run) = named else {
-        return reports::pointed_at(root, reports::Index::Any).ok_or_else(|| RunError::NotFound {
-            message: format!(
-                "no run has completed here yet: {} names none",
-                reports::Store::read(root)
-                    .index(reports::Index::Any)
-                    .display()
-            ),
-        });
+pub(crate) fn resolve(root: &Path, named: Option<&str>) -> Result<ResolvedRun, RunError> {
+    let workspace = reports::WorkspaceRoot::open(root)?;
+    let loaded = workspace.load_config()?;
+    let store = workspace.store(&loaded.config.reports.directory)?;
+    let stored = if let Some(run) = named {
+        let id = StoredRunId::try_from(run).map_err(|source| RunError::InvalidName { source })?;
+        store.open_run(&id)?
+    } else {
+        store
+            .pointed_run(reports::Index::Any)?
+            .ok_or_else(|| RunError::NotFound {
+                message: format!(
+                    "no run has completed here yet: {} names none",
+                    store.index_display(reports::Index::Any)
+                ),
+            })?
     };
-    if directory(root, run).is_dir() {
-        return Ok(run.to_owned());
-    }
-    Err(RunError::NotFound {
-        message: format!(
-            "there is no run {run} under {}",
-            reports::Store::read(root).runs().display()
-        ),
+    Ok(ResolvedRun {
+        stored,
+        config: loaded.config,
     })
-}
-
-/// Where one run's report directory is.
-#[must_use]
-pub fn directory(root: &Path, run: &str) -> PathBuf {
-    reports::Store::read(root).run(run)
 }
 
 /// Where one run's recording is, whether or not it was asked for.
 #[must_use]
-pub fn recording(root: &Path, run: &str) -> PathBuf {
-    root.join(".njutest/trace").join(run)
+pub fn recording(root: &Path, run: &StoredRunId) -> PathBuf {
+    root.join(".njutest/trace").join(run.as_str())
 }
 
 /// The document one run wrote, as text.
 ///
 /// # Errors
 /// [`RunError::NotFound`] when the document is not there.
-pub fn document(root: &Path, run: &str) -> Result<String, RunError> {
-    let path = directory(root, run).join(reports::DOCUMENT_NAME);
-    std::fs::read_to_string(&path).map_err(|source| RunError::NotFound {
-        message: format!("reading {}: {source}", path.display()),
-    })
+pub(crate) fn document(run: &ResolvedRun) -> Result<String, RunError> {
+    run.stored.document().map_err(RunError::from)
 }
 
 /// The report one run wrote.
@@ -94,10 +138,10 @@ pub fn document(root: &Path, run: &str) -> Result<String, RunError> {
 /// # Errors
 /// [`RunError::NotFound`] when the document is not there and
 /// [`RunError::Unreadable`] when it is not one this version understands.
-pub fn report(root: &Path, run: &str) -> Result<Report, RunError> {
-    let text = document(root, run)?;
+pub(crate) fn report(run: &ResolvedRun) -> Result<Report, RunError> {
+    let text = document(run)?;
     json::parse(&text).map_err(|source| RunError::Unreadable {
-        run: run.to_owned(),
+        run: run.id().to_string(),
         source,
     })
 }

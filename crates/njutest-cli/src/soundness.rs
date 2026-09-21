@@ -9,7 +9,7 @@ use syn::spanned::Spanned as _;
 use syn::visit::Visit;
 
 /// What kind of place the compiler stops vouching for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, njutest_macros::AllVariants)]
 pub enum Kind {
     /// An `unsafe { … }` block.
     Block,
@@ -26,18 +26,10 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Every kind, in declaration order.
-    pub const ALL: [Self; 6] = [
-        Self::Block,
-        Self::Function,
-        Self::Trait,
-        Self::Implementation,
-        Self::StaticMut,
-        Self::ForeignBlock,
-    ];
-
     /// The canonical wire name.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Block => "unsafe-block",
@@ -51,7 +43,10 @@ impl Kind {
 
     /// The kind with the given wire name, if any.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn parse(name: &str) -> Option<Self> {
+        #[cfg(feature = "testkit")]
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 }
@@ -113,6 +108,42 @@ pub enum SoundnessError {
         #[source]
         source: std::io::Error,
     },
+    /// A filesystem path cannot be represented in the report without changing it.
+    #[error("filesystem path {path:?} contains the non-UTF-8 component {spelling:?}")]
+    NonUtf8Path {
+        /// The path whose bytes cannot be represented exactly.
+        path: PathBuf,
+        /// The exact platform component that failed conversion.
+        spelling: std::ffi::OsString,
+    },
+    /// A discovered source escaped the root it was meant to be relative to.
+    #[error("{path:?} is outside {root:?}: {source}")]
+    OutsideRoot {
+        /// The discovered source.
+        path: PathBuf,
+        /// The root it was expected to be under.
+        root: PathBuf,
+        /// The exact prefix mismatch.
+        #[source]
+        source: std::path::StripPrefixError,
+    },
+    /// A parser coordinate cannot fit the report's numeric domain.
+    #[error("{path}: the {coordinate} coordinate does not fit u32: {source}")]
+    CoordinateOutsideWire {
+        /// The source whose coordinate failed.
+        path: String,
+        /// Which coordinate failed.
+        coordinate: &'static str,
+        /// The exact integer conversion failure.
+        #[source]
+        source: std::num::TryFromIntError,
+    },
+    /// Turning a zero-based parser coordinate into a one-based coordinate overflowed.
+    #[error("{path}: the parser column cannot be converted to a one-based coordinate")]
+    CoordinateArithmeticOverflow {
+        /// The source whose coordinate failed.
+        path: String,
+    },
 }
 
 /// Every place in one file, in source order.
@@ -121,20 +152,46 @@ pub enum SoundnessError {
 /// Returns [`SoundnessError::Unparsable`] for a file this release cannot read
 /// as Rust, which is not the same as a file with nothing in it.
 pub fn of_source(path: &str, source: &str) -> Result<Vec<Item>, SoundnessError> {
-    let file = syn::parse_file(source).map_err(|error| {
-        let span = error.span().start();
-        SoundnessError::Unparsable {
-            path: path.to_owned(),
-            line: u32::try_from(span.line).unwrap_or(0),
-            column: u32::try_from(span.column.saturating_add(1)).unwrap_or(0),
-            message: error.to_string(),
+    let file = match syn::parse_file(source) {
+        Ok(file) => file,
+        Err(error) => {
+            let span = error.span().start();
+            let line = u32::try_from(span.line).map_err(|source| {
+                SoundnessError::CoordinateOutsideWire {
+                    path: path.to_owned(),
+                    coordinate: "parser line",
+                    source,
+                }
+            })?;
+            let one_based_column = span.column.checked_add(1).ok_or_else(|| {
+                SoundnessError::CoordinateArithmeticOverflow {
+                    path: path.to_owned(),
+                }
+            })?;
+            let column = u32::try_from(one_based_column).map_err(|source| {
+                SoundnessError::CoordinateOutsideWire {
+                    path: path.to_owned(),
+                    coordinate: "parser column",
+                    source,
+                }
+            })?;
+            return Err(SoundnessError::Unparsable {
+                path: path.to_owned(),
+                line,
+                column,
+                message: error.to_string(),
+            });
         }
-    })?;
+    };
     let mut walker = Walker {
         path: path.to_owned(),
         found: Vec::new(),
+        failure: None,
     };
     walker.visit_file(&file);
+    if let Some(failure) = walker.failure {
+        return Err(failure);
+    }
     walker.found.sort();
     walker.found.dedup();
     Ok(walker.found)
@@ -148,9 +205,13 @@ pub fn of_source(path: &str, source: &str) -> Result<Vec<Item>, SoundnessError> 
 /// [`Inventory::unreadable`] rather than ending the walk, because one file
 /// this release cannot read must not hide what every other file says.
 pub fn inventory(root: &Path, packages: &[(String, PathBuf)]) -> Result<Inventory, SoundnessError> {
+    let root = match std::fs::canonicalize(root) {
+        Ok(canonical) => canonical,
+        Err(_absent) => root.to_path_buf(),
+    };
     let mut inventory = Inventory::default();
     for (name, directory) in packages {
-        for (relative, source) in sources(root, directory)? {
+        for (relative, source) in sources(&root, directory)? {
             match of_source(&relative, &source) {
                 Ok(found) => inventory.items.extend(found.into_iter().map(|item| Item {
                     package: name.clone(),
@@ -192,12 +253,24 @@ fn sources(root: &Path, directory: &Path) -> Result<Vec<(String, String)>, Sound
                 });
             }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.map_err(|source| SoundnessError::Unreadable {
+                path: current.clone(),
+                source,
+            })?;
             let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
-                continue;
+            let kind = entry
+                .file_type()
+                .map_err(|source| SoundnessError::Unreadable {
+                    path: path.clone(),
+                    source,
+                })?;
+            let name = match entry.file_name().into_string() {
+                Ok(name) => name,
+                Err(spelling) => {
+                    return Err(SoundnessError::NonUtf8Path { path, spelling });
+                }
             };
-            let name = entry.file_name().to_string_lossy().into_owned();
             if kind.is_dir() {
                 if !crate::evidence::tree::EXCLUDED_DIRECTORIES.contains(&name.as_str()) {
                     pending.push(path);
@@ -207,16 +280,30 @@ fn sources(root: &Path, directory: &Path) -> Result<Vec<(String, String)>, Sound
             if !kind.is_file() || path.extension() != Some(std::ffi::OsStr::new("rs")) {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .components()
-                .map(|part| part.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<String>>()
-                .join("/");
+            let text =
+                std::fs::read_to_string(&path).map_err(|source| SoundnessError::Unreadable {
+                    path: path.clone(),
+                    source,
+                })?;
+            let stripped =
+                path.strip_prefix(root)
+                    .map_err(|source| SoundnessError::OutsideRoot {
+                        path: path.clone(),
+                        root: root.to_path_buf(),
+                        source,
+                    })?;
+            let mut parts = Vec::new();
+            for part in stripped.components() {
+                let text =
+                    part.as_os_str()
+                        .to_str()
+                        .ok_or_else(|| SoundnessError::NonUtf8Path {
+                            path: path.clone(),
+                            spelling: part.as_os_str().to_owned(),
+                        })?;
+                parts.push(text.to_owned());
+            }
+            let relative = parts.join("/");
             found.push((relative, text));
         }
     }
@@ -227,16 +314,28 @@ fn sources(root: &Path, directory: &Path) -> Result<Vec<(String, String)>, Sound
 struct Walker {
     path: String,
     found: Vec<Item>,
+    failure: Option<SoundnessError>,
 }
 
 impl Walker {
     fn record(&mut self, kind: Kind, line: usize) {
-        self.found.push(Item {
-            package: String::new(),
-            path: self.path.clone(),
-            line: u32::try_from(line).unwrap_or(0),
-            kind,
-        });
+        match u32::try_from(line) {
+            Ok(line) => self.found.push(Item {
+                package: String::new(),
+                path: self.path.clone(),
+                line,
+                kind,
+            }),
+            Err(source) => {
+                if self.failure.is_none() {
+                    self.failure = Some(SoundnessError::CoordinateOutsideWire {
+                        path: self.path.clone(),
+                        coordinate: "source line",
+                        source,
+                    });
+                }
+            }
+        }
     }
 }
 

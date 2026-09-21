@@ -28,6 +28,17 @@ fn http(seq: u64, path: &str, status: u16) -> Exchange {
     }
 }
 
+#[expect(
+    clippy::panic,
+    reason = "a serialization failure is the test failure this helper reports"
+)]
+fn recorded(exchanges: &[Exchange]) -> String {
+    match written(exchanges) {
+        Ok(recording) => recording,
+        Err(error) => panic!("an Exchange stopped being serializable: {error}"),
+    }
+}
+
 #[test]
 fn what_an_interposer_wrote_is_what_a_reader_gets_back() {
     let held = vec![
@@ -43,7 +54,7 @@ fn what_an_interposer_wrote_is_what_a_reader_gets_back() {
             },
         },
     ];
-    let Read { exchanges, unread } = read(&written(&held));
+    let Read { exchanges, unread } = read(&recorded(&held));
     assert_eq!(
         exchanges, held,
         "a catalogue of faults is derived from this recording, so a record that does \
@@ -57,7 +68,7 @@ fn what_an_interposer_wrote_is_what_a_reader_gets_back() {
 fn a_line_the_reader_cannot_take_is_counted_rather_than_passed_over() {
     let recorded = format!(
         "{}\nnot a record at all\n\n",
-        written(&[http(0, "/a", 200)]).trim()
+        recorded(&[http(0, "/a", 200)]).trim()
     );
     let Read { exchanges, unread } = read(&recorded);
     assert_eq!(exchanges.len(), 1);
@@ -71,15 +82,19 @@ fn a_line_the_reader_cannot_take_is_counted_rather_than_passed_over() {
 
 #[test]
 fn every_line_names_the_schema_it_answers_to() {
-    let recorded = written(&[http(0, "/orders", 200)]);
+    let recorded = recorded(&[http(0, "/orders", 200)]);
     let first = recorded.lines().next().expect("one line per exchange");
-    let document: serde_json::Value = serde_json::from_str(first).expect("a line is JSON");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(first).expect("a line is JSON");
     assert_eq!(
         document["schema"], SCHEMA,
         "a stream that does not say what it is is one a later reader has to guess at: \
          {first}"
     );
-    assert_eq!(document["wire"], "http", "and which protocol carried it");
+    assert_eq!(
+        document["exchange"]["spoken"]["wire"], "http",
+        "and which protocol carried it"
+    );
 }
 
 #[test]
@@ -89,7 +104,7 @@ fn an_exchange_carries_the_test_that_was_running_or_says_it_could_not_tell() {
         during: None,
         ..told.clone()
     };
-    let Read { exchanges, .. } = read(&written(&[told, untold]));
+    let Read { exchanges, .. } = read(&recorded(&[told, untold]));
     assert_eq!(
         exchanges[0].during.as_deref(),
         Some("pkg/test/it orders"),
@@ -108,10 +123,11 @@ fn every_line_a_recording_holds_is_one_the_published_schema_takes() {
     let path = njutest_devkit::paths::workspace_root().join("schema/njutest-wire-v1.json");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    let schema: serde_json::Value = serde_json::from_str(&text).expect("the schema is JSON");
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON");
     let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
 
-    let recording = written(&[
+    let recording = recorded(&[
         http(0, "/orders", 200),
         Exchange {
             capability: "db".to_owned(),
@@ -125,7 +141,8 @@ fn every_line_a_recording_holds_is_one_the_published_schema_takes() {
         },
     ]);
     for line in recording.lines() {
-        let document: serde_json::Value = serde_json::from_str(line).expect("a line is JSON");
+        let document: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("a line is JSON");
         let problems: Vec<String> = validator
             .iter_errors(&document)
             .map(|error| format!("{} at {}", error, error.instance_path()))
@@ -138,15 +155,61 @@ fn every_line_a_recording_holds_is_one_the_published_schema_takes() {
         );
     }
 
-    let extra = serde_json::json!({
-        "schema": "njutest-wire-v1", "capability": "api", "seq": 0, "during": null,
-        "duration_ms": 1, "wire": "raw", "request_bytes": 0, "response_bytes": 0,
-        "invented": true
-    });
+    for invalid in [
+        serde_json::json!({
+            "schema": "njutest-wire-v1",
+            "exchange": {
+                "capability": "api", "seq": 0, "during": null, "duration_ms": 1,
+                "spoken": { "wire": "raw", "request_bytes": 0, "response_bytes": 0 },
+                "invented": true
+            }
+        }),
+        serde_json::json!({
+            "schema": "njutest-wire-v1",
+            "exchange": {
+                "capability": "api", "seq": 0, "during": null, "duration_ms": 1,
+                "spoken": { "wire": "raw", "request_bytes": 0 }
+            }
+        }),
+        serde_json::json!({
+            "schema": "njutest-wire-v1",
+            "exchange": {
+                "capability": "api", "seq": 0, "during": null, "duration_ms": 1,
+                "spoken": { "wire": "future", "request_bytes": 0, "response_bytes": 0 }
+            }
+        }),
+    ] {
+        assert!(
+            !validator.is_valid(&invalid),
+            "the published schema and the Rust types close the same nested objects: {invalid}"
+        );
+    }
+}
+
+#[test]
+fn direct_deserialization_rejects_extra_missing_duplicate_and_unknown_input() {
+    let valid = r#"{
+        "capability":"api",
+        "seq":0,
+        "during":null,
+        "duration_ms":1,
+        "spoken":{"wire":"raw","request_bytes":0,"response_bytes":0}
+    }"#;
     assert!(
-        !validator.is_valid(&extra),
-        "and it refuses a line with something extra in it, because serde cannot \
-         refuse an unknown field and flatten one in the same breath: the schema is \
-         where that job lives"
+        njutest_devkit::strictjson::decode_str::<Exchange>(valid).is_ok(),
+        "the exact object is accepted"
     );
+
+    for invalid in [
+        r#"{"capability":"api","seq":0,"during":null,"duration_ms":1,"spoken":{"wire":"raw","request_bytes":0,"response_bytes":0},"invented":true}"#,
+        r#"{"capability":"api","seq":0,"during":null,"duration_ms":1,"spoken":{"wire":"raw","request_bytes":0}}"#,
+        r#"{"capability":"api","seq":0,"during":null,"duration_ms":1,"spoken":{"wire":"future","request_bytes":0,"response_bytes":0}}"#,
+        r#"{"capability":"api","capability":"other","seq":0,"during":null,"duration_ms":1,"spoken":{"wire":"raw","request_bytes":0,"response_bytes":0}}"#,
+        r#"{"capability":"api","seq":0,"during":null,"duration_ms":1,"spoken":{"wire":"raw","request_bytes":0,"response_bytes":0,"invented":true}}"#,
+    ] {
+        assert!(
+            njutest_devkit::strictjson::decode_str::<Exchange>(invalid).is_err(),
+            "a current owned wire object has exactly one interpretation: {invalid}"
+        );
+    }
 }

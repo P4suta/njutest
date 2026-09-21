@@ -1,0 +1,1 @@
+{"targets":{"fixture-rejectable/lib/fixture_rejectable":{"reached":{},"bodies":{},"infected":{},"ran":[]}},"limitations":["touch-not-recorded:fixture-rejectable/doc/fixture_rejectable"],"narrowing":{"compared":[15],"bodies":{}}}

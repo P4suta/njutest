@@ -6,6 +6,11 @@
 use std::ffi::OsString;
 
 use njutest_devkit::repo::Repo;
+use njutest_devkit::result::{
+    OptionState::Present,
+    ResultState::{Refused, Returned},
+    option_state, result_state,
+};
 use rust_mutants::git::{Asking, Change, DEFAULT_BASE, Facts, changed, facts};
 use rust_mutants::runner::{Cancel, Watched};
 use rust_mutants::trace::Recorder;
@@ -71,7 +76,9 @@ fn a_committed_tree_names_its_commit_and_its_branch_and_is_clean() {
     asked.repo.package("demo").lib("pub fn f() {}\n");
     asked.repo.commit();
 
-    let facts = asked.facts().expect("git can be asked");
+    let facts = asked.facts();
+    assert_eq!(option_state(facts.as_ref()), Present, "git facts");
+    let Some(facts) = facts else { return };
     assert_eq!(facts.commit.len(), 40, "{facts:?}");
     assert!(
         facts.commit.chars().all(|c| c.is_ascii_hexdigit()),
@@ -88,7 +95,9 @@ fn a_tree_written_since_its_commit_is_dirty() {
     asked.repo.commit();
     asked.repo.write("src/lib.rs", "pub fn f() -> i32 { 1 }\n");
 
-    let facts = asked.facts().expect("git can be asked");
+    let facts = asked.facts();
+    assert_eq!(option_state(facts.as_ref()), Present, "git facts");
+    let Some(facts) = facts else { return };
     assert!(facts.dirty, "{facts:?}");
 }
 
@@ -105,7 +114,9 @@ fn a_tree_with_nothing_changed_has_an_empty_change_set() {
     asked.repo.package("demo").lib("pub fn f() {}\n");
     asked.repo.commit();
 
-    let change = asked.changed(DEFAULT_BASE).expect("git can be asked");
+    let change = asked.changed(DEFAULT_BASE);
+    assert_eq!(option_state(change.as_ref()), Present, "git change set");
+    let Some(change) = change else { return };
     assert_eq!(change.base, DEFAULT_BASE);
     assert!(change.files.is_empty(), "{change:?}");
 }
@@ -118,7 +129,9 @@ fn a_file_written_since_the_commit_is_in_the_change_set_before_it_is_committed()
     asked.repo.write("src/lib.rs", "pub fn f() -> i32 { 1 }\n");
     asked.repo.write("src/added.rs", "pub fn g() {}\n");
 
-    let change = asked.changed(DEFAULT_BASE).expect("git can be asked");
+    let change = asked.changed(DEFAULT_BASE);
+    assert_eq!(option_state(change.as_ref()), Present, "git change set");
+    let Some(change) = change else { return };
     assert!(
         change.files.contains(&"src/lib.rs".to_owned()),
         "{change:?}"
@@ -140,7 +153,9 @@ fn a_directory_the_caller_excluded_is_not_a_change_to_the_code() {
     asked.repo.write("artifacts/latest.json", "{}\n");
     asked.repo.write("src/added.rs", "pub fn g() {}\n");
 
-    let change = asked.changed(DEFAULT_BASE).expect("git can be asked");
+    let change = asked.changed(DEFAULT_BASE);
+    assert_eq!(option_state(change.as_ref()), Present, "git change set");
+    let Some(change) = change else { return };
     assert_eq!(change.files, vec!["src/added.rs".to_owned()], "{change:?}");
 }
 
@@ -174,6 +189,8 @@ fn a_change_set_mutates_within_the_rust_files_it_names() {
         ],
     };
     let within = rust_mutants::git::within(&change, &[]);
+    assert_eq!(result_state(&within), Returned, "changed paths: {within:?}");
+    let Ok(within) = within else { return };
     assert_eq!(within.len(), 2, "{within:?}");
     assert!(within.iter().any(|pattern| pattern.matches("src/lib.rs")));
     assert!(
@@ -192,6 +209,8 @@ fn a_change_set_that_names_no_rust_file_mutates_nothing_rather_than_everything()
         files: vec!["README.md".to_owned()],
     };
     let within = rust_mutants::git::within(&change, &[]);
+    assert_eq!(result_state(&within), Returned, "sentinel: {within:?}");
+    let Ok(within) = within else { return };
     assert_eq!(within.len(), 1, "{within:?}");
     assert!(!within.iter().any(|pattern| pattern.matches("src/lib.rs")));
 }
@@ -203,11 +222,33 @@ fn a_change_set_narrows_what_the_caller_already_selected_rather_than_widening_it
         merge_base: None,
         files: vec!["src/lib.rs".to_owned(), "other/lib.rs".to_owned()],
     };
-    let include = vec![rust_mutants::glob::Pattern::compile("src/**").expect("a pattern")];
+    let pattern = rust_mutants::glob::Pattern::compile("src/**");
+    assert_eq!(result_state(&pattern), Returned, "include: {pattern:?}");
+    let Ok(pattern) = pattern else { return };
+    let include = vec![pattern];
     let within = rust_mutants::git::within(&change, &include);
+    assert_eq!(result_state(&within), Returned, "changed paths: {within:?}");
+    let Ok(within) = within else { return };
     assert_eq!(within.len(), 1, "{within:?}");
     assert!(within.iter().any(|pattern| pattern.matches("src/lib.rs")));
     assert!(!within.iter().any(|pattern| pattern.matches("other/lib.rs")));
+}
+
+#[test]
+fn an_unrepresentable_changed_path_is_not_silently_omitted() {
+    let change = Change {
+        base: DEFAULT_BASE.to_owned(),
+        merge_base: None,
+        files: vec!["src//lib.rs".to_owned()],
+    };
+    let error = rust_mutants::git::within(&change, &[]);
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "invalid changed path: {error:?}"
+    );
+    let Err(error) = error else { return };
+    assert_eq!(error.pattern, "src//lib.rs");
 }
 
 #[test]
@@ -236,16 +277,26 @@ fn a_run_asks_about_the_tree_it_was_given_and_not_the_one_its_caller_was_in() {
         env: &env,
         excluded: &[],
         watch: &watch,
-    })
-    .expect("git has something to say about a repository");
+    });
+    assert_eq!(
+        option_state(asked.as_ref()),
+        Present,
+        "asked repository facts"
+    );
+    let Some(asked) = asked else { return };
 
     let mine = facts(&Asking {
         root: here.root(),
         env: &environment(),
         excluded: &[],
         watch: &watch,
-    })
-    .expect("git has something to say about a repository");
+    });
+    assert_eq!(
+        option_state(mine.as_ref()),
+        Present,
+        "local repository facts"
+    );
+    let Some(mine) = mine else { return };
 
     assert_eq!(
         asked.commit, mine.commit,

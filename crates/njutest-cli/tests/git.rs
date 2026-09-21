@@ -42,8 +42,12 @@ fn ask(root: &Path) -> njutest_cli::report::Git {
 /// What no verification reads, for a project that has said nothing about where it writes.
 fn excluded() -> njutest_cli::evidence::tree::Excluded {
     njutest_cli::evidence::tree::Excluded::beside(
-        &njutest_cli::config::Config::default().reports.directory,
+        njutest_cli::config::Config::default()
+            .reports
+            .directory
+            .as_path(),
     )
+    .expect("the default report path is valid UTF-8")
 }
 
 /// A repository with one commit, built with git's own plumbing so the fixture is the same on every machine: `commit-tree` writes a commit without consulting anybody's configuration, and the identity comes from the environment rather than from a global file.
@@ -66,9 +70,11 @@ fn repository() -> tempfile::TempDir {
         assert!(
             output.status.success(),
             "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
-        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        njutest_devkit::process::strict_utf8(&output.stdout)
+            .trim()
+            .to_owned()
     };
     run(&["init", "--initial-branch=main"]);
     std::fs::write(dir.path().join("a.txt"), b"one\n").expect("a file");

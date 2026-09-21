@@ -51,8 +51,9 @@ fn common() -> Common {
         environment: Vec::new(),
         contract: "standard-v1".to_owned(),
         test_args: Vec::new(),
-        build: Vec::new(),
+        build: rust_mutants::cargo::BuildConfig::default().selection(),
         timeout_ms: 1,
+        steps: 1,
         versions: Vec::new(),
         corpus: String::new(),
     }
@@ -208,9 +209,13 @@ fn neither_identity_entry_point_panics_when_the_tree_or_lockfile_cannot_be_read(
             vars: &[],
             elsewhere: &[],
         };
-        let _input_error = inputs(&asked, Mode::Full, &[], None)
-            .expect_err("an unreadable tree has no input identity");
-        let _identity_error = of(&asked, Mode::Full, common(), None)
-            .expect_err("an unreadable tree has no run identity");
+        assert!(
+            inputs(&asked, Mode::Full, &[], None).is_err(),
+            "an unreadable tree has no input identity"
+        );
+        assert!(
+            of(&asked, Mode::Full, common(), None).is_err(),
+            "an unreadable tree has no run identity"
+        );
     }
 }

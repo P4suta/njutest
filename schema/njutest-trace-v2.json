@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/njutest/schema/njutest-trace-v2.json",
+  "title": "njutest trace v2",
+  "description": "One line of the current diagnostic trace. Every owned object is closed and every nullable field is explicitly present.",
+  "$defs": {
+    "processExit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "code" },
+            "value": { "type": "integer" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "signal" },
+            "value": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "unknown" } }
+        }
+      ]
+    },
+    "stopped": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "not-started" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "exit"],
+          "properties": {
+            "kind": { "const": "exited" },
+            "exit": { "$ref": "#/$defs/processExit" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "timed-out" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "started"],
+          "properties": {
+            "kind": { "const": "cancelled" },
+            "started": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "wait-failed" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "notice"],
+          "properties": {
+            "kind": { "const": "step-limit-reached" },
+            "notice": {
+              "$ref": "rust-mutants-trace-v2.json#/$defs/step-limit-notice"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "const": "step-protocol-failed" },
+            "reason": {
+              "$ref": "rust-mutants-trace-v2.json#/$defs/step-protocol-failure"
+            }
+          }
+        }
+      ]
+    },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "duration_ms"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "duration_ms": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "stepBoundary": {
+      "$ref": "njutest-assurance-report-v2.json#/$defs/stepBoundary"
+    },
+    "nullableString": { "type": ["string", "null"] },
+    "nullableCount": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "timestamp", "elapsed_ms", "payload"],
+  "properties": {
+    "seq": { "type": "integer", "minimum": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "elapsed_ms": { "type": "integer", "minimum": 0 },
+    "payload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "start"],
+          "properties": {
+            "type": { "const": "run-start" },
+            "start": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema", "njutest", "rust_mutants", "run_id", "run_kind", "contract"],
+              "properties": {
+                "schema": { "const": "njutest-trace-v2" },
+                "njutest": { "type": "string", "minLength": 1 },
+                "rust_mutants": { "type": "string", "minLength": 1 },
+                "run_id": { "type": "string", "minLength": 1 },
+                "run_kind": { "enum": ["full", "changed", "scoped"] },
+                "contract": { "enum": ["standard-v1", "deep-v1", "verified-v1"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "phase"],
+          "properties": {
+            "type": { "const": "phase-start" },
+            "phase": { "$ref": "#/$defs/phase" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "phase"],
+          "properties": {
+            "type": { "const": "phase-end" },
+            "phase": { "$ref": "#/$defs/phase" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "exec"],
+          "properties": {
+            "type": { "const": "exec" },
+            "exec": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["argv", "dir", "env_names", "timeout_ms", "stopped", "duration_ms", "output_bytes", "output_sha256", "output_truncated", "output_path", "error"],
+              "properties": {
+                "argv": { "type": "array", "items": { "type": "string" } },
+                "dir": { "$ref": "#/$defs/nullableString" },
+                "env_names": { "type": "array", "items": { "type": "string" } },
+                "timeout_ms": { "$ref": "#/$defs/nullableCount" },
+                "stopped": { "$ref": "#/$defs/stopped" },
+                "duration_ms": { "type": "integer", "minimum": 0 },
+                "output_bytes": { "type": "integer", "minimum": 0 },
+                "output_sha256": {
+                  "oneOf": [
+                    { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    { "type": "null" }
+                  ]
+                },
+                "output_truncated": { "type": "boolean" },
+                "output_path": { "$ref": "#/$defs/nullableString" },
+                "error": { "$ref": "#/$defs/nullableString" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "progress"],
+          "properties": {
+            "type": { "const": "progress" },
+            "progress": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message", "subject", "done", "total"],
+              "properties": {
+                "message": { "type": "string" },
+                "subject": { "type": "string" },
+                "done": { "$ref": "#/$defs/nullableCount" },
+                "total": { "$ref": "#/$defs/nullableCount" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "artifact"],
+          "properties": {
+            "type": { "const": "artifact" },
+            "artifact": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "path", "bytes"],
+              "properties": {
+                "kind": { "type": "string" },
+                "path": { "type": "string" },
+                "bytes": { "$ref": "#/$defs/nullableCount" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "route"],
+          "properties": {
+            "type": { "const": "route" },
+            "route": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "granularity", "fallback", "reaching", "tests", "discharged", "considered", "reused", "refused"],
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "granularity": { "enum": ["all", "block", "test", "discharged", "unreached"] },
+                "fallback": {
+                  "enum": ["not-measured", "position-unknown", "outside-blocks", "coverage-incomplete", "touch-incomplete", null]
+                },
+                "reaching": { "type": "array", "items": { "type": "string" } },
+                "tests": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["target", "tests"],
+                    "properties": {
+                      "target": { "type": "string", "minLength": 1 },
+                      "tests": { "type": "array", "items": { "type": "string" } }
+                    }
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["target", "proof"],
+                    "properties": {
+                      "target": { "type": "string", "minLength": 1 },
+                      "proof": { "enum": ["branch-never-taken", "never-infected"] }
+                    }
+                  }
+                },
+                "considered": { "type": "array", "items": { "type": "string" } },
+                "reused": { "$ref": "#/$defs/nullableString" },
+                "refused": {
+                  "enum": ["nothing-recorded", "unreadable", "target-unknown", "not-routed", "key-changed", "not-passing", "target-entered", "nothing-routed", null]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "mutant"],
+          "properties": {
+            "type": { "const": "mutant-exec" },
+            "mutant": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "target", "args", "outcome", "step_boundary", "duration_ms", "alone"],
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "args": { "type": "array", "items": { "type": "string" } },
+                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
+                "step_boundary": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/stepBoundary" },
+                    { "type": "null" }
+                  ]
+                },
+                "duration_ms": { "type": "integer", "minimum": 0 },
+                "alone": { "type": "boolean" }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "required": ["outcome"],
+                    "properties": { "outcome": { "const": "step_limit_reached" } }
+                  },
+                  "then": { "properties": { "step_boundary": { "$ref": "#/$defs/stepBoundary" } } },
+                  "else": { "properties": { "step_boundary": { "type": "null" } } }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "probe"],
+          "properties": {
+            "type": { "const": "probe-exec" },
+            "probe": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["target", "outcome", "infected"],
+              "properties": {
+                "target": { "type": "string", "minLength": 1 },
+                "outcome": { "enum": ["measured", "not-measured"] },
+                "infected": { "$ref": "#/$defs/nullableCount" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "exchange"],
+          "properties": {
+            "type": { "const": "wire-exchange" },
+            "exchange": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capability", "seq", "during", "duration_ms", "read", "request_bytes", "response_bytes"],
+              "properties": {
+                "capability": { "type": "string", "minLength": 1 },
+                "seq": { "type": "integer", "minimum": 0 },
+                "during": { "$ref": "#/$defs/nullableString" },
+                "duration_ms": { "type": "integer", "minimum": 0 },
+                "read": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["wire", "method", "path", "status"],
+                      "properties": {
+                        "wire": { "const": "raw" },
+                        "method": { "type": "null" },
+                        "path": { "type": "null" },
+                        "status": { "type": "null" }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["wire", "method", "path", "status"],
+                      "properties": {
+                        "wire": { "const": "http" },
+                        "method": { "type": "string", "minLength": 1 },
+                        "path": { "type": "string" },
+                        "status": { "type": "integer", "minimum": 0, "maximum": 65535 }
+                      }
+                    }
+                  ]
+                },
+                "request_bytes": { "type": "integer", "minimum": 0 },
+                "response_bytes": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "wire"],
+          "properties": {
+            "type": { "const": "wire-exec" },
+            "wire": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "capability", "seq", "rule", "answer"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "capability": { "type": "string", "minLength": 1 },
+                "seq": { "type": "integer", "minimum": 0 },
+                "rule": { "enum": ["truncate-response", "delay-response", "drop-connection", "replay-request", "stale-response", "status-server-error", "status-not-found"] },
+                "answer": { "$ref": "njutest-assurance-report-v2.json#/$defs/seamAnswer" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "model"],
+          "properties": {
+            "type": { "const": "model" },
+            "model": { "$ref": "njutest-assurance-report-v2.json#/$defs/model" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "note"],
+          "properties": {
+            "type": { "const": "note" },
+            "note": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "detail"],
+              "properties": {
+                "kind": { "type": "string", "minLength": 1 },
+                "detail": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "run"],
+          "properties": {
+            "type": { "const": "run-end" },
+            "run": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["verdict", "accounting", "error", "events_emitted", "events_dropped"],
+              "properties": {
+                "verdict": { "enum": ["ASSURED", "CHANGE_ASSURED", "SCOPE_ASSURED", "DEFECT", "INSUFFICIENT", "PARTIAL", "ERROR"] },
+                "accounting": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["targets", "mutants", "soundness_by_build"],
+                      "properties": {
+                        "targets": { "$ref": "njutest-assurance-report-v2.json#/$defs/accounting/properties/targets" },
+                        "mutants": { "$ref": "njutest-assurance-report-v2.json#/$defs/accounting/properties/mutants" },
+                        "soundness_by_build": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["build", "accounting"],
+                            "properties": {
+                              "build": { "type": "string", "minLength": 1 },
+                              "accounting": { "$ref": "njutest-assurance-report-v2.json#/$defs/accounting/properties/soundness" }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    { "type": "null" }
+                  ]
+                },
+                "error": { "$ref": "#/$defs/nullableString" },
+                "events_emitted": { "type": "integer", "minimum": 0 },
+                "events_dropped": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

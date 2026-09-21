@@ -52,15 +52,16 @@ tree is never written to.
 ## Reading the summary
 
 ```
-MUTANTS   cataloged=120 refused=3 skipped=17 executed=117
-OUTCOMES  killed=98 survived=14 runaway=1 waited=0 inconclusive=0 errored=0 not_run=4 unreached=4 …
-SCORE     87.6%  (99 detected of 113 decided)
+MUTANTS   cataloged=117 refused=3 skipped=17 executed=113
+OUTCOMES  killed=98 survived=14 step_limit_reached=1 waited=0 inconclusive=0 errored=0 not_run=4 unreached=4 …
+SCORE     87.5%  (98 detected of 112 decided)
 ```
 
 - **killed** — a test failed with the mutation live. The tests noticed.
 - **survived** — every test passed. Nobody noticed.
-- **runaway** — the work stopped being bounded and a count of steps said so.
-  Counted as noticed: a count is a property of the work, not of the machine.
+- **step limit reached** — the active guard crossed its configured count. The
+  nonce-correlated notice makes that execution fact exact, but a finite count
+  cannot prove nontermination; it is neither detected nor survived.
 - **waited** — a bound expired before anything finished. Not counted as
   noticed, and not counted against the tests either: nothing was established.
 - **inconclusive** — the run could not decide, and says so rather than guessing.

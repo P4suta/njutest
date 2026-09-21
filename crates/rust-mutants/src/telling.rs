@@ -4,6 +4,7 @@
 //! What a thing a run establishes looks like, decided once for every surface either product draws.
 
 use crate::outcome::Outcome;
+use std::fmt;
 
 /// What a piece of text is, which is how it is painted.
 ///
@@ -133,9 +134,12 @@ impl Style {
     #[must_use]
     pub const fn of(outcome: Outcome) -> Self {
         match outcome {
-            Outcome::Killed | Outcome::Runaway => Self::Well,
+            Outcome::Killed => Self::Well,
             Outcome::Survived => Self::Gap,
-            Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => Self::Limitation,
+            Outcome::StepLimitReached
+            | Outcome::Waited
+            | Outcome::Inconclusive
+            | Outcome::Errored => Self::Limitation,
             Outcome::NotRun => Self::Frame,
         }
     }
@@ -166,4 +170,70 @@ pub fn linked(target: &str, text: &str, colour: bool) -> String {
         return text.to_owned();
     }
     format!("\u{1b}]8;;{target}\u{7}{text}\u{1b}]8;;\u{7}")
+}
+
+/// A reversible human rendering of bytes that may not be UTF-8.
+///
+/// Valid text is written as a Rust string literal after `utf8:`. Any invalid
+/// byte string is written as lowercase hexadecimal after `bytes:`. The tags
+/// keep the two domains disjoint, and both payload encodings are injective, so
+/// diagnostics never replace two different inputs with the same text.
+#[derive(Clone, Copy)]
+pub struct LosslessBytes<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> LosslessBytes<'a> {
+    /// Prepares `bytes` for reversible display.
+    #[must_use]
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+}
+
+impl fmt::Debug for LosslessBytes<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl fmt::Display for LosslessBytes<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match std::str::from_utf8(self.bytes) {
+            Ok(text) => write!(formatter, "utf8:{text:?}"),
+            Err(_not_utf8) => {
+                formatter.write_str("bytes:")?;
+                for byte in self.bytes {
+                    write!(formatter, "{byte:02x}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::LosslessBytes;
+
+    #[test]
+    fn byte_rendering_keeps_utf8_and_raw_bytes_in_disjoint_exact_domains() {
+        assert_eq!(
+            LosslessBytes::new(b"hello\n").to_string(),
+            "utf8:\"hello\\n\""
+        );
+        assert_eq!(LosslessBytes::new(&[0xff, 0]).to_string(), "bytes:ff00");
+        assert_eq!(
+            format!("{:?}", LosslessBytes::new(b"hello\n")),
+            "utf8:\"hello\\n\"",
+            "debug output cannot expose the renderer's private representation"
+        );
+
+        let rendered: BTreeSet<String> = (u8::MIN..=u8::MAX)
+            .map(|byte| LosslessBytes::new(&[byte]).to_string())
+            .collect();
+        assert_eq!(rendered.len(), 256);
+    }
 }

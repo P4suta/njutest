@@ -94,7 +94,7 @@ jobs:
       - name: Put the parts back together
         run: |
           set -euo pipefail
-          find parts -name run-report-v1.json -print0 \
+          find parts -name run-report-v2.json -print0 \
             | sort -z \
             | xargs -0 ./target/release/rust-mutants merge --output whole.json
       - name: Say whether each recording is complete
@@ -108,7 +108,7 @@ jobs:
           set -euo pipefail
           status=0
           for run in parts/*/*/; do
-            [ -f "$run/run-report-v1.json" ] || continue
+            [ -f "$run/run-report-v2.json" ] || continue
             echo "== $run"
             ./target/release/xtask engine-audit "$run" \
               --trace "$run/trace" --sites --ledger .rust-mutants.toml || status=1

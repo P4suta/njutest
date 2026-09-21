@@ -4,6 +4,7 @@
 //! Ported from goatest's `api_test.go`: the metadata is small, immutable, and strict about blank names.
 
 use njutest::{InvalidScope, Scope, ScopeKind};
+use njutest_devkit::result::{ResultState, result_state};
 
 #[test]
 fn unit_declares_no_capabilities() {
@@ -14,14 +15,18 @@ fn unit_declares_no_capabilities() {
 
 #[test]
 fn integration_trims_and_deduplicates_capabilities_in_first_seen_order() {
-    let scope = Scope::integration(["postgres", " redis ", "postgres"]).expect("valid");
+    let result = Scope::integration(["postgres", " redis ", "postgres"]);
+    assert_eq!(result_state(&result), ResultState::Returned);
+    let Ok(scope) = result else { return };
     assert_eq!(scope.kind(), ScopeKind::Integration);
     assert_eq!(scope.capabilities(), ["postgres", "redis"]);
 }
 
 #[test]
 fn integration_requires_at_least_one_capability() {
-    let error = Scope::integration(Vec::<&str>::new()).expect_err("empty is refused");
+    let result = Scope::integration(Vec::<&str>::new());
+    assert_eq!(result_state(&result), ResultState::Refused);
+    let Err(error) = result else { return };
     assert_eq!(error, InvalidScope::NoCapabilities);
     assert_eq!(
         error.to_string(),
@@ -31,7 +36,9 @@ fn integration_requires_at_least_one_capability() {
 
 #[test]
 fn integration_refuses_a_blank_capability() {
-    let error = Scope::integration(["postgres", "  "]).expect_err("blank is refused");
+    let result = Scope::integration(["postgres", "  "]);
+    assert_eq!(result_state(&result), ResultState::Refused);
+    let Err(error) = result else { return };
     assert_eq!(error, InvalidScope::BlankCapability { position: 1 });
     assert_eq!(
         error.to_string(),

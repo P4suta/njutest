@@ -53,7 +53,7 @@ fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
             &PrepareOptions {
                 tier: Tier::All,
                 mutant_timeout: Timeout::Fixed(Duration::from_secs(2)),
-                mutant_steps: Some(1_000_000),
+                mutant_steps: Some(100),
                 ..PrepareOptions::default()
             },
             &Cancel::new(),
@@ -73,7 +73,7 @@ fn mutant(session: &Session, rule: &str, line: u32) -> String {
         })
         .unwrap_or_else(|| panic!("a {rule} mutant on line {line}"))
         .display_id
-        .clone()
+        .to_string()
 }
 
 #[test]
@@ -86,7 +86,10 @@ fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_
         &[
             (
                 "FIXTURE_HANG_MARKER",
-                markers.to_string_lossy().into_owned(),
+                markers
+                    .to_str()
+                    .expect("fixture paths are exact UTF-8")
+                    .to_owned(),
             ),
             ("FIXTURE_HANG_PAUSE_MS", "4000".to_owned()),
         ],
@@ -99,18 +102,19 @@ fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_
         .judge(&Request::new(never), &quiet, &cancel)
         .expect("judge");
     assert_eq!(
-        stopped.result.outcome,
-        Outcome::Runaway,
+        stopped.result().outcome(),
+        Outcome::StepLimitReached,
         "the mutation deletes the step of a loop's counter, so the guard at its site is \
-         taken once an iteration and the allowance is spent long before the bound. What \
-         ends it is a number every machine agrees on"
+         taken once an iteration and the allowance is spent long before the bound. This says \
+         where the execution stopped; it does not prove that the mutant cannot terminate"
     );
+    assert!(stopped.result().step_notice().is_some());
     assert!(
-        !stopped.retried,
+        !stopped.retried(),
         "and it is not put again: the serial retry exists because a clock is unreliable, \
          and a count cannot disagree with itself on a second reading"
     );
-    assert_eq!(stopped.attempts.len(), 1);
+    assert_eq!(stopped.attempts.attempt_count(), 1);
     assert_eq!(stopped.timeout, Duration::from_secs(2));
     assert_eq!(stopped.timeout_source, TimeoutSource::Configured);
 
@@ -119,14 +123,14 @@ fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_
         .judge(&Request::new(slow_once), &quiet, &cancel)
         .expect("judge");
     assert_eq!(
-        undecided.result.outcome,
+        undecided.result().outcome(),
         Outcome::Inconclusive,
         "a mutation that was slow once and quick again is one the run cannot decide, and \
          calling it a wait would report a finding the second measurement contradicts. The \
          count does not answer here: nothing is spinning, the process is merely asleep"
     );
-    assert!(undecided.retried);
-    assert_eq!(undecided.attempts.len(), 2);
+    assert!(undecided.retried());
+    assert_eq!(undecided.attempts.attempt_count(), 2);
     session.close().expect("close");
 }
 
@@ -149,7 +153,7 @@ fn a_judgement_names_every_target_it_asked_and_what_each_answered() {
         judged
             .asked
             .iter()
-            .any(|one| one.target == judged.result.target),
+            .any(|one| one.target == judged.result().target),
         "the target whose answer the run took is one of the targets it asked"
     );
     assert!(
@@ -172,9 +176,9 @@ fn a_mutant_nothing_delays_is_judged_once() {
     let judged = session
         .judge(&Request::new(ordinary), &Quiet::default(), &Cancel::new())
         .expect("judge");
-    assert_eq!(judged.result.outcome, Outcome::Killed);
-    assert!(!judged.retried);
-    assert_eq!(judged.attempts.len(), 1);
+    assert_eq!(judged.result().outcome(), Outcome::Killed);
+    assert!(!judged.retried());
+    assert_eq!(judged.attempts.attempt_count(), 1);
     session.close().expect("close");
 }
 
@@ -197,7 +201,7 @@ impl rust_mutants::run::Observer for Watching {
     }
 
     fn started(&mut self, mutant: &rust_mutants::catalog::Mutant) {
-        self.started.push(mutant.display_id.clone());
+        self.started.push(mutant.display_id.to_string());
     }
 
     fn judged(&mut self, _judged: &rust_mutants::run::Judged, completed: u32, _total: u32) {
@@ -235,8 +239,11 @@ fn one_job_and_several_judge_a_catalog_the_same_way() {
             &mut watching,
         )
         .expect("the run answers");
+        let total = usize::try_from(watching.total);
+        assert!(total.is_ok(), "the progress total fits usize: {total:?}");
+        let Ok(total) = total else { return Vec::new() };
         assert_eq!(
-            usize::try_from(watching.total).unwrap_or(0),
+            total,
             run.judged.len(),
             "a run says how many mutants it is about to judge before it judges one, or a \
              caller drawing progress has no denominator"
@@ -319,7 +326,9 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
          calibrated: {measured:?}"
     );
 
-    let (derived, source) = session.timeout_for(&Request::new(String::new()), &target);
+    let (derived, source) = session
+        .timeout_for(&Request::new(String::new()), &target)
+        .expect("the measured baseline fits the timeout multiplier");
     assert_eq!(source, TimeoutSource::Derived);
     assert!(
         derived > measured,
@@ -329,10 +338,12 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
 
     let chosen = Duration::from_secs(17);
     assert_eq!(
-        session.timeout_for(
-            &Request::new(String::new()).with_timeout(Some(chosen)),
-            &target
-        ),
+        session
+            .timeout_for(
+                &Request::new(String::new()).with_timeout(Some(chosen)),
+                &target
+            )
+            .expect("the chosen finite duration needs no derivation"),
         (chosen, TimeoutSource::Configured),
         "and a caller who chose one is a caller who chose one"
     );

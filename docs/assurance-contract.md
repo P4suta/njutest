@@ -59,6 +59,55 @@ said could reach it. It advances no index and stores no verdict.
 every crate with a non-empty soundness inventory and every crate that links
 one, and may add sanitizers.
 
+`verified-v1` keeps the `standard-v1` mutation contract and asks one additional
+question about every test survivor that belongs to a deliberately closed,
+pure Rust fragment. Its `[verification]` section requires a nonzero unwind
+bound and a process timeout of at least one whole millisecond. The admitted signature is a top-level
+free function with at least one plain by-value input built only from fixed-size
+primitives, arrays, tuples, and `Option`; its output is in the same equality
+domain without floats. References, pointers, named types, `usize`/`isize`,
+calls, globals, macros, unsafe code, configuration attributes, and
+profile-dependent arithmetic are rejected before a harness exists.
+
+For an admitted survivor, njutest generates two isolated renderings and a
+single tagged differential assertion. Kani never compiles the subject package:
+each attempt gets a newly created dependency-free crate with a fixed manifest,
+fixed lockfile, and only those two function clones plus the harness. The full
+pristine source is retained as inert hexadecimal evidence, so `modelaudit` can
+re-mint the mutation without admitting the package's `build.rs`, procedural
+macros, dependencies, or unrelated modules as proof inputs. Only that assertion failing while every
+safety and unwind property succeeds is `model-noticed`; only every property
+succeeding is `model-proved`. An exhausted unwind bound, wall-clock cutoff,
+process failure, unknown property, tree drift, or protocol mismatch is one
+typed `undecided` record and leaves the mutation survived. It can never be
+promoted by a summary count or an exit code alone.
+
+The isolated crate always runs with Cargo networking disabled. Kani 0.68 does
+not accept Cargo's `--locked` option on either its proof or harness-list
+command, so both phases are instead guarded by the exact dependency-free
+manifest, exact empty lockfile, offline environment, and a whole-crate check
+before and after every subprocess. Every report carries a closed `crate_input` identity
+whose domain-separated digest binds those fixed files and the closed
+`minimal-v1` subprocess environment to the retained
+generated source; deserialization relates it to the rendered-source digest,
+and `modelaudit` recomputes it independently from the artifact bytes.
+
+The verifier boundary is Kani 0.68 with its exact exported schema, compiler,
+CBMC/goto, solver, target, and build-mode identity retained alongside the
+generated Rust, raw result, process termination, and their digests. This is a
+proof under that pinned verifier compiler's semantics, not a claim that its
+compiler is byte-identical to the compiler that ran the tests. `modelaudit`
+reconstructs the generated source and re-parses the raw result independently;
+`proofaudit` requires exactly one model record for every `verified-v1`
+survivor. The remaining trusted boundary is the local `cargo-kani` executable,
+versioned Kani/CBMC bundle, Cargo/rustup proxy, operating system, and filesystem
+isolation, not a human interpretation of checker output. Absolute/no-follow
+paths, a rebuilt minimal environment, the exact version banner, and exported
+compiler/backend identity narrow that boundary, but the report does not carry
+cryptographic digests of every host executable or claim to defeat a hostile
+administrator replacing one between validation and execution. CI constructs
+the boundary with a locked install of exactly `kani-verifier =0.68.0`.
+
 Benchmarks are not part of either correctness contract. Doctests are run and
 classified as one target per library, and mutations are routed to them: a
 mutation only a documented example can notice is noticed by it rather than
@@ -301,12 +350,12 @@ kill is `flaky-mutation-kill`. Both are inconclusive evidence and prevent an
 assured verdict. A mutation that does not compile is `compile-rejected`, never
 "compile-equivalent".
 
-Every cataloged mutant has exactly one report-v1 disposition, and the columns
+Every cataloged mutant has exactly one report-v2 disposition, and the columns
 say what the records say:
 
 ```text
 cataloged      = rejected + executed + unreached + equivalent
-executed      >= killed + survived + runaway + waited
+executed      >= killed + survived + step_limit_reached + waited
 accepted      <= survived + unreached + equivalent
 reused_killed <= killed        reused_survived <= survived
 ```
@@ -390,9 +439,12 @@ about the mutation, so before a run decides that time really ran out it stops
 starting anything else and measures once more. What that measurement observes
 is what stands: a mutation that completes under it was observed completing,
 and only a budget that expires again with nothing else running is `waited`.
-A `runaway` is not this and buys no quiet measurement: a guard counted the
-steps, a count cannot disagree with itself on a second reading, and the
-detection is a fact about the work rather than about the load.
+`step-limit-reached` is not this and buys no quiet measurement: a verified
+guard notice already makes the execution boundary deterministic. It remains a
+non-verdict, however. The count proves where this execution was stopped, not
+that the mutation caused divergence; a finite control execution can cross the
+same boundary. It is never detection, survival, score, cache evidence, or an
+acceptance candidate.
 This is not a retry policy — one expired budget buys exactly one quiet
 measurement, and the recording says of every execution whether the machine was
 given to it.

@@ -7,6 +7,11 @@ use std::path::PathBuf;
 
 use njutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
 use njutest_devkit::fixture::Fixture;
+use njutest_devkit::result::{
+    OptionState::Present,
+    ResultState::{Refused, Returned},
+    option_state, result_state,
+};
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::PrepareOptions;
 use rust_mutants::workspace::{OpenOptions, Workspace};
@@ -58,7 +63,10 @@ fn opening_reports_what_cargo_metadata_said_when_it_fails() {
         101,
         "error: failed to load manifest for workspace member `demo`\n",
     ));
-    let error = opened(&fixture, &script).0.expect_err("metadata fails");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(result_state(&opened), Refused, "metadata fails: {opened:?}");
+    let Err(error) = opened else { return };
+    drop(installed_toolchain);
     assert_eq!(error.code().code, "RM1014", "{error}");
     assert!(
         error.to_string().contains("failed to load manifest"),
@@ -69,7 +77,7 @@ fn opening_reports_what_cargo_metadata_said_when_it_fails() {
 #[test]
 fn opening_refuses_a_cargo_that_is_not_a_file() {
     let fixture = Fixture::copy("fixture-simple");
-    let error = Workspace::open(
+    let opened = Workspace::open(
         fixture.root(),
         OpenOptions {
             cargo: Some(PathBuf::from("/nonexistent/cargo")),
@@ -77,9 +85,36 @@ fn opening_refuses_a_cargo_that_is_not_a_file() {
             ..OpenOptions::default()
         },
         &Cancel::new(),
-    )
-    .expect_err("no such cargo");
+    );
+    assert_eq!(result_state(&opened), Refused, "no such cargo: {opened:?}");
+    let Err(error) = opened else { return };
     assert_eq!(error.code().code, "RM1012", "{error}");
+}
+
+#[test]
+fn opening_refuses_a_temporary_root_that_does_not_exist() {
+    let fixture = Fixture::copy("fixture-simple");
+    let missing = fixture.temp().join("not-created");
+    let opened = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(PathBuf::from("/nonexistent/cargo")),
+            temp_directory: missing.clone(),
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    );
+    assert_eq!(
+        result_state(&opened),
+        Refused,
+        "a missing temporary authority is refused: {opened:?}"
+    );
+    let Err(error) = opened else { return };
+    assert_eq!(error.code().code, "RM5006", "{error}");
+    assert!(
+        error.to_string().contains(&missing.display().to_string()),
+        "the typed refusal names the unbound directory: {error}"
+    );
 }
 
 #[test]
@@ -87,9 +122,14 @@ fn opening_refuses_a_banner_without_a_release_line() {
     let fixture = Fixture::copy("fixture-simple");
     let script = Script::new()
         .answering(Invocation::new("cargo", &["-vV"]).printing("cargo 1.98.0\nhost: x86_64\n"));
-    let error = opened(&fixture, &script)
-        .0
-        .expect_err("a banner with no release");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Refused,
+        "a banner with no release: {opened:?}"
+    );
+    let Err(error) = opened else { return };
+    drop(installed_toolchain);
     assert_eq!(error.code().code, "RM1013", "{error}");
 }
 
@@ -98,9 +138,14 @@ fn opening_refuses_metadata_that_is_not_its_document() {
     let fixture = Fixture::copy("fixture-simple");
     let script = toolchain_answers()
         .answering(Invocation::new("cargo", &["metadata"]).printing("{\"not\": \"metadata\"}\n"));
-    let error = opened(&fixture, &script)
-        .0
-        .expect_err("metadata that is not one");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Refused,
+        "metadata that is not one: {opened:?}"
+    );
+    let Err(error) = opened else { return };
+    drop(installed_toolchain);
     assert_eq!(error.code().code, "RM1015", "{error}");
 }
 
@@ -128,15 +173,21 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
             ..OpenOptions::default()
         },
         &Cancel::new(),
-    )
-    .expect("the workspace opens");
+    );
+    assert_eq!(
+        result_state(&workspace),
+        Returned,
+        "the workspace opens: {workspace:?}"
+    );
+    let Ok(workspace) = workspace else { return };
 
     assert_ne!(
         workspace.snapshot_root(),
         fixture.root(),
         "the tree the engine works in is the copy"
     );
-    assert!(workspace.snapshot_root().join("src/lib.rs").is_file());
+    let copied_source = std::fs::metadata(workspace.snapshot_root().join("src/lib.rs"));
+    assert!(matches!(copied_source, Ok(metadata) if metadata.is_file()));
     assert!(
         workspace.snapshot_root().starts_with(fixture.temp()),
         "and it lives under the temporary directory it was given"
@@ -152,6 +203,88 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
         "one banner each, the sysroot, then the metadata of the tree on disk — which is what \
          says whether a copy of it could build at all — and the metadata of the copy"
     );
+}
+
+#[cfg(unix)]
+#[derive(Debug, thiserror::Error)]
+enum TemporaryAliasFixtureError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Engine(#[from] rust_mutants::EngineError),
+    #[error(
+        "snapshot {snapshot} was minted from alias {alias} instead of physical root {physical}"
+    )]
+    SnapshotOutside {
+        alias: PathBuf,
+        physical: PathBuf,
+        snapshot: PathBuf,
+    },
+    #[error("build cache or scratch path was minted outside physical root {physical}")]
+    SupportingPathOutside { physical: PathBuf },
+    #[error("snapshot root {snapshot} is not its physical spelling {physical}")]
+    SnapshotNotPhysical {
+        snapshot: PathBuf,
+        physical: PathBuf,
+    },
+}
+
+#[cfg(unix)]
+#[test]
+fn a_temporary_root_alias_is_resolved_before_any_workspace_path_is_minted()
+-> Result<(), TemporaryAliasFixtureError> {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::copy("fixture-simple");
+    let physical = fixture.temp().join("physical-temporary-root");
+    std::fs::create_dir_all(&physical)?;
+    let alias = fixture.temp().join("temporary-root-alias");
+    symlink(&physical, &alias)?;
+
+    let script = toolchain_answers().answering(
+        Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
+    );
+    let installed = install(&script);
+    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = installed.env();
+    env.push((
+        std::ffi::OsString::from("PATH"),
+        std::ffi::OsString::from(installed.bin()),
+    ));
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(installed.cargo()),
+            search_path: Some(std::ffi::OsString::from(installed.bin())),
+            temp_directory: alias.clone(),
+            env,
+            locked: true,
+            offline: true,
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )?;
+
+    let physical = std::fs::canonicalize(&physical)?;
+    if !workspace.snapshot_root().starts_with(&physical) {
+        return Err(TemporaryAliasFixtureError::SnapshotOutside {
+            alias,
+            physical,
+            snapshot: workspace.snapshot_root().to_path_buf(),
+        });
+    }
+    if !workspace.target_dir().starts_with(&physical)
+        || !workspace.scratch_dir().starts_with(&physical)
+    {
+        return Err(TemporaryAliasFixtureError::SupportingPathOutside { physical });
+    }
+    let canonical_snapshot = std::fs::canonicalize(workspace.snapshot_root())?;
+    if canonical_snapshot != workspace.snapshot_root() {
+        return Err(TemporaryAliasFixtureError::SnapshotNotPhysical {
+            snapshot: workspace.snapshot_root().to_path_buf(),
+            physical: canonical_snapshot,
+        });
+    }
+    Ok(())
 }
 
 #[test]
@@ -170,8 +303,14 @@ fn opening_a_member_directory_names_the_workspace_root_and_the_flag() {
     );
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
-    let (opened, _installed) = opened(&fixture, &script);
-    let error = opened.expect_err("a member is not a workspace");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Refused,
+        "a member is not a workspace: {opened:?}"
+    );
+    let Err(error) = opened else { return };
+    drop(installed_toolchain);
     let said = error.to_string();
     assert!(said.contains("RM1018"), "{said}");
     assert!(
@@ -193,8 +332,14 @@ fn a_path_dependency_outside_the_root_is_named_before_any_copy() {
     );
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
-    let (opened, _installed) = opened(&fixture, &script);
-    let error = opened.expect_err("a tree that reads from outside itself");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Refused,
+        "a tree that reads from outside itself: {opened:?}"
+    );
+    let Err(error) = opened else { return };
+    drop(installed_toolchain);
     let said = error.to_string();
     assert!(said.contains("RM1017"), "{said}");
     assert!(said.contains("outside"), "{said}");
@@ -208,13 +353,23 @@ fn a_path_dependency_outside_the_root_is_named_before_any_copy() {
 fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
     let fixture = Fixture::copy("fixture-simple");
     let allowed = fixture.temp().join("elsewhere");
-    std::fs::create_dir_all(allowed.join("src")).expect("the directory beside the tree");
-    std::fs::write(
+    let created = std::fs::create_dir_all(allowed.join("src"));
+    assert_eq!(
+        result_state(&created),
+        Returned,
+        "the directory beside the tree: {created:?}"
+    );
+    let manifest = std::fs::write(
         allowed.join("Cargo.toml"),
         "[package]\nname = \"outside\"\n",
-    )
-    .expect("its manifest");
-    std::fs::write(allowed.join("src/lib.rs"), "pub fn f() {}\n").expect("its source");
+    );
+    assert_eq!(
+        result_state(&manifest),
+        Returned,
+        "its manifest: {manifest:?}"
+    );
+    let source = std::fs::write(allowed.join("src/lib.rs"), "pub fn f() {}\n");
+    assert_eq!(result_state(&source), Returned, "its source: {source:?}");
     let document = metadata_document(fixture.root()).replace(
         "\"targets\":[",
         &format!(
@@ -244,14 +399,28 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
         },
         &Cancel::new(),
     );
-    let workspace = opened.expect("a directory somebody named is one the run may read");
-    let beside = workspace
+    assert_eq!(
+        result_state(&opened),
+        Returned,
+        "a directory somebody named is one the run may read: {opened:?}"
+    );
+    let Ok(workspace) = opened else { return };
+    let snapshot_parent = workspace
         .snapshot_root()
         .parent()
-        .expect("the snapshot directory")
-        .join("elsewhere");
+        .map(std::path::Path::to_path_buf);
+    assert_eq!(
+        option_state(snapshot_parent.as_ref()),
+        Present,
+        "the snapshot directory"
+    );
+    let Some(snapshot_parent) = snapshot_parent else {
+        return;
+    };
+    let beside = snapshot_parent.join("elsewhere");
+    let beside_metadata = std::fs::metadata(&beside);
     assert!(
-        beside.is_dir(),
+        matches!(beside_metadata, Ok(metadata) if metadata.is_dir()),
         "and one the run copies beside the tree, so the same relative path resolves in the \
          copy: {}",
         beside.display()
@@ -287,11 +456,21 @@ fn preparing_refuses_a_tree_that_does_not_compile_before_anything_is_instrumente
                 ))
                 .failing(101, ""),
         );
-    let (opened, _installed) = opened(&fixture, &script);
-    let workspace = opened.expect("the workspace opens");
-    let error = workspace
-        .prepare(&PrepareOptions::default(), &Cancel::new())
-        .expect_err("a tree that does not compile");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Returned,
+        "the workspace opens: {opened:?}"
+    );
+    let Ok(workspace) = opened else { return };
+    let error = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "a tree that does not compile: {error:?}"
+    );
+    let Err(error) = error else { return };
+    drop(installed_toolchain);
     assert_eq!(error.code().code, "RM5001", "{error}");
     assert!(
         error.to_string().contains("expected one of"),
@@ -311,11 +490,21 @@ fn a_message_stream_line_that_is_not_a_message_is_refused_by_line_number() {
                 "{\"reason\":\"build-finished\",\"success\":true}\nthis is not a message\n",
             ),
         );
-    let (opened, _installed) = opened(&fixture, &script);
-    let workspace = opened.expect("the workspace opens");
-    let error = workspace
-        .prepare(&PrepareOptions::default(), &Cancel::new())
-        .expect_err("a stream that is not messages");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Returned,
+        "the workspace opens: {opened:?}"
+    );
+    let Ok(workspace) = opened else { return };
+    let error = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "a stream that is not messages: {error:?}"
+    );
+    let Err(error) = error else { return };
+    drop(installed_toolchain);
     assert_eq!(error.code().code, "RM1016", "{error}");
     assert!(
         error.to_string().contains("line 2"),
@@ -331,16 +520,26 @@ fn a_check_that_takes_longer_than_the_build_timeout_says_it_timed_out() {
             Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
         )
         .answering(Invocation::new("cargo", &["check"]).taking(5_000));
-    let (opened, _installed) = opened(&fixture, &script);
-    let workspace = opened.expect("the workspace opens");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Returned,
+        "the workspace opens: {opened:?}"
+    );
+    let Ok(workspace) = opened else { return };
     let options = PrepareOptions {
         build_timeout: Some(std::time::Duration::from_millis(200)),
         ..PrepareOptions::default()
     };
     let started = std::time::Instant::now();
-    let error = workspace
-        .prepare(&options, &Cancel::new())
-        .expect_err("a build that runs long");
+    let error = workspace.prepare(&options, &Cancel::new());
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "a build that runs long: {error:?}"
+    );
+    let Err(error) = error else { return };
+    drop(installed_toolchain);
     assert!(
         started.elapsed() < std::time::Duration::from_secs(4),
         "the timeout is what ended it, not the command"
@@ -367,12 +566,13 @@ fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
             Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
         )
         .answering(Invocation::new("cargo", &["check"]).taking(30_000));
-    let (opened, _installed) = opened(&fixture, &script);
-    let workspace = opened.expect("open");
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(result_state(&opened), Returned, "open: {opened:?}");
+    let Ok(workspace) = opened else { return };
 
     let cancel = Cancel::new();
     let waiting = cancel.clone();
-    let stopping = std::thread::spawn(move || {
+    let stopping = njutest_devkit::thread::JoinedThread::launch(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
         waiting.cancel();
     });
@@ -384,9 +584,20 @@ fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
             offline: true,
             ..rust_mutants::cargo::CompileOptions::default()
         },
-    )
-    .expect_err("a cancelled compilation does not answer");
-    stopping.join().expect("the canceller");
+    );
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "a cancelled compilation does not answer: {error:?}"
+    );
+    let Err(error) = error else { return };
+    let stopped = stopping.join();
+    assert_eq!(
+        result_state(&stopped),
+        Returned,
+        "the canceller: {stopped:?}"
+    );
+    drop(installed_toolchain);
 
     assert_eq!(
         error.kind(),
@@ -395,7 +606,8 @@ fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
          a failed build condemns mutants the compiler never saw"
     );
     assert_eq!(error.kind().code().code, "RM0001");
-    workspace.close().expect("close");
+    let closed = workspace.close();
+    assert_eq!(result_state(&closed), Returned, "close: {closed:?}");
 }
 
 /// A test process binding a Unix socket under the directory it runs in pays for every byte of that directory's path.

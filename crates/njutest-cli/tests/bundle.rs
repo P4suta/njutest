@@ -6,24 +6,27 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::disallowed_methods,
     reason = "test setup failures panic, and manifest indexing makes the asserted wire shape explicit"
 )]
 
 use std::path::Path;
 
 use njutest_cli::app::diagnostics::{MANIFEST_NAME, copy, copy_tree, record, run};
-use njutest_cli::app::reports::{DOCUMENT_NAME, Store};
+use njutest_cli::app::reports::DOCUMENT_NAME;
 use njutest_cli::cli::{Diagnostics, Environment};
 
 const RUN: &str = "20260101T000000Z-aaaaaa";
 
 fn environment(root: &Path) -> Environment {
     Environment {
+        vars: Vec::new(),
         working_directory: root.to_path_buf(),
         temp_directory: root.join("tmp"),
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: root.join("cache"),
-        ..Environment::default()
+        cancel: rust_mutants::runner::Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     }
 }
 
@@ -37,7 +40,8 @@ fn invoke(root: &Path) -> (u8, String, String) {
         &environment(root),
         &mut stdout,
         &mut stderr,
-    );
+    )
+    .expect("the in-memory streams take bytes");
     (
         code,
         String::from_utf8(stdout).expect("diagnostic output is text"),
@@ -46,7 +50,12 @@ fn invoke(root: &Path) -> (u8, String, String) {
 }
 
 fn empty_run(root: &Path) {
-    std::fs::create_dir_all(Store::read(root).run(RUN)).expect("an existing run");
+    std::fs::create_dir_all(
+        root.join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+            .join("runs")
+            .join(RUN),
+    )
+    .expect("an existing run");
 }
 
 #[test]
@@ -73,7 +82,7 @@ fn a_file_that_is_not_there_is_not_copied_and_says_so() {
     std::fs::write(&there, "one line\n").expect("a file to copy");
 
     assert!(
-        copy(&there, &dir.path().join("copied.txt")),
+        copy(&there, &dir.path().join("copied.txt")).expect("copy succeeds"),
         "a file that is there is copied and says it was"
     );
     assert_eq!(
@@ -82,15 +91,16 @@ fn a_file_that_is_not_there_is_not_copied_and_says_so() {
         "with its bytes, because a bundle of empty files is a bundle of nothing"
     );
     assert!(
-        !copy(&dir.path().join("nowhere.txt"), &dir.path().join("out.txt")),
+        !copy(&dir.path().join("nowhere.txt"), &dir.path().join("out.txt"))
+            .expect("absence is not an I/O failure"),
         "and one that is not there says so rather than leaving an empty file behind for \
          a reader to draw conclusions from"
     );
 
     std::fs::create_dir_all(dir.path().join("not-a-file")).expect("a directory at the destination");
     assert!(
-        !copy(&there, &dir.path().join("not-a-file")),
-        "a failed copy is not reported as a file the bundle holds"
+        copy(&there, &dir.path().join("not-a-file")).is_err(),
+        "a failed copy is an error rather than an absent file"
     );
 }
 
@@ -103,7 +113,10 @@ fn a_directory_is_carried_whole_and_an_empty_one_is_not_carried_at_all() {
     std::fs::write(from.join("deeper/under.txt"), "under\n").expect("a file below");
 
     let into = dir.path().join("bundle/outputs");
-    assert!(copy_tree(&from, &into), "a directory that holds something");
+    assert!(
+        copy_tree(&from, &into).expect("tree copy succeeds"),
+        "a directory that holds something"
+    );
     assert_eq!(
         std::fs::read_to_string(into.join("deeper/under.txt")).expect("the file below"),
         "under\n",
@@ -115,7 +128,7 @@ fn a_directory_is_carried_whole_and_an_empty_one_is_not_carried_at_all() {
     std::fs::create_dir_all(&empty).expect("a directory with nothing in it");
     let carried = dir.path().join("bundle/empty");
     assert!(
-        !copy_tree(&empty, &carried),
+        !copy_tree(&empty, &carried).expect("an empty tree is readable"),
         "while a directory that is there and holds nothing held nothing: saying it was \
          there would put a name in the manifest with nothing behind it, and a reader \
          would go looking for what it holds"
@@ -130,7 +143,8 @@ fn a_directory_is_carried_whole_and_an_empty_one_is_not_carried_at_all() {
         !copy_tree(
             &dir.path().join("nowhere"),
             &dir.path().join("bundle/nowhere")
-        ),
+        )
+        .expect("absence is not an I/O failure"),
         "and one that is not there is not there"
     );
 }
@@ -143,7 +157,7 @@ fn a_tree_that_holds_only_directories_is_carried_as_nothing() {
 
     let carried = dir.path().join("bundle/shells");
     assert!(
-        !copy_tree(&from, &carried),
+        !copy_tree(&from, &carried).expect("the empty tree is readable"),
         "a tree of empty directories held nothing, however deep it goes: a bundle that \
          said it carried this would send a reader through three levels to find out it \
          was empty"
@@ -155,7 +169,7 @@ fn a_tree_that_holds_only_directories_is_carried_as_nothing() {
 
     std::fs::write(from.join("one/two/deep.txt"), "deep\n").expect("one file, three levels down");
     assert!(
-        copy_tree(&from, &dir.path().join("bundle/again")),
+        copy_tree(&from, &dir.path().join("bundle/again")).expect("tree copy succeeds"),
         "while one file anywhere in it makes the whole tree worth carrying, and the \
          answer has to come back up from wherever it was"
     );
@@ -179,8 +193,8 @@ fn one_unreadable_entry_refuses_the_whole_tree_instead_of_claiming_a_partial_bun
     let into = dir.path().join("bundle/outputs");
 
     assert!(
-        !copy_tree(&from, &into),
-        "a bundle must not say it holds a tree when only a prefix was copied"
+        copy_tree(&from, &into).is_err(),
+        "a partial copy is an error rather than an absent tree"
     );
     assert!(
         !into.exists(),
@@ -210,7 +224,8 @@ fn a_bundle_with_no_optional_evidence_names_every_absence_exactly() {
     );
     let manifest = std::fs::read_to_string(bundle.join(MANIFEST_NAME)).expect("manifest");
     assert!(manifest.ends_with('\n'), "{manifest:?}");
-    let value: serde_json::Value = serde_json::from_str(&manifest).expect("manifest JSON");
+    let value: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&manifest).expect("manifest JSON");
     assert_eq!(value["schema"], "njutest-diagnostics-v1");
     assert_eq!(value["run_id"], RUN);
     assert_eq!(value["held"], serde_json::json!([]));

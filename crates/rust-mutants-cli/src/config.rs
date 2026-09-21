@@ -149,7 +149,7 @@ pub struct Mutation {
     /// How long one mutant execution may take before it is confirmed with the machine to itself. `auto` is a multiple of what the target's own baseline took.
     #[serde(deserialize_with = "timeout", serialize_with = "timeout_text")]
     pub timeout: Timeout,
-    /// How many times the active mutant's guard may be taken before its process is stopped. `0` counts nothing and leaves the bound as the only thing that can end a runaway.
+    /// How many times the active mutant's guard may be taken before its process is stopped. `0` disables this execution bound.
     pub steps: u64,
     /// How long a build may take. `None` is no bound.
     #[serde(
@@ -278,7 +278,13 @@ impl Skip {
     pub fn range(&self) -> Option<(u32, u32)> {
         let text = self.lines.as_deref()?;
         let (from, to) = text.split_once('-')?;
-        Some((from.trim().parse().ok()?, to.trim().parse().ok()?))
+        let Ok(from) = from.trim().parse::<u32>() else {
+            return None;
+        };
+        let Ok(to) = to.trim().parse::<u32>() else {
+            return None;
+        };
+        Some((from, to))
     }
 
     /// The entry as the engine reads it.
@@ -300,7 +306,7 @@ impl Default for Mutation {
         Self {
             tier: Tier::Balanced,
             operators: Vec::new(),
-            timeout: Timeout::Auto,
+            timeout: DEFAULT_TIMEOUT,
             steps: rust_mutants::session::DEFAULT_MUTANT_STEPS,
             build_timeout: None,
             verify: true,
@@ -392,7 +398,7 @@ impl Default for Stryker {
 }
 
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum ConfigErrorKind {
     /// The file could not be read.
     Unreadable,
@@ -405,14 +411,6 @@ pub enum ConfigErrorKind {
 }
 
 impl ConfigErrorKind {
-    /// Every kind, in code order.
-    pub const ALL: [Self; 4] = [
-        Self::Unreadable,
-        Self::Unparsable,
-        Self::Invalid,
-        Self::UnsupportedVersion,
-    ];
-
     /// The stable code of this failure.
     #[must_use]
     pub const fn code(self) -> ErrorCode {
@@ -445,6 +443,7 @@ impl ConfigError {
 
     /// The failure mode.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub const fn kind(&self) -> ConfigErrorKind {
         self.kind
     }
@@ -611,18 +610,15 @@ impl Config {
             let Some(outcome) = expectation.outcome() else {
                 return Err(invalid(format!(
                     "the expectation for {name:?} expects {:?}, which is not an outcome; write \
-                     survived, killed, or timed_out",
+                     survived or killed",
                     expectation.outcome.as_deref().unwrap_or_default()
                 )));
             };
-            if !matches!(
-                outcome,
-                Outcome::Survived | Outcome::Killed | Outcome::Runaway
-            ) {
+            if !matches!(outcome, Outcome::Survived | Outcome::Killed) {
                 return Err(invalid(format!(
                     "the expectation for {name:?} expects {}, which is not an outcome a run \
-                     confirms; write survived, killed, or runaway. A run this machine stopped \
-                     waiting for establishes nothing, so nothing can expect it",
+                     confirms; write survived or killed. A run that reached an execution bound \
+                     establishes nothing, so nothing can expect it",
                     outcome.name()
                 )));
             }
@@ -862,7 +858,7 @@ version = 1
 # [[mutation.expect]]
 # id = \"\"                        # identity, or a prefix that names exactly one
 # reason = \"\"                    # required
-# outcome = \"survived\"           # survived | killed | timed_out
+# outcome = \"survived\"           # survived | killed
 
 # The same claim, addressed by where the mutation is rather than by an
 # identity the next edit to the file will change. Never both.
@@ -873,7 +869,7 @@ version = 1
 # original = \"<=\"                # the bytes the edit replaces
 # line = 42                       # a hint, when the rest names more than one
 # reason = \"\"                    # required
-# outcome = \"survived\"           # survived | killed | timed_out
+# outcome = \"survived\"           # survived | killed
 
 # A place a reviewer decided is not worth measuring. The same decision a
 # rust-mutants: skip comment makes, written where the code cannot be edited.

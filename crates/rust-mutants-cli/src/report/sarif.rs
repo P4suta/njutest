@@ -152,7 +152,7 @@ pub fn log(document: &RunDocument) -> Log {
         let Some(mutant) = finding.mutant.as_deref().and_then(|id| named.get(id)) else {
             results.push(Reported {
                 rule_id: None,
-                level: level_of(&finding.kind).to_owned(),
+                level: level_of(finding.kind.as_str()).to_owned(),
                 message: Message {
                     text: format!("{}: {}", finding.kind, finding.detail),
                 },
@@ -222,7 +222,7 @@ fn reported(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Reported {
                 region: Region {
                     start_line: mutant.line,
                     start_column: mutant.column,
-                    end_column: width_of(mutant).map(|width| mutant.column.saturating_add(width)),
+                    end_column: width_of(mutant).and_then(|width| mutant.column.checked_add(width)),
                     snippet: (!mutant.original.is_empty()).then(|| Message {
                         text: mutant.original.clone(),
                     }),
@@ -246,7 +246,11 @@ fn level_of(kind: &str) -> &'static str {
 
 /// How wide the edit is, when it does not cross a line.
 fn width_of(mutant: &RunMutantDocument) -> Option<u32> {
-    (!mutant.original.contains('\n'))
-        .then(|| u32::try_from(mutant.original.len()).ok())
-        .flatten()
+    if mutant.original.contains('\n') {
+        return None;
+    }
+    match u32::try_from(mutant.original.len()) {
+        Ok(width) => Some(width),
+        Err(_) => None,
+    }
 }

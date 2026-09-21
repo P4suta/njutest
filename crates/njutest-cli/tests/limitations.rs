@@ -3,6 +3,11 @@
 
 //! Every limitation that can reach a report says what a reader can do about it.
 
+#![expect(
+    clippy::expect_used,
+    clippy::disallowed_methods,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -106,7 +111,10 @@ fn the_names_a_run_states_are_the_names_the_register_holds() {
     let mut loose = Vec::new();
     let mut stack = vec![root];
     while let Some(directory) = stack.pop() {
-        for entry in std::fs::read_dir(&directory).expect("the source").flatten() {
+        for entry in std::fs::read_dir(&directory)
+            .expect("the source")
+            .map(|entry| entry.expect("every source entry is readable"))
+        {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
@@ -156,7 +164,7 @@ fn aliases(root: &Path) -> BTreeMap<String, Vec<String>> {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries.map(|entry| entry.expect("every source entry is readable")) {
             let path = entry.path();
             if path.is_dir() {
                 pending.push(path);
@@ -196,7 +204,7 @@ fn every_limitation_either_product_can_state_is_one_a_test_puts_to_something() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries.map(|entry| entry.expect("every suite entry is readable")) {
             if entry.path().extension().is_some_and(|one| one == "rs") {
                 suites.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
                 suites.push('\n');

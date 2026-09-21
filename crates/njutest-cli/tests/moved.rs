@@ -26,12 +26,11 @@ fn told(verdict: Verdict, spots: Vec<Spot>) -> Told {
     Told {
         headline: Headline {
             verdict,
-            project: "fixture".to_owned(),
             cataloged: 4,
             killed: 3,
             survived: 1,
             unreached: 0,
-            runaway: 0,
+            step_limit_reached: 0,
             waited: 0,
             duration_ms: 1000,
             kept: String::new(),

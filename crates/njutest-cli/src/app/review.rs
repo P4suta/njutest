@@ -18,6 +18,7 @@ use crate::presentation::review::{AboutAGap, AboutTheUnsettled, Reason, Reviewed
 struct AtTheKeyboard<'a> {
     input: std::io::StdinLock<'static>,
     out: &'a mut dyn Write,
+    failure: Option<std::io::Error>,
 }
 
 impl AtTheKeyboard<'_> {
@@ -25,15 +26,38 @@ impl AtTheKeyboard<'_> {
     fn line(&mut self) -> Option<String> {
         let mut said = String::new();
         match self.input.read_line(&mut said) {
-            Ok(0) | Err(_) => None,
+            Ok(0) => None,
             Ok(_) => Some(said),
+            Err(error) => {
+                self.failure = Some(error);
+                None
+            }
+        }
+    }
+
+    /// Records the first stream failure and tells the question loop to stop.
+    fn wrote(&mut self, result: std::io::Result<()>) -> bool {
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                if self.failure.is_none() {
+                    self.failure = Some(error);
+                }
+                false
+            }
         }
     }
 
     /// Writes the prompt and waits, so a reader is not left with a cursor and no question.
     fn asking(&mut self, keys: &str) -> Option<String> {
-        let _written = write!(self.out, "  {keys} > ");
-        let _flushed = self.out.flush();
+        let written = write!(self.out, "  {keys} > ");
+        if !self.wrote(written) {
+            return None;
+        }
+        let flushed = self.out.flush();
+        if !self.wrote(flushed) {
+            return None;
+        }
         self.line()
     }
 }
@@ -45,7 +69,10 @@ impl crate::presentation::review::Answers for AtTheKeyboard<'_> {
         _blindness: crate::presentation::Blindness,
         drawn: &str,
     ) -> AboutAGap {
-        let _written = writeln!(self.out, "\n{drawn}");
+        let written = writeln!(self.out, "\n{drawn}");
+        if !self.wrote(written) {
+            return AboutAGap::Stop;
+        }
         loop {
             let Some(said) = self.asking("[a]ccept  [l]eave  [s]top") else {
                 return AboutAGap::Stop;
@@ -58,11 +85,14 @@ impl crate::presentation::review::Answers for AtTheKeyboard<'_> {
                     if let Some(reason) = Reason::of(&why) {
                         return AboutAGap::Accept(reason);
                     }
-                    let _written = writeln!(
+                    let written = writeln!(
                         self.out,
                         "  an acceptance with no reason is a mutation nobody looked at, \
                          recorded as one somebody did"
                     );
+                    if !self.wrote(written) {
+                        return AboutAGap::Stop;
+                    }
                 }
                 "l" | "leave" | "" => return AboutAGap::Leave,
                 "s" | "stop" | "q" | "quit" => return AboutAGap::Stop,
@@ -77,10 +107,13 @@ impl crate::presentation::review::Answers for AtTheKeyboard<'_> {
         _unsettled: crate::presentation::Unsettled,
         drawn: &str,
     ) -> AboutTheUnsettled {
-        let _written = writeln!(
+        let written = writeln!(
             self.out,
             "\n{drawn}\n   the run established nothing here, so there is nothing to accept"
         );
+        if !self.wrote(written) {
+            return AboutTheUnsettled::Stop;
+        }
         loop {
             let Some(said) = self.asking("[l]eave  [s]top") else {
                 return AboutTheUnsettled::Stop;
@@ -89,11 +122,14 @@ impl crate::presentation::review::Answers for AtTheKeyboard<'_> {
                 "l" | "leave" | "" => return AboutTheUnsettled::Leave,
                 "s" | "stop" | "q" | "quit" => return AboutTheUnsettled::Stop,
                 "a" | "accept" => {
-                    let _written = writeln!(
+                    let written = writeln!(
                         self.out,
                         "  the run established nothing here, so there is nothing to \
                          accept: find out why before deciding it may stand"
                     );
+                    if !self.wrote(written) {
+                        return AboutTheUnsettled::Stop;
+                    }
                 }
                 _ => {}
             }
@@ -102,41 +138,60 @@ impl crate::presentation::review::Answers for AtTheKeyboard<'_> {
 }
 
 /// Shows one run's gaps one at a time and records what a reviewer decided.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = &environment.working_directory;
     let run = match runs::resolve(root, arguments.run.as_deref()) {
         Ok(run) => run,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    let report = match runs::report(root, &run) {
+    let report = match runs::report(&run) {
         Ok(report) => report,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
-            return EXIT_ERROR;
+            super::diagnose(stderr, &error.to_string())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    let store = crate::app::reports::Store::read(root);
-    let kept = store.said(&store.run(&run).join(crate::app::reports::DOCUMENT_NAME));
-    let sources = crate::presentation::Sources::read(root, &report);
-    let told = crate::presentation::Told::of(&report, &sources, &kept);
-
-    let decided = {
-        let mut asking = AtTheKeyboard {
-            input: std::io::stdin().lock(),
-            out: stdout,
-        };
-        crate::presentation::review::review(&told, environment.terminal, &mut asking)
+    let kept = run.said_document().to_owned();
+    let sources = match crate::presentation::Sources::read(root, &report) {
+        Ok(sources) => sources,
+        Err(error) => {
+            super::complain(stderr, &error, crate::error::REPORT_UNSOUND)?;
+            return Ok(EXIT_ERROR);
+        }
     };
-    said(stdout, &decided);
-    EXIT_ASSURED
+    let told = match crate::presentation::Told::of(&report, &sources, &kept) {
+        Ok(told) => told,
+        Err(error) => {
+            super::complain(stderr, &error, crate::error::REPORT_UNSOUND)?;
+            return Ok(EXIT_ERROR);
+        }
+    };
+
+    let mut asking = AtTheKeyboard {
+        input: std::io::stdin().lock(),
+        out: stdout,
+        failure: None,
+    };
+    let decided = crate::presentation::review::review(&told, environment.terminal, &mut asking);
+    let interaction_failure = asking.failure.take();
+    drop(asking);
+    if let Some(error) = interaction_failure {
+        super::diagnose(stderr, &error.to_string())?;
+        return Ok(EXIT_ERROR);
+    }
+    said(stdout, &decided)?;
+    Ok(EXIT_ASSURED)
 }
 
 /// What the review came to, and the commands that record it.
@@ -145,16 +200,17 @@ pub fn run(
 /// deciding and a file is a change to their project: `njutest accept` is the
 /// command that makes it, it is already the one every other surface prints,
 /// and a reviewer who wants them all runs the lines they were given.
-fn said(out: &mut dyn Write, reviewed: &Reviewed) {
+fn said(out: &mut dyn Write, reviewed: &Reviewed) -> std::io::Result<()> {
     if reviewed.accepted.is_empty() {
-        let _written = writeln!(out, "\nnothing accepted; {} left", reviewed.left);
+        writeln!(out, "\nnothing accepted; {} left", reviewed.left)?;
     } else {
-        let _written = writeln!(out, "\nrun these to record what you decided:");
+        writeln!(out, "\nrun these to record what you decided:")?;
         for (named, reason) in &reviewed.accepted {
-            let _written = writeln!(out, "  njutest accept {named} --reason {:?}", reason.said());
+            writeln!(out, "  njutest accept {named} --reason {:?}", reason.said())?;
         }
     }
     if let Some(stopped) = &reviewed.stopped_at {
-        let _written = writeln!(out, "stopped at {stopped}");
+        writeln!(out, "stopped at {stopped}")?;
     }
+    Ok(())
 }

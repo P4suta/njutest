@@ -7,6 +7,7 @@
     clippy::expect_used,
     clippy::too_many_arguments,
     clippy::too_many_lines,
+    clippy::disallowed_methods,
     reason = "test fixtures report setup failures by panicking, and long scenario tables keep one protocol assertion together"
 )]
 
@@ -80,8 +81,8 @@ fn asked(environment: &Environment, extra: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
@@ -180,7 +181,7 @@ fn located(root: &Path, installed: &Installed) -> Toolchain {
 }
 
 fn packages(root: &Path) -> Vec<rust_mutants::cargo::Package> {
-    serde_json::from_str::<Metadata>(&metadata(root))
+    njutest_devkit::strictjson::decode_str::<Metadata>(&metadata(root))
         .expect("the test metadata")
         .packages
 }
@@ -357,7 +358,10 @@ fn a_plan_builds_in_its_dedicated_scratch_target_and_raii_removes_it() {
         ],
     )
     .printing(&successful_build(None))
-    .writing(&marker.to_string_lossy(), "{{target_dir}}");
+    .writing(
+        marker.to_str().expect("test protocol paths are UTF-8"),
+        "{{target_dir}}",
+    );
     let installed = install(&through_metadata(repo.root(), build));
     let environment = fake_environment(&repo, &installed);
 
@@ -409,7 +413,9 @@ fn target_enumeration_failure_is_an_error_and_not_a_panic() {
             "--target-dir",
         ],
     )
-    .printing(&successful_build(Some(&missing.to_string_lossy())));
+    .printing(&successful_build(Some(
+        missing.to_str().expect("test protocol paths are UTF-8"),
+    )));
     let installed = install(&through_metadata(repo.root(), build));
 
     let said = asked(&fake_environment(&repo, &installed), &[]);
@@ -547,7 +553,10 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
             "--target-dir",
         ],
     )
-    .when("CARGO_TARGET_DIR", &scratch.to_string_lossy())
+    .when(
+        "CARGO_TARGET_DIR",
+        scratch.to_str().expect("test protocol paths are UTF-8"),
+    )
     .when_set(&["CARGO_ENCODED_RUSTFLAGS", "LLVM_PROFILE_FILE"])
     .printing(&successful_build(None));
     let installed = install(&through_metadata(repo.root(), invocation));
@@ -586,18 +595,19 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
     .expect("the exact invocation matched");
 
     assert_eq!(installed.answered(), [0, 1, 2, 3]);
-    let exec = trace
-        .events()
-        .into_iter()
-        .find_map(|event| match event.payload {
-            Payload::Exec { exec } => Some(exec),
-            _ => None,
-        })
+    let events = trace.events();
+    let exec = events
+        .iter()
+        .find_map(|event| njutest_cli::testkit::payload::of(&event.payload).exec())
         .expect("the build execution is recorded");
     assert_eq!(
         exec.argv,
         [
-            installed.cargo().to_string_lossy().into_owned(),
+            installed
+                .cargo()
+                .to_str()
+                .expect("test protocol paths are UTF-8")
+                .to_owned(),
             "test".to_owned(),
             "--no-run".to_owned(),
             "--message-format=json".to_owned(),
@@ -614,12 +624,15 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
             "--features".to_owned(),
             "one,two".to_owned(),
             "--target-dir".to_owned(),
-            target.to_string_lossy().into_owned(),
+            target
+                .to_str()
+                .expect("test protocol paths are UTF-8")
+                .to_owned(),
         ]
     );
     assert_eq!(
         exec.dir.as_deref(),
-        Some(repo.root().to_string_lossy().as_ref())
+        Some(repo.root().to_str().expect("test protocol paths are UTF-8"))
     );
     assert_eq!(exec.timeout_ms, Some(4321));
     let value = |name: &str| {
@@ -627,7 +640,12 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
             .env
             .iter()
             .find(|(key, _)| key == name)
-            .map(|(_, value)| value.to_string_lossy().into_owned())
+            .map(|(_, value)| {
+                value
+                    .to_str()
+                    .expect("test protocol paths are UTF-8")
+                    .to_owned()
+            })
     };
     assert_eq!(
         value("CARGO_TARGET_DIR"),
@@ -669,7 +687,10 @@ fn a_native_build_preserves_plain_flags_and_uses_the_workspace_default_selection
             "--target-dir",
         ],
     )
-    .when("CARGO_TARGET_DIR", &scratch.to_string_lossy())
+    .when(
+        "CARGO_TARGET_DIR",
+        scratch.to_str().expect("test protocol paths are UTF-8"),
+    )
     .when("RUSTFLAGS", "--cfg native")
     .printing(&successful_build(None));
     let installed = install(&through_metadata(repo.root(), invocation));
@@ -737,7 +758,7 @@ fn a_build_timeout_is_a_not_run_error_and_is_recorded() {
         trace.events().iter().any(|event| matches!(
             &event.payload,
             Payload::Exec { exec }
-                if exec.stopped == rust_mutants::execute::Stopped::Waited
+                if exec.stopped == rust_mutants::execute::Stopped::TimedOut
         )),
         "that this machine stopped waiting is durable trace evidence, and the record says \
          which of the ways a process can end it was rather than a status beside a flag"
@@ -970,9 +991,16 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
             "--target-dir",
         ],
     )
-    .writing(&deps.join("demo.d").to_string_lossy(), &dep_line)
     .writing(
-        &deps.join("demo-bin.d").to_string_lossy(),
+        deps.join("demo.d")
+            .to_str()
+            .expect("test protocol paths are UTF-8"),
+        &dep_line,
+    )
+    .writing(
+        deps.join("demo-bin.d")
+            .to_str()
+            .expect("test protocol paths are UTF-8"),
         &format!(
             "{}: {}\n",
             binary.display(),
@@ -980,7 +1008,9 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
         ),
     )
     .writing(
-        &deps.join("demo_proc.d").to_string_lossy(),
+        deps.join("demo_proc.d")
+            .to_str()
+            .expect("test protocol paths are UTF-8"),
         &format!(
             "{}: {}\n",
             proc_macro.display(),
@@ -988,7 +1018,9 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
         ),
     )
     .writing(
-        &deps.join("foreign.d").to_string_lossy(),
+        deps.join("foreign.d")
+            .to_str()
+            .expect("test protocol paths are UTF-8"),
         &format!(
             "{}: {}\n",
             foreign.display(),
@@ -1096,7 +1128,9 @@ fn each_unit_gets_cargos_environment_over_the_parent_environment() {
         ],
     )
     .writing(
-        &deps.join("demo.d").to_string_lossy(),
+        deps.join("demo.d")
+            .to_str()
+            .expect("test protocol paths are UTF-8"),
         &format!(
             "{}: {}\n",
             library.display(),
@@ -1130,7 +1164,12 @@ fn each_unit_gets_cargos_environment_over_the_parent_environment() {
         unit.env
             .iter()
             .filter(|(key, _)| key == name)
-            .map(|(_, value)| value.to_string_lossy().into_owned())
+            .map(|(_, value)| {
+                value
+                    .to_str()
+                    .expect("test protocol paths are UTF-8")
+                    .to_owned()
+            })
             .collect::<Vec<_>>()
     };
     assert_eq!(values("DUPLICATE"), ["child"]);

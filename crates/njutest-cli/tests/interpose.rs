@@ -78,11 +78,22 @@ impl Upstream {
                 if told.load(std::sync::atomic::Ordering::Relaxed) {
                     return;
                 }
-                let which = counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Ok(which) = counted.fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |value| value.checked_add(1),
+                ) else {
+                    return;
+                };
                 let mut heard = [0_u8; 1024];
-                let _read = stream.read(&mut heard);
-                let _written = stream.write_all(answer.to(which).as_bytes());
-                let _flushed = stream.flush();
+                let read = stream.read(&mut heard).expect("the request is readable");
+                if read == 0 {
+                    return;
+                }
+                stream
+                    .write_all(answer.to(which).as_bytes())
+                    .expect("the answer is writable");
+                stream.flush().expect("the answer is flushed");
             }
         });
         Self {
@@ -102,17 +113,42 @@ impl Upstream {
     fn served(&self) -> usize {
         self.served.load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    fn join(&mut self) -> Result<(), UpstreamFailure> {
+        self.stopping
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        TcpStream::connect(self.address)
+            .map_err(|source| UpstreamFailure::CannotWake { source })?;
+        let Some(serving) = self.serving.take() else {
+            return Ok(());
+        };
+        match serving.join() {
+            Ok(()) => Ok(()),
+            Err(panic) => {
+                drop(panic);
+                Err(UpstreamFailure::Panicked)
+            }
+        }
+    }
 }
 
 impl Drop for Upstream {
     fn drop(&mut self) {
-        self.stopping
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let _woken = TcpStream::connect(self.address);
-        if let Some(serving) = self.serving.take() {
-            let _joined = serving.join();
+        if self.join().is_err() {
+            std::process::abort();
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum UpstreamFailure {
+    #[error("the upstream listener could not be woken: {source}")]
+    CannotWake {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("the upstream listener panicked")]
+    Panicked,
 }
 
 /// An upstream answering `200 OK` with `body`, until the test is done with it.
@@ -127,7 +163,9 @@ fn ask(address: std::net::SocketAddr, path: &str) -> String {
     stream.write_all(request.as_bytes()).expect("the request");
     stream.flush().expect("the request");
     let mut answer = String::new();
-    let _read = stream.read_to_string(&mut answer);
+    stream
+        .read_to_string(&mut answer)
+        .expect("the complete answer is readable");
     answer
 }
 
@@ -211,8 +249,10 @@ fn every_exchange_on_one_seam_is_numbered_in_the_order_it_happened() {
     })
     .expect("an interposer");
 
-    let _first = ask(interposer.address(), "/one");
-    let _second = ask(interposer.address(), "/two");
+    let first = ask(interposer.address(), "/one");
+    drop(first);
+    let second = ask(interposer.address(), "/two");
+    drop(second);
     let recorded = interposer.stop();
 
     let asked: Vec<String> = recorded.iter().map(|one| one.spoken.asked().0).collect();
@@ -260,9 +300,11 @@ fn an_exchange_is_stamped_with_whoever_the_run_says_is_running() {
     .expect("an interposer");
 
     interposer.during(Some("pkg/test/it".to_owned()));
-    let _first = ask(interposer.address(), "/one");
+    let first = ask(interposer.address(), "/one");
+    drop(first);
     interposer.during(None);
-    let _second = ask(interposer.address(), "/two");
+    let second = ask(interposer.address(), "/two");
+    drop(second);
 
     let recorded = interposer.stop();
     assert_eq!(
@@ -317,7 +359,8 @@ fn the_exchange_a_fault_names_is_answered_the_way_the_fault_says() {
          so the caller has to see 500 or the question was never put: {answer:?}"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -339,7 +382,8 @@ fn an_exchange_the_fault_does_not_name_goes_past_untouched() {
         "and the one it names is the one that changes: {second:?}"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -356,14 +400,15 @@ fn a_dropped_connection_gives_the_caller_nothing_at_all() {
          from the one named: {answer:?}"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 /// A lease as a provider answered it.
 fn lease(capability: &str, named: &[(&str, &str)]) -> njutest_cli::resource::Lease {
     njutest_cli::resource::Lease {
         capability: capability.to_owned(),
-        instance: "one".to_owned(),
+        instance: njutest_cli::provider::InstanceId::checked("one").expect("instance id"),
         environment: named
             .iter()
             .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
@@ -426,7 +471,12 @@ fn ask_url(url: &str) -> String {
     let path = url.split_once("://").map_or("/", |(_, rest)| {
         rest.find('/').map_or("/", |at| rest.split_at(at).1)
     });
-    ask(authority.parse().expect("an address"), path)
+    ask(
+        authority
+            .parse::<std::net::SocketAddr>()
+            .expect("an address"),
+        path,
+    )
 }
 
 #[test]
@@ -475,7 +525,8 @@ fn only_the_seams_the_configuration_names_are_watched() {
          rewrote it would send the tests somewhere nobody chose"
     );
 
-    let _answer = ask_url(told.get("BASE_URL").map_or("", String::as_str));
+    let answer = ask_url(told.get("BASE_URL").map_or("", String::as_str));
+    drop(answer);
     let recorded = seams.recorded();
     assert_eq!(
         recorded.len(),
@@ -491,7 +542,8 @@ fn a_fault_put_after_the_first_names_an_exchange_a_second_run_of_the_suite_reach
     let upstream_at = up.address();
     let interposer = injecting(upstream_at, None);
 
-    let _first = ask(interposer.address(), "/orders");
+    let first = ask(interposer.address(), "/orders");
+    drop(first);
     let taken = interposer.taken();
     assert_eq!(
         taken.len(),
@@ -516,7 +568,8 @@ fn a_fault_put_after_the_first_names_an_exchange_a_second_run_of_the_suite_reach
         "and a run told to put nothing puts nothing: {untouched:?}"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 /// A seam named `capability`, watching `upstream_at`, with nothing put yet.
@@ -527,6 +580,7 @@ fn seam(
     njutest_cli::wire::dialled::Watching {
         capability: capability.to_owned(),
         environment: Vec::new(),
+        held_up: std::time::Duration::ZERO,
         interposer: Interposer::start(&Interposing {
             capability: capability.to_owned(),
             upstream: upstream_at,
@@ -552,7 +606,8 @@ fn every_question_a_seam_licensed_is_put_to_the_suite_one_at_a_time() {
     );
     let seen = std::cell::RefCell::new(Vec::new());
     let went_past = seams.observing(|| {
-        let _recorded = ask(seams.watching[0].interposer.address(), "/orders");
+        let recorded = ask(seams.watching[0].interposer.address(), "/orders");
+        drop(recorded);
     });
     let done = njutest_cli::assure::wire::asking(
         &seams,
@@ -569,6 +624,10 @@ fn every_question_a_seam_licensed_is_put_to_the_suite_one_at_a_time() {
         },
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     );
+    let done = match done {
+        Ok(done) => done,
+        Err(error) => panic!("the licensed seam catalogue should be derivable: {error}"),
+    };
 
     assert!(
         done.executed,
@@ -596,7 +655,8 @@ fn every_question_a_seam_licensed_is_put_to_the_suite_one_at_a_time() {
     );
 
     for one in seams.watching {
-        let _stopped = one.interposer.stop();
+        let stopped = one.interposer.stop();
+        drop(stopped);
     }
 }
 
@@ -607,7 +667,8 @@ fn cutting_an_answer_with_no_body_short_hands_the_caller_what_it_would_have_had(
     let untouched = {
         let interposer = injecting(upstream_at, None);
         let answer = ask(interposer.address(), "/orders/1");
-        let _recorded = interposer.stop();
+        let recorded = interposer.stop();
+        drop(recorded);
         answer
     };
     let interposer = injecting(upstream_at, Some(fault("truncate-response", 0)));
@@ -620,7 +681,8 @@ fn cutting_an_answer_with_no_body_short_hands_the_caller_what_it_would_have_had(
          that removed this run while the two differed would report a gap as assured"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -630,7 +692,8 @@ fn a_suite_that_never_reached_the_exchange_a_fault_names_is_not_a_suite_that_mis
     let interposer = injecting(upstream_at, None);
 
     interposer.putting(Some(fault("status-server-error", 3)));
-    let _first = ask(interposer.address(), "/orders");
+    let first = ask(interposer.address(), "/orders");
+    drop(first);
     assert!(
         !interposer.was_put(),
         "one exchange came past and the fault names the fourth, so the question was \
@@ -642,7 +705,8 @@ fn a_suite_that_never_reached_the_exchange_a_fault_names_is_not_a_suite_that_mis
     let answer = ask(interposer.address(), "/orders");
     assert!(answer.contains("500") && interposer.was_put());
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -658,7 +722,8 @@ fn a_question_the_seam_never_reached_is_reported_as_a_hole_and_never_as_a_surviv
         njutest_cli::trace::Recorder::disabled(),
     );
     let went_past = seams.observing(|| {
-        let _recorded = ask(seams.watching[0].interposer.address(), "/orders");
+        let recorded = ask(seams.watching[0].interposer.address(), "/orders");
+        drop(recorded);
     });
     let done = njutest_cli::assure::wire::asking(
         &seams,
@@ -671,6 +736,10 @@ fn a_question_the_seam_never_reached_is_reported_as_a_hole_and_never_as_a_surviv
         },
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     );
+    let done = match done {
+        Ok(done) => done,
+        Err(error) => panic!("the unreached seam catalogue should be derivable: {error}"),
+    };
 
     assert!(
         done.findings
@@ -683,7 +752,8 @@ fn a_question_the_seam_never_reached_is_reported_as_a_hole_and_never_as_a_surviv
     );
 
     for one in seams.watching {
-        let _stopped = one.interposer.stop();
+        let stopped = one.interposer.stop();
+        drop(stopped);
     }
 }
 
@@ -694,7 +764,8 @@ fn a_request_the_run_replays_reaches_the_dependency_twice_and_the_caller_once() 
     let interposer = injecting(upstream_at, Some(fault("replay-request", 0)));
 
     let answer = ask(interposer.address(), "/orders");
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 
     assert!(
         answer.contains(" 200"),
@@ -727,7 +798,8 @@ fn the_exchange_answered_with_a_stale_one_gets_what_the_one_before_it_got() {
     );
     assert!(interposer.was_put());
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -747,7 +819,8 @@ fn the_first_exchange_on_a_seam_has_nothing_stale_to_be_answered_with() {
          nothing about, never a survivor because the tests then passed"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -757,7 +830,8 @@ fn restating_the_status_an_upstream_already_gave_hands_the_caller_what_it_would_
     let untouched = {
         let interposer = injecting(upstream_at, None);
         let answer = ask(interposer.address(), "/orders");
-        let _recorded = interposer.stop();
+        let recorded = interposer.stop();
+        drop(recorded);
         answer
     };
     let interposer = injecting(upstream_at, Some(fault("status-server-error", 0)));
@@ -770,7 +844,8 @@ fn restating_the_status_an_upstream_already_gave_hands_the_caller_what_it_would_
          differed would report a gap as assured"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -780,7 +855,8 @@ fn restating_a_status_worded_differently_hands_the_caller_something_else() {
     let untouched = {
         let interposer = injecting(upstream_at, None);
         let answer = ask(interposer.address(), "/orders");
-        let _recorded = interposer.stop();
+        let recorded = interposer.stop();
+        drop(recorded);
         answer
     };
     let interposer = injecting(upstream_at, Some(fault("status-server-error", 0)));
@@ -792,7 +868,8 @@ fn restating_a_status_worded_differently_hands_the_caller_something_else() {
          about the line rather than about the code"
     );
 
-    let _recorded = interposer.stop();
+    let recorded = interposer.stop();
+    drop(recorded);
 }
 
 #[test]
@@ -806,9 +883,11 @@ fn an_exchange_says_which_target_caused_it_where_the_run_can_tell() {
 
     let went_past = seams.observing(|| {
         seams.during(Some("pkg/test/one"));
-        let _first = ask(at, "/orders");
+        let first = ask(at, "/orders");
+        drop(first);
         seams.during(Some("pkg/test/two"));
-        let _second = ask(at, "/rows");
+        let second = ask(at, "/rows");
+        drop(second);
         seams.during(None);
     });
 
@@ -838,14 +917,17 @@ fn a_catalogue_holds_one_run_of_the_suite_and_never_the_runs_around_it() {
     };
     let at = seams.watching[0].interposer.address();
     for _verifying in 0..2 {
-        let _before = ask(at, "/orders");
+        let before = ask(at, "/orders");
+        drop(before);
     }
 
     let went_past = seams.observing(|| {
-        let _measured = ask(at, "/orders");
+        let measured = ask(at, "/orders");
+        drop(measured);
     });
     for _mutation in 0..4 {
-        let _after = ask(at, "/orders");
+        let after = ask(at, "/orders");
+        drop(after);
     }
 
     assert_eq!(
@@ -865,7 +947,8 @@ fn a_catalogue_holds_one_run_of_the_suite_and_never_the_runs_around_it() {
     );
 
     for one in seams.watching {
-        let _stopped = one.interposer.stop();
+        let stopped = one.interposer.stop();
+        drop(stopped);
     }
 }
 
@@ -883,15 +966,22 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
     );
     let runs = std::cell::Cell::new(0_u32);
     let went_past = seams.observing(|| {
-        let _baseline = ask(seams.watching[0].interposer.address(), "/orders");
+        let baseline = ask(seams.watching[0].interposer.address(), "/orders");
+        drop(baseline);
     });
     let done = njutest_cli::assure::wire::asking(
         &seams,
         &went_past,
         || {
-            runs.set(runs.get().saturating_add(1));
-            let _api = ask(seams.watching[0].interposer.address(), "/orders");
-            let _db = ask(seams.watching[1].interposer.address(), "/rows");
+            let next = match runs.get().checked_add(1) {
+                Some(next) => next,
+                None => panic!("the six-run fixture count must remain representable"),
+            };
+            runs.set(next);
+            let api = ask(seams.watching[0].interposer.address(), "/orders");
+            drop(api);
+            let db = ask(seams.watching[1].interposer.address(), "/rows");
+            drop(db);
             vec![njutest_cli::wire::settle::Answered {
                 target: "pkg/test/it".to_owned(),
                 passed: true,
@@ -899,6 +989,10 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
         },
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     );
+    let done = match done {
+        Ok(done) => done,
+        Err(error) => panic!("the multi-seam catalogue should be derivable: {error}"),
+    };
 
     assert_eq!(
         runs.get(),
@@ -920,6 +1014,7 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
     );
 
     for one in seams.watching {
-        let _stopped = one.interposer.stop();
+        let stopped = one.interposer.stop();
+        drop(stopped);
     }
 }

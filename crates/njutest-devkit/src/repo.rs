@@ -116,10 +116,10 @@ pub fn commit_tree(root: &Path) {
             .args(args)
             .current_dir(root)
             .env_clear()
-            .envs(
-                std::env::vars_os()
-                    .filter(|(key, _)| matches!(key.to_string_lossy().as_ref(), "PATH" | "HOME")),
-            )
+            .envs(std::env::vars_os().filter(|(key, _)| {
+                crate::paths::same_name(key, std::ffi::OsStr::new("PATH"))
+                    || crate::paths::same_name(key, std::ffi::OsStr::new("HOME"))
+            }))
             .env("GIT_AUTHOR_NAME", "fixture")
             .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
             .env("GIT_AUTHOR_DATE", "2026-09-05T00:00:00Z")
@@ -128,14 +128,21 @@ pub fn commit_tree(root: &Path) {
             .env("GIT_COMMITTER_DATE", "2026-09-05T00:00:00Z")
             .output()
             .expect("git runs");
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        let stderr = String::from_utf8(output.stderr).expect("git diagnostics are UTF-8");
+        assert!(output.status.success(), "git {args:?}: {stderr}");
+        String::from_utf8(output.stdout)
+            .expect("git plumbing output is UTF-8")
+            .trim()
+            .to_owned()
     };
-    if !root.join(".git").is_dir() {
+    let git = root.join(".git");
+    let exists = match std::fs::metadata(&git) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+    .expect("reading the repository metadata");
+    if !exists {
         run(&["init", "--initial-branch=main"]);
     }
     run(&["add", "-A"]);

@@ -12,6 +12,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[package.metadata.njutest]
+surface = "test-support"
+
 [dependencies]
 hex = { workspace = true }
 serde = { workspace = true }

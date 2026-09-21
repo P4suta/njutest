@@ -63,7 +63,9 @@ fn ran(seq: u64, argv: &[&str], duration_ms: u64) -> Event {
                 dir: None,
                 env_names: Vec::new(),
                 timeout_ms: None,
-                stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+                stopped: rust_mutants::execute::Stopped::Exited {
+                    exit: rust_mutants::runner::ProcessExit::Code(0),
+                },
                 duration_ms,
                 output_bytes: 0,
                 output_sha256: None,
@@ -267,16 +269,19 @@ fn a_difference_names_every_side_and_says_which_way_it_went() {
          a phase that stopped happening is the answer as often as one that got slower"
     );
     assert_eq!(
-        (delta(1, 4), delta(3, 0), delta(2, 2)),
-        (3, -3, 0),
+        (
+            delta(1, 4).to_string(),
+            delta(3, 0).to_string(),
+            delta(2, 2).to_string(),
+        ),
+        ("+3".to_owned(), "-3".to_owned(), "+0".to_owned()),
         "and the number a reader is looking at is signed, because slower and faster are \
          not the same news"
     );
     assert_eq!(
-        delta(u64::MAX, 0),
-        i64::MIN.saturating_add(1),
-        "a difference too large to be one is the largest there is rather than a number \
-         that wrapped round to the wrong sign"
+        delta(u64::MAX, 0).to_string(),
+        format!("-{}", u64::MAX),
+        "the full wire range remains exact rather than wrapping or clamping"
     );
 }
 
@@ -383,8 +388,8 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
     );
     (
         code,
-        String::from_utf8_lossy(&said).into_owned(),
-        String::from_utf8_lossy(&complaints).into_owned(),
+        njutest_devkit::process::strict_utf8(&said).into_owned(),
+        njutest_devkit::process::strict_utf8(&complaints).into_owned(),
     )
 }
 
@@ -420,9 +425,14 @@ fn a_summary_says_what_the_recording_holds_and_whether_it_holds_together() {
     }
 
     let mut broken = whole("20270115T080000Z-bbbbbb");
-    let _lost = broken.remove(1);
+    let lost = broken.remove(1);
+    assert_eq!(
+        lost.payload.type_name(),
+        "phase-end",
+        "the removed phase end is the deliberate hole in this recording"
+    );
     recorded(dir.path(), "20270115T080000Z-bbbbbb", &broken);
-    let (code, said, _complained) =
+    let (code, said, complained) =
         asked(dir.path(), &["trace", "summary", "20270115T080000Z-bbbbbb"]);
     assert_eq!(
         code, 2,
@@ -430,26 +440,32 @@ fn a_summary_says_what_the_recording_holds_and_whether_it_holds_together() {
          the code says so rather than leaving it to whoever reads the lines: {said}"
     );
     assert!(said.contains("PROBLEM\t"), "{said}");
+    assert!(
+        complained.is_empty(),
+        "a readable recording is not a refusal"
+    );
 }
 
 #[test]
 fn a_recording_that_is_not_there_is_named_rather_than_answered_about() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let (code, _said, complained) =
+    let (code, said, complained) =
         asked(dir.path(), &["trace", "summary", "20200101T000000Z-000000"]);
     assert_eq!(code, 3, "{complained}");
+    assert!(said.is_empty(), "a missing recording has no summary");
     assert!(
         complained.contains("20200101T000000Z-000000") && complained.contains(".njutest/trace"),
         "a run nobody recorded is named with the path that would have held it, because \
          the answer is usually that the run was somewhere else: {complained}"
     );
 
-    let (code, _said, complained) = asked(dir.path(), &["trace", "summary"]);
+    let (code, said, complained) = asked(dir.path(), &["trace", "summary"]);
     assert_eq!(
         code, 3,
         "and a directory where no run has finished has no latest run to summarise \
          either: {complained}"
     );
+    assert!(said.is_empty(), "an absent latest run has no summary");
     assert!(
         complained.contains("no run has completed here yet"),
         "which it says, rather than failing without a word: a command that exits 3 in \
@@ -512,6 +528,8 @@ fn a_summary_carries_what_the_engine_recorded_beside_it() {
         .path()
         .join(".njutest/trace")
         .join(run)
+        .join(njutest_cli::app::verify::BUILDS_DIRECTORY)
+        .join("0000000000")
         .join(njutest_cli::app::trace::ENGINE_DIRECTORY);
     std::fs::create_dir_all(&beside).expect("a directory for the engine's own");
     let engine = rust_mutants::testkit::trace::memory_recorder();
@@ -525,7 +543,8 @@ fn a_summary_carries_what_the_engine_recorded_beside_it() {
     std::fs::write(beside.join(rust_mutants::trace::FILE_NAME), &stream)
         .expect("the engine's recording");
 
-    let (_code, said, complained) = asked(dir.path(), &["trace", "summary", run]);
+    let (code, said, complained) = asked(dir.path(), &["trace", "summary", run]);
+    assert_eq!(code, 0, "the combined recording is complete");
     assert!(
         said.lines().any(|line| line.starts_with("ENGINE\t")),
         "the engine does most of a run — the snapshot, the instrumentation, the \
@@ -540,9 +559,18 @@ fn a_summary_carries_what_the_engine_recorded_beside_it() {
         "not a recording\n",
     )
     .expect("a recording that is not one");
-    let (_code, said, _complained) = asked(dir.path(), &["trace", "summary", run]);
+    let (code, said, complained) = asked(dir.path(), &["trace", "summary", run]);
+    assert_eq!(
+        code, 0,
+        "an unreadable optional engine trace is reported in the summary"
+    );
     assert!(
-        said.contains("ENGINE\tunreadable"),
+        complained.is_empty(),
+        "the runner recording itself remains readable"
+    );
+    assert!(
+        said.lines()
+            .any(|line| { line.starts_with("ENGINE\t") && line.contains("\tunreadable\t") }),
         "and one it cannot read is said to be unreadable rather than passed over: a \
          summary with no ENGINE lines reads as a run the engine did not record, which \
          is a different thing to go and look for: {said}"
@@ -610,6 +638,7 @@ fn the_slowest_names_what_a_run_actually_spends_its_time_on() {
                     outcome: "survived".to_owned(),
                     duration_ms: 12_000,
                     alone: false,
+                    step_boundary: None,
                 },
             },
         ),

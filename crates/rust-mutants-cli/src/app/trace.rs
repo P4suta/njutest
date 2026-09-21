@@ -6,13 +6,16 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use rust_mutants::id::RunId;
 use rust_mutants::runner::Cancel;
 use rust_mutants::trace::summary::{Summary, diff, render, summarize};
 use rust_mutants::trace::{
-    ChannelSink, DirSink, Event, FILE_NAME, Problem, ReadError, Recorder, Sink, check, read_events,
+    ChannelSink, DirSink, Event, FILE_NAME, Problem, ReadError, Recorder, Sink, TraceContext,
+    check, read_events,
 };
 
 use crate::error::CliError;
+use crate::filesystem::{EntryKind, entry_kind};
 use crate::settings::Settings;
 use crate::{Environment, cli};
 
@@ -23,36 +26,41 @@ pub const RUN_DIRECTORY_NAME: &str = "trace";
 pub const TRACES_DIRECTORY_NAME: &str = "traces";
 
 /// The recording a command was asked for, or the one that records nothing.
+///
+/// # Errors
+/// Returns the filesystem failure when a requested recording directory cannot be created.
 pub fn recorder(
     wanted: &Recording<'_>,
-    progress: Option<std::sync::mpsc::Sender<Event>>,
-    stderr: &mut dyn Write,
-) -> Recorder {
-    let watching = progress.map(|sender| Sink::Channel(ChannelSink::new(sender)));
+    progress: Option<std::sync::mpsc::SyncSender<Event>>,
+) -> Result<Recorder, CliError> {
+    let watching = progress.map(ChannelSink::new);
+    let context = TraceContext::Standalone {
+        run_id: wanted.id.clone(),
+        build_selection: wanted
+            .settings
+            .config
+            .build
+            .config()
+            .selection()
+            .digest()
+            .clone(),
+    };
     let Some(asked) = wanted.scope.trace.as_deref() else {
-        return watching.map_or_else(Recorder::disabled, Recorder::wall);
+        return Ok(match watching {
+            Some(watching) => Recorder::wall(Sink::Channel(watching), context),
+            None => Recorder::disabled(),
+        });
     };
     let directory = if asked.is_empty() {
         default_directory(wanted)
     } else {
         PathBuf::from(asked)
     };
-    let kept = match created(&directory) {
-        Ok(sink) => Some(Sink::Dir(sink)),
-        Err(error) => {
-            let _written = writeln!(
-                stderr,
-                "rust-mutants: not recording into {}: {error}",
-                directory.display()
-            );
-            None
-        }
-    };
-    match (kept, watching) {
-        (None, None) => Recorder::disabled(),
-        (Some(sink), None) | (None, Some(sink)) => Recorder::wall(sink),
-        (Some(kept), Some(watching)) => Recorder::wall(Sink::Tee(vec![kept, watching])),
-    }
+    let kept = created(&directory).map_err(|source| CliError::writing(&directory, source))?;
+    Ok(match watching {
+        Some(watching) => Recorder::wall(Sink::required_with_channel(kept, watching), context),
+        None => Recorder::wall(Sink::required(kept), context),
+    })
 }
 
 /// The recording's own directory, with the directories above it made first.
@@ -71,7 +79,7 @@ pub struct Recording<'a> {
     /// Where reports go, which is what a default recording is placed against.
     pub settings: &'a Settings,
     /// The name of this run.
-    pub id: &'a str,
+    pub id: &'a RunId,
     /// The command, which names its own recording when it is not a run.
     pub command: &'a cli::Command,
 }
@@ -80,7 +88,7 @@ pub struct Recording<'a> {
 fn default_directory(wanted: &Recording<'_>) -> PathBuf {
     let reports = wanted.settings.report_directory();
     if matches!(wanted.command, cli::Command::Run { .. }) {
-        reports.join(wanted.id).join(RUN_DIRECTORY_NAME)
+        reports.join(wanted.id.as_str()).join(RUN_DIRECTORY_NAME)
     } else {
         reports
             .join(TRACES_DIRECTORY_NAME)
@@ -111,17 +119,32 @@ const fn named(command: &cli::Command) -> &'static str {
 }
 
 /// Closes the recording with how the command ended, so a reader can tell a run that finished from one that was killed.
-pub fn ended(recorder: &Recorder, outcome: &Result<u8, CliError>, cancel: &Cancel) {
+///
+/// # Errors
+/// Returns the trace sink failure when the terminal event cannot be recorded completely.
+pub fn ended(
+    recorder: &Recorder,
+    outcome: &Result<u8, CliError>,
+    cancel: &Cancel,
+) -> Result<(), CliError> {
     if !recorder.is_enabled() {
-        return;
+        return Ok(());
     }
-    let error = outcome.as_ref().err().map(ToString::to_string);
+    let error = match outcome {
+        Ok(_) => None,
+        Err(error) => Some(error.to_string()),
+    };
     let verdict = if cancel.is_cancelled() {
         "interrupted"
     } else {
-        outcome.as_ref().map_or("failed", |code| verdict_of(*code))
+        match outcome {
+            Ok(code) => verdict_of(*code),
+            Err(_command_failure) => "failed",
+        }
     };
-    recorder.run_end(verdict, error);
+    recorder
+        .run_end(verdict, error)
+        .map_err(|source| CliError::writing(Path::new("<trace>"), source))
 }
 
 /// How a command ended, in the words the exit codes are named after.
@@ -158,8 +181,10 @@ pub fn read(
                 },
                 environment,
             )?;
-            say(stdout, &format!("RUN\t{}\n", found.name));
-            say(stdout, &render(&summarize(&found.events, *slowest)));
+            say(stdout, &format!("RUN\t{}\n", found.name))?;
+            let summary = summarize(&found.events, *slowest)
+                .map_err(|source| CliError::TraceSummary { source })?;
+            say(stdout, &render(&summary))?;
             Ok(0)
         }
         cli::TraceCommand::Check { root, run, dir } => {
@@ -171,29 +196,29 @@ pub fn read(
                 },
                 environment,
             )?;
-            say(stdout, &format!("RUN\t{}\n", found.name));
+            say(stdout, &format!("RUN\t{}\n", found.name))?;
             let problems = check(&found.events);
             if problems.is_empty() {
                 say(
                     stdout,
                     "COMPLETE\tthe recording begins, ends, and lost nothing\n",
-                );
+                )?;
                 return Ok(0);
             }
             for problem in &problems {
-                say(stdout, &format!("PROBLEM\t{}\n", describe(problem)));
+                say(stdout, &format!("PROBLEM\t{}\n", describe(problem)))?;
             }
             Ok(1)
         }
         cli::TraceCommand::Diff { root, a, b } => {
             let before = summary(root.as_deref(), a, environment)?;
             let after = summary(root.as_deref(), b, environment)?;
-            say(stdout, &format!("A\t{a}\nB\t{b}\n"));
+            say(stdout, &format!("A\t{a}\nB\t{b}\n"))?;
             for change in diff(&before, &after) {
                 say(
                     stdout,
                     &format!("CHANGED\t{}\t{}\t{}\n", change.what, change.from, change.to),
-                );
+                )?;
             }
             Ok(0)
         }
@@ -224,7 +249,7 @@ fn summary(root: Option<&Path>, run: &str, environment: &Environment) -> Result<
         },
         environment,
     )?;
-    Ok(summarize(&found.events, 0))
+    summarize(&found.events, 0).map_err(|source| CliError::TraceSummary { source })
 }
 
 /// The recording a reading names: a directory given outright, a named run, or the newest one stored.
@@ -248,7 +273,7 @@ fn load(wanted: &Where<'_>, environment: &Environment) -> Result<Found, CliError
 /// The recording a name asks for, or the newest one, out of what is stored.
 fn stored(wanted: &Where<'_>, environment: &Environment) -> Result<(String, PathBuf), CliError> {
     let reports = reports_directory(wanted.root, environment)?;
-    let kept = recordings(&reports);
+    let kept = recordings(&reports)?;
     let found = match wanted.run {
         Some(run) => kept
             .into_iter()
@@ -276,30 +301,65 @@ fn reports_directory(root: Option<&Path>, environment: &Environment) -> Result<P
 }
 
 /// Every stored recording, oldest first: a run's own beside its report, and every other command's under `traces/`.
-fn recordings(reports: &Path) -> Vec<(String, PathBuf)> {
+fn recordings(reports: &Path) -> Result<Vec<(String, PathBuf)>, CliError> {
     let mut found = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(reports) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name == TRACES_DIRECTORY_NAME {
-                continue;
-            }
-            let path = entry.path().join(RUN_DIRECTORY_NAME);
-            if path.join(FILE_NAME).is_file() {
-                found.push((name, path));
-            }
+    for entry in directory_entries(reports)? {
+        let path = entry.path();
+        let kind = entry_kind(&path).map_err(|source| CliError::StoredRunsUnreadable {
+            path: path.clone(),
+            source,
+        })?;
+        if kind != EntryKind::Directory {
+            continue;
+        }
+        let name = super::stored_spelling(&path)?;
+        if name == TRACES_DIRECTORY_NAME {
+            continue;
+        }
+        let recording = path.join(RUN_DIRECTORY_NAME);
+        if stored_file(&recording.join(FILE_NAME))? {
+            found.push((name, recording));
         }
     }
-    if let Ok(entries) = std::fs::read_dir(reports.join(TRACES_DIRECTORY_NAME)) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.join(FILE_NAME).is_file() {
-                found.push((entry.file_name().to_string_lossy().into_owned(), path));
-            }
+    let traces = reports.join(TRACES_DIRECTORY_NAME);
+    for entry in directory_entries(&traces)? {
+        let path = entry.path();
+        if stored_file(&path.join(FILE_NAME))? {
+            let name = super::stored_spelling(&path)?;
+            found.push((name, path));
         }
     }
     found.sort();
-    found
+    Ok(found)
+}
+
+fn stored_file(path: &Path) -> Result<bool, CliError> {
+    match entry_kind(path).map_err(|source| CliError::StoredRunsUnreadable {
+        path: path.to_path_buf(),
+        source,
+    })? {
+        EntryKind::File => Ok(true),
+        EntryKind::Missing | EntryKind::Directory | EntryKind::Other => Ok(false),
+    }
+}
+
+fn directory_entries(directory: &Path) -> Result<Vec<std::fs::DirEntry>, CliError> {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(CliError::StoredRunsUnreadable {
+                path: directory.to_path_buf(),
+                source,
+            });
+        }
+    };
+    entries
+        .collect::<std::io::Result<Vec<_>>>()
+        .map_err(|source| CliError::StoredRunsUnreadable {
+            path: directory.to_path_buf(),
+            source,
+        })
 }
 
 /// What is wrong with a recording, as one line.
@@ -326,8 +386,6 @@ fn said(error: &ReadError) -> String {
 }
 
 /// A closed stream is the reader's choice, not a failure of ours.
-fn say(stream: &mut dyn Write, text: &str) {
-    let _written = stream
-        .write_all(text.as_bytes())
-        .and_then(|()| stream.flush());
+fn say(stream: &mut dyn Write, text: &str) -> Result<(), CliError> {
+    super::write(stream, text)
 }

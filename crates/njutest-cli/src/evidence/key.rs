@@ -6,13 +6,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use rust_mutants::cargo::Metadata;
+use rust_mutants::cargo::{BuildSelection, Metadata};
 
 use super::digest::Fields;
 use super::tree::Scan;
 
 /// The domain hashed first for a behaviour key.
-pub const KEY_DOMAIN: &str = "njutest-mutation-evidence-key-v3";
+pub const KEY_DOMAIN: &str = "njutest-mutation-evidence-key-v5";
+
+/// The domain separating a configured build's continuation journal from the
+/// run-wide identity shared by every build in the same verification.
+const CONTINUATION_DOMAIN: &str = "njutest-build-continuation-v1";
 
 /// APIs whose result depends on what is in a directory rather than on what a file says.
 pub const DIRECTORY_READERS: [&str; 7] = [
@@ -38,14 +42,33 @@ pub struct Common {
     pub contract: String,
     /// The arguments the test binaries were given.
     pub test_args: Vec<String>,
-    /// What cargo was told to build, as the arguments that spell it: everything that decides which program comes out, and nothing about how fast.
-    pub build: Vec<String>,
+    /// The canonical, typed Cargo selection for this particular configured build.
+    ///
+    /// Toolchain, resolved platform, and environment inputs remain separate
+    /// fields in this key; this value does not claim to identify a binary.
+    pub build: BuildSelection,
     /// How long one command may take, in milliseconds.
     pub timeout_ms: u64,
+    /// How many times an active mutation guard may be entered before the execution is stopped. Zero disables the bound.
+    pub steps: u64,
     /// The version of the runner and of the engine.
     pub versions: Vec<String>,
     /// The digest of the fuzz corpora.
     pub corpus: String,
+}
+
+/// Binds a run-wide identity to one Cargo build selection.
+///
+/// Checkpoints and other continuation state use this narrower identity. Two
+/// builds in one run intentionally share the run identity and must never share
+/// this one unless their typed inputs are identical.
+#[must_use]
+pub fn continuation_identity(run: &str, build: &BuildSelection) -> String {
+    let mut fields = Fields::new(CONTINUATION_DOMAIN);
+    fields
+        .field("run", run)
+        .field("build", build.digest().as_str());
+    fields.finish()
 }
 
 /// The packages one target links, and what each of them is.
@@ -107,9 +130,11 @@ fn key(domain: &str, linked: &Linked, common: &Common) -> String {
                 .map(|(name, value)| format!("{name}={value}")),
         )
         .field("contract", &common.contract)
-        .list("test-args", &common.test_args)
-        .list("build", &common.build)
+        .list("test-args", &common.test_args);
+    fields
+        .field("build", common.build.digest().as_str())
         .field("timeout", &common.timeout_ms.to_string())
+        .field("steps", &common.steps.to_string())
         .list("versions", &common.versions)
         .field("corpus", &common.corpus);
     fields.finish()
@@ -129,8 +154,13 @@ pub struct Reading<'a> {
 }
 
 /// What one package's test binary links, read from the resolved graph and the tree this run scanned.
-#[must_use]
-pub fn linked_by(reading: &Reading<'_>, package_id: &str) -> Linked {
+/// # Errors
+/// Refuses a package directory whose platform spelling cannot be retained in
+/// the UTF-8 evidence key.
+pub fn linked_by(
+    reading: &Reading<'_>,
+    package_id: &str,
+) -> Result<Linked, crate::evidence::tree::ScanError> {
     let Reading {
         metadata,
         scan,
@@ -143,29 +173,35 @@ pub fn linked_by(reading: &Reading<'_>, package_id: &str) -> Linked {
         .iter()
         .map(|package| (package.id.as_str(), package))
         .collect();
-    let mut packages = BTreeSet::new();
-    let mut sources = BTreeMap::new();
+    let mut packages = Vec::new();
+    let mut sources = Vec::new();
     let mut reads_directories = false;
     for id in &closure {
         let Some(package) = by_id.get(id.as_str()) else {
-            let _first = packages.insert(id.clone());
+            packages.push(id.clone());
             continue;
         };
         let name = format!("{}@{}", package.name, package.version);
-        let _first = packages.insert(name.clone());
-        let Some(prefix) = inside(root, package.manifest_dir()) else {
+        packages.push(name.clone());
+        let Some(prefix) = inside(root, package.manifest_dir())? else {
             continue;
         };
-        sources.insert(name, package_digest(root, scan, &prefix));
+        sources.push((name, package_digest(root, scan, &prefix)));
         reads_directories |= reads_directories_under(root, scan, &prefix);
     }
-    Linked {
-        packages: packages.into_iter().collect(),
-        sources,
+    let unique_packages = packages
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let sources_by_display = sources.into_iter().collect();
+    Ok(Linked {
+        packages: unique_packages,
+        sources: sources_by_display,
         dependencies: dependencies.to_owned(),
         reads_directories,
         tree: scan.tree.clone(),
-    }
+    })
 }
 
 /// What is in a package that could change what its code does.
@@ -198,21 +234,31 @@ fn names_its_own_data(root: &Path, scan: &Scan, prefix: &str) -> bool {
 }
 
 /// `directory` as a slash-separated path relative to `root`, or nothing when it is not inside it — a path dependency outside the tree is not something this run measured.
-fn inside(root: &Path, directory: &Path) -> Option<String> {
-    let root = root
-        .canonicalize()
-        .unwrap_or_else(|_error| root.to_path_buf());
-    let directory = directory
-        .canonicalize()
-        .unwrap_or_else(|_error| directory.to_path_buf());
-    let relative = directory.strip_prefix(&root).ok()?;
-    Some(
-        relative
-            .components()
-            .map(|part| part.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<String>>()
-            .join("/"),
-    )
+fn inside(
+    root: &Path,
+    directory: &Path,
+) -> Result<Option<String>, crate::evidence::tree::ScanError> {
+    let root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(_unavailable_physical_spelling) => root.to_path_buf(),
+    };
+    let directory = match directory.canonicalize() {
+        Ok(directory) => directory,
+        Err(_unavailable_physical_spelling) => directory.to_path_buf(),
+    };
+    let Ok(relative) = directory.strip_prefix(&root) else {
+        return Ok(None);
+    };
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        let text = component.as_os_str().to_str().ok_or_else(|| {
+            crate::evidence::tree::ScanError::PathNotUtf8 {
+                path: relative.to_path_buf(),
+            }
+        })?;
+        parts.push(text.to_owned());
+    }
+    Ok(Some(parts.join("/")))
 }
 
 /// Whether any Rust file under `prefix` names an API whose result depends on what is in a directory rather than on what a file says.

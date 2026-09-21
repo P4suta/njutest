@@ -10,11 +10,11 @@ mod verify;
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
 use verify::verify;
-pub use verify::{Baseline, Measured, Passing, Verified};
+pub use verify::{Baseline, BaselineCacheError, Measured, Passing, Verified};
 
 pub use route::{
     Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, Granularity, NEVER_INFECTED, Proof, Reaches,
-    Route, Routing, Timing,
+    Route, RouteAccountingError, Routing, Timing,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,7 +24,9 @@ use std::time::Duration;
 use crate::EngineError;
 use crate::catalog::{Catalog, Mutant};
 use crate::discover::{self, DiscoverOptions, FileReport, SkipClaim};
-use crate::execute::{self, Context, ExecRequest, MutantResult, TargetKind, TestTarget, target_id};
+use crate::execute::{
+    self, Context, ExecRequest, MutantConclusion, MutantResult, TargetKind, TestTarget, target_id,
+};
 use crate::glob::Pattern;
 use crate::rule::Tier;
 use crate::runner::Cancel;
@@ -36,6 +38,7 @@ use crate::workspace::{SessionError, Workspace};
 
 /// Where a mutation is and what it edits, which is how a reviewer names one that outlives an edit elsewhere in the file.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Locator {
     /// The workspace-relative path with forward slashes.
     pub path: String,
@@ -58,7 +61,10 @@ impl Locator {
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let (rest, line) = match text.rsplit_once('@') {
-            Some((rest, digits)) => (rest, Some(digits.parse().ok()?)),
+            Some((rest, digits)) => match digits.parse::<u32>() {
+                Ok(line) => (rest, Some(line)),
+                Err(_not_a_line) => return None,
+            },
             None => (text, None),
         };
         let (path, rest) = rest.split_once(':')?;
@@ -106,21 +112,34 @@ fn names(item: &str, wanted: &str) -> bool {
 }
 
 /// What preparing does about a target whose baseline does not pass with nothing active.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Failing {
     /// End the preparation and name the target. A person who asked for a measurement wants to hear that there was nothing to measure.
-    #[default]
     Refuse,
     /// Report it and leave the target out of every route, so a caller with a verdict of its own can give it.
     Exclude,
+}
+
+/// What reach measurement established about one mutation.
+///
+/// This is deliberately not `Option<bool>`: not measuring a place is a fact
+/// distinct from measuring it and observing that no target reached it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Reachability {
+    /// Neither coverage nor the instrumented guards measured the place.
+    Unmeasured,
+    /// At least one measured target reached the place.
+    Reached,
+    /// Measurement covered the relevant targets and none reached the place.
+    Unreached,
 }
 
 /// How many times the active mutant's guard may be taken before its process is stopped, when nobody says.
 ///
 /// Fifty million takes of one site is a number a test written by a person does
 /// not approach and a loop that cannot terminate passes in about a second, so
-/// the ceiling stops a runaway long before the clock would and stops it by a
+/// the ceiling stops an unbounded execution long before the clock would and stops it by a
 /// number every machine agrees on. A person who has a test that really does
 /// drive one site that hard raises it, and a run that would rather have only
 /// the clock sets it to zero.
@@ -173,7 +192,7 @@ pub struct PrepareOptions {
     /// on a quiet one is two verdicts. A count of guard takes is the number
     /// every machine agrees on, and the guard of the selected mutant sits
     /// where the mutation does — so a loop whose condition was mutated takes
-    /// it once an iteration and a runaway is counted as it runs.
+    /// it once an iteration and an unbounded execution is counted as it runs.
     ///
     /// It is an allowance rather than a measurement of the tree: nothing is
     /// known in advance about how often a test reaches a site, so the number
@@ -212,7 +231,7 @@ impl Default for PrepareOptions {
             branch_proofs: true,
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
-            mutant_timeout: Timeout::default(),
+            mutant_timeout: Timeout::Auto,
             mutant_steps: Some(DEFAULT_MUTANT_STEPS),
             doctests: true,
             build: crate::cargo::BuildConfig::default(),
@@ -275,6 +294,12 @@ impl Request {
         self.timeout = timeout;
         self
     }
+
+    /// Repeats the exact test, arguments, and bound against the target whose
+    /// clock result is being confirmed. A different target cannot confirm it.
+    fn retrying_target(&self, target: &str) -> Self {
+        self.clone().with_target(target)
+    }
 }
 /// A prepared workspace.
 #[derive(Debug)]
@@ -293,13 +318,13 @@ pub struct Session {
     /// Whether every test process starts in its own scratch rather than where cargo would.
     scratch_working_directory: bool,
     /// How many executions this session has started, which is what names each one's own temporary directory.
-    executions: std::sync::atomic::AtomicU64,
+    executions: std::sync::Mutex<u64>,
     mutant_timeout: Timeout,
     mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
     harness_args: Vec<String>,
     /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
-    sources: BTreeMap<String, Vec<u8>>,
+    sources: BTreeMap<String, String>,
     /// Which package each mutant belongs to.
     packages: BTreeMap<u32, String>,
     /// The item each mutant sits in, by catalog index.
@@ -309,10 +334,10 @@ pub struct Session {
     reached: crate::reach::Reached,
     /// What the one run of every target with nothing active established, empty when nothing was verified.
     verified: Verified,
-    /// What each set of tests a route named answers on its own, so the question is put once however many mutants that set covers.
-    filtered: std::sync::Mutex<Established>,
-    /// How many tests this session started to establish those answers, counted as they are started rather than as they are remembered.
-    established: std::sync::atomic::AtomicU64,
+    /// The answers and counter produced while establishing filtered test sets,
+    /// kept under one lock so a report cannot observe a counter detached from
+    /// the routing state that produced it.
+    established: std::sync::Mutex<EstablishmentState>,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
     /// The digest of the pristine sources every unit of this build compiled.
@@ -412,8 +437,14 @@ impl Session {
     #[must_use]
     pub fn position(&self, mutant: &Mutant) -> Option<Position> {
         let source = self.sources.get(&mutant.candidate.path)?;
-        let text = std::str::from_utf8(source).ok()?;
-        Some(LineIndex::new(text).position(text, mutant.candidate.span.start))
+        let index = match LineIndex::new(source) {
+            Ok(index) => index,
+            Err(_unrepresentable) => return None,
+        };
+        match index.position(mutant.candidate.span.start) {
+            Ok(position) => Some(position),
+            Err(_inconsistent) => None,
+        }
     }
 
     /// The package a mutant belongs to.
@@ -449,7 +480,7 @@ impl Session {
                     .iter()
                     .map(|mutant| {
                         self.position(mutant).map_or_else(
-                            || mutant.display_id.clone(),
+                            || mutant.display_id.to_string(),
                             |at| format!("{}@{}", mutant.display_id, at.line),
                         )
                     })
@@ -494,7 +525,7 @@ impl Session {
                 .iter()
                 .map(|mutant| {
                     self.position(mutant).map_or_else(
-                        || mutant.display_id.clone(),
+                        || mutant.display_id.to_string(),
                         |at| format!("{}@{}", mutant.display_id, at.line),
                     )
                 })
@@ -521,7 +552,19 @@ impl Session {
     /// The source of one of the tree's mutable files, as it was before instrumentation.
     #[must_use]
     pub fn source(&self, path: &str) -> Option<&[u8]> {
-        self.sources.get(path).map(Vec::as_slice)
+        self.sources.get(path).map(String::as_bytes)
+    }
+
+    /// Every mutable source as it stood before this session instrumented it,
+    /// in stable path order.
+    ///
+    /// A proof layer must restore the complete set, rather than only the file
+    /// containing its subject, before it treats a copy of the prepared tree as
+    /// pristine proof context.
+    pub fn pristine_sources(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.sources
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_bytes()))
     }
 
     /// Everything this session is, as a document: what it catalogued, what it will run, and what it was all read from.
@@ -594,15 +637,25 @@ impl Session {
     }
 
     /// How many tests this session started to establish that a set of them answers on its own.
-    #[must_use]
-    pub fn established_tests(&self) -> u64 {
-        self.established.load(std::sync::atomic::Ordering::Relaxed)
+    ///
+    /// # Errors
+    /// Returns a typed session failure when a panic poisoned the routing
+    /// accounting state.
+    pub fn established_tests(&self) -> Result<u64, EngineError> {
+        self.established
+            .lock()
+            .map(|state| state.tests_started)
+            .map_err(|_poisoned| SessionError::RoutingStatePoisoned.into())
     }
 
-    /// Whether any measured target reached this mutant: `None` when the measurement says nothing about the place, so nothing is proved either way.
+    /// What measurement established about whether any target reached this mutant.
     #[must_use]
-    pub fn reaches(&self, mutant: &Mutant) -> Option<bool> {
-        self.covering(mutant).map(|targets| !targets.is_empty())
+    pub fn reaches(&self, mutant: &Mutant) -> Reachability {
+        match self.covering(mutant) {
+            None => Reachability::Unmeasured,
+            Some(targets) if targets.is_empty() => Reachability::Unreached,
+            Some(_targets) => Reachability::Reached,
+        }
     }
 
     /// The targets an execution of this mutant runs, or nothing when nothing narrows it.
@@ -629,12 +682,19 @@ impl Session {
     }
 
     /// The budget one execution of `target` is given, and where it came from.
-    #[must_use]
-    pub fn timeout_for(&self, request: &Request, target: &str) -> (Duration, TimeoutSource) {
-        request.timeout.map_or_else(
-            || self.mutant_timeout.of(self.baseline(target)),
-            |chosen| (chosen, TimeoutSource::Configured),
-        )
+    ///
+    /// # Errors
+    /// Refuses when deriving a timeout from the target baseline would overflow
+    /// [`Duration`].
+    pub fn timeout_for(
+        &self,
+        request: &Request,
+        target: &str,
+    ) -> Result<(Duration, TimeoutSource), SessionError> {
+        match request.timeout {
+            Some(chosen) => Ok((chosen, TimeoutSource::Configured)),
+            None => self.mutant_timeout.of(self.baseline(target)),
+        }
     }
 
     /// How long one target's own baseline took, when it was verified.
@@ -720,19 +780,30 @@ impl Session {
         target: &TestTarget,
         chosen: &Chosen,
         cancel: &Cancel,
-    ) -> Option<Vec<String>> {
-        let named = chosen.tests_of(&target.id)?;
-        self.usable(target, named, cancel)?;
-        Some(named.to_vec())
+    ) -> Result<Option<Vec<String>>, EngineError> {
+        let Some(named) = chosen.tests_of(&target.id) else {
+            return Ok(None);
+        };
+        if self.usable(target, named, cancel)?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(named.to_vec()))
     }
 
     /// How long the named tests of `target` take on their own with nothing active, or nothing when running them on their own is not the same question as running the target.
-    fn usable(&self, target: &TestTarget, tests: &[String], cancel: &Cancel) -> Option<Duration> {
+    fn usable(
+        &self,
+        target: &TestTarget,
+        tests: &[String],
+        cancel: &Cancel,
+    ) -> Result<Option<Duration>, EngineError> {
         let key = (target.id.clone(), tests.to_vec());
-        if let Ok(known) = self.filtered.lock()
-            && let Some(answer) = known.get(&key)
-        {
-            return *answer;
+        let mut established = self
+            .established
+            .lock()
+            .map_err(|_poisoned| SessionError::RoutingStatePoisoned)?;
+        if let Some(answer) = established.answers.get(&key) {
+            return Ok(*answer);
         }
         let context = Context {
             base_env: &self.workspace.base_env,
@@ -743,28 +814,30 @@ impl Session {
             steps: None,
             profile: None,
         };
-        let (timeout, _source) = self.mutant_timeout.of(self.baseline(&target.id));
+        let timeout = self.mutant_timeout.of(self.baseline(&target.id))?.0;
         let request = ExecRequest::new(target)
             .with_tests(tests.to_vec())
             .with_timeout(Some(timeout))
-            .with_scratch(self.exec_scratch())
+            .with_scratch(self.exec_scratch()?)
             .in_scratch(self.scratch_working_directory);
         let result = execute::exec(&request, &context, cancel, &self.workspace.trace);
-        let _asked = self.established.fetch_add(
-            u64::try_from(tests.len()).unwrap_or(0),
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        let asked = u32::try_from(tests.len())
+            .map_err(|_overflow| SessionError::RoutingCountTooLarge { count: tests.len() })?;
+        established.tests_started = established
+            .tests_started
+            .checked_add(u64::from(asked))
+            .ok_or(SessionError::RoutingCountExhausted)?;
         if cancel.is_cancelled() {
-            return None;
+            return Ok(None);
         }
-        let ran = usize::try_from(result.tests_run.unwrap_or(0)).unwrap_or(0);
-        let answer = (result.outcome == crate::outcome::Outcome::Survived && ran == tests.len())
+        let ran = result.tests_run;
+        let answer = (result.outcome() == crate::outcome::Outcome::Survived && ran == Some(asked))
             .then_some(result.duration);
         if answer.is_none() {
-            let why = if ran == tests.len() {
-                "did not pass on its own".to_owned()
-            } else {
-                format!("named {} tests and ran {ran} of them", tests.len())
+            let why = match ran {
+                Some(count) if count == asked => "did not pass on its own".to_owned(),
+                Some(count) => format!("named {asked} tests and ran {count} of them"),
+                None => format!("named {asked} tests but reported no executed-test count"),
             };
             self.workspace.trace.note(
                 TEST_ROUTING_UNSOUND,
@@ -773,14 +846,15 @@ impl Session {
                      measurement named",
                     target.id,
                     why,
-                    result.outcome.name()
+                    result.outcome().name()
                 ),
             );
         }
-        if let Ok(mut known) = self.filtered.lock() {
-            let _remembered = known.insert(key, answer);
+        if established.answers.insert(key, answer).is_some() {
+            return Err(SessionError::RoutingAnswerAlreadyEstablished.into());
         }
-        answer
+        drop(established);
+        Ok(answer)
     }
 
     /// The same route with every target a proof removes moved out of what could notice the mutation.
@@ -919,13 +993,17 @@ impl Session {
     }
 
     /// The name of the directory the source root sits in, which is what a report calls the workspace.
-    #[must_use]
-    pub fn root_name(&self) -> String {
-        self.workspace
-            .root()
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
+    ///
+    /// # Errors
+    /// Returns an engine error when the platform spelling cannot cross the
+    /// catalog's UTF-8 boundary without changing its bytes.
+    pub fn root_name(&self) -> Result<String, EngineError> {
+        let Some(name) = self.workspace.root().file_name() else {
+            return Ok(String::new());
+        };
+        crate::id::slashed(std::path::Path::new(name))
+            .map_err(|source| SessionError::WorkspacePathNotUtf8 { source })
+            .map_err(EngineError::from)
     }
 
     /// The mutant a name refers to: an identity, a prefix of one, or a locator.
@@ -973,16 +1051,25 @@ impl Session {
     }
 
     /// A temporary directory of this execution's own, so two executions at once cannot meet in one another's files.
-    fn exec_scratch(&self) -> PathBuf {
-        let at = self
+    fn exec_scratch(&self) -> Result<PathBuf, EngineError> {
+        let mut next = self
             .executions
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .lock()
+            .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?;
+        let at = *next;
+        let after = at
+            .checked_add(1)
+            .ok_or(SessionError::ScratchSequenceExhausted)?;
         let own = self.scratch.join(at.to_string());
-        if std::fs::create_dir_all(&own).is_ok() {
-            own
-        } else {
-            self.scratch.clone()
-        }
+        std::fs::DirBuilder::new().create(&own).map_err(|source| {
+            SessionError::ScratchCreateFailed {
+                path: own.clone(),
+                source,
+            }
+        })?;
+        *next = after;
+        drop(next);
+        Ok(own)
     }
 
     /// Runs one mutant and reports what the tests said.
@@ -1025,44 +1112,34 @@ impl Session {
             chosen: &chosen,
             mutant,
         };
-        let ran = quiet.shared(|| self.execute(request, running(false), cancel))?;
+        let ran = quiet.shared(|| self.execute(request, running(false), cancel))??;
         let (first, mut asked) = (ran.taken, ran.asked);
-        let (timeout, timeout_source) = self.timeout_for(request, &first.target);
-        let judgement = if first.outcome != crate::outcome::Outcome::Waited || cancel.is_cancelled()
-        {
-            Judgement {
-                result: first.clone(),
-                attempts: vec![first],
-                asked,
-                retried: false,
-                timeout,
-                timeout_source,
-                route,
-            }
-        } else {
-            let repeated = quiet.alone(|| self.execute(request, running(true), cancel))?;
-            let mut again = repeated.taken;
-            asked.extend(repeated.asked);
-            if again.outcome != crate::outcome::Outcome::Waited && !again.outcome.detected() {
-                again.outcome = crate::outcome::Outcome::Inconclusive;
-            }
-            Judgement {
-                result: again.clone(),
-                attempts: vec![first, again],
-                asked,
-                retried: true,
-                timeout,
-                timeout_source,
-                route,
+        let (timeout, timeout_source) = self.timeout_for(request, &first.target)?;
+        let attempts = match InitialAttempt::classify(first, cancel.is_cancelled()) {
+            InitialAttempt::Final(first) => AttemptLedger::single(first),
+            InitialAttempt::Retry(first) => {
+                let retry = request.retrying_target(&first.result().target);
+                let repeated = quiet.alone(|| self.execute(&retry, running(true), cancel))??;
+                asked.extend(repeated.asked);
+                AttemptLedger::with_retry(first, repeated.taken, cancel.is_cancelled())?
             }
         };
-        self.workspace.trace.route(judgement.route.record(
-            mutant,
-            judgement.route.executed(
-                &judgement.result.target,
-                judgement.result.outcome.detected(),
+        let judgement = Judgement {
+            attempts,
+            asked,
+            timeout,
+            timeout_source,
+            route,
+        };
+        let result = judgement.result();
+        self.workspace.trace.route(
+            judgement.route.record(
+                mutant,
+                judgement
+                    .route
+                    .executed(&result.target, result.outcome().detected()),
             ),
-        ));
+        );
         Ok(judgement)
     }
 
@@ -1103,55 +1180,69 @@ impl Session {
             steps: self.mutant_steps,
             profile: None,
         };
-        let mut last = None;
-        let mut silent = None;
         let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id);
+            let (timeout, source) = self.timeout_for(request, &target.id)?;
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch())
+                .with_scratch(self.exec_scratch()?)
                 .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
-            } else if let Some(named) = self.filtering(target, chosen, cancel) {
+            } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
             let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
-            self.workspace.trace.mutant_exec(MutantExecRecord {
-                id: mutant.id.clone(),
-                index: mutant.index,
-                target: target.id.clone(),
-                outcome: result.outcome.name().to_owned(),
-                exit_code: result.exit_code,
-                duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
-                tests_run: result.tests_run,
-                signal: result.signal,
-                failed_tests: result.failed_tests.clone(),
-                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-                timeout_source: source.name().to_owned(),
+            self.record_mutant_exec(Executed {
+                mutant,
+                target,
+                result: &result,
+                timeout,
+                source,
                 alone,
-            });
+            })?;
             asked.push(result.clone());
-            if result.outcome.detected() || cancel.is_cancelled() {
+            if result.outcome().detected() || cancel.is_cancelled() {
                 return Ok(Ran {
                     taken: result,
                     asked,
                 });
             }
-            if spoke(&result) {
-                last = Some(result);
-            } else {
-                silent = Some(result);
-            }
         }
-        let taken = last.or(silent).ok_or_else(|| {
+        let taken = verdict_result(&asked).ok_or_else(|| {
             EngineError::from(SessionError::NoTargets {
                 packages: self.packages(),
             })
         })?;
         Ok(Ran { taken, asked })
+    }
+
+    fn record_mutant_exec(&self, executed: Executed<'_>) -> Result<(), EngineError> {
+        let Executed {
+            mutant,
+            target,
+            result,
+            timeout,
+            source,
+            alone,
+        } = executed;
+        self.workspace.trace.mutant_exec(MutantExecRecord {
+            id: mutant.id.to_string(),
+            index: mutant.index,
+            target: target.id.clone(),
+            outcome: result.outcome().name().to_owned(),
+            step_notice: result.step_notice().cloned(),
+            exit_code: result.exit_code,
+            duration_ms: duration_ms(result.duration)?,
+            tests_run: result.tests_run,
+            signal: result.signal,
+            failed_tests: result.failed_tests.clone(),
+            timeout_ms: duration_ms(timeout)?,
+            timeout_source: source.name().to_owned(),
+            alone,
+        });
+        Ok(())
     }
 
     /// The arguments one execution's test binary is started with.
@@ -1178,14 +1269,13 @@ impl Session {
             steps: None,
             profile: None,
         };
-        let mut last = None;
-        let mut silent = None;
+        let mut asked = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id);
+            let (timeout, source) = self.timeout_for(request, &target.id)?;
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch())
+                .with_scratch(self.exec_scratch()?)
                 .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
@@ -1195,28 +1285,97 @@ impl Session {
                 id: String::new(),
                 index: u32::MAX,
                 target: target.id.clone(),
-                outcome: result.outcome.name().to_owned(),
+                outcome: result.outcome().name().to_owned(),
+                step_notice: result.step_notice().cloned(),
                 exit_code: result.exit_code,
-                duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+                duration_ms: duration_ms(result.duration)?,
                 tests_run: result.tests_run,
                 signal: result.signal,
                 failed_tests: result.failed_tests.clone(),
-                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                timeout_ms: duration_ms(timeout)?,
                 timeout_source: source.name().to_owned(),
                 alone: false,
             });
             if cancel.is_cancelled()
-                || (result.outcome != crate::outcome::Outcome::Survived && spoke(&result))
+                || (result.outcome() != crate::outcome::Outcome::Survived && spoke(&result))
             {
                 return Ok(result);
             }
-            if spoke(&result) {
-                last = Some(result);
-            } else {
-                silent = Some(result);
-            }
+            asked.push(result);
         }
-        last.or(silent).ok_or_else(|| {
+        aggregate_result(&asked).cloned().ok_or_else(|| {
+            EngineError::from(SessionError::NoTargets {
+                packages: self.packages(),
+            })
+        })
+    }
+
+    /// Runs the targets that can observe anything with no mutant active,
+    /// skipping harness targets whose own summary says they ran no tests: a
+    /// target with nothing to say cannot veto a control that passed
+    /// everywhere it ran. Verdict aggregation over mutations keeps the
+    /// universal claim; this is the boundary a candidate check stands on.
+    ///
+    /// # Errors
+    /// [`SessionError::NoTargets`] when every selected target ran nothing.
+    pub fn control_observing(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<MutantResult, EngineError> {
+        let targets = self.selected(request.target.as_deref())?;
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: None,
+            touch: None,
+            steps: None,
+            profile: None,
+        };
+        let mut asked = Vec::new();
+        for target in targets {
+            let (timeout, source) = self.timeout_for(request, &target.id)?;
+            let mut exec = ExecRequest::new(target)
+                .with_args(self.arguments(request))
+                .with_timeout(Some(timeout))
+                .with_scratch(self.exec_scratch()?)
+                .in_scratch(self.scratch_working_directory);
+            if let Some(test) = &request.test {
+                exec = exec.with_test(test.clone());
+            }
+            let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            self.workspace.trace.mutant_exec(MutantExecRecord {
+                id: String::new(),
+                index: u32::MAX,
+                target: target.id.clone(),
+                outcome: result.outcome().name().to_owned(),
+                step_notice: result.step_notice().cloned(),
+                exit_code: result.exit_code,
+                duration_ms: duration_ms(result.duration)?,
+                tests_run: result.tests_run,
+                signal: result.signal,
+                failed_tests: result.failed_tests.clone(),
+                timeout_ms: duration_ms(timeout)?,
+                timeout_source: source.name().to_owned(),
+                alone: false,
+            });
+            if cancel.is_cancelled() {
+                return Ok(result);
+            }
+            if result.outcome() != crate::outcome::Outcome::Survived && spoke(&result) {
+                return Ok(result);
+            }
+            if result
+                .summary
+                .as_ref()
+                .is_some_and(execute::Summary::ran_nothing)
+            {
+                continue;
+            }
+            asked.push(result);
+        }
+        aggregate_result(&asked).cloned().ok_or_else(|| {
             EngineError::from(SessionError::NoTargets {
                 packages: self.packages(),
             })
@@ -1317,6 +1476,7 @@ pub fn preview(
 /// One test target, as a document says what it is.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct TargetDescription {
     /// The identity a route and a report name it by.
     pub id: String,
@@ -1335,6 +1495,7 @@ pub struct TargetDescription {
 /// Everything a session is, as a document.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct Description {
     /// Every mutant, refusals included.
     pub catalog: Catalog,
@@ -1357,6 +1518,16 @@ struct Running<'a> {
     chosen: &'a Chosen,
     /// The mutation, resolved once by whoever asked rather than again here.
     mutant: &'a Mutant,
+}
+
+#[derive(Clone, Copy)]
+struct Executed<'a> {
+    mutant: &'a Mutant,
+    target: &'a TestTarget,
+    result: &'a MutantResult,
+    timeout: Duration,
+    source: TimeoutSource,
+    alone: bool,
 }
 
 /// Whose evidence an execution is narrowed by.
@@ -1434,18 +1605,146 @@ pub const TEST_ROUTING_UNSOUND: &str = "test-routing-unsound";
 /// What each set of tests a route named answers on its own: how long it took with nothing active, or nothing when running it on its own is not the same question as running its target.
 type Established = BTreeMap<(String, Vec<String>), Option<Duration>>;
 
-/// What one mutant's judgement is made of: what stands, every attempt it took, and the budget each was given.
+/// Filtered-test facts and the exact amount of work used to establish them.
+#[derive(Debug)]
+struct EstablishmentState {
+    answers: Established,
+    tests_started: u64,
+}
+
+/// A non-empty ledger of one mutant's executions.
+///
+/// The first execution is structurally mandatory. A retry can only be added
+/// from a waited attempt, and its conclusion is reconciled before it enters
+/// the ledger. The effective result and the retry bit are consequently
+/// projections, not independently writable state.
+///
+/// A caller cannot fabricate an empty or unreconciled ledger:
+///
+/// ```compile_fail
+/// use rust_mutants::session::AttemptLedger;
+///
+/// let _empty = AttemptLedger {};
+/// ```
+#[derive(Debug, Clone)]
+pub struct AttemptLedger {
+    first: MutantResult,
+    retry: Option<MutantResult>,
+    duration: Duration,
+}
+
+impl AttemptLedger {
+    const fn single(first: MutantResult) -> Self {
+        let duration = first.duration;
+        Self {
+            first,
+            retry: None,
+            duration,
+        }
+    }
+
+    fn with_retry(
+        first: WaitedAttempt,
+        mut repeated: MutantResult,
+        cancelled: bool,
+    ) -> Result<Self, SessionError> {
+        repeated.reconcile_outcome(retry_outcome(repeated.outcome(), cancelled));
+        let first = first.into_result();
+        let duration = first
+            .duration
+            .checked_add(repeated.duration)
+            .ok_or(SessionError::ExecutionDurationOverflow)?;
+        Ok(Self {
+            first,
+            retry: Some(repeated),
+            duration,
+        })
+    }
+
+    /// The conclusion this ordered ledger establishes.
+    #[must_use]
+    pub const fn result(&self) -> &MutantResult {
+        match &self.retry {
+            Some(repeated) => repeated,
+            None => &self.first,
+        }
+    }
+
+    /// Consumes the ledger and returns the conclusion it establishes.
+    #[must_use]
+    pub fn into_result(self) -> MutantResult {
+        match self.retry {
+            Some(repeated) => repeated,
+            None => self.first,
+        }
+    }
+
+    /// Every execution in causal order.
+    pub fn iter(&self) -> impl Iterator<Item = &MutantResult> {
+        std::iter::once(&self.first).chain(self.retry.iter())
+    }
+
+    /// The number of executions, which is one or two by construction.
+    #[must_use]
+    pub const fn attempt_count(&self) -> usize {
+        match self.retry {
+            Some(_) => 2,
+            None => 1,
+        }
+    }
+
+    /// Whether the first wait was checked by a serial retry.
+    #[must_use]
+    pub const fn retried(&self) -> bool {
+        self.retry.is_some()
+    }
+
+    /// How long every execution took together.
+    #[must_use]
+    pub const fn duration(&self) -> Duration {
+        self.duration
+    }
+}
+
+/// A first attempt whose only possible conclusion is a wall-clock wait.
+#[derive(Debug, Clone)]
+struct WaitedAttempt(MutantResult);
+
+impl WaitedAttempt {
+    const fn result(&self) -> &MutantResult {
+        &self.0
+    }
+
+    fn into_result(self) -> MutantResult {
+        self.0
+    }
+}
+
+/// Whether the first execution is final or requires the isolated retry.
+#[derive(Debug, Clone)]
+enum InitialAttempt {
+    Final(MutantResult),
+    Retry(WaitedAttempt),
+}
+
+impl InitialAttempt {
+    fn classify(first: MutantResult, cancelled: bool) -> Self {
+        if first.outcome() == crate::outcome::Outcome::Waited && !cancelled {
+            Self::Retry(WaitedAttempt(first))
+        } else {
+            Self::Final(first)
+        }
+    }
+}
+
+/// What one mutant's judgement is made of: every attempt it took, and the budget each was given.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Judgement {
-    /// What the run establishes about the mutant.
-    pub result: MutantResult,
-    /// Every execution, in order. One unless a budget expired.
-    pub attempts: Vec<MutantResult>,
+    /// The non-empty, ordered execution ledger. Its last entry is the result.
+    pub attempts: AttemptLedger,
     /// Every target that was actually asked, in the order they were asked, with what each answered. A target that reaches a mutation and is absent from this was never given the chance: one before it detected, or the run was cancelled.
     pub asked: Vec<MutantResult>,
-    /// Whether an expired budget was confirmed with the machine to itself.
-    pub retried: bool,
     /// The budget the target that answered was given.
     pub timeout: Duration,
     /// Where that budget came from.
@@ -1455,20 +1754,29 @@ pub struct Judgement {
 }
 
 impl Judgement {
+    /// What the run establishes about the mutant.
+    #[must_use]
+    pub const fn result(&self) -> &MutantResult {
+        self.attempts.result()
+    }
+
+    /// Whether an expired budget was confirmed with the machine to itself.
+    #[must_use]
+    pub const fn retried(&self) -> bool {
+        self.attempts.retried()
+    }
+
     /// How long every execution of this mutant took together.
     #[must_use]
-    pub fn duration(&self) -> Duration {
-        self.attempts.iter().fold(Duration::ZERO, |total, one| {
-            total.saturating_add(one.duration)
-        })
+    pub const fn duration(&self) -> Duration {
+        self.attempts.duration()
     }
 }
 
 /// What a run waits for one mutant execution.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Timeout {
     /// A multiple of what the target's own baseline took, never below [`MINIMUM_DERIVED_TIMEOUT`].
-    #[default]
     Auto,
     /// Exactly this long, whatever the baseline said.
     Fixed(Duration),
@@ -1504,35 +1812,515 @@ pub const MINIMUM_DERIVED_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MUTANT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The budget derived from one target's own baseline.
-#[must_use]
-pub fn derived(baseline: Duration) -> Duration {
+///
+/// # Errors
+/// Refuses when multiplying the baseline by [`TIMEOUT_MULTIPLE`] exceeds the
+/// largest [`Duration`].
+pub fn derived(baseline: Duration) -> Result<Duration, SessionError> {
     baseline
-        .saturating_mul(TIMEOUT_MULTIPLE)
-        .max(MINIMUM_DERIVED_TIMEOUT)
+        .checked_mul(TIMEOUT_MULTIPLE)
+        .map(|duration| duration.max(MINIMUM_DERIVED_TIMEOUT))
+        .ok_or(SessionError::DerivedTimeoutOverflow { baseline })
 }
 
 impl Timeout {
     /// The budget and where it came from, for a target whose baseline took `baseline`.
-    #[must_use]
-    pub fn of(self, baseline: Option<Duration>) -> (Duration, TimeoutSource) {
+    ///
+    /// # Errors
+    /// Refuses when an automatic timeout derived from `baseline` exceeds the
+    /// largest [`Duration`].
+    pub fn of(self, baseline: Option<Duration>) -> Result<(Duration, TimeoutSource), SessionError> {
         match self {
-            Self::Fixed(chosen) => (chosen, TimeoutSource::Configured),
-            Self::Auto => (
-                baseline.map_or(DEFAULT_MUTANT_TIMEOUT, derived),
+            Self::Fixed(chosen) => Ok((chosen, TimeoutSource::Configured)),
+            Self::Auto => Ok((
+                match baseline {
+                    Some(measured) => derived(measured)?,
+                    None => DEFAULT_MUTANT_TIMEOUT,
+                },
                 TimeoutSource::Derived,
-            ),
+            )),
         }
     }
 }
 
+fn duration_ms(duration: Duration) -> Result<u64, SessionError> {
+    u64::try_from(duration.as_millis())
+        .map_err(|_overflow| SessionError::DurationMillisOverflow { duration })
+}
+
 /// Whether a target said anything at all.
 const fn spoke(result: &MutantResult) -> bool {
-    execute::answered(result.outcome)
+    execute::answered(result.outcome())
+}
+
+/// The strongest fact all selected targets jointly establish.
+///
+/// `Survived` is deliberately the weakest non-empty state: every selected
+/// target must reach it before the aggregate may stay there. A kill decides
+/// the mutation; every other non-affirmative result prevents a survival
+/// claim, with a stable precedence so target order cannot decide the report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetAggregate {
+    Empty,
+    Survived,
+    NotRun,
+    Inconclusive,
+    StepLimitReached,
+    Waited,
+    Errored,
+    Killed,
+}
+
+impl TargetAggregate {
+    const fn of(outcome: crate::outcome::Outcome) -> Self {
+        match outcome {
+            crate::outcome::Outcome::Survived => Self::Survived,
+            crate::outcome::Outcome::NotRun => Self::NotRun,
+            crate::outcome::Outcome::Inconclusive => Self::Inconclusive,
+            crate::outcome::Outcome::StepLimitReached => Self::StepLimitReached,
+            crate::outcome::Outcome::Waited => Self::Waited,
+            crate::outcome::Outcome::Errored => Self::Errored,
+            crate::outcome::Outcome::Killed => Self::Killed,
+        }
+    }
+
+    const fn priority(self) -> u8 {
+        match self {
+            Self::Empty => 0,
+            Self::Survived => 1,
+            Self::NotRun => 2,
+            Self::Inconclusive => 3,
+            Self::StepLimitReached => 4,
+            Self::Waited => 5,
+            Self::Errored => 6,
+            Self::Killed => 7,
+        }
+    }
+
+    const fn include(self, outcome: crate::outcome::Outcome) -> Self {
+        self.join(Self::of(outcome))
+    }
+
+    const fn join(self, other: Self) -> Self {
+        if other.priority() > self.priority() {
+            other
+        } else {
+            self
+        }
+    }
+
+    const fn outcome(self) -> Option<crate::outcome::Outcome> {
+        match self {
+            Self::Empty => None,
+            Self::Survived => Some(crate::outcome::Outcome::Survived),
+            Self::NotRun => Some(crate::outcome::Outcome::NotRun),
+            Self::Inconclusive => Some(crate::outcome::Outcome::Inconclusive),
+            Self::StepLimitReached => Some(crate::outcome::Outcome::StepLimitReached),
+            Self::Waited => Some(crate::outcome::Outcome::Waited),
+            Self::Errored => Some(crate::outcome::Outcome::Errored),
+            Self::Killed => Some(crate::outcome::Outcome::Killed),
+        }
+    }
+}
+
+#[cfg(kani)]
+mod kani_laws {
+    use super::{AttemptLedger, TargetAggregate, WaitedAttempt, aggregate_outcomes, retry_outcome};
+    use crate::execute::{MutantConclusion, MutantResult};
+    use crate::outcome::Outcome;
+    use std::time::Duration;
+
+    fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
+        MutantResult {
+            conclusion,
+            target: String::new(),
+            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
+            duration,
+            output: Vec::new(),
+            summary: None,
+            tests_run: None,
+            signal: None,
+            failed_tests: Vec::new(),
+            passed_tests: Vec::new(),
+            ignored_tests: Vec::new(),
+        }
+    }
+
+    fn symbolic_duration() -> Duration {
+        let seconds = kani::any::<u64>();
+        let nanoseconds = kani::any::<u32>();
+        kani::assume(nanoseconds < 1_000_000_000);
+        Duration::new(seconds, nanoseconds)
+    }
+
+    fn symbolic_outcome() -> Outcome {
+        let index = kani::any::<u8>();
+        kani::assume(index < 7);
+        match index {
+            0 => Outcome::NotRun,
+            1 => Outcome::Killed,
+            2 => Outcome::Survived,
+            3 => Outcome::StepLimitReached,
+            4 => Outcome::Waited,
+            5 => Outcome::Inconclusive,
+            _ => Outcome::Errored,
+        }
+    }
+
+    fn symbolic_aggregate() -> TargetAggregate {
+        let index = kani::any::<u8>();
+        kani::assume(index < 8);
+        match index {
+            0 => TargetAggregate::Empty,
+            1 => TargetAggregate::Survived,
+            2 => TargetAggregate::NotRun,
+            3 => TargetAggregate::Inconclusive,
+            4 => TargetAggregate::StepLimitReached,
+            5 => TargetAggregate::Waited,
+            6 => TargetAggregate::Errored,
+            _ => TargetAggregate::Killed,
+        }
+    }
+
+    #[kani::proof]
+    fn target_join_is_idempotent() {
+        let value = symbolic_aggregate();
+        kani::assert(
+            value.join(value) == value,
+            "njutest-law-assertion:join-idempotent",
+        );
+        kani::cover!(value == TargetAggregate::Empty, "njutest-law-branch:empty");
+        kani::cover!(
+            value == TargetAggregate::Killed,
+            "njutest-law-branch:killed"
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    fn target_join_is_commutative() {
+        let left = symbolic_aggregate();
+        let right = symbolic_aggregate();
+        kani::assert(
+            left.join(right) == right.join(left),
+            "njutest-law-assertion:join-commutative",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    fn target_join_is_associative() {
+        let first = symbolic_aggregate();
+        let second = symbolic_aggregate();
+        let third = symbolic_aggregate();
+        kani::assert(
+            first.join(second).join(third) == first.join(second.join(third)),
+            "njutest-law-assertion:join-associative",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    fn killed_is_absorbing() {
+        let value = symbolic_aggregate();
+        kani::assert(
+            value.join(TargetAggregate::Killed) == TargetAggregate::Killed,
+            "njutest-law-assertion:killed-right-absorbing",
+        );
+        kani::assert(
+            TargetAggregate::Killed.join(value) == TargetAggregate::Killed,
+            "njutest-law-assertion:killed-left-absorbing",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn survived_means_every_nonempty_target_survived() {
+        let first = symbolic_outcome();
+        let second = symbolic_outcome();
+        let third = symbolic_outcome();
+        let aggregate = aggregate_outcomes([first, second, third]);
+        kani::assert(
+            (aggregate == TargetAggregate::Survived)
+                == (first == Outcome::Survived
+                    && second == Outcome::Survived
+                    && third == Outcome::Survived),
+            "njutest-law-assertion:survived-iff-all",
+        );
+        kani::cover!(
+            aggregate == TargetAggregate::Survived,
+            "njutest-law-branch:survived"
+        );
+        kani::cover!(
+            aggregate != TargetAggregate::Survived,
+            "njutest-law-branch:not-survived"
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    fn retry_reconciliation_is_closed() {
+        let repeated = symbolic_outcome();
+        let cancelled = kani::any::<bool>();
+        let reconciled = retry_outcome(repeated, cancelled);
+        if cancelled {
+            kani::assert(
+                reconciled == Outcome::NotRun,
+                "njutest-law-assertion:retry-cancelled",
+            );
+            kani::cover!(true, "njutest-law-branch:cancelled");
+        } else {
+            match repeated {
+                Outcome::Killed | Outcome::StepLimitReached | Outcome::Waited => {
+                    kani::assert(
+                        reconciled == repeated,
+                        "njutest-law-assertion:retry-preserved",
+                    );
+                    kani::cover!(true, "njutest-law-branch:preserved");
+                }
+                Outcome::NotRun | Outcome::Survived | Outcome::Inconclusive | Outcome::Errored => {
+                    kani::assert(
+                        reconciled == Outcome::Inconclusive,
+                        "njutest-law-assertion:retry-downgraded",
+                    );
+                    kani::cover!(true, "njutest-law-branch:downgraded");
+                }
+            }
+        }
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn attempt_ledger_is_nonempty_and_its_result_is_derived() {
+        let retried = kani::any::<bool>();
+        let first = result(MutantConclusion::Waited, Duration::ZERO);
+        let ledger = if retried {
+            let constructed = AttemptLedger::with_retry(
+                WaitedAttempt(first),
+                result(MutantConclusion::Killed, Duration::ZERO),
+                false,
+            );
+            kani::assert(
+                constructed.is_ok(),
+                "njutest-law-assertion:attempt-retry-constructs",
+            );
+            let Ok(ledger) = constructed else {
+                return;
+            };
+            ledger
+        } else {
+            AttemptLedger::single(first)
+        };
+        kani::assert(
+            ledger.attempt_count() == 1 || ledger.attempt_count() == 2,
+            "njutest-law-assertion:attempt-count-closed",
+        );
+        kani::assert(
+            ledger.retried() == retried,
+            "njutest-law-assertion:attempt-retried-derived",
+        );
+        kani::assert(
+            ledger.result().outcome()
+                == if retried {
+                    Outcome::Killed
+                } else {
+                    Outcome::Waited
+                },
+            "njutest-law-assertion:attempt-result-derived",
+        );
+        kani::cover!(retried, "njutest-law-branch:retried");
+        kani::cover!(!retried, "njutest-law-branch:single");
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn attempt_duration_is_the_checked_sum_of_every_execution() {
+        let first_duration = symbolic_duration();
+        let retry_duration = symbolic_duration();
+        let ledger = AttemptLedger::with_retry(
+            WaitedAttempt(result(MutantConclusion::Waited, first_duration)),
+            result(MutantConclusion::Killed, retry_duration),
+            false,
+        );
+        match first_duration.checked_add(retry_duration) {
+            Some(expected) => {
+                kani::assert(
+                    ledger.is_ok(),
+                    "njutest-law-assertion:duration-sum-constructs",
+                );
+                let Ok(actual) = ledger else {
+                    return;
+                };
+                kani::assert(
+                    actual.duration() == expected,
+                    "njutest-law-assertion:duration-sum-exact",
+                );
+                kani::cover!(true, "njutest-law-branch:sum");
+            }
+            None => {
+                kani::assert(
+                    matches!(
+                        ledger,
+                        Err(crate::workspace::SessionError::ExecutionDurationOverflow)
+                    ),
+                    "njutest-law-assertion:duration-overflow-refused",
+                );
+                kani::cover!(true, "njutest-law-branch:overflow");
+            }
+        }
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn cancelled_retry_is_structurally_not_run() {
+        let constructed = AttemptLedger::with_retry(
+            WaitedAttempt(result(MutantConclusion::Waited, Duration::ZERO)),
+            result(MutantConclusion::Killed, Duration::ZERO),
+            true,
+        );
+        kani::assert(
+            constructed.is_ok(),
+            "njutest-law-assertion:cancelled-retry-constructs",
+        );
+        let Ok(ledger) = constructed else {
+            return;
+        };
+        kani::assert(
+            ledger.result().outcome() == Outcome::NotRun,
+            "njutest-law-assertion:cancelled-retry-not-run",
+        );
+        kani::assert(
+            ledger.retried(),
+            "njutest-law-assertion:cancelled-retry-retained",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn cancellation_before_retry_cannot_create_a_retry() {
+        let first = result(MutantConclusion::Waited, Duration::ZERO);
+        let classified = super::InitialAttempt::classify(first, true);
+        kani::assert(
+            matches!(&classified, super::InitialAttempt::Final(_)),
+            "njutest-law-assertion:pre-retry-cancel-final",
+        );
+        let super::InitialAttempt::Final(observed) = classified else {
+            return;
+        };
+        let ledger = AttemptLedger::single(observed);
+        kani::assert(
+            !ledger.retried(),
+            "njutest-law-assertion:pre-retry-cancel-single",
+        );
+        kani::assert(
+            ledger.attempt_count() == 1,
+            "njutest-law-assertion:pre-retry-count-one",
+        );
+        kani::assert(
+            ledger.result().outcome() == Outcome::Waited,
+            "njutest-law-assertion:pre-retry-result-retained",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn equal_outcomes_choose_the_canonical_target_in_every_order() {
+        let mut later = result(MutantConclusion::Survived, Duration::ZERO);
+        later.target = String::from("z");
+        let mut earlier = result(MutantConclusion::Survived, Duration::ZERO);
+        earlier.target = String::from("a");
+
+        let forward = [later.clone(), earlier.clone()];
+        let reverse = [earlier, later];
+        let forward_result = super::aggregate_result(&forward);
+        kani::assert(
+            forward_result.is_some(),
+            "njutest-law-assertion:tie-forward-present",
+        );
+        let Some(forward_result) = forward_result else {
+            return;
+        };
+        let reverse_result = super::aggregate_result(&reverse);
+        kani::assert(
+            reverse_result.is_some(),
+            "njutest-law-assertion:tie-reverse-present",
+        );
+        let Some(reverse_result) = reverse_result else {
+            return;
+        };
+        kani::assert(
+            forward_result.target == "a",
+            "njutest-law-assertion:tie-forward-canonical",
+        );
+        kani::assert(
+            reverse_result.target == "a",
+            "njutest-law-assertion:tie-reverse-canonical",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+}
+
+fn aggregate_outcomes(
+    outcomes: impl IntoIterator<Item = crate::outcome::Outcome>,
+) -> TargetAggregate {
+    outcomes
+        .into_iter()
+        .fold(TargetAggregate::Empty, TargetAggregate::include)
+}
+
+/// The verdict of one mutant over the targets it was put to: a target whose
+/// harness ran no tests is silent, and a silent target contributes no
+/// reaching test, so it cannot turn a survived verdict inconclusive. When
+/// every target was silent the aggregate says so instead of inventing
+/// survival.
+fn verdict_result(results: &[MutantResult]) -> Option<MutantResult> {
+    let speaking: Vec<&MutantResult> = results.iter().filter(|result| spoke(result)).collect();
+    if speaking.is_empty() {
+        return aggregate_result(results).cloned();
+    }
+    let outcome = aggregate_outcomes(speaking.iter().map(|result| result.outcome())).outcome()?;
+    speaking
+        .into_iter()
+        .find(|result| result.outcome() == outcome)
+        .cloned()
+}
+
+fn aggregate_result(results: &[MutantResult]) -> Option<&MutantResult> {
+    let outcome = aggregate_outcomes(results.iter().map(MutantResult::outcome)).outcome()?;
+    results
+        .iter()
+        .filter(|result| result.outcome() == outcome)
+        .min_by(|left, right| left.target.cmp(&right.target))
+}
+
+/// Reconciles the result of the isolated retry with the wait that caused it.
+const fn retry_outcome(
+    repeated: crate::outcome::Outcome,
+    cancelled: bool,
+) -> crate::outcome::Outcome {
+    if cancelled {
+        return crate::outcome::Outcome::NotRun;
+    }
+    match repeated {
+        crate::outcome::Outcome::Killed
+        | crate::outcome::Outcome::StepLimitReached
+        | crate::outcome::Outcome::Waited => repeated,
+        crate::outcome::Outcome::Survived
+        | crate::outcome::Outcome::Inconclusive
+        | crate::outcome::Outcome::Errored
+        | crate::outcome::Outcome::NotRun => crate::outcome::Outcome::Inconclusive,
+    }
 }
 
 const fn unreached() -> MutantResult {
     MutantResult {
-        outcome: crate::outcome::Outcome::NotRun,
+        conclusion: MutantConclusion::NotRun,
         target: String::new(),
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
         duration: Duration::ZERO,
@@ -1550,4 +2338,169 @@ const fn unreached() -> MutantResult {
 #[must_use]
 pub fn target_name(package: &str, kind: TargetKind, name: &str) -> String {
     target_id(package, kind, name)
+}
+
+#[cfg(test)]
+mod tests {
+    use njutest_devkit::result::{ResultState::Returned, result_state};
+
+    use super::{AttemptLedger, InitialAttempt, WaitedAttempt, aggregate_outcomes, retry_outcome};
+    use crate::execute::{MutantConclusion, MutantResult, StepLimitNotice};
+    use crate::outcome::Outcome;
+    use std::time::Duration;
+
+    fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
+        MutantResult {
+            conclusion,
+            target: "target".to_owned(),
+            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
+            duration,
+            output: Vec::new(),
+            summary: None,
+            tests_run: None,
+            signal: None,
+            failed_tests: Vec::new(),
+            passed_tests: Vec::new(),
+            ignored_tests: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn no_nonaffirmative_target_can_be_hidden_by_a_survivor() {
+        for outcome in [
+            Outcome::StepLimitReached,
+            Outcome::Waited,
+            Outcome::Errored,
+            Outcome::Inconclusive,
+        ] {
+            for ordered in [[Outcome::Survived, outcome], [outcome, Outcome::Survived]] {
+                assert_eq!(
+                    aggregate_outcomes(ordered).outcome(),
+                    Some(outcome),
+                    "{ordered:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn target_order_cannot_change_the_aggregate() {
+        for first in Outcome::ALL {
+            for second in Outcome::ALL {
+                let forward = aggregate_outcomes([first, second]);
+                let reverse = aggregate_outcomes([second, first]);
+                assert_eq!(forward, reverse, "{first:?}, {second:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn three_target_rotation_cannot_change_the_aggregate() {
+        for first in Outcome::ALL {
+            for second in Outcome::ALL {
+                for third in Outcome::ALL {
+                    let all = aggregate_outcomes([first, second, third]);
+                    let rotated = aggregate_outcomes([second, third, first]);
+                    assert_eq!(all, rotated, "{first:?}, {second:?}, {third:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retry_preserves_only_a_reproduced_wait_a_kill_or_a_verified_step_boundary() {
+        for (repeated, expected) in [
+            (Outcome::Killed, Outcome::Killed),
+            (Outcome::StepLimitReached, Outcome::StepLimitReached),
+            (Outcome::Waited, Outcome::Waited),
+            (Outcome::Survived, Outcome::Inconclusive),
+            (Outcome::Inconclusive, Outcome::Inconclusive),
+            (Outcome::Errored, Outcome::Inconclusive),
+            (Outcome::NotRun, Outcome::Inconclusive),
+        ] {
+            assert_eq!(retry_outcome(repeated, false), expected, "{repeated:?}");
+            assert_eq!(
+                retry_outcome(repeated, true),
+                Outcome::NotRun,
+                "cancellation dominates {repeated:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn attempt_ledger_is_nonempty_and_derives_its_result_and_retry_state() {
+        let single =
+            AttemptLedger::single(result(MutantConclusion::Killed, Duration::from_secs(1)));
+        assert_eq!(single.attempt_count(), 1);
+        assert!(!single.retried());
+        assert_eq!(single.result().outcome(), Outcome::Killed);
+
+        let notice = StepLimitNotice::specimen();
+        let retried = AttemptLedger::with_retry(
+            WaitedAttempt(result(MutantConclusion::Waited, Duration::from_secs(1))),
+            result(
+                MutantConclusion::StepLimitReached {
+                    notice: notice.clone(),
+                },
+                Duration::from_secs(2),
+            ),
+            false,
+        );
+        assert_eq!(result_state(&retried), Returned, "ledger: {retried:?}");
+        let Ok(retried) = retried else { return };
+        assert_eq!(retried.attempt_count(), 2);
+        assert!(retried.retried());
+        assert_eq!(retried.result().outcome(), Outcome::StepLimitReached);
+        assert_eq!(retried.result().step_notice(), Some(&notice));
+        assert_eq!(retried.duration(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn attempt_ledger_fails_closed_when_its_exact_duration_overflows() {
+        let ledger = AttemptLedger::with_retry(
+            WaitedAttempt(result(MutantConclusion::Waited, Duration::MAX)),
+            result(MutantConclusion::Killed, Duration::from_nanos(1)),
+            false,
+        );
+        assert!(matches!(
+            ledger,
+            Err(crate::workspace::SessionError::ExecutionDurationOverflow)
+        ));
+    }
+
+    #[test]
+    fn cancellation_reconciles_the_retry_without_detaching_step_evidence() {
+        let ledger = AttemptLedger::with_retry(
+            WaitedAttempt(result(MutantConclusion::Waited, Duration::ZERO)),
+            result(
+                MutantConclusion::StepLimitReached {
+                    notice: StepLimitNotice::specimen(),
+                },
+                Duration::ZERO,
+            ),
+            true,
+        );
+        assert_eq!(result_state(&ledger), Returned, "ledger: {ledger:?}");
+        let Ok(ledger) = ledger else { return };
+        assert_eq!(ledger.result().outcome(), Outcome::NotRun);
+        assert!(ledger.result().step_notice().is_none());
+    }
+
+    #[test]
+    fn cancellation_before_a_retry_keeps_the_single_observed_attempt() {
+        let first = result(MutantConclusion::Waited, Duration::from_secs(1));
+        let classified = InitialAttempt::classify(first, true);
+        assert!(
+            matches!(classified, InitialAttempt::Final(_)),
+            "cancellation must suppress the isolated retry"
+        );
+        let InitialAttempt::Final(observed) = classified else {
+            return;
+        };
+        let ledger = AttemptLedger::single(observed);
+        assert_eq!(ledger.attempt_count(), 1);
+        assert!(!ledger.retried());
+        assert_eq!(ledger.result().outcome(), Outcome::Waited);
+        assert_eq!(ledger.duration(), Duration::from_secs(1));
+    }
 }

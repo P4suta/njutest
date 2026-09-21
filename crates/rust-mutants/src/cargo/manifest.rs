@@ -81,7 +81,7 @@ pub fn read_harnesses(text: &str) -> std::collections::BTreeMap<(String, String)
             .and_then(toml::Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        let _replaced = found.insert(("lib".to_owned(), name), harness);
+        found.entry(("lib".to_owned(), name)).or_insert(harness);
     }
     for kind in ["bin", "test", "bench", "example"] {
         let Some(toml::Value::Array(entries)) = document.get(kind) else {
@@ -94,7 +94,9 @@ pub fn read_harnesses(text: &str) -> std::collections::BTreeMap<(String, String)
             ) else {
                 continue;
             };
-            let _replaced = found.insert((kind.to_owned(), name.to_owned()), harness);
+            found
+                .entry((kind.to_owned(), name.to_owned()))
+                .or_insert(harness);
         }
     }
     found
@@ -106,7 +108,10 @@ pub fn forbidden(path: &Path, workspace: Option<&Path>) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    let root = workspace.and_then(|path| std::fs::read_to_string(path).ok());
+    let root = workspace.and_then(|path| match std::fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(_) => None,
+    });
     read_forbidden(&text, root.as_deref())
 }
 
@@ -122,11 +127,16 @@ pub fn read_forbidden(text: &str, workspace: Option<&str>) -> Vec<String> {
     let mut found = forbidden_in(lints);
     if lints.get("workspace").and_then(toml::Value::as_bool) == Some(true)
         && let Some(root) = workspace
-        && let Ok(root) = root.parse::<toml::Table>()
-        && let Some(toml::Value::Table(inherited)) =
-            root.get("workspace").and_then(|table| table.get("lints"))
     {
-        found.extend(forbidden_in(inherited));
+        let root = match root.parse::<toml::Table>() {
+            Ok(root) => root,
+            Err(_workspace_manifest_is_not_a_toml_table) => return Vec::new(),
+        };
+        if let Some(toml::Value::Table(inherited)) =
+            root.get("workspace").and_then(|table| table.get("lints"))
+        {
+            found.extend(forbidden_in(inherited));
+        }
     }
     found.sort();
     found.dedup();

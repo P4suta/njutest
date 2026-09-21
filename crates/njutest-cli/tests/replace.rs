@@ -3,6 +3,13 @@
 
 //! What a reader holds while a writer is replacing what it is reading.
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::disallowed_methods,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,8 +17,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use njutest_cli::report::{
-    Limitation, Provenance, Report, RunKind, TargetRecord, TargetStatus, Verdict,
+    BuildReport, Limitation, Provenance, RunKind, TargetRecord, TargetStatus,
 };
+use njutest_devkit::thread::JoinedThread;
+use rust_mutants::id::HexDigest;
+
+fn digest(number: u8) -> HexDigest {
+    HexDigest::try_from(format!("{number:064x}")).expect("a canonical digest")
+}
 
 /// How many entries the writer puts through the destination while the reader reads it.
 const ROUNDS: u64 = 400;
@@ -65,17 +78,18 @@ fn put_record(root: &Path, round: u64) -> Option<String> {
         .map(|one| (format!("demo/lib/target-{one:04}"), format!("{round:064}")))
         .collect();
     let record = njutest_cli::evidence::store::record(
-        "m1",
+        digest(1),
         &format!("run-{round}"),
         njutest_cli::evidence::store::Outcome::Survived { targets },
     );
-    njutest_cli::evidence::store::write(root, &record)
-        .err()
-        .map(|error| error.to_string())
+    match njutest_cli::evidence::store::write(root, &record) {
+        Ok(_written) => None,
+        Err(error) => Some(error.to_string()),
+    }
 }
 
 fn take_record(root: &Path) -> Option<String> {
-    match njutest_cli::evidence::store::read(root, "m1") {
+    match njutest_cli::evidence::store::read(root, &digest(1)) {
         Ok(Some(_whole)) => None,
         Ok(None) => Some("the store held no record where one had been written".to_owned()),
         Err(error) => Some(error.to_string()),
@@ -83,23 +97,27 @@ fn take_record(root: &Path) -> Option<String> {
 }
 
 fn put_checkpoint(root: &Path, round: u64) -> Option<String> {
-    let mut state = njutest_cli::checkpoint::State::new("inputs-1");
-    state.attempts = u32::try_from(round).unwrap_or(u32::MAX);
+    let identity = "a".repeat(64);
+    let mut state = njutest_cli::checkpoint::State::new(&identity);
+    state.attempts = u32::try_from(round).unwrap_or(u32::MAX).max(1);
     state.mutants = (0..MEMBERS)
         .map(|one| njutest_cli::checkpoint::SavedMutant {
-            id: format!("mutant-{one:04}"),
-            disposition: "killed".to_owned(),
-            killed_by: Some(format!("demo/lib/demo tests::round_{round}")),
+            id: format!("{one:064x}"),
+            disposition: njutest_cli::checkpoint::SavedDisposition::Killed {
+                by: format!("demo/lib/demo tests::round_{round}"),
+            },
             duration_ms: 3,
         })
         .collect();
-    njutest_cli::checkpoint::write(root, &state)
-        .err()
-        .map(|error| error.to_string())
+    match njutest_cli::checkpoint::write(root, &state) {
+        Ok(_written) => None,
+        Err(error) => Some(error.to_string()),
+    }
 }
 
 fn take_checkpoint(root: &Path) -> Option<String> {
-    match njutest_cli::checkpoint::read(root, "inputs-1") {
+    let identity = "a".repeat(64);
+    match njutest_cli::checkpoint::read(root, &identity) {
         Ok(Some(_whole)) => None,
         Ok(None) => Some("the store held no state where one had been written".to_owned()),
         Err(error) => Some(error.to_string()),
@@ -111,31 +129,27 @@ fn store(root: &Path) -> njutest_cli::cache::store::Store {
 }
 
 fn put_report(root: &Path, round: u64) -> Option<String> {
-    let mut report = Report::new(
+    let mut source = BuildReport::new(
         &format!("run-{round}"),
         RunKind::Full,
         njutest_cli::config::Contract::StandardV1,
     );
-    report.provenance = Provenance {
-        identity: "inputs-1".to_owned(),
+    source.provenance = Provenance {
+        identity: digest(1).to_string(),
         facts: njutest_cli::report::Established::Here,
     };
-    "demo".clone_into(&mut report.repository.root_name);
-    report.repository.workspace_digest = "a".repeat(64);
-    report.repository.configuration_digest = "b".repeat(64);
-    "rustc 1.98.0".clone_into(&mut report.toolchain.rustc);
-    report.limitations.push(Limitation::new(
+    "demo".clone_into(&mut source.repository.root_name);
+    source.repository.workspace_digest = "a".repeat(64);
+    source.repository.configuration_digest = "b".repeat(64);
+    "rustc 1.98.0".clone_into(&mut source.toolchain.rustc);
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    "2026-01-01T00:00:00Z".clone_into(&mut source.timing.started);
+    "2026-01-01T00:00:00Z".clone_into(&mut source.timing.finished);
+    source.limitations.push(Limitation::new(
         "git-metadata-unavailable",
         "the tree a test builds is not a git repository",
     ));
-    report.verdict = Verdict::Assured;
-    report.accounting.mutants.cataloged = 1;
-    report.accounting.mutants.executed = 1;
-    report.accounting.mutants.killed = 1;
-    report.accounting.mutants.observers.tests = 1;
-    report.accounting.targets.selected = u32::try_from(MEMBERS).unwrap_or(u32::MAX);
-    report.accounting.targets.passed = u32::try_from(MEMBERS).unwrap_or(u32::MAX);
-    report.targets = (0..MEMBERS)
+    source.targets = (0..MEMBERS)
         .map(|one| TargetRecord {
             id: format!("demo/lib/target-{one:04}"),
             package: "demo".to_owned(),
@@ -145,14 +159,33 @@ fn put_report(root: &Path, round: u64) -> Option<String> {
             message: None,
         })
         .collect();
-    store(root)
-        .put(&report)
-        .err()
-        .map(|error| error.to_string())
+    source
+        .count_targets()
+        .expect("one exact target row per member");
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let final_run = rust_mutants::id::RunId::try_from(format!("final-{round}").as_str())
+        .expect("a canonical run id");
+    let latticed = njutest_cli::report::across::configured(&final_run, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog cache fixture cannot be a shard");
+    };
+    let report = latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion");
+    match store(root).put(&report) {
+        Ok(()) => None,
+        Err(error) => Some(error.to_string()),
+    }
 }
 
 fn take_report(root: &Path) -> Option<String> {
-    match store(root).get("inputs-1") {
+    match store(root).get(&digest(1)) {
         Ok(Some(_whole)) => None,
         Ok(None) => Some("the store held no report where one had been written".to_owned()),
         Err(error) => Some(error.to_string()),
@@ -174,7 +207,7 @@ fn an_entry_a_reader_takes_while_a_run_replaces_it_is_one_whole_entry() {
             let root = root.clone();
             let done = Arc::clone(&done);
             let put = kept.put;
-            std::thread::spawn(move || {
+            JoinedThread::launch(move || {
                 let mut refused: Vec<String> = Vec::new();
                 for round in 1..=ROUNDS {
                     if let Some(stopped) = put(&root, round) {

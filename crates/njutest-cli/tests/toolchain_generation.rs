@@ -7,6 +7,7 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads a document as a table"
 )]
 
@@ -48,7 +49,7 @@ fn declaring(fixture: &Fixture) {
         format!(
             "version = 1\n\n[generation]\ncommand = [{:?}, \"generation\"]\n\
              environment = [\"FAKE_GENERATOR_OFFERS\"]\n",
-            provider().to_string_lossy()
+            provider().to_str().expect("test protocol paths are UTF-8")
         ),
     )
     .expect("write");
@@ -94,11 +95,22 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let path = njutest_cli::app::reports::Store::read(&fixture.root)
-        .run_of(njutest_cli::app::reports::Index::Any)
-        .expect("the index names a run")
+    let run =
+        njutest_cli::app::reports::pointed_at(&fixture.root, njutest_cli::app::reports::Index::Any)
+            .expect("the index is readable")
+            .expect("the index names a run");
+    let path = fixture
+        .root
+        .join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(run.as_str())
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
-    serde_json::from_str(&std::fs::read_to_string(&path).expect("the report")).expect("JSON")
+    let whole: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&path).expect("the report"),
+    )
+    .expect("JSON");
+    assert_eq!(whole["document_type"], "complete", "{whole}");
+    whole["report"]["builds"][0]["parts"][0].clone()
 }
 
 fn offering(path: &str, content: &str) -> String {
@@ -137,7 +149,7 @@ fn a_candidate_that_closes_the_gap_is_offered_and_only_then_written() {
     );
 
     let listed = njutest(&fixture, &["fix"], &offers);
-    let said = String::from_utf8_lossy(&listed.stdout).into_owned();
+    let said = njutest_devkit::process::strict_utf8(&listed.stdout).into_owned();
     assert!(said.contains("tests/zero.rs"), "{said}");
     assert!(said.contains("held up"), "{said}");
     assert!(
@@ -150,7 +162,7 @@ fn a_candidate_that_closes_the_gap_is_offered_and_only_then_written() {
         &["fix", "--apply", "--offline", "--locked"],
         &offers,
     );
-    let said = String::from_utf8_lossy(&applied.stdout).into_owned();
+    let said = njutest_devkit::process::strict_utf8(&applied.stdout).into_owned();
     assert_eq!(applied.status.code(), Some(0), "{applied:?}");
     assert!(said.contains("wrote tests/zero.rs"), "{said}");
     assert!(
@@ -289,7 +301,7 @@ fn a_digest_that_names_no_candidate_is_not_a_run_that_was_offered_none() {
     let verified = njutest(&fixture, &["verify", "--offline", "--locked"], &offers);
     assert_eq!(verified.status.code(), Some(2), "{verified:?}");
     let listed = njutest(&fixture, &["fix"], &offers);
-    let said = String::from_utf8_lossy(&listed.stdout).into_owned();
+    let said = njutest_devkit::process::strict_utf8(&listed.stdout).into_owned();
     let digest = said
         .lines()
         .next()
@@ -302,12 +314,12 @@ fn a_digest_that_names_no_candidate_is_not_a_run_that_was_offered_none() {
         one.status.code(),
         Some(0),
         "a digest that names a candidate names it: {}",
-        String::from_utf8_lossy(&one.stderr)
+        njutest_devkit::process::strict_utf8(&one.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&one.stdout).contains(&digest),
+        njutest_devkit::process::strict_utf8(&one.stdout).contains(&digest),
         "{}",
-        String::from_utf8_lossy(&one.stdout)
+        njutest_devkit::process::strict_utf8(&one.stdout)
     );
 
     let nothing = njutest(&fixture, &["fix", "--candidate", "ffffffffffff"], &offers);
@@ -317,9 +329,9 @@ fn a_digest_that_names_no_candidate_is_not_a_run_that_was_offered_none() {
         "a digest that names none of the candidates a run was offered is not a run that \
          was offered none: a person who mistyped a digest would read that the run had \
          nothing to propose, and a script would read success: {}",
-        String::from_utf8_lossy(&nothing.stdout)
+        njutest_devkit::process::strict_utf8(&nothing.stdout)
     );
-    let refusal = String::from_utf8_lossy(&nothing.stderr).into_owned();
+    let refusal = njutest_devkit::process::strict_utf8(&nothing.stderr).into_owned();
     assert!(
         refusal.contains("ffffffffffff") && refusal.contains("no candidate"),
         "and the refusal says which digest found nothing: {refusal}"

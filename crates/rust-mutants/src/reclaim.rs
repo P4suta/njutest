@@ -58,8 +58,20 @@ pub fn with<'a>(
     let started = Instant::now();
     let mut done = Reclaimed::default();
     for path in directories {
-        if !path.exists() {
-            continue;
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_irregular) => {
+                done.refused.push((
+                    path.to_path_buf(),
+                    String::from("refusing to reclaim a non-directory or symbolic link"),
+                ));
+                continue;
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                done.refused.push((path.to_path_buf(), source.to_string()));
+                continue;
+            }
         }
         if started.elapsed() >= BUDGET {
             done.unreached.push(path.to_path_buf());

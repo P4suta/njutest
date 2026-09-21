@@ -3,6 +3,7 @@
 
 //! The questions about a seam that need no run at all.
 
+#![expect(clippy::panic, reason = "a test reports a setup failure by panicking")]
 use njutest_cli::wire::derive::derive;
 use njutest_cli::wire::prove::{ALREADY_THAT_ANSWER, NO_BODY_TO_CUT, discharges};
 use njutest_cli::wire::{Exchange, Spoken};
@@ -33,9 +34,11 @@ fn said(body_bytes: u64, status: u16, status_line: &str) -> Exchange {
 
 /// The question of `rule` about the one exchange of `observed`.
 fn asking(observed: &[Exchange], rule: &str) -> Option<njutest_cli::wire::derive::Fault> {
-    derive(observed)
-        .into_iter()
-        .find(|one| one.rule.name() == rule)
+    let faults = match derive(observed) {
+        Ok(faults) => faults,
+        Err(error) => panic!("the bounded fixture must mint exact fault identities: {error}"),
+    };
+    faults.into_iter().find(|one| one.rule.name() == rule)
 }
 
 #[test]

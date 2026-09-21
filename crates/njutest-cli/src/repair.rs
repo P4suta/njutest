@@ -141,7 +141,7 @@ pub struct Proposal {
 }
 
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum RepairErrorKind {
     /// A provider said something this version does not understand.
     Protocol,
@@ -152,9 +152,6 @@ pub enum RepairErrorKind {
 }
 
 impl RepairErrorKind {
-    /// Every kind, in code order.
-    pub const ALL: [Self; 3] = [Self::Protocol, Self::PathRefused, Self::PreimageMoved];
-
     /// The stable code of this failure.
     #[must_use]
     pub const fn code(self) -> ErrorCode {
@@ -186,12 +183,16 @@ impl RepairError {
 
     /// The failure mode.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub const fn kind(&self) -> RepairErrorKind {
         self.kind
     }
 
     /// The stable code of this failure.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub const fn code(&self) -> ErrorCode {
         self.kind.code()
     }
@@ -211,7 +212,7 @@ pub fn take(said: &str, root: &Path, allowed: &[String]) -> Result<Vec<Proposal>
             format!("the provider wrote more than {OUTPUT_LIMIT} bytes"),
         ));
     }
-    let offered: Offered = serde_json::from_str(said.trim()).map_err(|source| {
+    let offered: Offered = crate::strictjson::decode_str(said.trim()).map_err(|source| {
         RepairError::new(
             RepairErrorKind::Protocol,
             format!("the provider said something that is not this protocol: {source}"),
@@ -327,14 +328,15 @@ pub fn admissible(
             _ => return Err(refuse("climbs out of the tree or names a root")),
         }
     }
-    let relative = candidate
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect::<Vec<String>>()
-        .join("/");
+    let mut parts = Vec::new();
+    for component in candidate.components() {
+        let Component::Normal(part) = component else {
+            return Err(refuse("climbs out of the tree or names a root"));
+        };
+        let text = part.to_str().ok_or_else(|| refuse("is not valid UTF-8"))?;
+        parts.push(text);
+    }
+    let relative = parts.join("/");
     if !allowed.iter().any(|pattern| pattern.matches(&relative)) {
         return Err(refuse("is not one of the allowed paths"));
     }
@@ -360,7 +362,10 @@ fn match_preimage(root: &Path, path: &str, claimed: Option<&str>) -> Result<(), 
 /// The SHA-256 of a file of the tree, or nothing when it is not there.
 #[must_use]
 pub fn preimage_of(root: &Path, path: &str) -> Option<String> {
-    let bytes = std::fs::read(root.join(path)).ok()?;
+    let bytes = match std::fs::read(root.join(path)) {
+        Ok(bytes) => bytes,
+        Err(_) => return None,
+    };
     Some(hex::encode(Sha256::digest(&bytes)))
 }
 
@@ -368,7 +373,12 @@ pub fn preimage_of(root: &Path, path: &str) -> Option<String> {
 fn compiled(allowed: &[String]) -> Vec<rust_mutants::glob::Pattern> {
     allowed
         .iter()
-        .filter_map(|pattern| rust_mutants::glob::Pattern::compile(pattern).ok())
+        .filter_map(
+            |pattern| match rust_mutants::glob::Pattern::compile(pattern) {
+                Ok(pattern) => Some(pattern),
+                Err(_) => None,
+            },
+        )
         .collect()
 }
 
@@ -397,17 +407,40 @@ pub fn keep(root: &Path, proposal: &Proposal) -> Result<PathBuf, std::io::Error>
 /// The content of one kept candidate, when it is still there and still itself.
 #[must_use]
 pub fn load(root: &Path, digest: &str) -> Option<Vec<u8>> {
-    let content = std::fs::read(stored_path(root, digest)).ok()?;
+    let content = match std::fs::read(stored_path(root, digest)) {
+        Ok(content) => content,
+        Err(_) => return None,
+    };
     (hex::encode(Sha256::digest(&content)) == digest).then_some(content)
 }
 
+/// Why provider text is not the strict base64 form the protocol accepts.
+#[derive(Debug, thiserror::Error)]
+enum DecodeError {
+    /// Base64 is made of complete four-character quanta.
+    #[error("its length is not a multiple of four")]
+    Length,
+    /// Padding appeared before the final two positions of the final quantum.
+    #[error("it pads somewhere other than the end")]
+    Padding,
+    /// A non-padding character followed padding.
+    #[error("it has a character after its padding")]
+    AfterPadding,
+    /// A character is outside the protocol alphabet.
+    #[error("{found:?} is not a base64 character")]
+    Character { found: char },
+    /// The fixed protocol alphabet no longer fits the accumulator's index.
+    #[error("its alphabet index cannot be represented")]
+    AlphabetIndex,
+}
+
 /// The bytes a strict base64 text stands for.
-fn decode(text: &str) -> Result<Vec<u8>, String> {
+fn decode(text: &str) -> Result<Vec<u8>, DecodeError> {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let bytes = text.as_bytes();
     if !bytes.len().is_multiple_of(4) {
-        return Err("its length is not a multiple of four".to_owned());
+        return Err(DecodeError::Length);
     }
     let mut out = Vec::with_capacity(bytes.len());
     let mut chunks = bytes.chunks(4).peekable();
@@ -418,20 +451,22 @@ fn decode(text: &str) -> Result<Vec<u8>, String> {
         for (position, byte) in chunk.iter().enumerate() {
             if *byte == b'=' {
                 if !last || position < 2 {
-                    return Err("it pads somewhere other than the end".to_owned());
+                    return Err(DecodeError::Padding);
                 }
                 padding = padding.saturating_add(1);
                 value <<= 6;
                 continue;
             }
             if padding > 0 {
-                return Err("it has a character after its padding".to_owned());
+                return Err(DecodeError::AfterPadding);
             }
             let index = ALPHABET
                 .iter()
                 .position(|allowed| allowed == byte)
-                .ok_or_else(|| format!("{:?} is not a base64 character", char::from(*byte)))?;
-            let index = u32::try_from(index).unwrap_or(0);
+                .ok_or_else(|| DecodeError::Character {
+                    found: char::from(*byte),
+                })?;
+            let index = u32::try_from(index).map_err(|_overflow| DecodeError::AlphabetIndex)?;
             value = (value << 6) | index;
         }
         let [_, first, second, third] = value.to_be_bytes();

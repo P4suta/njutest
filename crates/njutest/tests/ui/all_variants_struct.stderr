@@ -1,0 +1,5 @@
+error: AllVariants can only be derived for an enum
+ --> tests/ui/all_variants_struct.rs:2:8
+  |
+2 | struct NotAnEnum;
+  |        ^^^^^^^^^

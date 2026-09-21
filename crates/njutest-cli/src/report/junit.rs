@@ -7,130 +7,151 @@ use std::fmt::Write as _;
 
 use super::{Report, TargetStatus};
 
+/// Why a complete report could not be projected to JUnit without changing a
+/// fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum JunitError {
+    /// The report's exact accounting does not fit its durable counter type.
+    #[error(transparent)]
+    Count(#[from] super::CountError),
+    /// Formatting refused the destination.
+    #[error("the JUnit formatter refused its string destination")]
+    Format(#[from] std::fmt::Error),
+}
+
 /// The report as one JUnit document.
-#[must_use]
-pub fn document(report: &Report) -> String {
-    let targets = &report.accounting.targets;
+///
+/// # Errors
+/// Returns [`JunitError`] instead of clipping accounting or discarding a
+/// formatting failure.
+pub fn document(report: &Report) -> Result<String, JunitError> {
+    let conclusion = report.conclusion()?;
+    let targets = &conclusion.accounting.targets;
+    let findings = super::count_of("JUnit findings", conclusion.findings.len())?;
+    let tests = super::add("JUnit tests", targets.selected, findings)?;
+    let target_failures = super::add("JUnit target failures", targets.failed, targets.missing)?;
+    let failures = super::add("JUnit failures", target_failures, findings)?;
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    let _written = writeln!(
+    writeln!(
         out,
-        "<testsuites name=\"{}\" tests=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{:.3}\">",
+        "<testsuites name=\"{}\" tests=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\">",
         escape(&report.repository.root_name),
-        targets
-            .selected
-            .saturating_add(u32::try_from(report.findings.len()).unwrap_or(u32::MAX)),
-        targets
-            .failed
-            .saturating_add(targets.missing)
-            .saturating_add(u32::try_from(report.findings.len()).unwrap_or(u32::MAX)),
+        tests,
+        failures,
         targets.skipped,
-        seconds(report.timing.duration_ms)
-    );
-    let _written = writeln!(
+        seconds(conclusion.timing.compute_total_ms())
+    )?;
+    writeln!(
         out,
         "  <testsuite name=\"targets\" tests=\"{}\" failures=\"{}\" skipped=\"{}\">",
-        targets.selected,
-        targets.failed.saturating_add(targets.missing),
-        targets.skipped
-    );
-    for target in &report.targets {
-        write_target(&mut out, target);
+        targets.selected, target_failures, targets.skipped
+    )?;
+    for target in &conclusion.targets {
+        write_target(&mut out, target)?;
     }
-    let _written = writeln!(out, "  </testsuite>");
-    write_findings(&mut out, report);
-    let _written = writeln!(out, "  <properties>");
-    for (name, value) in properties(report) {
-        let _written = writeln!(
+    writeln!(out, "  </testsuite>")?;
+    write_findings(&mut out, &conclusion)?;
+    writeln!(out, "  <properties>")?;
+    for (name, value) in properties(report, &conclusion) {
+        writeln!(
             out,
             "    <property name=\"{}\" value=\"{}\"/>",
             escape(&name),
             escape(&value)
-        );
+        )?;
     }
-    let _written = writeln!(out, "  </properties>");
-    let _written = writeln!(out, "</testsuites>");
-    out
+    writeln!(out, "  </properties>")?;
+    writeln!(out, "</testsuites>")?;
+    Ok(out)
 }
 
-fn write_target(out: &mut String, target: &super::TargetRecord) {
-    let _written = write!(
+fn write_target(out: &mut String, target: &super::TargetRecord) -> Result<(), std::fmt::Error> {
+    write!(
         out,
-        "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\"",
+        "    <testcase classname=\"{}\" name=\"{}\" time=\"{}\"",
         escape(&target.package),
         escape(&target.name),
         seconds(target.duration_ms)
-    );
+    )?;
     let message = target.message.as_deref().unwrap_or_default();
     match target.status {
         TargetStatus::Passed => {
-            let _written = writeln!(out, "/>");
+            writeln!(out, "/>")?;
         }
         TargetStatus::Skipped => {
-            let _written = writeln!(
+            writeln!(
                 out,
                 ">\n      <skipped message=\"{}\"/>\n    </testcase>",
                 escape(message)
-            );
+            )?;
         }
         TargetStatus::Failed | TargetStatus::Missing => {
-            let _written = writeln!(
+            writeln!(
                 out,
                 ">\n      <failure message=\"{}\"/>\n    </testcase>",
                 escape(message)
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
-fn write_findings(out: &mut String, report: &Report) {
+fn write_findings(out: &mut String, report: &super::Conclusion) -> Result<(), std::fmt::Error> {
     if report.findings.is_empty() {
-        return;
+        return Ok(());
     }
-    let _written = writeln!(
+    writeln!(
         out,
         "  <testsuite name=\"findings\" tests=\"{}\" failures=\"{}\">",
         report.findings.len(),
         report.findings.len()
-    );
+    )?;
     for finding in &report.findings {
-        let _written = writeln!(
+        writeln!(
             out,
             "    <testcase classname=\"{}\" name=\"{}\">\n      \
              <failure message=\"{}\"/>\n    </testcase>",
             escape(&finding.kind_name()),
             escape(&finding.subject),
             escape(&finding.detail)
-        );
+        )?;
     }
-    let _written = writeln!(out, "  </testsuite>");
+    writeln!(out, "  </testsuite>")?;
+    Ok(())
 }
 
-fn properties(report: &Report) -> Vec<(String, String)> {
+fn properties(report: &Report, conclusion: &super::Conclusion) -> Vec<(String, String)> {
     vec![
         ("schema".to_owned(), report.schema.clone()),
-        ("run_id".to_owned(), report.run_id.clone()),
-        ("verdict".to_owned(), format!("{:?}", report.verdict)),
+        ("run_id".to_owned(), report.run_id.to_string()),
+        ("verdict".to_owned(), format!("{:?}", conclusion.verdict)),
         (
             "commit".to_owned(),
             report.repository.git.commit().to_owned(),
         ),
-        ("rustc".to_owned(), report.toolchain.rustc.clone()),
+        (
+            "builds".to_owned(),
+            report
+                .builds()
+                .map(|build| build.name.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
         (
             "mutants_killed".to_owned(),
-            report.accounting.mutants.killed.to_string(),
+            conclusion.accounting.mutants.killed.to_string(),
         ),
         (
             "mutants_survived".to_owned(),
-            report.accounting.mutants.survived.to_string(),
+            conclusion.accounting.mutants.survived.to_string(),
         ),
     ]
 }
 
-fn seconds(milliseconds: u64) -> f64 {
+fn seconds(milliseconds: u64) -> String {
     let whole = milliseconds / 1000;
     let rest = milliseconds % 1000;
-    f64::from(u32::try_from(whole).unwrap_or(u32::MAX))
-        + f64::from(u32::try_from(rest).unwrap_or_default()) / 1000.0
+    format!("{whole}.{rest:03}")
 }
 
 /// XML text with nothing in it that could close a tag.

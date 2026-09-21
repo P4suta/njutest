@@ -66,6 +66,8 @@ fn the_defaults_ask_for_nothing_a_run_has_to_be_told() {
     }
     assert!(!config.execution.all_features);
     assert!(!config.execution.no_default_features);
+    assert_eq!(config.verification.unwind, None);
+    assert_eq!(config.verification.timeout, None);
     assert!(config.resources.is_empty());
     assert!(config.generation.is_none());
 }
@@ -112,6 +114,7 @@ fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
         "[execution]",
         "[cache]",
         "[reports]",
+        "[verification]",
         "[soundness]",
         "[resources.",
         "[generation]",
@@ -164,14 +167,60 @@ fn only_version_one_is_understood() {
 }
 
 #[test]
-fn the_contract_is_one_of_two_names() {
+fn the_contract_is_one_of_three_names() {
     assert_eq!(
         load("contract = \"deep-v1\"\n").expect("deep").contract,
         Contract::DeepV1
     );
+    assert_eq!(
+        load("contract = \"verified-v1\"\n\n[verification]\nunwind = 8\ntimeout = \"30s\"\n")
+            .expect("verified")
+            .contract,
+        Contract::VerifiedV1
+    );
     let error = expect_error("contract = \"strict-v9\"\n");
     assert_eq!(error.kind(), ConfigErrorKind::Unparsable);
     assert!(error.to_string().contains("strict-v9"), "{error}");
+}
+
+#[test]
+fn verified_v1_requires_both_nonzero_bounds_and_reifies_them() {
+    let config =
+        expect_ok("contract = \"verified-v1\"\n\n[verification]\nunwind = 12\ntimeout = \"45s\"\n");
+    let verified = config
+        .verified()
+        .expect("valid verifier settings")
+        .expect("verified contract");
+    assert_eq!(verified.unwind().get(), 12);
+    assert_eq!(verified.timeout(), Duration::from_secs(45));
+    assert_eq!(verified.timeout_ms().get(), 45_000);
+
+    for refused in [
+        "contract = \"verified-v1\"\n",
+        "contract = \"verified-v1\"\n[verification]\ntimeout = \"1s\"\n",
+        "contract = \"verified-v1\"\n[verification]\nunwind = 1\n",
+        "contract = \"verified-v1\"\n[verification]\nunwind = 0\ntimeout = \"1s\"\n",
+        "contract = \"verified-v1\"\n[verification]\nunwind = 1\ntimeout = \"0s\"\n",
+        "contract = \"verified-v1\"\n[verification]\nunwind = 1\ntimeout = \"1ns\"\n",
+    ] {
+        let error = expect_error(refused);
+        assert_eq!(error.kind(), ConfigErrorKind::Invalid, "{refused}: {error}");
+    }
+}
+
+#[test]
+fn verifier_only_keys_are_not_silently_ignored_by_other_contracts() {
+    for contract in ["standard-v1", "deep-v1"] {
+        let text =
+            format!("contract = {contract:?}\n\n[verification]\nunwind = 8\ntimeout = \"30s\"\n");
+        let error = expect_error(&text);
+        assert_eq!(error.kind(), ConfigErrorKind::Invalid, "{error}");
+        assert!(error.to_string().contains("verified-v1"), "{error}");
+    }
+    assert_eq!(
+        Config::default().verified().expect("default contract"),
+        None
+    );
 }
 
 #[test]
@@ -518,14 +567,14 @@ fn an_unreadable_configuration_is_not_mistaken_for_an_absent_one() {
 #[test]
 fn canonical_configuration_is_the_complete_serialized_contract() {
     let config = Config::default();
-    let canonical = config.canonical();
+    let canonical = config.canonical().expect("canonical configuration");
     assert_eq!(
         canonical,
         serde_json::to_string(&config).expect("the configuration is serializable")
     );
     assert!(canonical.starts_with("{\"version\":1,"), "{canonical}");
     assert!(canonical.ends_with("\"configuration\":[]}"), "{canonical}");
-    assert_eq!(config.digest().len(), 64);
+    assert_eq!(config.digest().expect("configuration digest").len(), 64);
 
     let mut two = Config::default();
     two.configuration.push(njutest_cli::config::Configuration {
@@ -534,8 +583,8 @@ fn canonical_configuration_is_the_complete_serialized_contract() {
         ..njutest_cli::config::Configuration::default()
     });
     assert_ne!(
-        two.digest(),
-        config.digest(),
+        two.digest().expect("second configuration digest"),
+        config.digest().expect("first configuration digest"),
         "a run that measures a second build is a different run, and the identity has \
          to say so or the first run's answers would be read back for it"
     );

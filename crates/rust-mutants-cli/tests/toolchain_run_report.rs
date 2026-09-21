@@ -17,13 +17,15 @@ use rust_mutants_cli::{Environment, Streams};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+include!("support/metadata.rs");
+
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root());
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(args.iter().copied())
-            .chain(["--root", root.as_str()])
+            .chain(["--root", root])
             .map(OsString::from),
         &environment(fixture),
         &Cancel::new(),
@@ -53,16 +55,20 @@ fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
 }
 
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
+}
+
+fn stderr(output: &Output) -> std::borrow::Cow<'_, str> {
+    njutest_devkit::process::strict_utf8(&output.stderr)
 }
 
 fn count(value: usize) -> u64 {
-    u64::try_from(value).unwrap_or(u64::MAX)
+    u64::try_from(value).expect("a test collection fits the report schema")
 }
 
 /// The report the newest run stored, as a document.
 fn stored(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+    njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     ))
     .expect("the report is a document")
@@ -78,7 +84,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
         Some(1),
         "the fixture compares two values the compiler will not vouch for, so nothing \
          removes that mutation and one test has to notice it: {text}{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
     assert!(text.contains("mutants were cataloged"), "{text}");
     assert!(text.contains("SCORE     "), "{text}");
@@ -86,7 +92,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 
     let document = stored(&fixture);
     assert_eq!(document["document_type"], "rust-mutants/run-report");
-    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["schema_version"], 2);
     assert_eq!(document["run"]["exit_code"], 1);
     assert!(!document["run"]["interrupted"].as_bool().expect("a flag"));
     assert_eq!(document["selection"]["tier"], "all");
@@ -102,7 +108,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
     assert_eq!(
         number("killed")
             + number("survived")
-            + number("runaway")
+            + number("step_limit_reached")
             + number("waited")
             + number("inconclusive")
             + number("errored"),
@@ -131,7 +137,7 @@ fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() 
     );
     assert_eq!(
         document["score"]["decided"].as_u64().expect("decided"),
-        number("killed") + number("runaway") + number("survived"),
+        number("killed") + number("survived"),
         "a mutation this machine stopped waiting for decided nothing, so it is not among \
          what the score is over"
     );
@@ -152,7 +158,7 @@ fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() 
 
 /// Every error `named` reports about `document`, as a reader of the schema would see them.
 fn against_schema(named: &str, document: &serde_json::Value) -> Vec<String> {
-    let schema: serde_json::Value = serde_json::from_str(
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
             njutest_devkit::paths::workspace_root()
                 .join("schema")
@@ -175,9 +181,9 @@ fn the_report_validates_against_the_schema_that_is_published_with_it() {
     assert!(
         output.status.code() == Some(0) || output.status.code() == Some(1),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
-    let errors = against_schema("rust-mutants-run-report-v1.json", &stored(&fixture));
+    let errors = against_schema("rust-mutants-run-report-v2.json", &stored(&fixture));
     assert!(errors.is_empty(), "{errors:#?}");
 }
 
@@ -199,16 +205,12 @@ fn the_stored_report_is_read_back_by_the_report_command() {
     let as_json = against(&fixture, &["report", "--format", "json"]);
     assert_eq!(as_json.status.code(), Some(0));
     let document: serde_json::Value =
-        serde_json::from_str(&stdout(&as_json)).expect("one document");
+        njutest_devkit::strictjson::decode_str(&stdout(&as_json)).expect("one document");
     assert_eq!(document["document_type"], "rust-mutants/run-report");
 
     let missing = against(&fixture, &["report", "--run", "20200101T000000000Z"]);
     assert_eq!(missing.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&missing.stderr).contains("RM0007"),
-        "{}",
-        String::from_utf8_lossy(&missing.stderr)
-    );
+    assert!(stderr(&missing).contains("RM0007"), "{}", stderr(&missing));
 }
 
 #[test]
@@ -239,9 +241,9 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
     assert_eq!(document["accounting"]["expected"], 1, "{text}");
     assert_eq!(document["expectations"][0]["standing"], "met");
     assert!(
-        document["expectations"][0].get("covered").is_none(),
-        "a claim that names one mutation says nothing about how many, or every claim in every \
-         report would carry a count nobody wrote: {}",
+        document["expectations"][0]["covered"].is_null(),
+        "a claim that names one mutation carries an explicit absence rather than inventing a \
+         count: {}",
         document["expectations"][0]
     );
     let findings = document["findings"].as_array().expect("findings");
@@ -277,7 +279,11 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
 fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
     let output = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .args(["list", "--root", &fixture.root().to_string_lossy()])
+        .args([
+            "list",
+            "--root",
+            njutest_devkit::paths::utf8(fixture.root()),
+        ])
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
@@ -287,9 +293,9 @@ fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
         .output()
         .expect("rust-mutants runs");
     assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("RM0006"), "{stderr}");
-    assert!(stderr.contains("RUST_MUTANTS_TOUCH"), "{stderr}");
+    let error_text = stderr(&output);
+    assert!(error_text.contains("RM0006"), "{error_text}");
+    assert!(error_text.contains("RUST_MUTANTS_TOUCH"), "{error_text}");
 }
 #[test]
 fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {
@@ -297,15 +303,11 @@ fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {
     let first = against(&fixture, &["init"]);
     assert_eq!(first.status.code(), Some(0), "{}", stdout(&first));
     let path = fixture.root().join(".rust-mutants.toml");
-    assert!(path.is_file());
+    assert!(test_metadata(&path).is_file());
 
     let again = against(&fixture, &["init"]);
     assert_eq!(again.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&again.stderr).contains("RM0008"),
-        "{}",
-        String::from_utf8_lossy(&again.stderr)
-    );
+    assert!(stderr(&again).contains("RM0008"), "{}", stderr(&again));
     let forced = against(&fixture, &["init", "--force"]);
     assert_eq!(forced.status.code(), Some(0));
 }
@@ -314,12 +316,7 @@ fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {
 fn doctor_names_the_toolchain_the_workspace_and_where_temporary_trees_go() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["doctor"]);
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let text = stdout(&output);
     for label in ["cargo", "rustc", "host", "workspace", "config", "temp"] {
         assert!(text.contains(label), "{label} is missing from {text}");
@@ -344,7 +341,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         std::fs::create_dir_all(made).expect("mkdir");
     }
     let at = environment_at(&root, &temp, &cache);
-    let named = root.to_string_lossy().into_owned();
+    let named = njutest_devkit::paths::utf8(&root).to_owned();
 
     let run = asked(
         &at,
@@ -360,7 +357,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     assert_eq!(run.status.code(), Some(1), "{}", stdout(&run));
 
     let listed = asked(&at, &["cache"]);
-    let text = String::from_utf8_lossy(&listed.stdout).into_owned();
+    let text = stdout(&listed);
     assert_eq!(listed.status.code(), Some(0), "{text}");
     assert!(text.contains("caches       1 reclaimable"), "{text}");
     assert!(
@@ -369,7 +366,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     );
 
     let swept = asked(&at, &["cache", "--gc"]);
-    let text = String::from_utf8_lossy(&swept.stdout).into_owned();
+    let text = stdout(&swept);
     assert!(
         text.contains("caches       0 removed") && text.contains("1 kept for the next run"),
         "a sweep keeps the build caches a later run can still look up, so the next run \
@@ -377,11 +374,11 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     );
 
     let collected = asked(&at, &["cache", "--gc", "--all"]);
-    let text = String::from_utf8_lossy(&collected.stdout).into_owned();
+    let text = stdout(&collected);
     assert!(text.contains("caches       1 removed"), "{text}");
     let left: Vec<PathBuf> = std::fs::read_dir(&temp)
         .expect("the temporary directory")
-        .filter_map(Result::ok)
+        .map(|entry| entry.expect("read a temporary-directory entry"))
         .map(|entry| entry.path())
         .collect();
     assert!(left.is_empty(), "and --all collects them: {left:?}");
@@ -429,7 +426,7 @@ fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
         assert!(
             output.status.code() == Some(0) || output.status.code() == Some(1),
             "{part}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            stderr(&output)
         );
         let document = stored(&parts_fixture);
         assert_eq!(document["run"]["shard"], part);
@@ -441,7 +438,11 @@ fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
     }
 
     let mut arguments = vec!["merge".to_owned()];
-    arguments.extend(written.iter().map(|path| path.display().to_string()));
+    arguments.extend(
+        written
+            .iter()
+            .map(|path| njutest_devkit::paths::utf8(path).to_owned()),
+    );
     let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
     let merged_output = rootless(&parts_fixture, &borrowed);
     let whole_code = whole["run"]["exit_code"].as_i64().expect("an exit code");
@@ -449,10 +450,10 @@ fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
         merged_output.status.code().map(i64::from),
         Some(whole_code),
         "the whole and its parts reach the same answer: {}",
-        String::from_utf8_lossy(&merged_output.stderr)
+        stderr(&merged_output)
     );
     let merged: serde_json::Value =
-        serde_json::from_str(&stdout(&merged_output)).expect("one document");
+        njutest_devkit::strictjson::decode_str(&stdout(&merged_output)).expect("one document");
 
     assert_eq!(merged["run"]["shard"], serde_json::Value::Null);
     assert_eq!(merged["accounting"], whole["accounting"]);
@@ -498,15 +499,13 @@ fn reports_that_are_not_the_parts_of_one_whole_are_refused() {
     )
     .expect("write");
 
-    let output = rootless(
-        &fixture,
-        &["merge", &one.to_string_lossy(), &one.to_string_lossy()],
-    );
+    let named = njutest_devkit::paths::utf8(&one);
+    let output = rootless(&fixture, &["merge", named, named]);
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("more than one"),
+        stderr(&output).contains("more than one"),
         "the same part twice is not two parts: {}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
 }
 
@@ -611,7 +610,7 @@ fn every_mutant_row_carries_what_re_minting_its_id_needs() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
     let document = stored(&fixture);
     let rows = document["mutants"].as_array().expect("the rows");
@@ -629,7 +628,7 @@ fn every_mutant_row_carries_what_re_minting_its_id_needs() {
                     .as_u64()
                     .unwrap_or_else(|| panic!("{key} of {row}")),
             )
-            .unwrap_or_else(|_error| panic!("{key} of {row}"))
+            .unwrap_or_else(|error| panic!("{key} of {row}: {error}"))
         };
         let identity = rust_mutants::id::Identity {
             path: text("path"),
@@ -645,12 +644,12 @@ fn every_mutant_row_carries_what_re_minting_its_id_needs() {
         };
         let minted = identity.id().expect("the row is a complete identity");
         assert_eq!(
-            minted,
+            minted.as_str(),
             text("id"),
             "a row a reader cannot re-mint leaves the identity unaudited: {row}"
         );
         assert!(
-            minted.starts_with(&text("display_id")),
+            minted.as_str().starts_with(&text("display_id")),
             "the short identity is the head of the full one: {row}"
         );
     }
@@ -673,7 +672,7 @@ fn a_rejection_row_carries_its_catalog_index() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
     let document = stored(&fixture);
     let rejections = document["rejections"].as_array().expect("the refusals");
@@ -714,7 +713,7 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
     let document = stored(&fixture);
     let kinds: Vec<&str> = document["findings"]
@@ -727,9 +726,9 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
         kinds.contains(&"unreached-mutant"),
         "the fixture exists for its unreached mutation: {kinds:?}"
     );
-    let schema: serde_json::Value = serde_json::from_str(
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v2.json"),
         )
         .expect("the schema"),
     )
@@ -743,23 +742,24 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
 }
 
 #[test]
-fn an_older_reader_accepts_a_newer_report() {
+fn a_v2_reader_refuses_fields_outside_its_exact_schema() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked"]);
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
     let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
-    let pointer: serde_json::Value = serde_json::from_str(
+    let pointer: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(directory.join("latest.json")).expect("a pointer"),
     )
     .expect("the pointer is a document");
     let path = directory.join(pointer["document"].as_str().expect("a document path"));
-    let mut document: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).expect("the report"))
-            .expect("the report is a document");
+    let mut document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&path).expect("the report"),
+    )
+    .expect("the report is a document");
     document["a_field_from_a_later_release"] = serde_json::json!("whatever it means");
     document["mutants"][0]["another_one"] = serde_json::json!(7);
     document["rejections"] = serde_json::json!([]);
@@ -768,11 +768,12 @@ fn an_older_reader_accepts_a_newer_report() {
     let read = against(&fixture, &["report"]);
     assert_eq!(
         read.status.code(),
-        Some(1),
-        "a reader that refuses a field it does not know cannot read the next release: {}",
-        String::from_utf8_lossy(&read.stderr)
+        Some(2),
+        "one v2 identity cannot silently acquire a later shape: {}",
+        stderr(&read)
     );
-    assert!(stdout(&read).contains("MUTANTS   "), "{}", stdout(&read));
+    assert!(stderr(&read).contains("RM0007"), "{}", stderr(&read));
+    assert!(stdout(&read).is_empty(), "{}", stdout(&read));
 }
 
 /// Runs each part of the catalog and writes its report beside the tree, returning the paths.
@@ -794,7 +795,7 @@ fn parts(fixture: &Fixture, shards: &[&str]) -> Vec<PathBuf> {
         assert!(
             output.status.code().is_some_and(|code| code < 2),
             "{part}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            stderr(&output)
         );
         let document = stored(fixture);
         let path = fixture
@@ -816,7 +817,7 @@ fn the_parts_of_a_catalog_over_two_packages_and_two_targets_are_the_whole_of_it(
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
     let whole = stored(&whole_fixture);
     let answered: std::collections::BTreeSet<&str> = whole["mutants"]
@@ -841,11 +842,15 @@ fn the_parts_of_a_catalog_over_two_packages_and_two_targets_are_the_whole_of_it(
     let parts_fixture = Fixture::copy("fixture-workspace");
     let written = parts(&parts_fixture, &["1/4", "2/4", "3/4", "4/4"]);
     let mut arguments = vec!["merge".to_owned()];
-    arguments.extend(written.iter().map(|path| path.display().to_string()));
+    arguments.extend(
+        written
+            .iter()
+            .map(|path| njutest_devkit::paths::utf8(path).to_owned()),
+    );
     let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
     let merged_output = rootless(&parts_fixture, &borrowed);
     let merged: serde_json::Value =
-        serde_json::from_str(&stdout(&merged_output)).expect("one document");
+        njutest_devkit::strictjson::decode_str(&stdout(&merged_output)).expect("one document");
     assert_eq!(merged["accounting"], whole["accounting"]);
     assert_eq!(merged["score"], whole["score"]);
     let fates = |document: &serde_json::Value| -> Vec<(String, String, String)> {
@@ -882,7 +887,7 @@ fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr(&output)
     );
     let directory = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
@@ -891,15 +896,20 @@ fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
 }
 
 fn document_at(path: &Path) -> serde_json::Value {
-    serde_json::from_str(&std::fs::read_to_string(path).expect("the document")).expect("a document")
+    njutest_devkit::strictjson::decode_str(&std::fs::read_to_string(path).expect("the document"))
+        .expect("a document")
 }
 
 #[test]
 fn a_run_keeps_what_the_audit_re_derives_its_routes_from() {
-    let (directory, _fixture) = evidence_of(&[]);
+    let (directory, fixture) = evidence_of(&[]);
+    assert!(
+        test_metadata(fixture.root()).is_dir(),
+        "the evidence source remains alive while inspected"
+    );
     for name in ["touched-v1.json", "catalog-v1.json"] {
         assert!(
-            directory.join(name).is_file(),
+            test_metadata(&directory.join(name)).is_file(),
             "a proof layer removed executions, and a report that says so without the premises \
              is a claim rather than a proof: {name}"
         );
@@ -951,7 +961,11 @@ fn a_run_keeps_what_the_audit_re_derives_its_routes_from() {
 
 #[test]
 fn a_coverage_run_keeps_the_measurement_its_own_discharges_rest_on() {
-    let (directory, _fixture) = evidence_of(&["--coverage"]);
+    let (directory, fixture) = evidence_of(&["--coverage"]);
+    assert!(
+        test_metadata(fixture.root()).is_dir(),
+        "the evidence source remains alive while inspected"
+    );
     let reached = document_at(&directory.join("reached-v1.json"));
     assert!(
         reached["targets"]
@@ -1142,9 +1156,10 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
                  the other way about: {rows:?}"
             );
         }
+        let counted = u64::try_from(mine.len()).expect("the fixture count fits u64");
         assert_eq!(
             document["accounting"][reason].as_u64(),
-            u64::try_from(mine.len()).ok(),
+            Some(counted),
             "and the column a reader counts them in is the one they answer to: {rows:?}"
         );
         let kinds: Vec<&str> = document["findings"]
@@ -1211,13 +1226,13 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
     assert!(
         ran.status.code().is_some_and(|code| code <= 1),
         "{}",
-        String::from_utf8_lossy(&ran.stderr)
+        stderr(&ran)
     );
     let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let stored_id = std::fs::read_dir(&reports)
         .expect("the report directory")
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .map(|entry| entry.expect("stored report directory entry"))
+        .map(|entry| njutest_devkit::paths::owned_utf8(entry.file_name()))
         .find(|name| name.starts_with("2026"))
         .expect("the run that just happened");
 
@@ -1226,10 +1241,10 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
         one.status.code().is_some_and(|code| code <= 1),
         "a name that matches one stored run is that run: a person sharding by day names \
          the day: {}",
-        String::from_utf8_lossy(&one.stderr)
+        stderr(&one)
     );
-    let merged: serde_json::Value =
-        serde_json::from_str(&stdout(&one)).expect("the merge answers with a document");
+    let merged: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(&one))
+        .expect("the merge answers with a document");
     assert_eq!(
         merged["accounting"],
         stored(&fixture)["accounting"],
@@ -1244,16 +1259,12 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
          reads as a catalog with nothing in it: {}",
         stdout(&nothing)
     );
-    let said = String::from_utf8_lossy(&nothing.stderr).into_owned();
+    let said = stderr(&nothing);
+    let default_reports = rust_mutants_cli::config::Config::default()
+        .reports
+        .directory;
     assert!(
-        said.contains("20240101*")
-            && said.contains(&format!(
-                "{}",
-                rust_mutants_cli::config::Config::default()
-                    .reports
-                    .directory
-                    .display()
-            )),
+        said.contains("20240101*") && said.contains(njutest_devkit::paths::utf8(&default_reports)),
         "and the refusal says which pattern found nothing and where it looked, because \
          the usual cause is a report directory somewhere else: {said}"
     );
@@ -1266,9 +1277,9 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
         stdout(&malformed)
     );
     assert!(
-        String::from_utf8_lossy(&malformed.stderr).contains("--runs"),
+        stderr(&malformed).contains("--runs"),
         "naming the flag it was given to: {}",
-        String::from_utf8_lossy(&malformed.stderr)
+        stderr(&malformed)
     );
 }
 
@@ -1279,14 +1290,14 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
     assert!(
         ran.status.code().is_some_and(|code| code <= 1),
         "{}",
-        String::from_utf8_lossy(&ran.stderr)
+        stderr(&ran)
     );
     let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let document = serde_json::to_string(&stored(&fixture)).expect("renders");
     for name in ["20260101T000000000Z", "20260102T000000000Z"] {
         let directory = reports.join(name);
         std::fs::create_dir_all(&directory).expect("a second name for the same part");
-        std::fs::write(directory.join("run-report-v1.json"), &document).expect("write");
+        std::fs::write(directory.join("run-report-v2.json"), &document).expect("write");
     }
 
     let merged = against(&fixture, &["merge", "--runs", "2026010*"]);
@@ -1299,8 +1310,8 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         stdout(&merged)
     );
     assert!(
-        String::from_utf8_lossy(&merged.stderr).contains("more than one"),
+        stderr(&merged).contains("more than one"),
         "{}",
-        String::from_utf8_lossy(&merged.stderr)
+        stderr(&merged)
     );
 }

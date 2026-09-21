@@ -3,12 +3,17 @@
 
 //! Building the workspace's tests, in one of two flavours.
 
+#[cfg(feature = "testkit")]
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+#[cfg(feature = "testkit")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use rust_mutants::cargo::{CargoError, Message, Toolchain, parse_messages, units_of};
+#[cfg(feature = "testkit")]
+use rust_mutants::cargo::units_of;
+use rust_mutants::cargo::{CargoError, Message, Toolchain, parse_messages};
 use rust_mutants::execute::targets_of;
 use rust_mutants::runner::{EXIT_CODE_UNAVAILABLE, run};
 
@@ -91,12 +96,17 @@ pub struct Built {
     /// The test binaries, with the environment their processes run with.
     pub units: Vec<Unit>,
     /// The environment the build ran with, which is what anything compiling against its artifacts has to run with to reuse them.
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub env: Vec<(OsString, OsString)>,
     /// What the compiler said, when it refused. A workspace that does not compile is a finding, not an error.
     pub failure: Option<String>,
     /// What this build could not honour, by name.
+    #[cfg(feature = "testkit")]
     pub limitations: Vec<String>,
     /// The files each package's library is made of, workspace-relative, which is the coverage a documented example carries.
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub library_sources: BTreeMap<String, Vec<PathBuf>>,
 }
 
@@ -104,6 +114,9 @@ pub struct Built {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BuildError {
+    /// Cargo's configured compiler flags could not be represented exactly.
+    #[error(transparent)]
+    Config(#[from] rust_mutants::cargo::config::ConfigError),
     /// cargo could not be started, or was stopped.
     #[error("{}: the build could not be run: {message}", error::BUILD_FAILED.code)]
     NotRun {
@@ -116,6 +129,15 @@ pub enum BuildError {
         /// The failure.
         #[source]
         source: CargoError,
+    },
+    /// Cargo printed bytes that are not valid UTF-8 where text is required.
+    #[error("{}: {context} is not valid UTF-8: {source}", error::BUILD_UNREADABLE.code)]
+    OutputEncoding {
+        /// Which output was being decoded.
+        context: &'static str,
+        /// Why the bytes are not UTF-8.
+        #[source]
+        source: std::str::Utf8Error,
     },
     /// Cargo's completion record is absent, repeated, or contradicts its exit status.
     #[error("{}: the build's output could not be read: {message}", error::BUILD_UNREADABLE.code)]
@@ -130,8 +152,10 @@ impl BuildError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::NotRun { .. } => error::BUILD_FAILED,
-            Self::Unreadable { .. } | Self::Protocol { .. } => error::BUILD_UNREADABLE,
+            Self::Config(_) | Self::NotRun { .. } => error::BUILD_FAILED,
+            Self::Unreadable { .. } | Self::OutputEncoding { .. } | Self::Protocol { .. } => {
+                error::BUILD_UNREADABLE
+            }
         }
     }
 }
@@ -150,14 +174,14 @@ pub fn build(
 ) -> Result<Built, BuildError> {
     let mut limitations = Vec::new();
     let mut spec = toolchain.command(&options.root, arguments(toolchain, options));
-    let built_with = environment(options, &mut limitations);
-    spec.env = Some(built_with.clone());
+    let built_with = environment(options, &mut limitations)?;
+    spec.env = Some(built_with);
     spec.timeout = options.timeout;
     spec.structured_stdout = Some(BUILD_OUTPUT_LIMIT);
 
     let built = run(&spec, watch.cancel);
-    watch.trace.exec(ExecRecord::of(&spec, &built));
-    if let Some(refusal) = never_ran(&built, options.timeout) {
+    watch.trace.exec_result(ExecRecord::of(&spec, &built));
+    if let Some(refusal) = never_ran(&built, options.timeout)? {
         return Err(refusal);
     }
     let messages =
@@ -177,15 +201,18 @@ pub fn build(
             ),
         });
     };
-    if *success != (built.exit_code == 0) {
+    if *success != (built.conventional_exit_code() == 0) {
         return Err(BuildError::Protocol {
             message: format!(
                 "build-finished says success={success}, but cargo exited with {}",
-                built.exit_code
+                built.conventional_exit_code()
             ),
         });
     }
     let units = targets_of(&messages, packages, Some(&options.target_dir))
+        .map_err(|error| BuildError::Protocol {
+            message: error.to_string(),
+        })?
         .into_iter()
         .map(|target| {
             let mut env = spec.env.clone().unwrap_or_default();
@@ -196,19 +223,25 @@ pub fn build(
                 package: target.package,
                 kind: UnitKind::of(target.kind),
                 name: target.name,
+                harness: target.harness,
                 executable: target.executable,
                 cwd: target.cwd,
                 env,
             }
         })
         .collect();
+    #[cfg(feature = "testkit")]
     let library_sources = library_sources(&messages, packages, &options.root)
         .map_err(|source| BuildError::Unreadable { source })?;
     Ok(Built {
         units,
+        #[cfg(feature = "testkit")]
         library_sources,
-        env: built_with,
-        failure: failure_of(&messages, &built.output),
+        #[cfg(any(test, feature = "testkit"))]
+        #[cfg(feature = "testkit")]
+        env: spec.env.take().unwrap_or_default(),
+        failure: failure_of(&messages, &built.output)?,
+        #[cfg(feature = "testkit")]
         limitations,
     })
 }
@@ -271,7 +304,10 @@ pub fn configured_limitations(configured: &rustflags::Configured) -> Vec<&'stati
 }
 
 /// The environment the build runs with: the run's own, the scratch layer for anything it starts, and the flags the flavour needs.
-fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(OsString, OsString)> {
+fn environment(
+    options: &BuildOptions,
+    limitations: &mut Vec<String>,
+) -> Result<Vec<(OsString, OsString)>, BuildError> {
     let mut env = options.env.clone();
     set(
         &mut env,
@@ -279,7 +315,7 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
         options.scratch_build_dir.clone().into_os_string(),
     );
     if options.flavour == Flavour::Native {
-        return env;
+        return Ok(env);
     }
     let configured = rustflags::configured(&options.root, &options.env);
     limitations.extend(
@@ -287,7 +323,7 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
             .into_iter()
             .map(str::to_owned),
     );
-    if let Some(flags) = rustflags::encoded(&options.env, &configured, &[COVERAGE_FLAG]) {
+    if let Some(flags) = rustflags::encoded(&options.env, &configured, &[COVERAGE_FLAG])? {
         set(&mut env, "CARGO_ENCODED_RUSTFLAGS", flags);
         env.retain(|(key, _)| key != OsStr::new("RUSTFLAGS"));
     }
@@ -300,7 +336,7 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
             .join("%p-%m.profraw")
             .into_os_string(),
     );
-    env
+    Ok(env)
 }
 
 /// Sets one variable, replacing what was there.
@@ -310,12 +346,12 @@ fn set(env: &mut Vec<(OsString, OsString)>, name: &str, value: OsString) {
 }
 
 /// What the compiler said when it refused, or nothing when it did not.
-fn failure_of(messages: &[Message], output: &[u8]) -> Option<String> {
+fn failure_of(messages: &[Message], output: &[u8]) -> Result<Option<String>, BuildError> {
     let finished_badly = messages
         .iter()
         .any(|message| matches!(message, Message::BuildFinished { success: false }));
     if !finished_badly {
-        return None;
+        return Ok(None);
     }
     let rendered: Vec<String> = messages
         .iter()
@@ -333,37 +369,40 @@ fn failure_of(messages: &[Message], output: &[u8]) -> Option<String> {
         })
         .collect();
     if rendered.is_empty() {
-        let output = String::from_utf8_lossy(output);
+        let output = std::str::from_utf8(output).map_err(|source| BuildError::OutputEncoding {
+            context: "cargo's diagnostic output",
+            source,
+        })?;
         let output = output.trim();
-        return Some(if output.is_empty() {
+        return Ok(Some(if output.is_empty() {
             "cargo reported an unsuccessful build without a diagnostic".to_owned()
         } else {
             output.to_owned()
-        });
+        }));
     }
-    Some(rendered.join("\n"))
+    Ok(Some(rendered.join("\n")))
 }
 
 /// Why cargo produced nothing to read, when it did not.
 fn never_ran(
     built: &rust_mutants::runner::RunResult,
     timeout: Option<Duration>,
-) -> Option<BuildError> {
-    let said = if let Some(error) = &built.error {
+) -> Result<Option<BuildError>, BuildError> {
+    let said = if let Some(error) = built.error() {
         error.to_string()
-    } else if built.timed_out {
+    } else if built.timed_out() {
         format!(
             "cargo did not finish within {} milliseconds",
             timeout.unwrap_or_default().as_millis()
         )
-    } else if built.exit_code == EXIT_CODE_UNAVAILABLE {
+    } else if built.conventional_exit_code() == EXIT_CODE_UNAVAILABLE {
         String::from("cargo was stopped before it reported an exit status")
     } else {
-        return None;
+        return Ok(None);
     };
-    Some(BuildError::NotRun {
-        message: with_output(&said, &built.output),
-    })
+    Ok(Some(BuildError::NotRun {
+        message: with_output(&said, &built.output)?,
+    }))
 }
 
 /// What went wrong, with what cargo said about it.
@@ -373,16 +412,20 @@ fn never_ran(
 /// directory it then removed, and holds the bytes cargo wrote. Telling
 /// somebody to reproduce output the tool already has is asking them to rebuild
 /// a command they cannot see.
-fn with_output(said: &str, output: &[u8]) -> String {
-    let printed = String::from_utf8_lossy(output);
+fn with_output(said: &str, output: &[u8]) -> Result<String, BuildError> {
+    let printed = std::str::from_utf8(output).map_err(|source| BuildError::OutputEncoding {
+        context: "cargo's process output",
+        source,
+    })?;
     let printed = printed.trim();
     if printed.is_empty() {
-        return said.to_owned();
+        return Ok(said.to_owned());
     }
-    format!("{said}; cargo said:\n{printed}")
+    Ok(format!("{said}; cargo said:\n{printed}"))
 }
 
 /// The files each package's library compiles, workspace-relative with forward slashes.
+#[cfg(feature = "testkit")]
 fn library_sources(
     messages: &[Message],
     packages: &[rust_mutants::cargo::Package],
@@ -402,9 +445,11 @@ fn library_sources(
         };
         let files = found.entry(package).or_default();
         for source in unit.sources {
-            if let Ok(relative) = source.strip_prefix(root) {
-                files.push(relative.to_path_buf());
-            }
+            let relative = match source.strip_prefix(root) {
+                Ok(relative) => relative,
+                Err(_outside_the_test_workspace) => continue,
+            };
+            files.push(relative.to_path_buf());
         }
         files.sort();
         files.dedup();

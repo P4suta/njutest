@@ -15,17 +15,27 @@ use std::fmt;
 /// the run established perfectly well. An outcome added here is a break for
 /// anything that renders one, and that is the honest shape of the change
 /// (ADR 0023).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Outcome {
     /// Never executed: another shard owned it, a selection excluded it, the run was interrupted, or routing proved no test reaches it.
-    #[default]
     NotRun,
     /// At least one test failed with the mutant active. Detected.
     Killed,
     /// Every selected test passed with the mutant active.
     Survived,
-    /// The mutant's guard was taken more times than the run allowed, twice over: it does not terminate, and a count every machine agrees on says so.
-    Runaway,
+    /// One process reached the configured guard-take limit. This is an execution bound, not a decision about the mutation.
+    StepLimitReached,
     /// A bound expired while this machine watched, confirmed by a serial retry. Not detected: the run established that it stopped waiting, which is a fact about the machine and not about the mutation.
     Waited,
     /// The run could not decide: one timeout that did not reproduce, or a failure that also fails on the instrumented baseline.
@@ -35,17 +45,6 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Every outcome in declaration order.
-    pub const ALL: [Self; 7] = [
-        Self::NotRun,
-        Self::Killed,
-        Self::Survived,
-        Self::Runaway,
-        Self::Waited,
-        Self::Inconclusive,
-        Self::Errored,
-    ];
-
     /// The canonical wire name: `snake_case`, stable, used in JSON and caches.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -53,11 +52,17 @@ impl Outcome {
             Self::NotRun => "not_run",
             Self::Killed => "killed",
             Self::Survived => "survived",
-            Self::Runaway => "runaway",
+            Self::StepLimitReached => "step_limit_reached",
             Self::Waited => "waited",
             Self::Inconclusive => "inconclusive",
             Self::Errored => "errored",
         }
+    }
+
+    /// The canonical wire name, for interfaces that take a string slice.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.name()
     }
 
     /// What caught the mutant, when anything did.
@@ -71,10 +76,12 @@ impl Outcome {
     pub const fn noticed(self) -> Option<Noticed> {
         match self {
             Self::Killed => Some(Noticed::Tests),
-            Self::Runaway => Some(Noticed::Steps),
-            Self::NotRun | Self::Survived | Self::Waited | Self::Inconclusive | Self::Errored => {
-                None
-            }
+            Self::NotRun
+            | Self::Survived
+            | Self::StepLimitReached
+            | Self::Waited
+            | Self::Inconclusive
+            | Self::Errored => None,
         }
     }
 
@@ -96,30 +103,24 @@ impl Outcome {
 /// A closed set, because a reader adding these up is told which column each
 /// belongs in and a new way of catching one is a column somebody has to place
 /// rather than a number that quietly joins another.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum Noticed {
     /// A test failed with the mutant active.
     Tests,
-    /// The mutation stopped the program terminating, and a count said so.
-    Steps,
 }
 
 impl Noticed {
-    /// Every way a run catches a mutant, in the order a reader adds them up.
-    pub const ALL: [Self; 2] = [Self::Tests, Self::Steps];
-
     /// The canonical wire name.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Tests => "tests",
-            Self::Steps => "steps",
         }
     }
 }
 
 impl fmt::Display for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+        f.pad(self.name())
     }
 }

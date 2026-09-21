@@ -56,15 +56,15 @@ True, and unknowable from a recording that kept the parsed status code and
 discarded the status line, because the injection rebuilds a reason phrase and
 the recording no longer says what the original one was.
 
-**A mutation that ran out of time was decided by the tests.** The engine is
-right to say so — the process hung with the mutation active, and that is a
-detection. njutest is measuring something else: it gives a timeout its own
-column, and raises a finding reading *an expired budget establishes nothing
-about the mutation*, because a bound is a budget and a result resting on one
-is not a proof ([ADR 0004](0004-proof-layers-not-budgets.md)). A third table
-then said a timeout was a detection at the second-highest standing, so a
-build that timed out was not a hole and a release-only timeout vanished from
-`blind_in` entirely.
+**A finite execution bound was called a detection.** A wall-clock expiry says
+only that this machine stopped waiting. A nonce-verified guard notice is more
+reproducible, but it still says only that one execution crossed a configured
+finite count. A long finite computation on the unmutated control can cross the
+same count. Neither observation proves that the mutation caused divergence,
+so both are holes unless a matched control comparison supplies the missing
+premise ([ADR 0004](0004-proof-layers-not-budgets.md)). The old tables called
+the guard count `runaway` and a detection; the report finding beside it could
+not honestly support that conclusion.
 
 That last one is a different sub-kind and the reason it is here: nothing about
 it was *wrong to write*. Three tables each said something defensible about the
@@ -126,7 +126,8 @@ because the match looks finished.
 What catches the second is matching over the right type. Reading through
 `Blind` rather than `Outcome` means the outcomes that are not holes have no
 spot to be, so there is no arm to give them the wrong sentence; binding a
-payload per variant — `Killed { by }`, `TimedOut { on }` — means the name and
+payload per variant — `Killed { by }`, `StepLimitReached { on, boundary }`,
+`Waited { on }` — means the name and
 the sentence about it cannot come from two places and disagree. **A type is
 chosen so that the wrong arm has nothing to be written about, not so that
 every arm is written.**
@@ -295,22 +296,19 @@ The tell is a projection of `self` that the domain would never have asked for,
 and it is offered here as a thing to notice rather than a thing to gate: a
 rule broad enough to catch it would catch half of any presentation layer.
 
-**A ledger that names line numbers asks the question at the right moment, and
-that is worth the friction it looks like.** A shrink-only waiver file keyed by
-line — `xtask/seam_allowlist.txt`, `wildcard_allowlist.txt` — makes every
-refactor that moves a line ask *is this waiver still needed?* of somebody who
-is already looking at the code. Two waivers went away rather than being
-renumbered the first time this happened, because the answer turned out to be
-no and nobody would have gone to ask otherwise.
+**A ledger must name what it waives, and its ceiling must only fall.** The
+catch-all ledger originally named line numbers. Moving an unrelated arm could
+then move a waiver onto a different closed set without changing the ledger at
+all. It now names the file, item, enum and number of arms; those are exactly
+the facts that change when the exception changes and none of the facts that
+change during formatting. Its separate ceiling makes granting an exception a
+number going up in a shrink-only file.
 
-So far, every time the ledger has asked, the answer has been no: three waivers
-across two branches, all three deleted rather than renumbered. Two occasions
-is not proof, and it is better evidence than anybody expected this early.
-
-It was not designed in; the renumbering was expected to be pure friction. It
-is written down here because the obvious improvement — match the waiver on
-content so it survives a move — would delete the property, and somebody
-proposing that should have to argue with this paragraph first.
+The ceiling is now zero. Every former catch-all over a set this repository
+owns has been replaced by an exhaustive match, so adding a variant makes the
+compiler ask where it belongs. The empty ledger remains as the fail-closed
+mechanism: a future exception requires both a named claim and an explicit
+ceiling increase, rather than being absorbed by a wildcard nobody sees.
 
 **An audit that copies the defect is worse than no audit.** `xtask`'s
 independent re-implementation of the hollow-target question carried both holes
@@ -406,12 +404,12 @@ concluding about a product from a measurement of a part nothing uses. The
 milestone that named the gap named it in the right place, and the capability
 filling it was already there.
 
-A gate for it does not exist, and the reason is worth more than the gate would
-be. Of 718 public functions in production source, 125 are named only from
-tests — and most of those are not findings, because `rust-mutants` is a library
-whose callers are not in this tree. The predicate that separates them is *a
-public function in a crate whose public surface is incidental*, which is a fact
-about the crate and is written down nowhere.
+The first attempted gate could not exist honestly. Of 718 public functions in
+production source, 125 were named only from tests — and most were not findings,
+because `rust-mutants` is a library whose callers are not in this tree. The
+predicate that separates them is *a public function in a crate whose public
+surface is incidental*. Inferring that premise from who happened to call a
+name would merely move the guess into the gate.
 
 **A gate cannot ask a question whose premise nobody wrote down.** Twice in one
 day: *could this arm have been left out* needed to know which of our enums say
@@ -421,6 +419,17 @@ source, both are declarable, and in both cases the first instinct was a
 cleverer walk. A declaration in `Cargo.toml` has the property the ledger has —
 the cost lands on whoever is creating the crate, at the moment the decision is
 being made, rather than on a reader much later who has to reconstruct it.
+
+Every workspace package now makes that declaration: `public`, `incidental`, or
+`test-support`. `compiler-surfaces` recompiles every incidental library as a
+private module and points the real binary composition roots at it. In that
+compiler view a `pub` function has no hypothetical outside caller; workspace
+`unused = "deny"` rejects it unless production reaches it. The tests are not
+part of the view and therefore cannot make apparatus look shipped. `cargo
+xtask surfaces` holds the declared incidental set and the compiler views to
+exact equality, and refuses test support Cargo would permit publishing. The
+premise remains written by a person; every consequence of it is enforced by
+the compiler or by a closed-set gate.
 
 **A file that is a projection of the tree has no meaningful textual merge.**
 Every conflict in the catch-all ledger today was resolved by regenerating it

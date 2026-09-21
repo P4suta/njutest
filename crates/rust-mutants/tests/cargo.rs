@@ -11,6 +11,11 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::result::{
+    OptionState::Present,
+    ResultState::{Refused, Returned},
+    option_state, result_state,
+};
 use rust_mutants::cargo::{
     BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
     LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, parse_dep_info,
@@ -21,7 +26,9 @@ use rust_mutants::runner::Cancel;
 #[test]
 fn verbose_version_output_is_parsed_into_its_fields() {
     let cargo = "cargo 1.98.1 (797e8a9bc 2026-08-05)\nrelease: 1.98.1\ncommit-hash: 797e8a9bca276c1c9f9f738d2a20f484fa4eea9d\ncommit-date: 2026-08-05\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.4 (sys:0.21.0 vendored)\nos: Linux Mint 22.3.0 (zena) [64-bit]\n";
-    let parsed = parse_version(cargo).expect("cargo");
+    let parsed = parse_version(cargo);
+    assert_eq!(result_state(&parsed), Returned, "cargo version: {parsed:?}");
+    let Ok(parsed) = parsed else { return };
     assert_eq!(parsed.release, "1.98.1");
     assert_eq!(
         parsed.commit_hash.as_deref(),
@@ -33,12 +40,20 @@ fn verbose_version_output_is_parsed_into_its_fields() {
     assert_eq!(parsed.summary, "cargo 1.98.1 (797e8a9bc 2026-08-05)");
 
     let rustc = "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n";
-    let parsed = parse_version(rustc).expect("rustc");
+    let parsed = parse_version(rustc);
+    assert_eq!(result_state(&parsed), Returned, "rustc version: {parsed:?}");
+    let Ok(parsed) = parsed else { return };
     assert_eq!(parsed.release, "1.98.1");
     assert_eq!(parsed.llvm_version.as_deref(), Some("22.1.8"));
 
     let nightly = "rustc 1.100.0-nightly (abcdef012 2026-09-01)\nbinary: rustc\ncommit-hash: unknown\ncommit-date: unknown\nhost: aarch64-apple-darwin\nrelease: 1.100.0-nightly\nLLVM version: 23.0.0\n";
-    let parsed = parse_version(nightly).expect("nightly");
+    let parsed = parse_version(nightly);
+    assert_eq!(
+        result_state(&parsed),
+        Returned,
+        "nightly version: {parsed:?}"
+    );
+    let Ok(parsed) = parsed else { return };
     assert_eq!(parsed.commit_hash, None, "unknown is absent, not a hash");
     assert!(parsed.is_nightly());
     assert_eq!(parsed.host, "aarch64-apple-darwin");
@@ -53,21 +68,32 @@ fn version_output_without_release_or_host_is_refused() {
         "host: x\n",
         "garbage\nrelease: 1\n",
     ] {
-        let error = parse_version(bad).unwrap_err();
+        let error = parse_version(bad);
+        assert_eq!(result_state(&error), Refused, "{bad:?}: {error:?}");
+        let Err(error) = error else { continue };
         assert_eq!(error.kind(), CargoErrorKind::VersionUnreadable, "{bad:?}");
     }
 }
 
 #[test]
 fn a_cargo_that_cannot_run_is_a_typed_error() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = tempfile::tempdir();
+    assert_eq!(result_state(&temp), Returned, "tempdir: {temp:?}");
+    let Ok(temp) = temp else { return };
     let broken = temp.path().join("cargo");
-    std::fs::write(&broken, "not a program").expect("write");
+    let written = std::fs::write(&broken, "not a program");
+    assert_eq!(
+        result_state(&written),
+        Returned,
+        "write {broken:?}: {written:?}"
+    );
     let options = LocateOptions {
         cargo: Some(broken),
         ..LocateOptions::default()
     };
-    let error = Toolchain::locate(&options, temp.path(), &Cancel::new()).unwrap_err();
+    let error = Toolchain::locate(&options, temp.path(), &Cancel::new());
+    assert_eq!(result_state(&error), Refused, "broken cargo: {error:?}");
+    let Err(error) = error else { return };
     assert!(
         matches!(
             error.kind(),
@@ -98,7 +124,9 @@ fn metadata_json_is_parsed_into_packages_and_targets() {
       "workspace_root": "/w",
       "metadata": null
     }"#;
-    let metadata = Metadata::parse(json.as_bytes()).expect("parse");
+    let metadata = Metadata::parse(json.as_bytes());
+    assert_eq!(result_state(&metadata), Returned, "metadata: {metadata:?}");
+    let Ok(metadata) = metadata else { return };
     assert_eq!(metadata.workspace_root, Path::new("/w"));
     assert_eq!(metadata.target_directory, Path::new("/w/target"));
     let members: Vec<&str> = metadata.members().map(|p| p.name.as_str()).collect();
@@ -129,9 +157,21 @@ fn metadata_json_is_parsed_into_packages_and_targets() {
     assert!(demo.targets[0].is_lib());
     assert!(demo.targets[0].test);
 
-    let error = Metadata::parse(b"{\"version\": 1}").unwrap_err();
+    let error = Metadata::parse(b"{\"version\": 1}");
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "incomplete metadata: {error:?}"
+    );
+    let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::MetadataUnparsable);
-    let error = Metadata::parse(b"not json").unwrap_err();
+    let error = Metadata::parse(b"not json");
+    assert_eq!(
+        result_state(&error),
+        Refused,
+        "malformed metadata: {error:?}"
+    );
+    let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::MetadataUnparsable);
 }
 
@@ -153,7 +193,9 @@ const fn sample_stream() -> &'static str {
 
 #[test]
 fn message_lines_are_typed_and_a_line_that_is_not_one_is_refused() {
-    let messages = parse_messages(sample_stream().as_bytes()).expect("parse");
+    let messages = parse_messages(sample_stream().as_bytes());
+    assert_eq!(result_state(&messages), Returned, "messages: {messages:?}");
+    let Ok(messages) = messages else { return };
     assert_eq!(messages.len(), 5);
     let artifact = artifact_of(&messages[0]);
     assert_eq!(artifact.target.name, "demo");
@@ -167,7 +209,9 @@ fn message_lines_are_typed_and_a_line_that_is_not_one_is_refused() {
     assert_eq!(diagnostic.level, "error");
     assert_eq!(diagnostic.code.as_deref(), Some("E0369"));
     assert!(diagnostic.is_error());
-    let primary = diagnostic.primary_span().expect("primary");
+    let primary = diagnostic.primary_span();
+    assert_eq!(option_state(primary), Present, "primary span");
+    let Some(primary) = primary else { return };
     assert_eq!(
         (
             primary.file_name.as_str(),
@@ -177,18 +221,17 @@ fn message_lines_are_typed_and_a_line_that_is_not_one_is_refused() {
         ("src/lib.rs", 69, 70)
     );
     assert_eq!(diagnostic.children[0].level, "note");
-    assert!(
-        diagnostic
-            .rendered
-            .as_deref()
-            .unwrap()
-            .starts_with("error[E0369]")
-    );
+    let rendered = diagnostic.rendered.as_deref();
+    assert!(rendered.is_some(), "rendered diagnostic");
+    let Some(rendered) = rendered else { return };
+    assert!(rendered.starts_with("error[E0369]"));
 }
 
 #[test]
 fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
-    let messages = parse_messages(sample_stream().as_bytes()).expect("parse");
+    let messages = parse_messages(sample_stream().as_bytes());
+    assert_eq!(result_state(&messages), Returned, "messages: {messages:?}");
+    let Ok(messages) = messages else { return };
     assert!(matches!(&messages[2], Message::BuildScriptExecuted(_)));
     assert!(matches!(&messages[3], Message::Other { reason } if reason == "something-new"));
     assert!(matches!(
@@ -197,8 +240,9 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     ));
 
     let error =
-        parse_messages(b"{\"reason\":\"build-finished\",\"success\":true}\nCompiling demo\n")
-            .unwrap_err();
+        parse_messages(b"{\"reason\":\"build-finished\",\"success\":true}\nCompiling demo\n");
+    assert_eq!(result_state(&error), Refused, "mixed stream: {error:?}");
+    let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::MessageUnparsable);
     assert!(error.to_string().contains("line 2"), "{error}");
 }
@@ -206,17 +250,24 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
 #[test]
 fn dep_info_lists_the_prerequisites_of_the_first_rule_with_escapes_undone() {
     let text = "/t/deps/demo-abc.d: src/lib.rs src/with\\ space.rs \\\n  crates/x/src/mod.rs\n\n/t/deps/libdemo-abc.rmeta: src/lib.rs\n\nsrc/lib.rs:\n";
+    let parsed = parse_dep_info(text);
+    assert_eq!(result_state(&parsed), Returned, "dep-info: {parsed:?}");
+    let Ok(parsed) = parsed else { return };
     assert_eq!(
-        parse_dep_info(text).expect("parse"),
+        parsed,
         ["src/lib.rs", "src/with space.rs", "crates/x/src/mod.rs"]
     );
-    assert_eq!(
-        parse_dep_info("out.d: \\\n\n").expect("empty"),
-        Vec::<String>::new()
-    );
-    let error = parse_dep_info("no rule here\n").unwrap_err();
+    let empty = parse_dep_info("out.d: \\\n\n");
+    assert_eq!(result_state(&empty), Returned, "empty dep-info: {empty:?}");
+    let Ok(empty) = empty else { return };
+    assert_eq!(empty, Vec::<String>::new());
+    let error = parse_dep_info("no rule here\n");
+    assert_eq!(result_state(&error), Refused, "missing rule: {error:?}");
+    let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::DepInfoUnreadable);
-    let error = parse_dep_info("").unwrap_err();
+    let error = parse_dep_info("");
+    assert_eq!(result_state(&error), Refused, "empty input: {error:?}");
+    let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::DepInfoUnreadable);
 }
 
@@ -270,7 +321,11 @@ fn every_cargo_error_kind_has_a_code_in_the_workspace_area() {
         "a command nobody waited for is the caller's cancellation, not a fact about the \
          workspace, and it is the one cargo failure that is not"
     );
-    let error: CargoError = parse_dep_info("").unwrap_err();
+    let error = parse_dep_info("");
+    assert_eq!(result_state(&error), Refused, "empty dep-info: {error:?}");
+    let Err(error): Result<_, CargoError> = error else {
+        return;
+    };
     assert_eq!(error.kind().code().code, "RM2001");
 }
 
@@ -279,7 +334,9 @@ fn a_build_script_executed_message_carries_its_out_dir_and_environment() {
     let stream = r#"{"reason":"build-script-executed","package_id":"demo 0.1.0","linked_libs":[],"linked_paths":[],"cfgs":[],"env":[["FIXTURE_TAG","written"],["OTHER","2"]],"out_dir":"/t/debug/build/demo-abc/out"}
 {"reason":"build-finished","success":true}
 "#;
-    let messages = parse_messages(stream.as_bytes()).expect("parse");
+    let messages = parse_messages(stream.as_bytes());
+    assert_eq!(result_state(&messages), Returned, "messages: {messages:?}");
+    let Ok(messages) = messages else { return };
     let Message::BuildScriptExecuted(script) = &messages[0] else {
         panic!("{messages:?}");
     };
@@ -303,7 +360,9 @@ fn a_build_script_executed_message_carries_its_out_dir_and_environment() {
 #[test]
 fn a_build_script_that_wrote_nowhere_says_so_rather_than_guessing() {
     let stream = "{\"reason\":\"build-script-executed\",\"package_id\":\"demo 0.1.0\"}\n";
-    let messages = parse_messages(stream.as_bytes()).expect("parse");
+    let messages = parse_messages(stream.as_bytes());
+    assert_eq!(result_state(&messages), Returned, "messages: {messages:?}");
+    let Ok(messages) = messages else { return };
     let Message::BuildScriptExecuted(script) = &messages[0] else {
         panic!("{messages:?}");
     };
@@ -385,7 +444,7 @@ fn all_features_and_a_named_feature_are_both_spelled_because_cargo_accepts_both(
         ..CompileOptions::default()
     };
     let args = compile_arguments(&options);
-    assert!(args.contains(&"--all-features".to_owned()));
+    assert!(args.iter().any(|argument| argument == "--all-features"));
     assert_eq!(
         args.iter().filter(|arg| *arg == "--features").count(),
         1,
@@ -423,7 +482,9 @@ fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
         ..CompileOptions::default()
     });
     assert!(
-        !asked.iter().any(|one| one.starts_with("profile.")),
+        !asked
+            .iter()
+            .any(|one| { one.as_os_str().as_encoded_bytes().starts_with(b"profile.") }),
         "somebody who wants a debugger on a kept snapshot says so, and then nothing overrides \
          the profile they wrote: {asked:?}"
     );
@@ -437,7 +498,9 @@ fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
         ..CompileOptions::default()
     });
     assert!(
-        !named.iter().any(|one| one.starts_with("profile.")),
+        !named
+            .iter()
+            .any(|one| { one.as_os_str().as_encoded_bytes().starts_with(b"profile.") }),
         "a profile somebody named is one they meant, and this engine does not edit it: {named:?}"
     );
 }

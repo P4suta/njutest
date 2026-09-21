@@ -23,7 +23,8 @@ fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
 
 fn parts(value: &OsString) -> Vec<String> {
     value
-        .to_string_lossy()
+        .to_str()
+        .expect("test protocol paths are UTF-8")
         .split(SEPARATOR)
         .map(ToOwned::to_owned)
         .collect()
@@ -37,7 +38,7 @@ fn write(root: &Path, relative: &str, contents: &str) {
 
 #[test]
 fn nothing_to_say_leaves_the_variable_unset_so_the_configuration_still_applies() {
-    assert_eq!(encoded(&env(&[]), &Configured::default(), &[]), None);
+    assert_eq!(encoded(&env(&[]), &Configured::default(), &[]), Ok(None));
 }
 
 #[test]
@@ -48,6 +49,7 @@ fn the_coverage_flag_is_appended_to_what_was_already_encoded() {
         &Configured::default(),
         &[COVERAGE_FLAG],
     )
+    .expect("the flags are UTF-8")
     .expect("something to say");
     assert_eq!(
         parts(&value),
@@ -62,6 +64,7 @@ fn a_plain_rustflags_is_split_the_way_cargo_splits_it() {
         &Configured::default(),
         &[COVERAGE_FLAG],
     )
+    .expect("the flags are UTF-8")
     .expect("something to say");
     assert_eq!(
         parts(&value),
@@ -80,6 +83,7 @@ fn the_encoded_variable_wins_over_the_plain_one_exactly_as_cargo_does() {
         &Configured::default(),
         &[],
     )
+    .expect("the flags are UTF-8")
     .expect("something to say");
     assert_eq!(parts(&value), ["-Dwarnings"]);
 }
@@ -95,6 +99,7 @@ fn what_the_project_configured_is_put_back_because_the_variable_would_replace_it
         },
         &[COVERAGE_FLAG],
     )
+    .expect("the flags are UTF-8")
     .expect("something to say");
     assert_eq!(
         parts(&value),
@@ -114,6 +119,7 @@ fn an_environment_that_is_already_set_leaves_the_configuration_where_cargo_left_
         },
         &[COVERAGE_FLAG],
     )
+    .expect("the flags are UTF-8")
     .expect("something to say");
     assert_eq!(
         parts(&value),

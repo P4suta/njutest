@@ -3,7 +3,6 @@
 
 //! `njutest doctor`: what this machine can and cannot do.
 
-use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -162,8 +161,8 @@ impl Finding {
             self.detail.detail()
         );
         if !self.detail.held() {
-            let written = write!(text, "\n         try: {}", self.remedy());
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+            text.push_str("\n         try: ");
+            text.push_str(self.remedy());
         }
         text
     }
@@ -180,17 +179,17 @@ pub(super) fn run(
     environment: &Environment,
     stdout: &mut dyn Write,
     _stderr: &mut dyn Write,
-) -> Completion {
+) -> std::io::Result<Completion> {
     let findings = examine(environment);
     for finding in &findings {
-        super::say(stdout, &finding.line());
+        super::say(stdout, &finding.line())?;
     }
     let wanting: Vec<String> = findings
         .iter()
         .filter(|finding| finding.need == Need::Required && !finding.detail.held())
         .map(|finding| format!("{} is {}", finding.named.named(), finding.detail.word()))
         .collect();
-    super::say(stdout, "");
+    super::say(stdout, "")?;
     if wanting.is_empty() {
         super::say(
             stdout,
@@ -199,14 +198,14 @@ pub(super) fn run(
                  answered",
                 findings.len()
             ),
-        );
-        Completion::Assured
+        )?;
+        Ok(Completion::Assured)
     } else {
         super::say(
             stdout,
             &format!("a run cannot go ahead: {}", wanting.join(", ")),
-        );
-        Completion::Error
+        )?;
+        Ok(Completion::Error)
     }
 }
 
@@ -215,7 +214,7 @@ fn examine(environment: &Environment) -> Vec<Finding> {
     let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
     let dir = environment.working_directory.clone();
-    let toolchain = Toolchain::locate(
+    let toolchain = match Toolchain::locate(
         &LocateOptions {
             cargo: None,
             search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
@@ -223,27 +222,22 @@ fn examine(environment: &Environment) -> Vec<Finding> {
         },
         &dir,
         &cancel,
-    )
-    .ok();
-    let tools = toolchain
-        .as_ref()
-        .and_then(|located| Tools::locate(located, &dir, &Watch::new(&cancel, &trace)).ok());
+    ) {
+        Ok(toolchain) => Some(toolchain),
+        Err(_) => None,
+    };
+    let tools = toolchain.as_ref().and_then(|located| {
+        match Tools::locate(located, &dir, &Watch::new(&cancel, &trace)) {
+            Ok(tools) => Some(tools),
+            Err(_) => None,
+        }
+    });
     let probe = Probe {
         environment,
         dir: &dir,
         cancel: &cancel,
     };
 
-    let required = |named: Needed, detail: Option<String>| Finding {
-        named,
-        need: Need::Required,
-        detail: detail.map_or(State::Missing, State::Found),
-    };
-    let optional = |named: Needed, detail: State| Finding {
-        named,
-        need: Need::Optional,
-        detail,
-    };
     vec![
         Finding {
             named: Needed::Configuration,
@@ -293,6 +287,25 @@ fn examine(environment: &Environment) -> Vec<Finding> {
     ]
 }
 
+fn required(named: Needed, detail: Option<String>) -> Finding {
+    Finding {
+        named,
+        need: Need::Required,
+        detail: match detail {
+            Some(detail) => State::Found(detail),
+            None => State::Missing,
+        },
+    }
+}
+
+const fn optional(named: Needed, detail: State) -> Finding {
+    Finding {
+        named,
+        need: Need::Optional,
+        detail,
+    }
+}
+
 /// What it costs to run a file that has just been written, which a run does per target it builds.
 ///
 /// A system that evaluates an executable before it may run pays that cost once
@@ -323,11 +336,17 @@ fn exec_cost(temp: &Path, program: &Path) -> State {
 fn configuration(root: &Path) -> State {
     let path = root.join(crate::config::FILE_NAME);
     match crate::config::Config::load(root) {
-        Ok(_read) if path.is_file() => State::Found(path.display().to_string()),
-        Ok(_defaults) => State::Found(format!(
-            "none; the defaults apply. `njutest init` writes {}",
-            crate::config::FILE_NAME
-        )),
+        Ok(_read) => match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() => {
+                State::Found(path.display().to_string())
+            }
+            Ok(_) => State::Refused(format!("{} is not a regular file", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => State::Found(format!(
+                "none; the defaults apply. `njutest init` writes {}",
+                crate::config::FILE_NAME
+            )),
+            Err(error) => State::Refused(format!("cannot inspect {}: {error}", path.display())),
+        },
         Err(error) => State::Refused(error.to_string()),
     }
 }
@@ -347,8 +366,10 @@ impl Probe<'_> {
     /// install what they already have. The exit status and what it printed are
     /// in hand, so they are what is said.
     fn version_of(&self, program: &str, arguments: &[&str]) -> State {
-        let Some(program) = self.resolve(program) else {
-            return State::Missing;
+        let program = match self.resolve(program) {
+            Ok(Some(program)) => program,
+            Ok(None) => return State::Missing,
+            Err(error) => return State::Refused(format!("cannot inspect PATH: {error}")),
         };
         let mut spec = Spec::new(
             std::iter::once(program.into_os_string())
@@ -359,26 +380,33 @@ impl Probe<'_> {
         spec.env = Some(self.environment.vars.clone());
         spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
         let result = run_process(&spec, self.cancel);
-        if let Some(error) = &result.error {
+        if let Some(error) = result.error() {
             return State::Refused(format!("it is installed and would not start: {error}"));
         }
-        if result.timed_out {
+        if result.timed_out() {
             return State::Refused(format!(
                 "it is installed and did not answer within {} seconds, which a run \
                  would have waited for too",
                 rust_mutants::runner::PROBE.as_secs()
             ));
         }
-        if result.exit_code != 0 {
-            let said = String::from_utf8_lossy(&result.output)
-                .lines()
-                .next()
-                .map(str::trim)
-                .unwrap_or_default()
-                .to_owned();
+        if result.conventional_exit_code() != 0 {
+            let output = match std::str::from_utf8(&result.output) {
+                Ok(output) => output,
+                Err(error) => {
+                    return State::Refused(format!(
+                        "it is installed, exited {}, and printed output that is not valid UTF-8: {error}",
+                        result.conventional_exit_code()
+                    ));
+                }
+            };
+            let said = match output.lines().next() {
+                Some(line) => line.trim().to_owned(),
+                None => String::new(),
+            };
             return State::Refused(format!(
                 "it is installed and exited {}{}",
-                result.exit_code,
+                result.conventional_exit_code(),
                 if said.is_empty() {
                     String::new()
                 } else {
@@ -386,7 +414,15 @@ impl Probe<'_> {
                 }
             ));
         }
-        String::from_utf8_lossy(&result.stdout)
+        let stdout = match std::str::from_utf8(&result.stdout) {
+            Ok(stdout) => stdout,
+            Err(error) => {
+                return State::Refused(format!(
+                    "it is installed and printed a version that is not valid UTF-8: {error}"
+                ));
+            }
+        };
+        stdout
             .lines()
             .next()
             .map(str::trim)
@@ -398,15 +434,23 @@ impl Probe<'_> {
     }
 
     /// Where `program` is on the environment's `PATH`, if it is anywhere.
-    fn resolve(&self, program: &str) -> Option<PathBuf> {
-        let path = self.environment.var("PATH")?;
-        std::env::split_paths(path)
-            .flat_map(|directory| {
-                [
-                    directory.join(program),
-                    directory.join(format!("{program}.exe")),
-                ]
-            })
-            .find(|candidate| candidate.is_file())
+    fn resolve(&self, program: &str) -> std::io::Result<Option<PathBuf>> {
+        let Some(path) = self.environment.var("PATH") else {
+            return Ok(None);
+        };
+        for directory in std::env::split_paths(path) {
+            for candidate in [
+                directory.join(program),
+                directory.join(format!("{program}.exe")),
+            ] {
+                match std::fs::metadata(&candidate) {
+                    Ok(metadata) if metadata.file_type().is_file() => return Ok(Some(candidate)),
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(None)
     }
 }

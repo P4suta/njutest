@@ -1,0 +1,5 @@
+error: AllVariants refuses conditionally compiled variants
+ --> tests/ui/all_variants_cfg.rs:4:5
+  |
+4 |     #[cfg(unix)]
+  |     ^

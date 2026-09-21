@@ -3,11 +3,20 @@
 
 //! What an earlier run established about one mutant, and every condition under which this run may believe it.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
 use std::collections::{BTreeMap, BTreeSet};
 
 use njutest_cli::evidence::store::{
     Outcome, Refusal, SCHEMA, Standing, StoreError, path_of, read, record, write,
 };
+use rust_mutants::id::HexDigest;
+
+fn mutant(number: u8) -> HexDigest {
+    HexDigest::try_from(format!("{number:064x}")).expect("a canonical mutant id")
+}
 
 fn reaching(targets: &[&str]) -> BTreeSet<String> {
     targets.iter().map(|one| (*one).to_owned()).collect()
@@ -40,7 +49,7 @@ fn survived(entries: &[(&str, &str)]) -> Outcome {
 
 #[test]
 fn a_kill_is_believed_when_the_target_that_noticed_still_reaches_it_and_still_behaves_the_same() {
-    let one = record("m1", "run-1", killed("t1", "k1"));
+    let one = record(mutant(1), "run-1", killed("t1", "k1"));
     assert_eq!(
         one.believable(&reaching(&["t1", "t2"]), &standing(&[("t1", "k1")])),
         Ok(())
@@ -71,7 +80,7 @@ fn a_kill_is_believed_when_the_target_that_noticed_still_reaches_it_and_still_be
 
 #[test]
 fn a_survival_is_believed_only_when_every_target_that_could_notice_is_one_that_did_not() {
-    let one = record("m1", "run-1", survived(&[("t1", "k1"), ("t2", "k2")]));
+    let one = record(mutant(1), "run-1", survived(&[("t1", "k1"), ("t2", "k2")]));
     assert_eq!(
         one.believable(
             &reaching(&["t1", "t2"]),
@@ -122,20 +131,20 @@ fn a_survival_is_believed_only_when_every_target_that_could_notice_is_one_that_d
 fn what_one_run_recorded_is_what_the_next_one_reads() {
     let dir = tempfile::tempdir().expect("tempdir");
     assert!(
-        read(dir.path(), "m1")
+        read(dir.path(), &mutant(1))
             .expect("a miss is not a failure")
             .is_none()
     );
 
-    let one = record("m1", "run-1", killed("t1", "k1"));
+    let one = record(mutant(1), "run-1", killed("t1", "k1"));
     let written = write(dir.path(), &one).expect("written");
-    assert_eq!(written, path_of(dir.path(), "m1"));
-    assert_eq!(read(dir.path(), "m1").expect("readable"), Some(one));
+    assert_eq!(written, path_of(dir.path(), &mutant(1)));
+    assert_eq!(read(dir.path(), &mutant(1)).expect("readable"), Some(one));
 
-    let contradicted = record("m1", "run-2", survived(&[("t1", "k1")]));
+    let contradicted = record(mutant(1), "run-2", survived(&[("t1", "k1")]));
     write(dir.path(), &contradicted).expect("written");
     assert_eq!(
-        read(dir.path(), "m1").expect("readable"),
+        read(dir.path(), &mutant(1)).expect("readable"),
         Some(contradicted),
         "a stale record is removed by being contradicted, and nothing else removes one"
     );
@@ -144,29 +153,33 @@ fn what_one_run_recorded_is_what_the_next_one_reads() {
 #[test]
 fn a_record_that_is_not_about_the_mutant_it_is_filed_under_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write(dir.path(), &record("m1", "run-1", killed("t1", "k1"))).expect("written");
-    std::fs::copy(path_of(dir.path(), "m1"), path_of(dir.path(), "m2")).expect("copy");
-    let error = read(dir.path(), "m2").expect_err("a record about another mutant");
+    write(dir.path(), &record(mutant(1), "run-1", killed("t1", "k1"))).expect("written");
+    std::fs::copy(
+        path_of(dir.path(), &mutant(1)),
+        path_of(dir.path(), &mutant(2)),
+    )
+    .expect("copy");
+    let error = read(dir.path(), &mutant(2)).expect_err("a record about another mutant");
     assert!(matches!(error, StoreError::Corrupt { .. }), "{error}");
     assert!(error.to_string().contains("NJ8004"), "{error}");
 
-    std::fs::write(path_of(dir.path(), "m3"), "{ not a record").expect("write");
-    read(dir.path(), "m3").expect_err("a document that does not parse");
+    std::fs::write(path_of(dir.path(), &mutant(3)), "{ not a record").expect("write");
+    read(dir.path(), &mutant(3)).expect_err("a document that does not parse");
 }
 
 #[test]
 fn a_record_says_what_shape_it_is_and_what_established_it() {
-    let one = record("m1", "run-1", killed("t1", "k1"));
+    let one = record(mutant(1), "run-1", killed("t1", "k1"));
     assert_eq!(one.schema, SCHEMA);
     assert_eq!(one.run_id, "run-1");
     let text = serde_json::to_string(&one).expect("renders");
     assert!(text.contains("\"kind\":\"killed\""), "{text}");
     let back: njutest_cli::evidence::store::Record =
-        serde_json::from_str(&text).expect("reads back");
+        njutest_devkit::strictjson::decode_str(&text).expect("reads back");
     assert_eq!(back, one);
 
     let other = record(
-        "m2",
+        mutant(2),
         "run-1",
         Outcome::Survived {
             targets: BTreeMap::new(),
@@ -179,13 +192,13 @@ fn a_record_says_what_shape_it_is_and_what_established_it() {
 #[test]
 fn a_record_that_says_it_is_another_shape_is_refused_rather_than_read_as_this_one() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write(dir.path(), &record("m1", "run-1", killed("t1", "k1"))).expect("written");
-    let path = path_of(dir.path(), "m1");
+    write(dir.path(), &record(mutant(1), "run-1", killed("t1", "k1"))).expect("written");
+    let path = path_of(dir.path(), &mutant(1));
     let text = std::fs::read_to_string(&path).expect("the record");
     std::fs::write(&path, text.replace(SCHEMA, "njutest-mutation-evidence-v9"))
         .expect("a record of a shape this release does not know");
 
-    let error = read(dir.path(), "m1").expect_err("a record of another shape");
+    let error = read(dir.path(), &mutant(1)).expect_err("a record of another shape");
     assert!(matches!(error, StoreError::Corrupt { .. }), "{error}");
     assert!(
         error.to_string().contains("njutest-mutation-evidence-v9"),
@@ -197,9 +210,10 @@ fn a_record_that_says_it_is_another_shape_is_refused_rather_than_read_as_this_on
 #[test]
 fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::create_dir_all(path_of(dir.path(), "m1")).expect("a directory where a record goes");
+    std::fs::create_dir_all(path_of(dir.path(), &mutant(1)))
+        .expect("a directory where a record goes");
 
-    let error = read(dir.path(), "m1").expect_err("a record that cannot be read");
+    let error = read(dir.path(), &mutant(1)).expect_err("a record that cannot be read");
     assert!(
         matches!(error, StoreError::Unusable { .. }),
         "a record this run could not read is not a run that has no record: reading it \
@@ -207,7 +221,7 @@ fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
          re-establishes what it could not read rather than saying it could not: {error}"
     );
 
-    let refused = write(dir.path(), &record("m1", "run-1", killed("t1", "k1")))
+    let refused = write(dir.path(), &record(mutant(1), "run-1", killed("t1", "k1")))
         .expect_err("a record that cannot be written");
     assert!(
         matches!(refused, StoreError::Unusable { .. }),
@@ -218,9 +232,9 @@ fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
 
     let blocked = dir.path().join("blocked");
     std::fs::write(&blocked, "a file where a store's directory goes").expect("the file");
-    let refused = write(&blocked, &record("m2", "run-1", killed("t1", "k1")))
+    let refused = write(&blocked, &record(mutant(2), "run-1", killed("t1", "k1")))
         .expect_err("a store with nowhere to put its records");
-    let directory = path_of(&blocked, "m2")
+    let directory = path_of(&blocked, &mutant(2))
         .parent()
         .expect("the directory a record goes in")
         .display()

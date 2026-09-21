@@ -982,8 +982,10 @@ name = "njutest-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "getrandom 0.3.4",
  "hex",
  "jiff",
+ "njutest-macros",
  "proc-macro2",
  "rust-mutants",
  "rustix",
@@ -996,6 +998,28 @@ dependencies = [
  "toml",
  "toml_edit",
  "unicode-width",
+]
+
+[[package]]
+name = "njutest-devkit"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "njutest-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -1429,8 +1453,10 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rust-mutants"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.3.4",
  "hex",
  "jiff",
+ "njutest-macros",
  "proc-macro2",
  "rustix",
  "serde",
@@ -1449,6 +1475,7 @@ dependencies = [
  "clap",
  "hex",
  "jiff",
+ "njutest-macros",
  "ratatui",
  "rust-mutants",
  "rustix",
@@ -1467,6 +1494,7 @@ dependencies = [
  "arbitrary",
  "libfuzzer-sys",
  "njutest-cli",
+ "njutest-devkit",
  "rust-mutants",
  "rust-mutants-cli",
  "serde_json",
@@ -1640,6 +1668,12 @@ dependencies = [
  "errno",
  "libc",
 ]
+
+[[package]]
+name = "similar"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f66ca1f7aca2474dc10c942eb22feffc897735f54cd1db90138c2fddb490987"
 
 [[package]]
 name = "siphasher"

@@ -33,6 +33,7 @@ pub const REGION_KIND_CODE: u32 = 0;
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
+#[serde(deny_unknown_fields)]
 pub struct Point {
     /// The 1-based line.
     pub line: u32,
@@ -64,6 +65,7 @@ pub struct FileRegions {
 
 /// One stretch of source a test really ran.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Block {
     /// The file.
     pub file: PathBuf,
@@ -82,7 +84,7 @@ impl Block {
 }
 
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum CoverageErrorKind {
     /// A coverage export could not be read.
     Unreadable,
@@ -95,14 +97,6 @@ pub enum CoverageErrorKind {
 }
 
 impl CoverageErrorKind {
-    /// Every kind, in code order.
-    pub const ALL: [Self; 4] = [
-        Self::Unreadable,
-        Self::ToolsMissing,
-        Self::ToolFailed,
-        Self::NothingWritten,
-    ];
-
     /// The stable code of this failure.
     #[must_use]
     pub const fn code(self) -> ErrorCode {
@@ -149,18 +143,59 @@ struct Export {
     #[serde(rename = "type")]
     kind: String,
     data: Vec<Datum>,
+    #[serde(flatten)]
+    #[expect(
+        dead_code,
+        reason = "foreign protocol additions are retained for inspection"
+    )]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Datum {
     #[serde(default)]
     functions: Vec<Function>,
+    #[serde(flatten)]
+    #[expect(
+        dead_code,
+        reason = "foreign protocol additions are retained for inspection"
+    )]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Function {
     filenames: Vec<PathBuf>,
     regions: Vec<Vec<u64>>,
+    #[serde(flatten)]
+    #[expect(
+        dead_code,
+        reason = "foreign protocol additions are retained for inspection"
+    )]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum RegionError {
+    #[error("a region has {found} fields, not 8")]
+    MissingField { found: usize },
+    #[error("region field {index} with value {value} is out of range")]
+    FieldOutOfRange { index: usize, value: u64 },
+    #[error("a region names file id {value}, which is out of range")]
+    FileIdOutOfRange { value: u64 },
+    #[error("a region names file {file_id}, which the function does not have")]
+    MissingFile { file_id: usize },
+    #[error(
+        "a region of {} starts at {start_line}:{start_column} and ends at {end_line}:{end_column}, which is before it starts",
+        path.display()
+    )]
+    Reversed {
+        path: PathBuf,
+        start_line: u32,
+        start_column: u32,
+        end_line: u32,
+        end_column: u32,
+    },
 }
 
 /// Reads a coverage export into the regions of each file.
@@ -172,7 +207,7 @@ pub fn parse_export(json: &[u8]) -> Result<Vec<FileRegions>, CoverageError> {
         kind: CoverageErrorKind::Unreadable,
         message,
     };
-    let export: Export = serde_json::from_slice(json)
+    let export: Export = crate::strictjson::decode_slice(json)
         .map_err(|error| refuse(format!("the coverage export could not be read: {error}")))?;
     if export.kind != "llvm.coverage.json.export" {
         return Err(refuse(format!(
@@ -185,7 +220,8 @@ pub fn parse_export(json: &[u8]) -> Result<Vec<FileRegions>, CoverageError> {
     for datum in &export.data {
         for function in &datum.functions {
             for region in &function.regions {
-                let (path, region) = read_region(function, region).map_err(refuse)?;
+                let (path, region) =
+                    read_region(function, region).map_err(|error| refuse(error.to_string()))?;
                 by_file.entry(path).or_default().push(region);
             }
         }
@@ -197,50 +233,54 @@ pub fn parse_export(json: &[u8]) -> Result<Vec<FileRegions>, CoverageError> {
 }
 
 /// One region tuple, with the file its `file_id` names.
-fn read_region(function: &Function, region: &[u64]) -> Result<(PathBuf, Region), String> {
-    let field = |at: usize| -> Result<u64, String> {
-        region
-            .get(at)
-            .copied()
-            .ok_or_else(|| format!("a region has {} fields, not 8", region.len()))
-    };
-    let small = |at: usize| -> Result<u32, String> {
-        u32::try_from(field(at)?).map_err(|_error| "a region field is out of range".to_owned())
-    };
-    let file_id = usize::try_from(field(5)?)
-        .map_err(|_error| "a region names a file id out of range".to_owned())?;
+fn read_region(function: &Function, region: &[u64]) -> Result<(PathBuf, Region), RegionError> {
+    let file_id_value = field(region, 5)?;
+    let file_id =
+        usize::try_from(file_id_value).map_err(|_error| RegionError::FileIdOutOfRange {
+            value: file_id_value,
+        })?;
     let path = function
         .filenames
         .get(file_id)
-        .ok_or_else(|| format!("a region names file {file_id}, which the function does not have"))?
+        .ok_or(RegionError::MissingFile { file_id })?
         .clone();
     let start = Point {
-        line: small(0)?,
-        column: small(1)?,
+        line: small(region, 0)?,
+        column: small(region, 1)?,
     };
     let end = Point {
-        line: small(2)?,
-        column: small(3)?,
+        line: small(region, 2)?,
+        column: small(region, 3)?,
     };
     if (end.line, end.column) < (start.line, start.column) {
-        return Err(format!(
-            "a region of {} starts at {}:{} and ends at {}:{}, which is before it starts",
-            path.display(),
-            start.line,
-            start.column,
-            end.line,
-            end.column
-        ));
+        return Err(RegionError::Reversed {
+            path,
+            start_line: start.line,
+            start_column: start.column,
+            end_line: end.line,
+            end_column: end.column,
+        });
     }
     Ok((
         path,
         Region {
             start,
             end,
-            count: field(4)?,
-            kind: small(7)?,
+            count: field(region, 4)?,
+            kind: small(region, 7)?,
         },
     ))
+}
+
+fn field(region: &[u64], index: usize) -> Result<u64, RegionError> {
+    region.get(index).copied().ok_or(RegionError::MissingField {
+        found: region.len(),
+    })
+}
+
+fn small(region: &[u64], index: usize) -> Result<u32, RegionError> {
+    let value = field(region, index)?;
+    u32::try_from(value).map_err(|_error| RegionError::FieldOutOfRange { index, value })
 }
 
 /// The blocks a run really executed: the code regions with a non-zero count, deduplicated, in file and position order.
@@ -318,14 +358,20 @@ impl Tools {
         spec.structured_stdout = Some(crate::runner::PROBE_OUTPUT_LIMIT);
         let printed = run(&spec, watch.cancel());
         watch.exec(&spec, &printed);
-        if !printed.ok() {
+        if !printed.succeeded() {
             return Err(refuse(format!(
                 "cannot ask {} where its libraries are: {}",
                 toolchain.rustc().display(),
-                String::from_utf8_lossy(&printed.output).trim()
+                diagnostic_output(&printed.output)
             )));
         }
-        let libdir = PathBuf::from(String::from_utf8_lossy(&printed.stdout).trim().to_owned());
+        let libdir_text = std::str::from_utf8(&printed.stdout).map_err(|source| {
+            refuse(format!(
+                "{} printed a non-UTF-8 target library directory: {source}",
+                toolchain.rustc().display()
+            ))
+        })?;
+        let libdir = PathBuf::from(libdir_text.trim());
         let bin = libdir
             .parent()
             .ok_or_else(|| refuse(format!("{} has no parent", libdir.display())))?
@@ -333,11 +379,20 @@ impl Tools {
         let profdata = bin.join(executable_name("llvm-profdata"));
         let cov = bin.join(executable_name("llvm-cov"));
         for tool in [&profdata, &cov] {
-            if !tool.is_file() {
-                return Err(refuse(format!(
-                    "{} is missing; install the llvm-tools component (rustup component add llvm-tools)",
-                    tool.display()
-                )));
+            match std::fs::metadata(tool) {
+                Ok(metadata) if metadata.file_type().is_file() => {}
+                Ok(_not_a_file) => {
+                    return Err(refuse(format!(
+                        "{} is not a regular file; install the llvm-tools component (rustup component add llvm-tools)",
+                        tool.display()
+                    )));
+                }
+                Err(source) => {
+                    return Err(refuse(format!(
+                        "{} is unavailable ({source}); install the llvm-tools component (rustup component add llvm-tools)",
+                        tool.display()
+                    )));
+                }
             }
         }
         Ok(Self { profdata, cov })
@@ -372,14 +427,14 @@ impl Tools {
         let spec = Spec::new(argv, Bound::After(TOOL_WORK));
         let merged = run(&spec, watch.cancel());
         watch.exec(&spec, &merged);
-        if merged.ok() {
+        if merged.succeeded() {
             Ok(())
         } else {
             Err(CoverageError {
                 kind: CoverageErrorKind::ToolFailed,
                 message: format!(
                     "llvm-profdata merge failed: {}",
-                    String::from_utf8_lossy(&merged.output).trim()
+                    diagnostic_output(&merged.output)
                 ),
             })
         }
@@ -418,12 +473,12 @@ impl Tools {
         spec.structured_stdout = Some(1 << 30);
         let exported = run(&spec, watch.cancel());
         watch.exec(&spec, &exported);
-        if !exported.ok() {
+        if !exported.succeeded() {
             return Err(CoverageError {
                 kind: CoverageErrorKind::ToolFailed,
                 message: format!(
                     "llvm-cov export failed: {}",
-                    String::from_utf8_lossy(&exported.output).trim()
+                    diagnostic_output(&exported.output)
                 ),
             });
         }
@@ -434,6 +489,16 @@ impl Tools {
             });
         }
         parse_export(&exported.stdout)
+    }
+}
+
+/// Renders bounded tool output without changing invalid bytes into Unicode
+/// replacement characters which could make two different failures look the
+/// same.
+fn diagnostic_output(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.trim().to_owned(),
+        Err(_invalid_utf8) => format!("non-UTF-8 output (hex): {}", hex::encode(bytes)),
     }
 }
 
@@ -461,8 +526,17 @@ pub fn written_profiles(directory: &Path, target_id: &str) -> Result<Vec<PathBuf
         kind: CoverageErrorKind::NothingWritten,
         message: format!("cannot read {}: {error}", directory.display()),
     })?;
+    let entries = entries
+        .collect::<std::io::Result<Vec<_>>>()
+        .map_err(|error| CoverageError {
+            kind: CoverageErrorKind::NothingWritten,
+            message: format!(
+                "cannot enumerate every entry under {}: {error}",
+                directory.display()
+            ),
+        })?;
     let mut profiles: Vec<PathBuf> = entries
-        .flatten()
+        .into_iter()
         .map(|entry| entry.path())
         .filter(|path| {
             path.extension()

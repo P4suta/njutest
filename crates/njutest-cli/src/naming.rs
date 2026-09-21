@@ -3,7 +3,7 @@
 
 //! How a reader names one mutation, and the one place that answers to it.
 
-use crate::report::MutantRecord;
+use crate::report::ProjectedMutant;
 
 /// How a reader names one mutation again, which has to hold after they have edited the file.
 ///
@@ -11,13 +11,16 @@ use crate::report::MutantRecord;
 /// next — the test that closes this very survivor — re-mints it. A locator is
 /// where the mutation is and what was done to it, which survives that edit.
 #[must_use]
-pub fn locator(mutant: &MutantRecord) -> String {
-    if mutant.item.is_empty() || mutant.path.is_empty() {
-        return mutant.display_id.clone();
+pub fn locator(mutant: &ProjectedMutant) -> String {
+    if mutant.item().is_empty() || mutant.path().is_empty() {
+        return mutant.display_id().to_owned();
     }
     format!(
         "{}:{}:{}@{}",
-        mutant.path, mutant.item, mutant.rule, mutant.position.line
+        mutant.path(),
+        mutant.item(),
+        mutant.rule(),
+        mutant.position().line
     )
 }
 
@@ -28,9 +31,9 @@ pub fn locator(mutant: &MutantRecord) -> String {
 /// resolving it their own way is how a tool comes to print a command it then
 /// refuses.
 #[must_use]
-pub fn matching<'a>(mutants: &[&'a MutantRecord], named: &str) -> Vec<&'a MutantRecord> {
+pub fn matching<'a>(mutants: &[&'a ProjectedMutant], named: &str) -> Vec<&'a ProjectedMutant> {
     if let Some(wanted) = rust_mutants::session::Locator::parse(named) {
-        let found: Vec<&MutantRecord> = mutants
+        let found: Vec<&ProjectedMutant> = mutants
             .iter()
             .copied()
             .filter(|mutant| located(mutant, &wanted))
@@ -42,14 +45,16 @@ pub fn matching<'a>(mutants: &[&'a MutantRecord], named: &str) -> Vec<&'a Mutant
     mutants
         .iter()
         .copied()
-        .filter(|mutant| mutant.id.starts_with(named) || mutant.display_id.starts_with(named))
+        .filter(|mutant| mutant.id().starts_with(named) || mutant.display_id().starts_with(named))
         .collect()
 }
 
 /// Whether one mutation is the one a locator names.
-fn located(mutant: &MutantRecord, wanted: &rust_mutants::session::Locator) -> bool {
-    mutant.path == wanted.path
-        && mutant.item == wanted.item
-        && mutant.rule == wanted.rule
-        && wanted.line.is_none_or(|line| mutant.position.line == line)
+fn located(mutant: &ProjectedMutant, wanted: &rust_mutants::session::Locator) -> bool {
+    mutant.path() == wanted.path
+        && mutant.item() == wanted.item
+        && mutant.rule() == wanted.rule
+        && wanted
+            .line
+            .is_none_or(|line| mutant.position().line == line)
 }

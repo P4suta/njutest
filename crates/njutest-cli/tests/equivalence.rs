@@ -127,6 +127,7 @@ fn a_position_the_tests_ran_is_one_the_compiler_may_be_asked_about() {
 
 fn survivor(display_id: &str) -> Judged {
     Judged {
+        catalog_index: 0,
         id: display_id.repeat(4),
         display_id: display_id.to_owned(),
         path: "src/lib.rs".to_owned(),
@@ -180,16 +181,16 @@ fn what_this_layer_decided_about_each_mutation_is_in_the_recording() {
         &mut judged,
         &[decided("aaaa", false), decided("bbbb", true)],
         njutest_cli::watch::Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("one answer per mutation");
 
     let notes: Vec<String> = trace
         .events()
         .iter()
-        .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Note { note } => {
-                Some(format!("{} {}", note.kind, note.detail))
-            }
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .note()
+                .map(|note| format!("{} {}", note.kind, note.detail))
         })
         .collect();
     assert_eq!(
@@ -229,7 +230,8 @@ fn one_mutation_this_layer_says_nothing_about_does_not_end_what_it_says_about_th
             decided("dddd", true),
         ],
         njutest_cli::watch::Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("one answer per mutation");
 
     let equivalent: Vec<&str> = judged
         .iter()

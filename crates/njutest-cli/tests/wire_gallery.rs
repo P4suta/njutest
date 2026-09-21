@@ -3,10 +3,15 @@
 
 //! Every sentence a watched seam can put in front of a person, in one place somebody reads.
 
-use std::fmt::Write as _;
-
+#![expect(
+    clippy::assigning_clones,
+    clippy::expect_used,
+    clippy::format_push_string,
+    clippy::panic,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
 use njutest_cli::config::Contract;
-use njutest_cli::report::{Report, RunKind, SeamDecision, SeamRecord};
+use njutest_cli::report::{BuildReport, Report, RunKind, SeamDecision, SeamRecord};
 use njutest_cli::wire::derive::{Fault, derive};
 use njutest_cli::wire::rule::Rule;
 use njutest_cli::wire::{Exchange, Spoken};
@@ -83,19 +88,24 @@ fn observed() -> Vec<Exchange> {
 
 /// A report whose seams were decided the way `decide` says.
 fn reported(decide: impl Fn(&Fault) -> SeamDecision) -> Report {
-    let mut report = Report::new(
-        "20260918T090000Z-aaaaaa",
-        RunKind::Full,
-        Contract::StandardV1,
-    );
+    let mut source = BuildReport::new("wire-gallery", RunKind::Full, Contract::StandardV1);
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    source.timing.started = "2026-09-18T09:00:00Z".to_owned();
+    source.timing.finished = "2026-09-18T09:00:01Z".to_owned();
+    source
+        .limitations
+        .push(njutest_cli::report::Limitation::new(
+            "git-metadata-unavailable",
+            "the wire gallery fixture is not a git repository",
+        ));
     let seen = observed();
-    for fault in derive(&seen) {
+    for fault in derive(&seen).expect("the fault catalogue derives") {
         let named = seen
             .iter()
             .find(|one| one.capability == fault.capability && one.seq == fault.seq);
         let (asked, answered) =
             named.map_or_else(|| (String::new(), None), |one| one.spoken.asked());
-        report.seams.push(SeamRecord {
+        source.seams.push(SeamRecord {
             id: fault.id.clone(),
             capability: fault.capability.clone(),
             seq: fault.seq,
@@ -105,7 +115,22 @@ fn reported(decide: impl Fn(&Fault) -> SeamDecision) -> Report {
             decision: decide(&fault),
         });
     }
-    report
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let final_run =
+        rust_mutants::id::RunId::try_from("20260918t090000z-aaaaaa").expect("a canonical run id");
+    let latticed = njutest_cli::report::across::configured(&final_run, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog wire gallery fixture cannot be a shard");
+    };
+    latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion")
 }
 
 /// One way a suite can answer, with the name a reader sees above it.
@@ -158,12 +183,16 @@ fn every_sentence_a_watched_seam_can_say_is_one_somebody_has_looked_at() {
     );
     for (name, decide) in cases {
         let report = reported(decide);
-        let _written = writeln!(out, "\n=== {name} — the specification\n");
-        out.push_str(&njutest_cli::report::spec::page(&report));
-        let _written = writeln!(out, "\n=== {name} — what each question came to\n");
-        for one in &report.seams {
-            let _written = writeln!(
-                out,
+        let conclusion = report
+            .conclusion()
+            .expect("the checked report has a representable conclusion");
+        out.push_str(&format!("\n=== {name} — the specification\n\n"));
+        out.push_str(
+            &njutest_cli::report::spec::page(&report).expect("the gallery sentences are countable"),
+        );
+        out.push_str(&format!("\n=== {name} — what each question came to\n\n"));
+        for one in &conclusion.seams {
+            out.push_str(&format!(
                 "  {} seq {} {} {} -> {}{}",
                 one.capability,
                 one.seq,
@@ -177,7 +206,8 @@ fn every_sentence_a_watched_seam_can_say_is_one_somebody_has_looked_at() {
                 one.decision
                     .by()
                     .map_or_else(String::new, |who| format!(" ({who})"))
-            );
+            ));
+            out.push('\n');
         }
     }
     let path =
@@ -190,6 +220,7 @@ fn every_sentence_a_watched_seam_can_say_is_one_somebody_has_looked_at() {
 #[test]
 fn every_question_a_seam_can_license_appears_in_the_gallery() {
     let licensed: std::collections::BTreeSet<&'static str> = derive(&observed())
+        .expect("the fault catalogue derives")
         .iter()
         .map(|one| one.rule.name())
         .collect();

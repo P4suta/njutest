@@ -42,6 +42,12 @@ disallowed-methods = [
   { path = "std::env::set_var", reason = "races with other threads; wire the value through Options instead" },
   { path = "std::env::remove_var", reason = "see std::env::set_var" },
   { path = "std::process::exit", reason = "bypasses destructors; return an ExitCode from main. The generated mutant runtime is the one exception and is not this crate's source" },
+  { path = "core::result::Result::ok", reason = "turns a failure into absence; match, inspect, or report the error instead" },
+  { path = "core::result::Result::unwrap_or", reason = "turns a failure into a stand-in; report the error instead" },
+  { path = "core::result::Result::unwrap_or_default", reason = "turns a failure into an empty value; report the error instead" },
+  { path = "std::path::Path::exists", reason = "erases the difference between absent and unreadable; try the operation and match its error" },
+  { path = "std::path::Path::is_file", reason = "erases the difference between absent and unreadable; try the operation and match its error" },
+  { path = "std::path::Path::is_dir", reason = "erases the difference between absent and unreadable; try the operation and match its error" },
 ]
 
 disallowed-types = [

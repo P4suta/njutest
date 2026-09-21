@@ -15,10 +15,45 @@ use rust_mutants::run::{Judged, NotRunReason, Observer, Options, Quiet, Run, run
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Session, Timeout};
 use rust_mutants::testkit::opening::opening;
+use rust_mutants::trace::{Payload, RouteRecord};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
+enum RelevantPayload<'a> {
+    Route(&'a RouteRecord),
+    Other,
+}
+
+const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
+    match payload {
+        Payload::Route { route } => RelevantPayload::Route(route),
+        Payload::RunStart { .. }
+        | Payload::PhaseStart { .. }
+        | Payload::PhaseEnd { .. }
+        | Payload::Open { .. }
+        | Payload::Snapshot { .. }
+        | Payload::Exec { .. }
+        | Payload::DiscoverFile { .. }
+        | Payload::Instrument { .. }
+        | Payload::ValidateRound { .. }
+        | Payload::Bisect { .. }
+        | Payload::Build { .. }
+        | Payload::Verify { .. }
+        | Payload::Touch { .. }
+        | Payload::Witness { .. }
+        | Payload::SkipClaim { .. }
+        | Payload::Kept { .. }
+        | Payload::Cache { .. }
+        | Payload::Select { .. }
+        | Payload::Identical { .. }
+        | Payload::Evidence { .. }
+        | Payload::MutantExec { .. }
+        | Payload::Note { .. }
+        | Payload::RunEnd { .. } => RelevantPayload::Other,
+    }
+}
+
 fn prepared(fixture: &Fixture) -> Session {
-    prepared_within(fixture, Timeout::Auto)
+    prepared_within(fixture, Timeout::Auto, 1_000_000)
 }
 
 /// A prepared session whose executions are bounded by `timeout`.
@@ -29,7 +64,7 @@ fn prepared(fixture: &Fixture) -> Session {
 /// set at two seconds. Which of the two answered would then be decided by the
 /// machine's load, and a test that asserts an outcome would pass or fail by
 /// it. A million takes fires in about thirty milliseconds (ADR 0023).
-fn prepared_within(fixture: &Fixture, timeout: Timeout) -> Session {
+fn prepared_within(fixture: &Fixture, timeout: Timeout, steps: u64) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
         opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
@@ -41,7 +76,7 @@ fn prepared_within(fixture: &Fixture, timeout: Timeout) -> Session {
             &PrepareOptions {
                 tier: Tier::All,
                 mutant_timeout: timeout,
-                mutant_steps: Some(1_000_000),
+                mutant_steps: Some(steps),
                 ..PrepareOptions::default()
             },
             &Cancel::new(),
@@ -141,7 +176,11 @@ fn a_run_with_four_workers_judges_the_same_set_as_one_and_the_report_is_in_catal
 #[test]
 fn a_slow_mutant_does_not_delay_the_delivery_of_the_ones_that_finished() {
     let fixture = Fixture::copy("fixture-hang");
-    let session = prepared_within(&fixture, Timeout::Fixed(std::time::Duration::from_secs(2)));
+    let session = prepared_within(
+        &fixture,
+        Timeout::Fixed(std::time::Duration::from_secs(2)),
+        100,
+    );
     let mut delivered = Delivered::default();
     let finished = measured(&session, 4, &mut delivered);
     session.close().expect("close");
@@ -149,7 +188,7 @@ fn a_slow_mutant_does_not_delay_the_delivery_of_the_ones_that_finished() {
     let timed_out = finished
         .judged
         .iter()
-        .find(|one| one.outcome == Outcome::Runaway)
+        .find(|one| one.outcome == Outcome::StepLimitReached)
         .expect("the mutation that never returns");
     let at = delivered
         .order
@@ -269,9 +308,9 @@ fn every_judged_mutant_leaves_one_route_record_from_the_engine() {
     );
     let mut named: Vec<String> = routes
         .iter()
-        .filter_map(|event| match &event.payload {
-            rust_mutants::trace::Payload::Route { route } => Some(route.mutant.clone()),
-            _ => None,
+        .filter_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::Route(route) => Some(route.mutant.clone()),
+            RelevantPayload::Other => None,
         })
         .collect();
     named.sort();
@@ -318,7 +357,8 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
     for one in &finished.judged {
         if one.outcome != Outcome::Survived {
             assert_eq!(
-                one.identical, None,
+                one.identical,
+                rust_mutants::run::CodegenIdentity::NotMeasured,
                 "a mutation a test noticed is one the compiler plainly rendered, and asking \
                  about it would pay a build for an answer the run already has"
             );
@@ -331,9 +371,13 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
         .collect();
     assert!(
         if njutest_devkit::reproducible::builds_the_same_twice() {
-            survivors.iter().any(|one| one.identical == Some(true))
+            survivors
+                .iter()
+                .any(|one| one.identical == rust_mutants::run::CodegenIdentity::Identical)
         } else {
-            survivors.iter().all(|one| one.identical.is_none())
+            survivors
+                .iter()
+                .all(|one| one.identical == rust_mutants::run::CodegenIdentity::NotMeasured)
         },
         "the fixture holds a mutation the compiler renders identically, and what the layer \
          says is identical rather than equivalent — on a machine that renders one \

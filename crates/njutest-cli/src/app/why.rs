@@ -9,6 +9,26 @@ use std::path::Path;
 use crate::app::runs;
 use crate::cli::{EXIT_ASSURED, EXIT_ERROR, Environment, Why as Arguments};
 use crate::trace::{Event, read_events};
+use rust_mutants::id::StoredRunId;
+
+/// Why an existing recording could not be read completely.
+#[derive(Debug, thiserror::Error)]
+enum RecordingError {
+    /// The trace stream could not be opened.
+    #[error("{}: {source}", path.display())]
+    Open {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// The trace stream did not contain a valid complete event sequence.
+    #[error("{}: {source}", path.display())]
+    Read {
+        path: std::path::PathBuf,
+        #[source]
+        source: crate::trace::ReadError,
+    },
+}
 
 /// What a run recorded, or nothing, where nothing means the run kept no recording.
 ///
@@ -20,45 +40,54 @@ use crate::trace::{Event, read_events};
 ///
 /// # Errors
 /// The recording exists and could not be read.
-fn recording(root: &Path, run: &str) -> Result<Option<Vec<Event>>, String> {
+fn recording(root: &Path, run: &StoredRunId) -> Result<Option<Vec<Event>>, RecordingError> {
     let stream = runs::recording(root, run).join(crate::trace::FILE_NAME);
     match std::fs::File::open(&stream) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("{}: {error}", stream.display())),
+        Err(source) => Err(RecordingError::Open {
+            path: stream,
+            source,
+        }),
         Ok(file) => read_events(std::io::BufReader::new(file))
             .map(Some)
-            .map_err(|error| format!("{}: {error}", stream.display())),
+            .map_err(|source| RecordingError::Read {
+                path: stream,
+                source,
+            }),
     }
 }
 
 /// Says what a recording holds behind one claim.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = &environment.working_directory;
     let run = match runs::resolve(root, arguments.run.as_deref()) {
         Ok(run) => run,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    let events = match recording(root, &run) {
+    let events = match recording(root, run.id()) {
         Ok(events) => events,
-        Err(message) => {
+        Err(error) => {
             super::diagnose(
                 stderr,
-                &format!("{}: {message}", crate::error::RUN_NOT_FOUND.code),
-            );
-            return EXIT_ERROR;
+                &format!("{}: {error}", crate::error::RUN_NOT_FOUND.code),
+            )?;
+            return Ok(EXIT_ERROR);
         }
     };
     let claim = arguments.claim.asked();
     let why = crate::why::why(&claim, events.as_deref());
     let page = crate::presentation::why::page(&claim, &why, environment.terminal);
-    let _written = stdout.write_all(page.as_bytes());
-    EXIT_ASSURED
+    stdout.write_all(page.as_bytes())?;
+    Ok(EXIT_ASSURED)
 }

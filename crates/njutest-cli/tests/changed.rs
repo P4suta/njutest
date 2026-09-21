@@ -3,6 +3,10 @@
 
 //! What a run about a change set sees: which files differ from a revision, committed and not.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
 use njutest_cli::git::{DEFAULT_BASE, changed};
 use njutest_cli::trace::Recorder;
 use njutest_cli::watch::Watch;
@@ -24,8 +28,12 @@ fn seen(repo: &Repo, base: &str) -> Option<njutest_cli::git::Change> {
             root: repo.root(),
             env: &env,
             excluded: &njutest_cli::evidence::tree::Excluded::beside(
-                &njutest_cli::config::Config::default().reports.directory,
-            ),
+                njutest_cli::config::Config::default()
+                    .reports
+                    .directory
+                    .as_path(),
+            )
+            .expect("the default report path is valid UTF-8"),
             watch: Watch::new(&cancel, &trace),
         },
         base,

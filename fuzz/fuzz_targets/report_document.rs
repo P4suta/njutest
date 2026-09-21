@@ -12,10 +12,21 @@ fuzz_target!(|text: &str| {
     let Ok(report) = json::parse(text) else {
         return;
     };
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when a parsed report cannot be rendered"
+    )]
     let rendered = json::render(&report).expect("a report renders");
-    assert_eq!(json::parse(&rendered).expect("it reads back"), report);
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when the renderer emits a report its parser refuses"
+    )]
+    let reparsed = json::parse(&rendered).expect("it reads back");
+    assert_eq!(reparsed, report);
 
-    let stream = njutest_cli::report::lines::stream(&report);
+    let Ok(stream) = njutest_cli::report::lines::stream(&report) else {
+        return;
+    };
     let verdicts = stream
         .lines()
         .filter(|line| line.split('\t').next() == Some("VERDICT"))
@@ -23,6 +34,10 @@ fuzz_target!(|text: &str| {
     assert_eq!(verdicts, 1);
 
     if !audit::validate_for_persistence(&report).is_empty() {
+        #[expect(
+            clippy::expect_used,
+            reason = "the fuzzer must crash when persistence accepts an unsound report"
+        )]
         json::document(&report).expect_err("an unsound report is not written");
     }
 });

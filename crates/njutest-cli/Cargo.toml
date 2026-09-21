@@ -16,6 +16,9 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 
+[package.metadata.njutest]
+surface = "incidental"
+
 [[bin]]
 name = "njutest"
 path = "src/main.rs"
@@ -32,10 +35,13 @@ pkg-fmt = "tgz"
 bin-dir = "njutest-{ version }-{ target }/{ bin }{ binary-ext }"
 
 [features]
-testkit = []
+benchmarks = ["dep:criterion"]
+testkit = ["rust-mutants/testkit"]
 
 [dependencies]
+njutest-macros = { workspace = true }
 clap = { workspace = true }
+criterion = { workspace = true, optional = true }
 jiff = { workspace = true, features = ["serde"] }
 hex = { workspace = true }
 rust-mutants = { workspace = true }
@@ -51,7 +57,10 @@ toml_edit = { workspace = true }
 unicode-width = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
+getrandom = { workspace = true }
 rustix = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
 
 [dev-dependencies]
 hex = { workspace = true }
@@ -60,7 +69,6 @@ proptest = { workspace = true }
 sha2 = { workspace = true }
 rustix = { workspace = true }
 rust-mutants = { workspace = true, features = ["testkit"] }
-criterion = { workspace = true }
 jsonschema = { workspace = true }
 njutest-devkit = { workspace = true }
 tempfile = { workspace = true }
@@ -68,10 +76,12 @@ tempfile = { workspace = true }
 [[bench]]
 name = "report"
 harness = false
+required-features = ["benchmarks"]
 
 [[bench]]
 name = "evidence"
 harness = false
+required-features = ["benchmarks"]
 
 [lints]
 workspace = true

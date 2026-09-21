@@ -18,28 +18,38 @@ use crate::watch::Watch;
 pub const RECHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Says what a run was offered, and writes what still holds up.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = &environment.working_directory;
     let run = match runs::resolve(root, arguments.run.as_deref()) {
         Ok(run) => run,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    let report = match runs::report(root, &run) {
+    let report = match runs::report(&run) {
         Ok(report) => report,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    let selected: Vec<&CandidateRecord> = report
+    let conclusion = match report.conclusion() {
+        Ok(conclusion) => conclusion,
+        Err(error) => {
+            super::complain(stderr, &error, crate::error::REPORT_UNSOUND)?;
+            return Ok(EXIT_ERROR);
+        }
+    };
+    let selected: Vec<&CandidateRecord> = conclusion
         .candidates
         .iter()
         .filter(|candidate| {
@@ -51,27 +61,28 @@ pub fn run(
         .collect();
     if let Some(prefix) = arguments.candidate.as_deref()
         && selected.is_empty()
-        && !report.candidates.is_empty()
+        && !conclusion.candidates.is_empty()
     {
         super::diagnose(
             stderr,
             &format!(
-                "{}: no candidate of {run} starts with {prefix}; it was offered {}",
+                "{}: no candidate of {} starts with {prefix}; it was offered {}",
                 crate::error::RUN_NOT_FOUND.code,
-                report.candidates.len()
+                run.id(),
+                conclusion.candidates.len()
             ),
-        );
-        return EXIT_ERROR;
+        )?;
+        return Ok(EXIT_ERROR);
     }
     if selected.is_empty() {
-        super::say(stdout, &format!("{run} was offered no repair"));
-        return EXIT_ASSURED;
+        super::say(stdout, &format!("{} was offered no repair", run.id()))?;
+        return Ok(EXIT_ASSURED);
     }
     if !arguments.apply {
         for candidate in &selected {
-            super::say(stdout, &listed(candidate));
+            super::say(stdout, &listed(candidate))?;
         }
-        return EXIT_ASSURED;
+        return Ok(EXIT_ASSURED);
     }
     apply(
         &selected,
@@ -79,6 +90,7 @@ pub fn run(
             root,
             environment,
             arguments,
+            config: run.config(),
         },
         stdout,
         stderr,
@@ -111,6 +123,7 @@ struct Applying<'a> {
     root: &'a Path,
     environment: &'a Environment,
     arguments: &'a Arguments,
+    config: &'a crate::config::Config,
 }
 
 /// Puts every selected candidate to the tests again and writes the ones that hold.
@@ -119,21 +132,16 @@ fn apply(
     applying: &Applying<'_>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let Applying {
         root,
         environment,
         arguments,
+        config,
     } = *applying;
     let trace = Recorder::disabled();
     let watch = Watch::new(&environment.cancel, &trace);
-    let config = match crate::config::Config::load(root) {
-        Ok(config) => config,
-        Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
-        }
-    };
+    let config = config.clone();
     let build = config.execution.build();
     let checking = Checking {
         root,
@@ -148,7 +156,7 @@ fn apply(
         timeout: RECHECK_TIMEOUT,
         steps: config.execution.steps,
         build_timeout: config.execution.build_timeout,
-        reports: crate::app::reports::Store::of(root, &config.reports.directory),
+        reports: config.reports.directory,
     };
     let mut written = 0u32;
     let mut already = 0u32;
@@ -158,11 +166,11 @@ fn apply(
             Ok(Taken::Written(proposal)) => match write(root, &proposal) {
                 Ok(()) => {
                     written = written.saturating_add(1);
-                    super::say(stdout, &format!("wrote {}", proposal.path));
+                    super::say(stdout, &format!("wrote {}", proposal.path))?;
                 }
                 Err(why) => {
                     refused = refused.saturating_add(1);
-                    super::diagnose(stderr, &why);
+                    super::diagnose(stderr, &why.to_string())?;
                 }
             },
             Ok(Taken::Already(path)) => {
@@ -170,22 +178,22 @@ fn apply(
                 super::say(
                     stdout,
                     &format!("{path} is already what the candidate would write"),
-                );
+                )?;
             }
             Err(why) => {
                 refused = refused.saturating_add(1);
-                super::diagnose(stderr, &why);
+                super::diagnose(stderr, &why.to_string())?;
             }
         }
     }
     super::say(
         stdout,
         &format!("{written} written, {already} already there, {refused} not"),
-    );
+    )?;
     if refused > 0 {
-        EXIT_INSUFFICIENT
+        Ok(EXIT_INSUFFICIENT)
     } else {
-        EXIT_ASSURED
+        Ok(EXIT_ASSURED)
     }
 }
 
@@ -197,30 +205,67 @@ enum Taken {
     Already(String),
 }
 
+/// Why a recorded repair cannot be written to the current tree.
+#[derive(Debug, thiserror::Error)]
+enum CandidateError {
+    /// The earlier run did not establish the candidate.
+    #[error("skipped {path}: {standing}")]
+    NotAccepted { path: String, standing: String },
+    /// The content-addressed candidate body is absent or corrupt.
+    #[error(
+        "{}: the content of {path} is not in {}",
+        crate::error::GENERATION_PROTOCOL.code,
+        crate::repair::STORE
+    )]
+    ContentMissing { path: String },
+    /// This release cannot interpret the candidate kind.
+    #[error(
+        "{}: {path} is a candidate of a kind this release does not write",
+        crate::error::GENERATION_PROTOCOL.code
+    )]
+    UnknownKind { path: String },
+    /// The file has changed since the provider read it.
+    #[error(
+        "{}: {path} is not the file the provider saw",
+        crate::error::GENERATION_PREIMAGE_MOVED.code
+    )]
+    PreimageMoved { path: String },
+    /// A fresh check no longer supports the candidate.
+    #[error("{path} no longer holds up: {reason}")]
+    Rejected { path: String, reason: String },
+    /// The fresh assurance run itself could not complete.
+    #[error(transparent)]
+    Check(#[from] crate::error::RunnerError),
+    /// The checked content could not be installed.
+    #[error("cannot write {}: {source}", path.display())]
+    Write {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 /// One candidate, checked afresh: what a run recorded is where to look, never a reason to write.
 fn one(
     candidate: &CandidateRecord,
     checking: &Checking<'_>,
     watch: Watch<'_>,
-) -> Result<Taken, String> {
+) -> Result<Taken, CandidateError> {
     if !candidate.accepted {
-        return Err(format!("skipped {}: {}", candidate.path, listed(candidate)));
+        return Err(CandidateError::NotAccepted {
+            path: candidate.path.clone(),
+            standing: listed(candidate),
+        });
     }
     let content = crate::repair::load(checking.root, &candidate.digest).ok_or_else(|| {
-        format!(
-            "{}: the content of {} is not in {}",
-            crate::error::GENERATION_PROTOCOL.code,
-            candidate.path,
-            crate::repair::STORE
-        )
+        CandidateError::ContentMissing {
+            path: candidate.path.clone(),
+        }
     })?;
-    let kind = crate::repair::Kind::parse(&candidate.kind).ok_or_else(|| {
-        format!(
-            "{}: {} is a candidate of a kind this release does not write",
-            crate::error::GENERATION_PROTOCOL.code,
-            candidate.path
-        )
-    })?;
+    let kind =
+        crate::repair::Kind::parse(&candidate.kind).ok_or_else(|| CandidateError::UnknownKind {
+            path: candidate.path.clone(),
+        })?;
     let proposal = crate::repair::Proposal {
         kind,
         path: candidate.path.clone(),
@@ -233,34 +278,28 @@ fn one(
         return Ok(Taken::Already(proposal.path));
     }
     if on_disk != proposal.preimage {
-        return Err(format!(
-            "{}: {} is not the file the provider saw",
-            crate::error::GENERATION_PREIMAGE_MOVED.code,
-            proposal.path
-        ));
+        return Err(CandidateError::PreimageMoved {
+            path: proposal.path,
+        });
     }
     if proposal.kind == crate::repair::Kind::Corpus {
         return Ok(Taken::Written(proposal));
     }
     match crate::assure::repair::check(checking, &proposal, &candidate.mutant, watch) {
         Ok(Verdict { accepted: true, .. }) => Ok(Taken::Written(proposal)),
-        Ok(verdict) => Err(format!(
-            "{} no longer holds up: {}",
-            proposal.path,
-            verdict.why.unwrap_or_else(|| "no reason given".to_owned())
-        )),
-        Err(error) => Err(error.to_string()),
+        Ok(verdict) => Err(CandidateError::Rejected {
+            path: proposal.path,
+            reason: verdict.why.unwrap_or_else(|| "no reason given".to_owned()),
+        }),
+        Err(error) => Err(CandidateError::Check(error)),
     }
 }
 
 /// Writes one candidate into the tree a person is working in.
-fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), String> {
+fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), CandidateError> {
     let path = root.join(&proposal.path);
-    rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| {
-        format!(
-            "cannot write {}: {}",
-            failure.path.display(),
-            failure.source
-        )
+    rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| CandidateError::Write {
+        path: failure.path,
+        source: failure.source,
     })
 }

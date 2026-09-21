@@ -24,12 +24,14 @@ pub fn canonical(path: &Path) -> io::Result<PathBuf> {
 pub fn plainly(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
-        let text = path.to_string_lossy();
-        if let Some(rest) = text.strip_prefix(VERBATIM)
-            && !rest.starts_with("UNC\\")
-            && Path::new(rest).is_absolute()
-        {
-            return PathBuf::from(rest);
+        match path.strip_prefix(VERBATIM) {
+            Ok(rest)
+                if !rest.as_os_str().as_encoded_bytes().starts_with(b"UNC\\")
+                    && rest.is_absolute() =>
+            {
+                return rest.to_path_buf();
+            }
+            Ok(_) | Err(_) => {}
         }
     }
     path.to_path_buf()

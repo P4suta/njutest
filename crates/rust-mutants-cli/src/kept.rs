@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::filesystem::{EntryKind, entry_kind};
+
 /// The file the ledger is kept in, under the report directory.
 pub const FILE_NAME: &str = "kept-v1.json";
 
@@ -15,6 +17,7 @@ pub const DOCUMENT_TYPE: &str = "rust-mutants-kept-v1";
 
 /// One directory a run kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Entry {
     /// The directory, as an absolute path.
     pub path: PathBuf,
@@ -24,6 +27,7 @@ pub struct Entry {
 
 /// Every directory the runs of one report directory kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ledger {
     /// Names the shape, so a reader can tell versions apart.
     pub document_type: String,
@@ -44,14 +48,28 @@ impl Default for Ledger {
 }
 
 impl Ledger {
-    /// The ledger under `directory`, or an empty one when there is none this release reads.
-    #[must_use]
-    pub fn read(directory: &Path) -> Self {
-        std::fs::read_to_string(directory.join(FILE_NAME))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Self>(&text).ok())
-            .filter(|ledger| ledger.document_type == DOCUMENT_TYPE && ledger.schema_version == 1)
-            .unwrap_or_default()
+    /// The ledger under `directory`, or an empty one when no ledger exists yet.
+    ///
+    /// # Errors
+    /// A present ledger is unreadable, malformed, or belongs to another schema.
+    pub fn read(directory: &Path) -> Result<Self, std::io::Error> {
+        let path = directory.join(FILE_NAME);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => return Err(error),
+        };
+        let ledger: Self = crate::strictjson::decode_str(&text)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        if ledger.document_type != DOCUMENT_TYPE || ledger.schema_version != 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} is not {DOCUMENT_TYPE} schema 1", path.display()),
+            ));
+        }
+        Ok(ledger)
     }
 
     /// Adds what one run kept and writes the ledger back, dropping what is no longer there.
@@ -63,8 +81,14 @@ impl Ledger {
         run_id: &str,
         kept: &[PathBuf],
     ) -> Result<Self, std::io::Error> {
-        let mut ledger = Self::read(directory);
-        ledger.kept.retain(|entry| entry.path.exists());
+        let mut ledger = Self::read(directory)?;
+        let mut present = Vec::with_capacity(ledger.kept.len());
+        for entry in &ledger.kept {
+            if entry_kind(&entry.path)? != EntryKind::Missing {
+                present.push(entry.clone());
+            }
+        }
+        ledger.kept = present;
         for path in kept {
             if ledger.kept.iter().any(|entry| entry.path == *path) {
                 continue;
@@ -93,16 +117,16 @@ impl Ledger {
     ///
     /// # Errors
     /// The ledger that could not be written.
-    pub fn clear_with(
-        directory: &Path,
-        remove: &dyn Fn(&Path) -> std::io::Result<()>,
-    ) -> Result<(usize, Self), std::io::Error> {
-        let ledger = Self::read(directory);
+    pub fn clear_with<F>(directory: &Path, remove: &F) -> Result<(usize, Self), std::io::Error>
+    where
+        F: Fn(&Path) -> std::io::Result<()>,
+    {
+        let ledger = Self::read(directory)?;
         let started = std::time::Instant::now();
         let mut removed = 0usize;
         let mut left = Self::default();
         for entry in ledger.kept {
-            if !entry.path.exists() {
+            if entry_kind(&entry.path)? == EntryKind::Missing {
                 continue;
             }
             if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET
@@ -111,7 +135,9 @@ impl Ledger {
                 left.kept.push(entry);
                 continue;
             }
-            removed = removed.saturating_add(1);
+            removed = removed.checked_add(1).ok_or_else(|| {
+                std::io::Error::other("the kept-directory removal count does not fit usize")
+            })?;
         }
         let text = serde_json::to_string_pretty(&left)
             .map_err(|error| std::io::Error::other(error.to_string()))?;

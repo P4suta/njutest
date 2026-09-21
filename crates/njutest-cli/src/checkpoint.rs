@@ -3,19 +3,21 @@
 
 //! Scheduling state for continuing an interrupted verification.
 
+#[cfg(feature = "testkit")]
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "testkit")]
 use crate::coverage::{Block, Point};
 use crate::report::TargetStatus;
 
 /// The name of the shape.
-pub const SCHEMA: &str = "njutest-assurance-checkpoint-v1";
+pub const SCHEMA: &str = "njutest-assurance-checkpoint-v2";
 
 /// The file one identity's checkpoint is written to.
-pub const FILE_NAME: &str = "checkpoint-v1.json";
+pub const FILE_NAME: &str = "checkpoint-v2.json";
 
 /// Scheduling state for one interrupted run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +56,8 @@ impl State {
 
     /// The saved target with this identity, if any.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn target(&self, id: &str) -> Option<&SavedTarget> {
         self.targets.iter().find(|target| target.id == id)
     }
@@ -65,17 +69,19 @@ impl State {
     }
 
     /// Records one measured target, replacing what was there.
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn record_target(&mut self, target: SavedTarget) {
         self.targets.retain(|saved| saved.id != target.id);
         self.targets.push(target);
         self.targets.sort_by(|a, b| a.id.cmp(&b.id));
     }
 
-    /// Records one judged mutant, replacing what was there. A disposition outside [`SAVEABLE`] is not recorded: it is not a claim the next run can inherit.
+    /// Records one judged mutant, replacing what was there.
+    ///
+    /// [`SavedDisposition`] has no inconclusive arm, so a caller cannot put a
+    /// timeout or finite step boundary into continuation evidence.
     pub fn record_mutant(&mut self, mutant: SavedMutant) {
-        if !SAVEABLE.contains(&mutant.disposition.as_str()) {
-            return;
-        }
         self.mutants.retain(|saved| saved.id != mutant.id);
         self.mutants.push(mutant);
         self.mutants.sort_by(|a, b| a.id.cmp(&b.id));
@@ -101,6 +107,8 @@ pub struct SavedTarget {
 impl SavedTarget {
     /// The coverage a restored target contributes: one block spanning each file it reached, so it is a candidate for every position in that file and narrows none of them.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn coverage(&self) -> BTreeSet<Block> {
         self.files
             .iter()
@@ -116,8 +124,16 @@ impl SavedTarget {
     }
 }
 
-/// The dispositions a checkpoint may carry.
-pub const SAVEABLE: [&str; 2] = ["killed", "timed_out"];
+/// The only mutation fact a current checkpoint may carry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum SavedDisposition {
+    /// A named test noticed this exact mutation.
+    Killed {
+        /// The target that noticed it.
+        by: String,
+    },
+}
 
 /// One mutant an interrupted run had already judged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,10 +141,8 @@ pub const SAVEABLE: [&str; 2] = ["killed", "timed_out"];
 pub struct SavedMutant {
     /// The mutant's full identity.
     pub id: String,
-    /// What became of it, as the report spells it. One of [`SAVEABLE`].
-    pub disposition: String,
-    /// The target that noticed it.
-    pub killed_by: Option<String>,
+    /// The closed fact a successor may inherit.
+    pub disposition: SavedDisposition,
     /// How long it took.
     pub duration_ms: u64,
 }
@@ -147,12 +161,101 @@ pub enum CheckpointError {
         source: std::io::Error,
     },
     /// The file is there and is not the state it claims to be.
-    #[error("{}: {}: {message}", crate::error::CACHE_CORRUPT.code, path.display())]
+    #[error("{}: {}: {violation}", crate::error::CACHE_CORRUPT.code, path.display())]
     Corrupt {
         /// The file.
         path: PathBuf,
         /// What is wrong with it.
-        message: String,
+        violation: CheckpointViolation,
+    },
+}
+
+/// A contradiction inside an untrusted checkpoint document.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CheckpointViolation {
+    /// The bytes are not the closed JSON shape for [`State`].
+    #[error("the document is not a checkpoint: {detail}")]
+    Malformed {
+        /// The parser's diagnostic.
+        detail: String,
+    },
+    /// A filesystem key is not a canonical full digest.
+    #[error("checkpoint identity {value:?} is not 64 lowercase hexadecimal characters")]
+    InvalidIdentity {
+        /// The untrusted value, before it reaches a path join.
+        value: String,
+    },
+    /// The document claims another schema identity.
+    #[error("says it is {found:?} and not {SCHEMA:?}")]
+    WrongSchema {
+        /// The claimed schema.
+        found: String,
+    },
+    /// The document is filed under a different input identity.
+    #[error("is about {found} and was read for {expected}")]
+    WrongIdentity {
+        /// The identity inside the document.
+        found: String,
+        /// The identity selected by the caller.
+        expected: String,
+    },
+    /// A stored file cannot describe zero attempts: no attempt would have
+    /// written it.
+    #[error("records zero attempts")]
+    NoAttempts,
+    /// A target cannot be referred to by an empty identity.
+    #[error("a saved target has an empty identity")]
+    EmptyTarget,
+    /// Target identities are not in the one canonical, duplicate-free order.
+    #[error("target ids are not strictly increasing: {previous:?}, then {current:?}")]
+    TargetOrder {
+        /// The prior id.
+        previous: String,
+        /// The following id.
+        current: String,
+    },
+    /// Mutant identities are not in the one canonical, duplicate-free order.
+    #[error("mutant ids are not strictly increasing: {previous:?}, then {current:?}")]
+    MutantOrder {
+        /// The prior id.
+        previous: String,
+        /// The following id.
+        current: String,
+    },
+    /// A saved mutant is not named by its canonical full identity.
+    #[error("saved mutant identity {value:?} is not 64 lowercase hexadecimal characters")]
+    InvalidMutant {
+        /// The untrusted value.
+        value: String,
+    },
+    /// A reached source path is not canonical and workspace-relative.
+    #[error("target {target:?} carries noncanonical source path {path:?}: {detail}")]
+    InvalidFile {
+        /// The target carrying the path.
+        target: String,
+        /// The untrusted path.
+        path: String,
+        /// Why it is not canonical.
+        detail: String,
+    },
+    /// Reached source paths are not in one duplicate-free order.
+    #[error(
+        "target {target:?} file paths are not strictly increasing: {previous:?}, then {current:?}"
+    )]
+    FileOrder {
+        /// The target carrying the paths.
+        target: String,
+        /// The prior path.
+        previous: String,
+        /// The following path.
+        current: String,
+    },
+    /// A kill without the target that observed it proves nothing.
+    #[error("mutant {mutant:?} has an empty observing target")]
+    EmptyObserver {
+        /// The affected mutant.
+        mutant: String,
     },
 }
 
@@ -168,9 +271,17 @@ impl CheckpointError {
 }
 
 /// Where one identity's checkpoint lives under `root`.
-#[must_use]
-pub fn path_of(root: &Path, identity: &str) -> PathBuf {
-    root.join(identity).join(FILE_NAME)
+///
+/// # Errors
+/// Returns [`CheckpointViolation::InvalidIdentity`] before joining a value
+/// that is not a canonical full digest into the filesystem path.
+pub fn path_of(root: &Path, identity: &str) -> Result<PathBuf, CheckpointViolation> {
+    if !rust_mutants::id::is_digest(identity) {
+        return Err(CheckpointViolation::InvalidIdentity {
+            value: identity.to_owned(),
+        });
+    }
+    Ok(root.join(identity).join(FILE_NAME))
 }
 
 /// The state an interrupted run left for `identity`, if any.
@@ -181,42 +292,20 @@ pub fn path_of(root: &Path, identity: &str) -> PathBuf {
 /// identity. Continuing from a checkpoint that is about different inputs would
 /// make a run claim what it never established.
 pub fn read(root: &Path, identity: &str) -> Result<Option<State>, CheckpointError> {
-    let path = path_of(root, identity);
+    let path = checked_path(root, identity)?;
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(CheckpointError::Unusable { path, source }),
     };
-    let state: State = serde_json::from_str(&text).map_err(|error| CheckpointError::Corrupt {
-        path: path.clone(),
-        message: error.to_string(),
-    })?;
-    if state.schema != SCHEMA {
-        return Err(CheckpointError::Corrupt {
-            path,
-            message: format!("says it is {:?} and not {SCHEMA:?}", state.schema),
-        });
-    }
-    if state.identity != identity {
-        return Err(CheckpointError::Corrupt {
-            path,
-            message: format!("is about {} and was read for {identity}", state.identity),
-        });
-    }
-    if let Some(other) = state
-        .mutants
-        .iter()
-        .find(|mutant| !SAVEABLE.contains(&mutant.disposition.as_str()))
-    {
-        return Err(CheckpointError::Corrupt {
-            path,
-            message: format!(
-                "carries {} for {}, which is a disposition a resumed run re-derives rather \
-                 than inherits",
-                other.disposition, other.id
-            ),
-        });
-    }
+    let state: State =
+        crate::strictjson::decode_str(&text).map_err(|error| CheckpointError::Corrupt {
+            path: path.clone(),
+            violation: CheckpointViolation::Malformed {
+                detail: error.to_string(),
+            },
+        })?;
+    validate(&state, identity).map_err(|violation| CheckpointError::Corrupt { path, violation })?;
     Ok(Some(state))
 }
 
@@ -225,7 +314,11 @@ pub fn read(root: &Path, identity: &str) -> Result<Option<State>, CheckpointErro
 /// # Errors
 /// See [`CheckpointError::Unusable`].
 pub fn write(root: &Path, state: &State) -> Result<PathBuf, CheckpointError> {
-    let path = path_of(root, &state.identity);
+    validate(state, &state.identity).map_err(|violation| CheckpointError::Corrupt {
+        path: root.to_path_buf(),
+        violation,
+    })?;
+    let path = checked_path(root, &state.identity)?;
     let text = serde_json::to_string(state).map_err(|error| CheckpointError::Unusable {
         path: path.clone(),
         source: std::io::Error::other(error),
@@ -240,10 +333,139 @@ pub fn write(root: &Path, state: &State) -> Result<PathBuf, CheckpointError> {
 }
 
 /// Removes the checkpoint for `identity`. A run that finished has nothing to continue from.
-pub fn clear(root: &Path, identity: &str) {
-    let path = path_of(root, identity);
-    drop(std::fs::remove_file(&path));
+///
+/// # Errors
+/// [`CheckpointError::Unusable`] when an existing checkpoint or its now-empty
+/// identity directory cannot be removed. Absence is success: interrupted
+/// runs need not have established a reusable fact.
+pub fn clear(root: &Path, identity: &str) -> Result<(), CheckpointError> {
+    let path = checked_path(root, identity)?;
+    remove_or_absent(&path, |candidate| std::fs::remove_file(candidate))?;
     if let Some(directory) = path.parent() {
-        drop(std::fs::remove_dir(directory));
+        remove_or_absent(directory, |candidate| std::fs::remove_dir(candidate))?;
     }
+    Ok(())
+}
+
+fn checked_path(root: &Path, identity: &str) -> Result<PathBuf, CheckpointError> {
+    path_of(root, identity).map_err(|violation| CheckpointError::Corrupt {
+        path: root.to_path_buf(),
+        violation,
+    })
+}
+
+fn remove_or_absent(
+    path: &Path,
+    remove: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), CheckpointError> {
+    match remove(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(CheckpointError::Unusable {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn validate(state: &State, identity: &str) -> Result<(), CheckpointViolation> {
+    if !rust_mutants::id::is_digest(identity) {
+        return Err(CheckpointViolation::InvalidIdentity {
+            value: identity.to_owned(),
+        });
+    }
+    if state.schema != SCHEMA {
+        return Err(CheckpointViolation::WrongSchema {
+            found: state.schema.clone(),
+        });
+    }
+    if state.identity != identity {
+        return Err(CheckpointViolation::WrongIdentity {
+            found: state.identity.clone(),
+            expected: identity.to_owned(),
+        });
+    }
+    if state.attempts == 0 {
+        return Err(CheckpointViolation::NoAttempts);
+    }
+    validate_targets(&state.targets)?;
+    validate_mutants(&state.mutants)
+}
+
+fn validate_targets(targets: &[SavedTarget]) -> Result<(), CheckpointViolation> {
+    for target in targets {
+        if target.id.is_empty() {
+            return Err(CheckpointViolation::EmptyTarget);
+        }
+        for file in &target.files {
+            let normalized = rust_mutants::id::normalize_path(file).map_err(|error| {
+                CheckpointViolation::InvalidFile {
+                    target: target.id.clone(),
+                    path: file.clone(),
+                    detail: error.to_string(),
+                }
+            })?;
+            if normalized != *file {
+                return Err(CheckpointViolation::InvalidFile {
+                    target: target.id.clone(),
+                    path: file.clone(),
+                    detail: format!("canonical spelling is {normalized:?}"),
+                });
+            }
+        }
+        for pair in target.files.windows(2) {
+            let [previous, current] = pair else {
+                continue;
+            };
+            if previous >= current {
+                return Err(CheckpointViolation::FileOrder {
+                    target: target.id.clone(),
+                    previous: previous.clone(),
+                    current: current.clone(),
+                });
+            }
+        }
+    }
+    for pair in targets.windows(2) {
+        let [previous, current] = pair else {
+            continue;
+        };
+        if previous.id >= current.id {
+            return Err(CheckpointViolation::TargetOrder {
+                previous: previous.id.clone(),
+                current: current.id.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolation> {
+    for pair in mutants.windows(2) {
+        let [previous, current] = pair else {
+            continue;
+        };
+        if previous.id >= current.id {
+            return Err(CheckpointViolation::MutantOrder {
+                previous: previous.id.clone(),
+                current: current.id.clone(),
+            });
+        }
+    }
+    for mutant in mutants {
+        if !rust_mutants::id::is_id(&mutant.id) {
+            return Err(CheckpointViolation::InvalidMutant {
+                value: mutant.id.clone(),
+            });
+        }
+        match &mutant.disposition {
+            SavedDisposition::Killed { by } if by.is_empty() => {
+                return Err(CheckpointViolation::EmptyObserver {
+                    mutant: mutant.id.clone(),
+                });
+            }
+            SavedDisposition::Killed { .. } => {}
+        }
+    }
+    Ok(())
 }

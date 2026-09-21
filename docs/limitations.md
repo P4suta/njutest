@@ -34,6 +34,17 @@ below is stated fail-closed.
 
 ## Decided in advance
 
+### Durable report authority is Unix-only today
+
+Publishing or reopening evidence is an authority decision, not a display-path
+operation. njutest currently makes that decision only through its Unix
+handle-relative, no-follow backend, which retains the workspace and configured
+report-root identities through publication, index updates, reading, and
+retention. Windows and other non-Unix builds therefore refuse durable report
+publication and authority-bearing reads with `REPORT_NOT_KEPT`; they do not
+silently substitute a weaker pathname implementation. Pure computation that
+does not open or mutate a report store remains available.
+
 - Doctests are run as one target per library, switched off with
   `[execution] doctests = false` or `--no-doctests`, and mutations are routed
   to them at file granularity (`doctests-routed-by-file`): a documented example
@@ -65,8 +76,10 @@ below is stated fail-closed.
   rather than the repository: the same tree as the engine rewrote it, guards
   and generated runtime and all. This workspace has one such target,
   `xtask/test/gates`, whose gates refuse exactly what instrumentation adds —
-  the runtime carries the one `#[allow]` the tree is allowed to hold, and
-  `cargo xtask lints` exists to refuse an `#[allow]`. It fails on the
+  each private generated support module carries the exact
+  `#[allow(dead_code, unused_qualifications)]` needed by that generated
+  boundary, and `cargo xtask lints` exists to refuse an `#[allow]` in
+  repository source. It fails on the
   instrumentation and would fail on it identically under every mutation, so it
   is left out in `.rust-mutants.toml` with the reason written beside it. The
   gates are not unmeasured for it: `cargo xtask` applies them to the
@@ -389,10 +402,10 @@ fail-closed:
 
 - Git could not be asked what the tree is (`git-metadata-unavailable`), so the
   report carries `unavailable` rather than a guess. [The report
-  contract](report-v1.md) says what that sentinel means.
+  contract](report-v2.md) says what that sentinel means.
 - The run continued one that was interrupted (`resumed-from-checkpoint`), so
   part of what it reports another run established. [The checkpoint
-  contract](checkpoint-v1.md) says what may be inherited and what is judged
+  contract](checkpoint-v2.md) says what may be inherited and what is judged
   again.
 - The run worked in a directory it does not own (`temp-directory-unclaimed`),
   so what it left there is not its to remove. A run that cleaned up somebody
@@ -516,10 +529,12 @@ not the tests.
 
 ## Where a count reaches, and where the clock is still the only bound
 
-A mutation that stops a program terminating is `runaway` and counts as
-detected, because the guard of the active mutant is taken once per pass and a
-count is the same number on every machine. That holds only where the guard is
-*inside* the part that no longer ends.
+A mutation whose active guard crosses the configured count is
+`step_limit_reached`. The count and the exact `N + 1` boundary are stable
+across machines, but they do not prove the program would never have ended: a
+long finite computation crosses a finite count too. The outcome is therefore
+unresolved and excluded from both score and cache. The guard can reach that
+boundary only where it is *inside* the part that keeps running.
 
 A guard sits where its mutation does, and `active` spends a step only for the
 mutant a run selected. So a mutation of the loop — its condition, or a
@@ -540,12 +555,16 @@ program hangs. A reader who sees `waited` is told the machine ran out of
 time, and the honest reading of that is *ask again*, which is what they would
 do.
 
-This is the safe direction and it is still a gap. `waited` never counts as a
-detection, so no mutation is called caught on the strength of a clock; what is
-lost is the mutation that should have been `runaway` and is reported as
-nothing established. Raising `[mutation] timeout` does not close it, because
-the count is not rising: the bound is the only thing that can end that
-process, and lowering it would only make the run give up sooner.
+This is the safe direction and it is still a gap. Neither `waited` nor
+`step_limit_reached` counts as a detection, so no mutation is called caught on
+the strength of a clock or a finite prefix. Raising `[mutation] timeout` does
+not close it when the count is not rising: the clock is the only thing that
+can stop that process, and lowering it would only make the run give up sooner.
+
+A positive divergence proof needs more than the notice: the original control
+must complete under the same target, test and arguments, and the mutant must
+reproduce the same step boundary. Until that comparison is recorded, the
+report stays unresolved.
 
 Closing it means a guard somewhere the loop passes rather than only where the
 mutation is, which is a guard in code the run is not mutating — a cost every

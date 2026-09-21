@@ -11,36 +11,34 @@ needs nothing is not listed.
 
 ## Unreleased
 
-**A timeout is two outcomes now, and the old name is gone.** `timed_out`
-said one word about two unlike events: a mutation that made the work
-unbounded, which something noticed, and a bound that expired while the
-machine was busy, which establishes nothing about the mutation in either
-direction. The first is `runaway` and counts as detected; the second is
-`waited` and does not. `detected` is `killed + runaway`, so a score computed
-on a machine under load no longer moves with the load. `accounting` carries
-both columns where it carried one, and the run report, run stream and
-assurance report schemas all say the two names.
+**A finite step allowance is no longer a detection.** The former `runaway`
+outcome inferred nontermination from one execution crossing a finite count.
+That inference was stronger than the observation: a long finite computation
+can cross the same count. The new `step_limit_reached` outcome carries only
+the verified execution fact and contributes to neither side of the score.
+Only `killed` and `survived` are decided, and only those two can enter the
+outcome cache. An expectation can likewise claim only one of those verdicts.
 
-`Outcome::parse("timed_out")` returns nothing on purpose, so a
-`[[mutation.expect]]` that says `outcome = "timed_out"` no longer parses
-rather than quietly resolving to one of the two. Pick the one you meant: a
-mutation you expect to run away is `runaway`, and one you expect to outlast
-its budget is `waited` — and a fate table that expects `waited` is expecting
-a fact about the machine it runs on, which is worth knowing before you write
-it down.
+**Step attribution moved from exit status 95 to a nonce-correlated side
+channel.** The generated runtime atomically publishes the schema, fresh
+128-bit nonce, catalog, mutant, allowance and observed `N + 1`, then parks for
+the supervisor. Missing, malformed, stale and replayed notices fail closed.
+A program that returns 95 without that notice is now an ordinary non-zero
+test failure. `RUST_MUTANTS_STEP_NOTICE` and `RUST_MUTANTS_STEP_NONCE` join
+the environment names reserved by the engine.
 
-**A trace's `exec` record says how a process stopped, in one field.** It
-carried `exit_code` beside a `timed_out` boolean, a pair that could say a
-process was killed by a clock and also exited 101. Both are replaced by
-`stopped`, which is one of `ran` with a `code`, `waited`, `runaway`, or
-`unstarted`. A code exists only where one is the process's own. The trace
-schema name remains v1; a recording written by an earlier release does not
-validate against it.
+**Process termination and target aggregation are closed types.** `RunResult`
+now contains one `Termination`: not started, exited with a code/signal/unknown
+status, timed out, stopped by the execution monitor, cancelled, or wait
+failed. It cannot say both "timed out" and "exited 101". Across targets, a
+kill remains decisive, while any errored, bounded, waited or inconclusive
+target prevents a later passing target from manufacturing `survived`.
 
-**A checkpoint inherits a runaway and not a wait.** It inherited a kill and
-a confirmed timeout, both called existential claims about the tree. Only one
-of them was: a bound that expired is a fact about the machine that measured,
-and the next machine is not that one. A resumed run re-derives it.
+These semantic changes are new wire versions: run reports and run streams are
+v2, traces are `rust-mutants-trace-v2`, and the outcome cache uses its v2
+layout and a key containing the step allowance and policy ABI. The v1 schema
+files remain in `schema/` for readers of stored historical artifacts; new
+writes never claim the old contracts.
 
 **A filtered run validates and instruments only the mutations it can run.**
 The catalog remains complete and every identity and report position is still
@@ -58,7 +56,9 @@ again. The key includes the complete tree and every execution input; failures,
 tree-writing tests, changed binaries and damaged records are never reused.
 `--no-cache` forces a fresh baseline as well as fresh coverage and mutant
 outcomes. Trace `verify` records gained the optional `remembered` boolean; the
-trace schema name remains v1.
+schema was v1 when that field was introduced. Current runs identify the
+independent termination-shape change above as trace v2; the historical v1
+schema remains immutable.
 
 **`cargo rust-mutants` works.** The engine ships a second binary under the name
 cargo looks for, as the runner has since M13, so `cargo rust-mutants run` is

@@ -5,7 +5,7 @@
 
 #![expect(
     clippy::indexing_slicing,
-    reason = "a test reads a document as a table"
+    reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
 use std::ffi::OsString;
@@ -32,13 +32,21 @@ fn rust_mutants(args: &[&str]) -> Output {
 }
 
 /// The environment a command that reads no tree is answered in.
+#[expect(
+    clippy::panic,
+    reason = "the command-line contract cannot run without a working directory"
+)]
 fn environment() -> Environment {
+    let working_directory = match std::env::current_dir() {
+        Ok(working_directory) => working_directory,
+        Err(error) => panic!("the test process has no working directory: {error}"),
+    };
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: std::env::temp_dir(),
         program: PathBuf::from("this test never runs it"),
         cache_directory: std::env::temp_dir(),
-        working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
+        working_directory,
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
@@ -50,7 +58,7 @@ fn version_flag_prints_the_binary_name_and_its_version() {
     let output = rust_mutants(&["--version"]);
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stdout),
         format!("rust-mutants {}\n", rust_mutants::VERSION)
     );
     assert!(output.stderr.is_empty());
@@ -66,7 +74,7 @@ fn help_flag_matches_the_recorded_help_text() {
 
 /// Every command the top-level help lists, which is every command there is.
 fn subcommands() -> Vec<String> {
-    let help = String::from_utf8_lossy(&rust_mutants(&["--help"]).stdout).into_owned();
+    let help = njutest_devkit::process::strict_utf8(&rust_mutants(&["--help"]).stdout).into_owned();
     let listing = help
         .split_once("Commands:\n")
         .map_or(String::new(), |(_before, rest)| {
@@ -97,7 +105,7 @@ fn every_subcommand_has_its_own_recorded_help() {
             output.status.code(),
             Some(0),
             "the help offers {name} and the program does not take it: {}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
         let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/testdata/help-{name}.golden"));
@@ -111,14 +119,14 @@ fn no_arguments_prints_the_usage_to_stderr_and_exits_2() {
     let output = rust_mutants(&[]);
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Usage:"));
+    assert!(njutest_devkit::process::strict_utf8(&output.stderr).contains("Usage:"));
 }
 
 #[test]
 fn an_unknown_subcommand_is_a_usage_error() {
     let output = rust_mutants(&["frobnicate"]);
     assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         stderr.contains("frobnicate"),
         "names the offending argument: {stderr}"
@@ -154,7 +162,7 @@ fn every_subcommand_has_the_recorded_help_text() {
         recorded.push_str("$ rust-mutants ");
         recorded.push_str(name);
         recorded.push_str(" --help\n");
-        recorded.push_str(&String::from_utf8_lossy(&output.stdout));
+        recorded.push_str(&njutest_devkit::process::strict_utf8(&output.stdout));
         recorded.push('\n');
     }
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/subcommands.golden");
@@ -174,7 +182,7 @@ fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
         } else {
             rust_mutants(&[name, "--help"])
         };
-        helped.extend(flags(&String::from_utf8_lossy(&output.stdout)));
+        helped.extend(flags(&njutest_devkit::process::strict_utf8(&output.stdout)));
     }
     let missing: Vec<&String> = helped
         .iter()
@@ -208,7 +216,7 @@ fn the_flags_the_page_lists_beside_a_command_are_that_command_s_own() {
     );
     let mut wrong: Vec<String> = Vec::new();
     for (command, listed) in rows {
-        let helped = flags(&String::from_utf8_lossy(
+        let helped = flags(&njutest_devkit::process::strict_utf8(
             &rust_mutants(&[command.as_str(), "--help"]).stdout,
         ));
         wrong.extend(
@@ -282,7 +290,7 @@ fn flags(text: &str) -> std::collections::BTreeSet<String> {
 fn rules_lists_every_rule_with_its_tier_and_version_so_a_team_can_pin_operators() {
     let output = rust_mutants(&["rules"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let text = njutest_devkit::process::strict_utf8(&output.stdout).into_owned();
     for rule in rust_mutants::rule::CANONICAL_TABLE {
         assert!(
             text.contains(rule.name),
@@ -300,7 +308,7 @@ fn rules_answers_as_a_document_when_it_is_asked_to() {
     let output = rust_mutants(&["rules", "--json"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+        njutest_devkit::strictjson::decode_slice(&output.stdout).expect("the answer is JSON");
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden.json");
     njutest_devkit::golden::golden(&golden, &output.stdout)
         .expect("the document form of the operator table is the recorded one");
@@ -318,7 +326,7 @@ fn rules_answers_as_a_document_when_it_is_asked_to() {
 fn rules_narrowed_to_a_tier_is_what_that_tier_selects() {
     let output = rust_mutants(&["rules", "--tier", "balanced", "--json"]);
     let document: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+        njutest_devkit::strictjson::decode_slice(&output.stdout).expect("the answer is JSON");
     let named: Vec<String> = document["rules"]
         .as_array()
         .expect("the rules")

@@ -19,6 +19,18 @@ fn a_unit_test_still_runs_as_an_ordinary_test() {
 #[njutest::integration("postgres")]
 fn the_attribute_order_does_not_matter() {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest::AllVariants)]
+enum Phase {
+    Red,
+    Green,
+    Blue,
+}
+
+#[test]
+fn all_variants_is_generated_from_the_enum_declaration() {
+    assert_eq!(Phase::ALL, [Phase::Red, Phase::Green, Phase::Blue]);
+}
+
 #[test]
 fn declarations_that_cannot_be_read_are_compile_errors() {
     let cases = trybuild::TestCases::new();

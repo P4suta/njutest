@@ -61,6 +61,7 @@ fn sanitized(
         },
         Watch::new(&cancel, &trace),
     )
+    .expect("the fixture sanitizer output is valid UTF-8")
 }
 
 #[test]
@@ -183,7 +184,7 @@ fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
     let cargo = cargo();
     let packages = ["core".to_owned()];
 
-    let _done = sanitize(
+    let done = sanitize(
         &Sanitizing {
             root: dir.path(),
             cargo: &cargo,
@@ -196,14 +197,17 @@ fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
             locked: true,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture sanitizer output is valid UTF-8");
+    assert_eq!(done.ran, ["address"], "the recorded command completed");
 
     let exec = trace
         .events()
         .iter()
-        .find_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Exec { exec } => Some(exec.clone()),
-            _ => None,
+        .find_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .exec()
+                .cloned()
         })
         .expect("the command it started");
     assert_eq!(
@@ -241,7 +245,7 @@ fn as_started(dir: &Path, base: Vec<(std::ffi::OsString, std::ffi::OsString)>) -
         std::ffi::OsString::from("FAKE_CARGO_ENV_OUT"),
         std::ffi::OsString::from(seen.display().to_string()),
     ));
-    let _done = sanitize(
+    let done = sanitize(
         &Sanitizing {
             root: dir,
             cargo: &cargo,
@@ -254,7 +258,9 @@ fn as_started(dir: &Path, base: Vec<(std::ffi::OsString, std::ffi::OsString)>) -
             locked: true,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture sanitizer output is valid UTF-8");
+    assert_eq!(done.ran, ["address"], "the environment probe completed");
     std::fs::read_to_string(&seen).expect("what the cargo it started saw")
 }
 
@@ -309,7 +315,7 @@ fn a_run_that_named_no_package_asks_the_sanitizer_for_the_whole_workspace() {
         ),
     );
     let cargo = cargo();
-    let _done = sanitize(
+    let done = sanitize(
         &Sanitizing {
             root: dir.path(),
             cargo: &cargo,
@@ -322,13 +328,16 @@ fn a_run_that_named_no_package_asks_the_sanitizer_for_the_whole_workspace() {
             locked: true,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture sanitizer output is valid UTF-8");
+    assert_eq!(done.ran, ["address"], "the recorded command completed");
     let exec = trace
         .events()
         .iter()
-        .find_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Exec { exec } => Some(exec.clone()),
-            _ => None,
+        .find_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .exec()
+                .cloned()
         })
         .expect("the command it started");
     assert_eq!(
@@ -427,7 +436,8 @@ fn a_sanitizer_that_runs_out_of_time_has_not_checked_anything() {
             locked: true,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture sanitizer output is valid UTF-8");
     assert!(
         done.ran.is_empty(),
         "a sanitizer run that was stopped is not a sanitizer run: counting it makes a \

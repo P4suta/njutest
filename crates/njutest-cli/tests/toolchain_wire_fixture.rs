@@ -6,9 +6,9 @@
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
+    clippy::indexing_slicing,
     clippy::panic,
-    reason = "the helpers that start a run and read a fixture are not themselves tests, and a \
-              document this test wrote itself is one it may read back"
+    reason = "a test reports a setup failure by panicking"
 )]
 
 use std::ffi::OsString;
@@ -45,12 +45,28 @@ fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
     assert!(
         !found.is_empty(),
         "a run that recorded no seam at all established nothing this fixture is for: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
 
     let stated = njutest_devkit::fixture::stated_seams(FIXTURE);
     if found == stated {
         return;
+    }
+    if let Some(directory) = std::env::var_os("KEEP_REPORT") {
+        let run = njutest_cli::app::reports::pointed_at(
+            fixture.root(),
+            njutest_cli::app::reports::Index::Any,
+        )
+        .expect("the index is readable")
+        .expect("the index names a run");
+        let source = fixture
+            .root()
+            .join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+            .join("runs")
+            .join(run.as_str());
+        let kept = Path::new(&directory).join(format!("wire-{}", std::process::id()));
+        std::fs::create_dir_all(&kept).expect("a place to keep the failing report");
+        copy_tree(&source, &kept);
     }
     let drawn = found
         .iter()
@@ -86,7 +102,10 @@ fn pointed_at_the_provider(fixture: &Fixture) {
     let provider = njutest_devkit::fake_cargo::example("fake_upstream");
     std::fs::write(
         &path,
-        written.replace(PLACEHOLDER, &provider.to_string_lossy()),
+        written.replace(
+            PLACEHOLDER,
+            provider.to_str().expect("test protocol paths are UTF-8"),
+        ),
     )
     .expect("the configuration");
 }
@@ -95,7 +114,7 @@ fn pointed_at_the_provider(fixture: &Fixture) {
 fn verify(fixture: &Fixture) -> std::process::Output {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(
-        ["njutest", "verify", "--offline", "--locked"]
+        ["njutest", "verify", "--offline", "--locked", "--trace"]
             .into_iter()
             .map(OsString::from),
         &environment(fixture),
@@ -118,12 +137,23 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let path = njutest_cli::app::reports::Store::read(fixture.root())
-        .run_of(njutest_cli::app::reports::Index::Any)
-        .expect("the index names a run")
+    let run = njutest_cli::app::reports::pointed_at(
+        fixture.root(),
+        njutest_cli::app::reports::Index::Any,
+    )
+    .expect("the index is readable")
+    .expect("the index names a run");
+    let path = fixture
+        .root()
+        .join(njutest_cli::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(run.as_str())
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
-    serde_json::from_str(&std::fs::read_to_string(&path).expect("the report"))
-        .expect("the report is a document")
+    let whole: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&path).expect("the report"),
+    )
+    .expect("the report is a document");
+    whole["report"]["builds"][0]["parts"][0].clone()
 }
 
 /// Every seam the report names, in the order it names them.
@@ -139,14 +169,37 @@ fn rows(report: &serde_json::Value) -> Vec<Seam> {
                 capability: text("capability").unwrap_or_default(),
                 seq: row["seq"].as_u64().unwrap_or_default(),
                 rule: text("rule").unwrap_or_default(),
-                decision: text("decision").unwrap_or_default(),
-                by: text("noticed_by").or_else(|| text("proof")),
+                decision: row["answer"]["decision"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_default(),
+                by: row["answer"]["noticed_by"]
+                    .as_str()
+                    .or_else(|| row["answer"]["proof"].as_str())
+                    .map(str::to_owned),
             }
         })
         .collect()
 }
 
 /// Puts `drawn` in the README's seams block, leaving the rest of the page alone.
+fn copy_tree(source: &Path, kept: &Path) {
+    fn walk(source: &Path, kept: &Path) {
+        for entry in std::fs::read_dir(source).expect("a report directory to keep") {
+            let entry = entry.expect("a report entry to keep");
+            let kind = entry.file_type().expect("a report entry type");
+            let target = kept.join(entry.file_name());
+            if kind.is_dir() {
+                std::fs::create_dir_all(&target).expect("a place to keep report files");
+                walk(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), &target).expect("the report file is copied");
+            }
+        }
+    }
+    walk(source, kept);
+}
+
 fn rewrite(drawn: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures")

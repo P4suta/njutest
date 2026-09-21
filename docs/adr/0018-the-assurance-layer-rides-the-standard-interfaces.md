@@ -28,7 +28,7 @@ tests are written owns a syntax. This repository is not going to invent one.
 Measuring the supposed duplication changed the picture. `assure/schedule.rs`
 is 113 lines and none of them schedule tests: it decides how many mutations
 are measured at once and puts the answers back in catalog order.
-`targets.rs` is mostly the target identity `docs/report-v1.md` promises, which
+`targets.rs` is mostly the target identity `docs/report-v2.md` promises, which
 another runner cannot supply because it has an identity of its own. What is
 left is `build.rs` reading cargo's JSON artifact messages — which is what
 every runner does, `nextest` included, because it is the only interface cargo
@@ -67,7 +67,7 @@ contract each of those answers to.
 
 **Mutation is one evidence source among several, and that shape already
 exists**: `assure/mutation.rs`, `assure/deep.rs` (Miri), `assure/fuzz.rs`,
-`assure/repair.rs`, and the verification driver M12 adds are siblings under
+`assure/repair.rs`, and the verification driver K1 adds are siblings under
 one `assure/`. Integrating a further method means adding a sibling, not a
 plugin interface. An interface with one implementation is a promise nobody
 asked for.
@@ -86,11 +86,11 @@ it, so the question about one is never "is it good" — `nextest` is very good �
 but "should every project that wants an assurance verdict also have to want
 this". The answer has to be no for anything that is not already in the
 toolchain. The optional integrations that exist — Miri, `cargo-fuzz`, and the
-verifier M12 adds — are each the subject of a contract that names them
+verifier K1 adds — are each the subject of a contract that names them
 (`deep-v1`, `verified-v1`), and a run that does not promise them runs without
 them.
 
-**A target's identity is this repository's own.** `docs/report-v1.md` defines
+**A target's identity is this repository's own.** `docs/report-v2.md` defines
 it, and a report is compared against other reports of the same tree; borrowing
 another tool's names would make the identity theirs to change.
 

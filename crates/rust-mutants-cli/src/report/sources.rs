@@ -45,7 +45,12 @@ pub fn read(document: &RunDocument, root: &Path) -> Result<BTreeMap<String, Held
             .map_err(|_error| CliError::absent(&mutant.path, root))?;
         let same = mutant.source_digest.is_empty()
             || rust_mutants::id::digest(&bytes) == mutant.source_digest;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let text = std::str::from_utf8(&bytes)
+            .map(str::to_owned)
+            .map_err(|source| CliError::SourceTextNotUtf8 {
+                path: mutant.path.clone(),
+                source,
+            })?;
         held.insert(
             mutant.path.clone(),
             if same {

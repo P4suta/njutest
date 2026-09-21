@@ -8,7 +8,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
-use rust_mutants::tempowner::{self, Owner, SweepResult};
+use rust_mutants::id::RunId;
+#[cfg(feature = "testkit")]
+use rust_mutants::tempowner::SweepResult;
+use rust_mutants::tempowner::{self, ClaimError, Owner};
 
 use crate::error::{self, ErrorCode};
 
@@ -40,6 +43,24 @@ pub enum ScratchError {
         #[source]
         source: io::Error,
     },
+    /// The directory could not be claimed or marked as deliberately kept.
+    #[error("{}: owning {path}: {source}", error::SCRATCH_UNUSABLE.code)]
+    Ownership {
+        /// The scratch directory.
+        path: PathBuf,
+        /// The ownership protocol failure.
+        #[source]
+        source: ClaimError,
+    },
+    /// The bounded sweep could not reach every candidate directory.
+    #[error(
+        "{}: the scratch sweep left {unreached} candidate directories unexamined",
+        error::SCRATCH_UNUSABLE.code
+    )]
+    SweepIncomplete {
+        /// How many candidates the sweep budget did not reach.
+        unreached: usize,
+    },
 }
 
 impl ScratchError {
@@ -47,7 +68,9 @@ impl ScratchError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::Unusable { .. } => error::SCRATCH_UNUSABLE,
+            Self::Unusable { .. } | Self::Ownership { .. } | Self::SweepIncomplete { .. } => {
+                error::SCRATCH_UNUSABLE
+            }
         }
     }
 }
@@ -57,6 +80,7 @@ impl ScratchError {
 pub struct Scratch {
     dir: PathBuf,
     owner: Option<Owner>,
+    #[cfg(feature = "testkit")]
     swept: SweepResult,
     disarmed: bool,
 }
@@ -67,8 +91,24 @@ impl Scratch {
     /// # Errors
     /// [`ScratchError::Unusable`] when a directory cannot be made. Failing
     /// to claim one is not an error: see [`Scratch::is_claimed`].
-    pub fn create(parent: &Path, run_id: &str, now: Timestamp) -> Result<Self, ScratchError> {
-        let swept = tempowner::sweep(parent, &[DIR_PREFIX], now).unwrap_or_default();
+    pub fn create(parent: &Path, run_id: &RunId, now: Timestamp) -> Result<Self, ScratchError> {
+        let mut swept = tempowner::sweep(parent, &[DIR_PREFIX], now).map_err(|source| {
+            ScratchError::Unusable {
+                path: parent.to_path_buf(),
+                source,
+            }
+        })?;
+        if let Some(failure) = swept.failures.pop() {
+            return Err(ScratchError::Unusable {
+                path: failure.dir,
+                source: failure.source,
+            });
+        }
+        if swept.unreached != 0 {
+            return Err(ScratchError::SweepIncomplete {
+                unreached: swept.unreached,
+            });
+        }
         let dir = parent.join(format!("{DIR_PREFIX}{run_id}"));
         for path in [
             dir.join(BUILD_DIR_NAME),
@@ -77,13 +117,26 @@ impl Scratch {
         ] {
             fs::create_dir_all(&path).map_err(|source| ScratchError::Unusable { path, source })?;
         }
-        let owner = tempowner::claim_as(&dir, now, MARKER_SCHEMA).ok();
-        Ok(Self {
+        let owner = match tempowner::claim_as(&dir, now, MARKER_SCHEMA) {
+            Ok(owner) => Some(owner),
+            Err(ClaimError::Owned { .. }) => None,
+            Err(source @ (ClaimError::Lock { .. } | ClaimError::Marker { .. })) => {
+                return Err(ScratchError::Ownership {
+                    path: dir.clone(),
+                    source,
+                });
+            }
+        };
+        let scratch = Self {
             dir,
             owner,
+            #[cfg(feature = "testkit")]
             swept,
             disarmed: false,
-        })
+        };
+        #[cfg(not(feature = "testkit"))]
+        drop(swept);
+        Ok(scratch)
     }
 
     /// The directory this run owns.
@@ -100,12 +153,14 @@ impl Scratch {
 
     /// Where coverage profiles are written.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub fn profiles_dir(&self) -> PathBuf {
         self.dir.join(PROFILES_DIR_NAME)
     }
 
     /// Where preserved command output goes.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub fn output_dir(&self) -> PathBuf {
         self.dir.join(OUTPUT_DIR_NAME)
     }
@@ -114,6 +169,7 @@ impl Scratch {
     ///
     /// # Errors
     /// [`ScratchError::Unusable`] when it cannot be made.
+    #[cfg(feature = "testkit")]
     pub fn round_dir(&self, name: &str) -> Result<PathBuf, ScratchError> {
         let path = self.dir.join(name);
         fs::create_dir_all(&path).map_err(|source| ScratchError::Unusable {
@@ -131,6 +187,7 @@ impl Scratch {
 
     /// What the sweep on the way in collected.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub const fn swept(&self) -> &SweepResult {
         &self.swept
     }
@@ -142,41 +199,62 @@ impl Scratch {
     /// list, and not the person, who was told the run cleaned up after itself.
     /// A tree something else is holding — a mount, an open handle — refuses,
     /// and that is the one case worth reporting.
-    #[must_use]
-    pub fn close(mut self) -> Vec<PathBuf> {
+    /// # Errors
+    /// Returns the exact unlock, removal, or inspection failure.
+    pub fn close(mut self) -> Result<Vec<PathBuf>, ScratchError> {
+        let removed = self.remove();
         self.disarmed = true;
-        self.remove();
-        if self.dir.exists() {
-            vec![self.dir.clone()]
-        } else {
-            Vec::new()
+        removed?;
+        match fs::symlink_metadata(&self.dir) {
+            Ok(_replacement) => Ok(vec![self.dir.clone()]),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(source) => Err(ScratchError::Unusable {
+                path: self.dir.clone(),
+                source,
+            }),
         }
     }
 
     /// Records the keep in the marker, releases the lock, and leaves everything where it is, answering with what was preserved.
-    #[must_use]
-    pub fn keep(mut self) -> Vec<PathBuf> {
+    /// # Errors
+    /// Returns the exact marker or unlock failure.
+    pub fn keep(mut self) -> Result<Vec<PathBuf>, ScratchError> {
+        let kept = match self.owner.as_mut() {
+            Some(owner) => owner.keep().map_err(|source| ScratchError::Ownership {
+                path: self.dir.clone(),
+                source,
+            }),
+            None => Ok(()),
+        };
         self.disarmed = true;
-        if let Some(owner) = self.owner.as_mut() {
-            drop(owner.keep());
-        }
-        vec![self.dir.clone()]
+        kept?;
+        Ok(vec![self.dir.clone()])
     }
 
     /// Releases the lock, then removes the tree. The lock goes first everywhere: on Windows an open handle inside a directory is what makes the removal fail.
-    fn remove(&mut self) {
+    fn remove(&mut self) -> Result<(), ScratchError> {
         if let Some(owner) = self.owner.as_mut() {
-            drop(owner.release());
+            owner.release().map_err(|source| ScratchError::Unusable {
+                path: tempowner::lock_path(&self.dir),
+                source,
+            })?;
         }
-        drop(fs::remove_dir_all(&self.dir));
+        match fs::remove_dir_all(&self.dir) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(ScratchError::Unusable {
+                path: self.dir.clone(),
+                source,
+            }),
+        }
     }
 }
 
 impl Drop for Scratch {
     /// Best effort, so an early return leaves nothing behind; [`Scratch::close`] and [`Scratch::keep`] are the authority.
     fn drop(&mut self) {
-        if !self.disarmed {
-            self.remove();
+        if !self.disarmed && self.remove().is_err() {
+            std::process::abort();
         }
     }
 }

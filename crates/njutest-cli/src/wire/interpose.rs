@@ -6,11 +6,13 @@
 use std::io::{Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::rule::Rule;
 use super::{Exchange, Spoken, Wire};
-use crate::error::{self, ErrorCode};
+use crate::error;
+#[cfg(feature = "testkit")]
+use crate::error::ErrorCode;
 
 /// How much of one exchange is read into memory before it is passed on.
 const CHUNK: usize = 16 * 1024;
@@ -48,6 +50,8 @@ pub enum InterposeError {
 impl InterposeError {
     /// The stable code of this failure.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::CannotListen { .. } => error::WIRE_CANNOT_LISTEN,
@@ -67,8 +71,7 @@ pub struct Interposer {
     seq: Arc<std::sync::atomic::AtomicU64>,
     applied: Arc<AtomicBool>,
     previous: Arc<Mutex<Option<Vec<u8>>>>,
-    stopping: Arc<AtomicBool>,
-    serving: Option<std::thread::JoinHandle<()>>,
+    serving: ServingThread,
 }
 
 impl Interposer {
@@ -88,6 +91,12 @@ impl Interposer {
                 upstream: interposing.upstream,
                 source,
             })?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|source| InterposeError::CannotListen {
+                upstream: interposing.upstream,
+                source,
+            })?;
         let recorded = Arc::new(Mutex::new(Vec::new()));
         let sealed = Arc::new(AtomicBool::new(false));
         let carrying = Arc::new(AtomicBool::new(false));
@@ -97,8 +106,9 @@ impl Interposer {
         let applied = Arc::new(AtomicBool::new(false));
         let previous = Arc::new(Mutex::new(None));
         let stopping = Arc::new(AtomicBool::new(false));
-        let serving = std::thread::spawn({
-            let serving = Serving {
+        let serving = ServingThread::launch(
+            listener,
+            Serving {
                 interposing: interposing.clone(),
                 recorded: Arc::clone(&recorded),
                 sealed: Arc::clone(&sealed),
@@ -109,9 +119,9 @@ impl Interposer {
                 applied: Arc::clone(&applied),
                 previous: Arc::clone(&previous),
                 stopping: Arc::clone(&stopping),
-            };
-            move || serve(&listener, &serving)
-        });
+            },
+            stopping,
+        );
         Ok(Self {
             address,
             recorded,
@@ -122,8 +132,7 @@ impl Interposer {
             seq,
             applied,
             previous,
-            stopping,
-            serving: Some(serving),
+            serving,
         })
     }
 
@@ -133,9 +142,7 @@ impl Interposer {
     /// targets at once — and is better than the last name it happened to know,
     /// which would route a fault to tests that were not there.
     pub fn during(&self, who: Option<String>) {
-        if let Ok(mut held) = self.running.lock() {
-            *held = who;
-        }
+        *locked(&self.running) = who;
     }
 
     /// Says which fault the seam is to put from here, and starts counting exchanges again.
@@ -152,14 +159,10 @@ impl Interposer {
     /// fault names an exchange nothing reaches.
     pub fn putting(&self, fault: Option<super::derive::Fault>) {
         self.settled();
-        if let Ok(mut held) = self.putting.lock() {
-            *held = fault;
-        }
+        *locked(&self.putting) = fault;
         self.seq.store(0, Ordering::Relaxed);
         self.applied.store(false, Ordering::Relaxed);
-        if let Ok(mut held) = self.previous.lock() {
-            *held = None;
-        }
+        *locked(&self.previous) = None;
     }
 
     /// Whether the exchange the fault names actually came past, so the question was really put.
@@ -176,12 +179,11 @@ impl Interposer {
 
     /// Hands back everything that has gone past so far and forgets it, without stopping.
     #[must_use]
+    #[cfg(any(test, feature = "testkit"))]
+    #[cfg(feature = "testkit")]
     pub fn taken(&self) -> Vec<Exchange> {
         self.settled();
-        self.recorded
-            .lock()
-            .map(|mut held| std::mem::take(&mut *held))
-            .unwrap_or_default()
+        locked(&self.recorded).drain(..).collect()
     }
 
     /// How long a boundary waits for an exchange already being carried to finish.
@@ -233,9 +235,7 @@ impl Interposer {
     pub fn restart(&self) {
         self.settled();
         self.sealed.store(false, Ordering::Relaxed);
-        if let Ok(mut held) = self.recorded.lock() {
-            held.clear();
-        }
+        locked(&self.recorded).clear();
         self.putting(None);
     }
 
@@ -252,10 +252,7 @@ impl Interposer {
     pub fn seal(&self) -> Vec<Exchange> {
         self.settled();
         self.sealed.store(true, Ordering::Relaxed);
-        self.recorded
-            .lock()
-            .map(|held| held.clone())
-            .unwrap_or_default()
+        locked(&self.recorded).clone()
     }
 
     /// Where a test is told to dial.
@@ -267,16 +264,74 @@ impl Interposer {
     /// Stops listening and hands back everything that went past, in the order it did.
     #[must_use]
     pub fn stop(mut self) -> Vec<Exchange> {
-        self.stopping.store(true, Ordering::Relaxed);
-        let _woken = TcpStream::connect(self.address);
-        if let Some(serving) = self.serving.take() {
-            let _joined = serving.join();
+        if self.serving.stop().is_err() {
+            std::process::abort();
         }
-        self.recorded
-            .lock()
-            .map(|held| held.clone())
-            .unwrap_or_default()
+        locked(&self.recorded).clone()
     }
+}
+
+/// The listening thread and the stop capability that always joins it.
+#[derive(Debug)]
+struct ServingThread {
+    stopping: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<std::io::Result<()>>>,
+}
+
+impl ServingThread {
+    fn launch(listener: TcpListener, serving: Serving, stopping: Arc<AtomicBool>) -> Self {
+        let handle = std::thread::spawn(move || serve(&listener, &serving));
+        Self {
+            stopping,
+            handle: Some(handle),
+        }
+    }
+
+    fn stop(&mut self) -> Result<(), ServingFailure> {
+        self.stopping.store(true, Ordering::Release);
+        self.join()
+    }
+
+    fn join(&mut self) -> Result<(), ServingFailure> {
+        let Some(handle) = self.handle.take() else {
+            return Err(ServingFailure::AlreadyStopped);
+        };
+        match handle.join() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(source)) => Err(ServingFailure::Accept { source }),
+            Err(panic) => {
+                drop(panic);
+                Err(ServingFailure::Panicked)
+            }
+        }
+    }
+}
+
+impl Drop for ServingThread {
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::Release);
+        if self.handle.is_some() && self.join().is_err() {
+            std::process::abort();
+        }
+    }
+}
+
+/// Why the listening thread could not finish as one complete recording.
+#[derive(Debug, thiserror::Error)]
+enum ServingFailure {
+    /// A terminal operation had already consumed the handle.
+    #[error("the interposer serving thread had already stopped")]
+    AlreadyStopped,
+    /// The listening thread could no longer accept connections.
+    #[error("the interposer serving thread could not accept a connection: {source}")]
+    Accept {
+        /// The operating-system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The listening thread panicked before completing the recording.
+    #[error("the interposer serving thread panicked")]
+    Panicked,
 }
 
 /// What the listening thread was given, as one value.
@@ -294,19 +349,25 @@ struct Serving {
 }
 
 /// Accepts one connection at a time until asked to stop.
-fn serve(listener: &TcpListener, serving: &Serving) {
+fn serve(listener: &TcpListener, serving: &Serving) -> std::io::Result<()> {
     while !serving.stopping.load(Ordering::Relaxed) {
-        let Ok((downstream, _from)) = listener.accept() else {
-            return;
+        let downstream = match listener.accept() {
+            Ok((downstream, _from)) => downstream,
+            Err(source) if source.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                continue;
+            }
+            Err(source) => return Err(source),
         };
+        downstream.set_nonblocking(false)?;
         if serving.stopping.load(Ordering::Relaxed) {
-            return;
+            return Ok(());
         }
         serving.carrying.store(true, Ordering::Release);
         let seq = serving.seq.load(Ordering::Relaxed);
-        let during = serving.running.lock().ok().and_then(|held| held.clone());
-        let putting = serving.putting.lock().ok().and_then(|held| held.clone());
-        let previous = serving.previous.lock().ok().and_then(|held| held.clone());
+        let during = locked(&serving.running).clone();
+        let putting = locked(&serving.putting).clone();
+        let previous = locked(&serving.previous).clone();
         let carried = carry(
             downstream,
             &serving.interposing,
@@ -321,17 +382,31 @@ fn serve(listener: &TcpListener, serving: &Serving) {
             serving.applied.store(true, Ordering::Relaxed);
         }
         if let Some(exchange) = carried.exchange {
-            if !serving.sealed.load(Ordering::Relaxed)
-                && let Ok(mut held) = serving.recorded.lock()
-            {
-                held.push(exchange);
+            if !serving.sealed.load(Ordering::Relaxed) {
+                locked(&serving.recorded).push(exchange);
             }
-            if let Ok(mut held) = serving.previous.lock() {
-                *held = carried.upstream_said;
-            }
-            serving.seq.store(seq.saturating_add(1), Ordering::Relaxed);
+            *locked(&serving.previous) = carried.upstream_said;
+            let Some(next) = seq.checked_add(1) else {
+                std::process::abort();
+            };
+            serving.seq.store(next, Ordering::Relaxed);
         }
         serving.carrying.store(false, Ordering::Release);
+    }
+    Ok(())
+}
+
+/// Takes the explicit recovery policy for every interposer lock: a panic in a
+/// connection must not make all later state updates disappear. The value is
+/// still structurally valid, so the next owner continues from the poisoned
+/// guard rather than pretending the update succeeded without writing it.
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(held) => held,
+        Err(poisoned) => {
+            drop(poisoned);
+            std::process::abort();
+        }
     }
 }
 
@@ -372,10 +447,7 @@ fn carry(mut downstream: TcpStream, interposing: &Interposing, carrying: Carryin
         &interposing.capability,
         seq,
         Rule::ReplayRequest,
-    );
-    if put {
-        delivered_again(interposing.upstream, &asked);
-    }
+    ) && delivered_again(interposing.upstream, &asked);
     let done = injected(
         (&interposing.capability, interposing.held_up),
         putting.as_ref(),
@@ -397,8 +469,14 @@ fn carry(mut downstream: TcpStream, interposing: &Interposing, carrying: Carryin
             upstream_said: None,
         };
     }
-    let _flushed = downstream.flush();
-    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    if downstream.flush().is_err() {
+        return Carried {
+            exchange: None,
+            applied,
+            upstream_said: None,
+        };
+    }
+    let duration_ms = exact_duration_millis(started.elapsed());
     Carried {
         exchange: Some(Exchange {
             capability: interposing.capability.clone(),
@@ -415,11 +493,17 @@ fn carry(mut downstream: TcpStream, interposing: &Interposing, carrying: Carryin
 /// What the caller asked and what the upstream said, before anything is done to either.
 fn exchanged(downstream: &mut TcpStream, interposing: &Interposing) -> Option<(Vec<u8>, Vec<u8>)> {
     let asked = first(downstream)?;
-    let mut upstream = TcpStream::connect(interposing.upstream).ok()?;
-    upstream.write_all(&asked).ok()?;
-    upstream.flush().ok()?;
+    let mut upstream = match TcpStream::connect(interposing.upstream) {
+        Ok(upstream) => upstream,
+        Err(_) => return None,
+    };
+    if upstream.write_all(&asked).is_err() || upstream.flush().is_err() {
+        return None;
+    }
     let mut said = Vec::new();
-    let _read = upstream.read_to_end(&mut said).ok()?;
+    if upstream.read_to_end(&mut said).is_err() {
+        return None;
+    }
     Some((asked, said))
 }
 
@@ -436,16 +520,18 @@ fn names(putting: Option<&super::derive::Fault>, capability: &str, seq: u64, rul
 /// answer leaves it: the dependency did the work twice and the caller never
 /// knew. What notices is whatever holds the dependency's state, and a suite
 /// that notices nothing is a suite that would not notice a double charge.
-fn delivered_again(upstream: SocketAddr, asked: &[u8]) {
+fn delivered_again(upstream: SocketAddr, asked: &[u8]) -> bool {
     let Ok(mut again) = TcpStream::connect(upstream) else {
-        return;
+        return false;
     };
     if again.write_all(asked).is_err() {
-        return;
+        return false;
     }
-    let _flushed = again.flush();
+    if again.flush().is_err() {
+        return false;
+    }
     let mut ignored = Vec::new();
-    let _read = again.read_to_end(&mut ignored);
+    again.read_to_end(&mut ignored).is_ok()
 }
 
 /// How long a run holds an answer up for where nothing else says.
@@ -526,10 +612,7 @@ impl Done {
 
 /// The answer with its body cut away, as a connection that died mid-body leaves it.
 fn cut(answered: Vec<u8>) -> Vec<u8> {
-    let head = answered
-        .windows(4)
-        .position(|four| four == b"\r\n\r\n")
-        .map_or(answered.len(), |at| at.saturating_add(4));
+    let head = head_position(&answered);
     answered.get(..head).map(<[u8]>::to_vec).unwrap_or(answered)
 }
 
@@ -558,8 +641,11 @@ fn restated(answered: &[u8], status: u16, reason: &str) -> Vec<u8> {
         .unwrap_or(answered.len());
     let line = answered
         .get(..end)
-        .and_then(|line| std::str::from_utf8(line).ok())
-        .unwrap_or_default();
+        .and_then(|line| match std::str::from_utf8(line) {
+            Ok(line) => Some(line),
+            Err(_) => None,
+        });
+    let line = line.unwrap_or_default();
     let mut out = restated_line(line, status, reason).into_bytes();
     if let Some(rest) = answered.get(end..) {
         out.extend_from_slice(rest);
@@ -570,7 +656,10 @@ fn restated(answered: &[u8], status: u16, reason: &str) -> Vec<u8> {
 /// Everything the test sent before it stopped talking, up to one chunk.
 fn first(downstream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut buffer = vec![0_u8; CHUNK];
-    let read = downstream.read(&mut buffer).ok()?;
+    let read = match downstream.read(&mut buffer) {
+        Ok(read) => read,
+        Err(_) => return None,
+    };
     if read == 0 {
         return None;
     }
@@ -580,8 +669,8 @@ fn first(downstream: &mut TcpStream) -> Option<Vec<u8>> {
 
 /// What was said, read as far as the wire says to read it.
 fn spoken(wire: Wire, asked: &[u8], answered: &[u8]) -> Spoken {
-    let request_bytes = u64::try_from(asked.len()).unwrap_or(u64::MAX);
-    let response_bytes = u64::try_from(answered.len()).unwrap_or(u64::MAX);
+    let request_bytes = exact_byte_count(asked.len());
+    let response_bytes = exact_byte_count(answered.len());
     match wire {
         Wire::Raw => Spoken::Raw {
             request_bytes,
@@ -600,7 +689,7 @@ fn spoken(wire: Wire, asked: &[u8], answered: &[u8]) -> Spoken {
                 status: status(answered).unwrap_or_default(),
                 request_bytes,
                 response_bytes,
-                body_bytes: response_bytes.saturating_sub(head_of(answered)),
+                body_bytes: exact_body_bytes(response_bytes, head_of(answered)),
                 status_line: opening(answered).unwrap_or_default(),
             }
         }
@@ -612,11 +701,38 @@ fn spoken(wire: Wire, asked: &[u8], answered: &[u8]) -> Spoken {
 /// An answer with no terminator in it is all head, which is what makes cutting
 /// it short a change of nothing rather than a guess at where the body began.
 fn head_of(answered: &[u8]) -> u64 {
-    let head = answered
-        .windows(4)
-        .position(|four| four == b"\r\n\r\n")
-        .map_or(answered.len(), |at| at.saturating_add(4));
-    u64::try_from(head).unwrap_or(u64::MAX)
+    exact_byte_count(head_position(answered))
+}
+
+fn head_position(answered: &[u8]) -> usize {
+    let Some(start) = answered.windows(4).position(|four| four == b"\r\n\r\n") else {
+        return answered.len();
+    };
+    match start.checked_add(4) {
+        Some(end) => end,
+        None => std::process::abort(),
+    }
+}
+
+fn exact_body_bytes(response: u64, head: u64) -> u64 {
+    match response.checked_sub(head) {
+        Some(body) => body,
+        None => std::process::abort(),
+    }
+}
+
+fn exact_duration_millis(duration: std::time::Duration) -> u64 {
+    match u64::try_from(duration.as_millis()) {
+        Ok(milliseconds) => milliseconds,
+        Err(_) => std::process::abort(),
+    }
+}
+
+fn exact_byte_count(bytes: usize) -> u64 {
+    match u64::try_from(bytes) {
+        Ok(count) => count,
+        Err(_) => std::process::abort(),
+    }
 }
 
 /// The method and the path of an HTTP request, without the query.
@@ -635,7 +751,10 @@ fn requested(asked: &[u8]) -> Option<(String, String)> {
 /// The status an HTTP response opened with.
 fn status(answered: &[u8]) -> Option<u16> {
     let line = opening(answered)?;
-    line.split(' ').nth(1)?.parse().ok()
+    match line.split(' ').nth(1)?.parse::<u16>() {
+        Ok(status) => Some(status),
+        Err(_) => None,
+    }
 }
 
 /// The first line of what went past, as text.
@@ -645,5 +764,8 @@ fn opening(bytes: &[u8]) -> Option<String> {
         .position(|byte| *byte == b'\r' || *byte == b'\n')
         .unwrap_or(bytes.len());
     let line = bytes.get(..end)?;
-    std::str::from_utf8(line).ok().map(ToOwned::to_owned)
+    match std::str::from_utf8(line) {
+        Ok(line) => Some(line.to_owned()),
+        Err(_) => None,
+    }
 }

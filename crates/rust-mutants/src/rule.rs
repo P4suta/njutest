@@ -6,7 +6,7 @@
 use std::fmt;
 
 /// A profile level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, njutest_macros::AllVariants)]
 pub enum Tier {
     /// The default profile: operators whose survivors almost always point at a real gap in the tests.
     Balanced,
@@ -17,9 +17,6 @@ pub enum Tier {
 }
 
 impl Tier {
-    /// Every tier in inclusion order.
-    pub const ALL: [Self; 3] = [Self::Balanced, Self::Strong, Self::All];
-
     /// The tier's canonical name, which is also its profile name.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -50,7 +47,7 @@ impl fmt::Display for Tier {
 }
 
 /// An operator family: the unit of selection for `--operator`, and, through its position in the canonical table, the deduplication tiebreak — an earlier family is the more local edit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum Family {
     /// `true` ↔ `false`.
     BooleanLiteral,
@@ -89,27 +86,6 @@ pub enum Family {
 }
 
 impl Family {
-    /// Every family in canonical table order.
-    pub const ALL: [Self; CANONICAL_FAMILY_COUNT] = [
-        Self::BooleanLiteral,
-        Self::ConditionNegation,
-        Self::BooleanConnective,
-        Self::Comparison,
-        Self::Range,
-        Self::Arithmetic,
-        Self::ReturnReplacement,
-        Self::ErrorPropagation,
-        Self::MatchArm,
-        Self::ControlFlow,
-        Self::ConditionRemoval,
-        Self::Bitwise,
-        Self::CompoundAssignment,
-        Self::MethodSwap,
-        Self::StatementDeletion,
-        Self::Literal,
-        Self::SaturatingArithmetic,
-    ];
-
     /// The family's canonical name.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -183,7 +159,7 @@ impl fmt::Display for Rule {
 }
 
 /// The counts of the canonical v1 table, asserted by the registry tests.
-pub const CANONICAL_FAMILY_COUNT: usize = 17;
+pub const CANONICAL_FAMILY_COUNT: usize = Family::ALL.len();
 /// The number of rules in the canonical v1 table.
 pub const CANONICAL_RULE_COUNT: usize = 74;
 

@@ -6,11 +6,16 @@
 mod guards;
 mod observable;
 mod runtime;
+mod steps;
 pub mod witness;
 
 /// The name a generated module of `stem` can take in `text`, dodging every identifier the file spells.
-#[must_use]
-pub fn module_named_for(text: &str, stem: &str) -> String {
+///
+/// # Errors
+///
+/// Returns [`ModuleNameError`] when `text` is not a Rust token stream or the
+/// collision suffix namespace cannot be searched without overflow.
+pub fn module_named_for(text: &str, stem: &str) -> Result<String, ModuleNameError> {
     runtime::module_named(text, stem)
 }
 
@@ -27,29 +32,24 @@ use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, RUNAWAY_EXIT, RUNTIME_MARKER,
-    Rendering, STALE_CATALOG_EXIT, STEPS_ENV, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name,
-    render,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, ModuleNameError, RUNTIME_MARKER,
+    Rendering, RuntimeRenderError, STALE_CATALOG_EXIT, STEP_NONCE_ENV, STEP_NOTICE_ENV,
+    STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV,
+    TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
 pub const STALE_CATALOG_MARKER: &str = "rust-mutants: this binary was built from catalog ";
 
-/// Every lint a guard's own text can trip, which the attribute it carries turns off.
-pub const GUARD_NOISE_LINTS: [&str; 9] = [
-    "warnings",
-    "unused",
-    "unused_qualifications",
-    "unfulfilled_lint_expectations",
-    "clippy::all",
-    "clippy::pedantic",
-    "clippy::restriction",
-    "clippy::nursery",
-    "clippy::cargo",
-];
+/// Lint groups whose `forbid` level also makes the generated module's two
+/// exact allowances illegal.
+pub(crate) const GENERATED_MODULE_CONFLICTING_LINTS: [&str; 4] =
+    ["warnings", "unused", "dead_code", "unused_qualifications"];
 
-/// The text inserted before the innermost function holding a guard, so that a guard's own lint noise never trips a crate's deny policy anywhere else. It holds no line break.
-pub const ALLOW_ATTRIBUTE: &str = "#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] ";
+/// The exact, private exception carried by repository-generated support
+/// modules. It never decorates user-authored code.
+pub(super) const GENERATED_MODULE_ALLOW_ATTRIBUTE: &str =
+    "#[allow(dead_code, unused_qualifications)]";
 
 /// One mutant placed at its rewrite site.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,19 +90,9 @@ pub struct Branch {
     pub span: Span,
 }
 
-/// Moves a range along by `by` bytes.
-const fn shift(span: Span, by: u32) -> Span {
-    Span {
-        start: span.start.saturating_add(by),
-        end: span.end.saturating_add(by),
-    }
-}
-
 /// What one file is rewritten with: the mutants, the shape they nest in, and the markers its branch proofs put in it.
 #[derive(Debug, Clone, Copy)]
 struct Planted<'a> {
-    /// The mutants placed in the file.
-    placements: &'a [Placement],
     /// Which of them nest inside which, so an outer guard renders the inner ones in its own original branch.
     forest: &'a interval::Forest<Placement>,
     /// The markers that can be written where they are.
@@ -138,14 +128,16 @@ pub struct FileOutput {
     pub compared: Vec<u32>,
     /// Every marker this text holds the call for, ascending, which is not every marker it was given: a body inside a guard's own site takes none.
     pub marked: Vec<u32>,
-    /// The name the runtime module took, empty when none was generated.
+    /// The name the runtime module took.
     pub module: String,
-    /// Whether anything was rewritten. A file with no mutants comes back byte for byte, without a runtime: an unused module would only be noise, and a file cargo did not have to recompile is one this run does not pay for.
+    /// Whether anything was rewritten. Every mutable file receives control-flow
+    /// checkpoints, including one with no mutant of its own, so a mutation in
+    /// another file cannot escape its process-wide step allowance here.
     pub instrumented: bool,
 }
 
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum InstrumentErrorKind {
     /// A candidate is not in the catalog.
     UnknownMutant,
@@ -159,22 +151,11 @@ pub enum InstrumentErrorKind {
     SpliceFailed,
     /// A rewrite would have moved a line, breaking the one invariant every consumer of a position depends on.
     LinesMoved,
-    /// A mutant index collides with the runtime's sentinel values.
+    /// A mutant index makes the runtime's inclusive `u32` window unrepresentable.
     IndexReserved,
 }
 
 impl InstrumentErrorKind {
-    /// Every kind, in code order.
-    pub const ALL: [Self; 7] = [
-        Self::UnknownMutant,
-        Self::SourceMismatch,
-        Self::SiteConflict,
-        Self::FlattenFailed,
-        Self::SpliceFailed,
-        Self::LinesMoved,
-        Self::IndexReserved,
-    ];
-
     /// The stable code of this failure.
     #[must_use]
     pub const fn code(self) -> ErrorCode {
@@ -259,7 +240,7 @@ pub fn plan_file(
                 format!("a candidate has no identity: {error}"),
             )
         })?;
-        let Some(mutant) = catalog.by_id(&id) else {
+        let Some(mutant) = catalog.by_id(id.as_str()) else {
             if catalog
                 .duplicates()
                 .iter()
@@ -278,7 +259,7 @@ pub fn plan_file(
         };
         placements.push(Placement {
             index: mutant.index,
-            id,
+            id: id.to_string(),
             edit: one.candidate.span,
             original: one.candidate.original.clone(),
             replacement: one.candidate.replacement.clone(),
@@ -308,6 +289,91 @@ pub struct Instrumenting<'a> {
     pub catalog_digest: &'a str,
 }
 
+/// The pristine source after process-wide checkpoints have been inserted and
+/// every catalog position has been mapped into that intermediate source.
+struct Checkpointed {
+    source: Vec<u8>,
+    module: String,
+    placements: Vec<Placement>,
+    markers: Vec<Marker>,
+}
+
+fn guards_of(placements: &[Placement]) -> Vec<Guard> {
+    let mut guards: Vec<Guard> = placements
+        .iter()
+        .map(|placement| Guard {
+            index: placement.index,
+            id: placement.id.clone(),
+            form: placement.hint.form,
+            site: placement.hint.site,
+        })
+        .collect();
+    guards.sort_by_key(|guard| guard.index);
+    guards
+}
+
+fn checkpointed(
+    file: &Instrumenting<'_>,
+    text: &str,
+    module: String,
+) -> Result<Checkpointed, InstrumentError> {
+    let Instrumenting {
+        path,
+        source,
+        placements,
+        markers,
+        comparable: _comparable,
+        probed: _probed,
+        catalog_digest: _catalog_digest,
+    } = *file;
+    let boundaries = steps::splices(text, &module).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("the step checkpoints cannot be placed: {error}"),
+        )
+    })?;
+    let (source, offsets) = apply(source, &boundaries).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path,
+            format!("the step checkpoints could not be applied: {error}"),
+        )
+    })?;
+    let mapped_text = std::str::from_utf8(&source).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path,
+            format!("the checkpoint rewrite is not valid UTF-8: {error}"),
+        )
+    })?;
+    let placements = placements
+        .iter()
+        .map(|placement| mapped_placement(placement, mapped_text, &offsets, path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let markers = markers
+        .iter()
+        .map(|marker| {
+            let (at, exact) = offsets.to_output(marker.at);
+            if exact {
+                Ok(Marker { at, ..*marker })
+            } else {
+                Err(InstrumentError::new(
+                    InstrumentErrorKind::SiteConflict,
+                    path,
+                    format!("the marker at byte {} lies inside a checkpoint", marker.at),
+                ))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Checkpointed {
+        source,
+        module,
+        placements,
+        markers,
+    })
+}
+
 /// Rewrites one file so that every placed mutant lives in it behind a guard.
 ///
 /// # Errors
@@ -317,7 +383,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         path,
         source,
         placements,
-        markers,
+        markers: _original_markers,
         comparable,
         probed,
         catalog_digest,
@@ -329,37 +395,40 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
             format!("the source is not valid UTF-8: {error}"),
         )
     })?;
-    if placements.is_empty() {
-        return Ok(FileOutput {
-            path: path.to_owned(),
-            text: text.to_owned(),
-            guards: Vec::new(),
-            branches: Vec::new(),
-            compared: Vec::new(),
-            marked: Vec::new(),
-            module: String::new(),
-            instrumented: false,
-        });
-    }
-    let file = File {
+    let module = module_name(path, text).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("the source token stream is invalid: {error}"),
+        )
+    })?;
+    check_pristine(file, text, &module)?;
+    let checkpointed = checkpointed(file, text, module)?;
+    let bounded_text = std::str::from_utf8(&checkpointed.source).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path,
+            format!("the checkpointed source is no longer valid UTF-8: {error}"),
+        )
+    })?;
+    let worker = File {
         path,
-        text,
-        module: module_name(path, text),
+        text: bounded_text,
+        module: checkpointed.module,
         comparable,
         probed,
     };
-    file.check_placements(placements)?;
-    let forest = file.forest(placements)?;
-    let markers = File::markable(markers, &forest);
+    worker.check_placements(&checkpointed.placements)?;
+    let forest = worker.forest(&checkpointed.placements)?;
+    let markers = File::markable(&checkpointed.markers, &forest);
 
     let Rewritten {
         mut text,
         branches,
         compared,
-    } = file.rewrite(
-        source,
+    } = worker.rewrite(
+        &checkpointed.source,
         &Planted {
-            placements,
             forest: &forest,
             markers: &markers,
         },
@@ -367,33 +436,105 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(&render(&Rendering {
-        module: &file.module,
-        catalog_digest,
-        placements,
-        markers: &markers,
-        newline: file.newline(),
-    }));
-
-    let mut guards: Vec<Guard> = placements
-        .iter()
-        .map(|placement| Guard {
-            index: placement.index,
-            id: placement.id.clone(),
-            form: placement.hint.form,
-            site: placement.hint.site,
-        })
-        .collect();
-    guards.sort_by_key(|guard| guard.index);
+    worker.append_runtime(
+        &mut text,
+        &Rendering {
+            module: &worker.module,
+            catalog_digest,
+            placements: &checkpointed.placements,
+            markers: &markers,
+            newline: worker.newline(),
+        },
+    )?;
     Ok(FileOutput {
         path: path.to_owned(),
         text,
-        guards,
+        guards: guards_of(placements),
         branches,
         compared: compared.into_iter().collect(),
         marked: markers.iter().map(|marker| marker.index).collect(),
-        module: file.module,
+        module: worker.module,
         instrumented: true,
+    })
+}
+
+fn check_pristine(
+    file: &Instrumenting<'_>,
+    text: &str,
+    module: &str,
+) -> Result<(), InstrumentError> {
+    File {
+        path: file.path,
+        text,
+        module: module.to_owned(),
+        comparable: file.comparable,
+        probed: file.probed,
+    }
+    .check_placements(file.placements)
+}
+
+fn mapped_placement(
+    placement: &Placement,
+    source: &str,
+    offsets: &crate::splice::OffsetMap,
+    path: &str,
+) -> Result<Placement, InstrumentError> {
+    let map = |span| {
+        offsets.map_span(span).map_err(|error| {
+            InstrumentError::new(
+                InstrumentErrorKind::SiteConflict,
+                path,
+                format!("a checkpoint cannot preserve source span {span}: {error}"),
+            )
+        })
+    };
+    let edit = map(placement.edit)?;
+    let site = map(placement.hint.site)?;
+    let original = mapped_source(source, edit, "edit", path)?
+        .as_bytes()
+        .to_vec();
+    let site_text = mapped_source(source, site, "site", path)?;
+    Ok(Placement {
+        index: placement.index,
+        id: placement.id.clone(),
+        edit,
+        original,
+        replacement: placement.replacement.clone(),
+        hint: SiteHint {
+            form: placement.hint.form,
+            site,
+            site_text: site_text.to_owned(),
+            super_depth: placement.hint.super_depth,
+        },
+    })
+}
+
+fn mapped_source<'a>(
+    source: &'a str,
+    span: Span,
+    subject: &str,
+    path: &str,
+) -> Result<&'a str, InstrumentError> {
+    let start = usize::try_from(span.start).map_err(|_overflow| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("mapped {subject} {} does not fit this platform", span.start),
+        )
+    })?;
+    let end = usize::try_from(span.end).map_err(|_overflow| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("mapped {subject} {} does not fit this platform", span.end),
+        )
+    })?;
+    source.get(start..end).ok_or_else(|| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("mapped {subject} {span} is not in the checkpointed source"),
+        )
     })
 }
 
@@ -422,9 +563,36 @@ impl File<'_> {
         InstrumentError::new(kind, self.path, message)
     }
 
+    /// Appends the generated runtime after every source rewrite has kept its
+    /// line boundary intact.
+    fn append_runtime(
+        &self,
+        text: &mut String,
+        rendering: &Rendering<'_>,
+    ) -> Result<(), InstrumentError> {
+        let runtime = render(rendering).map_err(|error| {
+            self.error(
+                InstrumentErrorKind::SourceMismatch,
+                format!("the generated runtime cannot represent this file: {error}"),
+            )
+        })?;
+        text.push_str(&runtime);
+        Ok(())
+    }
+
     fn slice(&self, span: Span) -> Result<&str, InstrumentError> {
-        let start = usize::try_from(span.start).unwrap_or(usize::MAX);
-        let end = usize::try_from(span.end).unwrap_or(usize::MAX);
+        let start = usize::try_from(span.start).map_err(|_overflow| {
+            self.error(
+                InstrumentErrorKind::SourceMismatch,
+                format!("{} cannot be represented as a byte offset", span.start),
+            )
+        })?;
+        let end = usize::try_from(span.end).map_err(|_overflow| {
+            self.error(
+                InstrumentErrorKind::SourceMismatch,
+                format!("{} cannot be represented as a byte offset", span.end),
+            )
+        })?;
         self.text.get(start..end).ok_or_else(|| {
             self.error(
                 InstrumentErrorKind::SourceMismatch,
@@ -433,14 +601,14 @@ impl File<'_> {
         })
     }
 
-    /// Every placement must name bytes this file really holds, and an index the runtime can tell apart from its sentinels.
+    /// Every placement must name bytes this file really holds and an index whose inclusive runtime window is representable.
     fn check_placements(&self, placements: &[Placement]) -> Result<(), InstrumentError> {
         for placement in placements {
-            if placement.index >= runtime::LOWEST_SENTINEL {
+            if placement.index == runtime::FIRST_UNREPRESENTABLE_INDEX {
                 return Err(self.error(
                     InstrumentErrorKind::IndexReserved,
                     format!(
-                        "mutant index {} collides with the runtime's sentinels",
+                        "mutant index {} makes the runtime's inclusive u32 window overflow",
                         placement.index
                     ),
                 ));
@@ -450,10 +618,10 @@ impl File<'_> {
                 return Err(self.error(
                     InstrumentErrorKind::SourceMismatch,
                     format!(
-                        "{} covers {:?}, but the candidate was taken from {:?}",
+                        "{} covers {}, but the candidate was taken from {}",
                         placement.edit,
-                        String::from_utf8_lossy(found),
-                        String::from_utf8_lossy(&placement.original)
+                        crate::telling::LosslessBytes::new(found),
+                        crate::telling::LosslessBytes::new(&placement.original)
                     ),
                 ));
             }
@@ -505,7 +673,9 @@ impl File<'_> {
         Ok(forest)
     }
 
-    /// Applies every guard and every allow attribute to the file's bytes, and reports where each alternative landed in the result. The markers that can be written where they are, which is every one outside every guard's own site.
+    /// Applies every guard to the file's bytes, and reports where each
+    /// alternative landed in the result. The markers that can be written
+    /// where they are, which is every one outside every guard's own site.
     fn markable(markers: &[Marker], forest: &interval::Forest<Placement>) -> Vec<Marker> {
         markers
             .iter()
@@ -521,28 +691,80 @@ impl File<'_> {
 
     /// The call one marker becomes, in one line.
     fn marker(&self, marker: &Marker) -> Splice {
+        let path = guards::named(&self.module, marker.super_depth, "body");
         Splice {
             span: Span {
                 start: marker.at,
                 end: marker.at,
             },
             original: Vec::new(),
-            replacement: format!(
-                "{}{}::body({}); ",
-                "super::".repeat(usize::try_from(marker.super_depth).unwrap_or(0)),
-                self.module,
-                marker.index
-            )
-            .into_bytes(),
+            replacement: format!("{path}({}); ", marker.index).into_bytes(),
         }
     }
 
+    /// Converts a platform string offset into the catalog's on-wire offset.
+    fn offset(&self, offset: usize, about: &str) -> Result<u32, InstrumentError> {
+        u32::try_from(offset).map_err(|_overflow| {
+            self.error(
+                InstrumentErrorKind::SpliceFailed,
+                format!("{about} byte offset {offset} exceeds the u32 source boundary"),
+            )
+        })
+    }
+
+    /// Moves a rendered span without inventing a representable endpoint on overflow.
+    fn shifted(&self, span: Span, by: u32, about: &str) -> Result<Span, InstrumentError> {
+        let start = span.start.checked_add(by).ok_or_else(|| {
+            self.error(
+                InstrumentErrorKind::SpliceFailed,
+                format!("{about} start overflowed while shifting {span} by {by}"),
+            )
+        })?;
+        let end = span.end.checked_add(by).ok_or_else(|| {
+            self.error(
+                InstrumentErrorKind::SpliceFailed,
+                format!("{about} end overflowed while shifting {span} by {by}"),
+            )
+        })?;
+        Ok(Span { start, end })
+    }
+
+    /// Converts a composed guard's platform offsets and places its nested
+    /// branches inside the original arm.
+    fn composed_branches(
+        &self,
+        composed: &guards::Composed,
+        nested: &[(u32, Span)],
+    ) -> Result<Vec<(u32, Span)>, InstrumentError> {
+        let capacity = composed
+            .alternatives
+            .len()
+            .checked_add(nested.len())
+            .ok_or_else(|| {
+                self.error(
+                    InstrumentErrorKind::SpliceFailed,
+                    "a composed guard has too many branches",
+                )
+            })?;
+        let mut branches = Vec::with_capacity(capacity);
+        for (index, range) in &composed.alternatives {
+            branches.push((
+                *index,
+                Span {
+                    start: self.offset(range.start, "alternative branch start")?,
+                    end: self.offset(range.end, "alternative branch end")?,
+                },
+            ));
+        }
+        let original_at = self.offset(composed.original_at, "original branch start")?;
+        for (index, span) in nested {
+            branches.push((*index, self.shifted(*span, original_at, "nested branch")?));
+        }
+        Ok(branches)
+    }
+
     fn rewrite(&self, source: &[u8], planted: &Planted<'_>) -> Result<Rewritten, InstrumentError> {
-        let Planted {
-            placements,
-            forest,
-            markers,
-        } = *planted;
+        let Planted { forest, markers } = *planted;
         let mut splices = Vec::new();
         let mut roots = Vec::new();
         let mut compared = BTreeSet::new();
@@ -553,7 +775,6 @@ impl File<'_> {
             roots.push((root.span, rendered));
         }
         splices.extend(markers.iter().map(|marker| self.marker(marker)));
-        splices.extend(Self::allow_splices(placements, forest.roots()));
         splices.sort_by_key(|splice| splice.span.start);
         let (rewritten, offsets) = apply(source, &splices).map_err(|error| {
             self.error(
@@ -569,14 +790,34 @@ impl File<'_> {
         })?;
         let mut branches: Vec<Branch> = Vec::new();
         for (span, rendered) in roots {
-            let (at, _exact) = offsets.to_output(span.start);
-            branches.extend(rendered.branches.into_iter().map(|(index, branch)| Branch {
-                index,
-                span: Span {
-                    start: branch.start.saturating_add(at),
-                    end: branch.end.saturating_add(at),
-                },
-            }));
+            let (at, exact) = offsets.to_output(span.start);
+            if !exact {
+                return Err(self.error(
+                    InstrumentErrorKind::SpliceFailed,
+                    format!(
+                        "the rewritten root at byte {} has no exact offset",
+                        span.start
+                    ),
+                ));
+            }
+            for (index, branch) in rendered.branches {
+                let start = branch.start.checked_add(at).ok_or_else(|| {
+                    self.error(
+                        InstrumentErrorKind::SpliceFailed,
+                        format!("mutant {index}'s rewritten branch start overflowed"),
+                    )
+                })?;
+                let end = branch.end.checked_add(at).ok_or_else(|| {
+                    self.error(
+                        InstrumentErrorKind::SpliceFailed,
+                        format!("mutant {index}'s rewritten branch end overflowed"),
+                    )
+                })?;
+                branches.push(Branch {
+                    index,
+                    span: Span { start, end },
+                });
+            }
         }
         branches.sort_by_key(|branch| (branch.span.start, branch.index));
         Ok(Rewritten {
@@ -620,7 +861,16 @@ impl File<'_> {
             },
             &alternatives,
             &original,
-        );
+        )
+        .map_err(|error| {
+            self.error(
+                InstrumentErrorKind::SpliceFailed,
+                format!(
+                    "the guard at {} cannot represent its offsets: {error}",
+                    node.span
+                ),
+            )
+        })?;
         if count_lines(composed.text.as_bytes()) != count_lines(site.as_bytes()) {
             return Err(self.error(
                 InstrumentErrorKind::LinesMoved,
@@ -630,25 +880,7 @@ impl File<'_> {
                 ),
             ));
         }
-        let mut branches: Vec<(u32, Span)> = composed
-            .alternatives
-            .iter()
-            .map(|(index, range)| {
-                (
-                    *index,
-                    Span {
-                        start: u32::try_from(range.start).unwrap_or(u32::MAX),
-                        end: u32::try_from(range.end).unwrap_or(u32::MAX),
-                    },
-                )
-            })
-            .collect();
-        let original_at = u32::try_from(composed.original_at).unwrap_or(u32::MAX);
-        branches.extend(
-            nested
-                .iter()
-                .map(|(index, span)| (*index, shift(*span, original_at))),
-        );
+        let branches = self.composed_branches(&composed, &nested)?;
         compared.extend(composed.compared);
         Ok(Rendered {
             text: composed.text,
@@ -670,13 +902,10 @@ impl File<'_> {
         for child in &node.children {
             text.push_str(self.slice(bounds(cursor, child.span.start)?)?);
             let rendered = self.render(child)?;
-            let at = u32::try_from(text.len()).unwrap_or(u32::MAX);
-            branches.extend(
-                rendered
-                    .branches
-                    .iter()
-                    .map(|(index, span)| (*index, shift(*span, at))),
-            );
+            let at = self.offset(text.len(), "nested guard start")?;
+            for (index, span) in rendered.branches {
+                branches.push((index, self.shifted(span, at, "nested branch")?));
+            }
             compared.extend(rendered.compared);
             text.push_str(&rendered.text);
             cursor = child.span.end;
@@ -739,29 +968,5 @@ impl File<'_> {
             original: self.slice(span)?.as_bytes().to_vec(),
             replacement: replacement.into_bytes(),
         })
-    }
-
-    /// One `#[allow(warnings)]` insertion per function that holds a guard.
-    fn allow_splices(placements: &[Placement], roots: &[Node<Placement>]) -> Vec<Splice> {
-        let offsets: BTreeSet<u32> = placements
-            .iter()
-            .filter_map(|placement| placement.hint.allow_at)
-            .filter(|offset| {
-                !roots
-                    .iter()
-                    .any(|root| root.span.start < *offset && *offset < root.span.end)
-            })
-            .collect();
-        offsets
-            .into_iter()
-            .map(|offset| Splice {
-                span: Span {
-                    start: offset,
-                    end: offset,
-                },
-                original: Vec::new(),
-                replacement: ALLOW_ATTRIBUTE.as_bytes().to_vec(),
-            })
-            .collect()
     }
 }

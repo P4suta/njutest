@@ -3,6 +3,12 @@
 
 //! The answers earlier runs reached: what is stored, what is refused, what is read back, and what happens when two runs want the same one at once.
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::disallowed_methods,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
@@ -10,6 +16,8 @@ use jiff::Timestamp;
 use njutest_cli::cache::lock::{self, LeaseError};
 use njutest_cli::cache::store::{CacheError, Store};
 use njutest_cli::report::{Provenance, Report, RunKind, TargetRecord, TargetStatus, Verdict};
+use njutest_devkit::thread::ScopedThread;
+use rust_mutants::id::HexDigest;
 use rust_mutants::runner::Cancel;
 
 struct RefusingWriter;
@@ -32,34 +40,34 @@ impl Read for RefusingReader {
     }
 }
 
+fn digest(value: &str) -> HexDigest {
+    HexDigest::try_from(value).expect("a canonical digest")
+}
+
 fn report(run_id: &str, identity: &str) -> Report {
-    let mut report = Report::new(
-        run_id,
+    let mut source = njutest_cli::report::BuildReport::new(
+        "cache-evidence",
         RunKind::Full,
         njutest_cli::config::Contract::StandardV1,
     );
-    report.provenance = Provenance {
+    source.provenance = Provenance {
         identity: identity.to_owned(),
         facts: njutest_cli::report::Established::Here,
     };
-    "demo".clone_into(&mut report.repository.root_name);
-    report.repository.workspace_digest = "a".repeat(64);
-    report.repository.configuration_digest = "b".repeat(64);
-    "rustc 1.98.0".clone_into(&mut report.toolchain.rustc);
-    report
+    "demo".clone_into(&mut source.repository.root_name);
+    source.repository.workspace_digest = "a".repeat(64);
+    source.repository.configuration_digest = "b".repeat(64);
+    "rustc 1.98.0".clone_into(&mut source.toolchain.rustc);
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    "2026-01-01T00:00:00Z".clone_into(&mut source.timing.started);
+    "2026-01-01T00:00:00Z".clone_into(&mut source.timing.finished);
+    source
         .limitations
         .push(njutest_cli::report::Limitation::new(
             "git-metadata-unavailable",
             "the tree a test builds is not a git repository",
         ));
-    report.verdict = Verdict::Assured;
-    report.accounting.targets.selected = 1;
-    report.accounting.targets.passed = 1;
-    report.accounting.mutants.cataloged = 1;
-    report.accounting.mutants.executed = 1;
-    report.accounting.mutants.killed = 1;
-    report.accounting.mutants.observers.tests = 1;
-    report.targets.push(TargetRecord {
+    source.targets.push(TargetRecord {
         id: "demo/lib/demo".to_owned(),
         package: "demo".to_owned(),
         name: "demo".to_owned(),
@@ -67,7 +75,54 @@ fn report(run_id: &str, identity: &str) -> Report {
         duration_ms: 1,
         message: None,
     });
-    report
+    source.count_targets().expect("one exact target row");
+    source.mutants.push(njutest_cli::report::MutantRecord {
+        catalog_index: njutest_cli::report::CatalogIndex::new(0),
+        id: "c".repeat(64),
+        display_id: "c".repeat(20),
+        path: "src/lib.rs".to_owned(),
+        position: njutest_cli::report::Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
+        rule: "gt-to-ge".to_owned(),
+        item: "demo".to_owned(),
+        original: ">".to_owned(),
+        replacement: String::new(),
+        outcome: njutest_cli::report::Decided::Killed {
+            by: "demo/lib/demo".to_owned(),
+        },
+        accepted: false,
+        reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
+        blind_in: Vec::new(),
+        routing: None,
+    });
+    source.accounting.mutants = njutest_cli::report::MutantAccounting {
+        cataloged: 1,
+        executed: 1,
+        killed: 1,
+        observers: njutest_cli::report::ObserverAccounting {
+            tests: 1,
+            ..njutest_cli::report::ObserverAccounting::default()
+        },
+        ..njutest_cli::report::MutantAccounting::default()
+    };
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let final_run = rust_mutants::id::RunId::try_from(run_id).expect("a canonical run id");
+    let latticed = njutest_cli::report::across::configured(&final_run, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog cache fixture cannot be a shard");
+    };
+    latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion")
 }
 
 fn store(root: &std::path::Path) -> Store {
@@ -81,22 +136,25 @@ fn what_a_run_established_is_read_back_by_the_next_run_of_the_same_inputs() {
     let identity = "c".repeat(64);
     assert!(
         store
-            .get(&identity)
+            .get(&digest(&identity))
             .expect("a miss is not a failure")
             .is_none(),
         "nothing was stored yet"
     );
 
-    let written = store.put(&report("run-1", &identity)).expect("stored");
-    assert!(written.is_file());
+    store.put(&report("run-1", &identity)).expect("stored");
+    assert!(store.entry(&digest(&identity)).is_file());
     let read = store
-        .get(&identity)
+        .get(&digest(&identity))
         .expect("stored")
         .expect("what was stored is there");
-    assert_eq!(read.run_id, "run-1");
-    assert_eq!(read.verdict, Verdict::Assured);
+    assert_eq!(read.run_id(), "run-1");
+    assert_eq!(read.verdict(), Verdict::Assured);
     assert!(
-        store.get(&"d".repeat(64)).expect("a miss").is_none(),
+        store
+            .get(&digest(&"d".repeat(64)))
+            .expect("a miss")
+            .is_none(),
         "a different identity is a different question"
     );
 }
@@ -108,28 +166,26 @@ fn an_answer_that_is_not_the_answer_it_claims_to_be_is_never_quietly_used() {
     let identity = "c".repeat(64);
     store.put(&report("run-1", &identity)).expect("stored");
 
-    std::fs::write(store.entry(&identity), "{ not a report").expect("write");
+    std::fs::write(store.entry(&digest(&identity)), "{ not a report").expect("write");
     let error = store
-        .get(&identity)
+        .get(&digest(&identity))
         .expect_err("a document that does not parse");
     assert!(matches!(error, CacheError::Corrupt { .. }), "{error}");
     assert!(error.to_string().contains("NJ8004"), "{error}");
 
-    let mut misfiled = report("run-1", &"e".repeat(64));
-    misfiled.provenance.identity = "e".repeat(64);
+    let misfiled = report("run-1", &"e".repeat(64));
     let text = njutest_cli::report::json::render(&misfiled).expect("render");
-    std::fs::write(store.entry(&identity), text).expect("write");
+    std::fs::write(store.entry(&digest(&identity)), text).expect("write");
     let error = store
-        .get(&identity)
+        .get(&digest(&identity))
         .expect_err("an answer filed under the wrong question");
     assert!(error.to_string().contains(&identity), "{error}");
 
-    let mut unsound = report("run-1", &identity);
-    unsound.accounting.targets.selected = 9;
-    let text = njutest_cli::report::json::render(&unsound).expect("render");
-    std::fs::write(store.entry(&identity), text).expect("write");
+    let sound = njutest_cli::report::json::render(&report("run-1", &identity)).expect("render");
+    let unsound = sound.replace("\"selected\": 1", "\"selected\": 9");
+    std::fs::write(store.entry(&digest(&identity)), unsound).expect("write");
     let error = store
-        .get(&identity)
+        .get(&digest(&identity))
         .expect_err("an answer no reader could check");
     assert!(matches!(error, CacheError::Corrupt { .. }), "{error}");
 }
@@ -139,27 +195,29 @@ fn a_report_that_answers_for_no_inputs_or_was_itself_read_back_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = store(dir.path());
 
-    let mut nameless = report("run-1", "");
-    nameless.provenance.identity = String::new();
+    let nameless = report("run-1", njutest_cli::report::UNAVAILABLE);
     let error = store.put(&nameless).expect_err("no identity");
     assert!(matches!(error, CacheError::Refused { .. }), "{error}");
 
-    let mut copied = report("run-2", &"c".repeat(64));
-    copied.provenance.facts = njutest_cli::report::Established::ReadBackFrom("run-1".to_owned());
+    let copied = report("run-2", &"c".repeat(64))
+        .read_back_as(&rust_mutants::id::RunId::try_from("run-1").expect("a canonical run id"))
+        .expect("a report read back under a new run");
     let error = store.put(&copied).expect_err("already stored elsewhere");
     assert!(
         error.to_string().contains("read back"),
         "a chain of copies is not a chain of evidence: {error}"
     );
 
-    let mut unsound = report("run-3", &"c".repeat(64));
-    unsound.accounting.targets.selected = 9;
+    let unfiled = report("run-3", "not a digest any store could file under");
     let error = store
-        .put(&unsound)
-        .expect_err("not one a reader could check");
+        .put(&unfiled)
+        .expect_err("an answer keyed by no question is refused");
     assert!(matches!(error, CacheError::Refused { .. }), "{error}");
     assert!(
-        store.get(&"c".repeat(64)).expect("a miss").is_none(),
+        store
+            .get(&digest(&"c".repeat(64)))
+            .expect("a miss")
+            .is_none(),
         "nothing refused was written"
     );
 }
@@ -204,7 +262,7 @@ fn an_answer_older_than_the_time_to_live_is_not_an_answer_any_more() {
     let collected = store.collect(later).expect("collected");
     assert_eq!(collected.expired.len(), 1);
     assert!(collected.evicted.is_empty());
-    assert!(store.get(&identity).expect("a miss").is_none());
+    assert!(store.get(&digest(&identity)).expect("a miss").is_none());
 }
 
 #[test]
@@ -212,7 +270,8 @@ fn expiration_and_size_bounds_include_their_exact_edges() {
     let dir = tempfile::tempdir().expect("tempdir");
     let identity = "c".repeat(64);
     let ttl = Store::new(dir.path(), u64::MAX, Duration::from_secs(60));
-    let path = ttl.put(&report("run-1", &identity)).expect("stored");
+    ttl.put(&report("run-1", &identity)).expect("stored");
+    let path = ttl.entry(&digest(&identity));
     let modified = Timestamp::try_from(
         std::fs::metadata(&path)
             .expect("entry metadata")
@@ -281,7 +340,7 @@ fn zero_ttl_and_zero_size_bound_both_mean_unbounded() {
 fn two_runs_of_the_same_work_do_not_do_it_twice() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = store(dir.path());
-    let path = store.lease(&"c".repeat(64));
+    let path = store.lease(&digest(&"c".repeat(64)));
 
     let mut first = lock::try_claim(&path)
         .expect("a fresh claim")
@@ -308,12 +367,13 @@ fn two_runs_of_the_same_work_do_not_do_it_twice() {
 #[test]
 fn a_lease_releases_on_drop_and_explicit_release_is_idempotent() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = store(dir.path()).lease(&"c".repeat(64));
+    let path = store(dir.path()).lease(&digest(&"c".repeat(64)));
     {
-        let _lease = lock::try_claim(&path)
+        let lease = lock::try_claim(&path)
             .expect("a usable lock")
             .expect("a fresh claim");
         assert!(lock::try_claim(&path).expect("contended").is_none());
+        drop(lease);
     }
     let mut reclaimed = lock::try_claim(&path)
         .expect("a usable lock")
@@ -351,14 +411,14 @@ fn timeout_equality_is_expired_and_a_contended_claim_polls() {
     ));
 
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = store(dir.path()).lease(&"d".repeat(64));
+    let path = store(dir.path()).lease(&digest(&"d".repeat(64)));
     let held = lock::try_claim(&path)
         .expect("usable")
         .expect("fresh claim");
     let cancel = Cancel::new();
     let (started_waiting, release_owner) = std::sync::mpsc::sync_channel(0);
     std::thread::scope(|scope| {
-        scope.spawn(move || {
+        let release = ScopedThread::launch(scope, move || {
             release_owner
                 .recv()
                 .expect("the contender reached the wait");
@@ -373,13 +433,15 @@ fn timeout_equality_is_expired_and_a_contended_claim_polls() {
                 started_waiting.send(()).expect("tell the owner");
             }
         };
-        let _lease = lock::claim(&path, Duration::from_secs(2), &cancel, &mut waiting)
+        let lease = lock::claim(&path, Duration::from_secs(2), &cancel, &mut waiting)
             .expect("reclaimed after the owner left");
         assert!(announced, "contention is announced exactly once");
         assert!(
             started.elapsed() >= lock::POLL,
             "a contender waits for the polling interval instead of spinning"
         );
+        release.join().expect("the lease owner leaves");
+        drop(lease);
     });
 }
 
@@ -387,8 +449,8 @@ fn timeout_equality_is_expired_and_a_contended_claim_polls() {
 fn a_run_that_is_interrupted_while_waiting_stops_waiting() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = store(dir.path());
-    let path = store.lease(&"c".repeat(64));
-    let _held = lock::try_claim(&path)
+    let path = store.lease(&digest(&"c".repeat(64)));
+    let held = lock::try_claim(&path)
         .expect("a fresh claim")
         .expect("nobody has it");
 
@@ -397,6 +459,7 @@ fn a_run_that_is_interrupted_while_waiting_stops_waiting() {
     let error = lock::claim(&path, Duration::from_secs(30), &cancel, &mut || ())
         .expect_err("a cancelled wait is not a wait");
     assert!(matches!(error, LeaseError::Interrupted { .. }), "{error}");
+    drop(held);
 }
 
 #[test]
@@ -406,14 +469,14 @@ fn an_entry_that_is_not_there_is_no_answer_and_an_entry_that_cannot_be_read_is_a
     let identity = "a".repeat(64);
 
     assert!(
-        matches!(store.get(&identity), Ok(None)),
+        matches!(store.get(&digest(&identity)), Ok(None)),
         "no earlier run answered this question here, which is what an empty store is"
     );
 
-    let path = store.entry(&identity);
+    let path = store.entry(&digest(&identity));
     std::fs::create_dir_all(&path).expect("a directory where an entry goes");
     let error = store
-        .get(&identity)
+        .get(&digest(&identity))
         .expect_err("an entry that is not a file");
     assert!(
         matches!(&error, CacheError::Unusable { path: named, .. } if named == &path),
@@ -446,7 +509,7 @@ fn listing_failures_and_non_file_entries_fail_closed_for_every_store_operation()
 
     let malformed = tempfile::tempdir().expect("tempdir");
     let corrupt = store(malformed.path());
-    std::fs::create_dir_all(corrupt.entry(&"a".repeat(64)))
+    std::fs::create_dir_all(corrupt.entry(&digest(&"a".repeat(64))))
         .expect("a directory named like an entry");
     assert!(matches!(corrupt.status(), Err(CacheError::Corrupt { .. })));
     assert!(matches!(
@@ -460,7 +523,7 @@ fn listing_failures_and_non_file_entries_fail_closed_for_every_store_operation()
 }
 
 fn keepable() -> Report {
-    report("20260905T081500Z-abcdef", &"c".repeat(64))
+    report("20260905t081500z-abcdef", &"c".repeat(64))
 }
 
 #[test]
@@ -468,16 +531,13 @@ fn a_report_the_store_may_not_keep_says_which_of_the_three_reasons_it_is() {
     let dir = tempfile::tempdir().expect("tempdir");
     let kept = store(dir.path());
 
-    let mut nameless = keepable();
-    nameless.provenance.identity = njutest_cli::report::UNAVAILABLE.to_owned();
-    let mut copied = keepable();
-    copied.provenance.facts =
-        njutest_cli::report::Established::ReadBackFrom("20260905T081500Z-000000".to_owned());
-    let mut unsound = keepable();
-    unsound.accounting.targets.passed = 99;
-    if let Some(first) = unsound.targets.first_mut() {
-        first.status = TargetStatus::Failed;
-    }
+    let nameless = report("20260905t081500z-abcdef", njutest_cli::report::UNAVAILABLE);
+    let copied = keepable()
+        .read_back_as(
+            &rust_mutants::id::RunId::try_from("20260905t081500z-000000")
+                .expect("a canonical run id"),
+        )
+        .expect("a report read back under a new run");
 
     for (what, report, says) in [
         (
@@ -489,11 +549,6 @@ fn a_report_the_store_may_not_keep_says_which_of_the_three_reasons_it_is() {
             "a report that was itself read back",
             &copied,
             "already stored where it came from",
-        ),
-        (
-            "a report a reader could not check",
-            &unsound,
-            "accounts for",
         ),
     ] {
         let refused = kept.put(report).expect_err(what);
@@ -514,16 +569,17 @@ fn a_report_the_store_may_not_keep_says_which_of_the_three_reasons_it_is() {
 #[test]
 fn a_report_that_cannot_be_written_names_the_path_that_refused_it() {
     let report = keepable();
-    let identity = report.provenance.identity.clone();
+    let identity = report.provenance().identity.clone();
 
     let other = tempfile::tempdir().expect("tempdir");
     let elsewhere = store(&other.path().join("root"));
-    std::fs::create_dir_all(elsewhere.entry(&identity)).expect("a directory where the entry goes");
+    std::fs::create_dir_all(elsewhere.entry(&digest(&identity)))
+        .expect("a directory where the entry goes");
     let refused = elsewhere
         .put(&report)
         .expect_err("an entry that is a directory");
     assert!(
-        matches!(&refused, CacheError::Unusable { path, .. } if path == &elsewhere.entry(&identity)),
+        matches!(&refused, CacheError::Unusable { path, .. } if path == &elsewhere.entry(&digest(&identity))),
         "an answer is written beside its own name and moved into place, so one that was \
          written and could not be moved names where it was going: {refused}"
     );
@@ -534,11 +590,11 @@ fn what_one_machine_established_is_carried_to_another_and_answers_there() {
     let here = tempfile::tempdir().expect("tempdir");
     let there = tempfile::tempdir().expect("tempdir");
     let (one, two) = ("d".repeat(64), "e".repeat(64));
-    let _kept = store(here.path())
-        .put(&report("20260909T000000Z-aaaaaa", &one))
+    store(here.path())
+        .put(&report("20260909t000000z-aaaaaa", &one))
         .expect("the first answer");
-    let _kept = store(here.path())
-        .put(&report("20260909T000001Z-bbbbbb", &two))
+    store(here.path())
+        .put(&report("20260909t000001z-bbbbbb", &two))
         .expect("the second answer");
 
     let mut carried = Vec::new();
@@ -557,8 +613,9 @@ fn what_one_machine_established_is_carried_to_another_and_answers_there() {
         .map(|line| {
             njutest_cli::report::json::parse(line)
                 .expect("one report per line")
-                .provenance
+                .provenance()
                 .identity
+                .clone()
         })
         .collect();
     assert_eq!(
@@ -574,9 +631,9 @@ fn what_one_machine_established_is_carried_to_another_and_answers_there() {
     for identity in [&one, &two] {
         assert!(
             store(there.path())
-                .get(identity)
+                .get(&digest(identity))
                 .expect("the store answers")
-                .is_some_and(|report| &report.provenance.identity == identity),
+                .is_some_and(|report| &report.provenance().identity == identity),
             "and answers there for the inputs it answered for here, which is the whole \
              of what carrying it is for"
         );
@@ -624,10 +681,11 @@ fn an_answer_a_machine_cannot_vouch_for_is_not_carried_to_another_one() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = store(dir.path());
     let identity = "f".repeat(64);
-    let _kept = store
-        .put(&report("20260909T000000Z-aaaaaa", &identity))
+    store
+        .put(&report("20260909t000000z-aaaaaa", &identity))
         .expect("an answer");
-    std::fs::write(store.entry(&identity), "{ not a report }").expect("the entry, spoiled");
+    std::fs::write(store.entry(&digest(&identity)), "{ not a report }")
+        .expect("the entry, spoiled");
 
     let mut carried = Vec::new();
     let refused = store.export(&mut carried).expect_err("a refusal");
@@ -651,9 +709,13 @@ fn an_answer_a_machine_cannot_vouch_for_is_not_carried_to_another_one() {
 fn what_arrives_from_another_machine_is_held_to_what_a_run_of_this_one_would_be() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = store(dir.path());
-    let mut misfiled = report("20260909T000000Z-aaaaaa", &"1".repeat(64));
-    misfiled.accounting.targets.selected = 7;
-    let line = njutest_cli::report::json::line(&misfiled).expect("a report as one line");
+    let carried = report("20260909t000000z-aaaaaa", &"1".repeat(64))
+        .read_back_as(
+            &rust_mutants::id::RunId::try_from("20260909t000001z-bbbbbb")
+                .expect("a canonical run id"),
+        )
+        .expect("a report read back under a new run");
+    let line = njutest_cli::report::json::line(&carried).expect("a report as one line");
 
     let refused = store.import(&mut line.as_bytes()).expect_err("a refusal");
     assert!(
@@ -682,7 +744,7 @@ fn what_arrives_from_another_machine_is_held_to_what_a_run_of_this_one_would_be(
     );
 
     let spread =
-        njutest_cli::report::json::render(&report("20260909T000000Z-aaaaaa", &"2".repeat(64)))
+        njutest_cli::report::json::render(&report("20260909t000000z-aaaaaa", &"2".repeat(64)))
             .expect("a report a person can read");
     let refused = store.import(&mut spread.as_bytes()).expect_err("a refusal");
     assert!(

@@ -41,6 +41,16 @@ pub const CLEANUP_ATTEMPTS: usize = 5;
 /// The pause before the second removal attempt; it doubles for each attempt after that, so the ladder is 20, 40, 80, 160 ms and the whole loop costs at most a third of a second.
 pub const CLEANUP_BACKOFF: Duration = Duration::from_millis(20);
 
+/// The complete bounded retry schedule. Its array length is checked against
+/// [`CLEANUP_ATTEMPTS`] by the compiler.
+const CLEANUP_DELAYS: [Option<Duration>; CLEANUP_ATTEMPTS] = [
+    None,
+    Some(CLEANUP_BACKOFF),
+    Some(Duration::from_millis(40)),
+    Some(Duration::from_millis(80)),
+    Some(Duration::from_millis(160)),
+];
+
 /// How many fresh names [`create`] tries when the stable one is taken.
 const FALLBACK_ATTEMPTS: u32 = 64;
 
@@ -447,7 +457,7 @@ pub fn create(
         dest_parent: dir.parent().map(Path::to_path_buf).unwrap_or_default(),
         dir,
         manifest: Vec::new(),
-        workspace_digest: digest_of(&[], &passed_over),
+        workspace_digest: digest_of(&[], &passed_over)?,
         passed_over,
         stable_dir: stable,
         owner: Some(owner),
@@ -457,14 +467,14 @@ pub fn create(
         .and_then(|manifest| beside(&snapshot.dir, &options.beside).map(|()| manifest))
     {
         Ok(manifest) => {
-            snapshot.workspace_digest = digest_of(&manifest, &snapshot.passed_over);
+            snapshot.workspace_digest = digest_of(&manifest, &snapshot.passed_over)?;
             snapshot.manifest = manifest;
             Ok(snapshot)
         }
-        Err(cause) => {
-            drop(snapshot.cleanup());
-            Err(cause)
-        }
+        Err(cause) => match snapshot.cleanup() {
+            Ok(()) => Err(cause),
+            Err(cleanup) => Err(cleanup),
+        },
     }
 }
 
@@ -478,7 +488,8 @@ fn beside(dir: &Path, directories: &[PathBuf]) -> Result<(), SnapshotError> {
         walker.walk("")?;
         walker.rejection()?;
         let Walker { files, dirs, .. } = walker;
-        let _manifest = populate(&dir.join(name), &dirs, &files)?;
+        let copied_entries = populate(&dir.join(name), &dirs, &files)?;
+        drop(copied_entries);
     }
     Ok(())
 }
@@ -532,33 +543,49 @@ fn path_of(root: &Path, rel: &str) -> PathBuf {
 }
 
 /// Computes the frozen digest of a manifest.
-#[must_use]
-pub fn workspace_digest(entries: &[Entry]) -> String {
+///
+/// # Errors
+/// Returns an exact-encoding error if a digest field exceeds the recipe's
+/// 32-bit length prefix.
+pub fn workspace_digest(entries: &[Entry]) -> Result<String, SnapshotError> {
     digest_of(entries, &[])
 }
 
 /// The digest of a manifest and of what the walk passed over, so that two trees differing only in a link they hold are two trees.
-#[must_use]
-pub fn digest_of(entries: &[Entry], passed_over: &[PassedOver]) -> String {
+///
+/// # Errors
+/// Returns an exact-encoding error if a digest field exceeds the recipe's
+/// 32-bit length prefix.
+pub fn digest_of(entries: &[Entry], passed_over: &[PassedOver]) -> Result<String, SnapshotError> {
     let mut hasher = Sha256::new();
-    write_length_prefixed(&mut hasher, WORKSPACE_DOMAIN);
+    write_length_prefixed(&mut hasher, WORKSPACE_DOMAIN)?;
     for entry in entries {
-        write_length_prefixed(&mut hasher, &entry.rel_path);
-        write_length_prefixed(&mut hasher, &entry.sha256);
+        write_length_prefixed(&mut hasher, &entry.rel_path)?;
+        write_length_prefixed(&mut hasher, &entry.sha256)?;
     }
     for entry in passed_over {
-        write_length_prefixed(&mut hasher, &entry.rel_path);
-        write_length_prefixed(&mut hasher, entry.kind.name());
-        write_length_prefixed(&mut hasher, entry.target.as_deref().unwrap_or(""));
+        write_length_prefixed(&mut hasher, &entry.rel_path)?;
+        write_length_prefixed(&mut hasher, entry.kind.name())?;
+        write_length_prefixed(&mut hasher, entry.target.as_deref().unwrap_or(""))?;
     }
-    hex::encode(hasher.finalize())
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// Writes `enc(s)`: a 4-byte big-endian byte length, then the bytes.
-fn write_length_prefixed(hasher: &mut Sha256, s: &str) {
-    let length = u32::try_from(s.len()).unwrap_or(u32::MAX);
+fn write_length_prefixed(hasher: &mut Sha256, s: &str) -> Result<(), SnapshotError> {
+    let length = u32::try_from(s.len()).map_err(|_overflow| {
+        SnapshotError::new(
+            SnapshotErrorKind::Walk,
+            "workspace digest",
+            format!(
+                "a {bytes}-byte digest field exceeds the 32-bit recipe limit",
+                bytes = s.len()
+            ),
+        )
+    })?;
     hasher.update(length.to_be_bytes());
     hasher.update(s.as_bytes());
+    Ok(())
 }
 
 /// Builds the pattern list: what no snapshot of a git tree wants, then what the caller named.
@@ -567,7 +594,14 @@ fn write_length_prefixed(hasher: &mut Sha256, s: &str) {
 /// is. Where the caller writes its own output is the caller's to say, and an
 /// engine that guessed it excluded a directory of somebody else's source.
 fn exclusions(options: &Options) -> Result<Vec<Pattern>, SnapshotError> {
-    let mut patterns = Vec::with_capacity(options.exclude.len().saturating_add(3));
+    let capacity = options.exclude.len().checked_add(3).ok_or_else(|| {
+        SnapshotError::new(
+            SnapshotErrorKind::InvalidOptions,
+            "exclude",
+            "the exclusion count exceeds this platform's address space",
+        )
+    })?;
+    let mut patterns = Vec::with_capacity(capacity);
     let git = "**/.git";
     patterns.push(Pattern::compile(git).map_err(|error| {
         SnapshotError::new(
@@ -683,7 +717,9 @@ impl<'a> Walker<'a> {
     fn visit(&mut self, rel_dir: &str, name: &OsStr) -> Result<(), SnapshotError> {
         {
             let Some(utf8) = name.to_str() else {
-                let rel = join_rel(rel_dir, &name.to_string_lossy());
+                let rendered =
+                    crate::telling::LosslessBytes::new(name.as_encoded_bytes()).to_string();
+                let rel = join_rel(rel_dir, &rendered);
                 self.reject(
                     SnapshotErrorKind::UnsupportedName,
                     rel,
@@ -714,10 +750,27 @@ impl<'a> Walker<'a> {
             })?;
             let file_type = meta.file_type();
             if file_type.is_symlink() {
-                let target = fs::read_link(&abs)
-                    .ok()
-                    .map(|path| path.to_string_lossy().into_owned());
-                self.pass_over(NotARegularFile::Symlink, rel, target);
+                let target = fs::read_link(&abs).map_err(|source| {
+                    SnapshotError::new(
+                        SnapshotErrorKind::Walk,
+                        rel.clone(),
+                        "cannot read the symbolic-link target",
+                    )
+                    .with_source(source)
+                })?;
+                let target = target.to_str().ok_or_else(|| {
+                    SnapshotError::new(
+                        SnapshotErrorKind::UnsupportedName,
+                        rel.clone(),
+                        format!(
+                            "refuses a symbolic-link target that is not valid UTF-8: {}",
+                            crate::telling::LosslessBytes::new(
+                                target.as_os_str().as_encoded_bytes()
+                            )
+                        ),
+                    )
+                })?;
+                self.pass_over(NotARegularFile::Symlink, rel, Some(target.to_owned()));
             } else if platform::is_reparse_point(&meta) {
                 self.pass_over(NotARegularFile::ReparsePoint, rel, None);
             } else if file_type.is_dir() {
@@ -848,26 +901,32 @@ fn copy_file(src: &Path, dst: &Path, meta: &Metadata) -> io::Result<(u64, String
         if read == 0 {
             break;
         }
-        let chunk = buffer.get(..read).unwrap_or_default();
+        let chunk = buffer.get(..read).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a file read reported more bytes than its destination buffer",
+            )
+        })?;
         output.write_all(chunk)?;
         hasher.update(chunk);
-        size = size.saturating_add(to_u64(read));
+        size = size
+            .checked_add(to_u64(read)?)
+            .ok_or_else(|| io::Error::other("file size exceeds u64"))?;
     }
     platform::finalize_file_permissions(&output, meta)?;
     output.flush()?;
-    keep_times(&output, meta);
+    keep_times(&output, meta)?;
     Ok((size, hex::encode(hasher.finalize())))
 }
 
-/// Gives the copy the time the original was written, and says nothing when it cannot.
-fn keep_times(output: &File, meta: &Metadata) {
-    let Ok(modified) = meta.modified() else {
-        return;
-    };
+/// Gives the copy the exact access and modification times of the original.
+fn keep_times(output: &File, meta: &Metadata) -> io::Result<()> {
+    let modified = meta.modified()?;
+    let accessed = meta.accessed()?;
     let times = fs::FileTimes::new()
         .set_modified(modified)
-        .set_accessed(meta.accessed().unwrap_or(modified));
-    let _kept = output.set_times(times);
+        .set_accessed(accessed);
+    output.set_times(times)
 }
 
 /// The size and lowercase hex SHA-256 of a file already on disk: the read-only half of [`copy_file`], used by [`Snapshot::redigest`].
@@ -881,24 +940,37 @@ fn hash_file(path: &Path) -> io::Result<(u64, String)> {
         if read == 0 {
             break;
         }
-        hasher.update(buffer.get(..read).unwrap_or_default());
-        size = size.saturating_add(to_u64(read));
+        let chunk = buffer.get(..read).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a file read reported more bytes than its destination buffer",
+            )
+        })?;
+        hasher.update(chunk);
+        size = size
+            .checked_add(to_u64(read)?)
+            .ok_or_else(|| io::Error::other("file size exceeds u64"))?;
     }
     Ok((size, hex::encode(hasher.finalize())))
 }
 
-/// A byte count as the manifest carries it. Lossless on every supported target; the saturation is for the type system.
-fn to_u64(n: usize) -> u64 {
-    u64::try_from(n).unwrap_or(u64::MAX)
+/// A byte count as the manifest carries it.
+fn to_u64(n: usize) -> io::Result<u64> {
+    u64::try_from(n).map_err(|_overflow| io::Error::other("file size exceeds u64"))
 }
 
 /// The name of the snapshot directory of `abs_source_root`: [`DIR_PREFIX`] followed by the first [`STABLE_NAME_HEX_LENGTH`] lowercase hex characters of the SHA-256 of the path's bytes.
 #[must_use]
 pub fn stable_name(abs_source_root: &Path) -> String {
+    format!("{DIR_PREFIX}{}", stable_key(abs_source_root))
+}
+
+/// The digest component shared by the stable snapshot and build-cache names.
+#[must_use]
+pub(crate) fn stable_key(abs_source_root: &Path) -> String {
     let digest = Sha256::digest(abs_source_root.as_os_str().as_encoded_bytes());
     let hex = hex::encode(digest);
-    let prefix = hex.get(..STABLE_NAME_HEX_LENGTH).unwrap_or(&hex);
-    format!("{DIR_PREFIX}{prefix}")
+    hex.chars().take(STABLE_NAME_HEX_LENGTH).collect()
 }
 
 /// Creates the directory a snapshot of `abs_src` will own inside `parent`, and reports whether it got the stable name or a fresh one.
@@ -928,7 +1000,15 @@ fn destination(
             .with_source(source));
         }
     }
-    drop(tempowner::sweep(parent, &[name.as_str()], now));
+    let sweep_observation = tempowner::sweep(parent, &[name.as_str()], now).map_err(|source| {
+        SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            parent.display().to_string(),
+            "cannot inspect the snapshot destination for abandoned owners",
+        )
+        .with_source(source)
+    })?;
+    drop(sweep_observation);
     if fs::create_dir(&dir).is_ok() {
         return Ok((dir, true));
     }
@@ -975,8 +1055,15 @@ fn claim_destination(dir: &Path, now: Timestamp) -> Result<Owner, SnapshotError>
     match tempowner::claim(dir, now) {
         Ok(owner) => Ok(owner),
         Err(error) => {
-            if !matches!(error, ClaimError::Owned { .. }) {
-                drop(fs::remove_dir_all(dir));
+            if !matches!(error, ClaimError::Owned { .. })
+                && let Err(source) = fs::remove_dir_all(dir)
+            {
+                return Err(SnapshotError::new(
+                    SnapshotErrorKind::CleanupFailed,
+                    dir.display().to_string(),
+                    "cannot remove an unclaimed snapshot directory",
+                )
+                .with_source(source));
             }
             Err(SnapshotError::new(
                 SnapshotErrorKind::Destination,
@@ -1124,7 +1211,7 @@ impl Snapshot {
             });
         }
         manifest.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-        self.workspace_digest = digest_of(&manifest, &self.passed_over);
+        self.workspace_digest = digest_of(&manifest, &self.passed_over)?;
         self.manifest = manifest;
         Ok(absorbed)
     }
@@ -1192,13 +1279,10 @@ impl Snapshot {
             })?;
         }
         let mut last = None;
-        for attempt in 0..CLEANUP_ATTEMPTS {
-            if let Some(exponent) = attempt.checked_sub(1) {
+        for delay in CLEANUP_DELAYS {
+            if let Some(delay) = delay {
                 platform::clear_read_only(&self.dir);
-                let exponent = u32::try_from(exponent).unwrap_or(u32::MAX);
-                sleep(
-                    CLEANUP_BACKOFF.saturating_mul(1u32.checked_shl(exponent).unwrap_or(u32::MAX)),
-                );
+                sleep(delay);
             }
             match remove(&self.dir) {
                 Ok(()) => return Ok(()),
@@ -1219,11 +1303,16 @@ impl Snapshot {
 }
 
 impl Drop for Snapshot {
-    /// The deferred cleanup: best effort, errors dropped, nothing after a keep or an explicit cleanup.
+    /// The deferred cleanup: nothing after a keep or an explicit cleanup.
     fn drop(&mut self) {
         if self.state == State::Live {
             self.state = State::Released;
-            drop(self.remove(&|dir: &Path| fs::remove_dir_all(dir), &std::thread::sleep));
+            if let Err(cleanup_failure) =
+                self.remove(&|dir: &Path| fs::remove_dir_all(dir), &std::thread::sleep)
+            {
+                drop(cleanup_failure);
+                std::process::abort();
+            }
         }
     }
 }
@@ -1363,7 +1452,10 @@ mod platform {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return;
+            };
             let path = entry.path();
             let Ok(meta) = fs::symlink_metadata(&path) else {
                 continue;
@@ -1381,7 +1473,9 @@ mod platform {
                     reason = "Windows has no group or world bits to open; this only clears the attribute"
                 )]
                 permissions.set_readonly(false);
-                drop(fs::set_permissions(&path, permissions));
+                if let Err(best_effort_failure) = fs::set_permissions(&path, permissions) {
+                    drop(best_effort_failure);
+                }
             }
         }
     }
@@ -1391,11 +1485,18 @@ mod platform {
         if a.as_os_str().is_empty() || b.as_os_str().is_empty() {
             return false;
         }
-        let fold = |path: &Path| -> Vec<String> {
-            path.components()
-                .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
-                .collect()
-        };
-        fold(a) == fold(b)
+        let mut a = a.components();
+        let mut b = b.components();
+        loop {
+            match (a.next(), b.next()) {
+                (Some(left), Some(right))
+                    if left
+                        .as_os_str()
+                        .as_encoded_bytes()
+                        .eq_ignore_ascii_case(right.as_os_str().as_encoded_bytes()) => {}
+                (None, None) => return true,
+                (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) => return false,
+            }
+        }
     }
 }

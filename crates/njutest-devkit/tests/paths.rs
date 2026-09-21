@@ -3,7 +3,12 @@
 
 //! The paths every suite resolves through the devkit.
 
-use njutest_devkit::paths::{cargo_binary, fixtures_dir, workspace_root};
+include!("support/fail.rs");
+include!("support/metadata.rs");
+include!("support/ok.rs");
+include!("support/utf8.rs");
+
+use njutest_devkit::paths::{cargo_binary, fixtures_dir, owned_utf8, utf8, workspace_root};
 
 const ACTIVE: &str = "RUST_MUTANTS_ACTIVE";
 const CATALOG: &str = "RUST_MUTANTS_CATALOG";
@@ -30,7 +35,10 @@ fn add_synthetic_mutation_identity(command: &mut std::process::Command) {
 fn workspace_root_holds_the_workspace_manifest() {
     let root = workspace_root();
     assert!(root.is_absolute(), "{}", root.display());
-    let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("root Cargo.toml");
+    let manifest = test_ok(
+        std::fs::read_to_string(root.join("Cargo.toml")),
+        "root Cargo.toml",
+    );
     assert!(
         manifest.contains("[workspace]"),
         "not the workspace root: {}",
@@ -41,18 +49,32 @@ fn workspace_root_holds_the_workspace_manifest() {
 #[test]
 fn fixtures_dir_is_the_fixtures_directory_of_the_workspace() {
     assert_eq!(fixtures_dir(), workspace_root().join("fixtures"));
-    assert!(fixtures_dir().is_dir(), "{}", fixtures_dir().display());
+    assert!(
+        test_metadata(&fixtures_dir()).is_dir(),
+        "{}",
+        fixtures_dir().display()
+    );
+}
+
+#[test]
+fn textual_protocol_paths_keep_their_exact_utf8_spelling() {
+    let path = std::path::Path::new("fixture/λ.rs");
+    assert_eq!(utf8(path), "fixture/λ.rs");
+    assert_eq!(
+        owned_utf8(std::ffi::OsString::from("fixture-λ")),
+        "fixture-λ"
+    );
 }
 
 #[test]
 fn cargo_binary_is_the_cargo_that_built_the_tests() {
     let cargo = cargo_binary();
-    let output = std::process::Command::new(&cargo)
-        .arg("--version")
-        .output()
-        .expect("runs");
+    let output = test_ok(
+        std::process::Command::new(&cargo).arg("--version").output(),
+        "runs",
+    );
     assert!(output.status.success(), "{}", cargo.display());
-    assert!(String::from_utf8_lossy(&output.stdout).starts_with("cargo "));
+    assert!(test_utf8(&output.stdout, "cargo version").starts_with("cargo "));
 }
 
 #[test]
@@ -88,13 +110,13 @@ fn an_in_process_inner_run_receives_none_of_the_outer_measurement() {
             }));
             return;
         }
-        Ok(other) => panic!("unknown test stage {other}"),
+        Ok(other) => test_fail(format_args!("unknown test stage {other}")),
         Err(_) => {}
     }
 
-    let profiles = tempfile::tempdir().expect("a profile directory");
-    let mut command =
-        std::process::Command::new(std::env::current_exe().expect("this test binary"));
+    let profiles = test_ok(tempfile::tempdir(), "a profile directory");
+    let executable = test_ok(std::env::current_exe(), "this test binary");
+    let mut command = std::process::Command::new(executable);
     command
         .args([
             "--exact",
@@ -108,32 +130,35 @@ fn an_in_process_inner_run_receives_none_of_the_outer_measurement() {
         .env(COVERAGE_PRIVATE, "1")
         .env(RUSTC_WRAPPER, "outer-coverage-wrapper");
     add_synthetic_mutation_identity(&mut command);
-    let output = command.output().expect("the nested test runs");
+    let output = test_ok(command.output(), "the nested test runs");
     assert!(
         output.status.success(),
         "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        test_utf8(&output.stdout, "nested test stdout"),
+        test_utf8(&output.stderr, "nested test stderr")
     );
 
-    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
-        .args([
-            "--exact",
-            "an_in_process_inner_run_receives_none_of_the_outer_measurement",
-        ])
-        .current_dir(profiles.path())
-        .env(STAGE, "ordinary-wrapper")
-        .env_remove(COVERAGE)
-        .env_remove(COVERAGE_TARGET)
-        .env_remove(COVERAGE_PRIVATE)
-        .env(RUSTC_WRAPPER, "callers-own-rustc-wrapper")
-        .output()
-        .expect("the ordinary-wrapper test runs");
+    let executable = test_ok(std::env::current_exe(), "this test binary");
+    let output = test_ok(
+        std::process::Command::new(executable)
+            .args([
+                "--exact",
+                "an_in_process_inner_run_receives_none_of_the_outer_measurement",
+            ])
+            .current_dir(profiles.path())
+            .env(STAGE, "ordinary-wrapper")
+            .env_remove(COVERAGE)
+            .env_remove(COVERAGE_TARGET)
+            .env_remove(COVERAGE_PRIVATE)
+            .env(RUSTC_WRAPPER, "callers-own-rustc-wrapper")
+            .output(),
+        "the ordinary-wrapper test runs",
+    );
     assert!(
         output.status.success(),
         "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        test_utf8(&output.stdout, "ordinary wrapper stdout"),
+        test_utf8(&output.stderr, "ordinary wrapper stderr")
     );
 }
 
@@ -142,8 +167,8 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
     const STAGE: &str = "NJUTEST_DEVKIT_SUBPROCESS_STAGE";
     match std::env::var(STAGE).as_deref() {
         Ok("forward") => {
-            let mut command =
-                njutest_devkit::paths::command(&std::env::current_exe().expect("this test binary"));
+            let executable = test_ok(std::env::current_exe(), "this test binary");
+            let mut command = njutest_devkit::paths::command(&executable);
             command
                 .args([
                     "--exact",
@@ -161,12 +186,12 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
                     command.env_remove(expected);
                 }
             }
-            let output = command.output().expect("the subprocess runs");
+            let output = test_ok(command.output(), "the subprocess runs");
             assert!(
                 output.status.success(),
                 "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                test_utf8(&output.stdout, "subprocess stdout"),
+                test_utf8(&output.stderr, "subprocess stderr")
             );
             return;
         }
@@ -181,13 +206,13 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
             assert_eq!(std::env::var_os(PROFILE), None);
             return;
         }
-        Ok(other) => panic!("unknown test stage {other}"),
+        Ok(other) => test_fail(format_args!("unknown test stage {other}")),
         Err(_) => {}
     }
 
-    let profiles = tempfile::tempdir().expect("a profile directory");
-    let mut command =
-        std::process::Command::new(std::env::current_exe().expect("this test binary"));
+    let profiles = test_ok(tempfile::tempdir(), "a profile directory");
+    let executable = test_ok(std::env::current_exe(), "this test binary");
+    let mut command = std::process::Command::new(executable);
     command
         .args([
             "--exact",
@@ -197,12 +222,12 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
         .env(STAGE, "forward")
         .env(PROFILE, profiles.path().join("profiles-%p.profraw"));
     add_synthetic_mutation_identity(&mut command);
-    let output = command.output().expect("the forwarding test runs");
+    let output = test_ok(command.output(), "the forwarding test runs");
     assert!(
         output.status.success(),
         "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        test_utf8(&output.stdout, "forwarding test stdout"),
+        test_utf8(&output.stderr, "forwarding test stderr")
     );
 }
 

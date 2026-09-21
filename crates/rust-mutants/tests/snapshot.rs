@@ -39,6 +39,23 @@ fn write(root: &Path, rel: &str, bytes: &[u8]) -> PathBuf {
     path
 }
 
+/// Says whether a path exists without turning an inspection failure into absence.
+fn path_exists(path: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn path_is_directory(path: &Path) -> io::Result<bool> {
+    fs::metadata(path).map(|metadata| metadata.is_dir())
+}
+
+fn path_is_file(path: &Path) -> io::Result<bool> {
+    fs::metadata(path).map(|metadata| metadata.is_file())
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -102,7 +119,7 @@ fn the_constants_are_frozen() {
 #[test]
 fn the_workspace_digest_matches_the_independently_minted_vectors() {
     assert_eq!(
-        workspace_digest(&[]),
+        workspace_digest(&[]).expect("digest"),
         "13ff85f1943353b06f3d51ff611a31542f667b429529586787b2c517b93fe27f"
     );
     let main = Entry {
@@ -116,11 +133,11 @@ fn the_workspace_digest_matches_the_independently_minted_vectors() {
         sha256: "ae630b460f5f29f1d88c13c045b81c3920eb22c008fa1e9c46e6768993a2d92a".to_owned(),
     };
     assert_eq!(
-        workspace_digest(&[manifest.clone(), main.clone()]),
+        workspace_digest(&[manifest.clone(), main.clone()]).expect("digest"),
         "c4025b0efb8471560c6870f50e6a61da20c06037f117b27be81163230c2e56e5"
     );
     assert_eq!(
-        workspace_digest(&[main, manifest]),
+        workspace_digest(&[main, manifest]).expect("digest"),
         "75fa0f6b0c5e9ffe505a090ebe0dcafe10335946d62dde0daccbaf33e6d6ed5f"
     );
 }
@@ -132,7 +149,10 @@ fn the_workspace_digest_ignores_sizes_because_the_content_hash_already_pins_them
         size,
         sha256: sha256_hex(b"x"),
     };
-    assert_eq!(workspace_digest(&[entry(1)]), workspace_digest(&[entry(2)]));
+    assert_eq!(
+        workspace_digest(&[entry(1)]).expect("digest"),
+        workspace_digest(&[entry(2)]).expect("digest")
+    );
 }
 
 #[test]
@@ -161,12 +181,16 @@ fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
 
     assert_eq!(snap.source_root(), fx.source);
-    assert_eq!(snap.dir().parent().unwrap(), fx.dest);
+    assert_eq!(snap.dir().parent().expect("snapshot parent"), fx.dest);
     assert_eq!(snap.parent(), fx.dest);
     assert_eq!(snap.root(), snap.dir().join(TREE_NAME));
     assert!(snap.stable_dir());
     assert_eq!(
-        snap.dir().file_name().unwrap().to_str().unwrap(),
+        snap.dir()
+            .file_name()
+            .expect("snapshot name")
+            .to_str()
+            .expect("snapshot name is exact UTF-8"),
         stable_name(&fx.source)
     );
 
@@ -186,14 +210,17 @@ fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
     );
     assert_manifest_matches(&fx.source, &snap);
     assert!(
-        snap.root().join("empty/dir").is_dir(),
+        path_is_directory(&snap.root().join("empty/dir")).expect("inspect empty directory"),
         "empty directories are recreated"
     );
-    assert_eq!(snap.workspace_digest(), workspace_digest(snap.manifest()));
+    assert_eq!(
+        snap.workspace_digest(),
+        workspace_digest(snap.manifest()).expect("digest")
+    );
 
-    assert!(snap.dir().join(tempowner::LOCK_NAME).exists());
-    assert!(snap.dir().join(tempowner::MARKER_NAME).exists());
-    assert!(!snap.root().join(tempowner::MARKER_NAME).exists());
+    assert!(path_exists(&snap.dir().join(tempowner::LOCK_NAME)).expect("inspect lock"));
+    assert!(path_exists(&snap.dir().join(tempowner::MARKER_NAME)).expect("inspect marker"));
+    assert!(!path_exists(&snap.root().join(tempowner::MARKER_NAME)).expect("inspect tree marker"));
     let marker = read_marker(snap.dir()).expect("marker");
     assert_eq!(marker.pid, std::process::id());
     assert!(!marker.kept);
@@ -229,7 +256,7 @@ fn create_preserves_file_permissions_and_makes_directories_writable() {
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
     let mode = |rel: &str| {
         fs::metadata(snap.root().join(rel))
-            .unwrap()
+            .expect("copied metadata")
             .permissions()
             .mode()
             & 0o777
@@ -249,11 +276,14 @@ fn create_preserves_file_permissions_and_makes_directories_writable() {
 #[test]
 fn a_relative_or_missing_source_root_is_refused_before_anything_is_created() {
     let fx = fixture();
-    let missing = create(&fx.source.join("nope"), &options(&fx), now()).unwrap_err();
+    let missing = create(&fx.source.join("nope"), &options(&fx), now())
+        .expect_err("a missing source root is refused");
     assert_eq!(missing.kind(), SnapshotErrorKind::SourceRoot);
-    let file = create(&fx.source.join("Cargo.toml"), &options(&fx), now()).unwrap_err();
+    let file = create(&fx.source.join("Cargo.toml"), &options(&fx), now())
+        .expect_err("a source file is not a source root");
     assert_eq!(file.kind(), SnapshotErrorKind::SourceRoot);
-    let relative = create(Path::new("relative/root"), &options(&fx), now()).unwrap_err();
+    let relative = create(Path::new("relative/root"), &options(&fx), now())
+        .expect_err("a relative source root is refused");
     assert_eq!(relative.kind(), SnapshotErrorKind::SourceRoot);
     assert!(relative.to_string().contains("RM1002"), "{relative}");
     assert!(snapshot_dirs(&fx.dest).is_empty(), "nothing was created");
@@ -284,10 +314,10 @@ fn git_and_the_directory_the_caller_names_are_excluded_and_patterns_skip_whole_d
         .collect();
     assert_eq!(rel, ["Cargo.toml", "src/main.rs"]);
     assert!(
-        !snap.root().join("target").exists(),
+        !path_exists(&snap.root().join("target")).expect("inspect excluded target"),
         "an excluded directory is not descended"
     );
-    assert!(!snap.root().join("out/custom").exists());
+    assert!(!path_exists(&snap.root().join("out/custom")).expect("inspect excluded report"));
 }
 
 #[test]
@@ -320,7 +350,7 @@ fn the_directory_cargo_builds_into_is_skipped_whether_or_not_anybody_tagged_it()
          gigabytes another cargo may be rewriting underneath it"
     );
     assert!(
-        !snap.root().join("target").exists(),
+        !path_exists(&snap.root().join("target")).expect("inspect build directory"),
         "the directory is not descended: `CACHEDIR.TAG` is a hint a cooperating tool \
          leaves when it creates the directory, and a directory somebody else created \
          first never gets one"
@@ -344,7 +374,7 @@ fn a_configured_report_directory_that_escapes_the_root_is_an_invalid_option() {
     for bad in ["../elsewhere", "/abs/reports", ""] {
         let mut opts = options(&fx);
         opts.report_dir = Some(bad.to_owned());
-        let error = create(&fx.source, &opts, now()).unwrap_err();
+        let error = create(&fx.source, &opts, now()).expect_err("an escaping report directory");
         assert_eq!(error.kind(), SnapshotErrorKind::InvalidOptions, "{bad:?}");
         assert_eq!(error.path(), bad);
     }
@@ -375,7 +405,7 @@ fn symbolic_links_are_recorded_and_not_followed() {
          refuses to measure a project the compiler is perfectly happy with"
     );
     assert!(
-        !snapshot.root().join("src/zz-link.rs").exists(),
+        !path_exists(&snapshot.root().join("src/zz-link.rs")).expect("inspect skipped link"),
         "and it is not copied"
     );
 
@@ -426,7 +456,7 @@ fn irregular_files_are_recorded_and_not_copied() {
 fn a_name_with_a_backslash_is_refused_because_it_cannot_round_trip_through_a_relative_path() {
     let fx = fixture();
     write(&fx.source, "src/a\\b.rs", b"//\n");
-    let error = create(&fx.source, &options(&fx), now()).unwrap_err();
+    let error = create(&fx.source, &options(&fx), now()).expect_err("a backslash name is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::UnsupportedName);
     assert_eq!(error.path(), "src/a\\b.rs");
 }
@@ -442,7 +472,8 @@ fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() 
     let fx = fixture();
     let secret = write(&fx.source, "src/secret.rs", b"//\n");
     fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).expect("chmod");
-    let error = create(&fx.source, &options(&fx), now()).unwrap_err();
+    let error =
+        create(&fx.source, &options(&fx), now()).expect_err("an unreadable file is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Copy);
     assert_eq!(error.path(), "src/secret.rs");
     assert!(error.source().is_some(), "the OS error is kept");
@@ -463,9 +494,9 @@ fn a_second_live_snapshot_of_the_same_root_falls_back_to_a_random_name() {
     let name = second
         .dir()
         .file_name()
-        .unwrap()
+        .expect("random snapshot name")
         .to_str()
-        .unwrap()
+        .expect("random snapshot name is exact UTF-8")
         .to_owned();
     assert!(name.starts_with(DIR_PREFIX), "{name}");
     assert_eq!(second.workspace_digest(), first.workspace_digest());
@@ -495,10 +526,10 @@ fn an_abandoned_stable_directory_is_swept_and_the_name_reused_never_adopted() {
     assert!(snap.stable_dir());
     assert_eq!(snap.dir(), dir);
     assert!(
-        !snap.root().join("src/leftover.rs").exists(),
+        !path_exists(&snap.root().join("src/leftover.rs")).expect("inspect swept leftover"),
         "the leftover tree was swept"
     );
-    assert!(snap.root().join("src/main.rs").exists());
+    assert!(path_exists(&snap.root().join("src/main.rs")).expect("inspect fresh source"));
 }
 
 #[test]
@@ -509,7 +540,7 @@ fn a_kept_stable_directory_is_not_reused() {
     let kept_dir = first.dir().to_path_buf();
     drop(first);
     assert!(
-        kept_dir.join(TREE_NAME).join("src/main.rs").exists(),
+        path_exists(&kept_dir.join(TREE_NAME).join("src/main.rs")).expect("inspect kept source"),
         "kept means kept"
     );
 
@@ -517,7 +548,7 @@ fn a_kept_stable_directory_is_not_reused() {
     assert!(!second.stable_dir());
     assert_ne!(second.dir(), kept_dir);
     assert!(
-        kept_dir.join(TREE_NAME).join("src/main.rs").exists(),
+        path_exists(&kept_dir.join(TREE_NAME).join("src/main.rs")).expect("inspect kept source"),
         "still kept"
     );
 }
@@ -530,7 +561,7 @@ fn a_young_unowned_stable_directory_is_spared_and_the_name_not_taken() {
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
     assert!(!snap.stable_dir());
     assert!(
-        dir.exists(),
+        path_exists(&dir).expect("inspect legacy snapshot"),
         "a run in progress under an older binary is left alone"
     );
 }
@@ -565,19 +596,30 @@ fn redigest_reports_added_removed_and_changed_paths_sorted_and_is_empty_for_a_cl
             ("added", "testdata/golden.txt".to_owned()),
         ]
     );
+    assert!(
+        matches!(&drifts[2], Drift::Changed { .. }),
+        "{:?}",
+        drifts[2]
+    );
     let Drift::Changed { want, got, .. } = &drifts[2] else {
-        panic!("expected Changed, got {:?}", drifts[2]);
+        return;
     };
     assert_eq!(want.size, 13);
     assert_eq!(want.sha256, sha256_hex(b"fn main() {}\n"));
     assert_eq!(got.size, 24);
     assert_eq!(got.sha256, sha256_hex(b"fn main() { mutated() }\n"));
+    assert!(
+        matches!(&drifts[1], Drift::Removed { .. }),
+        "{:?}",
+        drifts[1]
+    );
     let Drift::Removed { want, .. } = &drifts[1] else {
-        panic!("expected Removed, got {:?}", drifts[1]);
+        return;
     };
     assert_eq!(want.sha256, sha256_hex(b"pub fn f() {}\n"));
+    assert!(matches!(&drifts[0], Drift::Added { .. }), "{:?}", drifts[0]);
     let Drift::Added { got, .. } = &drifts[0] else {
-        panic!("expected Added, got {:?}", drifts[0]);
+        return;
     };
     assert_eq!(got.size, 7);
 }
@@ -599,7 +641,7 @@ fn redigest_refuses_a_link_that_grew_inside_the_snapshot() {
     let fx = fixture();
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
     std::os::unix::fs::symlink("/etc", snap.root().join("src/etc")).expect("symlink");
-    let error = snap.redigest().unwrap_err();
+    let error = snap.redigest().expect_err("a new link is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Symlink);
     assert_eq!(error.path(), "src/etc");
 }
@@ -609,7 +651,7 @@ fn redigest_of_a_removed_tree_names_the_absolute_root() {
     let fx = fixture();
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
     fs::remove_dir_all(snap.root()).expect("remove tree");
-    let error = snap.redigest().unwrap_err();
+    let error = snap.redigest().expect_err("a removed tree is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Walk);
     assert_eq!(Path::new(error.path()), snap.root());
 }
@@ -620,7 +662,7 @@ fn cleanup_removes_the_whole_directory_and_releases_the_lock_first() {
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
     let dir = snap.dir().to_path_buf();
     snap.cleanup().expect("cleanup");
-    assert!(!dir.exists());
+    assert!(!path_exists(&dir).expect("inspect cleaned snapshot"));
     assert!(snapshot_dirs(&fx.dest).is_empty());
 }
 
@@ -631,7 +673,10 @@ fn dropping_an_unkept_snapshot_removes_it_best_effort() {
         let snap = create(&fx.source, &options(&fx), now()).expect("create");
         snap.dir().to_path_buf()
     };
-    assert!(!dir.exists(), "Drop is the deferred cleanup");
+    assert!(
+        !path_exists(&dir).expect("inspect dropped snapshot"),
+        "Drop is the deferred cleanup"
+    );
 }
 
 #[test]
@@ -643,7 +688,7 @@ fn keep_records_the_decision_in_the_marker_and_cleanup_becomes_a_no_op() {
     let dir = snap.dir().to_path_buf();
     assert!(read_marker(&dir).expect("marker").kept);
     snap.cleanup().expect("cleanup is a no-op after keep");
-    assert!(dir.join(TREE_NAME).join("Cargo.toml").exists());
+    assert!(path_exists(&dir.join(TREE_NAME).join("Cargo.toml")).expect("inspect kept manifest"));
     let swept = tempowner::sweep(&fx.dest, &[DIR_PREFIX], now()).expect("sweep");
     assert_eq!(swept.kept, 1);
     assert!(swept.removed.is_empty());
@@ -662,7 +707,9 @@ fn cleanup_retries_with_a_doubling_backoff_and_reports_a_directory_that_survives
         Err(io::Error::other("still mapped"))
     };
     let sleep = |d: Duration| sleeps.borrow_mut().push(d);
-    let error = snap.cleanup_with(&remove, &sleep).unwrap_err();
+    let error = snap
+        .cleanup_with(&remove, &sleep)
+        .expect_err("a surviving directory is reported");
     assert_eq!(error.kind(), SnapshotErrorKind::CleanupFailed);
     assert_eq!(*attempts.borrow(), CLEANUP_ATTEMPTS);
     assert_eq!(
@@ -670,7 +717,10 @@ fn cleanup_retries_with_a_doubling_backoff_and_reports_a_directory_that_survives
         [20, 40, 80, 160].map(Duration::from_millis)
     );
     assert!(error.to_string().contains("RM1011"), "{error}");
-    assert!(dir.exists(), "the seam removed nothing");
+    assert!(
+        path_exists(&dir).expect("inspect surviving snapshot"),
+        "the seam removed nothing"
+    );
     fs::remove_dir_all(&dir).expect("tidy");
 }
 
@@ -684,8 +734,10 @@ fn a_directory_that_is_already_gone_is_a_directory_that_was_removed() {
         *attempts.borrow_mut() += 1;
         Err(io::Error::from(io::ErrorKind::NotFound))
     };
-    snap.cleanup_with(&remove, &|_| panic!("nothing to wait for"))
+    let slept = std::cell::Cell::new(false);
+    snap.cleanup_with(&remove, &|_| slept.set(true))
         .expect("a directory nobody can find is a directory nobody has to remove");
+    assert!(!slept.get(), "an absent directory requires no retry delay");
     assert_eq!(
         *attempts.borrow(),
         1,
@@ -714,7 +766,7 @@ fn cleanup_succeeds_on_a_later_attempt_without_reporting_the_earlier_ones() {
         .expect("third time lucky");
     assert_eq!(*attempts.borrow(), 3);
     assert_eq!(*sleeps.borrow(), 2);
-    assert!(!dir.exists());
+    assert!(!path_exists(&dir).expect("inspect cleaned snapshot"));
 }
 
 /// A path that is absolute on the machine the test runs on, from a slash-separated tail.
@@ -749,7 +801,7 @@ fn the_cleanup_guard_refuses_anything_that_does_not_look_like_a_snapshot_directo
         ),
     ];
     for (name, dir, expected_word) in cases {
-        let error = cleanup_guard(&dir, parent).unwrap_err();
+        let error = cleanup_guard(&dir, parent).expect_err("an unsafe cleanup path is refused");
         assert_eq!(error.kind(), SnapshotErrorKind::CleanupRefused, "{name}");
         assert!(error.to_string().contains("RM1010"), "{name}: {error}");
         assert!(
@@ -761,10 +813,12 @@ fn the_cleanup_guard_refuses_anything_that_does_not_look_like_a_snapshot_directo
 
 mod properties {
     use std::collections::BTreeMap;
+    use std::fs;
 
     use proptest::prelude::*;
+    use rust_mutants::snapshot::{Entry, Options, create, workspace_digest};
 
-    use super::*;
+    use super::{now, sha256_hex, write};
 
     fn tree() -> impl Strategy<Value = BTreeMap<String, Vec<u8>>> {
         let component = (0u8..3).prop_map(|n| format!("d{n}"));
@@ -801,7 +855,10 @@ mod properties {
                 .collect();
             prop_assert_eq!(snap.manifest(), expected.as_slice());
             prop_assert!(snap.redigest().expect("redigest").is_empty());
-            prop_assert_eq!(snap.workspace_digest(), workspace_digest(&expected));
+            prop_assert_eq!(
+                snap.workspace_digest(),
+                workspace_digest(&expected).expect("digest")
+            );
         }
     }
 }
@@ -861,9 +918,9 @@ fn a_directory_tagged_as_a_cache_is_not_copied() {
     let snapshot =
         create(source.path(), &Options::new(dest.path()), Timestamp::now()).expect("the snapshot");
 
-    assert!(snapshot.root().join("Cargo.toml").is_file());
+    assert!(path_is_file(&snapshot.root().join("Cargo.toml")).expect("inspect copied manifest"));
     assert!(
-        !snapshot.root().join("target").exists(),
+        !path_exists(&snapshot.root().join("target")).expect("inspect skipped cache"),
         "copying somebody else's build cache would be gigabytes and a race with the \
          cargo that is writing it"
     );
@@ -887,7 +944,7 @@ fn a_directory_with_a_file_of_that_name_that_is_not_the_tag_is_copied() {
     let snapshot =
         create(source.path(), &Options::new(dest.path()), Timestamp::now()).expect("the snapshot");
     assert!(
-        snapshot.root().join("data/CACHEDIR.TAG").is_file(),
+        path_is_file(&snapshot.root().join("data/CACHEDIR.TAG")).expect("inspect ordinary tag"),
         "the signature is what tags a cache, not the name"
     );
 }

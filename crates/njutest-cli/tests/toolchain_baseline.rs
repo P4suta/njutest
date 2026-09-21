@@ -13,7 +13,7 @@ use njutest_cli::assure::baseline::{
     Baseline, Measured, RAN_NOTHING, Reporting, observe, refused, status_of,
 };
 use njutest_cli::report::TargetStatus;
-use njutest_cli::trace::{Clock, MemorySink, Payload, Recorder, Sink, StartRecord};
+use njutest_cli::trace::{Clock, MemorySink, Recorder, Sink, StartRecord};
 use njutest_cli::watch::Watch;
 use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
@@ -52,6 +52,7 @@ fn measure(fixture: &Fixture) -> Baseline {
             watch: Watch::new(&cancel, &trace),
         },
     )
+    .expect("the fixture baseline is read")
 }
 
 fn named<'a>(baseline: &'a Baseline, name: &str) -> &'a Measured {
@@ -243,11 +244,11 @@ fn a_target_that_did_not_pass_says_what_a_reader_acts_on() {
             Some("the target failed"),
         ),
         (
-            Outcome::Runaway,
+            Outcome::StepLimitReached,
             0,
             "",
             TargetStatus::Failed,
-            Some("the target took its guard past the run's allowance"),
+            Some("the target reached the run's guard-take allowance"),
         ),
         (
             Outcome::Waited,
@@ -295,11 +296,12 @@ fn a_target_that_did_not_pass_says_what_a_reader_acts_on() {
 fn a_target_that_failed_quotes_the_test_that_failed_and_not_the_build_log() {
     use rust_mutants::outcome::Outcome;
 
-    let (_was, said) = status_of(
+    let (was, said) = status_of(
         Outcome::Killed,
         0,
         "   Compiling fixture v0.1.0\ntest adds ... ok\nerror: unrelated\ntest doubling ... FAILED\n",
     );
+    assert_eq!(was, TargetStatus::Failed, "the target failed");
     assert_eq!(
         said.as_deref(),
         Some("test doubling ... FAILED"),
@@ -366,16 +368,16 @@ fn reading_the_baseline_is_a_phase_that_says_where_it_is() {
             notes: &mut njutest_cli::ui::Notes::Silent,
             watch: Watch::new(&cancel, &trace),
         },
-    );
+    )
+    .expect("the fixture baseline is read");
 
     let events = trace.events();
     let phases: Vec<&str> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            Payload::PhaseStart { phase } | Payload::PhaseEnd { phase } => {
-                Some(phase.name.as_str())
-            }
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .phase()
+                .map(|phase| phase.name.as_str())
         })
         .collect();
     assert_eq!(
@@ -387,11 +389,10 @@ fn reading_the_baseline_is_a_phase_that_says_where_it_is() {
 
     let progress: Vec<(String, Option<u64>, Option<u64>)> = events
         .iter()
-        .filter_map(|event| match &event.payload {
-            Payload::Progress { progress } => {
-                Some((progress.message.clone(), progress.done, progress.total))
-            }
-            _ => None,
+        .filter_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .progress()
+                .map(|progress| (progress.message.clone(), progress.done, progress.total))
         })
         .collect();
     assert_eq!(
@@ -435,9 +436,10 @@ fn every_target_the_baseline_reads_is_one_a_person_watching_is_told_about() {
             notes: &mut njutest_cli::ui::Notes::Plain(&mut said),
             watch: Watch::new(&cancel, &trace),
         },
-    );
+    )
+    .expect("the fixture baseline is read");
 
-    let told = String::from_utf8_lossy(&said).into_owned();
+    let told = njutest_devkit::process::strict_utf8(&said).into_owned();
     let total = baseline.targets.len();
     for (at, measured) in baseline.targets.iter().enumerate() {
         let step = at.saturating_add(1);

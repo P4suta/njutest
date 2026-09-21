@@ -4,36 +4,29 @@
 //! What a run would cost, counted in work first and guessed at in time last.
 
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 
-use rust_mutants::count::{Count, Mutants, Pairs, Targets, Tests};
+use rust_mutants::count::{Count, Mutants, Pairs, Targets, Tests, Unit};
 use rust_mutants::run;
 use rust_mutants::session::{self, Route, Session};
 
 /// What a run would cost, from what preparing established and before a mutant is executed.
-#[must_use]
-pub fn estimate(session: &Session, filter: &run::Filter) -> String {
-    let targets = u64::try_from(session.targets().len()).unwrap_or(u64::MAX);
-    let held: u64 = session
-        .targets()
-        .iter()
-        .map(|target| u64::from(session.tests_of(&target.id)))
-        .sum();
+///
+/// # Errors
+/// Returns the first count or duration that cannot be represented exactly.
+pub fn estimate(session: &Session, filter: &run::Filter) -> Result<String, crate::error::CliError> {
+    let targets = count(session.targets().len(), "the dry-run target count")?;
+    let held = held_tests(session)?;
     let mut counted = Estimated::default();
     let mut text = String::new();
-    let rejected: BTreeSet<u32> = session
-        .rejections()
-        .iter()
-        .map(|rejection| rejection.index)
-        .collect();
+    let rejected = rejected(session);
     for mutant in session.catalog().mutants() {
         if rejected.contains(&mutant.index) {
             continue;
         }
-        counted.cataloged = counted.cataloged.and(Count::new(1));
-        counted.tests_whole = counted.tests_whole.and(Count::new(held));
+        add(&mut counted.cataloged, 1, "the cataloged-mutant count")?;
+        add(&mut counted.tests_whole, held, "the all-tests work count")?;
         if !session.was_validated(mutant.index) {
-            counted.unselected = counted.unselected.and(Count::new(1));
+            add(&mut counted.unselected, 1, "the unselected-mutant count")?;
             continue;
         }
         debug_assert!(
@@ -43,44 +36,129 @@ pub fn estimate(session: &Session, filter: &run::Filter) -> String {
         let at = session.position(mutant);
         let line = at.map_or(0, |one| one.line);
         if !filter.is_empty() && !filter.selects(mutant, line) {
-            counted.unselected = counted.unselected.and(Count::new(1));
+            add(&mut counted.unselected, 1, "the unselected-mutant count")?;
             continue;
         }
         let route = session.route(mutant);
-        let reaching = u64::try_from(route.reaching().len()).unwrap_or(u64::MAX);
-        let discharged = u64::try_from(route.discharged().len()).unwrap_or(u64::MAX);
-        counted.discharged = counted.discharged.and(Count::new(discharged));
-        counted.unreached = counted.unreached.and(Count::new(
-            targets.saturating_sub(reaching).saturating_sub(discharged),
-        ));
+        let reaching = count(route.reaching().len(), "a route's reaching-target count")?;
+        let discharged = count(
+            route.discharged().len(),
+            "a route's discharged-target count",
+        )?;
+        add(
+            &mut counted.discharged,
+            discharged,
+            "the discharged-pair count",
+        )?;
+        let not_reaching =
+            targets
+                .checked_sub(reaching)
+                .ok_or(crate::error::CliError::ProjectionOverflow {
+                    projection: "dry-run",
+                    field: "a route with more reaching targets than the session",
+                })?;
+        let unreached = not_reaching.checked_sub(discharged).ok_or(
+            crate::error::CliError::ProjectionOverflow {
+                projection: "dry-run",
+                field: "a route with more accounted targets than the session",
+            },
+        )?;
+        add(
+            &mut counted.unreached,
+            unreached,
+            "the unreached-pair count",
+        )?;
         if reaching == 0 {
-            counted.nothing_to_ask = counted.nothing_to_ask.and(Count::new(1));
+            add(
+                &mut counted.nothing_to_ask,
+                1,
+                "the nothing-to-ask mutant count",
+            )?;
         } else {
-            counted.selected = counted.selected.and(Count::new(1));
-            counted.pairs = counted.pairs.and(Count::new(reaching));
-            counted.duration = counted.duration.saturating_add(priced(session, &route));
-            counted.tests = counted.tests.and(Count::new(
-                u64::try_from(
-                    route.started(|target| usize::try_from(session.tests_of(target)).unwrap_or(1)),
-                )
-                .unwrap_or(u64::MAX),
-            ));
+            add(&mut counted.selected, 1, "the selected-mutant count")?;
+            add(&mut counted.pairs, reaching, "the selected-pair count")?;
+            counted.duration = counted
+                .duration
+                .checked_add(priced(session, &route)?)
+                .ok_or(crate::error::CliError::ProjectionOverflow {
+                    projection: "dry-run",
+                    field: "the projected execution duration",
+                })?;
+            add_count(
+                &mut counted.tests,
+                route.started(|target| session.tests_of(target))?,
+                "the selected-test count",
+            )?;
         }
-        let written = writeln!(
-            text,
-            "#{:<5} {}  {:<22} {}:{}  {}  {} targets",
-            mutant.index,
-            mutant.display_id,
-            mutant.candidate.rule.name,
-            mutant.candidate.path,
-            line,
-            route.granularity().name(),
-            reaching
-        );
-        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        text.push_str(&route_line(mutant, line, &route, reaching));
     }
-    text.push_str(&counted.said(Count::new(targets)));
-    text
+    text.push_str(&counted.said(Count::new(targets))?);
+    Ok(text)
+}
+
+fn route_line(
+    mutant: &rust_mutants::catalog::Mutant,
+    line: u32,
+    route: &Route,
+    reaching: u64,
+) -> String {
+    format!(
+        "#{:<5} {}  {:<22} {}:{}  {}  {} targets\n",
+        mutant.index,
+        mutant.display_id,
+        mutant.candidate.rule.name,
+        mutant.candidate.path,
+        line,
+        route.granularity().name(),
+        reaching
+    )
+}
+
+fn rejected(session: &Session) -> BTreeSet<u32> {
+    session
+        .rejections()
+        .iter()
+        .map(|rejection| rejection.index)
+        .collect()
+}
+
+fn held_tests(session: &Session) -> Result<u64, crate::error::CliError> {
+    session.targets().iter().try_fold(0u64, |total, target| {
+        total
+            .checked_add(u64::from(session.tests_of(&target.id)))
+            .ok_or(crate::error::CliError::ProjectionOverflow {
+                projection: "dry-run",
+                field: "the total tests in all targets",
+            })
+    })
+}
+
+fn count(value: usize, field: &'static str) -> Result<u64, crate::error::CliError> {
+    u64::try_from(value).map_err(|_overflow| overflow(field))
+}
+
+fn add<U: Unit>(
+    slot: &mut Count<U>,
+    value: u64,
+    field: &'static str,
+) -> Result<(), crate::error::CliError> {
+    add_count(slot, Count::new(value), field)
+}
+
+fn add_count<U: Unit>(
+    slot: &mut Count<U>,
+    value: Count<U>,
+    field: &'static str,
+) -> Result<(), crate::error::CliError> {
+    *slot = slot.checked_add(value).ok_or_else(|| overflow(field))?;
+    Ok(())
+}
+
+const fn overflow(field: &'static str) -> crate::error::CliError {
+    crate::error::CliError::ProjectionOverflow {
+        projection: "dry-run",
+        field,
+    }
 }
 
 /// What a dry run counted, in pairs of one mutant and one target.
@@ -110,22 +188,38 @@ pub struct Estimated {
 
 impl Estimated {
     /// The estimate, counted in work first and guessed at in time last.
-    #[must_use]
-    pub fn said(&self, targets: Count<Targets>) -> String {
-        let whole = self.cataloged.against(targets);
-        let removed = whole.less(self.pairs);
-        let share = removed.share_of(whole).unwrap_or_default() * 100.0;
-        let tests_share = self
+    ///
+    /// # Errors
+    /// Returns when an arithmetic invariant or the rounded duration cannot be represented exactly.
+    pub fn said(&self, targets: Count<Targets>) -> Result<String, crate::error::CliError> {
+        let whole = self
+            .cataloged
+            .checked_against(targets)
+            .ok_or_else(|| overflow("the all-mutants pair count"))?;
+        let removed = whole
+            .checked_sub(self.pairs)
+            .ok_or_else(|| overflow("more selected pairs than all possible pairs"))?;
+        let share = match removed.share_of(whole) {
+            Some(share) => share * 100.0,
+            None => 0.0,
+        };
+        let tests_removed = self
             .tests_whole
-            .less(self.tests)
-            .share_of(self.tests_whole)
-            .unwrap_or_default()
-            * 100.0;
+            .checked_sub(self.tests)
+            .ok_or_else(|| overflow("more selected tests than all possible tests"))?;
+        let tests_share = match tests_removed.share_of(self.tests_whole) {
+            Some(share) => share * 100.0,
+            None => 0.0,
+        };
         let seconds = self
             .duration
             .as_secs()
-            .saturating_add(u64::from(self.duration.subsec_nanos() > 0));
-        format!(
+            .checked_add(u64::from(self.duration.subsec_nanos() > 0))
+            .ok_or(crate::error::CliError::ProjectionOverflow {
+                projection: "dry-run",
+                field: "the rounded projected duration",
+            })?;
+        Ok(format!(
             "\nWOULD START  {} of {} ({} against {}); {share:.1}% removed\n\
              WHICH RUN    {} of {}; {tests_share:.1}% removed\n\
              REMOVED BY   unreached={} discharged={} of the {} the route removed\n\
@@ -151,12 +245,15 @@ impl Estimated {
             seconds / 3600,
             seconds % 3600 / 60,
             seconds % 60,
-        )
+        ))
     }
 }
 
 /// What one route would take on this machine, priced from what this session timed.
-fn priced(session: &Session, route: &Route) -> std::time::Duration {
+fn priced(
+    session: &Session,
+    route: &Route,
+) -> Result<std::time::Duration, session::RouteAccountingError> {
     route.costing(|target| {
         session::Timing::new(
             session

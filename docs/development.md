@@ -46,29 +46,182 @@ in seconds, `lint` — clippy, rustdoc, the repository gates, the fuzz crate's
 own type check, spelling, TOML, workflows — in tens of them, and the suite in
 minutes.
 
-It is also what the pre-push hook runs, so a push that goes out has already
+It is also what the pre-push hook runs. The hook refuses a ref whose object is
+not the checked-out `HEAD`, and an update of an existing remote ref unless its
+old commit is present locally and is an ancestor of that `HEAD`. It then asks
+Git to render the object into a fresh detached worktree and checks the isolated
+tree again afterwards. Adjacent edits, ignored local files, and a mistaken
+non-fast-forward command therefore cannot become inputs to an answer attributed
+to the commit going out. A push that goes out has already
 answered everything CI asks but four things this machine cannot answer: the
 suite on Linux and Windows, the coverage ratchets, the suite under Miri, and
 the composite action driven the way another repository drives it.
 `xtask/tests/tasks.rs` holds the correspondence — a job added to `ci-success`
 has to name the local task that answers it first, or say why none can.
 
+The `manual-variant-list` rule refuses a whole-enum array maintained apart
+from the declaration. A closed fieldless enum derives
+`njutest_macros::AllVariants`; its compiler-generated `ALL` changes length and
+contents with the variants, so adding one cannot leave a ledger silently
+partial. Data-bearing specimen sets must instead be driven by such a generated
+fieldless discriminator.
+
 Among them, `cargo xtask all` is this repository's own:
 
 | Gate | Refuses |
 | --- | --- |
-| `lints` | `allow-attribute`: an `#[allow]` anywhere in the repository, tests included. `boxed-trait-object`: a `Box<dyn Trait>`. `comment`: a comment that is not documentation, the licence header, or a `rust-mutants:` annotation the engine reads. `unbounded-removal`: a recursive removal inside a loop, which `rust_mutants::reclaim` does with a budget and an account of what is still there. `perishable-handle`: a command or a record built with a mutant identity in it, which the edit that closes a survivor re-mints. `loose-layout`: a layout decided anywhere but in the configuration — a test joining an exported constant that spells a directory structure, or any file spelling a path under a directory a `DEFAULT_*_DIRECTORY` names. The default lives in its own `config.rs`; everybody else asks the type that owns the layout. `hand-painted`: a terminal escape put together anywhere but `rust_mutants::telling`, which is the one module in the workspace that turns a style into bytes. A surface asks for what a thing *is* — `Style::Gap`, `Style::Command` — and never for a colour, because two modules that each named their own drew the same timed-out mutation amber in one place and green in another ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)). Reading an escape in order to skip it is not putting one together, so measuring how wide a painted line is stays where it is. `wildcard-over-our-own`: a catch-all arm in a match over a set this repository closes, ratcheted against `xtask/wildcard_allowlist.txt`, which may shrink and never grow. A waiver is named `<file>::<item> over <Enum>, <n> arm(s)` and never by a line number: a number says where a catch-all sits and nothing about what it absorbs, so changing the arm above one moved its waiver onto a different closed set with no diff for anybody to read, and the gate stayed green when that was tried. The three parts change exactly when what is being waived changes, and moving the code, renaming a binding or reformatting a body changes none of them. The arm count is in the name because several arms absorbing one set in one item are one claim and one more is a claim nobody read. A name the tree no longer stands is refused, and the refusal says whether the catch-all went away or changed which set it is over, because a reader does a different thing about each. The gate reads the arms rather than the scrutinee — an arm spelling `Decision::Tests` says what is being matched without anything being resolved — and it collects every enum the workspace declares first, so a foreign one keeps its catch-all: the values of `syn::Expr` are not ours to list, and an arm standing for the rest of an open set somebody else owns is the handling rather than a default `open-and-closed`: a type that publishes `ALL` — every one of its variants — and also carries `#[non_exhaustive]`, which says there may be more. One file cannot hold both promises, and what the contradiction costs is a caller outside the crate writing an arm for a case the list says cannot exist: a tally reached one of those and counted every future outcome as a harness failure. `#[non_exhaustive]` belongs on an error a caller branches on, which publishes no list and where a caller must already handle one it does not recognise |
+| `lints` | `allow-attribute`: an `#[allow]` anywhere in the repository, tests included. `owned-trait-object`: any owned or ownership-ambiguous type argument containing `dyn Trait`; only a direct borrowed `&dyn Trait` is accepted. Closed implementations use an enum and open ones a generic parameter. `trait-object-alias` and `owned-pointer-alias`: aliases and renamed imports may not hide either side of that ownership from a different source file. `derived-enum-default`: `#[derive(Default)]` or `#[default]` on an enum, including qualified and conditional forms. `semantic-default`: a manual `Default` implementation outside the exact file-and-type allowlist of configuration, UI, and neutral containers; execution, evidence, report, and wire states use named constructors so `..Default::default()` cannot invent a conclusion and a new variant cannot leave old policy compiling silently. `default-derive-alias`: `Default` may not be renamed around those checks. `deserialize-derive-alias`: `Deserialize` may not be renamed or re-exported under a name a different file can use to escape the input-shape rules. `unit-domain-conversion`: `From<()>` may not turn the absence of a value into a domain state; unit aliases, renamed `From`, and macro-token forms are closed at their declaration, while a meaningful state is a named constructor. `glob-import`: a `*` import except from a module explicitly named `prelude`; qualified and grouped imports are inspected by their supplying module. `string-error`: a `Result` that has already flattened its error into `String` or `&str`; variants stay typed until the output boundary. `unit-error`: a `Result` whose error is `()`; a closed error enum keeps the failure exhaustively distinguishable. `string-alias` and `result-alias`: neither half may be hidden from another source file by an alias or renamed import. `discarded-result`: neither `Result::ok`, `filter_map(Result::ok)`, `Result::into_iter`, an error-ignoring fallback closure, nor an iterator `flatten` may turn a failure into absence or an unrelated fallback. Compiler-resolved Clippy policy additionally rejects `Result::unwrap_or`, `unwrap_or_default`, `map_or`, `map_or_else`, `or`, and `or_else`; use an exhaustive match so the error policy is explicit and type-checked. `dropped-computation`: `drop` may end one named value's lifetime, but cannot compute and discard a call, method, or expression; renaming `drop` is rejected at the declaration so another file cannot hide the call. `ignored-computation`: neither `let _ = call()` nor an underscore-prefixed binding may silence unused and must-use diagnostics for a call, method, or macro; a RAII value has a semantic name and an explicit `drop`. `open-deserialization`: a map-shaped owned deserializer must deny unknown fields, and current owned report, trace, and wire inputs may not use input-side `flatten`, `other`, `untagged`, `default`, or `alias`. A foreign protocol has one structural exception: an exact private `#[serde(flatten)] external_fields: BTreeMap<String, serde_json::Value>` field in the gate's narrow semantic boundary, which retains additions instead of ignoring them. `direct-json-input`: direct `serde_json` readers and `Deserializer` aliases are forbidden in production, tests, examples, fuzz targets, and macro tokens; every input passes through an exact `strictjson` module that rejects duplicate keys before typed conversion, so a last-key-wins oracle cannot certify different bytes. `opaque-macro-syntax`: a repository macro may not assemble a checked derive, serde option, or `cfg_attr` from tokens the source gate cannot parse; an unknown generated shape is a refusal, not evidence that the prohibited shape is absent. `comment`: a comment that is not documentation, the licence header, or a `rust-mutants:` annotation the engine reads. `unbounded-removal`: a recursive removal inside a loop, which `rust_mutants::reclaim` does with a budget and an account of what is still there. `perishable-handle`: a command or a record built with an identity in it, which the next edit re-mints. `loose-layout`: a layout decided anywhere but in the configuration — a test joining an exported constant that spells a directory structure, or any file spelling a path under a directory a `DEFAULT_*_DIRECTORY` names. The default lives in its own `config.rs`; everybody else asks the type that owns the layout. `hand-painted`: a terminal escape put together anywhere but `rust-mutants::telling`, which is the one module in the workspace that turns a style into bytes. A surface asks for what a thing *is* — `Style::Gap`, `Style::Command` — and never for a colour, because two modules that each named their own drew the same timed-out mutation amber in one place and green in another ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)). Reading an escape in order to skip it is not putting one together, so measuring how wide a painted line is stays where it is. `wildcard-over-our-own`: a catch-all arm in a match over a set this repository closes, ratcheted against `xtask/wildcard_allowlist.txt`, which may shrink and never grow. A waiver is named `<file>::<item> over <Enum>, <n> arm(s)` and never by a line number: a number says where a catch-all sits and nothing about what it absorbs, so changing the arm above one moved its waiver onto a different closed set with no diff for anybody to read, and the gate stayed green when that was tried. The three parts change exactly when what is being waived changes, and moving the code, renaming a binding or reformatting a body changes none of them. The arm count is in the name because several arms absorbing one set in one item are one claim and one more is a claim nobody read. A name the tree no longer stands is refused, and the refusal says whether the catch-all went away or changed which set it is over, because a reader does a different thing about each. The gate reads the arms rather than the scrutinee — an arm spelling `Decision::Tests` says what is being matched without anything being resolved — and it collects every enum the workspace declares first, so a foreign one keeps its catch-all: the values of `syn::Expr` are not ours to list, and an arm standing for the rest is the handling rather than a default. `open-and-closed`: a type that publishes `ALL`, `every`, `variants`, a fixed `[Self; N]`, or a total inherent match while also carrying `#[non_exhaustive]`. One file cannot hold both promises. `#[non_exhaustive]` belongs on a truly extensible error or protocol where no exhaustive list is published |
 | `devgates` | a seam the ledger `xtask/seam_allowlist.txt` does not name, and a ledger line the tree no longer has: `static mut`, a `static` with interior mutability, `thread_local!`, `#[cfg(test)]` outside a `mod tests`, a read of the process environment or an exit outside `main.rs`, an import of test support from production code ([ADR 0001](adr/0001-seam-policy.md)) |
-| `deps` | an internal dependency in the wrong direction ([ADR 0012](adr/0012-one-workspace-two-products.md)) |
+| `deps` | an internal dependency in the wrong direction ([ADR 0012](adr/0012-one-workspace-two-products.md)); a direct dependency on `anyhow`/`eyre`/`color-eyre`/`miette` that erases typed error variants behind downcasts; or a direct dependency on `async-trait`/`async-recursion`/`typetag`. Those procedural macros can introduce owned trait objects only after the source gate has inspected their input. Cargo metadata reports the canonical package name even when a manifest renames it, so an alias cannot conceal one |
 | `fixtures` | a fixture project without a `[workspace]` table, a committed `Cargo.lock`, the SPDX header, or with a dependency that is not a path inside itself |
 | `release-check` | a workspace version that disagrees with the release manifest, or a member that does not inherit it |
+| `milestones` | a milestone-shaped reference in the book that has no unique row in the roadmap |
+| `surfaces` | a workspace crate that does not declare its Rust visibility as `public`, `incidental`, or `test-support`; an incidental crate absent from the actual `surface-*` binary targets; a harness binary that names no incidental crate; publishable test apparatus |
+
+The `implicit-scalar-erasure` lint keeps scalar and domain newtypes nominal:
+they may not implement or rename `Deref`, `AsRef`, `Borrow`, `Into`, or a
+representation-side `From` into strings and paths. Representation boundaries
+use an explicit `as_str`, `as_path`, or `into_inner`, so generic coercion cannot
+erase the distinction the type exists to enforce.
+
+The `lossy-text` lint rejects `String::from_utf8_lossy` and
+`OsStr::to_string_lossy` everywhere, including tests, examples, fuzz targets,
+renamed imports, and macro tokens. Identity, evidence, protocol, path, and
+test-oracle code decodes exactly and retains failure as a typed result. A
+human-only boundary may display a platform path or losslessly escape invalid
+bytes, but it may not replace two different inputs with the same invented
+Unicode text.
+
+The `forgotten-value` lint rejects `mem::forget` and `ManuallyDrop`, including
+renamed imports, macro tokens, and code compiled only under another `cfg`.
+Proof harnesses run the same destructors as shipped code: suppressing a
+destructor only for Kani would establish a theorem about weaker ownership
+semantics than the program has. An intentional ownership transfer is a named
+owner or state transition, not a value silently made immortal.
+
+The `fabricated-overflow` lint applies to report, accounting, identity, cache,
+key, offset, and count code. It rejects saturating arithmetic and numeric
+`unwrap_or(0)` / `unwrap_or(MAX)` fallbacks, including renamed and macro-hidden
+forms. Those boundaries must use checked arithmetic and keep overflow in a
+typed result; deliberately saturating presentation geometry lives behind a
+separately named UI helper outside the persisted domain.
+
+The `wrapping-counter` lint rejects `fetch_add`, `fetch_sub`, and `wrapping_*`
+through direct, qualified, renamed, and macro-token forms. Atomic counters use
+`fetch_update` with checked arithmetic and retain exhaustion as typed or sticky
+state, so release-mode wraparound cannot impersonate an earlier event.
+
+The `unchecked-cast` lint covers platform source that the host compiler cannot
+type-check. Integer and pointer `as` casts are refused there, including macro
+tokens; conversions use `TryFrom` or preserve the exact FFI pointer type so an
+unrepresentable value retains a failure branch on every target.
+
+The `unowned-spawn`, `unbounded-channel`, and `poison-recovery` lints keep
+concurrency policy in types rather than cleanup conventions. A raw thread or
+child may only be constructed inside the exact owner that joins or reaps it;
+queues have a finite capacity and an explicit full/disconnect policy; and a
+panic-interrupted lock remains a typed sticky failure rather than being
+reclassified with `PoisonError::into_inner` or `clear_poison`. Renamed imports,
+qualified calls, macro bodies, and code excluded by the host's `cfg` are
+subject to the same rules.
+
+The `tri-state-bool` lint rejects `Option<bool>` and the aliases or macro
+constructors that can hide it. Three semantic states are a closed enum with
+three named variants, so every match is exhaustive and no caller has to guess
+whether `None` means unknown, unrecorded, inherited, or not applicable.
+
+`broad-expectation` additionally refuses crate- or module-wide
+`expect(dead_code)` and `expect(unsafe_code)`. The expectation belongs on the
+exact expression it permits: one existing hit must not license every unsafe or
+unused item added later.
+
+`vacuous-cfg` refuses conditions that the syntax proves always true or always
+false, including `cfg(any())`, `cfg(not(all()))`, `cfg(all())`, and
+`cfg(not(any()))`. The rule evaluates nested `all`, `any`, and `not`, descends
+through `cfg_attr`, repository macro output, and `cfg!`, and leaves real target,
+feature, and test predicates alone. Dead code cannot be hidden from every
+compiler, and unconditional code cannot wear a conditional-looking attribute
+as evidence that another configuration checked it. Qualifying `cfg!` does not
+hide it, and importing or re-exporting that built-in macro under another name
+is refused because a source-only walk cannot soundly resolve the macro
+namespace across files.
+
+The `lints` walk is fail-closed over its declared source universe. Every Rust
+source under `compiler-surfaces/`, `crates/`, `xtask/`, and `fuzz/` must be
+reached, read, and parsed before the gate can pass. A repository-wide inventory
+refuses an `.rs` file outside those four roots; `fixtures/` is the one explicit
+exception because its Rust is external input corpus, not code this workspace
+ships or runs as a gate. Root and fuzz Cargo manifests are preflighted before
+Cargo reads them. Cargo's complete target inventory and every recursively local
+normal, build, development, and target dependency must resolve to exact `.rs`
+members of the same four-root set, never through a `target/` directory. A
+literal `include!` may name only a scanned `support/*.rs`; `#[path]` is limited
+to the exact compiler-surface composition roots. Computed and macro-generated
+redirects are refusals. A qualified `include!` is still a redirect, and
+importing or re-exporting it under another name is refused at the declaration
+instead of trusting a file-local spelling to identify compiler input.
+
+Tests are in that set; they do not make an owned `Box<dyn Trait>`, a string
+error, an aliased escape hatch, or a discarded iterator error harmless. A
+borrowed `&dyn Trait` is allowed because it does not erase the owned
+implementation set. The other deliberate boundaries are the ones the
+catalogue names: a glob from a module explicitly named `prelude`;
+documentation, SPDX headers, and engine annotations rather than ordinary
+comments; and tests/testkits spelling perishable handles, terminal bytes, or
+bounded cleanup calls because their job is to inspect or clean up the exact
+thing production is forbidden to hand out or implement itself.
+
+Macro definitions and invocations in repository source are inspected
+recursively as token trees: an owned trait object and an owned pointer receiving
+a type metavariable are rejected there, and a pointer alias that a repository
+macro would emit is rejected at its constructor token before a later invocation
+can use it with `dyn Trait`. The workspace procedural-macro inventory is closed
+to `AllVariants`, `integration`, and `unit`. Its implementation may neither
+parse or construct opaque tokens, format identifiers, nor compose separately
+quoted fragments; the one interpolated `quote!` template is the exact closed
+`AllVariants` implementation. This is a structural source proof, not a claim
+that `syn` observes compiler expansion: substituted or external procedural
+macro output has no source AST for this gate. The complete locked dependency
+all-feature graphs of both the root and fuzz workspaces therefore enumerate every
+procedural-macro package by canonical name, exact version, and Cargo source in
+`xtask/proc_macro_inventory.txt`; metadata must agree with its corresponding
+lock file (whose registry entries retain their checksums) and with that exact
+list. An arbitrary new external generator is a
+gate failure, not a silently enlarged trust boundary. The implementations of
+the inventoried external macros remain supply-chain inputs rather than source
+AST this repository claims to inspect. Known direct generators of owned trait
+objects (`async-trait`, `async-recursion`, and `typetag`) are additionally
+denied by canonical Cargo package name, including renamed dependencies.
+Renaming or type-aliasing a token primitive, or renaming `format_ident!`, is
+also refused in the workspace procedural-macro implementation; changing the
+local name cannot turn opaque identifier synthesis back into inspected Rust.
+
+The workspace also denies Clippy's `unwrap_used`, `expect_used`, `panic`,
+`todo`, `unimplemented`, and `unreachable`. A test or testkit may use
+`#[expect(clippy::expect_used, reason = "…")]` or the corresponding panic
+expectation when the panic is the test's failure report or a failed setup
+precondition. That is a local, compiler-checked expectation, not a blanket
+test exemption: a reason is visible at the use site, an unfulfilled expectation
+fails under denied warnings, and `#[allow]` is one of the catalogue's shapes the
+repository gate refuses everywhere.
 
 The gates are also tests (`xtask/tests/gates.rs`), so `cargo test` refuses
 the same things.
 
+`compiler-surfaces` gives `incidental` a compiler-enforced meaning. It compiles
+each CLI library again as a private module together with the real binary
+composition roots. Workspace `unused = "deny"` then makes a public-looking
+function with no production caller a type-check error; tests cannot keep it
+alive in this view. Public libraries are deliberately not put through that
+view because callers outside this repository are their production callers.
+The `surfaces` gate derives the private-view set from Cargo's actual
+`compiler-surfaces` binary targets and proves it equals the incidental crates,
+so neither adding a crate nor deleting a harness while leaving a ledger entry
+can silently escape the rule.
+
 `cargo xtask proofaudit <run-directory> [--trace <recording>]` stands apart from
 `all`, because it is about one completed run rather than about the tree. It reads that run's
-`njutest-assurance-report-v1.json` and decides again, with code that never
+`njutest-assurance-report-v2.json` and decides again, with code that never
 calls the runner's, whether each verdict is the one the recorded evidence
 supports: whether the columns say what the records they summarise say and add
 up the way the [assurance contract](assurance-contract.md) states, whether
@@ -105,7 +258,7 @@ evidence rather than two copies of one mistake.
 
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard
 <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's
-own runs. It reads that run's `run-report-v1.json` and re-decides it in nine
+own runs. It reads that run's `run-report-v2.json` and re-decides it in nine
 layers, none of which calls the engine's code:
 
 | Layer | Re-derives |
@@ -118,7 +271,7 @@ layers, none of which calls the engine's code:
 | `exit` | the code the run returned, from what it found |
 | `merge` | the parts of one catalog: every `K/N` exactly once, same digests/scope/tool versions, disjoint indices, and the whole they come to |
 | `proofs` | every discharge against the measurement and the catalog the run kept: a target that covered the body it was discharged from, a discharge whose premises are missing, a discharged pair that then ran, the `discharged` column, and a mutant that never ran and whose reason the recording does not give |
-| `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed wait repeated and a runaway did not, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
+| `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated and a step-limit stop carried the notice that established it, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
 
 Its output and exit codes are `proofaudit`'s: one line per remark, a summary
@@ -360,8 +513,9 @@ test in each crate keeps the two equal in both directions.
 
 ## Diagnostics
 
-Everything a run does is recordable: the runner's [trace v1](trace-v1.md),
-the engine's [trace](engine/trace.md), `--keep-temp`, the diagnostics bundle
+Everything a run does is recordable: the runner's current [trace v2](trace-v2.md)
+(with [trace v1](trace-v1.md) retained as a historical contract), the engine's
+current [trace v2](engine/trace.md), `--keep-temp`, the diagnostics bundle
 of a failed run, and the `explain` family of commands. The rule for all of it
 is [ADR 0002](adr/0002-trace-is-not-evidence.md): never a claim, never a
 failure, always honest about what was dropped.

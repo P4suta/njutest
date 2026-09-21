@@ -3,31 +3,43 @@
 
 //! The run report: one completed run of every mutant, as a document and as lines a person reads.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::session::Session;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use crate::outcome::Outcome;
 use crate::report::catalog::{
     MutantDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument,
 };
-use crate::run::{Finding, Run, Standing, count};
+use crate::run::{Finding, FindingKind, NotRunReason, Run, Standing};
 
 /// The name of the shape, so a reader can tell versions apart.
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The file one run writes under its own directory.
-pub const FILE_NAME: &str = "run-report-v1.json";
+pub const FILE_NAME: &str = "run-report-v2.json";
 
 /// The pointer file that names the newest run.
 pub const LATEST_FILE_NAME: &str = "latest.json";
 
+/// Reads one complete run document without allowing a repeated object key to
+/// replace an earlier fact.
+///
+/// # Errors
+/// The input is not one exact current run document, contains trailing data,
+/// or repeats an object key at any depth.
+pub fn parse(text: &str) -> Result<RunDocument, serde_json::Error> {
+    crate::strictjson::decode_str(text)
+}
+
 /// One completed run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunDocument {
     /// Names the shape.
     pub document_type: String,
@@ -44,12 +56,11 @@ pub struct RunDocument {
     /// What the run counted.
     pub accounting: Accounting,
     /// The share of decided mutants the tests noticed, absent when the run decided nothing.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub score: Option<ScoreDocument>,
     /// The test targets the run built, which is what every mutant could have been asked against.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<TargetDocument>,
     /// How many tests the run started to establish that a set of them answers on its own, which is work no mutation asked for and every narrowed execution rests on.
-    #[serde(default)]
     pub established_tests: u64,
     /// One record per non-refused candidate the run accounts for, in catalog order.
     pub mutants: Vec<RunMutantDocument>,
@@ -65,6 +76,7 @@ pub struct RunDocument {
 
 /// When a run ran and how it ended.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunMeta {
     /// The run's identity, which is also its directory name.
     pub id: String,
@@ -79,11 +91,13 @@ pub struct RunMeta {
     /// The exit code the run earned.
     pub exit_code: u8,
     /// Which part of the catalog the run was about, absent for the whole of it.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub shard: Option<String>,
 }
 
 /// What a run counted. Every mutant is in exactly one of the outcome columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Accounting {
     /// How many candidate rows the run accounts for, excluding compiler refusals.
     pub cataloged: u32,
@@ -97,8 +111,8 @@ pub struct Accounting {
     pub killed: Of,
     /// How many every test passed on.
     pub survived: Of,
-    /// How many took their guard more times than the run allowed, twice over.
-    pub runaway: Of,
+    /// How many reached the per-process guard-take limit without deciding the mutation.
+    pub step_limit_reached: Of,
     /// How many this machine stopped waiting for, twice over.
     pub waited: Of,
     /// How many the run could not decide.
@@ -108,10 +122,8 @@ pub struct Accounting {
     /// How many never ran.
     pub not_run: Of,
     /// How many of those never ran because no measured target reaches them.
-    #[serde(default)]
     pub unreached: Within,
     /// How many of those never ran because a proof removed every target that could have noticed them.
-    #[serde(default)]
     pub discharged: Within,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: Within,
@@ -137,6 +149,12 @@ pub struct Within(u32);
 #[serde(transparent)]
 pub struct Beside(u32);
 
+/// A report accounting value exceeded its durable `u32` representation or
+/// contradicted a subset relation required by that representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("run accounting exceeds or contradicts its durable counters")]
+pub struct CountOverflow;
+
 /// Declares the three kinds with the same shape, and no `Display`.
 ///
 /// None of them can be written into a message by `{}`. That is the point: a
@@ -157,9 +175,18 @@ macro_rules! counted {
                 Self(count)
             }
 
-            /// Counts one more.
-            pub const fn raise(&mut self) {
-                self.0 = self.0.saturating_add(1);
+            /// Counts one more without fabricating a maximum value.
+            ///
+            /// # Errors
+            /// Refuses when the durable counter is exhausted.
+            pub const fn raise(&mut self) -> Result<(), CountOverflow> {
+                match self.0.checked_add(1) {
+                    Some(raised) => {
+                        self.0 = raised;
+                        Ok(())
+                    }
+                    None => Err(CountOverflow),
+                }
             }
         }
 
@@ -175,8 +202,9 @@ counted!(Of, Within, Beside);
 
 /// The share of decided mutants the tests noticed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScoreDocument {
-    /// Killed plus confirmed timeouts.
+    /// Mutants a test killed.
     pub detected: u32,
     /// Detected plus survived.
     pub decided: u32,
@@ -186,6 +214,7 @@ pub struct ScoreDocument {
 
 /// One non-refused candidate and what the run established about it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunMutantDocument {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -202,7 +231,6 @@ pub struct RunMutantDocument {
     /// The rule's name.
     pub rule: String,
     /// The item the mutation sits in, which is how a finding is matched across an edit.
-    #[serde(default)]
     pub item: String,
     /// The rule's version, which enters the identity.
     pub rule_version: u32,
@@ -211,20 +239,20 @@ pub struct RunMutantDocument {
     /// The 1-based byte column of the edit.
     pub column: u32,
     /// The first byte of the edit.
-    #[serde(default)]
     pub start_byte: u32,
     /// One past the last byte of the edit.
-    #[serde(default)]
     pub end_byte: u32,
     /// The SHA-256 of the file the edit was cut from, which is what re-minting the identity needs.
-    #[serde(default)]
     pub source_digest: String,
     /// The bytes the edit replaces.
     pub original: String,
     /// What they become.
     pub replacement: String,
     /// What the execution says.
-    pub outcome: String,
+    pub outcome: Outcome,
+    /// The verified runtime notice when this execution reached its step limit.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub step_notice: Option<crate::execute::StepLimitNotice>,
     /// The target that ran, empty when none did.
     pub target: String,
     /// The exit status of the last execution.
@@ -232,67 +260,648 @@ pub struct RunMutantDocument {
     /// How long every execution of this mutant took together.
     pub duration_ms: u64,
     /// How many tests ran, when the harness said.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub tests_run: Option<u32>,
     /// Every test that failed with the mutant active, which is what noticed it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub killed_by: Vec<String>,
     /// The signal the last execution died from, on the platforms that have them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
     /// Why it was never executed, when it was not: `unreached`, `discharged`, or `interrupted`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub not_run_reason: Option<String>,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub not_run_reason: Option<NotRunReason>,
     /// Which targets could have noticed it, and which of them ran.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub route: Option<RouteDocument>,
-    /// Whether the compiler renders the mutation identically to what it mutates, when the equivalence layer was asked. Never a claim that it is equivalent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identical: Option<bool>,
+    /// What comparison of the compiler artifacts established. Never a claim that the mutation is equivalent.
+    pub identical: crate::run::CodegenIdentity,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
     /// Whether no measured target reaches it, which is why it never ran.
-    #[serde(default)]
     pub unreached: bool,
     /// The run that established this, when it was not this one.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub source_run_id: Option<String>,
 }
 
 /// One declared expectation, as the run left it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExpectationDocument {
     /// The identity, prefix, or locator the file wrote, as a reader reads it.
     pub id: String,
     /// The locator the file wrote, when it wrote one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locator: Option<crate::session::Locator>,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub locator: Option<LocatorDocument>,
     /// Why the reviewer claims the outcome.
     pub reason: String,
     /// The outcome claimed.
-    pub outcome: String,
+    pub outcome: Outcome,
     /// The mutant it resolved to, when it resolved. The one that decided the standing, when it named several.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub mutant: Option<String>,
     /// How many mutants the claim was resolved against, when the locator stated a count.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub covered: Option<u32>,
     /// Whether the claim held: `met`, `stale`, or `unmatched`.
     pub standing: String,
     /// What the run established instead, when the claim was contradicted.
-    pub actual: Option<String>,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub actual: Option<Outcome>,
     /// Why the identity resolved to nothing, when it did not resolve.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub why: Option<String>,
+}
+
+/// One expectation locator in the current run-report wire shape.
+///
+/// This is deliberately distinct from the configuration locator: configuration
+/// may omit its optional hints, while a v2 report writes those keys explicitly
+/// as either a value or `null` and rejects a missing key on read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocatorDocument {
+    /// The workspace-relative path.
+    pub path: String,
+    /// The item suffix.
+    pub item: String,
+    /// The rule name.
+    pub rule: String,
+    /// The text the rule replaces.
+    pub original: String,
+    /// The optional line hint, represented by an explicit nullable key.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub line: Option<u32>,
+    /// The optional cardinality hint, represented by an explicit nullable key.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub count: Option<u32>,
+}
+
+impl From<&crate::session::Locator> for LocatorDocument {
+    fn from(locator: &crate::session::Locator) -> Self {
+        Self {
+            path: locator.path.clone(),
+            item: locator.item.clone(),
+            rule: locator.rule.clone(),
+            original: locator.original.clone(),
+            line: locator.line,
+            count: locator.count,
+        }
+    }
 }
 
 /// One thing that stops a run from being clean.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FindingDocument {
     /// What kind of hole it is.
-    pub kind: String,
+    pub kind: FindingKind,
     /// The mutant it is about, when it is about one.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub mutant: Option<String>,
     /// One sentence a reader can act on.
     pub detail: String,
+}
+
+/// Why a run document cannot be trusted as one coherent answer.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DocumentError {
+    /// The document names another shape or version.
+    #[error("the run report header has an invalid {field}")]
+    Header {
+        /// The invalid header field.
+        field: &'static str,
+    },
+    /// A catalog row's identity does not follow from the mutation it describes.
+    #[error("catalog row {mutant} has an invalid identity, display identity, or index")]
+    CatalogRow {
+        /// The row's claimed identity.
+        mutant: String,
+    },
+    /// The catalog cardinality cannot fit the fixed-width index wire.
+    #[error("the catalog contains more than u32::MAX rows")]
+    CatalogTooLarge,
+    /// Exact accounting exceeded a durable counter or contradicted a subset relation.
+    #[error(transparent)]
+    Count(#[from] CountOverflow),
+    /// The shard header is not a valid `K/N` selection.
+    #[error("the run report has an invalid shard {shard:?}")]
+    Shard {
+        /// The invalid shard spelling.
+        shard: String,
+    },
+    /// An accepted row does not belong to the shard that claims it.
+    #[error("catalog row {mutant} does not belong to shard {shard}")]
+    ShardRow {
+        /// The row outside the claimed shard.
+        mutant: String,
+        /// The parsed shard spelling.
+        shard: String,
+    },
+    /// The accounting columns are not the fold of the rows beside them.
+    #[error("the run report's {field} accounting does not equal its rows")]
+    Accounting {
+        /// The contradictory accounting field.
+        field: &'static str,
+    },
+    /// The score is not killed over killed plus survived.
+    #[error("the run report's score does not equal its decided rows")]
+    Score,
+    /// The exit code is not the one the interruption and findings earn.
+    #[error("the run report exits {actual}, but its findings and interruption earn {expected}")]
+    ExitCode {
+        /// The code derived from the report's facts.
+        expected: u8,
+        /// The code carried by the report.
+        actual: u8,
+    },
+    /// Step evidence was absent from a step-bound result, or attached to another outcome.
+    #[error("mutant {mutant} carries step evidence that contradicts its outcome")]
+    StepEvidence {
+        /// The contradictory mutant.
+        mutant: String,
+    },
+    /// Step evidence names another row, catalog, or configured allowance.
+    #[error("mutant {mutant} carries step evidence with a mismatched {field:?}")]
+    StepEvidenceMismatch {
+        /// The row carrying the evidence.
+        mutant: String,
+        /// Which execution identity field disagrees.
+        field: StepEvidenceField,
+    },
+    /// Reuse provenance was attached to an outcome the durable cache cannot establish.
+    #[error("mutant {mutant} names a source run for an outcome that is not reusable")]
+    ReuseProvenance {
+        /// The contradictory mutant.
+        mutant: String,
+    },
+    /// A not-run reason was attached to a result that did run.
+    #[error("mutant {mutant} carries a not-run reason that contradicts its outcome")]
+    NotRunReason {
+        /// The contradictory mutant.
+        mutant: String,
+    },
+    /// The legacy convenience flag and the typed reason disagree.
+    #[error("mutant {mutant} gives two different answers about whether it was unreached")]
+    Unreached {
+        /// The contradictory mutant.
+        mutant: String,
+    },
+    /// An interrupted reason appeared in a report that says the run was not interrupted.
+    #[error(
+        "mutant {mutant} says interruption stopped it, but the run says it was not interrupted"
+    )]
+    Interruption {
+        /// The contradictory mutant.
+        mutant: String,
+    },
+    /// The finding derived from a verdict is missing, duplicated, or of another kind.
+    #[error("mutant {mutant} has findings that contradict its verdict")]
+    FindingVerdict {
+        /// The contradictory mutant.
+        mutant: String,
+    },
+    /// A verdict finding names no row whose verdict could imply it.
+    #[error("verdict finding {kind} names no judged mutant {mutant}")]
+    UnknownFindingMutant {
+        /// The finding kind.
+        kind: FindingKind,
+        /// The missing mutant identity, or `<none>`.
+        mutant: String,
+    },
+    /// A finding not derived from a verdict has no corresponding report fact.
+    #[error("finding {kind} is not implied by the report")]
+    FindingFact {
+        /// The unsupported finding kind.
+        kind: FindingKind,
+    },
+}
+
+/// Which part of a verified step notice disagrees with its report row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepEvidenceField {
+    /// The notice names another mutant.
+    Mutant,
+    /// The notice names another catalog.
+    Catalog,
+    /// The notice was produced under another configured allowance.
+    Limit,
+}
+
+impl RunDocument {
+    /// Checks the cross-field facts that a schema cannot express: step evidence,
+    /// not-run reasons, and the finding each verdict necessarily implies.
+    ///
+    /// # Errors
+    /// The first pair of facts that cannot both be true.
+    pub fn validate(&self) -> Result<(), DocumentError> {
+        self.validate_header()?;
+        self.validate_catalog_rows()?;
+        for one in &self.mutants {
+            self.validate_mutant(one)?;
+        }
+        self.validate_verdict_finding_references()?;
+        self.validate_nonverdict_findings()?;
+        let expected_accounting = accounting_from_document(self)?;
+        if let Some(field) = accounting_difference(&self.accounting, &expected_accounting) {
+            return Err(DocumentError::Accounting { field });
+        }
+        if self.score != score_of(&expected_accounting)? {
+            return Err(DocumentError::Score);
+        }
+        let expected_exit = exit_code_of(self);
+        if self.run.exit_code != expected_exit {
+            return Err(DocumentError::ExitCode {
+                expected: expected_exit,
+                actual: self.run.exit_code,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_mutant(&self, one: &RunMutantDocument) -> Result<(), DocumentError> {
+        if one.source_run_id.is_some()
+            && !matches!(one.outcome, Outcome::Killed | Outcome::Survived)
+        {
+            return Err(DocumentError::ReuseProvenance {
+                mutant: one.id.clone(),
+            });
+        }
+        let has_step_evidence = one.step_notice.is_some();
+        if has_step_evidence != (one.outcome == Outcome::StepLimitReached) {
+            return Err(DocumentError::StepEvidence {
+                mutant: one.id.clone(),
+            });
+        }
+        if let Some(notice) = &one.step_notice {
+            let field = if notice.mutant() != one.id {
+                Some(StepEvidenceField::Mutant)
+            } else if notice.catalog() != self.workspace.catalog_digest {
+                Some(StepEvidenceField::Catalog)
+            } else if self.selection.mutant_steps != Some(notice.limit()) {
+                Some(StepEvidenceField::Limit)
+            } else {
+                None
+            };
+            if let Some(field) = field {
+                return Err(DocumentError::StepEvidenceMismatch {
+                    mutant: one.id.clone(),
+                    field,
+                });
+            }
+        }
+        if one.outcome != Outcome::NotRun && one.not_run_reason.is_some() {
+            return Err(DocumentError::NotRunReason {
+                mutant: one.id.clone(),
+            });
+        }
+        if one.unreached != (one.not_run_reason == Some(NotRunReason::Unreached)) {
+            return Err(DocumentError::Unreached {
+                mutant: one.id.clone(),
+            });
+        }
+        if one.not_run_reason == Some(NotRunReason::Interrupted) && !self.run.interrupted {
+            return Err(DocumentError::Interruption {
+                mutant: one.id.clone(),
+            });
+        }
+        let expected = verdict_finding(one, self.run.interrupted);
+        let actual: Vec<FindingKind> = self
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.kind.is_verdict() && finding.mutant.as_deref() == Some(one.id.as_str())
+            })
+            .map(|finding| finding.kind)
+            .collect();
+        if actual.as_slice() != expected.as_slice() {
+            return Err(DocumentError::FindingVerdict {
+                mutant: one.id.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_verdict_finding_references(&self) -> Result<(), DocumentError> {
+        for finding in self
+            .findings
+            .iter()
+            .filter(|finding| finding.kind.is_verdict())
+        {
+            let Some(mutant) = finding.mutant.as_deref() else {
+                return Err(DocumentError::UnknownFindingMutant {
+                    kind: finding.kind,
+                    mutant: "<none>".to_owned(),
+                });
+            };
+            if !self.mutants.iter().any(|one| one.id == mutant) {
+                return Err(DocumentError::UnknownFindingMutant {
+                    kind: finding.kind,
+                    mutant: mutant.to_owned(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_header(&self) -> Result<(), DocumentError> {
+        for (valid, field) in [
+            (self.document_type == DOCUMENT_TYPE, "document_type"),
+            (self.schema_version == SCHEMA_VERSION, "schema_version"),
+            (!self.tool_version.is_empty(), "tool_version"),
+            (
+                crate::id::is_digest(&self.workspace.workspace_digest),
+                "workspace_digest",
+            ),
+            (
+                crate::id::is_digest(&self.workspace.catalog_digest),
+                "catalog_digest",
+            ),
+        ] {
+            if !valid {
+                return Err(DocumentError::Header { field });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_catalog_rows(&self) -> Result<(), DocumentError> {
+        let mut indexes = BTreeSet::new();
+        let mut identities = BTreeSet::new();
+        let mut display_ids = BTreeSet::new();
+        let mut previous = None;
+        let registry = crate::rule::Registry::canonical();
+        let shard = self
+            .run
+            .shard
+            .as_deref()
+            .map(crate::run::Shard::parse)
+            .transpose()
+            .map_err(|_error| DocumentError::Shard {
+                shard: self.run.shard.clone().unwrap_or_default(),
+            })?;
+        for one in &self.mutants {
+            if let Some(shard) = shard
+                && !shard.holds(one.index)
+            {
+                return Err(DocumentError::ShardRow {
+                    mutant: one.id.clone(),
+                    shard: shard.to_string(),
+                });
+            }
+            let identity = crate::id::Identity {
+                path: one.path.clone(),
+                rule_name: one.rule.clone(),
+                rule_version: one.rule_version,
+                span: crate::span::Span {
+                    start: one.start_byte,
+                    end: one.end_byte,
+                },
+                source_digest: one.source_digest.clone(),
+                original_digest: crate::id::digest(one.original.as_bytes()),
+                replacement_digest: crate::id::digest(one.replacement.as_bytes()),
+            };
+            let id_matches = identity.id().is_ok_and(|id| id.as_str() == one.id);
+            let ordered = previous.is_none_or(|index| index < one.index);
+            let unique = indexes.insert(one.index)
+                && identities.insert(one.id.as_str())
+                && display_ids.insert(one.display_id.as_str());
+            let display_matches = crate::id::display_id_of(&one.id)
+                .is_ok_and(|display_id| display_id == one.display_id);
+            let rule_matches = registry.lookup(&one.rule).is_some_and(|rule| {
+                rule.version == one.rule_version && rule.family.name() == one.family
+            });
+            if !(id_matches && ordered && unique && display_matches && rule_matches) {
+                return Err(DocumentError::CatalogRow {
+                    mutant: one.id.clone(),
+                });
+            }
+            previous = Some(one.index);
+        }
+        for rejection in &self.rejections {
+            let unique = indexes.insert(rejection.index)
+                && identities.insert(rejection.id.as_str())
+                && display_ids.insert(rejection.display_id.as_str());
+            let valid = crate::id::is_id(&rejection.id)
+                && crate::id::display_id_of(&rejection.id)
+                    .is_ok_and(|display_id| display_id == rejection.display_id)
+                && registry.lookup(&rejection.rule).is_some();
+            if !(unique && valid) {
+                return Err(DocumentError::CatalogRow {
+                    mutant: rejection.id.clone(),
+                });
+            }
+        }
+        let total = self
+            .mutants
+            .len()
+            .checked_add(self.rejections.len())
+            .ok_or(DocumentError::CatalogTooLarge)?;
+        let total = u32::try_from(total).map_err(|_too_wide| DocumentError::CatalogTooLarge)?;
+        let dense = indexes.iter().copied().eq(0..total);
+        if shard.is_none_or(|shard| shard.of == 1) && !dense {
+            return Err(DocumentError::CatalogRow {
+                mutant: "<catalog>".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_nonverdict_findings(&self) -> Result<(), DocumentError> {
+        let stale = self
+            .expectations
+            .iter()
+            .filter(|expectation| expectation.standing == "stale")
+            .count();
+        let unmatched = self
+            .expectations
+            .iter()
+            .filter(|expectation| expectation.standing == "unmatched")
+            .count();
+        let stale_findings = self
+            .findings
+            .iter()
+            .filter(|finding| finding.kind == FindingKind::StaleExpectation)
+            .count();
+        let unmatched_findings = self
+            .findings
+            .iter()
+            .filter(|finding| finding.kind == FindingKind::UnmatchedExpectation)
+            .count();
+        if stale != stale_findings {
+            return Err(DocumentError::FindingFact {
+                kind: FindingKind::StaleExpectation,
+            });
+        }
+        if unmatched != unmatched_findings {
+            return Err(DocumentError::FindingFact {
+                kind: FindingKind::UnmatchedExpectation,
+            });
+        }
+        for finding in &self.findings {
+            let valid_mutant = match finding.kind {
+                FindingKind::StaleExpectation => finding.mutant.as_ref().is_some_and(|mutant| {
+                    self.expectations.iter().any(|expectation| {
+                        expectation.standing == "stale"
+                            && expectation.mutant.as_ref() == Some(mutant)
+                    })
+                }),
+                FindingKind::UnmatchedExpectation | FindingKind::UnmatchedSkip => {
+                    finding.mutant.is_none()
+                }
+                FindingKind::SurvivingMutant
+                | FindingKind::InconclusiveMutant
+                | FindingKind::StepLimitReachedMutant
+                | FindingKind::WaitedMutant
+                | FindingKind::ErroredMutant
+                | FindingKind::NotRunMutant
+                | FindingKind::UnreachedMutant
+                | FindingKind::DischargedMutant => true,
+            };
+            if !valid_mutant || finding.detail.trim().is_empty() {
+                return Err(DocumentError::FindingFact { kind: finding.kind });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl FindingKind {
+    const fn is_verdict(self) -> bool {
+        matches!(
+            self,
+            Self::SurvivingMutant
+                | Self::InconclusiveMutant
+                | Self::StepLimitReachedMutant
+                | Self::WaitedMutant
+                | Self::ErroredMutant
+                | Self::NotRunMutant
+                | Self::UnreachedMutant
+                | Self::DischargedMutant
+        )
+    }
+}
+
+const fn verdict_finding(one: &RunMutantDocument, interrupted: bool) -> Option<FindingKind> {
+    match one.outcome {
+        Outcome::Killed => None,
+        Outcome::Survived if one.expected => None,
+        Outcome::Survived => Some(FindingKind::SurvivingMutant),
+        Outcome::StepLimitReached => Some(FindingKind::StepLimitReachedMutant),
+        Outcome::Waited => Some(FindingKind::WaitedMutant),
+        Outcome::Inconclusive => Some(FindingKind::InconclusiveMutant),
+        Outcome::Errored => Some(FindingKind::ErroredMutant),
+        Outcome::NotRun => match one.not_run_reason {
+            Some(NotRunReason::Unreached) => Some(FindingKind::UnreachedMutant),
+            Some(NotRunReason::Discharged) => Some(FindingKind::DischargedMutant),
+            Some(
+                NotRunReason::Interrupted | NotRunReason::Unselected | NotRunReason::StoppedEarly,
+            ) => None,
+            None if interrupted => None,
+            None => Some(FindingKind::NotRunMutant),
+        },
+    }
+}
+
+fn accounting_from_document(document: &RunDocument) -> Result<Accounting, DocumentError> {
+    let mut accounting = Accounting {
+        cataloged: document_count(document.mutants.len())?,
+        refused: document_count(document.rejections.len())?.into(),
+        skipped: document
+            .skips
+            .iter()
+            .try_fold(0u32, |total, skip| {
+                total
+                    .checked_add(skip.count)
+                    .ok_or(DocumentError::CatalogTooLarge)
+            })?
+            .into(),
+        ..Accounting::default()
+    };
+    for one in &document.mutants {
+        let outcome = match one.outcome {
+            Outcome::Killed => &mut accounting.killed,
+            Outcome::Survived => &mut accounting.survived,
+            Outcome::StepLimitReached => &mut accounting.step_limit_reached,
+            Outcome::Waited => &mut accounting.waited,
+            Outcome::Inconclusive => &mut accounting.inconclusive,
+            Outcome::Errored => &mut accounting.errored,
+            Outcome::NotRun => &mut accounting.not_run,
+        };
+        outcome.raise()?;
+        if one.not_run_reason == Some(NotRunReason::Unreached) {
+            accounting.unreached.raise()?;
+        }
+        if one.not_run_reason == Some(NotRunReason::Discharged) {
+            accounting.discharged.raise()?;
+        }
+        if one.expected {
+            accounting.expected.raise()?;
+        }
+    }
+    accounting.executed = Beside::new(
+        accounting
+            .cataloged
+            .checked_sub(accounting.not_run.count())
+            .ok_or(CountOverflow)?,
+    );
+    Ok(accounting)
+}
+
+fn document_count(count: usize) -> Result<u32, DocumentError> {
+    u32::try_from(count).map_err(|_outside_range| DocumentError::CatalogTooLarge)
+}
+
+fn accounting_difference(actual: &Accounting, expected: &Accounting) -> Option<&'static str> {
+    [
+        ("cataloged", actual.cataloged, expected.cataloged),
+        ("refused", actual.refused.count(), expected.refused.count()),
+        ("skipped", actual.skipped.count(), expected.skipped.count()),
+        (
+            "executed",
+            actual.executed.count(),
+            expected.executed.count(),
+        ),
+        ("killed", actual.killed.count(), expected.killed.count()),
+        (
+            "survived",
+            actual.survived.count(),
+            expected.survived.count(),
+        ),
+        (
+            "step_limit_reached",
+            actual.step_limit_reached.count(),
+            expected.step_limit_reached.count(),
+        ),
+        ("waited", actual.waited.count(), expected.waited.count()),
+        (
+            "inconclusive",
+            actual.inconclusive.count(),
+            expected.inconclusive.count(),
+        ),
+        ("errored", actual.errored.count(), expected.errored.count()),
+        ("not_run", actual.not_run.count(), expected.not_run.count()),
+        (
+            "unreached",
+            actual.unreached.count(),
+            expected.unreached.count(),
+        ),
+        (
+            "discharged",
+            actual.discharged.count(),
+            expected.discharged.count(),
+        ),
+        (
+            "expected",
+            actual.expected.count(),
+            expected.expected.count(),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(name, actual, expected)| (actual != expected).then_some(name))
 }
 
 /// What the document needs that the session and the run do not carry.
@@ -322,15 +931,18 @@ fn target_documents(session: &Session) -> Vec<TargetDocument> {
 }
 
 /// The run as one document.
-#[must_use]
+///
+/// # Errors
+/// Returns an engine error when established-test accounting or any exact
+/// duration projection cannot be represented by the report schema.
 pub fn document(
     session: &Session,
     run: &Run,
     selection: SelectionDocument,
     meta: &Meta<'_>,
-) -> RunDocument {
-    let tally = run.tally();
-    RunDocument {
+) -> Result<RunDocument, crate::EngineError> {
+    let tally = run.tally()?;
+    Ok(RunDocument {
         document_type: DOCUMENT_TYPE.to_owned(),
         schema_version: SCHEMA_VERSION,
         tool_version: crate::VERSION.to_owned(),
@@ -338,15 +950,15 @@ pub fn document(
             id: meta.id.to_owned(),
             started_at: meta.started_at.to_string(),
             finished_at: meta.finished_at.to_string(),
-            duration_ms: millis(run.duration),
+            duration_ms: millis(run.duration)?,
             interrupted: run.interrupted,
             exit_code: run.exit_code(),
             shard: run.shard.map(|shard| shard.to_string()),
         },
-        workspace: crate::report::catalog::workspace_document(session),
+        workspace: crate::report::catalog::workspace_document(session)?,
         selection,
         targets: target_documents(session),
-        established_tests: session.established_tests(),
+        established_tests: session.established_tests()?,
         accounting: Accounting {
             cataloged: tally.cataloged,
             refused: tally.refused.into(),
@@ -354,7 +966,7 @@ pub fn document(
             executed: tally.executed.into(),
             killed: tally.killed.into(),
             survived: tally.survived.into(),
-            runaway: tally.runaway.into(),
+            step_limit_reached: tally.step_limit_reached.into(),
             waited: tally.waited.into(),
             inconclusive: tally.inconclusive.into(),
             errored: tally.errored.into(),
@@ -363,7 +975,7 @@ pub fn document(
             unreached: tally.unreached.into(),
             discharged: tally.discharged.into(),
         },
-        score: run.score().map(|score| ScoreDocument {
+        score: run.score()?.map(|score| ScoreDocument {
             detected: score.detected,
             decided: score.decided,
             value: score.value,
@@ -375,10 +987,11 @@ pub fn document(
                 let catalog = session
                     .catalog()
                     .by_index(one.index)
-                    .map(|mutant| crate::report::catalog::mutant_document(session, mutant));
+                    .map(|mutant| crate::report::catalog::mutant_document(session, mutant))
+                    .transpose()?;
                 mutant(one, catalog)
             })
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
         rejections: crate::report::catalog::rejection_documents(session),
         skips: crate::report::catalog::skip_documents(session),
         expectations: run
@@ -386,14 +999,14 @@ pub fn document(
             .iter()
             .map(|verified| ExpectationDocument {
                 id: verified.id.clone(),
-                locator: verified.locator.clone(),
+                locator: verified.locator.as_ref().map(LocatorDocument::from),
                 reason: verified.reason.clone(),
-                outcome: verified.outcome.name().to_owned(),
+                outcome: verified.outcome,
                 mutant: verified.mutant.clone(),
                 covered: (verified.covered > 1).then_some(verified.covered),
                 standing: standing_name(&verified.standing).to_owned(),
                 actual: match &verified.standing {
-                    Standing::Stale { actual } => Some(actual.name().to_owned()),
+                    Standing::Stale { actual } => Some(*actual),
                     Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
                 },
                 why: match &verified.standing {
@@ -406,7 +1019,7 @@ pub fn document(
             })
             .collect(),
         findings: run.findings().iter().map(finding).collect(),
-    }
+    })
 }
 
 const fn standing_name(standing: &Standing) -> &'static str {
@@ -419,13 +1032,16 @@ const fn standing_name(standing: &Standing) -> &'static str {
 
 fn finding(finding: &Finding) -> FindingDocument {
     FindingDocument {
-        kind: finding.kind.name().to_owned(),
+        kind: finding.kind,
         mutant: finding.mutant.clone(),
         detail: finding.detail.clone(),
     }
 }
 
-fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutantDocument {
+fn mutant(
+    one: &crate::run::Judged,
+    catalog: Option<MutantDocument>,
+) -> Result<RunMutantDocument, crate::EngineError> {
     let catalog = catalog.unwrap_or_else(|| MutantDocument {
         index: one.index,
         id: one.id.clone(),
@@ -445,7 +1061,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         replacement: String::new(),
         branch: None,
     });
-    RunMutantDocument {
+    Ok(RunMutantDocument {
         index: catalog.index,
         id: catalog.id,
         display_id: catalog.display_id,
@@ -462,25 +1078,27 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         source_digest: catalog.source_digest,
         original: catalog.original,
         replacement: catalog.replacement,
-        outcome: one.outcome.name().to_owned(),
+        outcome: one.outcome,
+        step_notice: one.step_notice.clone(),
         target: one.target.clone(),
         exit_code: one.exit_code,
-        duration_ms: millis(one.duration),
+        duration_ms: millis(one.duration)?,
         tests_run: one.tests_run,
         killed_by: one.failed_tests.clone(),
         signal: one.signal,
         retried: one.retried,
-        not_run_reason: one.not_run_reason.map(|reason| reason.name().to_owned()),
+        not_run_reason: one.not_run_reason,
         route: one.route.clone(),
         identical: one.identical,
         expected: one.expected,
-        unreached: one.not_run_reason == Some(crate::run::NotRunReason::Unreached),
+        unreached: one.not_run_reason == Some(NotRunReason::Unreached),
         source_run_id: one.source_run_id.clone(),
-    }
+    })
 }
 
 /// One test target a run built, and what it is beyond its name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TargetDocument {
     /// `package/kind/name`.
     pub id: String,
@@ -489,10 +1107,8 @@ pub struct TargetDocument {
     /// Whether it is built with the libtest harness, which decides how its silence is read.
     pub harness: bool,
     /// How many tests its baseline ran, which is what asking the whole of it about one mutation costs.
-    #[serde(default)]
     pub tests: u32,
     /// What a run could not establish about it, each named.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<String>,
 }
 
@@ -520,33 +1136,34 @@ pub fn route_document(route: &crate::session::Route, executed: Vec<String>) -> R
     }
 }
 
-fn millis(value: std::time::Duration) -> u64 {
-    u64::try_from(value.as_millis()).unwrap_or(u64::MAX)
+fn millis(value: std::time::Duration) -> Result<u64, crate::workspace::SessionError> {
+    u64::try_from(value.as_millis()).map_err(|_overflow| {
+        crate::workspace::SessionError::DurationMillisOverflow { duration: value }
+    })
 }
 
 /// Which targets could have noticed one mutation, and what became of the ones that ran.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RouteDocument {
     /// `all`, `test`, `block`, `discharged`, or `unreached`.
     pub granularity: String,
     /// Why the route is wider than the measurement alone would make it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub fallback: Option<String>,
     /// Every target that could have noticed the mutation.
     pub reaching: Vec<String>,
     /// Every target a proof removed, with the proof that removed it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub discharged: Vec<DischargeDocument>,
     /// Every target that ran, in the order the run asked them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub executed: Vec<String>,
     /// For each target the measurement narrowed to some of its tests, exactly those tests. A target absent from this ran every test it has.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tests: BTreeMap<String, Vec<String>>,
 }
 
 /// One target a proof removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DischargeDocument {
     /// The target.
     pub target: String,
@@ -579,6 +1196,19 @@ pub enum MergeError {
         /// The mutant two reports both claim.
         mutant: String,
     },
+    /// One part contradicts itself, so combining it would preserve a lie.
+    #[error("a report part contradicts itself: {error}")]
+    InvalidPart {
+        /// The contradiction.
+        #[source]
+        error: DocumentError,
+    },
+    /// The merged catalog contains more rows than its durable counters can represent.
+    #[error("the merged catalog exceeds its durable counters")]
+    CatalogTooLarge,
+    /// Exact merged accounting exceeded a durable counter or contradicted a subset relation.
+    #[error(transparent)]
+    Count(#[from] CountOverflow),
 }
 
 /// The report the whole of a catalog would have written, from the reports of its parts.
@@ -588,6 +1218,8 @@ pub enum MergeError {
 pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
     let first = parts.first().ok_or(MergeError::Nothing)?;
     for part in parts {
+        part.validate()
+            .map_err(|error| MergeError::InvalidPart { error })?;
         if part.workspace.catalog_digest != first.workspace.catalog_digest {
             return Err(MergeError::Disagree {
                 first: first.workspace.catalog_digest.clone(),
@@ -606,7 +1238,7 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
         }
     }
     let mutants: Vec<RunMutantDocument> = mutants.into_values().collect();
-    let accounting = accounting_of(&mutants, first);
+    let accounting = accounting_of(&mutants, first)?;
     let mut merged = first.clone();
     merged.run = RunMeta {
         duration_ms: parts.iter().map(|part| part.run.duration_ms).sum(),
@@ -614,72 +1246,89 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
         shard: None,
         ..first.run.clone()
     };
-    merged.score = score_of(&accounting);
+    merged.score = score_of(&accounting)?;
     merged.accounting = accounting;
     merged.mutants = mutants;
-    merged.expectations = parts
+    merged.expectations.clear();
+    for expectation in parts
         .iter()
         .flat_map(|part| part.expectations.iter().cloned())
-        .collect();
+    {
+        if !merged.expectations.contains(&expectation) {
+            merged.expectations.push(expectation);
+        }
+    }
     merged.findings = parts
         .iter()
         .flat_map(|part| part.findings.iter().cloned())
         .collect();
     merged.findings.sort_by(|a, b| {
         a.kind
-            .cmp(&b.kind)
+            .name()
+            .cmp(b.kind.name())
             .then_with(|| a.mutant.cmp(&b.mutant))
             .then_with(|| a.detail.cmp(&b.detail))
     });
     merged.findings.dedup();
     merged.run.exit_code = exit_code_of(&merged);
+    merged
+        .validate()
+        .map_err(|error| MergeError::InvalidPart { error })?;
     Ok(merged)
 }
 
 /// The columns the merged records add up to. What no part executed — refusals and skips — is a fact about the catalog rather than about a part, so it is taken from one of them rather than summed.
-fn accounting_of(mutants: &[RunMutantDocument], first: &RunDocument) -> Accounting {
+fn accounting_of(
+    mutants: &[RunMutantDocument],
+    first: &RunDocument,
+) -> Result<Accounting, MergeError> {
     let mut counted = Accounting {
-        cataloged: count(mutants.len()),
+        cataloged: u32::try_from(mutants.len())
+            .map_err(|_outside_range| MergeError::CatalogTooLarge)?,
         refused: first.accounting.refused,
         skipped: first.accounting.skipped,
         ..Accounting::default()
     };
     for one in mutants {
-        let slot = match one.outcome.as_str() {
-            "killed" => &mut counted.killed,
-            "survived" => &mut counted.survived,
-            "runaway" => &mut counted.runaway,
-            "waited" => &mut counted.waited,
-            "inconclusive" => &mut counted.inconclusive,
-            "not_run" => &mut counted.not_run,
-            _ => &mut counted.errored,
+        let slot = match one.outcome {
+            Outcome::Killed => &mut counted.killed,
+            Outcome::Survived => &mut counted.survived,
+            Outcome::StepLimitReached => &mut counted.step_limit_reached,
+            Outcome::Waited => &mut counted.waited,
+            Outcome::Inconclusive => &mut counted.inconclusive,
+            Outcome::NotRun => &mut counted.not_run,
+            Outcome::Errored => &mut counted.errored,
         };
-        slot.raise();
+        slot.raise()?;
         if one.unreached {
-            counted.unreached.raise();
+            counted.unreached.raise()?;
         }
-        if one.not_run_reason.as_deref() == Some("discharged") {
-            counted.discharged.raise();
+        if one.not_run_reason == Some(NotRunReason::Discharged) {
+            counted.discharged.raise()?;
         }
         if one.expected {
-            counted.expected.raise();
+            counted.expected.raise()?;
         }
     }
-    counted.executed = Beside::new(counted.cataloged.saturating_sub(counted.not_run.count()));
-    counted
+    counted.executed = Beside::new(
+        counted
+            .cataloged
+            .checked_sub(counted.not_run.count())
+            .ok_or(CountOverflow)?,
+    );
+    Ok(counted)
 }
 
-fn score_of(accounting: &Accounting) -> Option<ScoreDocument> {
-    let detected = accounting
-        .killed
-        .count()
-        .saturating_add(accounting.runaway.count());
-    let decided = detected.saturating_add(accounting.survived.count());
-    (decided > 0).then(|| ScoreDocument {
+fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverflow> {
+    let detected = accounting.killed.count();
+    let decided = detected
+        .checked_add(accounting.survived.count())
+        .ok_or(CountOverflow)?;
+    Ok((decided > 0).then(|| ScoreDocument {
         detected,
         decided,
         value: f64::from(detected) / f64::from(decided),
-    })
+    }))
 }
 
 /// The exit code the whole earns, which is the code the whole would have earned rather than the worst of its parts.
@@ -687,10 +1336,11 @@ fn exit_code_of(merged: &RunDocument) -> u8 {
     if merged.run.interrupted {
         return crate::run::EXIT_INTERRUPTED;
     }
-    if merged.findings.iter().any(|finding| {
-        crate::run::FindingKind::parse(&finding.kind)
-            .is_some_and(crate::run::FindingKind::is_infrastructure)
-    }) {
+    if merged
+        .findings
+        .iter()
+        .any(|finding| finding.kind.is_infrastructure())
+    {
         return crate::run::EXIT_FAILED;
     }
     if merged.findings.is_empty() {

@@ -3,6 +3,7 @@
 
 //! Respelling an integer literal: the radix and the suffix it was written with, and the values it cannot move to.
 
+use njutest_devkit::result::{OptionState::Present, option_state};
 use rust_mutants::syntax::respell_int;
 
 fn literal(text: &str) -> syn::LitInt {
@@ -44,8 +45,12 @@ proptest::proptest! {
             2 => format!("{value:#o}"),
             _ => format!("{value:#b}"),
         };
-        let up = respell_int(&literal(&text), 1).expect("one more");
-        let back = respell_int(&literal(&up), -1).expect("one less again");
+        let up = respell_int(&literal(&text), 1);
+        proptest::prop_assert_eq!(option_state(up.as_ref()), Present, "one more than {}", text);
+        let Some(up) = up else { return Ok(()) };
+        let back = respell_int(&literal(&up), -1);
+        proptest::prop_assert_eq!(option_state(back.as_ref()), Present, "one less than {}", up);
+        let Some(back) = back else { return Ok(()) };
         proptest::prop_assert_eq!(
             literal(&back).base10_digits().to_owned(),
             literal(&text).base10_digits().to_owned()

@@ -142,6 +142,15 @@ pub const COVERAGE_NOTHING_WRITTEN: ErrorCode = ErrorCode {
     ),
 };
 
+/// An executable a successful build named could not be read back for equivalence comparison.
+pub const EQUIVALENCE_ARTIFACT_UNREADABLE: ErrorCode = ErrorCode {
+    code: "RM7001",
+    summary: "an executable a successful build named could not be read back",
+    remedy: Some(
+        "run again after checking nothing removes or rewrites target files while the build is being measured",
+    ),
+};
+
 /// A change set that git could not be asked for.
 pub const CHANGE_SET_UNAVAILABLE: ErrorCode = ErrorCode {
     code: "RM0010",
@@ -163,6 +172,15 @@ pub const SOURCE_UNREADABLE: ErrorCode = ErrorCode {
     code: "RM0012",
     summary: "a source file a report names cannot be read from the root given",
     remedy: Some("pass --root at the tree the run measured, or check the file out again"),
+};
+
+/// An outcome cache could not be enumerated completely.
+pub const CACHE_UNREADABLE: ErrorCode = ErrorCode {
+    code: "RM0013",
+    summary: "an outcome cache could not be enumerated completely",
+    remedy: Some(
+        "check the cache directory is readable by this user, or pass --cache-dir at another one",
+    ),
 };
 
 /// Declares one error code. There is no form without a remedy, on purpose.
@@ -320,6 +338,9 @@ snapshot_code!(
     "the candidates could not be assembled into a catalog",
     "this is a defect in this tool: no candidate the walk produces should be one the catalog refuses"
 );
+
+/// A discovered candidate broke an identity invariant before it could be displayed.
+pub const CANDIDATE_INVALID: ErrorCode = DISCOVER_CATALOG_FAILED;
 snapshot_code!(
     DISCOVER_UNKNOWN_PACKAGE,
     "RM2007",
@@ -377,8 +398,8 @@ snapshot_code!(
 snapshot_code!(
     INSTRUMENT_INDEX_RESERVED,
     "RM3007",
-    "a mutant index collides with the runtime's sentinel values",
-    "this is a defect in this tool: the catalog outgrew the range the generated runtime reserves for real mutants"
+    "a mutant index makes the generated runtime's inclusive window overflow",
+    "this is a defect in this tool: the catalog outgrew the u32 window the generated runtime can represent"
 );
 snapshot_code!(
     VALIDATE_NOT_MUTANT_INDUCED,
@@ -448,6 +469,9 @@ pub enum EngineError {
     /// The toolchain could not be located or driven, or what it printed could not be read.
     #[error(transparent)]
     Cargo(#[from] crate::cargo::CargoError),
+    /// Compiler flags from the environment could not be preserved exactly.
+    #[error(transparent)]
+    CargoConfig(#[from] crate::cargo::config::ConfigError),
     /// The workspace's files could not be turned into a catalog.
     #[error(transparent)]
     Discover(#[from] crate::discover::DiscoverError),
@@ -469,6 +493,18 @@ pub enum EngineError {
     /// A duration the caller gave is not a duration.
     #[error(transparent)]
     Duration(#[from] crate::duration::DurationError),
+    /// A successful build named an executable whose bytes could not be read back for equivalence comparison.
+    #[error(transparent)]
+    Equivalence(#[from] crate::equivalence::artifacts::ArtifactError),
+    /// A durable outcome identity was not canonical.
+    #[error(transparent)]
+    OutcomeIdentity(#[from] crate::id::HexDigestError),
+    /// A durable outcome could not be read or written exactly.
+    #[error(transparent)]
+    Outcomes(#[from] crate::outcomes::StoreError),
+    /// A remembered passing baseline could not be read or checked exactly.
+    #[error(transparent)]
+    BaselineCache(#[from] crate::session::BaselineCacheError),
 }
 
 impl EngineError {
@@ -479,6 +515,7 @@ impl EngineError {
             Self::Interrupted => INTERRUPTED,
             Self::Snapshot(error) => error.code(),
             Self::Cargo(error) => error.code(),
+            Self::CargoConfig(_) => CONFIG_UNREADABLE,
             Self::Discover(error) => error.code(),
             Self::Instrument(error) => error.code(),
             Self::Validate(error) => error.code(),
@@ -486,6 +523,10 @@ impl EngineError {
             Self::Rule(_) => RULE_UNKNOWN,
             Self::Glob(_) => GLOB_INVALID,
             Self::Duration(_) => DURATION_INVALID,
+            Self::Equivalence(_) => EQUIVALENCE_ARTIFACT_UNREADABLE,
+            Self::OutcomeIdentity(_) | Self::Outcomes(_) | Self::BaselineCache(_) => {
+                CACHE_UNREADABLE
+            }
         }
     }
 }
@@ -506,6 +547,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CHANGE_SET_UNAVAILABLE,
         MERGE_REFUSED,
         SOURCE_UNREADABLE,
+        CACHE_UNREADABLE,
         SNAPSHOT_INVALID_OPTIONS,
         SNAPSHOT_SOURCE_ROOT,
         SNAPSHOT_WALK,
@@ -553,6 +595,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,
         COVERAGE_NOTHING_WRITTEN,
+        EQUIVALENCE_ARTIFACT_UNREADABLE,
         RULE_UNKNOWN,
         GLOB_INVALID,
         DURATION_INVALID,

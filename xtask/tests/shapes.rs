@@ -3,15 +3,51 @@
 
 //! The second opinion about a waived arm, which has to be able to disagree with the person who waived it.
 
+use njutest_devkit::result::{ResultState, result_state};
 use xtask::lints::declared_enums;
 use xtask::shapes::{Shape, shapes};
 
 fn read(source: &str) -> Vec<Shape> {
-    let ours = declared_enums(source);
-    shapes(source, &ours)
-        .into_values()
-        .map(|waived| waived.shape)
-        .collect()
+    let ours = enums(source);
+    let parsed = shapes(source, &ours);
+    assert_eq!(
+        result_state(&parsed),
+        ResultState::Returned,
+        "the literal source did not parse: {parsed:?}"
+    );
+    match parsed {
+        Ok(waivers) => waivers,
+        Err(_already_reported) => return Vec::new(),
+    }
+    .into_values()
+    .map(|waived| waived.shape)
+    .collect()
+}
+
+fn enums(source: &str) -> Vec<String> {
+    let parsed = declared_enums(source);
+    assert_eq!(
+        result_state(&parsed),
+        ResultState::Returned,
+        "the literal source did not parse: {parsed:?}"
+    );
+    match parsed {
+        Ok(enums) => enums,
+        Err(_already_reported) => Vec::new(),
+    }
+}
+
+fn wildcard_lines(source: &str) -> Vec<usize> {
+    let parsed = xtask::lints::wildcards(source, &enums(source));
+    assert_eq!(
+        result_state(&parsed),
+        ResultState::Returned,
+        "the literal source did not parse: {parsed:?}"
+    );
+    match parsed {
+        Ok(lines) => lines,
+        Err(_already_reported) => Vec::new(),
+    }
 }
 
 #[test]
@@ -136,7 +172,7 @@ fn a_guard_on_the_only_arm_naming_our_set_does_not_hide_the_match() {
         }
     ";
     assert_eq!(
-        xtask::lints::wildcards(source, &declared_enums(source)),
+        wildcard_lines(source),
         vec![7],
         "syn 3 keeps a guard inside the pattern rather than beside it, so an arm written          `Message::Compiler {{ .. }} if error` is a Pat::Guard and a walk reading only the          outer shape learns nothing from it. Every guarded match in the workspace was          invisible to this gate, which is a gate that was off and said it was on"
     );
@@ -154,7 +190,7 @@ fn an_arm_the_compiler_demands_is_not_a_waiver_anybody_could_have_refused() {
         }
     ";
     assert!(
-        xtask::lints::wildcards(every_arm_guarded, &declared_enums(every_arm_guarded)).is_empty(),
+        wildcard_lines(every_arm_guarded).is_empty(),
         "no variant is covered unconditionally, so the compiler asks for this arm. A gate \
          demanding a reviewed waiver for it asks somebody to have decided what they could \
          not decide, and a ledger of those is one nobody reads"
@@ -171,10 +207,33 @@ fn an_arm_the_compiler_demands_is_not_a_waiver_anybody_could_have_refused() {
         }
     ";
     assert_eq!(
-        xtask::lints::wildcards(one_arm_bare, &declared_enums(one_arm_bare)),
+        wildcard_lines(one_arm_bare),
         vec![7],
         "one unguarded naming arm and the exemption stops: this errs toward a ledger line \
          rather than toward a blind spot, because the cost of the first is a line somebody \
          reads and the cost of the second is a gate that is off and says it is on"
+    );
+}
+
+#[test]
+fn malformed_source_is_never_an_empty_inventory() {
+    let malformed = "fn (";
+    let enums = declared_enums(malformed);
+    assert_eq!(
+        result_state(&enums),
+        ResultState::Refused,
+        "malformed source declared enums: {enums:?}"
+    );
+    let wildcards = xtask::lints::wildcards(malformed, &[]);
+    assert_eq!(
+        result_state(&wildcards),
+        ResultState::Refused,
+        "malformed source declared wildcard lines: {wildcards:?}"
+    );
+    let shapes = shapes(malformed, &[]);
+    assert_eq!(
+        result_state(&shapes),
+        ResultState::Refused,
+        "malformed source declared shapes: {shapes:?}"
     );
 }

@@ -4,16 +4,20 @@
 //! A target that was put to mutations and noticed none of them.
 
 #![expect(
+    clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a test asserts with panics and reads as a table; no finding where this reads one is the failure it is here to report"
+    reason = "a test reports a setup failure by panicking"
 )]
 
-use njutest_cli::report::Decided;
-use njutest_cli::report::Outcome;
 use njutest_cli::report::{Answered, FindingKind, MutantRecord, Position, Routing, hollow::found};
+use njutest_cli::report::{Decided, Outcome, StepBoundary};
 
 fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
+    let outcome = Outcome::parse(outcome).unwrap_or(Outcome::Errored);
+    let boundary = (outcome == Outcome::StepLimitReached)
+        .then(|| StepBoundary::new(10, 11).expect("a first count beyond the allowance"));
     MutantRecord {
+        catalog_index: njutest_cli::report::CatalogIndex::new(0),
         id: id.repeat(64),
         display_id: id.repeat(20),
         path: "src/lib.rs".to_owned(),
@@ -26,12 +30,10 @@ fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
         item: "sign".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: Decided::of(
-            Outcome::parse(outcome).unwrap_or(Outcome::Errored),
-            Some("pkg/lib/pkg".to_owned()),
-        )
-        .or_else(|| Decided::of(Outcome::parse(outcome).unwrap_or(Outcome::Errored), None))
-        .unwrap_or(Decided::Survived),
+        outcome: Decided::of(outcome, Some("pkg/lib/pkg".to_owned()), boundary)
+            .or_else(|| Decided::of(outcome, None, boundary))
+            .unwrap_or(Decided::Survived),
+        accepted: false,
         blind_in: Vec::new(),
         routing: Some(Routing {
             granularity: rust_mutants::session::Granularity::Block,

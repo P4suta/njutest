@@ -142,12 +142,11 @@ fn one(place: &Place, spot: &Spot, telling: Telling) -> String {
     let told = Told {
         headline: super::Headline {
             verdict: crate::report::Verdict::Insufficient,
-            project: String::new(),
             cataloged: 0,
             killed: 0,
             survived: 0,
             unreached: 0,
-            runaway: 0,
+            step_limit_reached: 0,
             waited: 0,
             duration_ms: 0,
             kept: String::new(),

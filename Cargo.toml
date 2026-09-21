@@ -3,7 +3,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/*", "xtask"]
+members = ["compiler-surfaces", "crates/*", "xtask"]
 # Fixture projects are independent cargo workspaces the integration tests
 # drive with a real `cargo`; they are never built as part of this workspace.
 exclude = ["fixtures/*", "fuzz"]
@@ -21,10 +21,12 @@ readme = "README.md"
 [workspace.lints.rust]
 # `deny`, not `forbid`: the process supervisor and the temporary-directory
 # owner need Windows FFI (Job Objects, LockFileEx) in exactly two modules,
-# which carry `#[allow(unsafe_code, reason = ...)]`. Every crate that needs
+# whose individual FFI boundaries carry `#[expect(unsafe_code, reason = ...)]`.
+# Every crate that needs
 # none carries `#![forbid(unsafe_code)]` at its root.
 unsafe_code = "deny"
 non_ascii_idents = "deny"
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(kani)'] }
 
 unused = { level = "deny", priority = -1 }
 future_incompatible = { level = "deny", priority = -1 }
@@ -56,7 +58,8 @@ pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 
-# Restriction lints, enabled deliberately. An `#[allow]` needs a reason.
+# Restriction lints, enabled deliberately. Narrow `#[expect]` attributes carry
+# a reason; the repository syntax gate refuses `#[allow]` entirely.
 allow_attributes_without_reason = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
@@ -90,11 +93,22 @@ rc_mutex = "deny"
 string_add = "deny"
 assertions_on_result_states = "deny"
 exit = "deny"
+disallowed_methods = "deny"
+disallowed_types = "deny"
 
 # Allowed: the fix would rename well-named types, or is outside our control
 # (transitive dependency versions).
 module_name_repetitions = "allow"
 multiple_crate_versions = "allow"
+# These style suggestions hide branch policy inside fallback combinators. The
+# repository deliberately spells the arms out so a new state cannot inherit a
+# default answer merely because Clippy can shorten the expression.
+option_if_let_else = "allow"
+manual_unwrap_or = "allow"
+manual_unwrap_or_default = "allow"
+manual_ok_err = "allow"
+single_match_else = "allow"
+manual_let_else = "allow"
 
 [workspace.dependencies]
 # Internal crates. Version and path together so a member can be published.
@@ -109,7 +123,8 @@ serde_json = "1.0"
 thiserror = "2"
 sha2 = "0.11"
 hex = "0.4"
-# syn 2: the instrumentation never pretty-prints, so `printing` stays off.
+getrandom = "0.3"
+# syn 3: the instrumentation never pretty-prints, so `printing` stays off.
 syn = { version = "3", default-features = false, features = [
   "full",
   "parsing",
@@ -131,6 +146,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_IO",
   "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
+  "Win32_System_Pipes",
   "Win32_System_Threading",
 ] }
 jiff = "0.2"

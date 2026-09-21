@@ -18,7 +18,7 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -49,7 +49,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 /// As much of a page as a failing assertion is worth printing.
@@ -97,7 +97,7 @@ fn projected(fixture: &Fixture, format: &str) -> String {
 
 /// The text with everything that changes between two runs of the same tree taken out.
 fn steady(text: &str, fixture: &Fixture) -> String {
-    let mut out = text.replace(&fixture.root().to_string_lossy().into_owned(), "<root>");
+    let mut out = text.replace(njutest_devkit::paths::utf8(fixture.root()), "<root>");
     out = out.replace(env!("CARGO_PKG_VERSION"), "<version>");
     out = blanked(&out, "time=\"", '"', "0.000");
     out = blanked(&out, "<run>", '<', "");
@@ -106,11 +106,11 @@ fn steady(text: &str, fixture: &Fixture) -> String {
         .find_map(|(at, _)| {
             let candidate = out.get(at..at.checked_add(19)?)?;
             let shaped = candidate.len() == 19
-                && candidate.get(8..9) == Some("T")
-                && candidate.ends_with('Z')
-                && candidate
-                    .chars()
-                    .all(|one| one.is_ascii_digit() || one == 'T' || one == 'Z');
+                && matches!(candidate.get(8..9), Some("T" | "t"))
+                && candidate.ends_with(['Z', 'z'])
+                && candidate.chars().all(|one| {
+                    one.is_ascii_digit() || one == 'T' || one == 't' || one == 'Z' || one == 'z'
+                });
             shaped.then(|| candidate.to_owned())
         })
         .unwrap_or_default();
@@ -196,14 +196,16 @@ fn a_finding_no_mutant_row_carries_is_a_failing_case_of_its_own() {
 fn a_sarif_report_names_every_finding_with_the_place_it_is() {
     let fixture = with_a_survivor();
     let text = projected(&fixture, "sarif");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("SARIF is JSON");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("SARIF is JSON");
     assert_eq!(document["version"], "2.1.0");
     let run = &document["runs"][0];
     assert_eq!(run["tool"]["driver"]["name"], "rust-mutants");
     let results = run["results"].as_array().expect("the results");
     assert!(!results.is_empty(), "a run with a survivor reports it");
     let report: serde_json::Value =
-        serde_json::from_str(&projected(&fixture, "json")).expect("the stored report");
+        njutest_devkit::strictjson::decode_str(&projected(&fixture, "json"))
+            .expect("the stored report");
     assert_eq!(
         results.len(),
         report["findings"].as_array().expect("the findings").len(),
@@ -254,7 +256,8 @@ fn a_stryker_projection_carries_the_tests_that_killed_and_the_configured_thresho
     )
     .expect("a configuration");
     let text = projected(&fixture, "stryker");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("the projection is JSON");
+    let document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the projection is JSON");
     assert_eq!(document["thresholds"]["high"], 90);
     assert_eq!(document["thresholds"]["low"], 70);
     let killed = document["files"]["src/lib.rs"]["mutants"]
@@ -276,7 +279,7 @@ fn a_source_the_report_names_and_the_root_does_not_hold_is_rm0012() {
     let fixture = measured();
     std::fs::remove_file(fixture.root().join("src/lib.rs")).expect("the source goes away");
     let output = against(&fixture, &["report", "--format", "stryker"]);
-    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    let said = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(said.contains("RM0012"), "{said}");
     assert!(said.contains("src/lib.rs"), "{said}");
@@ -287,7 +290,8 @@ fn every_survivor_is_shown_inline_on_the_line_it_is_on() {
     let fixture = with_a_survivor();
     let text = projected(&fixture, "html");
     let report: serde_json::Value =
-        serde_json::from_str(&projected(&fixture, "json")).expect("the stored report is JSON");
+        njutest_devkit::strictjson::decode_str(&projected(&fixture, "json"))
+            .expect("the stored report is JSON");
     let survivors: Vec<&serde_json::Value> = report["mutants"]
         .as_array()
         .expect("the rows")
@@ -345,12 +349,13 @@ fn a_file_the_tests_noticed_every_mutation_in_is_counted_rather_than_printed() {
     );
     assert!(ran.status.code().is_some_and(|code| code <= 1), "{ran:?}");
     let report: serde_json::Value =
-        serde_json::from_str(&projected(&fixture, "json")).expect("the stored report");
+        njutest_devkit::strictjson::decode_str(&projected(&fixture, "json"))
+            .expect("the stored report");
     let clean = report["mutants"]
         .as_array()
         .expect("the rows")
         .iter()
-        .all(|row| row["outcome"] == "killed" || row["outcome"] == "timed_out");
+        .all(|row| row["outcome"] == "killed");
     if !clean {
         return;
     }

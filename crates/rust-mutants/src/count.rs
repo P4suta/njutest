@@ -89,16 +89,22 @@ impl<U: Unit> Count<U> {
         format!("{} {}", self.of, U::PLURAL)
     }
 
-    /// This many more of the same thing.
+    /// This many more of the same thing, or nothing when the exact count does not fit.
     #[must_use]
-    pub const fn and(self, other: Self) -> Self {
-        Self::new(self.of.saturating_add(other.of))
+    pub const fn checked_add(self, other: Self) -> Option<Self> {
+        match self.of.checked_add(other.of) {
+            Some(of) => Some(Self::new(of)),
+            None => None,
+        }
     }
 
-    /// The difference, never below nothing.
+    /// The exact difference, or nothing when `other` is larger.
     #[must_use]
-    pub const fn less(self, other: Self) -> Self {
-        Self::new(self.of.saturating_sub(other.of))
+    pub const fn checked_sub(self, other: Self) -> Option<Self> {
+        match self.of.checked_sub(other.of) {
+            Some(of) => Some(Self::new(of)),
+            None => None,
+        }
     }
 
     /// What share of `whole` this is, or nothing where the whole is nothing.
@@ -107,11 +113,22 @@ impl<U: Unit> Count<U> {
     /// a run that measured everything as a run that measured nothing.
     #[must_use]
     pub fn share_of(self, whole: Self) -> Option<f64> {
-        let widened = |count: u64| {
-            u32::try_from(count).map_or_else(|_too_many| f64::from(u32::MAX), f64::from)
-        };
-        (whole.of > 0).then(|| widened(self.of) / widened(whole.of))
+        ratio(self.of, whole.of)
     }
+}
+
+/// `part / whole` without truncating either 64-bit count to an apparently
+/// valid smaller count.
+#[must_use]
+pub(crate) fn ratio(part: u64, whole: u64) -> Option<f64> {
+    (whole != 0).then(|| widen(part) / widen(whole))
+}
+
+fn widen(value: u64) -> f64 {
+    let bytes = value.to_be_bytes();
+    let high = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let low = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    f64::from(high).mul_add(4_294_967_296.0, f64::from(low))
 }
 
 impl Count<Mutants> {
@@ -123,8 +140,11 @@ impl Count<Mutants> {
     /// different quantities, and the multiplication that joins them was a bare
     /// `*` nobody had to name.
     #[must_use]
-    pub const fn against(self, targets: Count<Targets>) -> Count<Pairs> {
-        Count::new(self.of.saturating_mul(targets.of))
+    pub const fn checked_against(self, targets: Count<Targets>) -> Option<Count<Pairs>> {
+        match self.of.checked_mul(targets.of) {
+            Some(of) => Some(Count::new(of)),
+            None => None,
+        }
     }
 }
 

@@ -4,27 +4,88 @@
 //! The language server: what it says about a report, and what it refuses to do about it.
 
 #![expect(
+    clippy::assigning_clones,
     clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a test that reads a fixed answer out of a fixed request is a table, and an index out of range is the failure it is there to report"
+    clippy::panic,
+    clippy::too_many_lines,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use std::io::{BufRead, Cursor, Read, Write};
 
 use njutest_cli::app::lsp::{Encoding, diagnostics, framed, message, serve};
+use njutest_cli::cli::EXIT_ASSURED;
 use njutest_cli::config::Contract;
 use njutest_cli::report::{
-    Finding, FindingKind, MutantRecord, Position, Report, RunKind, TargetRecord, TargetStatus,
+    BuildReport, Finding, FindingKind, Limitation, MutantAccounting, MutantRecord,
+    ObserverAccounting, Position, Report, RunKind, TargetRecord, TargetStatus,
 };
+use rust_mutants::id::RunId;
 use serde_json::{Value, json};
 
+fn run_id(value: &str) -> RunId {
+    RunId::try_from(value).expect("a canonical run id")
+}
+
+/// The on-disk spelling used only to assemble hostile LSP fixtures.
+///
+/// Production LSP readers use a held `StoredRun` capability and never reopen
+/// these display paths after validation.
+fn fixture_report_root(root: &std::path::Path) -> std::path::PathBuf {
+    root.join(
+        njutest_cli::config::Config::default()
+            .reports
+            .directory
+            .as_path(),
+    )
+}
+
+fn fixture_runs(root: &std::path::Path) -> std::path::PathBuf {
+    fixture_report_root(root).join("runs")
+}
+
+fn fixture_run(root: &std::path::Path, run: &RunId) -> std::path::PathBuf {
+    fixture_runs(root).join(run.as_str())
+}
+
+fn fixture_index(
+    root: &std::path::Path,
+    index: njutest_cli::app::reports::Index,
+) -> std::path::PathBuf {
+    fixture_report_root(root).join(index.file())
+}
+
+fn fixture_run_name(run: &RunId) -> String {
+    format!(
+        "{}/runs/{}",
+        njutest_cli::config::DEFAULT_REPORTS_DIRECTORY,
+        run.as_str()
+    )
+}
+
 fn reported() -> Report {
-    let mut report = Report::new(
-        "20260908T000000Z-000001",
-        RunKind::Full,
-        Contract::StandardV1,
-    );
-    report.targets.push(TargetRecord {
+    reported_at(
+        Position {
+            line: 7,
+            column: 9,
+            character_column: 5,
+        },
+        false,
+    )
+}
+
+fn reported_at(position: Position, unplaced_finding: bool) -> Report {
+    let mut source = BuildReport::new("source-one", RunKind::Full, Contract::StandardV1);
+    source.repository.root_name = "workspace".to_owned();
+    source.repository.workspace_digest = "b".repeat(64);
+    source.repository.configuration_digest = "c".repeat(64);
+    source.toolchain.rustc = "rustc 1.98.0".to_owned();
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    source.timing.started = "2026-09-08T00:00:00Z".to_owned();
+    source.timing.finished = "2026-09-08T00:00:00Z".to_owned();
+    source.timing.duration_ms = 1;
+    source.targets.push(TargetRecord {
         id: "one".to_owned(),
         name: "pkg/lib/pkg".to_owned(),
         package: "pkg".to_owned(),
@@ -32,38 +93,78 @@ fn reported() -> Report {
         duration_ms: 1,
         message: None,
     });
-    report.mutants.push(MutantRecord {
+    source.count_targets().expect("one exact target row");
+    source.mutants.push(MutantRecord {
+        catalog_index: njutest_cli::report::CatalogIndex::new(0),
         id: "a".repeat(64),
-        display_id: "aaaaaaaaaaaa".to_owned(),
+        display_id: "aaaaaaaaaaaaaaaaaaaa".to_owned(),
         path: "src/lib.rs".to_owned(),
-        position: Position {
-            line: 7,
-            column: 9,
-            character_column: 5,
-        },
+        position,
         rule: "gt-to-ge".to_owned(),
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
         outcome: njutest_cli::report::Decided::Survived,
+        accepted: false,
         reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
         blind_in: Vec::new(),
         routing: None,
     });
-    report.findings.push(Finding {
+    source.accounting.mutants = MutantAccounting {
+        cataloged: 1,
+        executed: 1,
+        survived: 1,
+        observers: ObserverAccounting {
+            unnoticed: 1,
+            ..ObserverAccounting::default()
+        },
+        ..MutantAccounting::default()
+    };
+    source.findings.push(Finding {
         kind: FindingKind::SurvivingMutant,
-        subject: "aaaaaaaaaaaa".to_owned(),
+        subject: "aaaaaaaaaaaaaaaaaaaa".to_owned(),
         detail: "no test noticed gt-to-ge".to_owned(),
+        origin: njutest_cli::report::FindingOrigin::Global,
         path: None,
         position: None,
     });
-    report
+    if unplaced_finding {
+        source.findings.push(Finding {
+            kind: FindingKind::FailingTest,
+            subject: "pkg/lib/pkg".to_owned(),
+            detail: "the target failed".to_owned(),
+            origin: njutest_cli::report::FindingOrigin::Global,
+            path: None,
+            position: None,
+        });
+    }
+    source.limitations.push(Limitation::new(
+        "git-metadata-unavailable",
+        "the LSP fixture is not a git repository",
+    ));
+    source.verdict = source.concluded();
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let final_run = run_id("one");
+    let latticed = njutest_cli::report::across::configured(&final_run, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog LSP fixture cannot be a shard");
+    };
+    latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion")
 }
 
 #[test]
 fn a_finding_is_shown_where_the_mutation_it_names_is() {
     let root = tempfile::tempdir().expect("a directory");
-    let shown = diagnostics(&reported(), root.path(), Encoding::Utf8);
+    let shown = diagnostics(&reported(), root.path(), Encoding::Utf8)
+        .expect("the checked report has representable diagnostics");
 
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].path, "src/lib.rs");
@@ -80,22 +181,26 @@ fn a_finding_is_shown_where_the_mutation_it_names_is() {
          every other surface of this run prints: a digest here and a locator in the \
          terminal is one mutation with two names"
     );
-    assert_eq!(shown[0].diagnostics[0]["data"]["id"], "aaaaaaaaaaaa");
+    assert_eq!(
+        shown[0].diagnostics[0]["data"]["id"],
+        "aaaaaaaaaaaaaaaaaaaa"
+    );
 }
 
 #[test]
 fn a_finding_about_something_that_is_not_in_a_file_is_not_shown_in_one() {
-    let mut report = reported();
-    report.findings.push(Finding {
-        kind: FindingKind::FailingTest,
-        subject: "pkg/lib/pkg".to_owned(),
-        detail: "the target failed".to_owned(),
-        path: None,
-        position: None,
-    });
+    let report = reported_at(
+        Position {
+            line: 7,
+            column: 9,
+            character_column: 5,
+        },
+        true,
+    );
     let root = tempfile::tempdir().expect("a directory");
 
-    let shown = diagnostics(&report, root.path(), Encoding::Utf8);
+    let shown = diagnostics(&report, root.path(), Encoding::Utf8)
+        .expect("the checked report has representable diagnostics");
     assert_eq!(
         shown.iter().map(|one| one.diagnostics.len()).sum::<usize>(),
         1,
@@ -114,15 +219,19 @@ fn a_column_is_counted_the_way_the_client_says_it_counts() {
     )
     .expect("a line whose characters are not one code unit each");
 
-    let mut report = reported();
-    report.mutants[0].position = Position {
-        line: 7,
-        column: 11,
-        character_column: 5,
-    };
+    let report = reported_at(
+        Position {
+            line: 7,
+            column: 11,
+            character_column: 5,
+        },
+        false,
+    );
 
-    let utf8 = diagnostics(&report, root.path(), Encoding::Utf8);
-    let utf16 = diagnostics(&report, root.path(), Encoding::Utf16);
+    let utf8 = diagnostics(&report, root.path(), Encoding::Utf8)
+        .expect("the checked report has representable UTF-8 diagnostics");
+    let utf16 = diagnostics(&report, root.path(), Encoding::Utf16)
+        .expect("the checked report has representable UTF-16 diagnostics");
 
     assert_eq!(
         utf8[0].diagnostics[0]["range"]["start"]["character"], 10,
@@ -199,21 +308,25 @@ fn a_code_action_hands_back_the_acceptance_to_record_and_edits_nothing() {
     let request = framed(&json!({
         "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction",
         "params": { "context": { "diagnostics": [
-            { "data": { "mutant": "aaaaaaaaaaaa" }, "message": "no test noticed it" }
+            { "data": { "mutant": "aaaaaaaaaaaaaaaaaaaa" }, "message": "no test noticed it" }
         ] } }
     }));
     let mut input = Cursor::new(request.into_bytes());
     let mut output: Vec<u8> = Vec::new();
     let root = tempfile::tempdir().expect("a directory");
 
-    let _code = serve(&mut input, &mut output, root.path());
+    let code = serve(&mut input, &mut output, root.path());
+    assert_eq!(code, EXIT_ASSURED, "a valid code-action request is served");
 
     let mut read = Cursor::new(output);
     let answer = message(&mut read).expect("one answer");
     let offered = answer["result"].as_array().expect("actions");
     assert_eq!(offered.len(), 1);
     assert_eq!(offered[0]["command"]["command"], "njutest.accept");
-    assert_eq!(offered[0]["command"]["arguments"][0], "aaaaaaaaaaaa");
+    assert_eq!(
+        offered[0]["command"]["arguments"][0],
+        "aaaaaaaaaaaaaaaaaaaa"
+    );
     assert!(
         offered[0].get("edit").is_none(),
         "a run is read-only and `fix --apply` is the one thing that writes, so this \
@@ -232,7 +345,8 @@ fn a_header_this_reader_does_not_know_is_not_a_reason_to_stop() {
     let mut output: Vec<u8> = Vec::new();
     let root = tempfile::tempdir().expect("a directory");
 
-    let _code = serve(&mut input, &mut output, root.path());
+    let code = serve(&mut input, &mut output, root.path());
+    assert_eq!(code, EXIT_ASSURED, "an allowed extra header is served");
 
     let mut read = Cursor::new(output);
     assert_eq!(
@@ -302,21 +416,24 @@ fn served(messages: &[Value], root: &std::path::Path) -> Recording {
 
 /// A workspace whose last run found the one mutation `reported` describes.
 fn ran(root: &std::path::Path) {
-    let store = njutest_cli::app::reports::Store::read(root);
-    std::fs::create_dir_all(store.run("one")).expect("mkdir");
+    let one = run_id("one");
+    std::fs::create_dir_all(fixture_run(root, &one)).expect("mkdir");
     std::fs::create_dir_all(root.join("src")).expect("mkdir");
     std::fs::write(root.join("src/lib.rs"), "\n\n\n\n\n\n\u{1D11E}x = 1;\n")
         .expect("the file a finding is in");
     std::fs::write(
-        store
-            .run("one")
-            .join(njutest_cli::app::reports::DOCUMENT_NAME),
+        fixture_run(root, &one).join(njutest_cli::app::reports::DOCUMENT_NAME),
         serde_json::to_string(&reported()).expect("a report"),
     )
     .expect("the report");
     std::fs::write(
-        store.index(njutest_cli::app::reports::Index::Any),
-        json!({ "directory": store.named("one"), "run_id": "one" }).to_string(),
+        fixture_index(root, njutest_cli::app::reports::Index::Any),
+        json!({
+            "schema": njutest_cli::report::SCHEMA,
+            "directory": fixture_run_name(&one),
+            "run_id": one.as_str(),
+        })
+        .to_string(),
     )
     .expect("the pointer a reader follows");
 }
@@ -324,19 +441,17 @@ fn ran(root: &std::path::Path) {
 #[test]
 fn a_finding_this_cannot_place_does_not_hide_the_ones_after_it() {
     let root = tempfile::tempdir().expect("a directory");
-    let mut report = reported();
-    report.findings.insert(
-        0,
-        Finding {
-            kind: FindingKind::FailingTest,
-            subject: "pkg/lib/pkg".to_owned(),
-            detail: "the target failed".to_owned(),
-            path: None,
-            position: None,
+    let report = reported_at(
+        Position {
+            line: 7,
+            column: 9,
+            character_column: 5,
         },
+        true,
     );
 
-    let shown = diagnostics(&report, root.path(), Encoding::Utf8);
+    let shown = diagnostics(&report, root.path(), Encoding::Utf8)
+        .expect("the checked report has representable diagnostics");
 
     assert_eq!(
         shown.len(),
@@ -350,18 +465,22 @@ fn a_finding_this_cannot_place_does_not_hide_the_ones_after_it() {
 #[test]
 fn a_line_that_cannot_be_read_is_counted_the_way_the_report_already_counted_it() {
     let root = tempfile::tempdir().expect("a directory");
-    let mut report = reported();
-    report.mutants[0].position = Position {
-        line: 7,
-        column: 11,
-        character_column: 5,
-    };
+    let report = reported_at(
+        Position {
+            line: 7,
+            column: 11,
+            character_column: 5,
+        },
+        false,
+    );
 
-    let missing = diagnostics(&report, root.path(), Encoding::Utf16);
+    let missing = diagnostics(&report, root.path(), Encoding::Utf16)
+        .expect("the checked report has representable diagnostics");
 
     std::fs::create_dir_all(root.path().join("src")).expect("mkdir");
     std::fs::write(root.path().join("src/lib.rs"), "one line\n").expect("a short file");
-    let short = diagnostics(&report, root.path(), Encoding::Utf16);
+    let short = diagnostics(&report, root.path(), Encoding::Utf16)
+        .expect("the checked report has representable diagnostics");
 
     assert_eq!(
         missing[0].diagnostics[0]["range"]["start"]["character"], 4,
@@ -439,7 +558,7 @@ fn a_diagnostic_that_names_no_mutation_does_not_hide_the_ones_after_it() {
             "jsonrpc": "2.0", "id": 6, "method": "textDocument/codeAction",
             "params": { "context": { "diagnostics": [
                 { "message": "something else put this here" },
-                { "data": { "mutant": "aaaaaaaaaaaa" } }
+                { "data": { "mutant": "aaaaaaaaaaaaaaaaaaaa" } }
             ] } }
         })],
         root.path(),
@@ -528,7 +647,8 @@ fn what_the_last_run_found_is_published_when_a_file_is_opened_or_saved() {
     );
     assert_eq!(
         published[0]["params"]["uri"],
-        njutest_cli::app::lsp::uri_of(&root.path().join("src/lib.rs")),
+        njutest_cli::app::lsp::uri_of(&root.path().join("src/lib.rs"))
+            .expect("the fixture path is valid UTF-8"),
         "the file a finding is in is the one it is shown in"
     );
     assert_eq!(
@@ -547,10 +667,9 @@ fn a_run_that_has_not_happened_is_not_a_file_with_nothing_wrong_in_it() {
         root.path(),
     );
 
-    let store = njutest_cli::app::reports::Store::read(root.path());
-    std::fs::create_dir_all(store.runs()).expect("mkdir");
+    std::fs::create_dir_all(fixture_runs(root.path())).expect("mkdir");
     std::fs::write(
-        store.index(njutest_cli::app::reports::Index::Any),
+        fixture_index(root.path(), njutest_cli::app::reports::Index::Any),
         "{ not json",
     )
     .expect("a pointer nobody can follow");
@@ -560,8 +679,11 @@ fn a_run_that_has_not_happened_is_not_a_file_with_nothing_wrong_in_it() {
     );
 
     std::fs::write(
-        store.index(njutest_cli::app::reports::Index::Any),
-        json!({ "directory": store.named("gone") }).to_string(),
+        fixture_index(root.path(), njutest_cli::app::reports::Index::Any),
+        json!({
+            "directory": fixture_run_name(&run_id("gone"))
+        })
+        .to_string(),
     )
     .expect("a pointer to a run whose report is not there");
     let missing = served(
@@ -569,10 +691,16 @@ fn a_run_that_has_not_happened_is_not_a_file_with_nothing_wrong_in_it() {
         root.path(),
     );
 
+    let published = |said: Vec<u8>| {
+        answers(said)
+            .into_iter()
+            .filter(|one| one["method"] == "textDocument/publishDiagnostics")
+            .collect::<Vec<_>>()
+    };
     assert!(
-        answers(never.said).is_empty()
-            && answers(unreadable.said).is_empty()
-            && answers(missing.said).is_empty(),
+        published(never.said).is_empty()
+            && published(unreadable.said).is_empty()
+            && published(missing.said).is_empty(),
         "publishing an empty list would clear the editor's markers, which reads as a \
          file that was measured and found clean: a workspace nobody has verified, a \
          pointer nobody can follow, and a run whose report is not there all say nothing \
@@ -646,7 +774,7 @@ fn the_whole_exchange_an_editor_has_with_this_server_is_recorded() {
             json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen" }),
             json!({ "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction",
                 "params": { "context": { "diagnostics": [
-                    { "data": { "mutant": "src/lib.rs:demo:gt-to-ge@7", "id": "aaaaaaaaaaaa", "rule": "gt-to-ge" } }
+                    { "data": { "mutant": "src/lib.rs:demo:gt-to-ge@7", "id": "aaaaaaaaaaaaaaaaaaaa", "rule": "gt-to-ge" } }
                 ] } } }),
             json!({ "jsonrpc": "2.0", "id": 3, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),
@@ -655,16 +783,20 @@ fn the_whole_exchange_an_editor_has_with_this_server_is_recorded() {
     );
 
     assert!(
-        String::from_utf8_lossy(&output.said).starts_with("Content-Length: "),
+        njutest_devkit::process::strict_utf8(&output.said).starts_with("Content-Length: "),
         "every message is framed the way the protocol frames them"
     );
     let mut lines = Vec::new();
     for said in answers(output.said) {
         let text = serde_json::to_string(&said).expect("one line");
         lines.extend_from_slice(
-            text.replace(&njutest_cli::app::lsp::uri_of(root.path()), "file://<root>")
-                .replace(&root.path().display().to_string(), "<root>")
-                .as_bytes(),
+            text.replace(
+                &njutest_cli::app::lsp::uri_of(root.path())
+                    .expect("the fixture path is valid UTF-8"),
+                "file://<root>",
+            )
+            .replace(&root.path().display().to_string(), "<root>")
+            .as_bytes(),
         );
         lines.push(b'\n');
     }
@@ -691,8 +823,7 @@ fn a_pointer_that_names_no_run_is_not_a_run() {
     let root = tempfile::tempdir().expect("a directory");
     ran(root.path());
     std::fs::write(
-        njutest_cli::app::reports::Store::read(root.path())
-            .index(njutest_cli::app::reports::Index::Any),
+        fixture_index(root.path(), njutest_cli::app::reports::Index::Any),
         json!({ "run_id": "one" }).to_string(),
     )
     .expect("a pointer that says which run and not where it is");
@@ -703,7 +834,9 @@ fn a_pointer_that_names_no_run_is_not_a_run() {
     );
 
     assert!(
-        answers(output.said).is_empty(),
+        answers(output.said)
+            .into_iter()
+            .all(|one| one["method"] != "textDocument/publishDiagnostics"),
         "the directory is the only thing in that file this can follow, and guessing one \
          would put whatever is at the guess in front of a person as what their run found"
     );

@@ -15,11 +15,18 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 
+[package.metadata.njutest]
+surface = "public"
+
 [features]
+benchmarks = ["dep:criterion"]
 testkit = []
 
 [dependencies]
+njutest-macros = { workspace = true }
+criterion = { workspace = true, optional = true }
 hex = { workspace = true }
+getrandom = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
 proc-macro2 = { workspace = true }
 serde = { workspace = true }
@@ -36,7 +43,6 @@ rustix = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
 jsonschema = { workspace = true }
 rust-mutants = { workspace = true, features = ["testkit"] }
 njutest-devkit = { workspace = true }
@@ -46,10 +52,12 @@ tempfile = { workspace = true }
 [[bench]]
 name = "foundation"
 harness = false
+required-features = ["benchmarks"]
 
 [[bench]]
 name = "pipeline"
 harness = false
+required-features = ["benchmarks"]
 
 [lints]
 workspace = true

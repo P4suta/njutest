@@ -3,7 +3,7 @@
 
 //! Driving a session: judging every mutant it holds, and what a run shares between the ones it is measuring at once.
 
-use std::sync::{PoisonError, RwLock};
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use crate::EngineError;
@@ -11,7 +11,7 @@ use crate::catalog::Mutant;
 use crate::discover::SkipClaim;
 use crate::outcome::Outcome;
 use crate::runner::Cancel;
-use crate::session::{Locator, Request, Session};
+use crate::session::{LocateError, Locator, Request, Session};
 use crate::workspace::SessionError;
 
 /// The machine: shared while a run measures several mutations at once, and given to one of them when a budget expires.
@@ -20,19 +20,33 @@ pub struct Quiet(RwLock<()>);
 
 impl Quiet {
     /// Runs `work` beside whatever else this run is measuring.
-    pub fn shared<R>(&self, work: impl FnOnce() -> R) -> R {
-        let held = self.0.read().unwrap_or_else(PoisonError::into_inner);
+    ///
+    /// # Errors
+    /// Returns a typed session failure after any panic poisons the coordination
+    /// lock; continuing could otherwise run a supposedly isolated retry beside
+    /// work whose state is unknown.
+    pub fn shared<R>(&self, work: impl FnOnce() -> R) -> Result<R, EngineError> {
+        let held = self
+            .0
+            .read()
+            .map_err(|_poisoned| SessionError::CoordinationPoisoned)?;
         let answer = work();
         drop(held);
-        answer
+        Ok(answer)
     }
 
     /// Runs `work` with nothing else this run started running beside it.
-    pub fn alone<R>(&self, work: impl FnOnce() -> R) -> R {
-        let held = self.0.write().unwrap_or_else(PoisonError::into_inner);
+    ///
+    /// # Errors
+    /// Returns a typed session failure when prior work poisoned the lock.
+    pub fn alone<R>(&self, work: impl FnOnce() -> R) -> Result<R, EngineError> {
+        let held = self
+            .0
+            .write()
+            .map_err(|_poisoned| SessionError::CoordinationPoisoned)?;
         let answer = work();
         drop(held);
-        answer
+        Ok(answer)
     }
 }
 
@@ -76,6 +90,32 @@ pub const EXIT_INTERRUPTED: u8 = 130;
 /// The exit code of a run that established nothing: it failed rather than answered.
 pub const EXIT_FAILED: u8 = 2;
 
+/// What the optional compiler-artifact comparison established.
+///
+/// `NotMeasured` and `NotEstablished` are different: the latter says the
+/// layer ran but its premises did not support either identity or difference.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum CodegenIdentity {
+    /// The comparison layer was not run for this mutation.
+    NotMeasured,
+    /// Every retained executable was byte-identical.
+    Identical,
+    /// At least one retained executable differed.
+    Different,
+    /// The comparison ran but its premises established neither answer.
+    NotEstablished,
+}
+
 /// What one mutant's execution established.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Judged {
@@ -87,6 +127,8 @@ pub struct Judged {
     pub display_id: String,
     /// What the execution says.
     pub outcome: Outcome,
+    /// The verified execution notice when the step limit was reached.
+    pub step_notice: Option<crate::execute::StepLimitNotice>,
     /// The target that ran, empty when none did.
     pub target: String,
     /// The exit status of the last execution.
@@ -111,8 +153,8 @@ pub struct Judged {
     pub route: Option<crate::report::run::RouteDocument>,
     /// Whether this run measured it, rather than reusing what an earlier one established or never reaching it. A measurement records its own route.
     pub measured: bool,
-    /// Whether the compiler renders the mutation identically to what it mutates, when the equivalence layer was asked.
-    pub identical: Option<bool>,
+    /// What comparison of the compiler artifacts established.
+    pub identical: CodegenIdentity,
 }
 
 /// Whether a reviewer's claim about one mutant held.
@@ -159,12 +201,27 @@ pub struct Verified {
 }
 
 /// What kind of hole a finding names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum FindingKind {
     /// Every test passed with the mutant active.
     SurvivingMutant,
     /// The run could not decide.
     InconclusiveMutant,
+    /// A process reached the selected guard's execution allowance, which does not decide why.
+    StepLimitReachedMutant,
     /// This machine stopped waiting for the mutant, so the run established nothing about it.
     WaitedMutant,
     /// The harness itself failed for this mutant.
@@ -184,26 +241,13 @@ pub enum FindingKind {
 }
 
 impl FindingKind {
-    /// Every kind, in the order findings are reported.
-    pub const ALL: [Self; 10] = [
-        Self::SurvivingMutant,
-        Self::InconclusiveMutant,
-        Self::WaitedMutant,
-        Self::ErroredMutant,
-        Self::NotRunMutant,
-        Self::UnreachedMutant,
-        Self::DischargedMutant,
-        Self::StaleExpectation,
-        Self::UnmatchedExpectation,
-        Self::UnmatchedSkip,
-    ];
-
     /// The canonical wire name.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::SurvivingMutant => "surviving-mutant",
             Self::InconclusiveMutant => "inconclusive-mutant",
+            Self::StepLimitReachedMutant => "step-limit-reached-mutant",
             Self::WaitedMutant => "waited-mutant",
             Self::ErroredMutant => "errored-mutant",
             Self::NotRunMutant => "not-run-mutant",
@@ -213,6 +257,12 @@ impl FindingKind {
             Self::UnmatchedExpectation => "unmatched-expectation",
             Self::UnmatchedSkip => "unmatched-skip",
         }
+    }
+
+    /// The canonical wire name, for interfaces that take a string slice.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.name()
     }
 
     /// The kind with the given wire name, if any.
@@ -226,7 +276,10 @@ impl FindingKind {
     pub const fn is_infrastructure(self) -> bool {
         matches!(
             self,
-            Self::ErroredMutant | Self::NotRunMutant | Self::WaitedMutant
+            Self::ErroredMutant
+                | Self::NotRunMutant
+                | Self::StepLimitReachedMutant
+                | Self::WaitedMutant
         )
     }
 }
@@ -257,8 +310,8 @@ pub struct Tally {
     pub killed: u32,
     /// How many every test passed on.
     pub survived: u32,
-    /// How many took their guard more times than the run allowed, twice over.
-    pub runaway: u32,
+    /// How many reached the per-process guard-take limit without deciding the mutation.
+    pub step_limit_reached: u32,
     /// How many this machine stopped waiting for, twice over. Not caught: the run established that it stopped waiting.
     pub waited: u32,
     /// How many the run could not decide.
@@ -278,7 +331,7 @@ pub struct Tally {
 /// The share of decided mutants the tests noticed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Score {
-    /// Killed plus confirmed timeouts.
+    /// Mutants a test killed.
     pub detected: u32,
     /// Detected plus survived: the mutants the run has an answer for.
     pub decided: u32,
@@ -309,10 +362,13 @@ pub struct Run {
 
 impl Run {
     /// The outcomes folded. An outcome this release does not know counts with the harness failures: nothing it says can be read as detection.
-    #[must_use]
-    pub fn tally(&self) -> Tally {
+    ///
+    /// # Errors
+    /// Refuses when the number of rows or any exact folded counter exceeds the
+    /// durable `u32` report representation.
+    pub fn tally(&self) -> Result<Tally, SessionError> {
         let mut tally = Tally {
-            cataloged: count(self.judged.len()),
+            cataloged: count(self.judged.len())?,
             refused: self.refused,
             skipped: self.skipped,
             ..Tally::default()
@@ -321,38 +377,55 @@ impl Run {
             let slot = match one.outcome {
                 Outcome::Killed => &mut tally.killed,
                 Outcome::Survived => &mut tally.survived,
-                Outcome::Runaway => &mut tally.runaway,
+                Outcome::StepLimitReached => &mut tally.step_limit_reached,
                 Outcome::Waited => &mut tally.waited,
                 Outcome::Inconclusive => &mut tally.inconclusive,
                 Outcome::NotRun => &mut tally.not_run,
                 Outcome::Errored => &mut tally.errored,
             };
-            *slot = slot.saturating_add(1);
+            *slot = slot.checked_add(1).ok_or(SessionError::RunCountOverflow)?;
             if one.not_run_reason == Some(NotRunReason::Unreached) {
-                tally.unreached = tally.unreached.saturating_add(1);
+                tally.unreached = tally
+                    .unreached
+                    .checked_add(1)
+                    .ok_or(SessionError::RunCountOverflow)?;
             }
             if one.not_run_reason == Some(NotRunReason::Discharged) {
-                tally.discharged = tally.discharged.saturating_add(1);
+                tally.discharged = tally
+                    .discharged
+                    .checked_add(1)
+                    .ok_or(SessionError::RunCountOverflow)?;
             }
             if one.expected {
-                tally.expected = tally.expected.saturating_add(1);
+                tally.expected = tally
+                    .expected
+                    .checked_add(1)
+                    .ok_or(SessionError::RunCountOverflow)?;
             }
         }
-        tally.executed = tally.cataloged.saturating_sub(tally.not_run);
-        tally
+        tally.executed = tally
+            .cataloged
+            .checked_sub(tally.not_run)
+            .ok_or(SessionError::RunCountOverflow)?;
+        Ok(tally)
     }
 
     /// The share of decided mutants the tests noticed, or `None` when the run decided nothing.
-    #[must_use]
-    pub fn score(&self) -> Option<Score> {
-        let tally = self.tally();
-        let detected = tally.killed.saturating_add(tally.runaway);
-        let decided = detected.saturating_add(tally.survived);
-        (decided > 0).then(|| Score {
+    ///
+    /// # Errors
+    /// Refuses when the run's exact accounting does not fit its durable
+    /// counters.
+    pub fn score(&self) -> Result<Option<Score>, SessionError> {
+        let tally = self.tally()?;
+        let detected = tally.killed;
+        let decided = detected
+            .checked_add(tally.survived)
+            .ok_or(SessionError::RunCountOverflow)?;
+        Ok((decided > 0).then(|| Score {
             detected,
             decided,
             value: f64::from(detected) / f64::from(decided),
-        })
+        }))
     }
 
     /// Everything that stops the run from being clean, mutants first and in catalog order. An outcome this release does not know counts as a harness failure: nothing it says can be read as detection.
@@ -380,7 +453,8 @@ impl Run {
                 }
                 Outcome::NotRun if self.interrupted => continue,
                 Outcome::NotRun => FindingKind::NotRunMutant,
-                Outcome::Killed | Outcome::Runaway => continue,
+                Outcome::Killed => continue,
+                Outcome::StepLimitReached => FindingKind::StepLimitReachedMutant,
                 Outcome::Waited => FindingKind::WaitedMutant,
                 Outcome::Errored => FindingKind::ErroredMutant,
             };
@@ -467,6 +541,11 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
              a step allowance so a mutant that cannot terminate is stopped by a count instead",
             one.display_id
         ),
+        FindingKind::StepLimitReachedMutant => format!(
+            "{} reached the configured per-process guard-take limit; that establishes where \
+             this execution stopped, not that the mutation cannot terminate",
+            one.display_id
+        ),
         FindingKind::InconclusiveMutant if one.retried => format!(
             "{} timed out once and did not do so again, so the run cannot say what the tests \
              noticed",
@@ -506,9 +585,12 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
 }
 
 /// One length as a count. A catalog larger than a `u32` is one no run could hold in memory to begin with.
-#[must_use]
-pub fn count(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
+///
+/// # Errors
+/// Refuses a host collection whose exact cardinality does not fit the durable
+/// run counter.
+pub fn count(value: usize) -> Result<u32, SessionError> {
+    u32::try_from(value).map_err(|_outside_range| SessionError::RunCountTooLarge { count: value })
 }
 
 /// What a run needs beyond the session itself.
@@ -583,7 +665,7 @@ impl Filter {
         if let Some(ids) = &self.ids
             && !ids
                 .iter()
-                .any(|prefix| mutant.id.starts_with(prefix.as_str()))
+                .any(|prefix| mutant.id.as_str().starts_with(prefix.as_str()))
         {
             return false;
         }
@@ -647,8 +729,8 @@ impl Shard {
             text: text.to_owned(),
         };
         let (index, of) = text.split_once('/').ok_or_else(malformed)?;
-        let index: u32 = index.trim().parse().map_err(|_error| malformed())?;
-        let of: u32 = of.trim().parse().map_err(|_error| malformed())?;
+        let index = index.trim().parse::<u32>().map_err(|_error| malformed())?;
+        let of = of.trim().parse::<u32>().map_err(|_error| malformed())?;
         if of == 0 || index == 0 || index > of {
             return Err(ShardError::OutOfRange { index, of });
         }
@@ -706,12 +788,12 @@ pub fn run<O: Observer>(
             }));
         }
         session.trace().select(crate::trace::SelectRecord {
-            mutant: mutant.display_id.clone(),
+            mutant: mutant.display_id.to_string(),
             reason: NotRunReason::Unselected.name().to_owned(),
         });
         unselected.push(unexecuted(mutant, NotRunReason::Unselected));
     }
-    observer.starting(count(places.len()));
+    observer.starting(count(places.len())?);
     let judged = if jobs(options.jobs) == 1 {
         serially(session, &places, options, (cancel, observer))?
     } else {
@@ -722,7 +804,7 @@ pub fn run<O: Observer>(
     judged.extend(unselected);
     judged.sort_by_key(|one| one.index);
     if let Some(asking) = options.equivalence {
-        equivalence(session, asking, &mut judged, cancel);
+        equivalence(session, asking, &mut judged, cancel)?;
     }
     let interrupted = judged
         .iter()
@@ -730,11 +812,12 @@ pub fn run<O: Observer>(
     Ok(Run {
         judged,
         expectations: Vec::new(),
-        skipped: session
-            .skips()
-            .iter()
-            .fold(0u32, |total, skip| total.saturating_add(skip.count)),
-        refused: count(session.rejections().len()),
+        skipped: session.skips().iter().try_fold(0u32, |total, skip| {
+            total
+                .checked_add(skip.count)
+                .ok_or(SessionError::RunCountOverflow)
+        })?,
+        refused: count(session.rejections().len())?,
         claims: session.claims().to_vec(),
         interrupted: interrupted || cancel.is_cancelled(),
         shard: options.shard,
@@ -743,22 +826,30 @@ pub fn run<O: Observer>(
 }
 
 /// The mutants a claim names, and where the first has moved to since the claim was written.
+#[derive(Debug, thiserror::Error)]
+enum AddressError {
+    #[error(transparent)]
+    Resolve(#[from] EngineError),
+    #[error("the claim names no mutant")]
+    MissingLocator,
+    #[error(transparent)]
+    Locate(#[from] LocateError),
+}
+
 fn addressed<'s>(
     session: &'s Session,
     expectation: &Expectation,
-) -> Result<(Vec<&'s Mutant>, Option<Standing>), String> {
+) -> Result<(Vec<&'s Mutant>, Option<Standing>), AddressError> {
     if let Some(id) = &expectation.id {
         return session
             .resolve(id)
             .map(|mutant| (vec![mutant], None))
-            .map_err(|error| error.to_string());
+            .map_err(AddressError::from);
     }
     let Some(locator) = &expectation.locator else {
-        return Err("the claim names no mutant".to_owned());
+        return Err(AddressError::MissingLocator);
     };
-    let mutants = session
-        .locate_all(locator)
-        .map_err(|error| error.to_string())?;
+    let mutants = session.locate_all(locator)?;
     let moved = locator.line.zip(mutants.first()).and_then(|(from, first)| {
         let to = session.position(first)?.line;
         (to != from).then_some(Standing::Moved { from, to })
@@ -795,7 +886,7 @@ fn equivalence(
     asking: &Equivalence<'_>,
     judged: &mut [Judged],
     cancel: &Cancel,
-) {
+) -> Result<(), EngineError> {
     let survivors: Vec<usize> = judged
         .iter()
         .enumerate()
@@ -803,15 +894,11 @@ fn equivalence(
         .map(|(at, _)| at)
         .collect();
     if survivors.is_empty() {
-        return;
+        return Ok(());
     }
     let phase = session.trace().phase("equivalence");
-    let opened =
-        crate::equivalence::Prover::open(asking.root, &asking.options, cancel, session.trace());
-    let Ok(mut prover) = opened else {
-        phase.end();
-        return;
-    };
+    let mut prover =
+        crate::equivalence::Prover::open(asking.root, &asking.options, cancel, session.trace())?;
     for at in survivors {
         if cancel.is_cancelled() {
             break;
@@ -822,9 +909,7 @@ fn equivalence(
         let Some(mutant) = session.catalog().by_index(one.index) else {
             continue;
         };
-        let Ok(answer) = prover.identical(&mutant.candidate, cancel) else {
-            break;
-        };
+        let answer = prover.identical(&mutant.candidate, cancel)?;
         session.trace().identical(crate::trace::IdenticalRecord {
             index: one.index,
             identity: answer.name().to_owned(),
@@ -838,14 +923,17 @@ fn equivalence(
         });
         if let Some(one) = judged.get_mut(at) {
             one.identical = match answer {
-                crate::equivalence::artifacts::Identity::Identical => Some(true),
-                crate::equivalence::artifacts::Identity::Differs => Some(false),
-                crate::equivalence::artifacts::Identity::NotEstablished(_) => None,
+                crate::equivalence::artifacts::Identity::Identical => CodegenIdentity::Identical,
+                crate::equivalence::artifacts::Identity::Differs => CodegenIdentity::Different,
+                crate::equivalence::artifacts::Identity::NotEstablished(_) => {
+                    CodegenIdentity::NotEstablished
+                }
             };
         }
     }
-    drop(prover.close());
+    prover.close()?;
     phase.end();
+    Ok(())
 }
 
 /// What the equivalence layer needs: the tree the user wrote, and how it is built.
@@ -863,7 +951,10 @@ pub fn jobs(configured: usize) -> usize {
     if configured > 0 {
         return configured;
     }
-    std::thread::available_parallelism().map_or(1, |cores| cores.get().min(DEFAULT_JOBS))
+    match std::thread::available_parallelism() {
+        Ok(cores) => cores.get().min(DEFAULT_JOBS),
+        Err(_unavailable) => 1,
+    }
 }
 
 /// The most mutants a run measures at once when nobody says.
@@ -877,7 +968,7 @@ fn serially<O: Observer>(
     watching: (&Cancel, &mut O),
 ) -> Result<Vec<Judged>, EngineError> {
     let (cancel, observer) = watching;
-    let total = count(places.len());
+    let total = count(places.len())?;
     let mut judged = Vec::with_capacity(places.len());
     let mut stopped = false;
     for (position, mutant) in places.iter().enumerate() {
@@ -892,7 +983,10 @@ fn serially<O: Observer>(
         observer.started(mutant);
         let mut one = one_mutant(session, mutant, options, cancel)?;
         route(session, mutant, &mut one);
-        observer.judged(&one, count(position).saturating_add(1), total);
+        let completed = count(position)?
+            .checked_add(1)
+            .ok_or(SessionError::RunCountOverflow)?;
+        observer.judged(&one, completed, total);
         stopped = options.fail_fast && stops(&one);
         judged.push(one);
     }
@@ -906,24 +1000,81 @@ fn one_mutant(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    if let Some(one) = reuse(session, mutant, options) {
+    if let Some(one) = reuse(session, mutant, options)? {
         return Ok(one);
     }
     let established = execute(session, mutant, options, cancel)?;
-    keep(mutant, options, &established);
+    keep(mutant, options, &established)?;
     Ok(established)
 }
 
 /// Measuring several mutants at once, and delivering each as it finishes.
 mod pool {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::mpsc;
+    use std::sync::mpsc::{SyncSender, sync_channel};
+    use std::sync::{Arc, Mutex};
 
     use super::{
-        EngineError, Judged, Mutant, NotRunReason, Observer, Options, Session, count, one_mutant,
-        route, unexecuted,
+        EngineError, Judged, Mutant, NotRunReason, Observer, Options, Session, one_mutant, route,
+        unexecuted,
     };
     use crate::runner::Cancel;
+    use crate::workspace::SessionError;
+
+    /// The sole owner of one scoped worker. Consuming `join` is the only
+    /// successful way out of the scope, so a panic is an engine fact rather
+    /// than a detached background failure.
+    struct JoinedWorker<'scope>(std::thread::ScopedJoinHandle<'scope, ()>);
+
+    impl<'scope> JoinedWorker<'scope> {
+        fn launch(
+            scope: &'scope std::thread::Scope<'scope, '_>,
+            ordinal: usize,
+            work: impl FnOnce() + Send + 'scope,
+        ) -> Result<Self, EngineError> {
+            std::thread::Builder::new()
+                .name(format!("rust-mutants-worker-{ordinal}"))
+                .spawn_scoped(scope, work)
+                .map(Self)
+                .map_err(|source| {
+                    SessionError::WorkerStartFailed {
+                        worker: ordinal,
+                        source,
+                    }
+                    .into()
+                })
+        }
+
+        fn join(self) -> Result<(), EngineError> {
+            self.0
+                .join()
+                .map_err(|_panic| SessionError::WorkerPanicked.into())
+        }
+    }
+
+    /// Which catalog position a worker owns next, and whether fail-fast closed
+    /// the queue. Both fields move under one lock so no worker can claim after
+    /// the stop transition.
+    struct WorkState {
+        next: usize,
+        stopped: bool,
+    }
+
+    impl WorkState {
+        const fn claim(&mut self, len: usize) -> Option<usize> {
+            if self.stopped || self.next >= len {
+                return None;
+            }
+            let at = self.next;
+            self.next = match at.checked_add(1) {
+                Some(next) => next,
+                None => {
+                    self.stopped = true;
+                    return None;
+                }
+            };
+            Some(at)
+        }
+    }
 
     /// What a worker hands the coordinator.
     enum Delivery {
@@ -935,6 +1086,139 @@ mod pool {
         Failed(Box<EngineError>),
     }
 
+    fn deliver(sender: &SyncSender<Delivery>, delivery: Delivery) -> bool {
+        sender.send(delivery).is_ok()
+    }
+
+    fn notify_failure(sender: &SyncSender<Delivery>, failure: Delivery) {
+        match sender.send(failure) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::SendError(undelivered)) => drop(undelivered),
+        }
+    }
+
+    struct WorkerContext<'a> {
+        session: &'a Session,
+        places: &'a [&'a Mutant],
+        options: &'a Options<'a>,
+        cancel: &'a Cancel,
+        state: Arc<Mutex<WorkState>>,
+    }
+
+    fn worker_loop(context: &WorkerContext<'_>, sender: &SyncSender<Delivery>) {
+        loop {
+            let at = match context.state.lock() {
+                Ok(mut state) => state.claim(context.places.len()),
+                Err(_poisoned) => {
+                    let failure =
+                        Delivery::Failed(Box::new(SessionError::WorkerStatePoisoned.into()));
+                    notify_failure(sender, failure);
+                    return;
+                }
+            };
+            let Some(at) = at else {
+                return;
+            };
+            let Some(mutant) = context.places.get(at) else {
+                return;
+            };
+            if context.cancel.is_cancelled() || !deliver(sender, Delivery::Started(at)) {
+                return;
+            }
+            let delivery =
+                match one_mutant(context.session, mutant, context.options, context.cancel) {
+                    Ok(mut one) => {
+                        route(context.session, mutant, &mut one);
+                        Delivery::Judged(at, Box::new(one))
+                    }
+                    Err(error) => Delivery::Failed(Box::new(error)),
+                };
+            if !deliver(sender, delivery) {
+                return;
+            }
+        }
+    }
+
+    struct Coordinator<'a, O> {
+        places: &'a [&'a Mutant],
+        options: &'a Options<'a>,
+        cancel: &'a Cancel,
+        observer: &'a mut O,
+        state: Arc<Mutex<WorkState>>,
+        done: Vec<Option<Judged>>,
+        failure: Option<EngineError>,
+        completed: u32,
+        total: u32,
+        stopped: bool,
+    }
+
+    impl<O: Observer> Coordinator<'_, O> {
+        fn fail(&mut self, error: EngineError) {
+            self.cancel.cancel();
+            if self.failure.is_none() {
+                self.failure = Some(error);
+            }
+        }
+
+        fn stop_claiming(&mut self) {
+            let poisoned = match self.state.lock() {
+                Ok(mut state) => {
+                    state.stopped = true;
+                    false
+                }
+                Err(_poisoned) => true,
+            };
+            if poisoned {
+                self.fail(SessionError::WorkerStatePoisoned.into());
+            }
+        }
+
+        fn accept(&mut self, delivery: Delivery) {
+            match delivery {
+                Delivery::Started(at) => {
+                    if let Some(mutant) = self.places.get(at) {
+                        self.observer.started(mutant);
+                    }
+                }
+                Delivery::Judged(at, one) => self.accept_judged(at, *one),
+                Delivery::Failed(error) => self.fail(*error),
+            }
+        }
+
+        fn accept_judged(&mut self, at: usize, one: Judged) {
+            let Some(completed) = self.completed.checked_add(1) else {
+                self.fail(SessionError::CompletedCountExhausted.into());
+                return;
+            };
+            self.completed = completed;
+            self.observer.judged(&one, completed, self.total);
+            self.stopped |= self.options.fail_fast && super::stops(&one);
+            if let Some(place) = self.done.get_mut(at) {
+                *place = Some(one);
+            }
+            if self.stopped {
+                self.stop_claiming();
+            }
+        }
+
+        fn finish(self) -> Result<Vec<Judged>, EngineError> {
+            if let Some(error) = self.failure {
+                return Err(error);
+            }
+            let unreached = if self.stopped {
+                NotRunReason::StoppedEarly
+            } else {
+                NotRunReason::Interrupted
+            };
+            Ok(self
+                .places
+                .iter()
+                .zip(self.done)
+                .map(|(mutant, one)| one.unwrap_or_else(|| unexecuted(mutant, unreached)))
+                .collect())
+        }
+    }
+
     /// Judges every mutant with `jobs` of them in flight, delivering each as it finishes.
     pub(super) fn judge<O: Observer>(
         session: &Session,
@@ -943,87 +1227,70 @@ mod pool {
         watching: (&Cancel, &mut O),
     ) -> Result<Vec<Judged>, EngineError> {
         let (cancel, observer) = watching;
-        let total = count(places.len());
-        let mut done: Vec<Option<Judged>> = (0..places.len()).map(|_| None).collect();
-        let mut failure: Option<EngineError> = None;
-        let mut completed: u32 = 0;
-        let mut stopped = false;
-        let stop = std::sync::atomic::AtomicBool::new(false);
-        let next = AtomicUsize::new(0);
-        let (sender, receiver) = mpsc::channel::<Delivery>();
+        let total =
+            u32::try_from(places.len()).map_err(|_overflow| SessionError::WorkerQueueTooLarge {
+                workers: places.len(),
+            })?;
+        if places.is_empty() {
+            return Ok(Vec::new());
+        }
+        let worker_count = super::jobs(options.jobs).min(places.len());
+        let capacity = worker_count
+            .checked_mul(2)
+            .ok_or(SessionError::WorkerQueueTooLarge {
+                workers: worker_count,
+            })?;
+        let work = Arc::new(Mutex::new(WorkState {
+            next: 0,
+            stopped: false,
+        }));
+        let (sender, receiver) = sync_channel::<Delivery>(capacity);
+        let mut coordinator = Coordinator {
+            places,
+            options,
+            cancel,
+            observer,
+            state: Arc::clone(&work),
+            done: (0..places.len()).map(|_| None).collect(),
+            failure: None,
+            completed: 0,
+            total,
+            stopped: false,
+        };
 
         std::thread::scope(|scope| {
-            for _worker in 0..super::jobs(options.jobs) {
+            let mut workers = Vec::with_capacity(worker_count);
+            for ordinal in 0..worker_count {
                 let sender = sender.clone();
-                let next = &next;
-                let stop = &stop;
-                let _handle = scope.spawn(move || {
-                    loop {
-                        let at = next.fetch_add(1, Ordering::SeqCst);
-                        let Some(mutant) = places.get(at) else {
-                            return;
-                        };
-                        if cancel.is_cancelled() || stop.load(Ordering::SeqCst) {
-                            return;
-                        }
-                        if sender.send(Delivery::Started(at)).is_err() {
-                            return;
-                        }
-                        let sent = match one_mutant(session, mutant, options, cancel) {
-                            Ok(mut one) => {
-                                route(session, mutant, &mut one);
-                                sender.send(Delivery::Judged(at, Box::new(one)))
-                            }
-                            Err(error) => sender.send(Delivery::Failed(Box::new(error))),
-                        };
-                        if sent.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-            drop(sender);
-            for delivery in receiver {
-                match delivery {
-                    Delivery::Started(at) => {
-                        if let Some(mutant) = places.get(at) {
-                            observer.started(mutant);
-                        }
-                    }
-                    Delivery::Judged(at, one) => {
-                        completed = completed.saturating_add(1);
-                        observer.judged(&one, completed, total);
-                        stopped |= options.fail_fast && super::stops(&one);
-                        if let Some(place) = done.get_mut(at) {
-                            *place = Some(*one);
-                        }
-                        if stopped {
-                            stop.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    Delivery::Failed(error) => {
-                        cancel.cancel();
-                        if failure.is_none() {
-                            failure = Some(*error);
-                        }
+                let context = WorkerContext {
+                    session,
+                    places,
+                    options,
+                    cancel,
+                    state: Arc::clone(&work),
+                };
+                match JoinedWorker::launch(scope, ordinal, move || {
+                    worker_loop(&context, &sender);
+                }) {
+                    Ok(worker) => workers.push(worker),
+                    Err(error) => {
+                        coordinator.fail(error);
+                        coordinator.stop_claiming();
+                        break;
                     }
                 }
             }
+            drop(sender);
+            for delivery in receiver {
+                coordinator.accept(delivery);
+            }
+            for worker in workers {
+                if let Err(error) = worker.join() {
+                    coordinator.fail(error);
+                }
+            }
         });
-
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        let unreached = if stopped {
-            NotRunReason::StoppedEarly
-        } else {
-            NotRunReason::Interrupted
-        };
-        Ok(places
-            .iter()
-            .zip(done)
-            .map(|(mutant, one)| one.unwrap_or_else(|| unexecuted(mutant, unreached)))
-            .collect())
+        coordinator.finish()
     }
 }
 
@@ -1033,7 +1300,7 @@ fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
         && session.trace().is_enabled()
     {
         session.trace().select(crate::trace::SelectRecord {
-            mutant: mutant.display_id.clone(),
+            mutant: mutant.display_id.to_string(),
             reason: reason.name().to_owned(),
         });
     }
@@ -1077,7 +1344,17 @@ pub struct Silent;
 impl Observer for Silent {}
 
 /// Why a mutant was never executed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum NotRunReason {
     /// The coverage measurement proved no target reaches it.
     Unreached,
@@ -1092,15 +1369,6 @@ pub enum NotRunReason {
 }
 
 impl NotRunReason {
-    /// Every reason, in the order a report's schema lists them.
-    pub const ALL: [Self; 5] = [
-        Self::Unreached,
-        Self::Discharged,
-        Self::Interrupted,
-        Self::Unselected,
-        Self::StoppedEarly,
-    ];
-
     /// The reason that answers to `name`, when one does.
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
@@ -1118,6 +1386,18 @@ impl NotRunReason {
             Self::StoppedEarly => "stopped-early",
         }
     }
+
+    /// The canonical wire name, for interfaces that take a string slice.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.name()
+    }
+}
+
+impl std::fmt::Display for FindingKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.pad(self.name())
+    }
 }
 
 /// One mutant, executed once and — when it timed out — once more on its own before the timeout is believed.
@@ -1127,27 +1407,33 @@ fn execute(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    let request = Request::new(mutant.id.clone()).with_args(options.args.to_vec());
+    let request = Request::new(mutant.id.to_string()).with_args(options.args.to_vec());
     let judgement = session.judge(&request, options.quiet, cancel)?;
     let duration = judgement.duration();
-    let result = judgement.result;
+    let retried = judgement.retried();
+    let crate::session::Judgement {
+        attempts, route, ..
+    } = judgement;
+    let result = attempts.into_result();
+    let outcome = result.outcome();
     Ok(Judged {
         index: mutant.index,
-        id: mutant.id.clone(),
-        display_id: mutant.display_id.clone(),
-        outcome: result.outcome,
+        id: mutant.id.to_string(),
+        display_id: mutant.display_id.to_string(),
+        outcome,
+        step_notice: result.step_notice().cloned(),
         target: result.target,
         exit_code: result.exit_code,
         duration,
         tests_run: result.tests_run,
         failed_tests: result.failed_tests,
         signal: result.signal,
-        retried: judgement.retried,
+        retried,
         expected: false,
-        not_run_reason: not_run_because(result.outcome, &judgement.route),
+        not_run_reason: not_run_because(outcome, &route),
         route: None,
         measured: true,
-        identical: None,
+        identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
     })
 }
@@ -1169,13 +1455,15 @@ fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<No
 /// Whether this outcome is the one a run asked to stop at the first finding stops at.
 const fn stops(one: &Judged) -> bool {
     match one.outcome {
-        Outcome::Killed | Outcome::Runaway => false,
+        Outcome::Killed => false,
         Outcome::Survived => !one.expected,
         Outcome::NotRun => matches!(
             one.not_run_reason,
             Some(NotRunReason::Unreached | NotRunReason::Discharged)
         ),
-        Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => true,
+        Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => {
+            true
+        }
     }
 }
 
@@ -1196,7 +1484,7 @@ fn narrowed<'m>(
         } else {
             if session.trace().is_enabled() {
                 session.trace().select(crate::trace::SelectRecord {
-                    mutant: mutant.display_id.clone(),
+                    mutant: mutant.display_id.to_string(),
                     reason: NotRunReason::Unselected.name().to_owned(),
                 });
             }
@@ -1214,27 +1502,37 @@ fn filter_selects(session: &Session, mutant: &Mutant, filter: Option<&Filter>) -
 }
 
 /// What an earlier run of this exact tree established about this mutant, when a record answers for it.
-fn reuse(session: &Session, mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
-    let reusing = options.outcomes?;
+fn reuse(
+    session: &Session,
+    mutant: &Mutant,
+    options: &Options<'_>,
+) -> Result<Option<Judged>, EngineError> {
+    let Some(reusing) = options.outcomes else {
+        return Ok(None);
+    };
     if !reusing.keyed.usable() {
-        return None;
+        return Ok(None);
     }
-    let key = reusing.keyed.key(&mutant.id);
-    let found = reusing.store.get(&key, &mutant.id);
+    let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
+    let key = reusing.keyed.key(&mutant_id);
+    let found = reusing.store.get(&key, &mutant_id)?;
     if session.trace().is_enabled() {
         session.trace().cache(crate::trace::CacheRecord {
-            mutant: mutant.display_id.clone(),
-            key,
+            mutant: mutant.display_id.to_string(),
+            key: key.to_string(),
             hit: found.is_some(),
             source_run_id: found.as_ref().map(|(_, record)| record.run_id.clone()),
         });
     }
-    let (outcome, record) = found?;
-    Some(Judged {
+    let Some((outcome, record)) = found else {
+        return Ok(None);
+    };
+    Ok(Some(Judged {
         index: mutant.index,
-        id: mutant.id.clone(),
-        display_id: mutant.display_id.clone(),
+        id: mutant.id.to_string(),
+        display_id: mutant.display_id.to_string(),
         outcome,
+        step_notice: None,
         target: record.target,
         exit_code: 0,
         duration: Duration::ZERO,
@@ -1246,45 +1544,51 @@ fn reuse(session: &Session, mutant: &Mutant, options: &Options<'_>) -> Option<Ju
         not_run_reason: None,
         route: None,
         measured: false,
-        identical: None,
+        identical: CodegenIdentity::NotMeasured,
         source_run_id: Some(record.run_id),
-    })
+    }))
 }
 
 /// Records what this run established, for the next run of this exact tree. Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
-fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) {
+fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), EngineError> {
     let Some(reusing) = options.outcomes else {
-        return;
+        return Ok(());
     };
-    if !matches!(
-        judged.outcome,
-        Outcome::Killed | Outcome::Survived | Outcome::Runaway
-    ) {
-        return;
-    }
+    let outcome = match judged.outcome {
+        Outcome::Killed => crate::outcomes::CacheOutcome::Killed,
+        Outcome::Survived => crate::outcomes::CacheOutcome::Survived,
+        Outcome::NotRun
+        | Outcome::StepLimitReached
+        | Outcome::Waited
+        | Outcome::Inconclusive
+        | Outcome::Errored => return Ok(()),
+    };
     if !reusing.keyed.usable() {
-        return;
+        return Ok(());
     }
+    let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
     reusing.store.put(
-        &reusing.keyed.key(&mutant.id),
+        &reusing.keyed.key(&mutant_id),
         &crate::outcomes::Record {
             schema: crate::outcomes::SCHEMA.to_owned(),
-            mutant: mutant.id.clone(),
-            outcome: judged.outcome.name().to_owned(),
+            mutant: mutant_id,
+            outcome,
             target: judged.target.clone(),
             tests_run: judged.tests_run,
             failed_tests: judged.failed_tests.clone(),
             run_id: reusing.run_id.to_owned(),
         },
-    );
+    )?;
+    Ok(())
 }
 
 fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
     Judged {
         index: mutant.index,
-        id: mutant.id.clone(),
-        display_id: mutant.display_id.clone(),
+        id: mutant.id.to_string(),
+        display_id: mutant.display_id.to_string(),
         outcome: Outcome::NotRun,
+        step_notice: None,
         target: String::new(),
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
         duration: Duration::ZERO,
@@ -1296,54 +1600,61 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         not_run_reason: Some(reason),
         route: None,
         measured: false,
-        identical: None,
+        identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
     }
 }
 
 /// Resolves every declared expectation against what the run established, and marks the mutants a reviewer accounted for.
-#[must_use]
+///
+/// # Errors
+/// Refuses when one expectation resolves to more mutants than the durable
+/// coverage counter can represent.
 pub fn verify(
     session: &Session,
     expectations: &[Expectation],
     judged: &mut [Judged],
-) -> Vec<Verified> {
-    expectations
-        .iter()
-        .map(|expectation| {
-            let resolved = addressed(session, expectation);
-            let (covered, mutant, standing) = match resolved {
-                Err(why) => (0, None, Standing::Unmatched { why }),
-                Ok((mutants, moved)) => {
-                    let ids: Vec<String> = mutants.iter().map(|mutant| mutant.id.clone()).collect();
-                    let (named, standing) = standing_of(judged, expectation.outcome, &ids);
-                    let standing = match standing {
-                        Standing::Met => moved.unwrap_or(Standing::Met),
-                        held @ (Standing::Moved { .. }
-                        | Standing::Stale { .. }
-                        | Standing::Unmatched { .. }) => held,
-                    };
-                    if matches!(standing, Standing::Met | Standing::Moved { .. }) {
-                        for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
-                            one.expected = true;
-                        }
+) -> Result<Vec<Verified>, SessionError> {
+    let mut verified = Vec::with_capacity(expectations.len());
+    for expectation in expectations {
+        let resolved = addressed(session, expectation);
+        let (covered, mutant, standing) = match resolved {
+            Err(why) => (
+                0,
+                None,
+                Standing::Unmatched {
+                    why: why.to_string(),
+                },
+            ),
+            Ok((mutants, moved)) => {
+                let ids: Vec<String> = mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+                let (named, standing) = standing_of(judged, expectation.outcome, &ids);
+                let standing = match standing {
+                    Standing::Met => moved.unwrap_or(Standing::Met),
+                    held @ (Standing::Moved { .. }
+                    | Standing::Stale { .. }
+                    | Standing::Unmatched { .. }) => held,
+                };
+                if matches!(standing, Standing::Met | Standing::Moved { .. }) {
+                    for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
+                        one.expected = true;
                     }
-                    (
-                        u32::try_from(ids.len()).unwrap_or(u32::MAX),
-                        named,
-                        standing,
-                    )
                 }
-            };
-            Verified {
-                id: expectation.name(),
-                locator: expectation.locator.clone(),
-                reason: expectation.reason.clone(),
-                outcome: expectation.outcome,
-                mutant,
-                covered,
-                standing,
+                let covered = u32::try_from(ids.len()).map_err(|_outside_range| {
+                    SessionError::ExpectationCoverageTooLarge { count: ids.len() }
+                })?;
+                (covered, named, standing)
             }
-        })
-        .collect()
+        };
+        verified.push(Verified {
+            id: expectation.name(),
+            locator: expectation.locator.clone(),
+            reason: expectation.reason.clone(),
+            outcome: expectation.outcome,
+            mutant,
+            covered,
+            standing,
+        });
+    }
+    Ok(verified)
 }

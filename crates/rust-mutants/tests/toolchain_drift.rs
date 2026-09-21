@@ -43,9 +43,10 @@ fn a_test_that_writes_into_the_tree_is_reported_as_drift() {
         .expect("the fixture catalogs a mutation")
         .clone();
     let cancel = Cancel::new();
-    let _result = session
-        .exec(&Request::new(mutant.id), &cancel)
+    let result = session
+        .exec(&Request::new(mutant.id.to_string()), &cancel)
         .expect("exec");
+    drop(result);
     let drift = session.changes().expect("changes");
     let written: Vec<String> = drift
         .iter()
@@ -69,9 +70,10 @@ fn a_tree_nobody_wrote_to_drifts_in_nothing() {
         .expect("the fixture catalogs a mutation")
         .clone();
     let cancel = Cancel::new();
-    let _result = session
-        .exec(&Request::new(mutant.id), &cancel)
+    let result = session
+        .exec(&Request::new(mutant.id.to_string()), &cancel)
         .expect("exec");
+    drop(result);
     let drift = session.changes().expect("changes");
     assert!(
         drift.is_empty(),

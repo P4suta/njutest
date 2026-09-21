@@ -5,7 +5,53 @@
 
 #![expect(clippy::indexing_slicing, reason = "a test reads its cases as a table")]
 
-use xtask::lints::wildcards_over;
+use njutest_devkit::result::{ResultState, result_state};
+use xtask::lints::{Wildcard, wildcards_over as checked_wildcards_over};
+
+fn wildcards_over(source: &str, ours: &[String]) -> Vec<Wildcard> {
+    let parsed = checked_wildcards_over(source, ours);
+    assert_eq!(
+        result_state(&parsed),
+        ResultState::Returned,
+        "the literal source did not parse: {parsed:?}"
+    );
+    match parsed {
+        Ok(wildcards) => wildcards,
+        Err(_already_reported) => Vec::new(),
+    }
+}
+
+#[test]
+fn imported_or_aliased_variants_do_not_hide_the_closed_set() {
+    for source in [
+        "enum Decision { Tests, Steps, More }\nuse Decision::Tests;\nfn read(one: Decision) -> bool { match one { Tests => true, _ => false } }\n",
+        "enum Decision { Tests, Steps, More }\nuse Decision as D;\nfn read(one: Decision) -> bool { match one { D::Tests => true, _ => false } }\n",
+        "mod model { pub enum Decision { Tests, Steps, More } }\nuse model::Decision::*;\nfn read(one: model::Decision) -> bool { match one { Tests => true, _ => false } }\n",
+        "enum Decision { Tests, Steps, More }\nfn read(one: Decision) -> bool { match one { Decision::Tests | Decision::Steps => true, _ => false } }\n",
+    ] {
+        let found = wildcards_over(source, &["Decision".to_owned()]);
+        assert_eq!(found.len(), 1, "{source}");
+        assert_eq!(found[0].over, "Decision", "{source}");
+    }
+}
+
+#[test]
+fn malformed_source_is_not_an_empty_waiver_set() {
+    let parsed = checked_wildcards_over("fn (", &[]);
+    assert_eq!(
+        result_state(&parsed),
+        ResultState::Refused,
+        "malformed source became a waiver inventory: {parsed:?}"
+    );
+}
+
+#[test]
+fn the_scrutinee_type_exposes_an_all_wildcard_match() {
+    let source = "enum Decision { Tests, Steps }\nfn read(one: Decision) -> bool { match one { _ => false } }\n";
+    let found = wildcards_over(source, &["Decision".to_owned()]);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].over, "Decision");
+}
 
 #[test]
 fn an_arm_added_beside_a_waived_one_is_a_name_nobody_has_granted() {

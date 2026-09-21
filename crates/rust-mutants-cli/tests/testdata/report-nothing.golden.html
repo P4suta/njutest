@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>rust-mutants 20260905T120000000Z</title>
-<style>body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:72rem;line-height:1.5;padding:0 1rem}h1{margin:0}.identity{color:#666;margin-top:0}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.25rem .5rem;border-bottom:1px solid #ddd;vertical-align:top}code{font-family:ui-monospace,monospace}td.survived,td.errored,td.inconclusive,td.not_run{color:#a30}td.killed,td.timed_out{color:#0a6}p.none{color:#666}.score{font-size:2rem;font-weight:600}.controls{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.5rem 0}.controls input,.controls select{font:inherit;padding:.2rem .4rem}pre.source{background:#fbfbfb;border:1px solid #ddd;border-radius:4px;padding:.5rem;overflow-x:auto;font-family:ui-monospace,monospace;font-size:.85rem;line-height:1.45}pre.source .n{color:#999;user-select:none;display:inline-block;width:4ch;text-align:right;padding-right:1ch}pre.source .l{display:block}pre.source .l.has{background:#fff6f0}pre.source .l.killed{background:#f2fbf7}.mark{display:block;margin-left:5ch;font-size:.8rem;color:#a30}.mark.killed{color:#0a6}.changed{color:#a30}tr.hidden{display:none}</style>
+<style>body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:72rem;line-height:1.5;padding:0 1rem}h1{margin:0}.identity{color:#666;margin-top:0}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.25rem .5rem;border-bottom:1px solid #ddd;vertical-align:top}code{font-family:ui-monospace,monospace}td.survived,td.step_limit_reached,td.waited,td.errored,td.inconclusive,td.not_run{color:#a30}td.killed{color:#0a6}p.none{color:#666}.score{font-size:2rem;font-weight:600}.controls{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.5rem 0}.controls input,.controls select{font:inherit;padding:.2rem .4rem}pre.source{background:#fbfbfb;border:1px solid #ddd;border-radius:4px;padding:.5rem;overflow-x:auto;font-family:ui-monospace,monospace;font-size:.85rem;line-height:1.45}pre.source .n{color:#999;user-select:none;display:inline-block;width:4ch;text-align:right;padding-right:1ch}pre.source .l{display:block}pre.source .l.has{background:#fff6f0}pre.source .l.killed{background:#f2fbf7}.mark{display:block;margin-left:5ch;font-size:.8rem;color:#a30}.mark.killed{color:#0a6}.changed{color:#a30}tr.hidden{display:none}</style>
 </head>
 <body>
 <h1>&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;</h1>
@@ -16,7 +16,7 @@
 <table>
 <tr><th>killed</th><td>1</td></tr>
 <tr><th>survived</th><td>1</td></tr>
-<tr><th>runaway</th><td>0</td></tr>
+<tr><th>step_limit_reached</th><td>0</td></tr>
 <tr><th>waited</th><td>0</td></tr>
 <tr><th>inconclusive</th><td>0</td></tr>
 <tr><th>errored</th><td>0</td></tr>
@@ -26,7 +26,7 @@
 <h2>Findings</h2>
 <p class="none">Nothing was found.</p>
 <h2>Mutants</h2>
-<div class="controls"><label>search <input id="q" type="search" placeholder="path, rule, id"></label><label>outcome <select id="outcome"><option value="all">all</option><option value="survived">survived</option><option value="killed">killed</option><option value="timed_out">timed out</option><option value="inconclusive">inconclusive</option><option value="errored">errored</option><option value="not_run">not run</option></select></label><label>order <select id="sort"><option value="finding">findings first</option><option value="where">where</option><option value="rule">rule</option></select></label></div>
+<div class="controls"><label>search <input id="q" type="search" placeholder="path, rule, id"></label><label>outcome <select id="outcome"><option value="all">all</option><option value="survived">survived</option><option value="killed">killed</option><option value="step_limit_reached">step limit reached</option><option value="waited">waited</option><option value="inconclusive">inconclusive</option><option value="errored">errored</option><option value="not_run">not run</option></select></label><label>order <select id="sort"><option value="finding">findings first</option><option value="where">where</option><option value="rule">rule</option></select></label></div>
 <p class="none">Nothing was cataloged.</p><h2>Source</h2>
 <p class="none">Nothing was cataloged.</p>
 <h2>Refused</h2>

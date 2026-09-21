@@ -3,6 +3,10 @@
 
 //! Talking to a real provider process: what a run holds, and what it refuses to hold.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
 #![cfg(unix)]
 use std::ffi::OsString;
 use std::path::Path;
@@ -25,8 +29,9 @@ const SPOKEN: [&str; 3] = [
 fn provider() -> Vec<String> {
     vec![
         njutest_devkit::fake_cargo::example("fake_provider")
-            .to_string_lossy()
-            .into_owned(),
+            .to_str()
+            .expect("test protocol paths are UTF-8")
+            .to_owned(),
         "resource".to_owned(),
     ]
 }
@@ -78,7 +83,7 @@ fn a_run_holds_what_the_provider_started_and_tells_its_tests_where_it_is() {
     let lease = manager
         .start("postgres", &resource(provider()))
         .expect("the provider is ready");
-    assert_eq!(lease.instance, "pg-1");
+    assert_eq!(lease.instance.as_str(), "pg-1");
     assert_eq!(
         manager.environment(),
         vec![(
@@ -87,7 +92,7 @@ fn a_run_holds_what_the_provider_started_and_tells_its_tests_where_it_is() {
         )]
     );
     assert!(manager.release().is_empty());
-    assert!(manager.is_empty());
+    assert!(manager.leases().is_empty());
 }
 
 #[test]
@@ -125,7 +130,7 @@ fn a_provider_that_says_nothing_ends_the_lease_rather_than_the_run_waiting_on_it
         .start("silent", &slow)
         .expect_err("nothing was said");
     assert_eq!(refused.code().code, "NJ5002", "{refused}");
-    assert!(manager.is_empty());
+    assert!(manager.leases().is_empty());
 }
 
 #[test]
@@ -140,7 +145,7 @@ fn a_provider_that_offers_what_a_run_composes_itself_is_refused_and_stopped() {
         .expect_err("refused");
     assert!(matches!(refused, ResourceError::EnvironmentRefused { .. }));
     assert_eq!(refused.code().code, "NJ5005");
-    assert!(manager.is_empty());
+    assert!(manager.leases().is_empty());
 }
 
 #[test]
@@ -178,7 +183,11 @@ fn a_provider_that_is_not_there_is_not_a_resource_the_run_has() {
         .start(
             "missing",
             &resource(vec![
-                dir.path().join("nothing").to_string_lossy().into_owned(),
+                dir.path()
+                    .join("nothing")
+                    .to_str()
+                    .expect("test protocol paths are UTF-8")
+                    .to_owned(),
             ]),
         )
         .expect_err("refused");

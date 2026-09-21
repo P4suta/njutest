@@ -29,6 +29,7 @@ fn kept(run: &str) -> String {
         njutest_cli::config::Config::default()
             .reports
             .directory
+            .as_path()
             .display()
     )
 }
@@ -37,12 +38,11 @@ fn told(spots: Vec<Spot>) -> Told {
     Told {
         headline: Headline {
             verdict: Verdict::Insufficient,
-            project: "fixture".to_owned(),
             cataloged: 3,
             killed: 1,
             survived: 1,
             unreached: 1,
-            runaway: 0,
+            step_limit_reached: 0,
             waited: 0,
             duration_ms: 1000,
             kept: kept("one"),

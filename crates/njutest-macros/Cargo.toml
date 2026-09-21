@@ -3,7 +3,7 @@
 
 [package]
 name = "njutest-macros"
-description = "Attribute macros of the njutest crate; depend on `njutest` instead"
+description = "Compiler-enforced declarations shared by the njutest workspace"
 keywords = ["testing", "assurance", "integration-tests"]
 categories = ["development-tools::testing"]
 version.workspace = true
@@ -15,12 +15,16 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 
+[package.metadata.njutest]
+surface = "public"
+
 [lib]
 proc-macro = true
 
 [dependencies]
 proc-macro2 = { workspace = true, features = ["proc-macro"] }
-syn = { workspace = true, features = ["proc-macro"] }
+quote = { workspace = true }
+syn = { workspace = true, features = ["derive", "printing", "proc-macro"] }
 
 [lints]
 workspace = true

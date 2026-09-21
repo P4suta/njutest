@@ -4,6 +4,7 @@
 //! The seeds whose readers live on this side of the workspace.
 
 #![expect(
+    clippy::expect_used,
     clippy::panic,
     reason = "a test reports a setup failure by panicking, and a seed the reader refuses names itself in the message"
 )]
@@ -16,7 +17,7 @@ fn seeds(target: &str) -> Vec<PathBuf> {
         .join(target);
     let held: Vec<PathBuf> = std::fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("{target}: {error}"))
-        .flatten()
+        .map(|entry| entry.expect("seed directory entry"))
         .map(|entry| entry.path())
         .collect();
     assert!(!held.is_empty(), "{target} has no seeds");
@@ -28,7 +29,7 @@ fn every_run_report_seed_is_a_document_the_reader_takes() {
     for seed in seeds("run_report") {
         let text = std::fs::read_to_string(&seed)
             .unwrap_or_else(|error| panic!("{}: {error}", seed.display()));
-        serde_json::from_str::<rust_mutants_cli::report::run::RunDocument>(&text)
+        njutest_devkit::strictjson::decode_str::<rust_mutants_cli::report::run::RunDocument>(&text)
             .unwrap_or_else(|error| panic!("{}: {error}", seed.display()));
     }
 }

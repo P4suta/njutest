@@ -9,9 +9,11 @@ use super::{Finding, FindingKind, Report};
 pub const VERSION: &str = "2.1.0";
 
 /// The report's findings as one SARIF log.
-#[must_use]
-pub fn document(report: &Report) -> serde_json::Value {
-    serde_json::json!({
+/// # Errors
+/// Returns the checked projection error retained by the completed report.
+pub fn document(report: &Report) -> Result<serde_json::Value, super::CountError> {
+    let conclusion = report.conclusion()?;
+    Ok(serde_json::json!({
         "version": VERSION,
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "runs": [{
@@ -19,23 +21,23 @@ pub fn document(report: &Report) -> serde_json::Value {
                 "name": "njutest",
                 "version": report.tool.njutest,
                 "informationUri": "https://github.com/P4suta/njutest",
-                "rules": rules(report),
+                "rules": rules(&conclusion.findings),
             }},
             "automationDetails": { "id": report.run_id },
-            "results": report.findings.iter().map(result).collect::<Vec<_>>(),
+            "results": conclusion.findings.iter().map(result).collect::<Vec<_>>(),
             "properties": {
-                "verdict": format!("{:?}", report.verdict),
-                "accounting": serde_json::to_value(report.accounting).unwrap_or_default(),
-                "limitations": report.limitations.iter().map(|limitation| {
+                "verdict": format!("{:?}", conclusion.verdict),
+                "accounting": conclusion.accounting,
+                "limitations": conclusion.limitations.iter().map(|limitation| {
                     serde_json::json!({ "name": limitation.name, "detail": limitation.detail })
                 }).collect::<Vec<_>>(),
             },
         }],
-    })
+    }))
 }
 
-fn rules(report: &Report) -> Vec<serde_json::Value> {
-    let mut kinds: Vec<String> = report.findings.iter().map(Finding::kind_name).collect();
+fn rules(findings: &[Finding]) -> Vec<serde_json::Value> {
+    let mut kinds: Vec<String> = findings.iter().map(Finding::kind_name).collect();
     kinds.sort();
     kinds.dedup();
     kinds

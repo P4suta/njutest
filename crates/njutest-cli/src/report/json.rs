@@ -3,8 +3,9 @@
 
 //! The canonical projection: the whole model, as one JSON document.
 
-use super::{Report, audit};
+use super::{Report, ReportDocument, audit};
 use crate::error::{self, ErrorCode};
+use serde::Deserialize as _;
 
 /// Why a report could not be written or read.
 #[derive(Debug, thiserror::Error)]
@@ -61,12 +62,30 @@ pub fn document(report: &Report) -> Result<String, ReportError> {
     render(report)
 }
 
+/// The durable tagged document for either a completed answer or one shard.
+///
+/// # Errors
+/// A completed report is independently audited before serialization; a shard
+/// has already passed its checked constructor and can only be borrowed here.
+pub fn document_any(document: &ReportDocument) -> Result<String, ReportError> {
+    if let ReportDocument::Complete(report) = document {
+        let violations = audit::validate_for_persistence(report);
+        if !violations.is_empty() {
+            return Err(ReportError::Unsound { violations });
+        }
+    }
+    let mut text = serde_json::to_string_pretty(document)
+        .map_err(|source| ReportError::Unserializable { source })?;
+    text.push('\n');
+    Ok(text)
+}
+
 /// The same document, without the audit, for a caller that has one reason to look at a report it already knows is broken — a diagnostics bundle, a test of the audit itself.
 ///
 /// # Errors
 /// [`ReportError::Unserializable`] when the model cannot be written.
 pub fn render(report: &Report) -> Result<String, ReportError> {
-    let mut text = serde_json::to_string_pretty(report)
+    let mut text = serde_json::to_string_pretty(&ReportDocument::Complete(report.clone()))
         .map_err(|source| ReportError::Unserializable { source })?;
     text.push('\n');
     Ok(text)
@@ -78,14 +97,36 @@ pub fn render(report: &Report) -> Result<String, ReportError> {
 /// [`ReportError::Unserializable`], which is an invariant failure rather than
 /// anything about the run.
 pub fn line(report: &Report) -> Result<String, ReportError> {
-    serde_json::to_string(report).map_err(|source| ReportError::Unserializable { source })
+    serde_json::to_string(&ReportDocument::Complete(report.clone()))
+        .map_err(|source| ReportError::Unserializable { source })
 }
 
 /// Reads a document this version understands, and refuses anything else.
 ///
 /// # Errors
 /// [`ReportError::Unreadable`] for a document with an unknown field, a
-/// missing field, or a value of the wrong shape.
+/// missing field, or a value of the wrong shape; [`ReportError::Unsound`] for
+/// a shape-correct document whose facts contradict one another.
 pub fn parse(text: &str) -> Result<Report, ReportError> {
-    serde_json::from_str(text).map_err(|source| ReportError::Unreadable { source })
+    match parse_any(text)? {
+        ReportDocument::Complete(report) => Ok(report),
+        ReportDocument::Shard(_) => {
+            let source = <serde_json::Error as serde::de::Error>::custom(
+                "this consumer requires a complete report; the document is one shard",
+            );
+            Err(ReportError::Unreadable { source })
+        }
+    }
+}
+
+/// Reads either strict v2 document variant without erasing whether it is
+/// complete.
+///
+/// # Errors
+/// Refuses duplicate/unknown/missing fields and every cross-field invariant
+/// enforced by the variant's checked deserializer.
+pub fn parse_any(text: &str) -> Result<ReportDocument, ReportError> {
+    let value =
+        crate::strictjson::from_str(text).map_err(|source| ReportError::Unreadable { source })?;
+    ReportDocument::deserialize(value).map_err(|source| ReportError::Unreadable { source })
 }

@@ -7,12 +7,17 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use jiff::Timestamp;
+use rust_mutants::id::HexDigest;
 
 use crate::error::{self, ErrorCode};
 use crate::report::{Report, audit};
 
-/// The directory a store lives in, below the user's cache directory. The version is in the name: a future layout becomes `outcomes-v2` and the two never read each other's entries.
-pub const LAYOUT: &str = "njutest/outcomes-v1";
+/// The directory a store lives in, below the user's cache directory.
+///
+/// V2 stores the tagged assurance-report-v2 complete document. The historical
+/// untagged V1 entries remain isolated in `outcomes-v1` and are never guessed
+/// into the current contract.
+pub const LAYOUT: &str = "njutest/outcomes-v2";
 
 /// The extension of a stored answer.
 pub const ENTRY_EXTENSION: &str = "json";
@@ -62,6 +67,12 @@ pub enum CacheError {
         /// What is wrong with it.
         message: String,
     },
+    /// A cache counter or timestamp difference could not be represented.
+    #[error("{}: cache arithmetic overflow while {operation}", error::CACHE_UNUSABLE.code)]
+    Arithmetic {
+        /// The operation whose exact result did not fit.
+        operation: &'static str,
+    },
 }
 
 impl CacheError {
@@ -69,9 +80,10 @@ impl CacheError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::Unusable { .. } | Self::Refused { .. } | Self::Carrying { .. } => {
-                error::CACHE_UNUSABLE
-            }
+            Self::Unusable { .. }
+            | Self::Refused { .. }
+            | Self::Carrying { .. }
+            | Self::Arithmetic { .. } => error::CACHE_UNUSABLE,
             Self::Corrupt { .. } | Self::Arriving { .. } => error::CACHE_CORRUPT,
         }
     }
@@ -124,13 +136,13 @@ impl Store {
 
     /// The entry one identity is stored at.
     #[must_use]
-    pub fn entry(&self, identity: &str) -> PathBuf {
+    pub fn entry(&self, identity: &HexDigest) -> PathBuf {
         self.root.join(format!("{identity}.{ENTRY_EXTENSION}"))
     }
 
     /// The claim a run holds while it establishes one identity.
     #[must_use]
-    pub fn lease(&self, identity: &str) -> PathBuf {
+    pub fn lease(&self, identity: &HexDigest) -> PathBuf {
         self.root.join(format!("{identity}.{LEASE_EXTENSION}"))
     }
 
@@ -142,7 +154,7 @@ impl Store {
     /// filed under, or does not satisfy the audit every durable report must.
     /// Nothing is silently ignored, because an entry that is quietly wrong is
     /// exactly what a wrong answer looks like.
-    pub fn get(&self, identity: &str) -> Result<Option<Report>, CacheError> {
+    pub fn get(&self, identity: &HexDigest) -> Result<Option<Report>, CacheError> {
         let path = self.entry(identity);
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
@@ -153,12 +165,12 @@ impl Store {
             path: path.clone(),
             message: error.to_string(),
         })?;
-        if report.provenance.identity != identity {
+        if report.provenance().identity != identity.as_str() {
             return Err(CacheError::Corrupt {
                 path,
                 message: format!(
                     "filed under {identity} and carries {}",
-                    report.provenance.identity
+                    report.provenance().identity
                 ),
             });
         }
@@ -176,20 +188,23 @@ impl Store {
         Ok(Some(report))
     }
 
-    /// Stores `report` under its own identity, and returns where it went.
+    /// Stores `report` under its own identity.
     ///
     /// # Errors
     /// [`CacheError::Refused`] for a report that must not be stored: one with
     /// no identity, and one that was itself read back, because a chain of
     /// copies is not a chain of evidence.
-    pub fn put(&self, report: &Report) -> Result<PathBuf, CacheError> {
-        let identity = report.provenance.identity.as_str();
+    pub fn put(&self, report: &Report) -> Result<(), CacheError> {
+        let identity = report.provenance().identity.as_str();
         if identity.trim().is_empty() || identity == crate::report::UNAVAILABLE {
             return Err(CacheError::Refused {
                 message: "a report with no identity answers for no inputs".to_owned(),
             });
         }
-        if report.provenance.facts.read_back().is_some() {
+        let identity = HexDigest::try_from(identity).map_err(|error| CacheError::Refused {
+            message: error.to_string(),
+        })?;
+        if report.provenance().facts.read_back().is_some() {
             return Err(CacheError::Refused {
                 message: "a report that was read back is already stored where it came from"
                     .to_owned(),
@@ -208,17 +223,17 @@ impl Store {
                 ),
             });
         }
-        let text = crate::report::json::render(report).map_err(|error| CacheError::Refused {
+        let text = crate::report::json::document(report).map_err(|error| CacheError::Refused {
             message: error.to_string(),
         })?;
-        let path = self.entry(identity);
+        let path = self.entry(&identity);
         rust_mutants::replace::file(&path, text.as_bytes()).map_err(|failure| {
             CacheError::Unusable {
                 path: failure.path,
                 source: failure.source,
             }
         })?;
-        Ok(path)
+        Ok(())
     }
 
     /// What the store holds.
@@ -229,8 +244,18 @@ impl Store {
     pub fn status(&self) -> Result<Status, CacheError> {
         let mut status = Status::default();
         for entry in self.entries()? {
-            status.entries = status.entries.saturating_add(1);
-            status.bytes = status.bytes.saturating_add(entry.bytes);
+            status.entries = status
+                .entries
+                .checked_add(1)
+                .ok_or(CacheError::Arithmetic {
+                    operation: "counting cache entries",
+                })?;
+            status.bytes = status
+                .bytes
+                .checked_add(entry.bytes)
+                .ok_or(CacheError::Arithmetic {
+                    operation: "summing cache bytes",
+                })?;
         }
         Ok(status)
     }
@@ -246,12 +271,23 @@ impl Store {
         for entry in entries {
             let age = now
                 .as_second()
-                .saturating_sub(entry.modified.as_second())
+                .checked_sub(entry.modified.as_second())
+                .ok_or(CacheError::Arithmetic {
+                    operation: "computing cache entry age",
+                })?
                 .max(0);
-            let ttl = i64::try_from(self.ttl.as_secs()).unwrap_or(i64::MAX);
-            if self.ttl > Duration::ZERO && age >= ttl {
+            let age = u64::try_from(age).map_err(|_negative| CacheError::Arithmetic {
+                operation: "representing cache entry age",
+            })?;
+            if self.ttl > Duration::ZERO && age >= self.ttl.as_secs() {
                 remove(&entry)?;
-                collected.bytes = collected.bytes.saturating_add(entry.bytes);
+                collected.bytes =
+                    collected
+                        .bytes
+                        .checked_add(entry.bytes)
+                        .ok_or(CacheError::Arithmetic {
+                            operation: "summing expired cache bytes",
+                        })?;
                 collected.expired.push(entry.path);
             } else {
                 remaining.push(entry);
@@ -261,14 +297,30 @@ impl Store {
             return Ok(collected);
         }
         remaining.sort_by_key(|entry| entry.modified);
-        let mut total: u64 = remaining.iter().map(|entry| entry.bytes).sum();
+        let mut total = remaining.iter().try_fold(0_u64, |total, entry| {
+            total
+                .checked_add(entry.bytes)
+                .ok_or(CacheError::Arithmetic {
+                    operation: "summing retained cache bytes",
+                })
+        })?;
         for entry in remaining {
             if total <= self.max_bytes {
                 break;
             }
             remove(&entry)?;
-            total = total.saturating_sub(entry.bytes);
-            collected.bytes = collected.bytes.saturating_add(entry.bytes);
+            total = total
+                .checked_sub(entry.bytes)
+                .ok_or(CacheError::Arithmetic {
+                    operation: "subtracting evicted cache bytes",
+                })?;
+            collected.bytes =
+                collected
+                    .bytes
+                    .checked_add(entry.bytes)
+                    .ok_or(CacheError::Arithmetic {
+                        operation: "summing evicted cache bytes",
+                    })?;
             collected.evicted.push(entry.path);
         }
         Ok(collected)
@@ -297,7 +349,9 @@ impl Store {
                 message: error.to_string(),
             })?;
             writeln!(out, "{text}").map_err(|source| CacheError::Carrying { source })?;
-            written = written.saturating_add(1);
+            written = written.checked_add(1).ok_or(CacheError::Arithmetic {
+                operation: "counting exported cache entries",
+            })?;
         }
         Ok(written)
     }
@@ -315,13 +369,26 @@ impl Store {
             if line.trim().is_empty() {
                 continue;
             }
+            let zero_based = match u32::try_from(at) {
+                Ok(line) => line,
+                Err(_too_many_lines) => {
+                    return Err(CacheError::Arithmetic {
+                        operation: "counting imported cache lines",
+                    });
+                }
+            };
+            let line_number = zero_based.checked_add(1).ok_or(CacheError::Arithmetic {
+                operation: "counting imported cache lines",
+            })?;
             let report =
                 crate::report::json::parse(&line).map_err(|error| CacheError::Arriving {
-                    line: u32::try_from(at).unwrap_or(u32::MAX).saturating_add(1),
+                    line: line_number,
                     message: error.to_string(),
                 })?;
-            let _at = self.put(&report)?;
-            read = read.saturating_add(1);
+            self.put(&report)?;
+            read = read.checked_add(1).ok_or(CacheError::Arithmetic {
+                operation: "counting imported cache entries",
+            })?;
         }
         Ok(read)
     }
@@ -353,12 +420,16 @@ impl Store {
                 .ok_or_else(|| CacheError::Corrupt {
                     path: path.clone(),
                     message: "the entry name is not text".to_owned(),
-                })?
-                .to_owned();
-            let metadata = found.metadata().map_err(|source| CacheError::Unusable {
+                })?;
+            let identity = HexDigest::try_from(identity).map_err(|error| CacheError::Corrupt {
                 path: path.clone(),
-                source,
+                message: error.to_string(),
             })?;
+            let metadata =
+                std::fs::symlink_metadata(&path).map_err(|source| CacheError::Unusable {
+                    path: path.clone(),
+                    source,
+                })?;
             if !metadata.is_file() {
                 return Err(CacheError::Corrupt {
                     path,
@@ -392,7 +463,7 @@ impl Store {
 #[derive(Debug, Clone)]
 struct Entry {
     path: PathBuf,
-    identity: String,
+    identity: HexDigest,
     bytes: u64,
     modified: Timestamp,
 }

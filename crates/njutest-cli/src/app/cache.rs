@@ -13,18 +13,21 @@ use crate::cli::{Cache, EXIT_ASSURED, EXIT_ERROR, Environment};
 use crate::config::Config;
 
 /// Says what the store holds, and collects it when asked.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Cache,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = environment.rooted(arguments.directory.as_deref());
     let config = match Config::load(&root) {
         Ok(config) => config,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
     let store = Store::new(
@@ -42,8 +45,8 @@ pub fn run(
         match store.collect(Timestamp::now()) {
             Ok(collected) => collected,
             Err(error) => {
-                super::complain(stderr, &error, error.code());
-                return EXIT_ERROR;
+                super::complain(stderr, &error, error.code())?;
+                return Ok(EXIT_ERROR);
             }
         }
     } else {
@@ -52,11 +55,11 @@ pub fn run(
     let status = match store.status() {
         Ok(status) => status,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    super::say(stdout, &format!("root      {}", store.root().display()));
+    super::say(stdout, &format!("root      {}", store.root().display()))?;
     super::say(
         stdout,
         &format!(
@@ -69,7 +72,7 @@ pub fn run(
                 format!("at most {}", config.cache.max_bytes)
             }
         ),
-    );
+    )?;
     super::say(
         stdout,
         &if arguments.gc {
@@ -82,10 +85,13 @@ pub fn run(
         } else {
             String::from("collected nothing; --gc is what collects")
         },
-    );
-    temporary(environment, arguments.gc, stdout);
-    preserved(&root, stdout);
-    EXIT_ASSURED
+    )?;
+    temporary(environment, arguments.gc, stdout)?;
+    if let Err(error) = preserved(&root, stdout) {
+        super::complain(stderr, &error, crate::error::CACHE_CORRUPT)?;
+        return Ok(EXIT_ERROR);
+    }
+    Ok(EXIT_ASSURED)
 }
 
 /// Which way answers are moving between this machine and a file.
@@ -129,29 +135,31 @@ fn said(
     carried: Result<String, crate::cache::store::CacheError>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     match carried {
         Ok(line) => {
-            super::say(stdout, &line);
-            EXIT_ASSURED
+            super::say(stdout, &line)?;
+            Ok(EXIT_ASSURED)
         }
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            EXIT_ERROR
+            super::complain(stderr, &error, error.code())?;
+            Ok(EXIT_ERROR)
         }
     }
 }
 
 /// What runs preserved on purpose and is still there. The ledger names a directory; the directory's own marker says whether it may be removed, so this reports rather than collects.
-fn preserved(root: &Path, stdout: &mut dyn Write) {
-    let left = crate::kept::forget_gone(&crate::kept::read(root));
+fn preserved(root: &Path, stdout: &mut dyn Write) -> std::io::Result<()> {
+    let ledger = crate::kept::read(root)?;
+    let left = crate::kept::forget_gone(&ledger);
     super::say(
         stdout,
         &format!("kept      {} directories", left.kept.len()),
-    );
+    )?;
     for one in &left.kept {
-        super::say(stdout, &format!("          {} ({})", one.path, one.run_id));
+        super::say(stdout, &format!("          {} ({})", one.path, one.run_id))?;
     }
+    Ok(())
 }
 
 /// What earlier runs left in the operating system's temporary directory, collected when asked.
@@ -160,7 +168,11 @@ fn preserved(root: &Path, stdout: &mut dyn Write) {
 /// have rubbish and gives them nothing to sweep it with — and `--gc` is the
 /// flag they would reach for. It collects here too, and without it the line
 /// says what would go rather than what went.
-fn temporary(environment: &Environment, collect: bool, stdout: &mut dyn Write) {
+fn temporary(
+    environment: &Environment,
+    collect: bool,
+    stdout: &mut dyn Write,
+) -> std::io::Result<()> {
     let nothing = |_dir: &Path| Ok(());
     let remove = |dir: &Path| std::fs::remove_dir_all(dir);
     let swept = rust_mutants::tempowner::sweep_with(
@@ -171,8 +183,7 @@ fn temporary(environment: &Environment, collect: bool, stdout: &mut dyn Write) {
         ],
         Timestamp::now(),
         if collect { &remove } else { &nothing },
-    )
-    .unwrap_or_default();
+    )?;
     super::say(
         stdout,
         &format!(
@@ -183,7 +194,7 @@ fn temporary(environment: &Environment, collect: bool, stdout: &mut dyn Write) {
             swept.live,
             swept.kept
         ),
-    );
+    )?;
     if swept.unreached > 0 {
         super::say(
             stdout,
@@ -192,6 +203,7 @@ fn temporary(environment: &Environment, collect: bool, stdout: &mut dyn Write) {
                  open, and a sweep cannot take it back",
                 swept.unreached
             ),
-        );
+        )?;
     }
+    Ok(())
 }

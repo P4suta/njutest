@@ -15,10 +15,14 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 
+[package.metadata.njutest]
+surface = "public"
+
 [dependencies]
 njutest-macros = { workspace = true }
 
 [dev-dependencies]
+njutest-devkit = { workspace = true }
 trybuild = { workspace = true }
 
 [lints]

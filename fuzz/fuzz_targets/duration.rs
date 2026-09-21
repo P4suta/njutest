@@ -16,6 +16,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let rendered = render(value);
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when the renderer emits text its own parser refuses"
+    )]
     let again = parse(&rendered).expect("what the parser renders it reads back");
     assert_eq!(
         again, value,

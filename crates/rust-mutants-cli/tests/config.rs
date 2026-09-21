@@ -504,7 +504,7 @@ fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is()
          been told about a tree it did not name"
     );
     assert_eq!(
-        named(Some(&inside.to_string_lossy())),
+        named(Some(njutest_devkit::paths::utf8(&inside))),
         inside,
         "while an absolute root is the tree it names, wherever the caller is"
     );

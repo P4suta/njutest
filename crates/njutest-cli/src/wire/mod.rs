@@ -13,17 +13,27 @@ pub mod settle;
 use serde::{Deserialize, Serialize};
 
 /// How much of what goes past an interposer is read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Wire {
     /// Read nothing but what needs no parsing, which is what a seam nobody named the protocol of gets.
-    #[default]
     Raw,
     /// Read the request line and the status line, and count the rest.
     Http,
 }
 
+impl Wire {
+    const DEFAULT_PROTOCOL: Self = Self::Raw;
+}
+
+impl Default for Wire {
+    fn default() -> Self {
+        Self::DEFAULT_PROTOCOL
+    }
+}
+
 /// Names the shape, so a later reader is never guessing what it holds.
+#[cfg(feature = "testkit")]
 pub const SCHEMA: &str = "njutest-wire-v1";
 
 /// What one exchange was, in the words of the protocol that carried it.
@@ -35,6 +45,7 @@ pub const SCHEMA: &str = "njutest-wire-v1";
 /// cut it short, or drop it, and not enough to invent a status for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "wire", rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
 pub enum Spoken {
     /// One HTTP request and the response it got.
     Http {
@@ -86,12 +97,10 @@ impl Spoken {
 
 /// One exchange over one seam, as the interposer recorded it.
 ///
-/// Not `deny_unknown_fields`: serde cannot refuse an unknown field and flatten
-/// one in the same breath, and the protocol has to be a field of the line
-/// rather than a table under it. The published schema is what refuses a
-/// document with something extra in it, which is where `docs/report-v1.md`
-/// says that job belongs.
+/// The protocol is nested rather than flattened so both serde and the
+/// published schema reject fields that this version does not understand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Exchange {
     /// The capability the seam serves, as `[resources.<name>]` names it.
     pub capability: String,
@@ -102,44 +111,46 @@ pub struct Exchange {
     /// How long the upstream took.
     pub duration_ms: u64,
     /// What was said, and by which protocol.
-    #[serde(flatten)]
     pub spoken: Spoken,
 }
 
 /// One line of the stream: the exchange, and the schema it answers to.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg(feature = "testkit")]
 struct Line {
     /// Always [`SCHEMA`].
     schema: String,
     /// The exchange itself.
-    #[serde(flatten)]
     exchange: Exchange,
 }
 
 /// What a reader got back, and how much of the stream it could not take.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg(feature = "testkit")]
 pub struct Read {
     /// The exchanges, in the order the stream held them.
     pub exchanges: Vec<Exchange>,
     /// How many non-empty lines were not exchanges this release understands.
-    pub unread: u64,
+    pub unread: usize,
 }
 
 /// The stream an interposer writes: one exchange per line, each naming the schema.
-#[must_use]
-pub fn written(exchanges: &[Exchange]) -> String {
+/// # Errors
+/// Returns the serialization failure rather than shortening the recording.
+#[cfg(feature = "testkit")]
+pub fn written(exchanges: &[Exchange]) -> Result<String, serde_json::Error> {
     let mut out = String::new();
     for exchange in exchanges {
         let line = Line {
             schema: SCHEMA.to_owned(),
             exchange: exchange.clone(),
         };
-        if let Ok(text) = serde_json::to_string(&line) {
-            out.push_str(&text);
-            out.push('\n');
-        }
+        let text = serde_json::to_string(&line)?;
+        out.push_str(&text);
+        out.push('\n');
     }
-    out
+    Ok(out)
 }
 
 /// What `recorded` holds, with the lines it could not take counted rather than passed over.
@@ -147,13 +158,18 @@ pub fn written(exchanges: &[Exchange]) -> String {
 /// A recording a reader silently shortened is one a derivation would take for
 /// a seam that was quieter than it was, so the count travels with the answer.
 #[must_use]
+#[cfg(feature = "testkit")]
 pub fn read(recorded: &str) -> Read {
-    let mut answer = Read::default();
+    let mut exchanges = Vec::new();
+    let mut rejected = Vec::new();
     for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<Line>(line) {
-            Ok(held) if held.schema == SCHEMA => answer.exchanges.push(held.exchange),
-            _ => answer.unread = answer.unread.saturating_add(1),
+        match crate::strictjson::decode_str::<Line>(line) {
+            Ok(held) if held.schema == SCHEMA => exchanges.push(held.exchange),
+            _ => rejected.push(()),
         }
     }
-    answer
+    Read {
+        exchanges,
+        unread: rejected.len(),
+    }
 }

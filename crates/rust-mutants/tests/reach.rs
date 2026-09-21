@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::coverage::{Block, Point};
 use rust_mutants::reach::{Reached, UNMEASURED};
 use rust_mutants::session::{Fallback, Granularity, Route, Routing};
@@ -358,14 +359,24 @@ fn a_record_that_is_not_there_is_a_process_that_wrote_nothing_and_one_that_will_
     use rust_mutants::limitation::appended;
     use std::io::{Error, ErrorKind};
 
+    let readable = appended(Ok("t\t-\t1\n".to_owned()));
+    assert_eq!(result_state(&readable), Returned, "a readable record");
+    let Ok(readable) = readable else { return };
     assert_eq!(
-        appended(Ok("t\t-\t1\n".to_owned())).ok(),
-        Some("t\t-\t1\n".to_owned()),
+        readable,
+        "t\t-\t1\n".to_owned(),
         "a record that read back is the record"
     );
+    let absent = appended(Err(Error::from(ErrorKind::NotFound)));
     assert_eq!(
-        appended(Err(Error::from(ErrorKind::NotFound))).ok(),
-        Some(String::new()),
+        result_state(&absent),
+        Returned,
+        "an absent record is an empty limitation"
+    );
+    let Ok(absent) = absent else { return };
+    assert_eq!(
+        absent,
+        String::new(),
         "a runtime creates the file the first time it has something to say, so a file that is \
          not there is a process that had nothing to say"
     );

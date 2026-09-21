@@ -165,18 +165,31 @@ fn routing_by_test_starts_fewer_tests_than_routing_by_target_would() {
     let fixture = Fixture::copy("fixture-coverage");
     let session = prepared(&fixture);
     let of = |target: &str| {
-        session
+        let held = session
             .touched()
             .targets
             .get(target)
-            .map_or(1, |touches| touches.ran.len().max(1))
+            .map_or(1, |touches| touches.ran.len().max(1));
+        u32::try_from(held)
+            .unwrap_or_else(|error| panic!("the fixture test count fits u32: {error}"))
     };
-    let mut narrowed = 0;
-    let mut whole = 0;
+    let mut narrowed = 0u64;
+    let mut whole = 0u64;
     for one in session.catalog().mutants() {
         let route = session.route(one);
-        narrowed += route.started(of);
-        whole += route.reaching().into_iter().map(of).sum::<usize>();
+        let started = route
+            .started(of)
+            .unwrap_or_else(|error| panic!("the fixture route count is exact: {error}"));
+        narrowed = narrowed
+            .checked_add(started.get())
+            .unwrap_or_else(|| panic!("the fixture's narrowed count fits u64"));
+        whole = route
+            .reaching()
+            .into_iter()
+            .try_fold(whole, |total, target| {
+                total.checked_add(u64::from(of(target)))
+            })
+            .unwrap_or_else(|| panic!("the fixture's whole count fits u64"));
     }
     assert!(
         narrowed < whole,
@@ -219,15 +232,14 @@ fn a_test_that_only_passes_beside_its_neighbour_takes_its_target_off_test_routin
     let (session, trace) = recorded(&fixture);
     let cancel = Cancel::new();
     for one in session.catalog().mutants() {
-        drop(
-            session
-                .judge(
-                    &rust_mutants::session::Request::new(one.display_id.clone()),
-                    &rust_mutants::run::Quiet::default(),
-                    &cancel,
-                )
-                .expect("judge"),
-        );
+        let judgement = session
+            .judge(
+                &rust_mutants::session::Request::new(one.display_id.to_string()),
+                &rust_mutants::run::Quiet::default(),
+                &cancel,
+            )
+            .expect("judge");
+        drop(judgement);
     }
     let said = notes(&trace, rust_mutants::session::TEST_ROUTING_UNSOUND);
     assert!(
@@ -327,10 +339,8 @@ fn a_process_that_cannot_record_costs_its_target_the_measurement_and_not_the_run
         session.targets().len(),
         "a measurement nothing could make routes every mutant everywhere: {route:?}"
     );
-    drop(std::fs::set_permissions(
-        &logs,
-        std::fs::Permissions::from_mode(0o755),
-    ));
+    std::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o755))
+        .expect("restore readable coverage logs");
     session.close().expect("close");
 }
 
@@ -358,8 +368,20 @@ fn what_a_route_would_take_is_the_tests_it_names_and_not_the_target_they_are_in(
     let mut every = std::time::Duration::ZERO;
     for one in session.catalog().mutants() {
         let route = session.route(one);
-        narrowed = narrowed.saturating_add(route.costing(timing));
-        every = every.saturating_add(route.costing(whole));
+        narrowed = narrowed
+            .checked_add(
+                route
+                    .costing(timing)
+                    .unwrap_or_else(|error| panic!("the fixture route duration is exact: {error}")),
+            )
+            .unwrap_or_else(|| panic!("the fixture's narrowed duration fits"));
+        every = every
+            .checked_add(
+                route
+                    .costing(whole)
+                    .unwrap_or_else(|error| panic!("the fixture route duration is exact: {error}")),
+            )
+            .unwrap_or_else(|| panic!("the fixture's whole duration fits"));
     }
     assert!(
         narrowed < every,

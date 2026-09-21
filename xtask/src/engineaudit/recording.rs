@@ -8,12 +8,12 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::{
-    Audit, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row, STOPPED_EARLY, TIMED_OUT, UNREACHED,
-    UNSELECTED, array, number, numbers, string, strings,
+    Audit, CheckedRecording, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row, STOPPED_EARLY,
+    StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string, strings,
 };
 
 /// The recording, against the report it is supposed to be the exhaust of.
-pub(super) fn trace(report: &Report, recorded: Option<&str>, audit: &mut Audit) {
+pub(super) fn trace(report: &Report, recorded: Option<&CheckedRecording>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Trace);
     let Some(recorded) = recorded else {
         notes.unaudited(
@@ -23,50 +23,82 @@ pub(super) fn trace(report: &Report, recorded: Option<&str>, audit: &mut Audit) 
         );
         return;
     };
-    let events = events(recorded);
-    complete(&events, &mut notes);
-    instrumented(&events, &mut notes);
-    verified(&events, &mut notes);
-    condemned(report, &events, &mut notes);
-    routed(report, recorded, &mut notes);
+    complete(&recorded.events, &mut notes);
+    instrumented(&recorded.events, &mut notes);
+    verified(&recorded.events, &mut notes);
+    condemned(report, &recorded.events, &mut notes);
+    routed(report, &recorded.routing, &mut notes);
 }
 
 /// Whether the recording begins, ends, lost nothing, and closed every phase it opened.
 fn complete(events: &[Value], notes: &mut Notes<'_>) {
-    let kind = |event: &Value| string(event, "type").unwrap_or_default();
     match events.first() {
         None => {
             notes.unaudited("recording", "the recording holds no event".to_owned());
             return;
         }
-        Some(first) if kind(first) != "run-start" => notes.violated(
+        Some(first) if string(first, "type").as_deref() != Some("run-start") => notes.violated(
             "run-start",
             "the recording does not begin with run-start; its beginning was lost".to_owned(),
         ),
         Some(_) => {}
     }
-    let mut expected = events
-        .first()
-        .and_then(|first| number(first, "seq"))
-        .unwrap_or(1);
+    if sequence(events, notes) == Sequence::Incomplete {
+        return;
+    }
+    phases(events, notes);
+    ending(events, notes);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sequence {
+    Complete,
+    Incomplete,
+}
+
+fn sequence(events: &[Value], notes: &mut Notes<'_>) -> Sequence {
+    let Some(mut expected) = events.first().and_then(|first| number(first, "seq")) else {
+        notes.violated("seq", "the first event carries no sequence".to_owned());
+        return Sequence::Incomplete;
+    };
     for event in events {
-        let seq = number(event, "seq").unwrap_or_default();
+        let Some(seq) = number(event, "seq") else {
+            notes.violated("seq", "an event carries no sequence".to_owned());
+            return Sequence::Incomplete;
+        };
         if seq != expected {
             notes.violated(
                 "seq",
                 format!("sequence {expected} is missing and the next event is {seq}; the sink lost what was between"),
             );
         }
-        expected = seq.saturating_add(1);
+        let Some(next) = seq.checked_add(1) else {
+            notes.violated(
+                "seq",
+                "the event sequence exhausted the trace contract's integer width".to_owned(),
+            );
+            return Sequence::Incomplete;
+        };
+        expected = next;
     }
+    Sequence::Complete
+}
+
+fn phases(events: &[Value], notes: &mut Notes<'_>) {
     let mut open: Vec<String> = Vec::new();
     for event in events {
-        match kind(event).as_str() {
-            "phase-start" => open.push(phase_name(event)),
-            "phase-end" => {
+        match string(event, "type").as_deref() {
+            Some("phase-start") => open.push(phase_name(event)),
+            Some("phase-end") => {
                 let name = phase_name(event);
                 if let Some(at) = open.iter().rposition(|held| *held == name) {
-                    let _closed = open.remove(at);
+                    let closed = open.remove(at);
+                    if closed != name {
+                        notes.violated(
+                            "phase",
+                            "the phase stack removed a different phase than it selected".to_owned(),
+                        );
+                    }
                 } else {
                     let said = format!("the phase {name} ended without beginning");
                     notes.violated("phase", said);
@@ -78,12 +110,21 @@ fn complete(events: &[Value], notes: &mut Notes<'_>) {
     for name in open {
         notes.violated("phase", format!("the phase {name} began and never ended"));
     }
+}
+
+fn ending(events: &[Value], notes: &mut Notes<'_>) {
     match events.last() {
-        Some(last) if kind(last) == "run-end" => {
-            let dropped = last
+        Some(last) if string(last, "type").as_deref() == Some("run-end") => {
+            let Some(dropped) = last
                 .get("run")
                 .and_then(|run| number(run, "events_dropped"))
-                .unwrap_or_default();
+            else {
+                notes.violated(
+                    "run-end",
+                    "the final event carries no dropped-event count".to_owned(),
+                );
+                return;
+            };
             if dropped > 0 {
                 notes.violated(
                     "run-end",
@@ -193,7 +234,15 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
     for event in events {
         match string(event, "type").as_deref() {
             Some("validate-round") => {
-                rounds = rounds.saturating_add(1);
+                let Some(next_rounds) = rounds.checked_add(1) else {
+                    notes.violated(
+                        "rejections",
+                        "the number of validation rounds exceeds this platform's address space"
+                            .to_owned(),
+                    );
+                    return;
+                };
+                rounds = next_rounds;
                 if let Some(record) = event.get("round") {
                     for one in array(record, "attributed") {
                         if let Some(index) = number(one, "index") {
@@ -221,19 +270,7 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
         }
         return;
     }
-    let refused: BTreeSet<u64> = report
-        .rejections
-        .iter()
-        .filter_map(|one| one.index)
-        .collect();
-    if refused.len() != report.rejections.len() {
-        notes.unaudited(
-            "rejections",
-            "a refusal carries no catalog index, so what condemned it cannot be re-derived"
-                .to_owned(),
-        );
-        return;
-    }
+    let refused: BTreeSet<u64> = report.rejections.iter().map(|one| one.index).collect();
     for index in named.difference(&refused) {
         notes.violated(
             &index.to_string(),
@@ -246,7 +283,7 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
         let subject = report
             .rejections
             .iter()
-            .find(|one| one.index == Some(*index))
+            .find(|one| one.index == *index)
             .map_or_else(|| index.to_string(), |one| one.display_id.clone());
         notes.violated(
             &subject,
@@ -258,8 +295,7 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
 }
 
 /// Every row against the route and the executions the recording holds for it.
-fn routed(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
-    let routing = crate::route::read(recorded);
+fn routed(report: &Report, routing: &crate::route::Routing, notes: &mut Notes<'_>) {
     if routing.routes.is_empty() && routing.execs.is_empty() {
         notes.unaudited(
             "route",
@@ -286,7 +322,7 @@ fn routed(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
     let stopped = report
         .mutants
         .iter()
-        .filter(|row| row.outcome == NOT_RUN && report.interrupted == Some(true))
+        .filter(|row| row.outcome == NOT_RUN && report.interrupted)
         .count();
     if stopped > 0 {
         notes.unaudited(
@@ -299,7 +335,7 @@ fn routed(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
     }
     for row in &report.mutants {
         if row.source_run_id.is_some()
-            || (row.outcome == NOT_RUN && report.interrupted == Some(true))
+            || (row.outcome == NOT_RUN && report.interrupted)
             || row.not_run(UNSELECTED)
             || row.not_run(STOPPED_EARLY)
         {
@@ -315,9 +351,69 @@ fn routed(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
             continue;
         };
         let execs: Vec<&crate::route::Exec> = routing.execs_for(&row.id, &row.display_id).collect();
+        reported_route(row, route, notes);
         answered(row, &execs, notes);
         reached(row, route, &execs, notes);
         discharged(row, route, &execs, notes);
+    }
+}
+
+/// The route copied into the durable report must be the route the recording
+/// actually committed, field for field.
+fn reported_route(row: &Row, recorded: &crate::route::Route, notes: &mut Notes<'_>) {
+    let Some(reported) = row.route.as_ref() else {
+        notes.violated(
+            row.label(),
+            "the recording holds a route and the report omits it".to_owned(),
+        );
+        return;
+    };
+    if reported.granularity.as_str() != recorded.granularity {
+        notes.violated(
+            row.label(),
+            format!(
+                "the report records route granularity {} and the recording says {}",
+                reported.granularity, recorded.granularity
+            ),
+        );
+    }
+    if reported.fallback != recorded.fallback {
+        notes.violated(
+            row.label(),
+            "the report and recording disagree about why routing widened".to_owned(),
+        );
+    }
+    let reported_reaching: BTreeSet<&str> = reported.reaching.iter().map(String::as_str).collect();
+    let recorded_reaching: BTreeSet<&str> = recorded.reaching.iter().map(String::as_str).collect();
+    if reported_reaching != recorded_reaching {
+        notes.violated(
+            row.label(),
+            "the report and recording name different reachable targets".to_owned(),
+        );
+    }
+    let reported_executed: BTreeSet<&str> = reported.executed.iter().map(String::as_str).collect();
+    let recorded_executed: BTreeSet<&str> = recorded.executed.iter().map(String::as_str).collect();
+    if reported_executed != recorded_executed {
+        notes.violated(
+            row.label(),
+            "the report and recording name different executed targets".to_owned(),
+        );
+    }
+    let reported_discharged: BTreeSet<(&str, &str)> = reported
+        .discharged
+        .iter()
+        .map(|(target, proof)| (target.as_str(), proof.as_str()))
+        .collect();
+    let recorded_discharged: BTreeSet<(&str, &str)> = recorded
+        .discharged
+        .iter()
+        .map(|discharge| (discharge.target.as_str(), discharge.proof.as_str()))
+        .collect();
+    if reported_discharged != recorded_discharged {
+        notes.violated(
+            row.label(),
+            "the report and recording name different proof discharges".to_owned(),
+        );
     }
 }
 
@@ -337,7 +433,7 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
         );
         return;
     };
-    if answer.outcome != row.outcome {
+    if answer.outcome != row.outcome.as_str() {
         notes.violated(
             row.label(),
             format!(
@@ -345,6 +441,25 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
                  with its own recording is not evidence",
                 row.outcome, row.target, answer.outcome
             ),
+        );
+    }
+    let recorded_notice = match answer.step_notice.as_ref() {
+        None => None,
+        Some(document) => match serde_json::from_value::<StepNotice>(document.clone()) {
+            Ok(notice) => Some(notice),
+            Err(error) => {
+                notes.violated(
+                    row.label(),
+                    format!("the execution's step-limit evidence is malformed: {error}"),
+                );
+                return;
+            }
+        },
+    };
+    if recorded_notice != row.step_notice {
+        notes.violated(
+            row.label(),
+            "the row and its execution carry different step-limit evidence".to_owned(),
         );
     }
     if let (Some(recorded), Some(reported)) = (answer.tests_run, row.tests_run)
@@ -358,35 +473,33 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     retried(row, execs, notes);
 }
 
-/// A timeout the run believed, against the retry that is what believing one takes.
+/// A wall-clock expiry the run believed, against the serial retry that is what believing one takes.
 fn retried(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
-    let timed_out = execs
-        .iter()
-        .filter(|exec| exec.outcome == TIMED_OUT)
-        .count();
-    if row.outcome == TIMED_OUT && (timed_out < 2 || !row.retried) {
+    let waited = execs.iter().filter(|exec| exec.outcome == WAITED).count();
+    if row.outcome == WAITED && (waited < 2 || !row.retried) {
         notes.violated(
             row.label(),
             format!(
-                "the row is a timeout and the recording holds {timed_out} of them with \
-                 retried={}; a timeout is believed only after it repeats on its own",
+                "the row says this machine stopped waiting and the recording holds {waited} \
+                 expiries with retried={}; a wall-clock expiry is believed only after it \
+                 repeats on its own",
                 row.retried
             ),
         );
     }
-    if row.retried && timed_out == 0 {
+    if row.retried && waited == 0 {
         notes.violated(
             row.label(),
-            "the row says it was retried and nothing timed out; a retry is what a timeout \
-             costs and nothing else asks for one"
+            "the row says it was retried and no wait expired; a retry is what a wall-clock \
+             expiry costs and nothing else asks for one"
                 .to_owned(),
         );
     }
-    if row.outcome == INCONCLUSIVE && row.retried && timed_out < 1 {
+    if row.outcome == INCONCLUSIVE && row.retried && waited < 1 {
         notes.violated(
             row.label(),
-            "the row could not be decided after a retry and nothing timed out; inconclusive \
-             after a retry is what a timeout that did not repeat leaves behind"
+            "the row could not be decided after a retry and no wait expired; inconclusive \
+             after a retry is what an expiry that did not repeat leaves behind"
                 .to_owned(),
         );
     }
@@ -450,7 +563,7 @@ fn discharged(
 }
 
 /// The ledger of accepted survivors, against the run that was asked to hold to it. The work the report claims, against the routes it claims it from and the recording of what ran.
-pub(super) fn work(report: &Report, recorded: Option<&str>, audit: &mut Audit) {
+pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Work);
     let targets = report.targets.len();
     if targets == 0 {
@@ -467,9 +580,27 @@ pub(super) fn work(report: &Report, recorded: Option<&str>, audit: &mut Audit) {
     for row in &report.mutants {
         pairs_of(row, &built, targets, &mut notes);
         if row.source_run_id.is_none() {
-            started = started
-                .saturating_add(u64::try_from(row.executed.len()).unwrap_or(u64::MAX))
-                .saturating_add(u64::from(row.retried));
+            let Some(route) = row.route.as_ref() else {
+                continue;
+            };
+            let Ok(executed) = u64::try_from(route.executed.len()) else {
+                notes.violated(
+                    row.label(),
+                    "the route's execution count exceeds the report's integer width".to_owned(),
+                );
+                return;
+            };
+            let Some(next) = started
+                .checked_add(executed)
+                .and_then(|total| total.checked_add(u64::from(row.retried)))
+            else {
+                notes.violated(
+                    "executions",
+                    "the execution total exceeds the report's integer width".to_owned(),
+                );
+                return;
+            };
+            started = next;
         }
     }
     let Some(recorded) = recorded else {
@@ -481,12 +612,18 @@ pub(super) fn work(report: &Report, recorded: Option<&str>, audit: &mut Audit) {
         );
         return;
     };
-    let events = events(recorded);
-    let ran = events
+    let ran = recorded
+        .events
         .iter()
         .filter(|event| string(event, "type").as_deref() == Some("mutant-exec"))
         .count();
-    let ran = u64::try_from(ran).unwrap_or(u64::MAX);
+    let Ok(ran) = u64::try_from(ran) else {
+        notes.violated(
+            "executions",
+            "the recording's execution count exceeds the report's integer width".to_owned(),
+        );
+        return;
+    };
     if ran != started {
         notes.violated(
             "executions",
@@ -500,9 +637,12 @@ pub(super) fn work(report: &Report, recorded: Option<&str>, audit: &mut Audit) {
 
 /// Whether one row's pairs are ones the run built targets for and its own route reached.
 fn pairs_of(row: &Row, built: &BTreeSet<&str>, targets: usize, notes: &mut Notes<'_>) {
-    let reaching: BTreeSet<&str> = row.reaching.iter().map(String::as_str).collect();
-    let discharged: BTreeSet<&str> = row.discharged.iter().map(|(id, _)| id.as_str()).collect();
-    for name in row.executed.iter().map(String::as_str) {
+    let Some(route) = row.route.as_ref() else {
+        return;
+    };
+    let reaching: BTreeSet<&str> = route.reaching.iter().map(String::as_str).collect();
+    let discharged: BTreeSet<&str> = route.discharged.iter().map(|(id, _)| id.as_str()).collect();
+    for name in route.executed.iter().map(String::as_str) {
         if !reaching.contains(name) {
             notes.violated(
                 row.label(),
@@ -529,30 +669,25 @@ fn pairs_of(row: &Row, built: &BTreeSet<&str>, targets: usize, notes: &mut Notes
                 .to_owned(),
         );
     }
-    if reaching.len().saturating_add(discharged.len()) > targets {
+    let Some(accounted) = reaching.len().checked_add(discharged.len()) else {
         notes.violated(
             row.label(),
-            format!(
-                "the route accounts for {} targets and the run built {targets}",
-                reaching.len().saturating_add(discharged.len())
-            ),
+            "the route's target count exceeds this platform's address space".to_owned(),
+        );
+        return;
+    };
+    if accounted > targets {
+        notes.violated(
+            row.label(),
+            format!("the route accounts for {accounted} targets and the run built {targets}"),
         );
     }
-    if row.source_run_id.is_some() && !row.executed.is_empty() {
+    if row.source_run_id.is_some() && !route.executed.is_empty() {
         notes.violated(
             row.label(),
             "an earlier run established this and a process was started for it anyway".to_owned(),
         );
     }
-}
-
-/// Every event of a recording, skipping what is not one.
-pub(super) fn events(recorded: &str) -> Vec<Value> {
-    recorded
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .collect()
 }
 
 /// The name of the phase one boundary is about.

@@ -49,7 +49,8 @@ alone: they cannot be negated or swapped and compile.
 Type-directed splits are impossible without a type checker
 ([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)),
 so families split by syntax and the compiler rejects what does not
-type-check. Replacements derive from the token, never from a string.
+type-check. Replacements derive from the token, never from a string. The table
+has seventeen families and seventy-four rules.
 
 | Family | Rules | Tier |
 | --- | --- | --- |

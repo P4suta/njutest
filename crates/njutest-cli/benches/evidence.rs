@@ -57,8 +57,13 @@ fn common() -> key::Common {
         environment: environment(20),
         contract: "standard-v1".to_owned(),
         test_args: Vec::new(),
-        build: vec!["--features".to_owned(), "default".to_owned()],
+        build: rust_mutants::cargo::BuildConfig {
+            features: vec!["default".to_owned()],
+            ..rust_mutants::cargo::BuildConfig::default()
+        }
+        .selection(),
         timeout_ms: 60_000,
+        steps: 50_000_000,
         versions: vec!["njutest 0.1.0".to_owned(), "rust-mutants 0.1.0".to_owned()],
         corpus: "b".repeat(64),
     }
@@ -68,6 +73,7 @@ fn common() -> key::Common {
 fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
     let judged = (0..count)
         .map(|index| Judged {
+            catalog_index: index,
             id: format!("{index:064x}"),
             display_id: format!("crates/core/src/lib.rs:{index}:comparison-swap"),
             path: "crates/core/src/lib.rs".to_owned(),

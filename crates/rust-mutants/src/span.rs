@@ -43,6 +43,7 @@ pub enum SpanError {
     serde::Serialize,
     serde::Deserialize,
 )]
+#[serde(deny_unknown_fields)]
 pub struct Span {
     /// The first byte covered.
     pub start: u32,

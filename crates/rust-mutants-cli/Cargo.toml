@@ -16,6 +16,12 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 
+[package.metadata.njutest]
+surface = "incidental"
+
+[features]
+testkit = []
+
 [[bin]]
 name = "rust-mutants"
 path = "src/main.rs"
@@ -32,6 +38,7 @@ pkg-fmt = "tgz"
 bin-dir = "njutest-{ version }-{ target }/{ bin }{ binary-ext }"
 
 [dependencies]
+njutest-macros = { workspace = true }
 clap = { workspace = true }
 jiff = { workspace = true }
 ratatui = { workspace = true }
@@ -52,6 +59,7 @@ rust-mutants = { workspace = true, features = ["testkit"] }
 njutest-devkit = { workspace = true }
 rustix = { workspace = true }
 tempfile = { workspace = true }
+rust-mutants-cli = { path = ".", features = ["testkit"] }
 
 [lints]
 workspace = true

@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented.** A run writes one document, and `rust-mutants report`
 projects it into whatever a reader already has. Every projection is derived
-from the stored `run-report-v1.json` and nothing else, so a projection is
+from the stored `run-report-v2.json` and nothing else, so a projection is
 never a second measurement — it is the same run said in another vocabulary.
 
 ```console
@@ -35,14 +35,14 @@ a projection in a pipeline still reports what the run established.
 
 ## What each one calls an outcome
 
-JUnit has four states and this engine has six, so the mapping is a decision
+JUnit has four states and this engine has seven, so the mapping is a decision
 rather than a translation:
 
 | Outcome | JUnit | SARIF | Why |
 | --- | --- | --- | --- |
-| killed, timed out | a passing case | not a result | the tests noticed it, which is the tests working |
+| killed | a passing case | not a result | the tests noticed it, which is the tests working |
 | survived | `<failure>` | `warning` | a gap in the tests is what a failing case means to a reader |
-| inconclusive, errored | `<error>` | `error` | the run established nothing, which is about the run |
+| step limit reached, waited, inconclusive, errored | `<error>` | `error` | the run established no verdict, which is about the run |
 | not run | `<skipped>` with the reason | `note` | unreached, discharged, unselected, or stopped early |
 
 SARIF carries a result **only** for a finding. A killed mutant is not a

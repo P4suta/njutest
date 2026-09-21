@@ -2,131 +2,76 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/P4suta/njutest/schema/njutest-wire-v1.json",
   "title": "njutest-wire-v1",
-  "description": "One exchange over one seam, as an interposer recorded it. The stream is JSON Lines: one of these per line, each naming the schema, in the order the seam carried them. A catalogue of faults is derived from a recording of these rather than guessed at, so a line that is not one of these is counted as unread rather than passed over.",
+  "description": "One exchange over one seam, as an interposer recorded it. The stream is JSON Lines: one exact object per line. A catalogue of faults is derived from these records, so malformed lines are counted as unread rather than shortened away.",
   "type": "object",
-  "unevaluatedProperties": false,
-  "required": [
-    "schema",
-    "capability",
-    "seq",
-    "during",
-    "duration_ms",
-    "wire"
-  ],
+  "additionalProperties": false,
+  "required": ["schema", "exchange"],
   "properties": {
     "schema": {
       "const": "njutest-wire-v1"
     },
-    "capability": {
-      "type": "string",
-      "minLength": 1,
-      "description": "The capability the seam serves, as [resources.<name>] names it."
-    },
-    "seq": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "Which exchange this is on that seam, from zero."
-    },
-    "during": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "description": "The test that was running, or null where the run could not tell. Null says it could not, rather than naming the last test it happened to know about."
-    },
-    "duration_ms": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "wire": {
-      "type": "string",
-      "enum": [
-        "http",
-        "raw"
-      ]
-    }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "wire": {
-            "const": "http"
-          }
+    "exchange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "seq", "during", "duration_ms", "spoken"],
+      "properties": {
+        "capability": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The capability the seam serves, as [resources.<name>] names it."
         },
-        "required": [
-          "wire"
-        ]
-      },
-      "then": {
-        "required": [
-          "method",
-          "path",
-          "status",
-          "request_bytes",
-          "response_bytes",
-          "body_bytes",
-          "status_line"
-        ],
-        "properties": {
-          "method": {
-            "type": "string",
-            "minLength": 1
-          },
-          "path": {
-            "type": "string",
-            "minLength": 1
-          },
-          "status": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 599
-          },
-          "request_bytes": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "response_bytes": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "body_bytes": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "status_line": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "wire": {
-            "const": "raw"
-          }
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Which exchange this is on that seam, from zero."
         },
-        "required": [
-          "wire"
-        ]
-      },
-      "then": {
-        "required": [
-          "request_bytes",
-          "response_bytes"
-        ],
-        "properties": {
-          "request_bytes": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "response_bytes": {
-            "type": "integer",
-            "minimum": 0
-          }
+        "during": {
+          "type": ["string", "null"],
+          "description": "The test that was running, or null where the run could not tell."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "spoken": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "wire",
+                "method",
+                "path",
+                "status",
+                "request_bytes",
+                "response_bytes",
+                "body_bytes",
+                "status_line"
+              ],
+              "properties": {
+                "wire": { "const": "http" },
+                "method": { "type": "string", "minLength": 1 },
+                "path": { "type": "string", "minLength": 1 },
+                "status": { "type": "integer", "minimum": 0, "maximum": 599 },
+                "request_bytes": { "type": "integer", "minimum": 0 },
+                "response_bytes": { "type": "integer", "minimum": 0 },
+                "body_bytes": { "type": "integer", "minimum": 0 },
+                "status_line": { "type": "string" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["wire", "request_bytes", "response_bytes"],
+              "properties": {
+                "wire": { "const": "raw" },
+                "request_bytes": { "type": "integer", "minimum": 0 },
+                "response_bytes": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ]
         }
       }
     }
-  ]
+  }
 }

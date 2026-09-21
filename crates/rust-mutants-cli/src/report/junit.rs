@@ -4,7 +4,8 @@
 //! The run as the JUnit XML every continuous integration server already reads.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
+
+use rust_mutants::outcome::Outcome;
 
 use super::run::{RunDocument, RunMutantDocument};
 
@@ -17,21 +18,31 @@ pub fn document(document: &RunDocument) -> String {
     }
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     let counted = document.accounting;
-    let _written = writeln!(
-        out,
-        "<testsuites name=\"rust-mutants\" tests=\"{tests}\" failures=\"{failures}\" \
+    crate::text::line(
+        &mut out,
+        format_args!(
+            "<testsuites name=\"rust-mutants\" tests=\"{tests}\" failures=\"{failures}\" \
          errors=\"{errors}\" skipped=\"{skipped}\" time=\"{time}\">",
-        tests = counted.cataloged,
-        failures = counted
-            .survived
-            .count()
-            .saturating_sub(counted.expected.count()),
-        errors = counted
-            .inconclusive
-            .count()
-            .saturating_add(counted.errored.count()),
-        skipped = counted.not_run.count(),
-        time = seconds(document.run.duration_ms),
+            tests = counted.cataloged,
+            failures = document
+                .mutants
+                .iter()
+                .filter(|mutant| mutant.outcome == Outcome::Survived && !mutant.expected)
+                .count(),
+            errors = document
+                .mutants
+                .iter()
+                .filter(|mutant| matches!(
+                    mutant.outcome,
+                    Outcome::StepLimitReached
+                        | Outcome::Waited
+                        | Outcome::Inconclusive
+                        | Outcome::Errored
+                ))
+                .count(),
+            skipped = counted.not_run.count(),
+            time = seconds(document.run.duration_ms),
+        ),
     );
     for (path, mutants) in files {
         suite(&mut out, path, &mutants);
@@ -61,48 +72,60 @@ fn loose(out: &mut String, document: &RunDocument) {
     if orphaned.is_empty() {
         return;
     }
-    let _written = writeln!(
+    crate::text::line(
         out,
-        "  <testsuite name=\"findings\" tests=\"{count}\" failures=\"{count}\" errors=\"0\" \
+        format_args!(
+            "  <testsuite name=\"findings\" tests=\"{count}\" failures=\"{count}\" errors=\"0\" \
          skipped=\"0\" time=\"0.000\">",
-        count = orphaned.len(),
+            count = orphaned.len(),
+        ),
     );
     for finding in orphaned {
-        let _written = write!(
+        crate::text::append(
             out,
-            "    <testcase name=\"{kind}\" classname=\"findings\" time=\"0.000\">\n\
+            format_args!(
+                "    <testcase name=\"{kind}\" classname=\"findings\" time=\"0.000\">\n\
              \x20     <failure message=\"{kind}\" type=\"{kind}\">{detail}</failure>\n\
              \x20 </testcase>\n",
-            kind = escape(&finding.kind),
-            detail = escape(&finding.detail),
+                kind = escape(finding.kind.as_str()),
+                detail = escape(&finding.detail),
+            ),
         );
     }
     out.push_str("  </testsuite>\n");
 }
 
 fn suite(out: &mut String, path: &str, mutants: &[&RunMutantDocument]) {
-    let counted = |kinds: &[&str]| {
+    let counted = |kinds: &[Outcome]| {
         mutants
             .iter()
-            .filter(|mutant| kinds.contains(&mutant.outcome.as_str()))
+            .filter(|mutant| kinds.contains(&mutant.outcome))
             .count()
     };
-    let elapsed: u64 = mutants
+    let elapsed: u128 = mutants
         .iter()
-        .fold(0, |total, mutant| total.saturating_add(mutant.duration_ms));
-    let _written = writeln!(
+        .map(|mutant| u128::from(mutant.duration_ms))
+        .sum();
+    crate::text::line(
         out,
-        "  <testsuite name=\"{name}\" tests=\"{tests}\" failures=\"{failures}\" \
+        format_args!(
+            "  <testsuite name=\"{name}\" tests=\"{tests}\" failures=\"{failures}\" \
          errors=\"{errors}\" skipped=\"{skipped}\" time=\"{time}\">",
-        name = escape(path),
-        tests = mutants.len(),
-        failures = mutants
-            .iter()
-            .filter(|mutant| mutant.outcome == "survived" && !mutant.expected)
-            .count(),
-        errors = counted(&["inconclusive", "errored"]),
-        skipped = counted(&["not_run"]),
-        time = seconds(elapsed),
+            name = escape(path),
+            tests = mutants.len(),
+            failures = mutants
+                .iter()
+                .filter(|mutant| mutant.outcome == Outcome::Survived && !mutant.expected)
+                .count(),
+            errors = counted(&[
+                Outcome::StepLimitReached,
+                Outcome::Waited,
+                Outcome::Inconclusive,
+                Outcome::Errored,
+            ]),
+            skipped = counted(&[Outcome::NotRun]),
+            time = seconds(elapsed),
+        ),
     );
     for mutant in mutants {
         case(out, path, mutant);
@@ -129,46 +152,53 @@ fn case(out: &mut String, path: &str, mutant: &RunMutantDocument) {
         rendered(&mutant.original),
         rendered(&mutant.replacement)
     );
-    let body = match mutant.outcome.as_str() {
-        "survived" if mutant.expected => Some(format!(
+    let body = match mutant.outcome {
+        Outcome::Survived if mutant.expected => Some(format!(
             "      <skipped message=\"{}\"/>\n",
             escape(&format!(
                 "{change} at {path}:{}:{} survived, which a reviewer wrote down in advance",
                 mutant.line, mutant.column
             ))
         )),
-        "survived" => Some(format!(
+        Outcome::Survived => Some(format!(
             "      <failure message=\"survived\" type=\"surviving-mutant\">{}</failure>\n",
             escape(&format!(
                 "the tests did not notice that {change} at {path}:{}:{}",
                 mutant.line, mutant.column
             ))
         )),
-        "inconclusive" | "errored" => Some(format!(
-            "      <error message=\"{outcome}\" type=\"{outcome}-mutant\">{detail}</error>\n",
-            outcome = escape(&mutant.outcome),
-            detail = escape(&format!("{change}; the run established nothing about it")),
-        )),
-        "not_run" => Some(format!(
+        Outcome::StepLimitReached | Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => {
+            Some(format!(
+                "      <error message=\"{outcome}\" type=\"{outcome}-mutant\">{detail}</error>\n",
+                outcome = escape(mutant.outcome.as_str()),
+                detail = escape(&format!("{change}; the run established nothing about it")),
+            ))
+        }
+        Outcome::NotRun => Some(format!(
             "      <skipped message=\"{}\"/>\n",
-            escape(mutant.not_run_reason.as_deref().unwrap_or("not run"))
+            escape(
+                mutant
+                    .not_run_reason
+                    .map_or("not run", |reason| reason.as_str())
+            )
         )),
-        _ => None,
+        Outcome::Killed => None,
     };
     match body {
         Some(body) => {
-            let _written = write!(out, "{head}>\n{body}    </testcase>\n");
+            crate::text::append(out, format_args!("{head}>\n{body}    </testcase>\n"));
         }
         None => {
-            let _written = writeln!(out, "{head}/>");
+            crate::text::line(out, format_args!("{head}/>"));
         }
     }
 }
 
 /// Milliseconds as the seconds this format counts in.
-fn seconds(millis: u64) -> String {
-    let whole = millis.wrapping_div(1000);
-    let thousandths = millis.wrapping_rem(1000);
+fn seconds(millis: impl Into<u128>) -> String {
+    let millis = millis.into();
+    let whole = millis / 1000;
+    let thousandths = millis % 1000;
     format!("{whole}.{thousandths:03}")
 }
 

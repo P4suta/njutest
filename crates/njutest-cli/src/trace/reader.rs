@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufRead};
 
+use serde::Deserialize as _;
+
 use super::event::{Event, Payload};
 
 /// Why a stream could not be read. Fail-closed: a malformed line is an error naming the line, never an event skipped in silence.
@@ -33,6 +35,7 @@ pub enum ReadError {
 impl ReadError {
     /// The 1-based line the error is about, or 0 for an I/O failure.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub const fn line(&self) -> usize {
         match self {
             Self::Io { .. } => 0,
@@ -52,7 +55,11 @@ pub fn read_events(reader: impl BufRead) -> Result<Vec<Event>, ReadError> {
         if line.trim().is_empty() {
             continue;
         }
-        let event = serde_json::from_str(&line).map_err(|source| ReadError::Malformed {
+        let value = crate::strictjson::from_str(&line).map_err(|source| ReadError::Malformed {
+            line: index.saturating_add(1),
+            source,
+        })?;
+        let event = Event::deserialize(value).map_err(|source| ReadError::Malformed {
             line: index.saturating_add(1),
             source,
         })?;

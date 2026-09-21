@@ -10,6 +10,8 @@ extend-ignore-identifiers-re = [
 [default.extend-words]
 mut = "mut"           # Rust keyword
 mutants = "mutants"
+nto = "nto"           # QNX Neutrino, a rustc target_os
+WRONLY = "WRONLY"     # rustix open flag
 Yasunobu = "Yasunobu"
 
 [files]

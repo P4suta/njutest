@@ -4,82 +4,23 @@
 //! The ledgers the runner's own pages keep, against the code that is the ledger.
 
 #![expect(
+    clippy::expect_used,
     clippy::panic,
-    reason = "the helpers that read the repository's own pages are not themselves tests: a page \
-              that cannot be read leaves nothing to assert"
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    clippy::disallowed_methods,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use njutest_cli::config::Config;
 use njutest_cli::report::{Decision, FindingKind};
+use njutest_devkit::docs::{
+    TraceSpecimen, frozen_trace_field_ledger, table_count, trace_field_ledger,
+};
 
 fn page(relative: &str) -> String {
     let path = njutest_devkit::paths::workspace_root().join(relative);
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
-}
-
-/// A number as a page spells it.
-fn spelled(many: usize) -> &'static str {
-    const WORDS: [&str; 21] = [
-        "no",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-        "twenty",
-    ];
-    WORDS
-        .get(many)
-        .copied()
-        .unwrap_or_else(|| panic!("no page spells a number as large as {many}"))
-}
-
-/// Holds the count the paragraph above a table states to the number of rows the ledger read from it.
-///
-/// A ledger reads every name in a table and no number, so a page could say
-/// *six* over seven rows and every name still line up. One did, for as long
-/// as anybody can tell: `observers` has had seven columns and the sentence
-/// above it said six. A count is the one part of a documented table that
-/// duplicates it, which is the only reason it can disagree — and
-/// [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) asks that
-/// the sentence a person reads be held by its own assertion.
-///
-/// Only the paragraph directly above the table is read, so a number further
-/// up the page counting something else is not mistaken for this one.
-fn says_how_many(text: &str, marker: &str, many: usize, noun: &str) -> Result<(), String> {
-    let Some(table) = text.find(marker) else {
-        return Err(format!("the page has no table beginning {marker}"));
-    };
-    let Some(lead) = text.get(..table) else {
-        return Err(format!(
-            "the page breaks between characters before {marker}"
-        ));
-    };
-    let above = lead.trim_end();
-    let paragraph = above.rsplit("\n\n").next().unwrap_or(above);
-    let said = format!("{} {noun}", spelled(many));
-    if paragraph.contains(&said) {
-        return Ok(());
-    }
-    Err(format!(
-        "the paragraph above the table counts its rows, and this one does not say \
-         \"{said}\". A reader who takes the number rather than counting the table \
-         is told something nothing held: {paragraph:?}"
-    ))
 }
 
 #[test]
@@ -92,25 +33,28 @@ fn a_count_a_page_states_is_read_from_the_paragraph_that_states_it() {
                    | `kind` | what it says |\n\
                    | --- | --- |\n\
                    | `a` | b |\n";
-    assert_eq!(says_how_many(written, "| `kind` |", 11, "kinds"), Ok(()));
+    assert_eq!(
+        table_count(written, "| `kind` |", 11, "kinds").map_err(|error| error.to_string()),
+        Ok(())
+    );
     assert!(
-        says_how_many(written, "| `kind` |", 10, "kinds").is_err(),
+        table_count(written, "| `kind` |", 10, "kinds").is_err(),
         "a page that counts wrong is the whole reason this is read"
     );
     assert!(
-        says_how_many(written, "| `kind` |", 3, "narrowings").is_err(),
+        table_count(written, "| `kind` |", 3, "narrowings").is_err(),
         "only the paragraph directly above the table is this table's count, so a \
          number further up the page counting something else cannot answer for it"
     );
     assert!(
-        says_how_many(written, "| nothing |", 11, "kinds").is_err(),
+        table_count(written, "| nothing |", 11, "kinds").is_err(),
         "a marker that names no table is a ledger reading a page that moved"
     );
 }
 
 #[test]
 fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
-    let text = page("docs/report-v1.md");
+    let text = page("docs/report-v2.md");
     let mut words: Vec<&str> = rust_mutants::session::Route::GRANULARITIES.to_vec();
     for fallback in rust_mutants::session::Fallback::ALL {
         words.push(fallback.name());
@@ -130,7 +74,7 @@ fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page(
 
 #[test]
 fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
-    let text = page("docs/report-v1.md");
+    let text = page("docs/report-v2.md");
     let listed: Vec<(String, Vec<String>)> = text
         .lines()
         .skip_while(|line| !line.starts_with("| column | what decided it |"))
@@ -156,7 +100,7 @@ fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
          holds one row per way a mutation can be decided, in the order the model \
          lists them"
     );
-    if let Err(why) = says_how_many(
+    if let Err(why) = table_count(
         &text,
         "| column | what decided it |",
         Decision::ALL.len(),
@@ -189,7 +133,7 @@ fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
 
 #[test]
 fn the_kinds_the_page_lists_are_the_kinds_there_are_and_it_says_which_are_defects() {
-    let text = page("docs/report-v1.md");
+    let text = page("docs/report-v2.md");
     let listed: Vec<(String, bool)> = text
         .lines()
         .skip_while(|line| !line.starts_with("| `kind` |"))
@@ -207,7 +151,7 @@ fn the_kinds_the_page_lists_are_the_kinds_there_are_and_it_says_which_are_defect
         FindingKind::ALL.len(),
         "the table of kinds is read and holds one row per kind: {listed:?}"
     );
-    if let Err(why) = says_how_many(&text, "| `kind` |", FindingKind::ALL.len(), "kinds") {
+    if let Err(why) = table_count(&text, "| `kind` |", FindingKind::ALL.len(), "kinds") {
         panic!("{why}");
     }
     let mut wrong = Vec::new();
@@ -240,8 +184,12 @@ fn the_kinds_the_page_lists_are_the_kinds_there_are_and_it_says_which_are_defect
 #[test]
 fn a_kind_a_report_carries_is_the_name_it_is_written_under() {
     for kind in FindingKind::ALL {
+        let written = match serde_json::to_value(kind) {
+            Ok(written) => Some(written),
+            Err(_) => None,
+        };
         assert_eq!(
-            serde_json::to_value(kind).ok(),
+            written,
             Some(serde_json::Value::String(kind.name().to_owned())),
             "a kind is written into the report by one rule and read out of the code by \
              another, and the two are the same word or the page below documents a name \
@@ -252,7 +200,7 @@ fn a_kind_a_report_carries_is_the_name_it_is_written_under() {
 
 #[test]
 fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
-    let text = page("docs/report-v1.md");
+    let text = page("docs/report-v2.md");
     let missing: Vec<&str> = FindingKind::ALL
         .into_iter()
         .map(FindingKind::name)
@@ -260,7 +208,7 @@ fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
         .collect();
     assert!(
         missing.is_empty(),
-        "docs/report-v1.md does not name these, and a report can carry every one of \
+        "docs/report-v2.md does not name these, and a report can carry every one of \
          them: a consumer that meets a kind the page does not have has no way to learn \
          what it is claiming. {missing:?}"
     );
@@ -311,19 +259,23 @@ fn every_key_the_configuration_page_shows_is_one_the_reader_accepts() {
         .collect::<Vec<&str>>()
         .join("\n");
     let parsed: Result<Config, _> = toml::from_str(&skeleton);
+    let failure = match &parsed {
+        Ok(_) => None,
+        Err(error) => Some(error),
+    };
     assert!(
         parsed.is_ok(),
         "a reader who copies what the page shows gets a file the run refuses, which is \
          the page teaching somebody to write a configuration that does not work: {:?}\n\
          {skeleton}",
-        parsed.err()
+        failure
     );
 }
 
 #[test]
 fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
     let printed = njutest_cli::cli::exit_codes();
-    let text = page("docs/report-v1.md");
+    let text = page("docs/report-v2.md");
     let table: String = text
         .lines()
         .skip_while(|line| !line.starts_with("| Code |"))
@@ -332,7 +284,7 @@ fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
         .join("\n");
     assert!(
         !table.is_empty(),
-        "docs/report-v1.md has no exit code table"
+        "docs/report-v2.md has no exit code table"
     );
 
     for line in printed.lines().skip(1) {
@@ -340,7 +292,7 @@ fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
         let listed = table
             .lines()
             .find(|row| row.starts_with(&format!("| {code} |")))
-            .unwrap_or_else(|| panic!("docs/report-v1.md has no row for exit code {code}"));
+            .unwrap_or_else(|| panic!("docs/report-v2.md has no row for exit code {code}"));
         for name in names
             .split(',')
             .map(str::trim)
@@ -373,56 +325,138 @@ fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
 }
 
 #[test]
-fn every_shape_a_recording_can_hold_is_a_row_on_the_page_that_documents_it() {
-    let text = page("docs/trace-v1.md");
-    let missing: Vec<&str> = njutest_cli::testkit::every_payload()
+fn every_trace_type_and_its_serialized_fields_are_exactly_one_row_on_the_page() {
+    let text = page("docs/trace-v2.md");
+    let payloads = njutest_cli::testkit::every_payload();
+    let specimens: Vec<TraceSpecimen<'_, njutest_cli::trace::Payload>> = payloads
         .iter()
-        .map(njutest_cli::trace::Payload::type_name)
-        .filter(|name| !text.contains(&format!("`{name}`")))
+        .map(|payload| {
+            TraceSpecimen::new(
+                payload,
+                Some(njutest_cli::testkit::payload_record_key(payload)),
+            )
+        })
         .collect();
-    assert!(
-        missing.is_empty(),
-        "a recording is what an audit re-derives a run's proofs from, and a shape the \
-         page does not list is one a reader meets with nothing to look it up by: \
-         {missing:?}"
-    );
+    if let Err(why) = trace_field_ledger(&text, "| Type | Fields | Records |", &specimens) {
+        panic!(
+            "a trace row is the wire vocabulary a reader implements; missing, extra or \
+             repeated names let the page and a recording describe different objects: {why}"
+        );
+    }
 }
 
 #[test]
-fn every_type_the_page_lists_is_a_shape_a_recording_can_hold() {
+fn the_historical_v1_trace_table_cannot_be_rewritten_from_the_v2_types() {
+    const FIELDS: &[(&str, &[&str])] = &[
+        (
+            "run-start",
+            &[
+                "schema",
+                "njutest",
+                "rust_mutants",
+                "run_id",
+                "run_kind",
+                "contract",
+            ],
+        ),
+        ("phase-start", &["name", "duration_ms"]),
+        ("phase-end", &["name", "duration_ms"]),
+        (
+            "exec",
+            &[
+                "argv",
+                "dir",
+                "env_names",
+                "timeout_ms",
+                "exit_code",
+                "timed_out",
+                "duration_ms",
+                "output_bytes",
+                "output_sha256",
+                "output_truncated",
+                "output_path",
+                "error",
+            ],
+        ),
+        ("progress", &["message", "subject", "done", "total"]),
+        ("artifact", &["kind", "path", "bytes"]),
+        (
+            "route",
+            &[
+                "mutant",
+                "granularity",
+                "fallback",
+                "reaching",
+                "tests",
+                "discharged",
+                "considered",
+                "reused",
+                "refused",
+            ],
+        ),
+        (
+            "mutant-exec",
+            &[
+                "mutant",
+                "target",
+                "args",
+                "outcome",
+                "duration_ms",
+                "alone",
+            ],
+        ),
+        ("probe-exec", &["target", "outcome", "infected"]),
+        (
+            "wire-exchange",
+            &[
+                "capability",
+                "seq",
+                "during",
+                "duration_ms",
+                "wire",
+                "method",
+                "path",
+                "status",
+                "request_bytes",
+                "response_bytes",
+            ],
+        ),
+        (
+            "wire-exec",
+            &[
+                "fault",
+                "capability",
+                "seq",
+                "rule",
+                "decision",
+                "noticed_by",
+                "proof",
+            ],
+        ),
+        ("note", &["kind", "detail"]),
+        (
+            "run-end",
+            &[
+                "verdict",
+                "accounting",
+                "error",
+                "events_emitted",
+                "events_dropped",
+            ],
+        ),
+    ];
     let text = page("docs/trace-v1.md");
-    let held: std::collections::BTreeSet<&str> = njutest_cli::testkit::every_payload()
-        .iter()
-        .map(njutest_cli::trace::Payload::type_name)
-        .collect();
-    let listed: Vec<String> = text
-        .lines()
-        .skip_while(|line| !line.starts_with("| Type |"))
-        .skip(2)
-        .take_while(|line| line.starts_with('|'))
-        .filter_map(|line| line.split('|').nth(1).map(str::trim))
-        .flat_map(|cell| {
-            cell.split(',')
-                .map(|name| name.trim().trim_matches('`').to_owned())
-                .collect::<Vec<String>>()
-        })
-        .collect();
-    assert!(listed.len() >= 10, "the table of types is read: {listed:?}");
-    let invented: Vec<&String> = listed
-        .iter()
-        .filter(|name| !held.contains(name.as_str()))
-        .collect();
-    assert!(
-        invented.is_empty(),
-        "a type the page lists that no recording can hold is a shape a reader waits for \
-         and an audit looks for: the page is what says a recording is complete, so a row \
-         nothing writes is a hole nobody sees. {invented:?}"
-    );
+    if let Err(why) = frozen_trace_field_ledger(&text, "| Type | Fields | Records |", FIELDS) {
+        panic!(
+            "trace v1 describes already-written bytes, so a current type must not rewrite its \
+             vocabulary: {why}"
+        );
+    }
 }
 
 #[test]
 fn every_reason_a_route_can_give_for_believing_nothing_is_on_that_page_too() {
-    let text = page("docs/trace-v1.md");
+    let text = page("docs/trace-v2.md");
     let missing: Vec<&'static str> = njutest_cli::testkit::every_refusal()
         .iter()
         .map(njutest_cli::evidence::store::Refusal::name)
@@ -463,7 +497,7 @@ fn suites() -> String {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries.map(|entry| entry.expect("every source entry is readable")) {
             if entry.path().extension().is_some_and(|one| one == "rs") {
                 read.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
                 read.push('\n');

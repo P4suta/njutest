@@ -52,27 +52,29 @@ no arrangement of them answers *what stands behind the verdict*.
    source added from here names its values for the three, and nothing is
    integrated as "another kind of test".
 2. **The observers are a closed set the compiler checks.** For the mutation
-   phase today they are the type system and the tests. A new observer is a new
-   variant, and the exhaustive matches that break are the decisions it forces.
-3. **`Decision` is a partition, and the report is held to it.** The six ways a
-   mutation can be decided — `types`, `tests`, `proved`, `unnoticed`,
-   `unreached`, `undecided` — cover the catalog exactly once.
+   phase they include the type system, tests, and the pinned model checker. A
+   new observer is a new variant, and the exhaustive matches that break are
+   the decisions it forces.
+3. **`Decision` is a partition, and the report is held to it.** Its ten closed
+   variants — `types`, `tests`, `model-noticed`, `model-proved`,
+   `step-limit-reached`, `proved`, `unnoticed`, `unreached`, `waited`, and
+   `errored` — cover the catalog exactly once.
    `report::audit::validate_for_persistence` refuses a report where they do not
    add up to `cataloged`, so every path that builds an accounting is held to it
    rather than each one being chased.
-4. **`Undecided` is a first-class answer.** A run that could not decide a claim
-   says so, in a column of its own, and names why. It is a gap in the
-   verification rather than in the project. Every other tool in this space
-   spells the same state as an absence — a sample not taken, a budget expired,
-   an exclusion — and an absence is indistinguishable from a decision nobody
-   needed. This is [ADR 0004](0004-proof-layers-not-budgets.md) decision 1 said
-   in the vocabulary of the whole rather than of mutants.
+4. **A hole is a first-class closed value.** `Blind` can contain only
+   `unnoticed`, `unreached`, `step-limit-reached`, `waited`, or `errored`; an
+   answered mutation cannot be put in `blind_in`. A finite guard boundary and
+   a wall-clock expiry remain holes because neither proves what caused the
+   execution not to complete. This is
+   [ADR 0004](0004-proof-layers-not-budgets.md) decision 1 said in the
+   vocabulary of the whole rather than of mutants.
 5. **The existing counts keep their meaning.** `rejected` stays where it is in
    `cataloged = rejected + executed + unreached + equivalent`, and no score
    changes denominator. The observers are a second reading of the same
    dispositions, not a replacement for the first.
-6. **One table maps outcomes to decisions**, `Decision::OUTCOMES`, and a ledger
-   test holds `docs/report-v1.md` to it in both directions. An outcome the page
+6. **One total function maps outcomes to decisions**, `Outcome::decision`, and
+   a ledger test holds `docs/report-v2.md` to it in both directions. An outcome the page
    forgets is one whose standing a reader cannot tell; one it lists twice is one
    they would count twice.
 

@@ -188,10 +188,13 @@ pub fn diagnostic_beside(path: &str, start: u32, end: u32, index: u32) -> Messag
     let json = format!(
         r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":0,"byte_end":1,"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}},{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":false,"text":[],"label":"expected because of this"}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
     );
-    crate::cargo::parse_messages(json.as_bytes())
-        .ok()
-        .and_then(|messages| messages.into_iter().next())
-        .unwrap_or_else(|| panic!("the composed diagnostic parses"))
+    match crate::cargo::parse_messages(json.as_bytes()) {
+        Ok(messages) => messages
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("the composed diagnostic has one message")),
+        Err(error) => panic!("the composed diagnostic parses: {error}"),
+    }
 }
 
 /// A `compiler-message` whose spans name nothing and whose child note covers `[start, end)` of `path`.
@@ -203,10 +206,13 @@ pub fn diagnostic_noted(path: &str, start: u32, end: u32, index: u32) -> Message
     let json = format!(
         r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":0,"byte_end":1,"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[{{"message":"the size is not known","code":null,"level":"note","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":null}}],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
     );
-    crate::cargo::parse_messages(json.as_bytes())
-        .ok()
-        .and_then(|messages| messages.into_iter().next())
-        .unwrap_or_else(|| panic!("the composed diagnostic parses"))
+    match crate::cargo::parse_messages(json.as_bytes()) {
+        Ok(messages) => messages
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("the composed diagnostic has one message")),
+        Err(error) => panic!("the composed diagnostic parses: {error}"),
+    }
 }
 
 /// A `compiler-message` about mutant `index`, whose primary span covers `[start, end)` of `path`.
@@ -214,14 +220,24 @@ pub fn diagnostic_noted(path: &str, start: u32, end: u32, index: u32) -> Message
 /// # Panics
 /// When the message this composes does not parse, which is a broken testkit.
 #[must_use]
+#[expect(
+    clippy::panic,
+    reason = "a testkit constructor cannot return a fabricated compiler message when JSON string encoding fails"
+)]
 pub fn diagnostic_at(path: &str, start: u32, end: u32, index: u32) -> Message {
-    let path = serde_json::to_string(path).unwrap_or_else(|_error| String::from(r#""""#));
+    let path = match serde_json::to_string(path) {
+        Ok(path) => path,
+        Err(error) => panic!("encoding a diagnostic path as JSON failed: {error}"),
+    };
     let path = path.trim_matches('"');
     let json = format!(
         r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
     );
-    crate::cargo::parse_messages(json.as_bytes())
-        .ok()
-        .and_then(|messages| messages.into_iter().next())
-        .unwrap_or_else(|| panic!("the composed diagnostic parses"))
+    match crate::cargo::parse_messages(json.as_bytes()) {
+        Ok(messages) => messages
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("the composed diagnostic has one message")),
+        Err(error) => panic!("the composed diagnostic parses: {error}"),
+    }
 }

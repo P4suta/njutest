@@ -6,7 +6,9 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-pub use rust_mutants::cargo::config::{Configured, SEPARATOR, encoded, home};
+#[cfg(feature = "testkit")]
+pub use rust_mutants::cargo::config::SEPARATOR;
+pub use rust_mutants::cargo::config::{Configured, encoded, home};
 
 /// The flag the coverage build adds.
 pub const COVERAGE_FLAG: &str = "-Cinstrument-coverage";

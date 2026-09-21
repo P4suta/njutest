@@ -10,12 +10,13 @@ use njutest_cli::assure::mutation::{Disposition, Judged, Mutation};
 use njutest_cli::assure::route::{BRANCH_NEVER_TAKEN, Discharge, Route};
 use njutest_cli::assure::run::{about, absorb, record};
 use njutest_cli::config::Contract;
-use njutest_cli::report::{Report, RunKind};
+use njutest_cli::report::{BuildReport, RunKind};
 
 fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
     Judged {
-        id: display_id.repeat(4),
-        display_id: display_id.to_owned(),
+        catalog_index: 0,
+        id: format!("{display_id}{}", "0".repeat(60)),
+        display_id: format!("{display_id}{}", "0".repeat(16)),
         path: "src/lib.rs".to_owned(),
         rule: "add-to-sub@1".to_owned(),
         item: "demo".to_owned(),
@@ -28,9 +29,9 @@ fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
     }
 }
 
-fn blank() -> Report {
-    Report::new(
-        "20260909T000000Z-000001",
+fn blank() -> BuildReport {
+    BuildReport::new(
+        "20260909t000000z-000001",
         RunKind::Full,
         Contract::StandardV1,
     )
@@ -71,7 +72,7 @@ fn what_the_baseline_could_not_do_reaches_the_report_with_the_targets_it_was_abo
         ],
     };
 
-    absorb(&mut report, &baseline);
+    absorb(&mut report, &baseline).expect("the baseline ledger fits the report counters");
 
     assert_eq!(report.limitations.len(), 1, "{:?}", report.limitations);
     let stated = report.limitations.first().expect("one limitation");
@@ -92,7 +93,7 @@ fn a_workspace_that_did_not_build_is_a_finding_and_the_compiler_speaks_first() {
         limitations: Vec::new(),
     };
 
-    absorb(&mut report, &baseline);
+    absorb(&mut report, &baseline).expect("the baseline ledger fits the report counters");
 
     let raised = report.findings.first().expect("one finding");
     assert_eq!(raised.subject, "demo");
@@ -137,12 +138,13 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
         skips: BTreeMap::from([("macro-invocation".to_owned(), 7u64)]),
     };
 
-    record(&mut report, &mutation, &BTreeSet::new());
+    record(&mut report, &mutation, &BTreeSet::new())
+        .expect("the mutation ledger fits the report counters");
 
     let rows = &report.mutants;
     assert_eq!(rows.len(), 2);
     let killed = rows.first().expect("the kill");
-    assert_eq!(killed.display_id, "aaaa");
+    assert_eq!(killed.display_id, "aaaa0000000000000000");
     assert_eq!(killed.outcome.name(), "killed");
     assert_eq!(
         killed.outcome.decided_by(),
@@ -178,5 +180,86 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
         "how many places a run passed over is the difference between a catalog that is \
          small and one that is narrow, and which reason they were passed over for is \
          what somebody does about it: {skipped:?}"
+    );
+}
+
+#[test]
+fn a_ledger_entry_cannot_mark_an_outcome_that_is_not_answerable_as_accepted() {
+    let killed = judged(
+        "aaaa",
+        Disposition::Killed {
+            by: "one".to_owned(),
+        },
+        false,
+    );
+    let mut survivor = judged(
+        "bbbb",
+        Disposition::Survived {
+            route: Route::Discharged {
+                discharged: vec![Discharge {
+                    target: "pkg/lib/pkg".to_owned(),
+                    proof: BRANCH_NEVER_TAKEN,
+                }],
+            },
+        },
+        false,
+    );
+    survivor.catalog_index = 1;
+    let accepted = BTreeSet::from([killed.id.clone(), survivor.id.clone()]);
+    let mutation = Mutation {
+        judged: vec![killed, survivor],
+        skips: BTreeMap::new(),
+    };
+    let mut report = blank();
+
+    record(&mut report, &mutation, &accepted)
+        .expect("the mutation ledger fits the report counters");
+
+    let completed = {
+        "2026-01-01T00:00:00Z".clone_into(&mut report.timing.started);
+        "2026-01-01T00:00:00Z".clone_into(&mut report.timing.finished);
+        report.scope.configured_builds =
+            vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+        report
+            .limitations
+            .push(njutest_cli::report::Limitation::new(
+                "git-metadata-unavailable",
+                "the fixture is not a git repository",
+            ));
+        let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+            njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+            rust_mutants::cargo::BuildConfig::default().selection(),
+            report.clone(),
+        )])
+        .expect("one checked build measurement");
+        let final_run = rust_mutants::id::RunId::try_from("20260909t000000z-000002")
+            .expect("a canonical run id");
+        let latticed = njutest_cli::report::across::configured(&final_run, &measurements)
+            .expect("one checked complete lattice");
+        let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+            panic!("the whole-catalog fixture cannot be a shard");
+        };
+        latticed
+            .complete_without_models()
+            .expect("standard-v1 needs no model completion")
+    };
+
+    let killed_row = report.mutants.first().expect("the killed row");
+    let survivor_row = report.mutants.get(1).expect("the surviving row");
+    assert!(!killed_row.accepted, "a kill is already answered by a test");
+    assert!(
+        survivor_row.accepted,
+        "a surviving gap is one a reviewer may answer for"
+    );
+    assert_eq!(report.accounting.mutants.accepted, 1);
+    assert!(
+        !njutest_cli::report::audit::validate_for_persistence(&completed)
+            .iter()
+            .any(|violation| matches!(
+                violation,
+                njutest_cli::report::audit::Violation::MutantRowIncoherent { .. }
+                    | njutest_cli::report::audit::Violation::MutantAccountingDisagrees { .. }
+            )),
+        "the producer and its independent audit derive acceptance from the same closed domain"
     );
 }

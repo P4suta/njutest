@@ -14,6 +14,10 @@ fuzz_target!(|text: &str| {
     };
     assert_eq!(config.version, 1, "only version 1 is ever accepted");
     for pattern in config.project.include.iter().chain(&config.project.exclude) {
+        #[expect(
+            clippy::expect_used,
+            reason = "the fuzzer must crash when accepted configuration carries an invalid glob"
+        )]
         rust_mutants::glob::Pattern::compile(pattern).expect("an accepted pattern compiles");
     }
     let registry = rust_mutants::rule::Registry::canonical();
@@ -32,7 +36,6 @@ fuzz_target!(|text: &str| {
                 Some(
                     rust_mutants::outcome::Outcome::Survived
                         | rust_mutants::outcome::Outcome::Killed
-                        | rust_mutants::outcome::Outcome::Runaway
                 )
             ),
             "only an outcome a run confirms may be expected: {:?}",
@@ -48,7 +51,15 @@ fuzz_target!(|text: &str| {
     assert!(!directory.as_os_str().is_empty());
     assert!(!directory.is_absolute());
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when accepted configuration cannot be serialized"
+    )]
     let rendered = toml::to_string(&config).expect("an accepted configuration writes back");
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when the serializer emits configuration the parser refuses"
+    )]
     let again = Config::parse(&rendered, std::path::Path::new(".rust-mutants.toml"))
         .expect("what it writes, it reads");
     assert_eq!(again, config, "the round trip is the identity");

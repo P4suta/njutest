@@ -10,13 +10,12 @@
 //! a number that went up. `UPDATE_GOLDEN=1` rewrites it.
 
 #![expect(
+    clippy::format_push_string,
     clippy::too_many_lines,
-    reason = "the list of cases is a list: one entry per shape a person is shown, and \
-              cutting it into functions would hide the thing it exists to show, which is \
-              all of them together"
+    clippy::disallowed_methods,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::fmt::Write as _;
 use std::path::Path;
 
 use njutest_cli::presentation::{
@@ -85,19 +84,18 @@ fn kept(run: &str) -> String {
         njutest_cli::config::Config::default()
             .reports
             .directory
-            .display()
+            .as_str()
     )
 }
 
 fn headline(verdict: Verdict, killed: u32, survived: u32, unreached: u32) -> Headline {
     Headline {
         verdict,
-        project: "fixture-baseline".to_owned(),
         cataloged: killed.saturating_add(survived).saturating_add(unreached),
         killed,
         survived,
         unreached,
-        runaway: 0,
+        step_limit_reached: 0,
         waited: 0,
         duration_ms: 1911,
         kept: kept("20260101T000000Z-aaaaaa"),
@@ -456,12 +454,12 @@ fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
     );
     for (name, told) in cases() {
         for (shape, terminal) in SHAPES {
-            let _written = writeln!(out, "\n=== {name} — {shape}\n");
+            out.push_str(&format!("\n=== {name} — {shape}\n\n"));
             out.push_str(&human::draw(&told, terminal));
         }
     }
     for (name, told) in cases() {
-        let _written = writeln!(out, "\n=== {name} — as a briefing\n");
+        out.push_str(&format!("\n=== {name} — as a briefing\n\n"));
         out.push_str(&njutest_cli::presentation::agent::brief(&told));
     }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/gallery.golden");

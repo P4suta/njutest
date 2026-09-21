@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -82,7 +83,7 @@ fn every_code_the_runner_declares_is_one_some_place_reports() {
         for code in error_codes() {
             let constant = names.get(code.code).map_or("", String::as_str);
             if text.contains(code.code) || (!constant.is_empty() && text.contains(constant)) {
-                let _added = reported.insert(code.code);
+                reported.extend([code.code]);
             }
         }
     }
@@ -130,7 +131,7 @@ fn sources() -> Vec<String> {
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(&directory)
             .expect("a directory")
-            .flatten()
+            .map(|entry| entry.expect("every source entry is readable"))
         {
             let path = entry.path();
             if path.is_dir() {

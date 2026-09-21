@@ -21,6 +21,7 @@ fn kept(run: &str) -> String {
         njutest_cli::config::Config::default()
             .reports
             .directory
+            .as_path()
             .display()
     )
 }
@@ -57,12 +58,11 @@ fn told() -> Told {
     Told {
         headline: Headline {
             verdict: Verdict::Insufficient,
-            project: "fixture-baseline".to_owned(),
             cataloged: 10,
             killed: 7,
             survived: 2,
             unreached: 1,
-            runaway: 0,
+            step_limit_reached: 0,
             waited: 0,
             duration_ms: 1911,
             kept: kept("20260101T000000Z-aaaaaa"),
@@ -168,12 +168,11 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
     let told = Told {
         headline: Headline {
             verdict: Verdict::Assured,
-            project: "fixture-assured".to_owned(),
             cataloged: 4,
             killed: 4,
             survived: 0,
             unreached: 0,
-            runaway: 0,
+            step_limit_reached: 0,
             waited: 0,
             duration_ms: 1388,
             kept: kept("20260101T000000Z-bbbbbb"),
@@ -274,8 +273,10 @@ fn the_label_under_a_mark_says_what_the_run_established_and_never_something_else
             "noticed",
         ),
         (
-            Decided::Runaway {
+            Decided::StepLimitReached {
                 on: "fixture/test/smoke".to_owned(),
+                boundary: njutest_cli::report::StepBoundary::new(10, 11)
+                    .expect("the first count beyond the allowance"),
             },
             "noticed",
         ),

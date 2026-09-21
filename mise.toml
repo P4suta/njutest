@@ -23,7 +23,7 @@ RUSTC_WRAPPER = "sccache"
 rust = "1.98.0"
 actionlint = "1.7.12"
 taplo = "0.10.0"
-typos = "1.48.0"
+typos = "1.50.1"
 lefthook = "2.1.9"
 "cargo:cargo-nextest" = "0.9.140"
 "cargo:cargo-deny" = "0.19.7"
@@ -93,22 +93,42 @@ run = [
   "cargo xtask deps",
   "cargo xtask fixtures",
   "cargo xtask release-check",
+  "cargo xtask milestones",
+  "cargo xtask surfaces",
+  "cargo xtask waivers",
 ]
 
 [tasks.lint]
-description = "Run clippy, rustdoc, the repository gates, the fuzz targets' own type check, spelling, TOML, and workflow linters"
-depends = ["clippy", "doc", "gates", "fuzz:check"]
+description = "Run clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
+depends = ["clippy", "doc", "gates", "fuzz:clippy", "committed:range"]
 run = ["typos", "actionlint"]
+
+[tasks."committed:range"]
+description = "Check exactly the commits unique to this branch against the current origin/main"
+shell = "bash -c"
+run = """
+set -euo pipefail
+base_ref="${NJUTEST_COMMITTED_BASE_REF:-origin/main}"
+head_ref="${NJUTEST_COMMITTED_HEAD:-HEAD}"
+git rev-parse --verify "${base_ref}^{commit}" >/dev/null
+git rev-parse --verify "${head_ref}^{commit}" >/dev/null
+committed "${base_ref}..${head_ref}"
+"""
 
 # The suite is written for three platforms and run here on one. Most of what
 # the other two answer differently needs their machine to find out, but code
 # behind `#[cfg(windows)]` is not even read by this one's compiler, and a
 # workspace that builds here can fail to build there on a lint. This asks for
-# the reading without the machine, and needs the target's standard library:
-# `rustup target add x86_64-pc-windows-msvc`.
+# the reading without the machine; the prerequisite task installs that target's
+# standard library for the same exact compiler the workspace pins.
+[tasks."setup:windows-target"]
+description = "Install the pinned Windows standard library used by the cross-target type check"
+run = "rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"
+
 [tasks."check:windows"]
-description = "Type-check every target for Windows, so code only that platform compiles is compiled here too"
-run = "cargo check --locked --workspace --all-targets --all-features --target x86_64-pc-windows-msvc"
+description = "Type-check every non-benchmark target with every non-benchmark feature for Windows; real Windows CI covers feature-complete benchmarks"
+depends = ["setup:windows-target"]
+run = "cargo check --locked --workspace --all-targets --features njutest-cli/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc"
 
 [tasks."build:examples"]
 description = "Build the scripted cargo the suite drives, which no test build produces"
@@ -133,8 +153,8 @@ run = "bash scripts/exec-tax.sh"
 [tasks."test:slow"]
 description = "Run the suites that drive a real cargo against the fixture projects"
 depends = ["exec-tax", "build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
-run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
+run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
@@ -142,7 +162,39 @@ run = "cargo test --locked --workspace --doc"
 
 [tasks.test]
 description = "Run the complete suite: every target through nextest, then the doctests"
-depends = ["test:fast", "test:slow", "test:doc"]
+run = ["mise run test:fast", "mise run test:slow", "mise run test:doc"]
+
+[tasks."kani:verified"]
+description = "Run the generated-harness and strict-result protocol suite with the pinned Kani 0.68 installation"
+depends = ["kani:laws"]
+run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked -p njutest-cli --lib real_kani_068 -- --test-threads=1"
+
+[tasks."kani:laws"]
+description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation"
+run = """
+set -eu
+export_file="$(mktemp "${TMPDIR:-/tmp}/njutest-kani-laws.XXXXXX")"
+cleanup() { rm -f "$export_file"; }
+trap cleanup EXIT HUP INT TERM
+env -u RUSTFLAGS cargo kani -p rust-mutants --lib --exact --no-assertion-reach-checks \
+  --harness instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend \
+  --harness instrument::runtime::kani_laws::activation_is_idempotent \
+  --harness instrument::runtime::kani_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary \
+  --harness instrument::runtime::kani_laws::stopping_is_absorbing \
+  --harness session::kani_laws::attempt_duration_is_the_checked_sum_of_every_execution \
+  --harness session::kani_laws::attempt_ledger_is_nonempty_and_its_result_is_derived \
+  --harness session::kani_laws::cancellation_before_retry_cannot_create_a_retry \
+  --harness session::kani_laws::cancelled_retry_is_structurally_not_run \
+  --harness session::kani_laws::equal_outcomes_choose_the_canonical_target_in_every_order \
+  --harness session::kani_laws::killed_is_absorbing \
+  --harness session::kani_laws::retry_reconciliation_is_closed \
+  --harness session::kani_laws::survived_means_every_nonempty_target_survived \
+  --harness session::kani_laws::target_join_is_associative \
+  --harness session::kani_laws::target_join_is_commutative \
+  --harness session::kani_laws::target_join_is_idempotent \
+  -Z unstable-options --export-json "$export_file"
+cargo xtask kani-laws-audit "$export_file"
+"""
 
 # The floors are the ones .github/workflows/ci.yml enforces, in the same order
 # and with the same scoping. Never lower one; raise one when its suite earns it,
@@ -172,15 +224,27 @@ cargo llvm-cov report --summary-only --fail-under-regions 80 \
 """
 
 [tasks.package]
-description = "Package every publishable member and write what a release would say it is made of"
-run = [
-  "cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile",
-  "cargo xtask sbom --output target/njutest.cdx.json",
-]
+description = "Package every publishable member, install both CLIs, and write what a release would say it is made of"
+shell = "bash -c"
+run = """
+set -euo pipefail
+install_root="$(mktemp -d "${TMPDIR:-/tmp}/njutest-package-install.XXXXXX")"
+cleanup() { rm -rf -- "$install_root"; }
+trap cleanup EXIT HUP INT TERM
+export CARGO_TARGET_DIR="$install_root/target"
+cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
+cargo install --locked --path crates/njutest-cli --root "$install_root"
+cargo install --locked --path crates/rust-mutants-cli --root "$install_root"
+"$install_root/bin/njutest" --version
+"$install_root/bin/rust-mutants" --version
+PATH="$install_root/bin:$PATH" cargo njutest --version
+PATH="$install_root/bin:$PATH" cargo rust-mutants --version
+cargo xtask sbom --output "$install_root/njutest.cdx.json"
+"""
 
 [tasks.deny]
 description = "Check licenses, advisories, bans, and sources"
-run = "cargo deny --locked check"
+run = "cargo deny --locked --all-features check"
 
 [tasks.audit]
 description = "Check the dependency graph against the RustSec advisory database"
@@ -191,19 +255,25 @@ description = "Type-check every cargo-fuzz target on the toolchain the workspace
 dir = "fuzz"
 run = "cargo check --locked --all-targets"
 
+[tasks."fuzz:clippy"]
+description = "Lint every cargo-fuzz target with the root workspace's exact rustc and Clippy policy"
+env = { CARGO_NET_OFFLINE = "false" }
+run = "cargo xtask fuzz-clippy"
+
 [tasks."fuzz:build"]
 description = "Build every cargo-fuzz target (nightly, sanitizer) without running one"
 dir = "fuzz"
 run = "cargo +nightly fuzz build"
 
 [tasks."fuzz:smoke"]
-description = "Run every cargo-fuzz target briefly, the way CI does on a pull request"
+description = "Seed and run every cargo-fuzz target briefly, the same entry path as weekly CI"
 dir = "fuzz"
 shell = "bash -c"
 run = """
 set -euo pipefail
 for target in $(cargo +nightly fuzz list); do
   echo "== $target"
+  bash ../scripts/seed-fuzz-corpus.sh "$target"
   cargo +nightly fuzz run "$target" -- -runs=2000 -max_len=1024
 done
 """
@@ -230,8 +300,10 @@ description = "Run every local gate, the ones that answer quickest first"
 run = [
   "mise run fmt:check",
   "mise run build",
+  "mise run check:windows",
   "mise run lint",
   "mise run test",
+  "mise run kani:verified",
   "mise run deny",
   "mise run audit",
   "mise run book",
@@ -290,7 +362,7 @@ cargo build --release --bin rust-mutants
 cargo build --release -p xtask
 ./target/release/rust-mutants run --locked --offline --trace --jobs 4 "$@" || true
 run="$(ls -dt reports/mutation/*/ 2>/dev/null | head -1)"
-if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
+if [ -z "${run}" ] || [ ! -f "${run}run-report-v2.json" ]; then
   echo "the run left no report to re-decide; read what it said above" >&2
   exit 2
 fi

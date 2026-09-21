@@ -3,10 +3,10 @@
 
 //! The record stream: one line per fact, tab-separated, the kind first.
 
-use super::{Report, TargetStatus};
+use super::{Conclusion, Report, TargetStatus};
 
 /// The record stream inside a run directory.
-pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
+pub const FILE_NAME: &str = "njutest-assurance-report-v2.lines";
 
 /// The whole report as records, each line terminated, and where the run's document is from the project's own root.
 ///
@@ -14,21 +14,24 @@ pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
 /// document beside it: a `REPORT` record is how a script that read the verdict
 /// reads the rest, and guessing a path is how one stops working the day a
 /// project moves its report directory.
-#[must_use]
-pub fn kept(report: &Report, document: &str) -> String {
+/// # Errors
+/// Returns the checked projection error retained by the completed report.
+pub fn kept(report: &Report, document: &str) -> Result<String, super::CountError> {
     written(report, Some(document))
 }
 
 /// The whole report as records, each line terminated.
-#[must_use]
-pub fn stream(report: &Report) -> String {
+/// # Errors
+/// Returns the checked projection error retained by the completed report.
+pub fn stream(report: &Report) -> Result<String, super::CountError> {
     written(report, None)
 }
 
-fn written(report: &Report, document: Option<&str>) -> String {
+fn written(report: &Report, document: Option<&str>) -> Result<String, super::CountError> {
     let mut out = String::new();
-    identity(report, &mut out);
-    for target in &report.targets {
+    let conclusion = report.conclusion()?;
+    identity(report, &conclusion, &mut out);
+    for target in &conclusion.targets {
         record(
             &mut out,
             "TARGET",
@@ -41,29 +44,39 @@ fn written(report: &Report, document: Option<&str>) -> String {
         );
         append_optional(&mut out, target.message.as_deref());
     }
-    for mutant in &report.mutants {
+    for mutant in &conclusion.mutants {
         record(
             &mut out,
             "MUTANT",
             &[
-                mutant.outcome.name(),
-                &mutant.display_id,
+                mutant.decision().name(),
+                mutant.display_id(),
                 &format!(
                     "{}:{}:{}",
-                    mutant.path, mutant.position.line, mutant.position.column
+                    mutant.path(),
+                    mutant.position().line,
+                    mutant.position().column
                 ),
-                &mutant.rule,
+                mutant.rule(),
             ],
         );
-        if let Some(killed_by) = mutant.outcome.decided_by() {
-            append(&mut out, &format!("killed_by={killed_by}"));
-        }
-        if let Some(provenance) = mutant.reuse.0.read_back() {
-            append(&mut out, &format!("reused={provenance}"));
+        for fact in mutant.by_build() {
+            if let Some(killed_by) = fact.outcome().decided_by() {
+                append(
+                    &mut out,
+                    &format!("build={} killed_by={killed_by}", fact.build()),
+                );
+            }
+            if let Some(provenance) = fact.reuse().0.read_back() {
+                append(
+                    &mut out,
+                    &format!("build={} reused={provenance}", fact.build()),
+                );
+            }
         }
         out.push('\n');
     }
-    for finding in &report.findings {
+    for finding in &conclusion.findings {
         let kind = wire_name(&finding.kind);
         record(&mut out, "FINDING", &[kind.as_str(), &finding.subject]);
         append(&mut out, &finding.detail);
@@ -72,20 +85,20 @@ fn written(report: &Report, document: Option<&str>) -> String {
         }
         out.push('\n');
     }
-    for limitation in &report.limitations {
+    for limitation in &conclusion.limitations {
         record(&mut out, "LIMITATION", &[&limitation.name]);
         append(&mut out, &limitation.detail);
         out.push('\n');
     }
-    onward(report, &mut out);
-    accounting(report, &mut out);
+    onward(&conclusion, &mut out);
+    accounting(&conclusion, &mut out);
     if let Some(document) = document {
         record(&mut out, "REPORT", &[document]);
         out.push('\n');
     }
     record(&mut out, "VERDICT", &[&verdict_name(report)]);
     out.push('\n');
-    out
+    Ok(out)
 }
 
 /// Where a reader goes from a wall of findings, which is the next thing they want.
@@ -95,11 +108,11 @@ fn written(report: &Report, document: Option<&str>) -> String {
 /// answers the first and `accept` records the second, and nothing on the way
 /// here named either.
 /// How a reader names this mutation again, which has to hold after they have changed the file.
-fn onward(report: &Report, out: &mut String) {
+fn onward(report: &Conclusion, out: &mut String) {
     let Some(first) = report
         .mutants
         .iter()
-        .find(|one| one.outcome.outcome() == super::Outcome::Survived)
+        .find(|one| one.decision() == super::Decision::Unnoticed)
     else {
         return;
     };
@@ -120,7 +133,7 @@ fn onward(report: &Report, out: &mut String) {
 }
 
 /// What the run was and what it ran on.
-fn identity(report: &Report, out: &mut String) {
+fn identity(report: &Report, conclusion: &Conclusion, out: &mut String) {
     let git = &report.repository.git;
     record(
         out,
@@ -132,18 +145,23 @@ fn identity(report: &Report, out: &mut String) {
         ],
     );
     out.push('\n');
-    record(
-        out,
-        "TOOLCHAIN",
-        &[
-            &format!("rustc={}", report.toolchain.rustc),
-            &format!("cargo={}", report.toolchain.cargo),
-            &format!("target={}", report.toolchain.target),
-            &format!("os={}", report.toolchain.os),
-            &format!("arch={}", report.toolchain.arch),
-        ],
-    );
-    out.push('\n');
+    for build in report.builds() {
+        let baseline = build.baseline();
+        record(out, "BUILD", &[&format!("name={}", build.name)]);
+        out.push('\n');
+        record(
+            out,
+            "TOOLCHAIN",
+            &[
+                &format!("rustc={}", baseline.toolchain.rustc),
+                &format!("cargo={}", baseline.toolchain.cargo),
+                &format!("target={}", baseline.toolchain.target),
+                &format!("os={}", baseline.toolchain.os),
+                &format!("arch={}", baseline.toolchain.arch),
+            ],
+        );
+        out.push('\n');
+    }
     record(
         out,
         "REPOSITORY",
@@ -179,9 +197,9 @@ fn identity(report: &Report, out: &mut String) {
         out,
         "TIMING",
         &[
-            &format!("started={}", report.timing.started),
-            &format!("finished={}", report.timing.finished),
-            &format!("duration_ms={}", report.timing.duration_ms),
+            &format!("started={}", conclusion.timing.wall().started()),
+            &format!("finished={}", conclusion.timing.wall().finished()),
+            &format!("compute_total_ms={}", conclusion.timing.compute_total_ms()),
         ],
     );
     out.push('\n');
@@ -196,7 +214,7 @@ fn named(values: &[String]) -> String {
 }
 
 /// What the run counted.
-fn accounting(report: &Report, out: &mut String) {
+fn accounting(report: &Conclusion, out: &mut String) {
     let targets = report.accounting.targets;
     record(
         out,
@@ -228,7 +246,7 @@ fn accounting(report: &Report, out: &mut String) {
         &[
             &format!("killed={}", mutants.killed),
             &format!("survived={}", mutants.survived),
-            &format!("runaway={}", mutants.runaway),
+            &format!("step_limit_reached={}", mutants.step_limit_reached),
             &format!("waited={}", mutants.waited),
             &format!("equivalent={}", mutants.equivalent),
         ],
@@ -244,17 +262,20 @@ fn accounting(report: &Report, out: &mut String) {
         ],
     );
     out.push('\n');
-    let soundness = report.accounting.soundness;
-    record(
-        out,
-        "SOUNDNESS",
-        &[
-            &format!("unsafe_items={}", soundness.unsafe_items),
-            &format!("packages_with_unsafe={}", soundness.packages_with_unsafe),
-            &format!("was_executed={}", soundness.executed),
-        ],
-    );
-    out.push('\n');
+    for measured in &report.accounting.soundness_by_build {
+        let soundness = measured.accounting();
+        record(
+            out,
+            "SOUNDNESS",
+            &[
+                &format!("build={}", measured.build()),
+                &format!("unsafe_items={}", soundness.unsafe_items),
+                &format!("packages_with_unsafe={}", soundness.packages_with_unsafe),
+                &format!("was_executed={}", soundness.executed),
+            ],
+        );
+        out.push('\n');
+    }
 }
 
 /// Writes `kind` and its fields, without terminating the record.
@@ -316,10 +337,10 @@ const fn status_name(status: TargetStatus) -> &'static str {
 
 /// The wire name of a value the model serializes, taken from the model so the two projections can never drift.
 fn wire_name<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| super::UNAVAILABLE.to_owned())
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(name)) => name,
+        Ok(_) | Err(_) => super::UNAVAILABLE.to_owned(),
+    }
 }
 
 fn run_kind_name(report: &Report) -> String {
@@ -331,5 +352,5 @@ fn contract_name(report: &Report) -> String {
 }
 
 fn verdict_name(report: &Report) -> String {
-    wire_name(&report.verdict)
+    wire_name(&report.verdict())
 }

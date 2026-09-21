@@ -5,7 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-pub use njutest_macros::{integration, unit};
+pub use njutest_macros::{AllVariants, integration, unit};
 
 /// The execution resources a test declares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -49,7 +49,9 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _released = self.release();
+        if let Err(release) = self.release() {
+            drop(release);
+        }
     }
 }
 
@@ -76,10 +78,6 @@ mod sys {
 }
 
 #[cfg(windows)]
-#[expect(
-    unsafe_code,
-    reason = "LockFileEx and UnlockFileEx are the platform's advisory lock and have no safe binding"
-)]
 mod sys {
     use std::fs::File;
     use std::io;
@@ -92,7 +90,12 @@ mod sys {
     use windows_sys::Win32::System::IO::OVERLAPPED;
 
     pub(super) fn try_lock(file: &File) -> io::Result<bool> {
+        #[expect(
+            unsafe_code,
+            reason = "OVERLAPPED is initialized through its documented zero state"
+        )]
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        #[expect(unsafe_code, reason = "LockFileEx has no safe binding")]
         let ok = unsafe {
             LockFileEx(
                 file.as_raw_handle(),
@@ -107,14 +110,25 @@ mod sys {
             return Ok(true);
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(i32::try_from(ERROR_LOCK_VIOLATION).unwrap_or(33)) {
+        let Some(raw) = error.raw_os_error() else {
+            return Err(error);
+        };
+        let Ok(unsigned) = u32::try_from(raw) else {
+            return Err(error);
+        };
+        if unsigned == ERROR_LOCK_VIOLATION {
             return Ok(false);
         }
         Err(error)
     }
 
     pub(super) fn unlock(file: &File) -> io::Result<()> {
+        #[expect(
+            unsafe_code,
+            reason = "OVERLAPPED is initialized through its documented zero state"
+        )]
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        #[expect(unsafe_code, reason = "UnlockFileEx has no safe binding")]
         let ok = unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut overlapped) };
         if ok != 0 {
             Ok(())

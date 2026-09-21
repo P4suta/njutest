@@ -136,16 +136,22 @@ fn establish_for(
         return Ok(Established::default());
     }
     let claims = &questions.conditions;
-    let _phase = trace.phase("witness");
+    let witness_phase = trace.phase("witness");
     let root = workspace.snapshot_root().to_path_buf();
     let wrote = write(&root, sources, &questions);
-    let checked = wrote
-        .is_ok()
-        .then(|| compile(&workspace.driver(cancel), &checking(workspace, options)));
+    let checked = if wrote.is_ok() {
+        Some(compile(
+            &workspace.driver(cancel),
+            &checking(workspace, options)?,
+        ))
+    } else {
+        None
+    };
     restore(&root, sources)?;
     let written = wrote?;
 
     let Some(Ok(checked)) = checked else {
+        drop(witness_phase);
         return Ok(Established::default());
     };
     let mut refused = if checked.success {
@@ -169,7 +175,7 @@ fn establish_for(
     }
     unasked(&questions, &written.unasked, &mut refused);
     let markers = markers_of(claims);
-    let established = vouched(&questions, sources, &Checked { refused, markers }, trace);
+    let established = vouched(&questions, sources, &Checked { refused, markers }, trace)?;
     trace.note(
         "witness",
         &format!(
@@ -178,7 +184,7 @@ fn establish_for(
             count(claims),
             claims
                 .values()
-                .flatten()
+                .flat_map(|claims| claims.iter())
                 .filter(|claimed| claimed.body.is_some())
                 .count(),
             established.comparable.len(),
@@ -191,6 +197,7 @@ fn establish_for(
             established.probed.len(),
         ),
     );
+    drop(witness_phase);
     Ok(established)
 }
 
@@ -208,22 +215,33 @@ fn vouched(
     sources: &BTreeMap<String, Vec<u8>>,
     checked: &Checked,
     trace: &Recorder,
-) -> Established {
+) -> Result<Established, SessionError> {
     let Checked { refused, markers } = checked;
     let mut established = Established::default();
     for file in questions.probes.values() {
         for probe in file {
             if !refused.probes.contains(&probe.index) {
-                let _vouched = established.probed.insert(probe.index, probe.question);
+                established
+                    .probed
+                    .entry(probe.index)
+                    .or_insert(probe.question);
             }
         }
     }
     for (path, file) in &questions.conditions {
-        let Some(source) = sources.get(path) else {
-            continue;
-        };
-        let text = String::from_utf8_lossy(source);
-        let index = LineIndex::new(&text);
+        let source = sources
+            .get(path)
+            .ok_or_else(|| SessionError::SelectionSourceMissing { path: path.clone() })?;
+        let text =
+            std::str::from_utf8(source).map_err(|source| SessionError::SelectionSourceNotUtf8 {
+                path: path.clone(),
+                source,
+            })?;
+        let index =
+            LineIndex::new(text).map_err(|source| SessionError::SelectionPositionInvalid {
+                path: path.clone(),
+                source,
+            })?;
         for claimed in file {
             trace.witness(crate::trace::WitnessRecord {
                 index: claimed.index,
@@ -238,24 +256,34 @@ fn vouched(
             if refused.claims.contains(&claimed.index) {
                 continue;
             }
-            let _vouched = established.comparable.insert(claimed.index);
+            established
+                .comparable
+                .extend(std::iter::once(claimed.index));
             let Some(body) = claimed.body else {
                 continue;
             };
-            let _kept = established.proofs.insert(
-                claimed.index,
-                Proof {
-                    body_start: index.position(&text, body.start),
-                    body_end: end_of(&index, &text, body.end),
-                    marker: markers
-                        .get(&(path.clone(), body))
-                        .copied()
-                        .filter(|_| !refused.markers.contains(&claimed.index)),
-                },
-            );
+            let proof = Proof {
+                body_start: index.position(body.start).map_err(|source| {
+                    SessionError::SelectionPositionInvalid {
+                        path: path.clone(),
+                        source,
+                    }
+                })?,
+                body_end: end_of(&index, body.end).map_err(|source| {
+                    SessionError::SelectionPositionInvalid {
+                        path: path.clone(),
+                        source,
+                    }
+                })?,
+                marker: markers
+                    .get(&(path.clone(), body))
+                    .copied()
+                    .filter(|_| !refused.markers.contains(&claimed.index)),
+            };
+            established.proofs.entry(claimed.index).or_insert(proof);
         }
     }
-    established
+    Ok(established)
 }
 
 /// What the one `cargo check` established about the tree.
@@ -270,8 +298,12 @@ pub struct Established {
 }
 
 /// The position one past the body's last byte. A body's end is exclusive, and a reader looking at the closing brace wants where it is rather than where the next thing starts.
-fn end_of(index: &LineIndex, text: &str, offset: u32) -> Position {
-    index.position(text, offset.saturating_sub(1))
+fn end_of(index: &LineIndex<'_>, offset: u32) -> Result<Position, crate::syntax::PositionError> {
+    let last = match offset.checked_sub(1) {
+        Some(last) => last,
+        None => 0,
+    };
+    index.position(last)
 }
 
 /// The marker each body would carry, by the file and the body it is in.
@@ -307,7 +339,7 @@ fn questions_of(discovery: &Discovery, selected: Option<&BTreeSet<u32>>) -> Ques
         let Ok(id) = located.found.candidate.id() else {
             continue;
         };
-        let Some(mutant) = discovery.catalog.by_id(&id) else {
+        let Some(mutant) = discovery.catalog.by_id(id.as_str()) else {
             continue;
         };
         if selected.is_some_and(|selected| !selected.contains(&mutant.index)) {
@@ -371,31 +403,38 @@ struct Rests {
 }
 
 /// How the witness tree is checked.
-fn checking(workspace: &Workspace, options: &PrepareOptions) -> CompileOptions {
-    CompileOptions {
+fn checking(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+) -> Result<CompileOptions, crate::cargo::config::ConfigError> {
+    Ok(CompileOptions {
         kind: CompileKind::Check,
         packages: Vec::new(),
         target_dir: Some(workspace.target_dir.join("witness")),
         locked: workspace.locked,
         offline: workspace.offline,
         timeout: Workspace::timeout(options.build_timeout),
-        env: capping(workspace),
+        env: capping(workspace)?,
         build: options.build.clone(),
-    }
+    })
 }
 
 /// The flag that holds every lint to a warning, spelled without a space so it survives every form of the variable.
 const CAP_LINTS: &str = "--cap-lints=warn";
 
 /// The compiler flags the witness check adds to what the workspace is otherwise compiled with.
-fn capping(workspace: &Workspace) -> Vec<(OsString, OsString)> {
+fn capping(
+    workspace: &Workspace,
+) -> Result<Vec<(OsString, OsString)>, crate::cargo::config::ConfigError> {
     let flags = crate::cargo::config::configured(
         workspace.snapshot_root(),
         crate::cargo::config::home(&workspace.base_env).as_deref(),
     );
-    let encoded = crate::cargo::config::encoded(&workspace.base_env, &flags, &[CAP_LINTS])
-        .unwrap_or_default();
-    vec![
+    let encoded = match crate::cargo::config::encoded(&workspace.base_env, &flags, &[CAP_LINTS])? {
+        Some(encoded) => encoded,
+        None => OsString::new(),
+    };
+    Ok(vec![
         (
             OsString::from(crate::cargo::config::ENCODED_RUSTFLAGS),
             encoded,
@@ -404,7 +443,7 @@ fn capping(workspace: &Workspace) -> Vec<(OsString, OsString)> {
             OsString::from(crate::cargo::config::RUSTFLAGS),
             OsString::new(),
         ),
-    ]
+    ])
 }
 
 /// Writes the witness tree over the pristine sources.
@@ -417,15 +456,15 @@ fn write(
     let mut written = Written::default();
     for path in questions.paths() {
         let Some(source) = sources.get(path) else {
-            let _unasked = written.unasked.insert(path.clone());
+            written.unasked.extend(std::iter::once(path.clone()));
             continue;
         };
         let Ok(one) = witness::witness_file(path, source, &questions.of(path, &empty)) else {
-            let _unasked = written.unasked.insert(path.clone());
+            written.unasked.extend(std::iter::once(path.clone()));
             continue;
         };
         if !one.witnessed {
-            let _unasked = written.unasked.insert(path.clone());
+            written.unasked.extend(std::iter::once(path.clone()));
             continue;
         }
         std::fs::write(root.join(path), &one.text).map_err(|source| SessionError::WriteFailed {

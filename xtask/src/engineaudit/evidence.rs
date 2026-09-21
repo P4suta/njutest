@@ -7,65 +7,31 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use super::recording::events;
 use super::{
-    Audit, BRANCH_NEVER_TAKEN, DISCHARGED, Evidence, Layer, NEVER_INFECTED, NOT_RUN, Notes, Report,
-    Row, number, plural, string,
+    Audit, BRANCH_NEVER_TAKEN, CheckedEvidence, DISCHARGED, Granularity, Layer, NEVER_INFECTED,
+    NOT_RUN, Notes, Report, RouteDecision, Row, number, plural, string,
 };
 
 /// Every place a rule targets, against the decision the walk took about it.
-pub(super) fn sites(evidence: &Evidence<'_>, audit: &mut Audit) {
+pub(super) fn sites(evidence: &CheckedEvidence<'_>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Sites);
     if !evidence.sites {
         return;
     }
-    let Some(recorded) = evidence.recorded else {
+    let Some(recorded) = &evidence.recorded else {
         notes.unaudited(
             "recording",
             "the run kept no recording, so the places the walk saw cannot be counted".to_owned(),
         );
         return;
     };
-    let mut seen = 0usize;
-    for event in events(recorded) {
-        if string(&event, "type").unwrap_or_default() != "discover-file" {
-            continue;
-        }
-        let Some(record) = event.get("discover") else {
-            continue;
-        };
-        seen = seen.saturating_add(1);
-        let path = string(record, "path").unwrap_or_default();
-        let candidates = number(record, "candidates").unwrap_or_default();
-        let places = record
-            .get("sites")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        let tallies = record
-            .get("skips")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let hidden: u64 = tallies
-            .iter()
-            .filter_map(|skip| number(skip, "count"))
-            .sum();
-        if places == 0 && candidates == 0 && tallies.len() == 1 {
-            continue;
-        }
-        let decided = u64::try_from(places).unwrap_or(u64::MAX);
-        if decided != candidates.saturating_add(hidden) {
-            notes.violated(
-                &path,
-                format!(
-                    "the walk of {path} took {decided} decisions and the file holds \
-                     {candidates} candidates and {hidden} skipped places; a place with \
-                     neither is one it passed over without saying so"
-                ),
-            );
+    let mut discovery = Discovery::Absent;
+    for event in &recorded.events {
+        if audit_discovery(event, &mut notes) == Discovery::Present {
+            discovery = Discovery::Present;
         }
     }
-    if seen == 0 {
+    if discovery == Discovery::Absent {
         notes.unaudited(
             "recording",
             "the recording names no file the walk went through".to_owned(),
@@ -73,8 +39,112 @@ pub(super) fn sites(evidence: &Evidence<'_>, audit: &mut Audit) {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Discovery {
+    Absent,
+    Present,
+}
+
+fn audit_discovery(event: &Value, notes: &mut Notes<'_>) -> Discovery {
+    if string(event, "type").as_deref() != Some("discover-file") {
+        return Discovery::Absent;
+    }
+    let Some(record) = event.get("discover") else {
+        notes.violated(
+            "discover-file",
+            "a discover-file event carries no discover record".to_owned(),
+        );
+        return Discovery::Present;
+    };
+    let Some(path) = string(record, "path") else {
+        notes.violated("discover-file", "the record names no path".to_owned());
+        return Discovery::Present;
+    };
+    let Some(candidates) = number(record, "candidates") else {
+        notes.violated(&path, "the record carries no candidate count".to_owned());
+        return Discovery::Present;
+    };
+    let Some(tallies) = record.get("skips").and_then(Value::as_array) else {
+        notes.violated(&path, "the record carries no skip array".to_owned());
+        return Discovery::Present;
+    };
+    let Some(places) = record.get("sites").and_then(Value::as_array) else {
+        notes.violated(&path, "the record carries no site array".to_owned());
+        return Discovery::Present;
+    };
+    let Some(hidden) = skip_total(tallies, &path, notes) else {
+        return Discovery::Present;
+    };
+    if candidates == 0 && places.is_empty() && whole_file_skip(tallies) {
+        return Discovery::Present;
+    }
+    let decided = super::count(places.len());
+    let Some(accounted) = candidates.checked_add(hidden) else {
+        notes.violated(
+            &path,
+            "candidate plus skipped-place count exceeds the report's integer width".to_owned(),
+        );
+        return Discovery::Present;
+    };
+    if decided != accounted {
+        notes.violated(
+            &path,
+            format!(
+                "the walk of {path} took {decided} decisions and the file holds \
+                 {candidates} candidates and {hidden} skipped places; a place with \
+                 neither is one it passed over without saying so"
+            ),
+        );
+    }
+    Discovery::Present
+}
+
+fn whole_file_skip(tallies: &[Value]) -> bool {
+    tallies.len() == 1
+        && tallies
+            .first()
+            .and_then(|skip| string(skip, "reason"))
+            .is_some_and(|reason| {
+                matches!(
+                    reason.as_str(),
+                    "excluded"
+                        | "test-only-file"
+                        | "no-std-crate"
+                        | "generated-outside-workspace"
+                        | "forbidden-lints"
+                )
+            })
+}
+
+fn skip_total(tallies: &[Value], path: &str, notes: &mut Notes<'_>) -> Option<u64> {
+    let mut hidden = 0u64;
+    for skip in tallies {
+        let Some(skipped) = number(skip, "count") else {
+            notes.violated(path, "a skip record has no valid count".to_owned());
+            return None;
+        };
+        if skipped == 0 {
+            notes.violated(
+                path,
+                "a skip record names no skipped place; an empty decision is not evidence"
+                    .to_owned(),
+            );
+            return None;
+        }
+        let Some(next_hidden) = hidden.checked_add(skipped) else {
+            notes.violated(
+                path,
+                "the skip total exceeds the report's integer width".to_owned(),
+            );
+            return None;
+        };
+        hidden = next_hidden;
+    }
+    Some(hidden)
+}
+
 /// The parts of one catalog, against the whole they say they are.
-pub(super) fn merge(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit) {
+pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Merge);
     if evidence.shards.is_empty() {
         notes.unaudited(
@@ -85,17 +155,9 @@ pub(super) fn merge(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit)
         );
         return;
     }
-    let mut indices: BTreeSet<u64> = report.mutants.iter().filter_map(|row| row.index).collect();
+    let mut indices: BTreeSet<u64> = report.mutants.iter().map(|row| row.index).collect();
     let mut total = report.mutants.len();
-    for (name, text) in &evidence.shards {
-        let Ok(document) = serde_json::from_str::<Value>(text) else {
-            notes.unaudited(
-                name,
-                "the part is not a document this audit can read".to_owned(),
-            );
-            continue;
-        };
-        let part = Report::of(&document);
+    for (name, part) in &evidence.shards {
         for (what, mine, theirs) in [
             (
                 "catalog_digest",
@@ -127,14 +189,22 @@ pub(super) fn merge(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit)
                     .to_owned(),
             );
         }
-        total = total.saturating_add(part.mutants.len());
+        let Some(next_total) = total.checked_add(part.mutants.len()) else {
+            notes.violated(
+                "shards",
+                "the number of rows does not fit in this platform's address space".to_owned(),
+            );
+            return;
+        };
+        total = next_total;
         for row in &part.mutants {
-            if let Some(index) = row.index
-                && !indices.insert(index)
-            {
+            if !indices.insert(row.index) {
                 notes.violated(
                     name,
-                    format!("index {index} is in two parts; a mutant belongs to one part"),
+                    format!(
+                        "index {} is in two parts; a mutant belongs to one part",
+                        row.index
+                    ),
                 );
             }
         }
@@ -152,7 +222,7 @@ pub(super) fn merge(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit)
 }
 
 /// Re-derives every discharge the run claimed from the evidence it kept.
-fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Notes<'_>) {
+fn measured_every_target(report: &Report, reached: Option<&Value>, notes: &mut Notes<'_>) {
     let Some(reached) = reached else {
         notes.unaudited(
             "measurement",
@@ -162,14 +232,7 @@ fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Not
         );
         return;
     };
-    let Ok(document) = serde_json::from_str::<Value>(reached) else {
-        notes.violated(
-            "measurement",
-            "the measurement the run kept is not a document".to_owned(),
-        );
-        return;
-    };
-    let named: BTreeSet<&str> = document
+    let named: BTreeSet<&str> = reached
         .get("targets")
         .and_then(Value::as_object)
         .map(|targets| targets.keys().map(String::as_str).collect())
@@ -181,7 +244,7 @@ fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Not
         );
         return;
     }
-    let excused: BTreeSet<String> = document
+    let excused: BTreeSet<String> = reached
         .get("limitations")
         .and_then(Value::as_array)
         .map(|entries| {
@@ -210,12 +273,16 @@ fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Not
 }
 
 /// Every route the guards decided, re-decided from what the guards recorded.
-pub(super) fn touch(report: &Report, touched: Option<&str>, audit: &mut Audit) {
+pub(super) fn touch(report: &Report, touched: Option<&Value>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Touch);
     let routed = report
         .mutants
         .iter()
-        .filter(|row| row.granularity == "test")
+        .filter(|row| {
+            row.route
+                .as_ref()
+                .is_some_and(|route| route.granularity == Granularity::Test)
+        })
         .count();
     let Some(record) = touched else {
         if routed > 0 {
@@ -231,14 +298,7 @@ pub(super) fn touch(report: &Report, touched: Option<&str>, audit: &mut Audit) {
         }
         return;
     };
-    let Ok(document) = serde_json::from_str::<Value>(record) else {
-        notes.violated(
-            "record",
-            "what the guards recorded is not a document".to_owned(),
-        );
-        return;
-    };
-    let recorded = Recorded::of(&document);
+    let recorded = Recorded::of(record);
     if recorded.targets.is_empty() {
         if routed > 0 {
             notes.violated(
@@ -250,19 +310,17 @@ pub(super) fn touch(report: &Report, touched: Option<&str>, audit: &mut Audit) {
     }
     accounted_for(report, &recorded, &mut notes);
     for row in &report.mutants {
-        if row.source_run_id.is_some() || row.granularity != "test" {
+        if row.source_run_id.is_some() {
             continue;
         }
-        let Some(index) = row.index else {
-            notes.unaudited(
-                row.label(),
-                "the row carries no catalog index, so what the guards said about it cannot be \
-                 looked up"
-                    .to_owned(),
-            );
+        let Some(route) = row
+            .route
+            .as_ref()
+            .filter(|route| route.granularity == Granularity::Test)
+        else {
             continue;
         };
-        re_decided(row, index, &recorded, &mut notes);
+        re_decided(row, route, &recorded, &mut notes);
     }
 }
 
@@ -283,14 +341,14 @@ fn accounted_for(report: &Report, recorded: &Recorded, notes: &mut Notes<'_>) {
 }
 
 /// One row's route, re-decided from the record alone.
-fn re_decided(row: &Row, index: u64, recorded: &Recorded, notes: &mut Notes<'_>) {
-    let removed: BTreeSet<&String> = row.discharged.iter().map(|(target, _)| target).collect();
+fn re_decided(row: &Row, route: &RouteDecision, recorded: &Recorded, notes: &mut Notes<'_>) {
+    let removed: BTreeSet<&String> = route.discharged.iter().map(|(target, _)| target).collect();
     for (target, touches) in &recorded.targets {
         if removed.contains(target) {
             continue;
         }
-        let reaching = touches.reaching(index, &recorded.narrowing);
-        let named = row.reaching.iter().any(|one| one == target);
+        let reaching = touches.reaching(row.index, &recorded.narrowing);
+        let named = route.reaching.iter().any(|one| one == target);
         match (&reaching, named) {
             (Reaching::Nothing, true) => notes.violated(
                 row.label(),
@@ -309,7 +367,7 @@ fn re_decided(row: &Row, index: u64, recorded: &Recorded, notes: &mut Notes<'_>)
                 ),
             ),
         }
-        let asked: BTreeSet<&String> = row
+        let asked: BTreeSet<&String> = route
             .tests
             .get(target)
             .map(|named| named.iter().collect())
@@ -427,7 +485,12 @@ impl Narrowing {
                 .map(|named| {
                     named
                         .iter()
-                        .filter_map(|(index, marker)| Some((index.parse().ok()?, marker.as_u64()?)))
+                        .filter_map(|(index, marker)| {
+                            match (index.parse::<u64>(), marker.as_u64()) {
+                                (Ok(index), Some(marker)) => Some((index, marker)),
+                                (Err(_) | Ok(_), None) | (Err(_), Some(_)) => None,
+                            }
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -567,15 +630,21 @@ enum Reaching {
     Whole,
 }
 
-pub(super) fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit) {
+pub(super) fn proofs(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let discharged = report
         .mutants
         .iter()
         .filter(|row| row.not_run(DISCHARGED))
         .count();
-    let counted = report.columns.get(DISCHARGED).copied().unwrap_or_default();
-    if u64::try_from(discharged).unwrap_or(u64::MAX) != counted {
+    let Some(counted) = report.column(DISCHARGED) else {
+        notes.unaudited(
+            DISCHARGED,
+            "the report carries no discharged accounting column".to_owned(),
+        );
+        return;
+    };
+    if super::count(discharged) != counted {
         notes.violated(
             DISCHARGED,
             format!(
@@ -584,10 +653,10 @@ pub(super) fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit
             ),
         );
     }
-    if let Some(recorded) = evidence.recorded {
-        selected(report, recorded, &mut notes);
+    if let Some(recorded) = &evidence.recorded {
+        selected(report, &recorded.events, &mut notes);
     }
-    measured_every_target(report, evidence.reached, &mut notes);
+    measured_every_target(report, evidence.reached.as_ref(), &mut notes);
     let claims = claimed(report);
     if claims.is_empty() {
         notes.unaudited(
@@ -596,17 +665,17 @@ pub(super) fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit
         );
         return;
     }
-    let recorded = record_of(evidence.touched);
+    let recorded = evidence.touched.as_ref().map(Recorded::of);
     branch_discharges(&claims, recorded.as_ref(), evidence, &mut notes);
     infection_discharges(&claims, recorded.as_ref(), evidence, &mut notes);
-    if let Some(recorded) = evidence.recorded {
-        never_ran(&claims, recorded, &mut notes);
+    if let Some(recorded) = &evidence.recorded {
+        never_ran(&claims, &recorded.routing, &mut notes);
     }
 }
 
 /// Every mutant that never ran says why, in the recording as well as in the report.
-fn selected(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
-    let said: BTreeMap<String, String> = events(recorded)
+fn selected(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
+    let said: BTreeMap<String, String> = events
         .iter()
         .filter(|event| string(event, "type").as_deref() == Some("select"))
         .filter_map(|event| {
@@ -629,13 +698,17 @@ fn selected(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
             );
             continue;
         };
-        if row.not_run_reason.as_deref() != Some(reason.as_str()) {
+        if !row.not_run(reason) {
+            let reported = match row.not_run_reason {
+                Some(held) => held.as_str(),
+                None => "unexplained",
+            };
             notes.violated(
                 "select",
                 format!(
                     "{} is {} in the report and {reason} in the recording",
                     row.label(),
-                    row.not_run_reason.as_deref().unwrap_or("unexplained")
+                    reported
                 ),
             );
         }
@@ -645,7 +718,7 @@ fn selected(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
 /// One discharge a report claims: which mutant, which target, and which proof.
 struct Discharged {
     mutant: String,
-    index: Option<u64>,
+    index: u64,
     target: String,
     proof: String,
 }
@@ -656,44 +729,62 @@ fn claimed(report: &Report) -> Vec<Discharged> {
         .mutants
         .iter()
         .flat_map(|row| {
-            row.discharged.iter().map(|(target, proof)| Discharged {
-                mutant: row.display_id.clone(),
-                index: row.index,
-                target: target.clone(),
-                proof: proof.clone(),
+            row.route.iter().flat_map(|route| {
+                route.discharged.iter().map(|(target, proof)| Discharged {
+                    mutant: row.display_id.clone(),
+                    index: row.index,
+                    target: target.clone(),
+                    proof: proof.clone(),
+                })
             })
         })
         .collect()
 }
 
-/// What the guards recorded, or nothing when the run kept no record or kept one that does not read.
-fn record_of(text: Option<&str>) -> Option<Recorded> {
-    let document = serde_json::from_str::<Value>(text?).ok()?;
-    Some(Recorded::of(&document))
+/// What a guard record establishes about one event, without encoding a third
+/// state as `Option<bool>`.
+enum Observation {
+    Observed,
+    Absent,
+    Unavailable,
 }
 
-/// Whether the record says `claim`'s target entered the body its branch proof names, or nothing where the record cannot say.
-fn entered_the_body(recorded: &Recorded, claim: &Discharged) -> Option<bool> {
-    let marker = *recorded.narrowing.bodies.get(&claim.index?)?;
-    let touches = recorded.targets.get(&claim.target)?;
-    Some(touches.bodies.any(marker))
-}
-
-/// Whether the record says `claim`'s target ever saw the guard's two branches part, or nothing where the record cannot say.
-fn saw_a_difference(recorded: &Recorded, claim: &Discharged) -> Option<bool> {
-    let index = claim.index?;
-    if !recorded.narrowing.compared.contains(&index) {
-        return None;
+/// Whether the record says `claim`'s target entered the body its branch proof names.
+fn entered_the_body(recorded: &Recorded, claim: &Discharged) -> Observation {
+    let Some(marker) = recorded.narrowing.bodies.get(&claim.index).copied() else {
+        return Observation::Unavailable;
+    };
+    let Some(touches) = recorded.targets.get(&claim.target) else {
+        return Observation::Unavailable;
+    };
+    if touches.bodies.any(marker) {
+        Observation::Observed
+    } else {
+        Observation::Absent
     }
-    let touches = recorded.targets.get(&claim.target)?;
-    Some(touches.infected.any(index))
+}
+
+/// Whether the record says `claim`'s target ever saw the guard's two branches part.
+fn saw_a_difference(recorded: &Recorded, claim: &Discharged) -> Observation {
+    let index = claim.index;
+    if !recorded.narrowing.compared.contains(&index) {
+        return Observation::Unavailable;
+    }
+    let Some(touches) = recorded.targets.get(&claim.target) else {
+        return Observation::Unavailable;
+    };
+    if touches.infected.any(index) {
+        Observation::Observed
+    } else {
+        Observation::Absent
+    }
 }
 
 /// Re-derives every `branch-never-taken` discharge from what the guards recorded, and from the coverage regions for the ones they say nothing about.
 fn branch_discharges(
     claims: &[Discharged],
     recorded: Option<&Recorded>,
-    evidence: &Evidence<'_>,
+    evidence: &CheckedEvidence<'_>,
     notes: &mut Notes<'_>,
 ) {
     let mut branch: Vec<&Discharged> = Vec::new();
@@ -701,8 +792,12 @@ fn branch_discharges(
         .iter()
         .filter(|claim| claim.proof == BRANCH_NEVER_TAKEN)
     {
-        match recorded.and_then(|one| entered_the_body(one, claim)) {
-            Some(true) => notes.violated(
+        let observation = match recorded {
+            Some(one) => entered_the_body(one, claim),
+            None => Observation::Unavailable,
+        };
+        match observation {
+            Observation::Observed => notes.violated(
                 BRANCH_NEVER_TAKEN,
                 format!(
                     "the guards of {} say it entered the body {} sits in, so it may have \
@@ -710,14 +805,15 @@ fn branch_discharges(
                     claim.target, claim.mutant
                 ),
             ),
-            Some(false) => {}
-            None => branch.push(claim),
+            Observation::Absent => {}
+            Observation::Unavailable => branch.push(claim),
         }
     }
     if branch.is_empty() {
         return;
     }
-    let (Some(reached), Some(catalog)) = (evidence.reached, evidence.catalog) else {
+    let (Some(reached), Some(catalog)) = (evidence.reached.as_ref(), evidence.catalog.as_ref())
+    else {
         notes.unaudited(
             BRANCH_NEVER_TAKEN,
             format!(
@@ -728,22 +824,8 @@ fn branch_discharges(
         );
         return;
     };
-    let Ok(reached) = serde_json::from_str::<Value>(reached) else {
-        notes.unaudited(
-            BRANCH_NEVER_TAKEN,
-            "the measurement the run kept is not a document".to_owned(),
-        );
-        return;
-    };
-    let Ok(catalog) = serde_json::from_str::<Value>(catalog) else {
-        notes.unaudited(
-            BRANCH_NEVER_TAKEN,
-            "the catalog the run kept is not a document".to_owned(),
-        );
-        return;
-    };
     for claim in branch {
-        let Some(row) = mutant_row(&catalog, &claim.mutant) else {
+        let Some(row) = mutant_row(catalog, &claim.mutant) else {
             notes.unaudited(
                 BRANCH_NEVER_TAKEN,
                 format!("the catalog holds no row for {}", claim.mutant),
@@ -760,15 +842,29 @@ fn branch_discharges(
             );
             continue;
         };
-        let path = string(row, "path").unwrap_or_default();
-        if ran_the_body(&reached, &claim.target, &path, body) {
-            notes.violated(
+        let Some(path) = string(row, "path") else {
+            notes.unaudited(
+                BRANCH_NEVER_TAKEN,
+                format!("the catalog row for {} names no path", claim.mutant),
+            );
+            continue;
+        };
+        match ran_the_body(reached, &claim.target, &path, body) {
+            Observation::Observed => notes.violated(
                 BRANCH_NEVER_TAKEN,
                 format!(
                     "{} covered a region inside the body {} sits in, so it may have noticed it",
                     claim.target, claim.mutant
                 ),
-            );
+            ),
+            Observation::Absent => {}
+            Observation::Unavailable => notes.unaudited(
+                BRANCH_NEVER_TAKEN,
+                format!(
+                    "the retained measurement cannot locate the body {} sits in",
+                    claim.mutant
+                ),
+            ),
         }
     }
 }
@@ -783,39 +879,59 @@ fn mutant_row<'a>(catalog: &'a Value, display_id: &str) -> Option<&'a Value> {
 }
 
 /// Whether the target's measured run covered a region beginning inside the body.
-fn ran_the_body(reached: &Value, target: &str, path: &str, body: &Value) -> bool {
-    let number = |value: &Value, key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
-    let start = (number(body, "start_line"), number(body, "start_column"));
-    let end = (number(body, "end_line"), number(body, "end_column"));
+fn ran_the_body(reached: &Value, target: &str, path: &str, body: &Value) -> Observation {
+    let (Some(start_line), Some(start_column), Some(end_line), Some(end_column)) = (
+        number(body, "start_line"),
+        number(body, "start_column"),
+        number(body, "end_line"),
+        number(body, "end_column"),
+    ) else {
+        return Observation::Unavailable;
+    };
+    let start = (start_line, start_column);
+    let end = (end_line, end_column);
     let Some(blocks) = reached
         .get("targets")
         .and_then(|targets| targets.get(target))
         .and_then(Value::as_array)
     else {
-        return false;
+        return Observation::Unavailable;
     };
-    blocks.iter().any(|block| {
-        if string(block, "file").as_deref() != Some(path) {
-            return false;
+    for block in blocks {
+        let Some(file) = string(block, "file") else {
+            return Observation::Unavailable;
+        };
+        if file != path {
+            continue;
         }
         let Some(at) = block.get("start") else {
-            return false;
+            return Observation::Unavailable;
         };
-        let position = (number(at, "line"), number(at, "column"));
-        position >= start && position < end
-    })
+        let (Some(line), Some(column)) = (number(at, "line"), number(at, "column")) else {
+            return Observation::Unavailable;
+        };
+        let position = (line, column);
+        if position >= start && position < end {
+            return Observation::Observed;
+        }
+    }
+    Observation::Absent
 }
 
 /// Re-derives every `never-infected` discharge from what the guards recorded, and asks for the probe's own log where they say nothing.
 fn infection_discharges(
     claims: &[Discharged],
     recorded: Option<&Recorded>,
-    evidence: &Evidence<'_>,
+    evidence: &CheckedEvidence<'_>,
     notes: &mut Notes<'_>,
 ) {
     for claim in claims.iter().filter(|claim| claim.proof == NEVER_INFECTED) {
-        match recorded.and_then(|one| saw_a_difference(one, claim)) {
-            Some(true) => notes.violated(
+        let observation = match recorded {
+            Some(one) => saw_a_difference(one, claim),
+            None => Observation::Unavailable,
+        };
+        match observation {
+            Observation::Observed => notes.violated(
                 NEVER_INFECTED,
                 format!(
                     "the guards of {} say the two branches of {} answered differently there, \
@@ -823,8 +939,8 @@ fn infection_discharges(
                     claim.target, claim.mutant
                 ),
             ),
-            Some(false) => {}
-            None => {
+            Observation::Absent => {}
+            Observation::Unavailable => {
                 let wanted = format!("{}.log", claim.target.replace('/', "-"));
                 if !evidence.probe_logs.iter().any(|name| name == &wanted) {
                     notes.unaudited(
@@ -841,8 +957,7 @@ fn infection_discharges(
 }
 
 /// A discharged pair that then ran is a proof the run contradicted.
-fn never_ran(claims: &[Discharged], recorded: &str, notes: &mut Notes<'_>) {
-    let routing = crate::route::read(recorded);
+fn never_ran(claims: &[Discharged], routing: &crate::route::Routing, notes: &mut Notes<'_>) {
     for claim in claims {
         if routing
             .execs

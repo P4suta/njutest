@@ -21,10 +21,6 @@ pub const GIT_METADATA_UNAVAILABLE: &str = "git-metadata-unavailable";
 /// The project configures compiler flags for a target and the coverage build could not merge them.
 pub const TARGET_RUSTFLAGS_NOT_MERGED: &str = "target-rustflags-not-merged";
 
-/// A cargo configuration file could not be read at all, so what a build compiles with is unknown.
-pub const CARGO_CONFIGURATION_UNREADABLE: &str =
-    rust_mutants::limitation::CARGO_CONFIGURATION_UNREADABLE;
-
 /// A procedural macro is in scope: what it expands to is decided during the build, and this run does not measure it.
 pub const PROC_MACRO_EXPANSION_NOT_MEASURED: &str = "proc-macro-expansion-not-measured";
 
@@ -63,6 +59,7 @@ pub const GENERATION_CANDIDATE_NOT_KEPT: &str = "generation-candidate-not-kept";
 pub const RESOURCE_NOT_STOPPED: &str = "resource-not-stopped";
 
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
+#[cfg(feature = "testkit")]
 pub const ALL: [&str; 18] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,

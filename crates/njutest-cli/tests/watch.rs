@@ -3,6 +3,11 @@
 
 //! The watch loop: what makes it run a round, and what makes it stop.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
+
 use std::cell::Cell;
 use std::ffi::OsString;
 use std::path::Path;
@@ -36,8 +41,8 @@ fn watching(arguments: &[&str], environment: &Environment) -> (u8, String, Strin
     let code = njutest_cli::run_from(args, environment, &mut out, &mut err);
     (
         code,
-        String::from_utf8_lossy(&out).into_owned(),
-        String::from_utf8_lossy(&err).into_owned(),
+        njutest_devkit::process::strict_utf8(&out).into_owned(),
+        njutest_devkit::process::strict_utf8(&err).into_owned(),
     )
 }
 
@@ -46,6 +51,13 @@ fn seen(files: &[(&str, u64)]) -> Seen {
         .iter()
         .map(|(name, size)| ((*name).to_owned(), (None, *size)))
         .collect()
+}
+
+fn completed<T>(result: Result<T, std::convert::Infallible>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(never) => match never {},
+    }
 }
 
 /// A look that counts itself and cancels the watch once it has been asked `most` times.
@@ -70,19 +82,20 @@ fn the_first_look_is_a_change_and_runs_a_round() {
     let looks = Cell::new(0u64);
     let mut count = bounded(&cancel, &looks, 8);
 
-    let code = until(
+    let code = completed(until(
         &cancel,
         Duration::ZERO,
         || {
-            let _at = count();
-            Some(seen(&[("src/lib.rs", 10)]))
+            let at = count();
+            assert_eq!(at, looks.get(), "the bounded look reports its own count");
+            Ok(Some(seen(&[("src/lib.rs", 10)])))
         },
         || {
             rounds.set(rounds.get().saturating_add(1));
             cancel.cancel();
-            0
+            Ok(0)
         },
-    );
+    ));
 
     assert_eq!(
         rounds.get(),
@@ -101,18 +114,19 @@ fn a_tree_that_did_not_change_is_not_verified_again() {
     let looks = Cell::new(0u64);
     let mut count = bounded(&cancel, &looks, 8);
 
-    let code = until(
+    let code = completed(until(
         &cancel,
         Duration::ZERO,
         || {
-            let _at = count();
-            Some(seen(&[("src/lib.rs", 10)]))
+            let at = count();
+            assert_eq!(at, looks.get(), "the bounded look reports its own count");
+            Ok(Some(seen(&[("src/lib.rs", 10)])))
         },
         || {
             rounds.set(rounds.get().saturating_add(1));
-            2
+            Ok(2)
         },
-    );
+    ));
 
     assert_eq!(
         rounds.get(),
@@ -133,18 +147,18 @@ fn every_change_is_a_round_of_its_own() {
     let looks = Cell::new(0u64);
     let mut count = bounded(&cancel, &looks, 20);
 
-    let _code = until(
+    let code = completed(until(
         &cancel,
         Duration::ZERO,
-        || Some(seen(&[("src/lib.rs", count())])),
+        || Ok(Some(seen(&[("src/lib.rs", count())]))),
         || {
             rounds.set(rounds.get().saturating_add(1));
             if rounds.get() >= 3 {
                 cancel.cancel();
             }
-            0
+            Ok(0)
         },
-    );
+    ));
 
     assert_eq!(
         rounds.get(),
@@ -152,6 +166,7 @@ fn every_change_is_a_round_of_its_own() {
         "a tree that keeps changing keeps being verified: the loop does not coalesce two \
          edits into one answer, because the second edit has not been answered for"
     );
+    assert_eq!(code, 0, "every completed round passed");
 }
 
 #[test]
@@ -161,18 +176,19 @@ fn a_tree_that_could_not_be_read_waits_rather_than_verifying_what_it_did_not_see
     let looks = Cell::new(0u64);
     let mut count = bounded(&cancel, &looks, 6);
 
-    let _code = until(
+    let code = completed(until(
         &cancel,
         Duration::ZERO,
         || {
-            let _at = count();
-            None
+            let at = count();
+            assert_eq!(at, looks.get(), "the bounded look reports its own count");
+            Ok(None)
         },
         || {
             rounds.set(rounds.get().saturating_add(1));
-            0
+            Ok(0)
         },
-    );
+    ));
 
     assert_eq!(
         rounds.get(),
@@ -180,6 +196,7 @@ fn a_tree_that_could_not_be_read_waits_rather_than_verifying_what_it_did_not_see
         "a directory that could not be walked is not a tree that changed: verifying on \
          it would put a round's report against a state nothing observed"
     );
+    assert_eq!(code, 0, "no round ran, so no failing status was invented");
 }
 
 #[test]
@@ -188,7 +205,7 @@ fn a_look_that_failed_after_one_that_did_not_is_still_not_a_tree_that_changed() 
     let rounds = Cell::new(0u32);
     let looks = Cell::new(0u64);
 
-    let _code = until(
+    let code = completed(until(
         &cancel,
         Duration::ZERO,
         || {
@@ -196,13 +213,13 @@ fn a_look_that_failed_after_one_that_did_not_is_still_not_a_tree_that_changed() 
             if looks.get() >= 4 {
                 cancel.cancel();
             }
-            (looks.get() == 1).then(|| seen(&[("src/lib.rs", 10)]))
+            Ok((looks.get() == 1).then(|| seen(&[("src/lib.rs", 10)])))
         },
         || {
             rounds.set(rounds.get().saturating_add(1));
-            0
+            Ok(0)
         },
-    );
+    ));
 
     assert_eq!(
         rounds.get(),
@@ -211,6 +228,7 @@ fn a_look_that_failed_after_one_that_did_not_is_still_not_a_tree_that_changed() 
          from what the last look saw, and taking that difference for an edit would run \
          a round against a state nothing observed"
     );
+    assert_eq!(code, 0, "the one completed round passed");
 }
 
 #[test]
@@ -221,12 +239,13 @@ fn an_edit_that_lands_while_a_round_runs_gets_a_round_of_its_own() {
     let looks = Cell::new(0u64);
     let mut count = bounded(&cancel, &looks, 12);
 
-    let _code = until(
+    let code = completed(until(
         &cancel,
         Duration::ZERO,
         || {
-            let _at = count();
-            Some(seen(&[("src/lib.rs", size.get())]))
+            let at = count();
+            assert_eq!(at, looks.get(), "the bounded look reports its own count");
+            Ok(Some(seen(&[("src/lib.rs", size.get())])))
         },
         || {
             rounds.set(rounds.get().saturating_add(1));
@@ -236,9 +255,9 @@ fn an_edit_that_lands_while_a_round_runs_gets_a_round_of_its_own() {
             if rounds.get() >= 2 {
                 cancel.cancel();
             }
-            0
+            Ok(0)
         },
-    );
+    ));
 
     assert_eq!(
         rounds.get(),
@@ -247,6 +266,7 @@ fn an_edit_that_lands_while_a_round_runs_gets_a_round_of_its_own() {
          while it runs was not answered for, and reading the tree again afterwards \
          would fold that edit into an answer that never saw it"
     );
+    assert_eq!(code, 0, "both completed rounds passed");
 }
 
 #[test]
@@ -255,7 +275,7 @@ fn a_tree_that_did_not_change_is_waited_on_rather_than_given_up_on() {
     let rounds = Cell::new(0u32);
     let looks = Cell::new(0u64);
 
-    let _code = until(
+    let code = completed(until(
         &cancel,
         Duration::ZERO,
         || {
@@ -263,16 +283,16 @@ fn a_tree_that_did_not_change_is_waited_on_rather_than_given_up_on() {
             if looks.get() >= 6 {
                 cancel.cancel();
             }
-            Some(seen(&[(
+            Ok(Some(seen(&[(
                 "src/lib.rs",
                 if looks.get() < 3 { 10 } else { 11 },
-            )]))
+            )])))
         },
         || {
             rounds.set(rounds.get().saturating_add(1));
-            0
+            Ok(0)
         },
-    );
+    ));
 
     assert_eq!(
         rounds.get(),
@@ -281,13 +301,18 @@ fn a_tree_that_did_not_change_is_waited_on_rather_than_given_up_on() {
          watching: the edit that came after it is one a watch that gave up would never \
          see"
     );
+    assert_eq!(code, 0, "both completed rounds passed");
 }
 
 /// What no verification reads, for a project that has said nothing about where it writes.
 fn excluded() -> njutest_cli::evidence::tree::Excluded {
     njutest_cli::evidence::tree::Excluded::beside(
-        &njutest_cli::config::Config::default().reports.directory,
+        njutest_cli::config::Config::default()
+            .reports
+            .directory
+            .as_path(),
     )
+    .expect("the default report path is valid UTF-8")
 }
 
 #[test]
@@ -296,12 +321,15 @@ fn looking_reads_every_file_under_verification_and_none_of_what_a_run_writes() {
     std::fs::create_dir_all(root.path().join("src")).expect("mkdir");
     std::fs::create_dir_all(root.path().join("target")).expect("mkdir");
     let reports = njutest_cli::config::Config::default().reports.directory;
-    std::fs::create_dir_all(root.path().join(&reports)).expect("mkdir");
+    std::fs::create_dir_all(root.path().join(reports.as_path())).expect("mkdir");
     std::fs::write(root.path().join("src/lib.rs"), "pub fn f() {}\n").expect("a source file");
     std::fs::write(root.path().join("Cargo.toml"), "[package]\n").expect("a manifest");
     std::fs::write(root.path().join("target/debug"), "x").expect("something a build wrote");
-    std::fs::write(root.path().join(&reports).join("latest.json"), "{}")
-        .expect("something a run wrote");
+    std::fs::write(
+        root.path().join(reports.as_path()).join("latest.json"),
+        "{}",
+    )
+    .expect("something a run wrote");
 
     let seen = look(root.path(), &excluded()).expect("a directory that can be walked");
 
@@ -422,7 +450,7 @@ fn a_watch_that_ran_nothing_says_what_a_run_that_found_nothing_says() {
     cancel.cancel();
 
     assert_eq!(
-        until(&cancel, POLL, || Some(seen(&[])), || 3),
+        completed(until(&cancel, POLL, || Ok(Some(seen(&[]))), || Ok(3),)),
         0,
         "a watch cancelled before it looked has run nothing, and nothing is not a \
          failure: the code it carries is the last round's, and there was none"
@@ -434,9 +462,10 @@ fn a_watch_says_what_it_is_watching_and_how_often_it_will_ask() {
     let root = tempfile::tempdir().expect("a directory");
     let environment = stopped(root.path());
 
-    let (code, said, _complained) = watching(&["watch", "--poll-ms", "70"], &environment);
+    let (code, said, complained) = watching(&["watch", "--poll-ms", "70"], &environment);
 
     assert_eq!(code, 0, "a watch stopped before its first look ran nothing");
+    assert!(complained.is_empty(), "a stopped watch is not a refusal");
     assert!(
         said.contains(&format!("watching\t{}\tevery 70ms", root.path().display())),
         "a person who starts a watch is told which tree it is on and how often it will \
@@ -450,7 +479,9 @@ fn a_watch_told_nothing_about_how_often_asks_at_the_rate_the_default_names() {
     let root = tempfile::tempdir().expect("a directory");
     let environment = stopped(root.path());
 
-    let (_code, said, _complained) = watching(&["watch"], &environment);
+    let (code, said, complained) = watching(&["watch"], &environment);
+    assert_eq!(code, 0, "a stopped watch ran no failing round");
+    assert!(complained.is_empty(), "a stopped watch is not a refusal");
 
     assert!(
         said.contains(&format!("every {}ms", POLL.as_millis())),
@@ -465,10 +496,12 @@ fn a_watch_on_a_directory_it_was_given_watches_that_one_and_not_where_it_was_sta
     let asked = tempfile::tempdir().expect("another directory");
     let environment = stopped(elsewhere.path());
 
-    let (_code, said, _complained) = watching(
+    let (code, said, complained) = watching(
         &["watch", "--directory", &asked.path().display().to_string()],
         &environment,
     );
+    assert_eq!(code, 0, "a stopped watch ran no failing round");
+    assert!(complained.is_empty(), "a stopped watch is not a refusal");
 
     assert!(
         said.contains(&asked.path().display().to_string())

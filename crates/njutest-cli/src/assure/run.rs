@@ -7,9 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use jiff::Timestamp;
+use rust_mutants::id::RunId;
 
 use crate::assure::baseline;
 use crate::assure::equivalence;
+use crate::assure::model;
 use crate::assure::mutation::{self, MutationOptions, Subject};
 use crate::build::Cargo;
 use crate::cli::Environment;
@@ -17,7 +19,7 @@ use crate::config::{Acceptance, Config};
 use crate::error::RunnerError;
 use crate::git;
 use crate::report::{
-    Finding, FindingKind, Limitation, MutantRecord, Report, RunKind, SoundnessAccounting,
+    BuildReport, Finding, FindingKind, Limitation, MutantRecord, RunKind, SoundnessAccounting,
     TargetRecord, TargetStatus, Toolchain, UNAVAILABLE,
 };
 use crate::scratch::Scratch;
@@ -25,6 +27,52 @@ use crate::soundness;
 use crate::ui::Notes;
 use crate::watch::Watch;
 use rust_mutants::cargo::Metadata;
+
+/// An exact run fact that could not be represented without changing it.
+#[derive(Debug, thiserror::Error)]
+pub enum RunInvariantError {
+    /// A control execution answered under a target other than the requested target.
+    #[error("the control for target {requested:?} returned evidence for {observed:?}")]
+    ControlTargetMismatch {
+        /// The target the assurance phase selected.
+        requested: String,
+        /// The target named by the engine result.
+        observed: String,
+    },
+    /// Combining two configured time allowances exceeded `Duration`.
+    #[error("the {phase} timeout exceeds std::time::Duration")]
+    TimeoutOverflow {
+        /// The phase whose bound could not be formed.
+        phase: &'static str,
+    },
+    /// A checkpoint's attempt counter reached the end of its wire range.
+    #[error("the checkpoint attempt counter exceeds u32")]
+    AttemptOverflow,
+    /// The measured wall duration cannot be carried by the report wire.
+    #[error("the run duration {milliseconds}ms is outside the report's u64 range")]
+    ElapsedOutsideWire {
+        /// The exact signed duration returned by the clock.
+        milliseconds: i128,
+    },
+    /// A probe infected more mutations than the trace wire can count exactly.
+    #[error("the probe infection count {count} is outside the trace's u64 range")]
+    ProbeCountOutsideWire {
+        /// The exact in-memory count.
+        count: usize,
+    },
+    /// A mutation execution lasted longer than the trace wire can represent.
+    #[error("the mutation execution duration {milliseconds}ms is outside the trace's u64 range")]
+    MutationDurationOutsideWire {
+        /// The exact measured duration.
+        milliseconds: u128,
+    },
+    /// The aggregation ledger lost the row it had just recorded for a target.
+    #[error("the mutation answer ledger lost the recorded row for target {target}")]
+    MissingMutationAnswer {
+        /// The target whose answer should have been present.
+        target: String,
+    },
+}
 
 /// What one run was asked to do.
 #[derive(Debug, Clone)]
@@ -35,8 +83,6 @@ pub struct Request {
     pub config: Config,
     /// What cargo is told to build, which is what decides which program the run measures.
     pub build: rust_mutants::cargo::BuildConfig,
-    /// What a report calls the build, which is [`crate::config::DEFAULT_CONFIGURATION`] for the one `[execution]` describes.
-    pub built_as: String,
     /// Packages the command line asked for, which narrow the configuration's.
     pub packages: Vec<String>,
     /// Arguments for the test binaries, after `--`.
@@ -46,7 +92,7 @@ pub struct Request {
     /// Preserve the directories the run worked in.
     pub keep_temp: bool,
     /// The run's identity.
-    pub run_id: String,
+    pub run_id: RunId,
     /// When it started.
     pub started: Timestamp,
     /// Where the engine records its own stream.
@@ -69,9 +115,11 @@ pub struct Request {
 #[derive(Debug, Clone)]
 pub struct Outcome {
     /// The report, audited and ready to persist.
-    pub report: Report,
+    pub report: BuildReport,
     /// What the run preserved, for a person to look at.
     pub kept: Vec<PathBuf>,
+    /// Immutable survivor inputs for the one post-lattice model phase.
+    pub(crate) model: model::Preparation,
 }
 
 /// Runs one verification.
@@ -87,47 +135,42 @@ pub fn run(
     notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<Outcome, RunnerError> {
-    let mut report = identity(request);
-    notes.phase("open");
+    let mut report = identity(request)?;
+    notes.phase("open")?;
     watch.trace.stage("open");
     let scratch = Scratch::create(
         &environment.temp_directory,
         &request.run_id,
         request.started,
     )?;
-    opened(&mut report, request, environment, (&scratch, watch));
+    opened(&mut report, request, environment, (&scratch, watch))?;
 
     let (toolchain, metadata) = locate(request, environment, watch)?;
     surveyed(&mut report, request, (&toolchain, &metadata));
+    let mut model = model::Preparation::for_contract(request.config.contract, toolchain.host());
 
-    notes.phase("soundness");
+    notes.phase("soundness")?;
     watch.trace.stage("soundness");
-    let unsafe_packages = take_inventory(&mut report, request, &metadata);
+    let unsafe_packages = take_inventory(&mut report, request, &metadata)?;
     deepened(&mut report, request, (&toolchain, environment), watch)?;
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
     let seams = super::wire::watched(&resources.leases(), &request.config.resources);
-    let held = with_seams(environment, &seams);
+    let mut held = with_seams(environment, &seams);
+    if request.config.contract == crate::config::Contract::VerifiedV1 {
+        set_environment(&mut held, "CARGO_BUILD_TARGET", toolchain.host());
+    }
     let environment = &held;
 
-    notes.phase("baseline");
+    notes.phase("baseline")?;
     watch.trace.stage("baseline");
-    let restore = resume_state(request, &mut report);
-    let mut journal = Journal::of(request, restore.as_ref());
-    let prepared = match prepare(request, environment, watch) {
-        Ok(session) => Some(session),
-        Err(error) => {
-            let Some(refused) = baseline::refused(&error) else {
-                return Err(error);
-            };
-            absorb(&mut report, &refused);
-            None
-        }
-    };
+    let restore = resume_state(request, &mut report)?;
+    let mut journal = Journal::of(request, restore.as_ref())?;
+    let prepared = prepared(request, environment, &mut report, watch)?;
     let mut asked = false;
     if let Some(session) = prepared {
-        let baseline = baseline::observe(&session, baseline::Reporting { notes, watch });
-        absorb(&mut report, &baseline);
+        let baseline = baseline::observe(&session, baseline::Reporting { notes, watch })?;
+        absorb(&mut report, &baseline)?;
         if measurable(&baseline) {
             run_mutation(
                 &mut Mutating {
@@ -141,32 +184,56 @@ pub fn run(
                     journal: &mut journal,
                     session: &session,
                 },
+                &mut model,
                 notes,
                 watch,
             )?;
         }
-        asked = wired(&mut report, &seams, &session, (notes, watch));
+        asked = wired(&mut report, &seams, &session, (notes, watch))?;
         for path in session.close()? {
-            notes.note("kept", &path.display().to_string());
+            notes.note("kept", &path.display().to_string())?;
         }
     }
     if !asked {
-        licensed(&mut report, seams);
+        licensed(&mut report, seams)?;
     }
     afterwards(
         &mut report,
         (request, environment, &toolchain),
         (notes, watch),
-    );
+    )?;
     released(&mut resources, &mut report);
-    finish(&mut report, request.started);
-    journal.finished(watch.cancel);
+    finish(&mut report, request.started)?;
+    journal.finished(watch.cancel)?;
     let kept = if request.keep_temp {
-        scratch.keep()
+        scratch.keep()?
     } else {
-        scratch.close()
+        scratch.close()?
     };
-    Ok(Outcome { report, kept })
+    notes.finish()?;
+    Ok(Outcome {
+        report,
+        kept,
+        model,
+    })
+}
+
+fn prepared(
+    request: &Request,
+    environment: &Environment,
+    report: &mut BuildReport,
+    watch: Watch<'_>,
+) -> Result<Option<rust_mutants::session::Session>, RunnerError> {
+    match prepare(request, environment, watch) {
+        Ok(session) => Ok(Some(session)),
+        Err(error) => {
+            let Some(refused) = baseline::refused(&error) else {
+                return Err(error);
+            };
+            absorb(report, &refused)?;
+            Ok(None)
+        }
+    }
 }
 
 /// Runs the suite one target at a time, telling the seams which one is running.
@@ -182,15 +249,23 @@ fn attributed(
     session: &rust_mutants::session::Session,
     timeout: std::time::Duration,
     watch: Watch<'_>,
-) {
+) -> Result<(), RunnerError> {
     for target in session.targets() {
-        seams.during(Some(&target.id));
+        seams.during(Some(target.id.as_str()));
         let asked = rust_mutants::session::Request::new(String::new())
-            .with_target(&target.id)
+            .with_target(target.id.as_str())
             .with_timeout(Some(timeout));
-        let _ran = session.control(&asked, watch.cancel);
+        let ran = session.control(&asked, watch.cancel)?;
+        if ran.target != target.id {
+            return Err(RunInvariantError::ControlTargetMismatch {
+                requested: target.id.clone(),
+                observed: ran.target,
+            }
+            .into());
+        }
     }
     seams.during(None);
+    Ok(())
 }
 
 /// Puts every question the seams recorded back to the suite, and says whether it put any.
@@ -199,51 +274,87 @@ fn attributed(
 /// is what `control` is, so what a failure says is that a test noticed the
 /// seam answering differently rather than that the code changed.
 fn wired(
-    report: &mut Report,
+    report: &mut BuildReport,
     seams: &super::wire::Seams,
     session: &rust_mutants::session::Session,
     (notes, watch): (&mut Notes<'_>, Watch<'_>),
-) -> bool {
+) -> Result<bool, RunnerError> {
     if seams.watching.is_empty() {
-        return false;
+        return Ok(false);
     }
-    notes.phase("wire");
+    notes.phase("wire")?;
     watch.trace.stage("wire");
-    let timeout = session.slowest_baseline().saturating_mul(2);
-    let once = || {
+    let held_up = seams
+        .watching
+        .iter()
+        .map(|one| one.held_up)
+        .max()
+        .unwrap_or_default();
+    let timeout = session
+        .slowest_baseline()
+        .checked_mul(2)
+        .and_then(|doubled| doubled.checked_add(held_up))
+        .ok_or(RunInvariantError::TimeoutOverflow { phase: "wire" })?;
+    let mut answer_error = None;
+    let mut once = || {
         let asked = rust_mutants::session::Request::new(String::new()).with_timeout(Some(timeout));
-        session
-            .control(&asked, watch.cancel)
-            .ok()
-            .map(|ran| {
-                vec![crate::wire::settle::Answered {
-                    passed: ran.outcome == rust_mutants::outcome::Outcome::Survived,
+        match session.control_observing(&asked, watch.cancel) {
+            Ok(ran) => match ran.outcome() {
+                rust_mutants::outcome::Outcome::Survived
+                | rust_mutants::outcome::Outcome::Killed => vec![crate::wire::settle::Answered {
+                    passed: ran.outcome() == rust_mutants::outcome::Outcome::Survived,
                     target: ran.target,
-                }]
-            })
-            .unwrap_or_default()
+                }],
+                rust_mutants::outcome::Outcome::NotRun
+                | rust_mutants::outcome::Outcome::StepLimitReached
+                | rust_mutants::outcome::Outcome::Waited
+                | rust_mutants::outcome::Outcome::Inconclusive
+                | rust_mutants::outcome::Outcome::Errored => Vec::new(),
+            },
+            Err(error) => {
+                if answer_error.is_none() {
+                    answer_error = Some(RunnerError::from(error));
+                }
+                Vec::new()
+            }
+        }
     };
-    let went_past = seams.observing(|| attributed(seams, session, timeout, watch));
-    let measured = super::wire::asking(seams, &went_past, once, watch);
+    let mut observation_error = None;
+    let went_past = seams.observing(|| match attributed(seams, session, timeout, watch) {
+        Ok(()) => {}
+        Err(error) => observation_error = Some(error),
+    });
+    if let Some(error) = observation_error {
+        return Err(error);
+    }
+    let measured = super::wire::asking(seams, &went_past, &mut once, watch);
+    if let Some(error) = answer_error {
+        return Err(error);
+    }
+    let measured = measured?;
     report.findings.extend(measured.findings);
     report.limitations.extend(measured.limitations);
     report.seams.extend(measured.seams);
-    measured.executed
+    Ok(measured.executed)
 }
 
 /// States what the seams the run watched licensed it to ask, where it asked none of it.
-fn licensed(report: &mut Report, seams: super::wire::Seams) {
+fn licensed(
+    report: &mut BuildReport,
+    seams: super::wire::Seams,
+) -> Result<(), crate::wire::derive::DeriveError> {
     if seams.watching.is_empty() {
-        return;
+        return Ok(());
     }
     report
         .limitations
-        .extend(super::wire::licensing(&seams.recorded()));
+        .extend(super::wire::licensing(&seams.recorded())?);
+    Ok(())
 }
 
 /// What the toolchain and the workspace are, before anything is built.
 fn surveyed(
-    report: &mut Report,
+    report: &mut BuildReport,
     request: &Request,
     found: (&rust_mutants::cargo::Toolchain, &Metadata),
 ) {
@@ -264,7 +375,7 @@ fn surveyed(
 /// cannot answer for. A sanitizer that will not run is a limitation, because
 /// it is asked for by configuration rather than promised by the contract.
 fn deepened(
-    report: &mut Report,
+    report: &mut BuildReport,
     request: &Request,
     with: (&rust_mutants::cargo::Toolchain, &Environment),
     watch: Watch<'_>,
@@ -303,19 +414,23 @@ fn deepened(
             locked: request.cargo.locked,
         },
         watch,
-    );
+    )?;
     report.findings.extend(checked.findings);
     report.limitations.extend(checked.limitations);
     Ok(())
 }
 
 /// What a run reads before it builds anything: the tree, the identity, and the repository. What the run can say before it has compiled anything, and what it already knows it cannot claim.
+///
+/// # Errors
+/// Returns [`RunnerError`] when the tree, repository identity, or opening
+/// trace cannot be established exactly.
 pub fn opened(
-    report: &mut Report,
+    report: &mut BuildReport,
     request: &Request,
     environment: &Environment,
     within: (&Scratch, Watch<'_>),
-) {
+) -> Result<(), RunnerError> {
     let (scratch, watch) = within;
     open_phase(
         report,
@@ -325,44 +440,63 @@ pub fn opened(
             scratch,
         },
         watch,
-    );
+    )?;
     if report.repository.git.said().is_none() {
         report.limitations.push(Limitation::new(
             crate::limitation::GIT_METADATA_UNAVAILABLE,
             "git could not be asked, so the run cannot name the commit it verified",
         ));
     }
+    Ok(())
 }
 
 /// What a run does once it has measured: drive the fuzz targets, and ask for repairs for what it found.
 fn afterwards(
-    report: &mut Report,
+    report: &mut BuildReport,
     within: (&Request, &Environment, &rust_mutants::cargo::Toolchain),
     telling: (&mut Notes<'_>, Watch<'_>),
-) {
+) -> Result<(), RunnerError> {
     let (request, environment, toolchain) = within;
     let (notes, watch) = telling;
-    driven(report, request, toolchain, (notes, watch));
-    proposed(report, request, environment, (notes, watch));
+    driven(report, request, toolchain, (notes, watch))?;
+    proposed(report, request, environment, (notes, watch))?;
+    Ok(())
 }
 
 /// Drives the fuzz targets the tree holds, when the configuration asks for it, and keeps what crashed one as a candidate for the corpus.
 fn driven(
-    report: &mut Report,
+    report: &mut BuildReport,
     request: &Request,
     toolchain: &rust_mutants::cargo::Toolchain,
     telling: (&mut Notes<'_>, Watch<'_>),
-) {
+) -> Result<(), RunnerError> {
     let (notes, watch) = telling;
-    let held = super::fuzz::targets_of(&request.root);
+    let held = match super::fuzz::targets_of(&request.root) {
+        Ok(held) => held,
+        Err(error) => {
+            report.limitations.push(Limitation::new(
+                crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+                &format!("fuzz targets could not be read completely: {error}"),
+            ));
+            report.findings.push(Finding {
+                kind: FindingKind::NotMeasured,
+                subject: "fuzz:targets".to_owned(),
+                detail: format!("filesystem traversal failed: {error}"),
+                origin: crate::report::FindingOrigin::Global,
+                path: None,
+                position: None,
+            });
+            return Ok(());
+        }
+    };
     if held.is_empty() {
-        return;
+        return Ok(());
     }
     if !request.config.fuzz.run {
         report.limitations.push(super::fuzz::found(&held));
-        return;
+        return Ok(());
     }
-    notes.phase("fuzz");
+    notes.phase("fuzz")?;
     watch.trace.stage("fuzz");
     let done = super::fuzz::fuzz(
         &super::fuzz::Fuzzing {
@@ -376,16 +510,18 @@ fn driven(
                     .config
                     .fuzz
                     .max_total_time
-                    .saturating_add(request.config.execution.timeout),
+                    .checked_add(request.config.execution.timeout)
+                    .ok_or(RunInvariantError::TimeoutOverflow { phase: "fuzz" })?,
             ),
         },
         watch,
-    );
+    )?;
     report.findings.extend(done.findings);
     report.limitations.extend(done.limitations);
     for crash in &done.crashes {
         kept(report, request, crash);
     }
+    Ok(())
 }
 
 /// The environment the fuzzer runs with: the toolchain's own, since a fuzz build is a build.
@@ -399,7 +535,7 @@ fn environment_of(
 }
 
 /// Keeps one crashing input as a candidate for the corpus.
-fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
+fn kept(report: &mut BuildReport, request: &Request, crash: &super::fuzz::Crash) {
     let proposal = crate::repair::Proposal {
         kind: crate::repair::Kind::Corpus,
         path: crash.corpus.clone(),
@@ -433,22 +569,28 @@ fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
 
 /// The limitation a run states when a candidate held up and could not be stored.
 fn proposed(
-    report: &mut Report,
+    report: &mut BuildReport,
     request: &Request,
     environment: &Environment,
     telling: (&mut Notes<'_>, Watch<'_>),
-) {
+) -> Result<(), RunnerError> {
     let (notes, watch) = telling;
     if request.config.generation.is_none() {
-        return;
+        return Ok(());
     }
-    notes.phase("generation");
+    notes.phase("generation")?;
     watch.trace.stage("generation");
     propose(report, request, environment, watch);
+    Ok(())
 }
 
 /// Asks the generation provider to close what the run found, and puts every candidate to the tests before keeping it.
-fn propose(report: &mut Report, request: &Request, environment: &Environment, watch: Watch<'_>) {
+fn propose(
+    report: &mut BuildReport,
+    request: &Request,
+    environment: &Environment,
+    watch: Watch<'_>,
+) {
     let Some(generation) = &request.config.generation else {
         return;
     };
@@ -502,7 +644,7 @@ fn propose(report: &mut Report, request: &Request, environment: &Environment, wa
 
 /// What the provider is told about one finding.
 fn ask(
-    report: &Report,
+    report: &BuildReport,
     request: &Request,
     about: (&str, &str),
     allowed: &[String],
@@ -527,14 +669,14 @@ fn ask(
         allowed_paths: allowed.to_vec(),
         workspace: crate::repair::AskedWorkspace {
             workspace_digest: report.repository.workspace_digest.clone(),
-            run_id: request.run_id.clone(),
+            run_id: request.run_id.to_string(),
         },
     }
 }
 
 /// Puts one candidate to the tests and records what that established.
 fn considered(
-    report: &mut Report,
+    report: &mut BuildReport,
     within: (&Request, &Environment, Watch<'_>),
     about: (&crate::repair::Proposal, &str),
 ) {
@@ -551,10 +693,7 @@ fn considered(
             timeout: request.config.execution.timeout,
             steps: request.config.execution.steps,
             build_timeout: request.config.execution.build_timeout,
-            reports: crate::app::reports::Store::of(
-                &request.root,
-                &request.config.reports.directory,
-            ),
+            reports: request.config.reports.directory.clone(),
         },
         proposal,
         mutant,
@@ -590,7 +729,7 @@ fn considered(
 }
 
 /// Stops everything the run held, and says what would not stop.
-fn released(resources: &mut crate::resource::Manager, report: &mut Report) {
+fn released(resources: &mut crate::resource::Manager, report: &mut BuildReport) {
     for refusal in resources.release() {
         report.limitations.push(Limitation::new(
             crate::limitation::RESOURCE_NOT_STOPPED,
@@ -606,7 +745,7 @@ fn released(resources: &mut crate::resource::Manager, report: &mut Report) {
 fn holding(
     request: &Request,
     environment: &Environment,
-    report: &mut Report,
+    report: &mut BuildReport,
     telling: (&mut Notes<'_>, Watch<'_>),
 ) -> Result<crate::resource::Manager, RunnerError> {
     let (notes, watch) = telling;
@@ -615,7 +754,7 @@ fn holding(
         env: environment.vars.clone(),
     });
     if !request.config.resources.is_empty() {
-        notes.phase("resources");
+        notes.phase("resources")?;
         watch.trace.stage("resources");
         hold(&mut resources, request, report, watch)?;
     }
@@ -626,7 +765,7 @@ fn holding(
 fn hold(
     resources: &mut crate::resource::Manager,
     request: &Request,
-    report: &mut Report,
+    report: &mut BuildReport,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
     for (capability, resource) in &request.config.resources {
@@ -637,13 +776,21 @@ fn hold(
         let lease = match started {
             Ok(lease) => lease,
             Err(refusal) => {
-                let _stopped = resources.release();
-                return Err(refusal.into());
+                let cleanup = resources.release();
+                return if cleanup.is_empty() {
+                    Err(refusal.into())
+                } else {
+                    Err(crate::resource::ResourceError::ReleaseAfterFailure {
+                        primary: Box::new(refusal),
+                        cleanup,
+                    }
+                    .into())
+                };
             }
         };
         report.resources.push(crate::report::ResourceRecord {
             capability: lease.capability.clone(),
-            instance: lease.instance.clone(),
+            instance: lease.instance.to_string(),
             environment: lease
                 .environment
                 .iter()
@@ -657,25 +804,46 @@ fn hold(
 /// The environment every later phase runs with: this run's own, and what the resources it holds told it.
 fn with_seams(environment: &Environment, seams: &super::wire::Seams) -> Environment {
     let mut held = environment.clone();
-    let mut vars: BTreeMap<std::ffi::OsString, std::ffi::OsString> =
-        held.vars.into_iter().collect();
-    for (name, value) in seams.environment.iter().cloned() {
-        let _replaced = vars.insert(
-            std::ffi::OsString::from(name),
-            std::ffi::OsString::from(value),
-        );
-    }
-    held.vars = vars.into_iter().collect();
+    held.vars = held
+        .vars
+        .into_iter()
+        .chain(seams.environment.iter().map(|(name, value)| {
+            (
+                std::ffi::OsString::from(name),
+                std::ffi::OsString::from(value),
+            )
+        }))
+        .collect::<BTreeMap<_, _>>()
+        .into_iter()
+        .collect();
     held
 }
 
+fn set_environment(environment: &mut Environment, name: &str, value: &str) {
+    environment.vars.retain(|(held, _value)| {
+        !held
+            .to_str()
+            .is_some_and(|held| held.eq_ignore_ascii_case(name))
+    });
+    environment
+        .vars
+        .push((name.into(), std::ffi::OsString::from(value)));
+}
+
 /// The report as it is before anything has run: what the run is, what it was asked to verify, and what it already knows it will not claim.
-#[must_use]
-pub fn identity(request: &Request) -> Report {
-    let mut report = Report::new(&request.run_id, kind_of(request), request.config.contract);
+///
+/// # Errors
+/// Returns [`RunnerError`] when a path or configuration digest cannot be
+/// represented exactly in the report identity.
+pub fn identity(request: &Request) -> Result<BuildReport, RunnerError> {
+    let mut report = BuildReport::new(
+        request.run_id.as_str(),
+        kind_of(request),
+        request.config.contract,
+    );
     report.timing.started = request.started.to_string();
-    report.repository.root_name = root_name(&request.root);
-    report.repository.configuration_digest = request.config.digest();
+    report.repository.root_name = root_name(&request.root)?;
+    report.repository.configuration_digest = request.config.digest()?;
     if request.evidence.is_known() {
         report
             .repository
@@ -700,6 +868,16 @@ pub fn identity(request: &Request) -> Report {
         .scope
         .configuration
         .clone_from(&request.configuration);
+    report.scope.configured_builds =
+        std::iter::once(crate::config::DEFAULT_CONFIGURATION.to_owned())
+            .chain(
+                request
+                    .config
+                    .configuration
+                    .iter()
+                    .map(|configuration| configuration.name.clone()),
+            )
+            .collect();
     if !request.config.execution.skip_targets.is_empty() {
         report.limitations.push(Limitation::new(
             rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION,
@@ -717,25 +895,33 @@ pub fn identity(request: &Request) -> Report {
              reused by another",
         ));
     }
-    report
+    Ok(report)
 }
 
-fn count(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
+fn count(field: &'static str, value: usize) -> Result<u32, crate::report::CountError> {
+    u32::try_from(value).map_err(|_outside_wire_range| crate::report::CountError::Width {
+        ledger: field,
+        count: value,
+    })
 }
 
 /// What an interrupted run left for this one, or nothing. A state this release cannot continue from is a state it does not continue from: the run starts cold and says so.
-fn resume_state(request: &Request, report: &mut Report) -> Option<crate::checkpoint::State> {
-    let directory = request.checkpoints.as_ref()?;
+fn resume_state(
+    request: &Request,
+    report: &mut BuildReport,
+) -> Result<Option<crate::checkpoint::State>, crate::checkpoint::CheckpointError> {
+    let Some(directory) = request.checkpoints.as_ref() else {
+        return Ok(None);
+    };
     if !request.evidence.is_known() {
-        return None;
+        return Ok(None);
     }
-    let state = match crate::checkpoint::read(directory, &request.evidence.identity) {
-        Ok(state) => state?,
-        Err(_unusable) => return None,
+    let identity = request.evidence.continuation_identity();
+    let Some(state) = crate::checkpoint::read(directory, &identity)? else {
+        return Ok(None);
     };
     if state.is_empty() {
-        return None;
+        return Ok(None);
     }
     report.limitations.push(Limitation::new(
         crate::limitation::RESUMED_FROM_CHECKPOINT,
@@ -747,7 +933,7 @@ fn resume_state(request: &Request, report: &mut Report) -> Option<crate::checkpo
             state.mutants.len()
         ),
     ));
-    Some(state)
+    Ok(Some(state))
 }
 
 /// What this run has established so far, written where an interrupted run's successor will find it.
@@ -757,56 +943,72 @@ struct Journal {
 }
 
 impl Journal {
-    fn of(request: &Request, restore: Option<&crate::checkpoint::State>) -> Self {
+    fn of(
+        request: &Request,
+        restore: Option<&crate::checkpoint::State>,
+    ) -> Result<Self, RunInvariantError> {
+        let identity = request.evidence.continuation_identity();
         let mut state = restore
             .cloned()
-            .unwrap_or_else(|| crate::checkpoint::State::new(&request.evidence.identity));
-        state.attempts = state.attempts.saturating_add(1);
-        Self {
+            .unwrap_or_else(|| crate::checkpoint::State::new(&identity));
+        state.attempts = state
+            .attempts
+            .checked_add(1)
+            .ok_or(RunInvariantError::AttemptOverflow)?;
+        Ok(Self {
             directory: request
                 .checkpoints
                 .clone()
                 .filter(|_directory| request.evidence.is_known()),
             state,
-        }
+        })
     }
 
-    fn keep_mutant(&mut self, judged: &mutation::Judged) {
-        let (disposition, by) = match &judged.disposition {
-            mutation::Disposition::Killed { by } => ("killed", by.clone()),
-            mutation::Disposition::Runaway { on } => ("runaway", on.clone()),
-            mutation::Disposition::Waited { .. }
+    fn keep_mutant(
+        &mut self,
+        judged: &mutation::Judged,
+    ) -> Result<(), crate::checkpoint::CheckpointError> {
+        let disposition = match &judged.disposition {
+            mutation::Disposition::Killed { by } => {
+                crate::checkpoint::SavedDisposition::Killed { by: by.clone() }
+            }
+            mutation::Disposition::StepLimitReached { .. }
+            | mutation::Disposition::Waited { .. }
             | mutation::Disposition::Rejected { .. }
             | mutation::Disposition::Survived { .. }
             | mutation::Disposition::Unreached
             | mutation::Disposition::Equivalent { .. }
             | mutation::Disposition::Unconfirmed { .. }
-            | mutation::Disposition::Errored { .. } => return,
+            | mutation::Disposition::Errored { .. } => return Ok(()),
         };
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),
-            disposition: disposition.to_owned(),
-            killed_by: Some(by),
+            disposition,
             duration_ms: 0,
         });
-        self.write();
+        self.write()
     }
 
-    /// A checkpoint that cannot be written is a run that cannot be continued, which is not a reason to stop the run that is under way.
-    fn write(&self) {
+    /// Preserves the current state before the next mutation can begin.
+    fn write(&self) -> Result<(), crate::checkpoint::CheckpointError> {
         if let Some(directory) = &self.directory {
-            drop(crate::checkpoint::write(directory, &self.state));
+            crate::checkpoint::write(directory, &self.state)?;
         }
+        Ok(())
     }
 
     /// Clears what this run established, because a run that reached its end has nothing left to continue.
-    fn finished(&self, cancel: &rust_mutants::runner::Cancel) {
+    fn finished(
+        &self,
+        cancel: &rust_mutants::runner::Cancel,
+    ) -> Result<(), crate::checkpoint::CheckpointError> {
         if cancel.is_cancelled() {
-            return;
+            return Ok(());
         }
         if let Some(directory) = &self.directory {
-            crate::checkpoint::clear(directory, &self.state.identity);
+            crate::checkpoint::clear(directory, &self.state.identity)?;
         }
+        Ok(())
     }
 }
 
@@ -822,7 +1024,11 @@ pub struct Opening<'a> {
 }
 
 /// What the run can say before it has compiled anything: where it works, and what the repository was.
-fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
+fn open_phase(
+    report: &mut BuildReport,
+    opening: &Opening<'_>,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
     let Opening {
         request,
         environment,
@@ -835,17 +1041,19 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
              while the run is still using it",
         ));
     }
+    let excluded =
+        crate::evidence::tree::Excluded::beside(request.config.reports.directory.as_path())?;
     report.repository.git = git::describe(&git::Asked {
         root: &request.root,
         env: &environment.vars,
-        excluded: &crate::evidence::tree::Excluded::beside(&request.config.reports.directory),
+        excluded: &excluded,
         watch,
     });
     let Some(change) = &request.changed else {
-        return;
+        return Ok(());
     };
     let crate::report::Git::Said(said) = &mut report.repository.git else {
-        return;
+        return Ok(());
     };
     said.against = change
         .merge_base
@@ -854,10 +1062,15 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
             merge_base,
             changed_files: change.files.clone(),
         });
+    Ok(())
 }
 
 /// Counts every place a selected package steps outside what the compiler guarantees.
-fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -> BTreeSet<String> {
+fn take_inventory(
+    report: &mut BuildReport,
+    request: &Request,
+    metadata: &Metadata,
+) -> Result<BTreeSet<String>, crate::report::CountError> {
     let selected = selected(&report.scope.resolved_packages, metadata);
     let Ok(taken) = soundness::inventory(&request.root, &selected) else {
         report.limitations.push(Limitation::new(
@@ -865,15 +1078,15 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
             "the tree could not be walked for the places the compiler stops vouching for, so \
              the run makes no claim about them",
         ));
-        return BTreeSet::new();
+        return Ok(BTreeSet::new());
     };
     report.accounting.soundness = SoundnessAccounting {
-        unsafe_items: count(taken.items.len()),
-        packages_with_unsafe: count(taken.packages.len()),
+        unsafe_items: count("unsafe items", taken.items.len())?,
+        packages_with_unsafe: count("packages containing unsafe", taken.packages.len())?,
         executed: false,
     };
     report.limitations.extend(stated(&taken));
-    taken.packages.iter().cloned().collect()
+    Ok(taken.packages.iter().cloned().collect())
 }
 
 /// The packages a run's scope names, each with the directory its manifest is in.
@@ -984,18 +1197,20 @@ pub fn alone(config: &Config) -> bool {
 }
 
 /// The verdict, the canonical order, and how long it all took.
-fn finish(report: &mut Report, started: Timestamp) {
+fn finish(report: &mut BuildReport, started: Timestamp) -> Result<(), RunInvariantError> {
     report.verdict = report.concluded();
     report.sort_targets();
     let finished = Timestamp::now();
     report.timing.finished = finished.to_string();
-    report.timing.duration_ms =
-        u64::try_from(finished.duration_since(started).as_millis()).unwrap_or(0);
+    let milliseconds = finished.duration_since(started).as_millis();
+    report.timing.duration_ms = u64::try_from(milliseconds)
+        .map_err(|_outside_wire_range| RunInvariantError::ElapsedOutsideWire { milliseconds })?;
+    Ok(())
 }
 
 /// Puts what the baseline observed into the report.
 struct Mutating<'a> {
-    report: &'a mut Report,
+    report: &'a mut BuildReport,
     request: &'a Request,
     environment: &'a Environment,
     baseline: &'a baseline::Baseline,
@@ -1017,18 +1232,26 @@ pub struct ResolvedAcceptances {
     pub findings: Vec<Finding>,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum AcceptanceResolutionError {
+    #[error(transparent)]
+    Prefix(#[from] rust_mutants::catalog::PrefixError),
+    #[error(transparent)]
+    Locator(#[from] rust_mutants::session::LocateError),
+}
+
 /// Resolves every unexpired acceptance against the complete catalog for a session.
 #[must_use]
 pub fn resolve_acceptances(
     catalog: &rust_mutants::catalog::Catalog,
-    locate: &dyn Fn(&rust_mutants::session::Locator) -> Result<String, String>,
+    locate: &dyn Fn(
+        &rust_mutants::session::Locator,
+    ) -> Result<String, rust_mutants::session::LocateError>,
     acceptances: &[Acceptance],
     now: Timestamp,
 ) -> ResolvedAcceptances {
-    let mut resolved = ResolvedAcceptances {
-        ids: BTreeSet::new(),
-        findings: Vec::new(),
-    };
+    let mut ids = Vec::new();
+    let mut findings = Vec::new();
     for acceptance in acceptances
         .iter()
         .filter(|acceptance| acceptance.holds(now))
@@ -1037,16 +1260,14 @@ pub fn resolve_acceptances(
             || {
                 catalog
                     .resolve_prefix(&acceptance.id)
-                    .map(|mutant| mutant.id.clone())
-                    .map_err(|error| error.to_string())
+                    .map(|mutant| mutant.id.to_string())
+                    .map_err(AcceptanceResolutionError::from)
             },
-            |locator| locate(&locator),
+            |locator| locate(&locator).map_err(AcceptanceResolutionError::from),
         );
         match found {
-            Ok(id) => {
-                let _new = resolved.ids.insert(id);
-            }
-            Err(error) => resolved.findings.push(Finding::new(
+            Ok(id) => ids.push(id),
+            Err(error) => findings.push(Finding::new(
                 FindingKind::UnmatchedAcceptance,
                 &acceptance.named(),
                 &format!(
@@ -1055,25 +1276,25 @@ pub fn resolve_acceptances(
             )),
         }
     }
-    resolved
+    let unique_ids = ids.into_iter().collect();
+    ResolvedAcceptances {
+        ids: unique_ids,
+        findings,
+    }
 }
 
 fn run_mutation(
     mutating: &mut Mutating<'_>,
+    model: &mut model::Preparation,
     notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
-    notes.phase("mutation");
+    notes.phase("mutation")?;
     watch.trace.stage("mutation");
     let session = mutating.session;
     let accepted = resolve_acceptances(
         session.catalog(),
-        &|locator| {
-            session
-                .locate(locator)
-                .map(|mutant| mutant.id.clone())
-                .map_err(|error| error.to_string())
-        },
+        &|locator| session.locate(locator).map(|mutant| mutant.id.to_string()),
         &mutating.request.config.acceptance,
         mutating.request.started,
     );
@@ -1083,16 +1304,20 @@ fn run_mutation(
             baseline: &mutating.baseline.targets,
         },
         &MutationOptions {
-            accepted: accepted.ids.clone(),
             test_args: mutating.request.test_args.clone(),
-            evidence: evidence_of(mutating),
+            evidence: evidence_of(mutating)?,
             jobs: mutating.request.config.execution.jobs,
             exclusive: alone(&mutating.request.config),
             shard: mutating.request.shard,
         },
         &mut mutation::Resume {
             state: mutating.restore,
-            record: &mut |judged| mutating.journal.keep_mutant(judged),
+            record: &mut |judged| {
+                mutating
+                    .journal
+                    .keep_mutant(judged)
+                    .map_err(RunnerError::from)
+            },
         },
         baseline::Reporting { notes, watch },
     )?;
@@ -1116,7 +1341,8 @@ fn run_mutation(
             (notes, watch),
         )?;
     }
-    record(mutating.report, &mutation, &accepted.ids);
+    model.capture(session, &mutation.judged, tree_written)?;
+    record(mutating.report, &mutation, &accepted.ids)?;
     mutating.report.findings.extend(accepted.findings);
     Ok(())
 }
@@ -1144,7 +1370,7 @@ fn prove_equivalence(
     if asked.is_empty() {
         return Ok(());
     }
-    notes.phase("equivalence");
+    notes.phase("equivalence")?;
     watch.trace.stage("equivalence");
     let phase = watch.trace.phase("equivalence-prove");
     let request = mutating.request;
@@ -1160,13 +1386,7 @@ fn prove_equivalence(
                     .map(std::ffi::OsStr::to_owned),
                 env: mutating.environment.vars.clone(),
                 temp_directory: mutating.environment.temp_directory.clone(),
-                report_directory: Some(
-                    crate::app::reports::Store::of(
-                        &request.root,
-                        &request.config.reports.directory,
-                    )
-                    .relative(),
-                ),
+                report_directory: Some(request.config.reports.directory.as_str().to_owned()),
                 exclude: Vec::new(),
                 keep_temp: false,
                 offline: request.cargo.offline,
@@ -1182,7 +1402,7 @@ fn prove_equivalence(
         watch.cancel,
         &rust_mutants::trace::Recorder::disabled(),
     )?;
-    equivalence::settle(&mut mutation.judged, &decided, watch);
+    equivalence::settle(&mut mutation.judged, &decided, watch)?;
     phase.end();
     Ok(())
 }
@@ -1193,6 +1413,7 @@ fn prepare(
     environment: &Environment,
     watch: Watch<'_>,
 ) -> Result<rust_mutants::session::Session, RunnerError> {
+    let include = narrowing(request).map_err(rust_mutants::EngineError::from)?;
     let workspace = rust_mutants::workspace::Workspace::open(
         &request.root,
         rust_mutants::workspace::OpenOptions {
@@ -1201,10 +1422,7 @@ fn prepare(
             search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
-            report_directory: Some(
-                crate::app::reports::Store::of(&request.root, &request.config.reports.directory)
-                    .relative(),
-            ),
+            report_directory: Some(request.config.reports.directory.as_str().to_owned()),
             exclude: Vec::new(),
             keep_temp: request.keep_temp,
             offline: request.cargo.offline,
@@ -1216,7 +1434,7 @@ fn prepare(
     Ok(workspace.prepare(
         &rust_mutants::session::PrepareOptions {
             packages: request.packages.clone(),
-            include: narrowing(request),
+            include,
             exclude: request.config.project.excluded(),
             build: request.build.clone(),
             harness_args: request.test_args.clone(),
@@ -1234,13 +1452,17 @@ fn prepare(
 }
 
 /// Where this run reads and writes what is established about individual mutants, or nothing when it may not.
-fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
+fn evidence_of(mutating: &Mutating<'_>) -> Result<Option<mutation::Evidence>, RunnerError> {
     let request = mutating.request;
-    let root = request.evidence_store.as_ref()?;
+    let Some(root) = request.evidence_store.as_ref() else {
+        return Ok(None);
+    };
     if !reusable(mutating.report.run_kind, &request.config.resources) {
-        return None;
+        return Ok(None);
     }
-    let keying = request.evidence.keying.as_ref()?;
+    let Some(keying) = request.evidence.keying.as_ref() else {
+        return Ok(None);
+    };
     let mut standing = crate::evidence::store::Standing::default();
     let mut names = BTreeMap::new();
     for measured in &mutating.baseline.targets {
@@ -1258,19 +1480,19 @@ fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
                 dependencies: &keying.dependencies,
             },
             &id,
-        );
+        )?;
         standing.passing.insert(
-            measured.target.id.clone(),
+            measured.target.id.to_string(),
             crate::evidence::key::behaviour(&linked, &keying.common),
         );
-        names.insert(measured.target.id.clone(), measured.target.name());
+        names.insert(measured.target.id.to_string(), measured.target.name());
     }
-    Some(mutation::Evidence {
+    Ok(Some(mutation::Evidence {
         root: root.clone(),
-        run_id: request.run_id.clone(),
+        run_id: request.run_id.to_string(),
         standing,
         names,
-    })
+    }))
 }
 
 /// Whether a run of this shape may read and write what earlier runs established about individual mutants.
@@ -1289,21 +1511,32 @@ fn package_id(metadata: &Metadata, name: &str) -> Option<String> {
 }
 
 /// Which files anything may be mutated in: what the configuration allows, narrowed to what changed.
-fn narrowing(request: &Request) -> Vec<rust_mutants::glob::Pattern> {
+fn narrowing(
+    request: &Request,
+) -> Result<Vec<rust_mutants::glob::Pattern>, rust_mutants::glob::GlobError> {
     let configured = request.config.project.included();
     let Some(change) = request.changed.as_ref() else {
-        return configured;
+        return Ok(configured);
     };
     rust_mutants::git::within(change, &configured)
 }
 
 /// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.
-pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSet<String>) {
-    report.accounting.mutants = mutation.accounting(accepted);
+///
+/// # Errors
+/// Returns [`crate::report::CountError`] when exact report counters cannot
+/// represent the mutation ledger.
+pub fn record(
+    report: &mut BuildReport,
+    mutation: &mutation::Mutation,
+    accepted: &BTreeSet<String>,
+) -> Result<(), crate::report::CountError> {
+    report.accounting.mutants = mutation.accounting(accepted)?;
     report.mutants = mutation
         .judged
         .iter()
         .map(|judged| MutantRecord {
+            catalog_index: crate::report::CatalogIndex::new(judged.catalog_index),
             id: judged.id.clone(),
             display_id: judged.display_id.clone(),
             path: judged.path.clone(),
@@ -1317,6 +1550,7 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             original: judged.original.clone(),
             replacement: judged.replacement.clone(),
             outcome: judged.disposition.decided(),
+            accepted: mutation::answered_by(judged, accepted),
             reuse: crate::report::Reuse(judged.source_run_id.clone().map_or(
                 crate::report::Established::Here,
                 crate::report::Established::ReadBackFrom,
@@ -1344,6 +1578,7 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             ),
         ));
     }
+    Ok(())
 }
 
 /// Each limitation the baseline stated, once, beside the targets it was stated about.
@@ -1365,7 +1600,14 @@ pub fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
 }
 
 /// Puts what the baseline observed into the report.
-pub fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
+///
+/// # Errors
+/// Returns [`crate::report::CountError`] when exact report counters cannot
+/// represent the baseline ledger.
+pub fn absorb(
+    report: &mut BuildReport,
+    baseline: &baseline::Baseline,
+) -> Result<(), crate::report::CountError> {
     for (name, targets) in about(&baseline.limitations) {
         let detail = limitation_detail(&name);
         let detail = if targets.is_empty() {
@@ -1381,7 +1623,7 @@ pub fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
             &report.repository.root_name,
             &first_line(failure),
         ));
-        return;
+        return Ok(());
     }
     for measured in &baseline.targets {
         let subject = measured.target.name();
@@ -1405,7 +1647,7 @@ pub fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
             TargetStatus::Passed | TargetStatus::Skipped => {}
         }
         report.targets.push(TargetRecord {
-            id: measured.target.id.clone(),
+            id: measured.target.id.to_string(),
             name: subject,
             package: measured.target.package.clone(),
             status: measured.status,
@@ -1414,7 +1656,8 @@ pub fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
         });
     }
 
-    report.count_targets();
+    report.count_targets()?;
+    Ok(())
 }
 
 /// The `rustc -vV` and `cargo -vV` facts a report records.
@@ -1460,11 +1703,15 @@ pub fn resolved(request: &Request, members: &[String]) -> Vec<String> {
 }
 
 /// The name a person calls the workspace.
-fn root_name(root: &std::path::Path) -> String {
-    root.file_name().map_or_else(
-        || UNAVAILABLE.to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    )
+fn root_name(root: &std::path::Path) -> Result<String, crate::evidence::tree::ScanError> {
+    let Some(name) = root.file_name() else {
+        return Ok(UNAVAILABLE.to_owned());
+    };
+    name.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| crate::evidence::tree::ScanError::PathNotUtf8 {
+            path: root.to_path_buf(),
+        })
 }
 
 /// One sentence of a compiler's several, and something to say when it said nothing.

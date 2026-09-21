@@ -6,16 +6,20 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Engine trace
 
 **Status: implemented.** `rust_mutants::trace` holds the `Recorder`, the
-`Sink` enum with `MemorySink`, `DirSink`, and `Tee`, `read_events` and
+`Sink` enum with best-effort `MemorySink`/`ChannelSink`, durable `DirSink`,
+and a closed `RequiredSink` that keeps the durable authority distinct from
+its observers; `read_events` and
 `check` for reading a stream back, and `summary` for reading one as numbers.
 The command line records under `--trace[=DIR]` and reads a recording back
 with `rust-mutants trace summary|check|diff`.
 
 The rules are those of
 [ADR 0002](../adr/0002-trace-is-not-evidence.md): a recording is never a
-claim, never a failure, and honest about what it dropped. A directory that
-cannot be created costs one line on standard error and nothing else; the
-command does what it was asked either way.
+claim and is honest about what it dropped. When no trace was requested, an
+in-memory progress observer remains best effort. An explicit `--trace` is a
+durability request: failure to claim its directory refuses the command before
+execution, and any later loss or final-sync failure makes finalization fail.
+An observer channel cannot hide a failure of that durable authority.
 
 ## Where a recording goes
 
@@ -32,13 +36,26 @@ A recording owns its directory: a directory that is already there is refused
 rather than appended to, which is what keeps two runs from writing one
 stream.
 
+When `njutest` owns the run, each configured build has a distinct engine
+recording under `builds/<zero-padded ordinal>/engine/`. A raw configuration
+name never becomes a path. All namespaces are claimed before the first build
+starts, so a requested multibuild trace cannot degrade into a partial set.
+
 ## What a line is
 
 Every line is one JSON object: `seq` (monotonic from 1, delivery order is
 sequence order however many threads record), `timestamp` (RFC 3339, UTC),
-`elapsed_ms`, `type`, and the type's record under a key named after the
-type. The first event is `run-start` with `schema: "rust-mutants-trace-v1"`
-and the engine version; the last is `run-end` with `outcome`,
+`elapsed_ms`, and a closed `payload`. The payload's `type` selects the record
+under a key named after that type. The first event is `run-start` with
+`schema: "rust-mutants-trace-v2"`,
+the engine version, and a closed `context`. A standalone context binds the
+canonical run id and Cargo `BuildSelection` digest. The selection covers the
+seven Cargo options controlled by the engine; toolchain and resolved host
+inputs are separate evidence rather than being overclaimed by this digest. An
+`njutest`
+context binds the final run id, build-internal run id, zero-based ordinal,
+configured name, and that same canonical build digest. The last event is
+`run-end` with `outcome`,
 `events_emitted`, and `events_dropped`, where a sink that counts its own
 drops (a full ring, a failed write) is the authority and the recorder's
 observed failures fill in otherwise. The outcome is the word the
@@ -55,35 +72,41 @@ cut at 1 MiB with a `...` marker, and records `output_path` and
 record unconditionally. `Recorder::new` takes the clock as an argument, which
 is how the goldens in `crates/rust-mutants/tests/testdata/trace/` freeze the
 shape, and every line is checked against
-[`schema/rust-mutants-trace-v1.json`](../../schema/rust-mutants-trace-v1.json).
+[`schema/rust-mutants-trace-v2.json`](../../schema/rust-mutants-trace-v2.json).
 
 ## The types
 
-| Type | Records |
-| --- | --- |
-| `run-start` | schema, engine version |
-| `phase-start` / `phase-end` | a phase boundary: name, and on the end its duration |
-| `open` | root, snapshot path and whether its stable name was available, sweep result |
-| `snapshot` | files copied, bytes, digest, refusals |
-| `exec` | every process: argv verbatim, dir, environment variable names, timeout, how it stopped — an exit code of its own, a bound that expired, a guard's count passed, or never started — duration, output digest. A code exists only where one is the process's own, so a record cannot say a process was killed by a guard and also exited 101 |
-| `discover-file` | per file: candidates found, and every site with its form (`C`, `E`, `S`) or its skip reason |
-| `instrument` | per file: guards placed, the runtime module's name, and the line count before and after, which must be equal |
-| `validate-round` | per round: how many were condemned going in, how many files it had to write again, whether the tree compiled, which mutant each error was attributed to with the compiler's first line, and the errors no branch accounts for |
-| `bisect` | per isolation: how many suspects, which offenders it named, how many compilations it cost, how many it could put the compiler's own words to |
-| `build` | the test binaries the build produced, each with its kind, whether it carries the libtest harness, and what a run could not establish about it |
-| `verify` | per target: what the suite established with nothing active, how many tests ran, how long the baseline took, and whether that exact passing measurement was remembered |
-| `touch` | per target: how many of its tests reached a mutation, how many distinct mutations anything of it reached, how many were reached where nothing named a test, and how many it saw a guard's two branches differ over |
-| `witness` | per candidate: the witness placed, whether it checked, and the diagnostic that refused it |
-| `skip-claim` | per `rust-mutants: skip` marker: where it sits, the reason its author wrote, and whether it hid anything |
-| `kept` | per directory a run was asked to keep rather than remove, with the run that kept it |
-| `route` | per judged mutant: granularity, what widened it, the targets that could notice, the ones a proof discharged, the ones that ran, and the run an answer was reused from |
-| `mutant-exec` | id, index, target, outcome, exit code, duration, tests run, signal, failed tests, the budget it was given and where that came from, and whether it had the machine to itself |
-| `cache` | what an earlier run of this exact tree said about one mutant: the key, whether a record answered, and the run that established it |
-| `select` | why one mutant was never executed |
-| `identical` | what the equivalence layer said about one mutation: `identical`, `differs`, or nothing at all |
-| `evidence` | one file the run kept for an audit: its path, its size, and its digest |
-| `note` | a free-form note: progress, a decision, a limitation |
-| `run-end` | `outcome`, `events_emitted`, `events_dropped` |
+`Fields` is the exact set of keys the record object can serialize, not a
+summary. Optional keys are still named. Tests serialize non-empty specimens
+and compare both directions, so adding, removing, or repeating a key cannot
+leave this table green.
+
+| Type | Fields | Records |
+| --- | --- | --- |
+| `run-start` | `schema`, `engine`, `context` | the schema and engine version plus a closed standalone or `njutest` build binding |
+| `phase-start` | `name`, `duration_ms` | a phase beginning |
+| `phase-end` | `name`, `duration_ms` | the matching phase end and its duration |
+| `open` | `root`, `snapshot_dir`, `stable_dir`, `sweep` | the root, snapshot path and whether its stable name was available, and the sweep result |
+| `snapshot` | `source_root`, `dir`, `files`, `bytes`, `workspace_digest`, `duration_ms`, `error` | the tree copied, its destination, files, bytes, digest, duration, and any refusal |
+| `exec` | `argv`, `dir`, `env_names`, `timeout_ms`, `stopped`, `duration_ms`, `output_bytes`, `output_sha256`, `output_truncated`, `output_path`, `error` | every process: argv verbatim, dir, environment variable names, timeout, and one closed stop reason — not started, its own code/signal/unknown exit, timed out, cancelled, wait failed, a verified step-limit notice, or a failed step protocol — plus duration, output digest and preserved output. A process cannot be both timed out and exited |
+| `discover-file` | `path`, `candidates`, `sites`, `skips` | per file: candidates found, and every site with its form (`C`, `E`, `S`) or its skip reason |
+| `instrument` | `path`, `guards`, `module`, `lines_before`, `lines_after` | per file: guards placed, the runtime module's name, and the line count before and after, which must be equal |
+| `validate-round` | `round`, `condemned`, `success`, `written`, `attributed`, `unattributed` | per round: how many were condemned going in, how many files it had to write again, whether the tree compiled, which mutant each error was attributed to with the compiler's first line, and the errors no branch accounts for |
+| `bisect` | `suspects`, `offenders`, `attempts`, `diagnosed` | per isolation: how many suspects, which offenders it named, how many compilations it cost, and how many it could put the compiler's own words to |
+| `build` | `targets`, `details` | the test binaries the build produced, each with its kind, whether it carries the libtest harness, and what a run could not establish about it |
+| `verify` | `target`, `outcome`, `tests_run`, `duration_ms`, `remembered`, `retried` | per target: what the suite established with nothing active, how many tests ran, how long the baseline took, whether that exact passing measurement was remembered, and whether it retried |
+| `touch` | `target`, `tests`, `sites`, `loose`, `infected` | per target: how many of its tests reached a mutation, how many distinct mutations anything of it reached, how many were reached where nothing named a test, and how many it saw a guard's two branches differ over |
+| `witness` | `index`, `witnesses`, `checked`, `diagnostic` | per candidate: the witness placed, whether it checked, and the diagnostic that refused it |
+| `skip-claim` | `path`, `line`, `reason`, `matched` | per `rust-mutants: skip` marker: where it sits, the reason its author wrote, and whether it hid anything |
+| `kept` | `path`, `run_id` | per directory a run was asked to keep rather than remove, with the run that kept it |
+| `route` | `mutant`, `index`, `granularity`, `fallback`, `reaching`, `considered`, `discharged`, `executed`, `reused` | per judged mutant: granularity, what widened it, the targets that could notice, the ones a proof discharged, the ones that ran, and the run an answer was reused from |
+| `cache` | `mutant`, `key`, `hit`, `source_run_id` | what an earlier run of this exact tree said about one mutant: the key, whether a record answered, and the run that established it |
+| `select` | `mutant`, `reason` | why one mutant was never executed |
+| `identical` | `index`, `identity`, `detail` | what the equivalence layer said about one mutation: `identical`, `differs`, or nothing at all |
+| `evidence` | `file`, `bytes`, `digest` | one file the run kept for an audit: its path, its size, and its digest |
+| `mutant-exec` | `id`, `index`, `target`, `outcome`, `step_notice`, `exit_code`, `duration_ms`, `tests_run`, `signal`, `failed_tests`, `timeout_ms`, `timeout_source`, `alone` | the mutation, target, outcome, any verified step-limit notice, status, duration, tests run, signal, failed tests, the budget it was given and where that came from, and whether it had the machine to itself |
+| `note` | `kind`, `detail` | a free-form note: progress, a decision, or a limitation |
+| `run-end` | `outcome`, `error`, `events_emitted`, `events_dropped` | the outcome, any failure, and the recording's kept and lost event counts |
 
 ## Reading one back
 

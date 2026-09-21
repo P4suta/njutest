@@ -12,6 +12,7 @@ pub mod tint;
 pub mod why;
 
 use crate::report::Verdict;
+use crate::text::{append, line};
 
 /// What a person is told about one run: the answer, and the things they act on.
 ///
@@ -48,8 +49,6 @@ pub struct Stated {
 pub struct Headline {
     /// What the run concluded.
     pub verdict: Verdict,
-    /// The project it is about, as a reader names it.
-    pub project: String,
     /// How many mutations the run cataloged.
     pub cataloged: u32,
     /// How many a test noticed.
@@ -58,8 +57,9 @@ pub struct Headline {
     pub survived: u32,
     /// How many nothing reached.
     pub unreached: u32,
-    /// How many stopped the program terminating, which a count established and no test asserted.
-    pub runaway: u32,
+    /// How many crossed the configured step boundary without a control proof
+    /// establishing a mutation verdict.
+    pub step_limit_reached: u32,
     /// How many this machine stopped waiting for, which is not a gap and is not a pass.
     pub waited: u32,
     /// How long the whole run took.
@@ -196,6 +196,7 @@ impl Standing {
         match blind {
             crate::report::Blind::Unnoticed => Self::Blind(Blindness::Ran),
             crate::report::Blind::Unreached => Self::Blind(Blindness::Never),
+            crate::report::Blind::StepLimitReached => Self::Unsettled(Unsettled::StepLimitReached),
             crate::report::Blind::Waited => Self::Unsettled(Unsettled::Waited),
             crate::report::Blind::Errored => Self::Unsettled(Unsettled::Errored),
         }
@@ -274,6 +275,7 @@ impl Standing {
 /// drawn as one a test had caught. A closed set made that match total; it did
 /// not make it true (ADR 0023).
 #[must_use]
+#[cfg(feature = "testkit")]
 pub fn label(rule: &str, decided: &crate::report::Decided) -> String {
     use crate::report::Decided;
     match decided {
@@ -283,9 +285,18 @@ pub fn label(rule: &str, decided: &crate::report::Decided) -> String {
         Decided::Equivalent => {
             format!("{rule} here, and a proof says no test could tell the difference")
         }
+        Decided::ModelNoticed => {
+            format!("{rule} here, and the model checker found a distinguishing input")
+        }
+        Decided::ModelProved => {
+            format!("{rule} here, and the model checker proved its closed domain equal")
+        }
         Decided::CompileRejected => format!("{rule} here, and the compiler refused it"),
-        Decided::Runaway { on } => {
-            format!("{rule} here, and it never finished under {on}")
+        Decided::StepLimitReached { on, boundary } => {
+            format!(
+                "{rule} here, and {on} crossed its step allowance at {}",
+                boundary.observed()
+            )
         }
         Decided::Waited { on } => {
             format!("{rule} here, and this machine stopped waiting for {on}")
@@ -294,6 +305,33 @@ pub fn label(rule: &str, decided: &crate::report::Decided) -> String {
             format!("{rule} here, and {on} did not answer the same way twice")
         }
         Decided::Errored { on } => format!("{rule} here, and {on} could not be measured"),
+    }
+}
+
+/// What to say for a cross-build lattice projection, without borrowing one
+/// build's target or provenance as though it represented every build.
+#[must_use]
+pub fn projected_label(rule: &str, decision: crate::report::Decision) -> String {
+    use crate::report::Decision;
+    match decision {
+        Decision::Types => format!("{rule} here, and a compiler refused it"),
+        Decision::Tests => format!("{rule} here, and a test noticed"),
+        Decision::ModelNoticed => {
+            format!("{rule} here, and the model checker found a distinguishing input")
+        }
+        Decision::ModelProved => {
+            format!("{rule} here, and the model checker proved its closed domain equal")
+        }
+        Decision::Proved => {
+            format!("{rule} here, and a proof says no test could tell the difference")
+        }
+        Decision::Unnoticed => format!("{rule} here, and at least one build noticed nothing"),
+        Decision::Unreached => format!("{rule} here, and at least one build never reached it"),
+        Decision::StepLimitReached => {
+            format!("{rule} here, and at least one build reached its step boundary")
+        }
+        Decision::Waited => format!("{rule} here, and at least one build did not finish"),
+        Decision::Errored => format!("{rule} here, and at least one build was not measured"),
     }
 }
 
@@ -371,6 +409,9 @@ impl Blindness {
 /// A gap in the run: what somebody investigates rather than writes a test for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unsettled {
+    /// The deterministic guard boundary was reached, but no control comparison
+    /// established that the mutation caused divergence.
+    StepLimitReached,
     /// It ran out of time rather than answering.
     Waited,
     /// The measurement could not be taken, so nothing was observed either way.
@@ -382,6 +423,7 @@ impl Unsettled {
     #[must_use]
     pub const fn word(self) -> &'static str {
         match self {
+            Self::StepLimitReached => "step limit reached",
             Self::Waited => "timed out",
             Self::Errored => "not measured",
         }
@@ -391,6 +433,7 @@ impl Unsettled {
     #[must_use]
     pub const fn counted(self) -> &'static str {
         match self {
+            Self::StepLimitReached => "step limit reached",
             Self::Waited => "timed out",
             Self::Errored => "not measured",
         }
@@ -400,6 +443,7 @@ impl Unsettled {
     #[must_use]
     pub const fn find_out(self) -> &'static str {
         match self {
+            Self::StepLimitReached => "compare the same target without the mutation",
             Self::Waited => "find out why nothing finished",
             Self::Errored => "find out why nothing could be measured",
         }
@@ -705,7 +749,7 @@ impl Telling {
     pub fn caret(self, site: &Site, gutter: usize, line: &str) -> Vec<String> {
         let before: String = line
             .chars()
-            .take(usize::try_from(site.column.saturating_sub(1)).unwrap_or(usize::MAX))
+            .take(usize_from_u32(site.column.saturating_sub(1)))
             .collect();
         let indent = wide(&before);
         let width = site.width.max(1);
@@ -771,7 +815,7 @@ impl Telling {
         let mut spots: Vec<&&Spot> = spots.iter().collect();
         spots.sort_by_key(|spot| spot.column);
         for spot in spots {
-            let from = usize::try_from(spot.column.saturating_sub(1)).unwrap_or(usize::MAX);
+            let from = usize_from_u32(spot.column.saturating_sub(1));
             let width = spot.was.chars().count().max(1);
             let to = from.saturating_add(width).min(characters.len());
             if from < at || from >= characters.len() {
@@ -830,7 +874,7 @@ impl Telling {
     pub fn spot(self, spot: &Spot, gutter: usize, line: &str) -> Vec<String> {
         let before: String = line
             .chars()
-            .take(usize::try_from(spot.column.saturating_sub(1)).unwrap_or(usize::MAX))
+            .take(usize_from_u32(spot.column.saturating_sub(1)))
             .collect();
         let indent = wide(&before);
         let width = spot.was.chars().count().max(1);
@@ -927,6 +971,20 @@ pub fn wide(text: &str) -> usize {
     width
 }
 
+fn usize_from_u32(value: u32) -> usize {
+    match usize::try_from(value) {
+        Ok(value) => value,
+        Err(_overflow) => usize::MAX,
+    }
+}
+
+fn u32_from_usize(value: usize) -> u32 {
+    match u32::try_from(value) {
+        Ok(value) => value,
+        Err(_overflow) => u32::MAX,
+    }
+}
+
 /// `text` broken so that no line is wider than `room`, breaking only between words.
 ///
 /// A note that ran past the edge was the same note wrapped by the terminal at
@@ -951,7 +1009,7 @@ pub fn folded(text: &str, room: usize) -> Vec<String> {
             wide(&line).saturating_add(1).saturating_add(wide(word))
         };
         if !line.is_empty() && would > room {
-            lines.push(std::mem::take(&mut line.trim_end().to_owned()));
+            lines.push(line.trim_end().to_owned());
             line.clear();
         }
         if !line.is_empty() || word.is_empty() {
@@ -971,68 +1029,71 @@ pub fn folded(text: &str, room: usize) -> Vec<String> {
 /// Read up front and passed in rather than opened where a line is wanted: a
 /// renderer that touched the filesystem could not be asserted without one, and
 /// the same value serves a test that supplies its own files.
+#[derive(Debug, Clone)]
+enum Source {
+    Lines(Vec<String>),
+    Unreadable,
+}
+
+/// The source files a presentation may quote, including files whose read failed.
 #[derive(Debug, Clone, Default)]
-pub struct Sources(std::collections::BTreeMap<String, Vec<String>>);
+pub struct Sources(std::collections::BTreeMap<String, Source>);
 
 impl Sources {
     /// Every line of the files `report` names, so a place can be drawn whole.
     #[must_use]
     pub fn span(&self, path: &str, from: u32, to: u32) -> Vec<(u32, String)> {
-        let Some(lines) = self.0.get(path) else {
+        let Some(Source::Lines(lines)) = self.0.get(path) else {
             return Vec::new();
         };
-        let first = usize::try_from(from)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(1);
-        let last = usize::try_from(to).unwrap_or(usize::MAX).min(lines.len());
+        let first = usize_from_u32(from).saturating_sub(1);
+        let last = usize_from_u32(to).min(lines.len());
         (first..last)
             .filter_map(|at| {
-                lines.get(at).map(|line| {
-                    (
-                        u32::try_from(at.saturating_add(1)).unwrap_or(u32::MAX),
-                        line.clone(),
-                    )
-                })
+                lines
+                    .get(at)
+                    .map(|line| (u32_from_usize(at.saturating_add(1)), line.clone()))
             })
             .collect()
     }
 
-    /// The files `report` names, read from `root`. A file that cannot be read is one whose lines are not shown.
-    #[must_use]
-    pub fn read(root: &std::path::Path, report: &crate::report::Report) -> Self {
-        let wanted: std::collections::BTreeSet<&str> = report
+    /// The files `report` names, read from `root`.
+    ///
+    /// An unreadable file is retained as an explicit state rather than
+    /// disappearing from the inventory. A later excerpt then reports
+    /// [`Missing::Unreadable`] instead of treating an I/O failure as absence.
+    /// # Errors
+    /// Returns the checked projection error instead of reading a partial
+    /// source inventory.
+    pub fn read(
+        root: &std::path::Path,
+        report: &crate::report::Report,
+    ) -> Result<Self, crate::report::CountError> {
+        let conclusion = report.conclusion()?;
+        let wanted: std::collections::BTreeSet<&str> = conclusion
             .findings
             .iter()
             .filter_map(|finding| finding.path.as_deref())
-            .chain(report.mutants.iter().map(|mutant| mutant.path.as_str()))
+            .chain(
+                conclusion
+                    .mutants
+                    .iter()
+                    .map(crate::report::ProjectedMutant::path),
+            )
             .filter(|path| !path.is_empty())
             .collect();
-        Self(
+        Ok(Self(
             wanted
                 .into_iter()
-                .filter_map(|path| {
-                    std::fs::read_to_string(root.join(path))
-                        .ok()
-                        .map(|text| (path.to_owned(), lines_of(&text)))
+                .map(|path| {
+                    let source = match std::fs::read_to_string(root.join(path)) {
+                        Ok(text) => Source::Lines(lines_of(&text)),
+                        Err(_unreadable) => Source::Unreadable,
+                    };
+                    (path.to_owned(), source)
                 })
                 .collect(),
-        )
-    }
-
-    /// The files a test supplies, as path and contents.
-    #[must_use]
-    pub fn of<I, P, T>(files: I) -> Self
-    where
-        I: IntoIterator<Item = (P, T)>,
-        P: Into<String>,
-        T: AsRef<str>,
-    {
-        Self(
-            files
-                .into_iter()
-                .map(|(path, text)| (path.into(), lines_of(text.as_ref())))
-                .collect(),
-        )
+        ))
     }
 
     /// The line a diagnostic is about, or why it is not being shown.
@@ -1042,12 +1103,10 @@ impl Sources {
     /// the run never measured.
     #[must_use]
     pub fn at(&self, path: &str, line: u32, original: &str) -> Excerpt {
-        let Some(lines) = self.0.get(path) else {
+        let Some(Source::Lines(lines)) = self.0.get(path) else {
             return Excerpt::Instead(Missing::Unreadable);
         };
-        let at = usize::try_from(line)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(1);
+        let at = usize_from_u32(line).saturating_sub(1);
         let Some(text) = lines.get(at) else {
             return Excerpt::Instead(Missing::Moved);
         };
@@ -1066,13 +1125,22 @@ fn lines_of(text: &str) -> Vec<String> {
 }
 
 /// Who is on the other end of the output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reader {
     /// A person at a terminal.
     Person,
     /// Something that will parse it.
-    #[default]
     Program,
+}
+
+impl Reader {
+    const DEFAULT_AUDIENCE: Self = Self::Program;
+}
+
+impl Default for Reader {
+    fn default() -> Self {
+        Self::DEFAULT_AUDIENCE
+    }
 }
 
 /// What was said about colour, which is three answers rather than two flags.
@@ -1080,25 +1148,43 @@ pub enum Reader {
 /// `NO_COLOR` and `CLICOLOR_FORCE` are not independent — both set means forced
 /// — so they are one question with three answers rather than two booleans a
 /// caller can set to a combination nobody meant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wanted {
     /// `CLICOLOR_FORCE`: colour even where nothing else asks for it.
     Forced,
     /// `NO_COLOR`: none, whatever else is true.
     Refused,
     /// Nothing said, so whether the reader is a person decides.
-    #[default]
     Unsaid,
 }
 
+impl Wanted {
+    const DEFAULT_REQUEST: Self = Self::Unsaid;
+}
+
+impl Default for Wanted {
+    fn default() -> Self {
+        Self::DEFAULT_REQUEST
+    }
+}
+
 /// What the font is expected to have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Glyphs {
     /// More than ASCII.
     Drawn,
     /// ASCII, which every terminal has.
-    #[default]
     Plain,
+}
+
+impl Glyphs {
+    const DEFAULT_REPERTOIRE: Self = Self::Plain;
+}
+
+impl Default for Glyphs {
+    fn default() -> Self {
+        Self::DEFAULT_REPERTOIRE
+    }
 }
 
 /// What the composition root found out about where the output is going.

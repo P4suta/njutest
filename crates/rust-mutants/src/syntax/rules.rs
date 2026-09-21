@@ -126,7 +126,9 @@ pub fn respell_int(lit: &syn::LitInt, delta: i32) -> Option<String> {
         _ => ("", 10),
     };
     let body = digits.get(prefix.len()..)?;
-    let value = u128::from_str_radix(body, radix).ok()?;
+    let Ok(value) = u128::from_str_radix(body, radix) else {
+        return None;
+    };
     let moved = if delta < 0 {
         value.checked_sub(1)?
     } else {
@@ -302,7 +304,8 @@ pub(super) fn arguments(tokens: &proc_macro2::TokenStream) -> Vec<proc_macro2::T
             proc_macro2::TokenTree::Punct(punct)
                 if punct.as_char() == ',' && punct.spacing() == proc_macro2::Spacing::Alone =>
             {
-                split.push(std::mem::take(&mut current).into_iter().collect());
+                split.push(current.into_iter().collect());
+                current = Vec::new();
             }
             _ => current.push(tree),
         }

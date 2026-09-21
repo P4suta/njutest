@@ -5,7 +5,10 @@
 
 #![expect(
     clippy::arithmetic_side_effects,
-    reason = "a law about counts is written the way a reader adds them up; the values are a report's own and cannot approach the width they are held in"
+    clippy::expect_used,
+    clippy::panic,
+    clippy::disallowed_methods,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 #![expect(
     clippy::indexing_slicing,
@@ -17,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use njutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed};
 use njutest_cli::config::Contract;
 use njutest_cli::evidence::digest::{Inputs, Mode, identity};
-use njutest_cli::report::Decision;
 use njutest_cli::report::across::across;
+use njutest_cli::report::{Decision, StepBoundary};
 use proptest::prelude::*;
 use rust_mutants::session::{Fallback, Route};
 
@@ -35,8 +38,9 @@ fn disposition() -> impl Strategy<Value = Disposition> {
         Just(Disposition::Killed {
             by: "pkg/lib/pkg".to_owned()
         }),
-        Just(Disposition::Runaway {
-            on: "pkg/lib/pkg".to_owned()
+        Just(Disposition::StepLimitReached {
+            on: "pkg/lib/pkg".to_owned(),
+            boundary: StepBoundary::new(10, 11).expect("a first count beyond the allowance"),
         }),
         Just(Disposition::Waited {
             on: "pkg/lib/pkg".to_owned()
@@ -70,10 +74,11 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
     Mutation {
         judged: dispositions
             .into_iter()
-            .enumerate()
-            .map(|(at, disposition)| Judged {
-                id: format!("{at:064x}"),
-                display_id: format!("{at:020x}"),
+            .zip(0u32..)
+            .map(|(disposition, catalog_index)| Judged {
+                catalog_index,
+                id: format!("{catalog_index:064x}"),
+                display_id: format!("{catalog_index:020x}"),
                 path: "src/lib.rs".to_owned(),
                 rule: "add-to-sub@1".to_owned(),
                 item: "demo".to_owned(),
@@ -89,13 +94,34 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
     }
 }
 
+fn name(build: &str) -> njutest_cli::report::BuildName {
+    njutest_cli::report::BuildName::try_from(build).expect("a law names its builds canonically")
+}
+
+/// What a run records about one mutation, from what each of these builds decided.
+fn resolved(
+    by_build: &BTreeMap<String, Decision>,
+) -> Option<njutest_cli::report::across::Resolved> {
+    let named: Vec<(njutest_cli::report::BuildName, Decision)> = by_build
+        .iter()
+        .map(|(build, decision)| (name(build), *decision))
+        .collect();
+    let (first, rest) = named.split_first()?;
+    let rest: Vec<(&njutest_cli::report::BuildName, Decision)> = rest
+        .iter()
+        .map(|(build, decision)| (build, *decision))
+        .collect();
+    Some(across((&first.0, first.1), &rest))
+}
+
 proptest! {
     /// Every mutation is in exactly one of the four columns a reader adds up.
     #[test]
     fn what_a_run_catalogued_is_what_it_refused_ran_could_not_reach_or_proved_identical(
         dispositions in proptest::collection::vec(disposition(), 0..24)
     ) {
-        let counts = judged_from(dispositions).accounting(&BTreeSet::new());
+        let counts = judged_from(dispositions).accounting(&BTreeSet::new())
+            .expect("a law's catalog fits the report's counters");
         prop_assert_eq!(
             counts.cataloged,
             counts.rejected + counts.executed + counts.unreached + counts.equivalent,
@@ -104,7 +130,11 @@ proptest! {
             counts
         );
         prop_assert!(
-            counts.killed + counts.survived + counts.runaway + counts.waited <= counts.executed,
+            counts.killed
+                + counts.survived
+                + counts.step_limit_reached
+                + counts.waited
+                <= counts.executed,
             "and what ran is at least what the outcomes of running account for: {:?}",
             counts
         );
@@ -119,11 +149,12 @@ proptest! {
     fn every_mutation_is_in_exactly_one_of_the_columns_that_say_who_decided_it(
         dispositions in proptest::collection::vec(disposition(), 0..24)
     ) {
-        let counts = judged_from(dispositions).accounting(&BTreeSet::new());
+        let counts = judged_from(dispositions).accounting(&BTreeSet::new())
+            .expect("a law's catalog fits the report's counters");
         let who = counts.observers;
         prop_assert_eq!(
             counts.cataloged,
-            who.total(),
+            who.total().expect("a law's observers fit the report's counter"),
             "a verdict is what stands behind each mutation, so the ways one can be \
              decided have to cover the catalog exactly once. A mutation in none of \
              these columns is one the report counted and never answered for, and a \
@@ -138,7 +169,8 @@ proptest! {
     fn what_the_compiler_refused_is_what_the_type_system_noticed(
         dispositions in proptest::collection::vec(disposition(), 0..24)
     ) {
-        let counts = judged_from(dispositions).accounting(&BTreeSet::new());
+        let counts = judged_from(dispositions).accounting(&BTreeSet::new())
+            .expect("a law's catalog fits the report's counters");
         prop_assert_eq!(
             counts.observers.types,
             counts.rejected,
@@ -173,8 +205,14 @@ proptest! {
                 .map(|(at, decision)| (format!("later-{at}"), *decision)),
         );
 
-        let before = across(&one).decision.standing();
-        let after = across(&both).decision.standing();
+        let before = resolved(&one)
+            .expect("a run starts from at least one build")
+            .decision()
+            .standing();
+        let after = resolved(&both)
+            .expect("adding a build leaves a run with at least one")
+            .decision()
+            .standing();
         prop_assert!(
             after <= before,
             "a run that measured a release build as well as a debug one cannot come \
@@ -190,7 +228,7 @@ proptest! {
     #[test]
     fn a_single_build_is_answered_for_by_itself(one in decision_of()) {
         let only = BTreeMap::from([("default".to_owned(), one)]);
-        prop_assert_eq!(across(&only).decision, one);
+        prop_assert_eq!(resolved(&only).expect("a single build is a run").decision(), one);
     }
 
     /// Every build with a hole here is named, because a reader has to know which.
@@ -201,12 +239,15 @@ proptest! {
             .enumerate()
             .map(|(at, decision)| (format!("build-{at}"), *decision))
             .collect();
-        let named = across(&by_build).blind_in;
+        let named = match resolved(&by_build) {
+            Some(resolved) => resolved.blind_in().to_vec(),
+            None => Vec::new(),
+        };
         let expected: Vec<njutest_cli::report::BlindIn> = by_build
             .iter()
             .filter_map(|(build, decision)| {
                 Some(njutest_cli::report::BlindIn {
-                    build: build.clone(),
+                    build: name(build),
                     decision: decision.blind()?,
                 })
             })
@@ -228,7 +269,7 @@ proptest! {
     ) {
         let mutation = judged_from(dispositions);
         let every: BTreeSet<String> = mutation.judged.iter().map(|one| one.id.clone()).collect();
-        let counts = mutation.accounting(&every);
+        let counts = mutation.accounting(&every).expect("a law's catalog fits the report's counters");
         prop_assert_eq!(
             counts.accepted,
             counts.survived + counts.unreached + counts.equivalent,
@@ -237,7 +278,9 @@ proptest! {
              would let a reviewer sign off on an outcome nobody established: {:?}",
             counts
         );
-        let none = judged_from(Vec::new()).accounting(&every);
+        let none = judged_from(Vec::new())
+            .accounting(&every)
+            .expect("a law's catalog fits the report's counters");
         prop_assert_eq!(none.accepted, 0, "and a run that judged nothing accepts nothing");
     }
 }
@@ -374,34 +417,37 @@ fn finding() -> impl Strategy<Value = njutest_cli::report::Finding> {
 
 /// A report of a run that found these things.
 fn reported(findings: Vec<njutest_cli::report::Finding>) -> njutest_cli::report::Report {
-    let mut report = njutest_cli::report::Report::new(
-        "20260909T000000Z-000001",
+    let mut source = njutest_cli::report::BuildReport::new(
+        "the-source",
         njutest_cli::report::RunKind::Full,
         Contract::StandardV1,
     );
-    "workspace".clone_into(&mut report.repository.root_name);
-    report.verdict = njutest_cli::report::Verdict::Insufficient;
-    report.mutants = findings
-        .iter()
-        .filter_map(|one| Some((one.path.clone()?, one.position?)))
-        .enumerate()
-        .map(|(at, (path, position))| njutest_cli::report::MutantRecord {
-            id: format!("{at:064x}"),
-            display_id: format!("{at:020x}"),
-            path,
-            position,
-            rule: "add-to-sub@1".to_owned(),
-            item: "demo".to_owned(),
-            original: ">".to_owned(),
-            replacement: String::new(),
-            outcome: njutest_cli::report::Decided::Survived,
-            reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
-            blind_in: Vec::new(),
-            routing: None,
-        })
-        .collect();
-    report.findings = findings;
-    report
+    "workspace".clone_into(&mut source.repository.root_name);
+    source.scope.configured_builds = vec![njutest_cli::config::DEFAULT_CONFIGURATION.to_owned()];
+    "2026-09-09T00:00:00Z".clone_into(&mut source.timing.started);
+    "2026-09-09T00:00:00Z".clone_into(&mut source.timing.finished);
+    source
+        .limitations
+        .push(njutest_cli::report::Limitation::new(
+            "git-metadata-unavailable",
+            "this synthetic fixture has no repository process",
+        ));
+    source.findings = findings;
+    let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
+        njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
+        rust_mutants::cargo::BuildConfig::default().selection(),
+        source,
+    )])
+    .expect("one checked build measurement");
+    let run = rust_mutants::id::RunId::try_from("the-report").expect("a canonical run id");
+    let latticed = njutest_cli::report::across::configured(&run, &measurements)
+        .expect("one checked complete lattice");
+    let njutest_cli::report::LatticedDocument::Complete(latticed) = latticed else {
+        panic!("the whole-catalog fixture cannot be a shard");
+    };
+    latticed
+        .complete_without_models()
+        .expect("standard-v1 needs no model completion")
 }
 
 proptest! {
@@ -421,7 +467,8 @@ proptest! {
              and no other tool can be handed"
         );
 
-        let log = njutest_cli::report::sarif::document(&report);
+        let log = njutest_cli::report::sarif::document(&report)
+            .expect("the checked report has a representable SARIF log");
         let run = &log["runs"][0];
         let rules: Vec<String> = run["tool"]["driver"]["rules"]
             .as_array()
@@ -447,13 +494,15 @@ proptest! {
             }
         }
 
-        let page = njutest_cli::report::html::document(&report);
+        let page = njutest_cli::report::html::document(&report)
+            .expect("the checked report has a representable page");
         prop_assert!(
             !page.contains(MARKUP),
             "nothing a test printed becomes markup in a page somebody opens, and what a \
              test prints is whatever the code under test printed"
         );
-        let document = njutest_cli::report::junit::document(&report);
+        let document = njutest_cli::report::junit::document(&report)
+            .expect("the checked report has a representable JUnit document");
         prop_assert!(
             !document.contains(MARKUP),
             "nor a tag in the document a reporter parses"
@@ -462,7 +511,8 @@ proptest! {
             document.starts_with("<?xml") && document.ends_with("</testsuites>\n"),
             "and the document a test reporter reads is a whole one: {document}"
         );
-        let stream = njutest_cli::report::lines::stream(&report);
+        let stream = njutest_cli::report::lines::stream(&report)
+            .expect("the checked report has a representable record stream");
         prop_assert!(
             stream.lines().all(|line| !line.contains('\n')),
             "and every record a person greps for is one line"
@@ -481,7 +531,8 @@ proptest! {
         let answers = njutest_cli::assure::schedule::measure(&items, workers, |at, item| {
             prop_assert_eq!(at, *item, "a worker is told which item it has");
             Ok(at.saturating_mul(2))
-        });
+        })
+        .expect("a law's measurements do not panic or overflow the cursor");
         let answers: Vec<usize> = answers
             .into_iter()
             .collect::<Result<Vec<usize>, TestCaseError>>()?;
@@ -501,7 +552,8 @@ proptest! {
         available in prop_oneof![Just(0_usize), 1_usize..64],
         exclusive in proptest::bool::ANY,
     ) {
-        let workers = njutest_cli::assure::schedule::workers(jobs, available, exclusive);
+        let workers = njutest_cli::assure::schedule::workers(jobs, available, exclusive)
+            .expect("a law's worker count fits this machine");
         prop_assert!(
             workers >= 1,
             "a run measures something: nought workers is a run that never finishes"

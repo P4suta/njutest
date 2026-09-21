@@ -56,13 +56,28 @@ pub struct Kept {
     pub path: String,
 }
 
-/// The ledger at `root`, or an empty one when there is none or it cannot be read. A ledger this release cannot read is replaced rather than obeyed: it authorizes nothing on its own.
-#[must_use]
-pub fn read(root: &Path) -> Ledger {
-    std::fs::read_to_string(path(root))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+/// The ledger at `root`, or an empty one when no ledger exists yet.
+///
+/// # Errors
+/// A present ledger is unreadable, malformed, or belongs to another schema.
+pub fn read(root: &Path) -> std::io::Result<Ledger> {
+    let path = path(root);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Ledger::default());
+        }
+        Err(error) => return Err(error),
+    };
+    let ledger: Ledger = crate::strictjson::decode_str(&text)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if ledger.schema != SCHEMA {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{} is not a {SCHEMA} ledger", path.display()),
+        ));
+    }
+    Ok(ledger)
 }
 
 /// Records that `run_id` preserved `paths`, and returns where the ledger went.
@@ -76,7 +91,7 @@ pub fn record(
     at: Timestamp,
     paths: &[PathBuf],
 ) -> std::io::Result<PathBuf> {
-    let mut ledger = read(root);
+    let mut ledger = read(root)?;
     for path in paths {
         let entry = Kept {
             run_id: run_id.to_owned(),
@@ -101,7 +116,13 @@ pub fn forget_gone(ledger: &Ledger) -> Ledger {
         kept: ledger
             .kept
             .iter()
-            .filter(|kept| Path::new(&kept.path).is_dir())
+            .filter(
+                |kept| match std::fs::symlink_metadata(Path::new(&kept.path)) {
+                    Ok(metadata) => metadata.file_type().is_dir(),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                    Err(_unreadable) => true,
+                },
+            )
             .cloned()
             .collect(),
     }

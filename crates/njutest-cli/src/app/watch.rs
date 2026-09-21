@@ -32,10 +32,24 @@ pub fn look(root: &Path, excluded: &Excluded) -> Result<Seen, ScanError> {
         excluded,
     };
     walk(root, &within, |relative, entry| {
-        if let Entry::File(path) = entry
-            && let Ok(held) = std::fs::metadata(&path)
-        {
-            let _replaced = seen.insert(relative.to_owned(), (held.modified().ok(), held.len()));
+        if let Entry::File(path) = entry {
+            let held = std::fs::metadata(&path).map_err(|source| ScanError::Unreadable {
+                path: path.clone(),
+                source,
+            })?;
+            let modified = held.modified().map_err(|source| ScanError::Unreadable {
+                path: path.clone(),
+                source,
+            })?;
+            if seen
+                .insert(relative.to_owned(), (Some(modified), held.len()))
+                .is_some()
+            {
+                return Err(ScanError::Malformed {
+                    path: relative.to_owned(),
+                    message: "the tree walker returned the same path twice".to_owned(),
+                });
+            }
         }
         Ok(())
     })?;
@@ -43,39 +57,42 @@ pub fn look(root: &Path, excluded: &Excluded) -> Result<Seen, ScanError> {
 }
 
 /// Runs `round` once, then again every time `look` reports the tree has changed, until `cancel`.
-pub fn until<L, R>(cancel: &Cancel, poll: Duration, mut look: L, mut round: R) -> u8
+///
+/// # Errors
+/// Returns the first observation or round failure.
+pub fn until<L, R, E>(cancel: &Cancel, poll: Duration, mut look: L, mut round: R) -> Result<u8, E>
 where
-    L: FnMut() -> Option<Seen>,
-    R: FnMut() -> u8,
+    L: FnMut() -> Result<Option<Seen>, E>,
+    R: FnMut() -> Result<u8, E>,
 {
     until_with_wait(cancel, &mut look, &mut round, (poll, std::thread::sleep))
 }
 
-pub(crate) fn until_with_wait<L, R, W>(
+pub(crate) fn until_with_wait<L, R, W, E>(
     cancel: &Cancel,
     mut look: L,
     mut round: R,
     (poll, mut wait): (Duration, W),
-) -> u8
+) -> Result<u8, E>
 where
-    L: FnMut() -> Option<Seen>,
-    R: FnMut() -> u8,
+    L: FnMut() -> Result<Option<Seen>, E>,
+    R: FnMut() -> Result<u8, E>,
     W: FnMut(Duration),
 {
     let mut last: Option<Seen> = None;
     let mut code = 0;
     while !cancel.is_cancelled() {
-        let seen = look();
+        let seen = look()?;
         if seen.is_none() || seen == last {
             if !cancel.is_cancelled() {
                 wait(poll);
             }
             continue;
         }
-        code = round();
+        code = round()?;
         last = seen;
     }
-    code
+    Ok(code)
 }
 
 /// What the round that just finished concluded, when there is a stored report to read back.
@@ -84,53 +101,107 @@ where
 /// a round that found nothing. The difference matters on the first round of
 /// all, where an empty stand-in would report every gap in the project as one
 /// the reader had just opened (ADR 0023).
-fn concluded(root: &Path) -> Option<crate::presentation::Told> {
-    let run = crate::app::runs::resolve(root, None).ok()?;
-    let report = crate::app::runs::report(root, &run).ok()?;
-    let sources = crate::presentation::Sources::read(root, &report);
-    Some(crate::presentation::Told::of(&report, &sources, ""))
+fn concluded(root: &Path) -> Result<crate::presentation::Told, ConclusionError> {
+    let run = crate::app::runs::resolve(root, None)?;
+    let report = crate::app::runs::report(&run)?;
+    let sources = crate::presentation::Sources::read(root, &report)?;
+    Ok(crate::presentation::Told::of(&report, &sources, "")?)
+}
+
+/// Why a completed watch round could not be compared with its predecessor.
+#[derive(Debug, thiserror::Error)]
+enum ConclusionError {
+    /// The completed run or its durable report could not be read.
+    #[error(transparent)]
+    Run(#[from] crate::app::runs::RunError),
+    /// The report's exact projection exceeded a durable counter.
+    #[error(transparent)]
+    Count(#[from] crate::report::CountError),
+}
+
+/// A watch failure that must either stop the command or reach its output
+/// boundary unchanged.
+#[derive(Debug, thiserror::Error)]
+enum WatchCommandError {
+    /// The watched tree could not be observed completely.
+    #[error(transparent)]
+    Scan(#[from] ScanError),
+    /// A diagnostic or command result could not be written.
+    #[error(transparent)]
+    Output(#[from] std::io::Error),
 }
 
 /// Verifies whenever the tree changes, until the run is interrupted.
+///
+/// # Errors
+/// Returns the output stream's write failure.
 pub fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> std::io::Result<u8> {
     let root = environment.rooted(arguments.verify.directory.as_deref());
     let config = match Config::load(&root) {
         Ok(config) => config,
         Err(error) => {
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
         }
     };
-    let excluded = Excluded::beside(&config.reports.directory);
-    let poll = arguments.poll_ms.map_or(POLL, Duration::from_millis);
+    let excluded = match Excluded::beside(config.reports.directory.as_path()) {
+        Ok(excluded) => excluded,
+        Err(error) => {
+            super::complain(stderr, &error, error.code())?;
+            return Ok(EXIT_ERROR);
+        }
+    };
+    let poll = match arguments.poll_ms {
+        Some(milliseconds) => Duration::from_millis(milliseconds),
+        None => POLL,
+    };
     let cancel = environment.cancel.clone();
     super::say(
         stdout,
         &format!("watching\t{}\tevery {}ms", root.display(), poll.as_millis()),
-    );
+    )?;
     let mut before: Option<crate::presentation::Told> = None;
-    until(
+    let watched = until(
         &cancel,
         poll,
-        || look(&root, &excluded).ok(),
         || {
-            let code = super::verify::run(&arguments.verify, environment, stdout, stderr);
-            if environment.terminal.drawing
-                && let Some(now) = concluded(&root)
-            {
-                if let Some(last) = before.as_ref() {
-                    let said = crate::presentation::moved::moved(last, &now, environment.terminal);
-                    let _written = stdout.write_all(said.as_bytes());
-                }
-                before = Some(now);
-            }
-            super::say(stdout, "waiting\tfor the next change");
-            code
+            look(&root, &excluded)
+                .map(Some)
+                .map_err(WatchCommandError::from)
         },
-    )
+        || {
+            let code = super::verify::run(&arguments.verify, environment, stdout, stderr)?;
+            if environment.terminal.drawing {
+                match concluded(&root) {
+                    Ok(now) => {
+                        if let Some(last) = before.as_ref() {
+                            let said =
+                                crate::presentation::moved::moved(last, &now, environment.terminal);
+                            stdout.write_all(said.as_bytes())?;
+                        }
+                        before = Some(now);
+                    }
+                    Err(error) => {
+                        super::complain(stderr, &error, crate::error::REPORT_UNSOUND)?;
+                        return Ok(EXIT_ERROR);
+                    }
+                }
+            }
+            super::say(stdout, "waiting\tfor the next change")?;
+            Ok(code)
+        },
+    );
+    match watched {
+        Ok(code) => Ok(code),
+        Err(WatchCommandError::Scan(error)) => {
+            super::complain(stderr, &error, error.code())?;
+            Ok(EXIT_ERROR)
+        }
+        Err(WatchCommandError::Output(error)) => Err(error),
+    }
 }

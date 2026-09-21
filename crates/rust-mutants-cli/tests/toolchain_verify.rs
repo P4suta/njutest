@@ -10,8 +10,10 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/missing.rs");
+
 fn run(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -39,7 +41,7 @@ fn a_baseline_that_fails_its_own_test_refuses_the_session_with_rm5002() {
         Some(2),
         "a run that could not establish anything is not a run that found nothing"
     );
-    let said = String::from_utf8_lossy(&output.stderr);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(said.contains("RM5002"), "{said}");
     assert!(
         said.contains("fixture-verify-fails/lib/fixture_verify_fails"),
@@ -59,9 +61,7 @@ fn a_baseline_that_fails_its_own_test_refuses_the_session_with_rm5002() {
         "the refusal says what to do about it: {said}"
     );
     assert!(
-        !rust_mutants_cli::app::stored::Store::read(fixture.root())
-            .root()
-            .exists(),
+        test_missing(&rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),),
         "a run that established nothing writes no report"
     );
 }
@@ -74,9 +74,9 @@ fn without_verification_the_same_test_kills_every_mutant_it_touches() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
         text.contains("killed=4 survived=0"),
         "a target that was already failing reports every mutation as killed, which is what \
@@ -88,7 +88,7 @@ fn without_verification_the_same_test_kills_every_mutant_it_touches() {
 fn a_refusal_names_every_target_that_failed_rather_than_the_first() {
     let fixture = Fixture::copy("fixture-verify-fails");
     let output = run(&fixture, &[]);
-    let said = String::from_utf8_lossy(&output.stderr);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         said.contains("fixture-verify-fails/lib/fixture_verify_fails"),
         "{said}"

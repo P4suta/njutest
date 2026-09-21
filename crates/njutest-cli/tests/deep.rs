@@ -184,7 +184,7 @@ fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
     let trace = recording();
     let cargo = cargo();
 
-    let _done = interpret(
+    let done = interpret(
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
@@ -196,14 +196,17 @@ fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
             locked: true,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture interpreter output is valid UTF-8");
+    assert!(done.executed, "the interpreter command completed");
 
     let exec = trace
         .events()
         .iter()
-        .find_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Exec { exec } => Some(exec.clone()),
-            _ => None,
+        .find_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .exec()
+                .cloned()
         })
         .expect("the command it started");
     assert_eq!(
@@ -238,7 +241,7 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
     let cargo = cargo();
     let packages = ["core".to_owned(), "app".to_owned()];
 
-    let _done = interpret(
+    let done = interpret(
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
@@ -250,14 +253,17 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
             locked: false,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture interpreter output is valid UTF-8");
+    assert!(done.executed, "the interpreter command completed");
 
     let argv: Vec<String> = trace
         .events()
         .iter()
-        .find_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Exec { exec } => Some(exec.argv.clone()),
-            _ => None,
+        .find_map(|event| {
+            njutest_cli::testkit::payload::of(&event.payload)
+                .exec()
+                .map(|exec| exec.argv.clone())
         })
         .expect("the command it started");
     assert_eq!(
@@ -299,7 +305,7 @@ fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
         "-Zmiri-symbolic-alignment-check".to_owned(),
     ];
 
-    let _done = interpret(
+    let done = interpret(
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
@@ -311,7 +317,9 @@ fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
             locked: true,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture interpreter output is valid UTF-8");
+    assert!(done.executed, "the interpreter command completed");
 
     let said = std::fs::read_to_string(&seen).expect("what the cargo it started saw");
     assert!(
@@ -345,7 +353,7 @@ fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given(
         std::ffi::OsString::from(seen.display().to_string()),
     ));
 
-    let _done = interpret(
+    let done = interpret(
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
@@ -357,7 +365,9 @@ fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given(
             locked: true,
         },
         Watch::new(&cancel, &trace),
-    );
+    )
+    .expect("the fixture interpreter output is valid UTF-8");
+    assert!(done.executed, "the interpreter command completed");
 
     let said = std::fs::read_to_string(&seen).expect("what the cargo it started saw");
     assert!(

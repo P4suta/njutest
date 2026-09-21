@@ -1,0 +1,1 @@
+{"targets":{"fixture-unreached/lib/fixture_unreached":{"reached":{"tests":{"tests::doubling_two_is_four":[0,1,2,3]}},"bodies":{},"infected":{},"ran":["tests::doubling_two_is_four"]}},"limitations":["touch-not-recorded:fixture-unreached/doc/fixture_unreached"],"narrowing":{"compared":[],"bodies":{}}}

@@ -4,12 +4,12 @@
 # The two halves of this fixture pull the bound in opposite directions, so each
 # is given a prop of its own rather than made to share one.
 #
-# `count_to` has mutations that never return. The count stops them: a guard
-# taken a million times fires in about thirty milliseconds, sixty times inside
-# the bound below, so no amount of load can let the clock answer first. Fifty
-# million -- the engine's default -- spends in about 1.5 seconds, which is
-# twenty times inside the thirty-second floor a real run derives and was only
-# ever tight against the two seconds this file sets.
+# `count_to` has mutations that never return. The count stops them: the
+# durable step protocol pays one locked state-file round trip per take, so a
+# guard taken a hundred times fires in well under half a second, several times
+# inside the bound below, and no amount of load can let the clock answer
+# first. The engine's default of fifty million is sized for the in-memory
+# counter this protocol replaced and is unreachable at durable cost.
 #
 # `clamp_positive` is merely slow, under FIXTURE_HANG_PAUSE_MS, and the clock is
 # what has to answer for it. That wants a bound a four-second sleep can beat,
@@ -20,4 +20,4 @@ version = 1
 
 [mutation]
 timeout = "2s"
-steps = 1_000_000
+steps = 100

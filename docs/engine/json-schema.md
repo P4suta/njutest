@@ -7,28 +7,40 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented and validated. The catalog document is
 `schema/rust-mutants-catalog-v1.json`, the run report
-`schema/rust-mutants-run-report-v1.json`.**
+`schema/rust-mutants-run-report-v2.json`.**
 Both carry `document_type` and `schema_version`, close every object with
 `additionalProperties: false`, and are validated by tests against the
 schemas under `schema/`, so a field added without a version bump fails a
 test rather than a consumer.
 
-## Writers are strict, readers are lenient
+## Writers and readers are exact within one version
 
 A writer emits exactly what the schema describes, and a test proves it. A
-reader ignores a field it does not know, so a document one release wrote is
-read by the one before it.
+current reader rejects an unknown, missing, duplicate, aliased, or defaulted
+field at every owned object boundary. Nullable fields must be explicitly
+present as `null`; absence is not another spelling of null. This keeps one
+schema identity from meaning two different object shapes depending on which
+reader saw it.
 
-That makes the version rule a short one. **Adding an optional field, and the
-schema entry for it in the same change, keeps the version.** Making a field
-required, renaming one, or changing what an existing one means is a new
-version and a new schema file. A consumer that must know whether a field was
-present reads it as absent rather than as a default; a consumer that reads a
-document as a whole never fails on a field it has no use for.
+The version rule is therefore deliberately short: **any field addition,
+removal, rename, requiredness change, or semantic change creates a new schema
+identity.** Compatibility belongs in a separate historical reader and schema,
+not in defaults or catch-all fields on the current type. The engine's
+configuration and outcome store follow the same fail-closed rule because a
+discarded key there would silently change what was asked or what was proved.
 
-The engine's own configuration file and its outcome store are the exception:
-both refuse a key they do not know, because there a typo is a silent change
-of what was asked rather than a field from the future.
+## Historical schemas
+
+Current writers emit only run report v2, run stream v2, and trace v2. The
+immutable v1 schemas remain shipped so a stored artifact can still be
+identified and validated as the artifact an earlier release wrote:
+`schema/rust-mutants-run-report-v1.json`,
+`schema/rust-mutants-run-stream-v1.json`, and
+`schema/rust-mutants-trace-v1.json`. They are historical contracts, not an
+instruction to reinterpret v1 as v2. Current independent audits require the
+v2 schema names and reject v1 explicitly; the compatibility fixture validates
+each v1 specimen against v1 and proves that the corresponding v2 schema does
+not accept it.
 
 ## `rust-mutants/catalog` v1
 
@@ -65,24 +77,24 @@ lost nothing. `path`, `rule`, `rule_version`, `start_byte`, `end_byte`,
 identity takes, so a reader can re-mint `id` from the row and find out
 whether it is the mutant it says it is.
 
-## `rust-mutants/run-report` v1
+## `rust-mutants/run-report` v2
 
 Written by `rust-mutants run` to
-`<reports.directory>/<run id>/run-report-v1.json`, with
+`<reports.directory>/<run id>/run-report-v2.json`, with
 `<reports.directory>/latest.json` naming the newest.
 
 ```jsonc
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 1,
+  "schema_version": 2,
   "tool_version": "0.1.0",
   "run": { "id": "20260905T132650666Z", "started_at": "…", "finished_at": "…",
            "duration_ms": 812, "interrupted": false, "exit_code": 1 },
   "workspace": { "…": "as in the catalog document, plus catalog_digest" },
   "selection": { "tier": "all", "operators": [], "include": [], "exclude": [], "packages": [],
-                 "build": ["--features", "extra"] },
+                 "build": ["--features", "extra"], "mutant_steps": 50000000 },
   "accounting": { "cataloged": 6, "refused": 0, "skipped": 5, "executed": 6,
-                  "killed": 5, "survived": 1, "runaway": 0, "waited": 0,
+                  "killed": 5, "survived": 1, "step_limit_reached": 0, "waited": 0,
                   "inconclusive": 0,
                   "errored": 0, "not_run": 0, "unreached": 0, "expected": 0 },
   "score": { "detected": 5, "decided": 6, "value": 0.8333333333333334 },
@@ -97,17 +109,19 @@ Written by `rust-mutants run` to
 }
 ```
 
-The outcome columns add up: `killed + survived + runaway + waited +
+The outcome columns add up: `killed + survived + step_limit_reached + waited +
 inconclusive + errored == executed`, and `executed + not_run == cataloged`. `unreached`
 counts the `not_run` mutants a coverage measurement proved no target reaches,
 so it is never larger than `not_run` and is zero in a run that measured none. `score` is
-`detected / decided` where `detected = killed + runaway` and `decided =
-detected + survived`; it is **absent** when the run decided nothing, which is
-not the same as a score of zero. `runaway` is a mutation whose step count
-passed a guard, which is a detection because a count is a property of the work
-rather than of the machine. `waited` is a bound that expired with nothing else
-running, which is a hole rather than a detection; a bound that expired once and
-did not expire again is `inconclusive`.
+`detected / decided` where `detected = killed` and `decided = killed +
+survived`; it is **absent** when the run decided nothing, which is not the same
+as a score of zero. `step_limit_reached` carries `step_notice`, whose nonce,
+catalog, mutant, allowance and observed `N + 1` count were verified against
+that execution. It is an execution bound, not a verdict, so it contributes to
+neither half of the score and is not reusable from the outcome cache. Every
+other outcome prohibits `step_notice` in the schema. `waited` is a bound that
+expired with nothing else running, which is also unresolved; a bound that
+expired once and did not expire again is `inconclusive`.
 
 Here `cataloged` is the number of candidate rows in `mutants`, not a blanket
 claim that the compiler accepted every row. `refused` candidates live in
@@ -120,7 +134,7 @@ guard present in that run's build.
 `1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it
 was terminated.
 
-A `finding` is one of `surviving-mutant`, `inconclusive-mutant`,
+A `finding` is one of `surviving-mutant`, `step-limit-reached-mutant`, `inconclusive-mutant`,
 `waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`,
 `discharged-mutant`, `stale-expectation`, `unmatched-expectation`, or
 `unmatched-skip`. A `waited-mutant` is one this machine stopped waiting for
@@ -147,8 +161,8 @@ changing catalog identity.
 
 ## The run as it happens
 
-`run --json` writes `rust-mutants-run-stream-v1`
-(`schema/rust-mutants-run-stream-v1.json`): one JSON object per line, each
+`run --json` writes `rust-mutants-run-stream-v2`
+(`schema/rust-mutants-run-stream-v2.json`): one JSON object per line, each
 flushed as it is written, for a program rather than a person. The kinds are
 `run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`, and
 `error`, each carrying a `type`.
@@ -239,6 +253,6 @@ audit calls unaudited, which is the honest answer.
 ## Recordings
 
 `rust-mutants trace` writes JSON Lines rather than a document; its shape is
-`schema/rust-mutants-trace-v1.json` and its rules are in
+`schema/rust-mutants-trace-v2.json` and its rules are in
 [trace](trace.md). A recording is never evidence, so nothing here reads one
 to decide anything.

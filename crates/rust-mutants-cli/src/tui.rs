@@ -10,24 +10,32 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use rust_mutants::outcome::Outcome;
 use rust_mutants::telling::Hue;
 
 use crate::report::run::{RunDocument, RunMutantDocument};
 use crate::report::sources::Held;
 
 /// Every outcome a browser can narrow to, in the order the key cycles them.
-pub const OUTCOMES: [&str; 7] = [
+pub const OUTCOMES: [&str; 8] = [
     "all",
-    "killed",
-    "survived",
-    "timed_out",
-    "inconclusive",
-    "errored",
-    "not_run",
+    Outcome::Killed.as_str(),
+    Outcome::Survived.as_str(),
+    Outcome::StepLimitReached.as_str(),
+    Outcome::Waited.as_str(),
+    Outcome::Inconclusive.as_str(),
+    Outcome::Errored.as_str(),
+    Outcome::NotRun.as_str(),
 ];
 
 /// The outcomes a digit goes straight to, in the order the digits name them.
-pub const SHORTCUTS: [&str; 5] = ["all", "survived", "killed", "not_run", "errored"];
+pub const SHORTCUTS: [&str; 5] = [
+    "all",
+    Outcome::Survived.as_str(),
+    Outcome::Killed.as_str(),
+    Outcome::NotRun.as_str(),
+    Outcome::Errored.as_str(),
+];
 
 /// How many rows a page moves by.
 const PAGE: usize = 10;
@@ -70,10 +78,9 @@ pub enum Key {
 }
 
 /// Which pane the reader is looking at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
     /// The mutant the reader is on.
-    #[default]
     Mutants,
     /// The file it is in, around the mutation.
     Source,
@@ -81,6 +88,17 @@ pub enum Pane {
     Findings,
     /// The keys.
     Help,
+}
+
+impl Default for Pane {
+    fn default() -> Self {
+        Self::INITIAL
+    }
+}
+
+impl Pane {
+    /// The pane a new browser begins on.
+    const INITIAL: Self = Self::Mutants;
 }
 
 /// What the reader has narrowed the rows to.
@@ -99,23 +117,23 @@ impl Filter {
     #[must_use]
     pub fn admits(&self, mutant: &RunMutantDocument) -> bool {
         let wanted = OUTCOMES.get(self.outcome).copied().unwrap_or("all");
-        if wanted != "all" && mutant.outcome != wanted {
+        if wanted != "all" && mutant.outcome.as_str() != wanted {
             return false;
         }
         if self.query.is_empty() {
             return true;
         }
         let wanted = self.query.to_lowercase();
-        [
+        let named = [
             &mutant.path,
             &mutant.rule,
             &mutant.family,
             &mutant.display_id,
             &mutant.id,
-            &mutant.outcome,
         ]
         .into_iter()
-        .any(|field| field.to_lowercase().contains(&wanted))
+        .any(|field| field.to_lowercase().contains(&wanted));
+        named || mutant.outcome.as_str().contains(&wanted)
     }
 }
 
@@ -172,12 +190,14 @@ impl Browser {
 
     /// What the reader is searching for.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub fn query(&self) -> &str {
         &self.filter.query
     }
 
     /// Which pane is on the right.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub const fn pane(&self) -> Pane {
         self.pane
     }
@@ -279,7 +299,10 @@ pub fn pressed(browser: &mut Browser, key: Key) -> Flow {
         Key::Char(digit) if digit.is_ascii_digit() => {
             if let Some(wanted) = digit
                 .to_digit(10)
-                .and_then(|one| usize::try_from(one).ok())
+                .and_then(|one| match usize::try_from(one) {
+                    Ok(index) => Some(index),
+                    Err(_) => None,
+                })
                 .and_then(|one| one.checked_sub(1))
                 .and_then(|one| SHORTCUTS.get(one))
             {
@@ -295,9 +318,9 @@ pub fn pressed(browser: &mut Browser, key: Key) -> Flow {
 fn typing(browser: &mut Browser, key: Key) -> Flow {
     match key {
         Key::Char(character) => browser.filter.query.push(character),
-        Key::Backspace => {
-            let _dropped = browser.filter.query.pop();
-        }
+        Key::Backspace => match browser.filter.query.pop() {
+            Some(_) | None => {}
+        },
         Key::Enter => browser.filter.typing = false,
         Key::Escape => {
             browser.filter.typing = false;
@@ -397,8 +420,8 @@ fn list(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
         .map(|mutant| {
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("{:<10} ", short(&mutant.outcome)),
-                    Style::default().fg(colour(&mutant.outcome)),
+                    format!("{:<10} ", short(mutant.outcome)),
+                    Style::default().fg(colour(mutant.outcome)),
                 ),
                 Span::raw(format!("{} {}", mutant.display_id, mutant.rule)),
             ]))
@@ -474,23 +497,21 @@ fn listing(held: &str, mutant: &RunMutantDocument) -> Vec<Line<'static>> {
     let first = mutant.line.saturating_sub(AROUND).max(1);
     let last = mutant.line.saturating_add(AROUND);
     held.lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            let number = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
-            (number >= first && number <= last).then(|| {
-                let here = number == mutant.line;
-                Line::from(vec![
-                    Span::styled(
-                        format!("{}{number:>4} ", if here { "→" } else { " " }),
-                        Style::default().fg(if here {
-                            colour(&mutant.outcome)
-                        } else {
-                            Color::DarkGray
-                        }),
-                    ),
-                    Span::raw(line.to_owned()),
-                ])
-            })
+        .zip(1u32..=last)
+        .filter(|(_line, number)| *number >= first && *number <= last)
+        .map(|(line, number)| {
+            let here = number == mutant.line;
+            Line::from(vec![
+                Span::styled(
+                    format!("{}{number:>4} ", if here { "→" } else { " " }),
+                    Style::default().fg(if here {
+                        colour(mutant.outcome)
+                    } else {
+                        Color::DarkGray
+                    }),
+                ),
+                Span::raw(line.to_owned()),
+            ])
         })
         .collect()
 }
@@ -506,7 +527,7 @@ fn findings(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
             .flat_map(|finding| {
                 [
                     Line::from(Span::styled(
-                        finding.kind.clone(),
+                        finding.kind.as_str(),
                         Style::default().fg(Color::Red),
                     )),
                     Line::from(finding.detail.clone()),
@@ -601,12 +622,15 @@ const fn key_of(code: ratatui::crossterm::event::KeyCode) -> Option<Key> {
 }
 
 /// The outcome, short enough for a column.
-fn short(outcome: &str) -> &str {
+const fn short(outcome: Outcome) -> &'static str {
     match outcome {
-        "timed_out" => "timeout",
-        "inconclusive" => "inconcl.",
-        "not_run" => "not run",
-        other => other,
+        Outcome::NotRun => "not run",
+        Outcome::Killed => "killed",
+        Outcome::Survived => "survived",
+        Outcome::StepLimitReached => "step limit",
+        Outcome::Waited => "waited",
+        Outcome::Inconclusive => "inconcl.",
+        Outcome::Errored => "errored",
     }
 }
 
@@ -617,10 +641,7 @@ fn short(outcome: &str) -> &str {
 /// timeout was worth. `rust_mutants::telling::Style` answers for both now, and
 /// this turns a style into the palette a terminal library understands — which
 /// is the only thing about drawing that a screen program decides for itself.
-fn colour(outcome: &str) -> Color {
-    let Some(outcome) = rust_mutants::outcome::Outcome::parse(outcome) else {
-        return Color::DarkGray;
-    };
+const fn colour(outcome: Outcome) -> Color {
     match rust_mutants::telling::Style::of(outcome).hue() {
         Hue::Settled => Color::Green,
         Hue::Alarm => Color::Red,
