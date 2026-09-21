@@ -317,3 +317,51 @@ fn a_limitation_spelled_at_a_call_site_is_one_the_registers_hold() {
          can emit: {fabricated:#?}"
     );
 }
+
+/// Every limitation a register file declares, and every one its `ALL` names.
+fn declared_and_registered(module: &str) -> (Vec<String>, Vec<String>) {
+    let text = std::fs::read_to_string(njutest_devkit::paths::workspace_root().join(module))
+        .expect("the register");
+    let (declarations, register) = text
+        .split_once("pub const ALL:")
+        .expect("the register names the limitations it holds");
+    let declared: Vec<String> = declarations
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("pub const "))
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(_, rest)| rest.trim_start().starts_with("&str"))
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    let held: Vec<String> = register
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_suffix(','))
+        .filter(|line| {
+            line.chars()
+                .all(|one| one.is_ascii_uppercase() || one == '_')
+        })
+        .map(ToOwned::to_owned)
+        .collect();
+    (declared, held)
+}
+
+#[test]
+fn every_limitation_a_register_declares_is_one_its_register_holds() {
+    for module in [
+        "crates/njutest-cli/src/limitation.rs",
+        "crates/rust-mutants/src/limitation.rs",
+    ] {
+        let (declared, held) = declared_and_registered(module);
+        assert!(declared.len() > 10, "{module} declares them: {declared:?}");
+        let missing: Vec<&String> = declared.iter().filter(|one| !held.contains(one)).collect();
+        assert!(
+            missing.is_empty(),
+            "{module} declares a limitation its ALL does not name, and ALL is what the \
+             page test, the put-to-something test and the register test all read: a name \
+             left out of it reaches a report and no ledger whatever. {missing:?}"
+        );
+        let stale: Vec<&String> = held.iter().filter(|one| !declared.contains(one)).collect();
+        assert!(stale.is_empty(), "{module}: {stale:?}");
+    }
+}
