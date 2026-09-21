@@ -5,6 +5,8 @@
 
 #![expect(
     clippy::indexing_slicing,
+    clippy::expect_used,
+    clippy::panic,
     reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
@@ -361,4 +363,95 @@ fn the_trace_flag_never_eats_the_argument_after_it() {
         "the word after --trace is the mutant the caller named; reading it as the trace \
          directory made the command refuse for want of an argument it had been given"
     );
+}
+
+/// Every switch the command line declares, as clap itself reports them.
+fn switch_names() -> Vec<String> {
+    use clap::Args as _;
+    rust_mutants_cli::cli::Switches::augment_args(clap::Command::new("probe"))
+        .get_arguments()
+        .filter_map(clap::Arg::get_long)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// What a run does differently because one switch was given, under the configuration in `root`.
+fn with(switch: Option<&str>, root: &Path) -> (rust_mutants_cli::config::Config, bool) {
+    use rust_mutants_cli::cli;
+    use rust_mutants_cli::settings::Settings;
+
+    let words = ["rust-mutants", "list"]
+        .into_iter()
+        .map(OsString::from)
+        .chain(switch.map(|name| OsString::from(format!("--{name}"))));
+    let parsed = cli::parse(words).expect("a `list` with one switch on it parses");
+    let cli::Command::List { scope, .. } = parsed.command else {
+        panic!("`list` parses as List")
+    };
+    let environment = Environment {
+        vars: Vec::new(),
+        temp_directory: PathBuf::from("/tmp"),
+        program: PathBuf::from("this test never runs it"),
+        cache_directory: PathBuf::from("/tmp/cache"),
+        working_directory: root.to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    };
+    let settings = Settings::resolve(&scope, &environment).expect("a scope with nothing wrong");
+    let opened = settings
+        .open_options(
+            &scope,
+            &environment,
+            rust_mutants::trace::Recorder::disabled(),
+        )
+        .expect("options with no pattern wrong in them");
+    (settings.config, opened.keep_temp)
+}
+
+/// Every boolean of `value`, set the other way.
+fn flipped(value: toml::Value) -> toml::Value {
+    match value {
+        toml::Value::Boolean(held) => toml::Value::Boolean(!held),
+        toml::Value::Table(table) => toml::Value::Table(
+            table
+                .into_iter()
+                .map(|(key, held)| (key, flipped(held)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// A directory holding a configuration with every boolean set the other way from the default.
+fn contrary() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("a directory");
+    let default = toml::Value::try_from(rust_mutants_cli::config::Config::default())
+        .expect("the default configuration serializes");
+    let text = toml::to_string(&flipped(default)).expect("a configuration serializes");
+    std::fs::write(
+        root.path().join(rust_mutants_cli::config::FILE_NAME),
+        text.as_bytes(),
+    )
+    .expect("write");
+    root
+}
+
+#[test]
+fn every_switch_the_command_line_declares_changes_what_a_run_does() {
+    let plain = tempfile::tempdir().expect("a directory");
+    let contrary = contrary();
+    let baselines = [plain.path(), contrary.path()];
+    let names = switch_names();
+    assert!(!names.is_empty(), "clap reports the switches it declares");
+    for name in names {
+        assert!(
+            baselines
+                .iter()
+                .any(|root| with(Some(&name), root) != with(None, root)),
+            "--{name} changes neither the configuration a run resolves nor how the \
+             workspace is opened, against a default configuration or against one with \
+             every boolean set the other way: giving it does nothing and nothing says so"
+        );
+    }
 }

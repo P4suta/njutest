@@ -186,7 +186,7 @@ fn a_reserved_variable_that_is_already_set_is_a_failure_that_names_it() {
         environment_check["detail"]
             .as_str()
             .is_some_and(|detail| detail.contains("RUST_MUTANTS_CATALOG")),
-        "and the check names the variable, because there are three of them and unsetting \
+        "and the check names the variable, because the engine owns several and unsetting \
          the wrong one leaves the run refusing: {environment_check}"
     );
     assert_eq!(
@@ -204,6 +204,36 @@ fn a_reserved_variable_that_is_already_set_is_a_failure_that_names_it() {
         said.out,
         said.err
     );
+}
+
+#[test]
+fn every_variable_the_engine_owns_is_one_the_doctor_reports_as_set() {
+    for reserved in rust_mutants::execute::RESERVED_ENV {
+        let fixture = Fixture::copy("fixture-simple");
+        let mut environment = environment(&fixture);
+        environment
+            .vars
+            .push((OsString::from(reserved), OsString::from("left behind")));
+
+        let document = document(&environment);
+        assert_eq!(
+            standing(&document, "environment"),
+            "fail",
+            "{reserved} is a variable the engine composes for every test process, so one \
+             already in the environment makes every answer an answer about something \
+             else: {document}"
+        );
+        let detail = check(&document, "environment")["detail"]
+            .as_str()
+            .map(ToOwned::to_owned);
+        assert!(
+            detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(reserved)),
+            "and the check names it, because unsetting the wrong one leaves the run \
+             refusing: {detail:?}"
+        );
+    }
 }
 
 #[test]

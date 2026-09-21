@@ -37,13 +37,6 @@ use bundle::{Gathering, bundle};
 use doctor::{Asked, doctor};
 use stored::{named, newest, prune, store};
 
-/// The variables a run composes for itself and normally refuses to inherit.
-pub const RESERVED_ENV: [&str; 3] = [
-    "RUST_MUTANTS_ACTIVE",
-    "RUST_MUTANTS_CATALOG",
-    "RUST_MUTANTS_TOUCH",
-];
-
 /// Does what the command asks and returns the exit code it earns.
 ///
 /// # Errors
@@ -217,7 +210,7 @@ pub fn reserved_names(environment: &Environment) -> Vec<String> {
         .iter()
         .filter(|(_, value)| !value.is_empty())
         .filter_map(|(name, _)| {
-            RESERVED_ENV
+            rust_mutants::execute::RESERVED_ENV
                 .iter()
                 .find(|reserved| name.as_os_str() == std::ffi::OsStr::new(reserved))
                 .map(|reserved| (*reserved).to_owned())

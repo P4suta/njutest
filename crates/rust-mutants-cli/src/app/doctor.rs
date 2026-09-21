@@ -491,7 +491,10 @@ fn environment_check(environment: &Environment) -> doctor_report::Check {
         return doctor_report::Check::new(
             "environment",
             Well,
-            &format!("none of {} is set", crate::app::RESERVED_ENV.join(", ")),
+            &format!(
+                "none of {} is set",
+                rust_mutants::execute::RESERVED_ENV.join(", ")
+            ),
             None,
         );
     }

@@ -39,17 +39,27 @@ impl Settings {
         replace(&mut config.project.exclude, &scope.exclude);
         replace(&mut config.snapshot.omit, &scope.omit);
         replace(&mut config.project.packages, &scope.packages);
-        config
-            .execution
-            .skip_targets
-            .extend(scope.skip_targets.iter().cloned());
+        replace(&mut config.execution.skip_targets, &scope.skip_targets);
         if let Some(text) = &scope.timeout {
             config.mutation.timeout =
                 crate::config::parse_timeout(text).map_err(EngineError::from)?;
         }
         replace(&mut config.build.features, &scope.features);
-        config.build.all_features |= scope.switches.all_features;
-        config.build.no_default_features |= scope.switches.no_default_features;
+        let cli::Switches {
+            offline,
+            locked,
+            keep_temp: _read_when_the_workspace_is_opened,
+            no_verify,
+            coverage,
+            no_coverage,
+            no_touch,
+            equivalence,
+            no_doctests,
+            all_features,
+            no_default_features,
+        } = scope.switches;
+        config.build.all_features |= all_features;
+        config.build.no_default_features |= no_default_features;
         if let Some(target) = &scope.build_target {
             config.build.target.clone_from(target);
         }
@@ -62,14 +72,14 @@ impl Settings {
         if let Some(jobs) = scope.jobs {
             config.execution.jobs = jobs;
         }
-        config.execution.offline |= scope.switches.offline;
-        config.execution.locked |= scope.switches.locked;
-        config.mutation.verify &= !scope.switches.no_verify;
-        config.mutation.coverage |= scope.switches.coverage;
-        config.mutation.coverage &= !scope.switches.no_coverage;
-        config.mutation.touch &= !scope.switches.no_touch;
-        config.mutation.equivalence |= scope.switches.equivalence;
-        config.execution.doctests &= !scope.switches.no_doctests;
+        config.execution.offline |= offline;
+        config.execution.locked |= locked;
+        config.mutation.verify &= !no_verify;
+        config.mutation.coverage |= coverage;
+        config.mutation.coverage &= !no_coverage;
+        config.mutation.touch &= !no_touch;
+        config.mutation.equivalence |= equivalence;
+        config.execution.doctests &= !no_doctests;
         Ok(Self { root, config })
     }
 
