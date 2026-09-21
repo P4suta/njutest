@@ -303,7 +303,7 @@ jobs:
           CARGO_NET_OFFLINE: "false"
         run: cargo fetch --locked
       - name: Build the njutest this commit would ship
-        run: cargo build --locked --release --bin njutest
+        run: mise run build:release
       # Every other job runs on a machine with no Miri, where the whole of
       # deep-v1 is the refusal NJ7001. This is the only place the promise
       # itself is kept: the suite interpreted, and what the interpreter would
@@ -346,9 +346,7 @@ jobs:
       - name: Prove the production mutation outcome laws
         run: mise run kani:laws
       - name: Exercise generated harnesses and the retained-result protocol with real Kani
-        env:
-          NJUTEST_REAL_KANI: "1"
-        run: env -u RUSTFLAGS cargo test --locked -p njutest-cli --lib real_kani_068 -- --test-threads=1
+        run: mise run kani:verified
 
   action-smoke:
     name: action-smoke

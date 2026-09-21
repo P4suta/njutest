@@ -696,3 +696,52 @@ fn every_task_a_page_or_a_workflow_names_is_one_mise_declares() {
          covers something, a gate nobody runs: {gone:?}"
     );
 }
+
+/// The commands a workflow runs that are the pipeline's own plumbing rather than a gate.
+const PLUMBING: [&str; 4] = [
+    "cargo fetch --locked",
+    "rustup toolchain install",
+    "cargo llvm-cov report",
+    "cargo xtask sbom",
+];
+
+#[test]
+fn every_gate_the_pipeline_runs_is_one_this_machine_can_run() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let declared = repository("mise.toml");
+    let mut asked = Vec::new();
+    for line in workflow.lines() {
+        let Some((_, command)) = line.split_once("run: ") else {
+            continue;
+        };
+        let command = command.trim();
+        if command.is_empty() || command.starts_with(['>', '|']) {
+            continue;
+        }
+        if PLUMBING.iter().any(|one| command.starts_with(one)) {
+            continue;
+        }
+        asked.push(command.to_owned());
+    }
+    asked.sort();
+    asked.dedup();
+    assert!(asked.len() > 8, "the pipeline runs gates: {asked:?}");
+    let answered = |command: &str| -> bool {
+        if let Some(task) = command.strip_prefix("mise run ") {
+            return declared.contains(&format!("[tasks.{task}]"))
+                || declared.contains(&format!("[tasks.\"{task}\"]"));
+        }
+        command
+            .split("&&")
+            .map(str::trim)
+            .all(|part| declared.contains(part))
+    };
+    let unanswerable: Vec<&String> = asked.iter().filter(|command| !answered(command)).collect();
+    assert!(
+        unanswerable.is_empty(),
+        "the pipeline runs a gate no mise task runs, so a developer cannot answer it \
+         before pushing and learns about it twenty minutes later. The job-to-task \
+         mapping is by name and says nothing about what either one does: `mise run \
+         lint` omitted cargo fmt and taplo for exactly this long. {unanswerable:?}"
+    );
+}

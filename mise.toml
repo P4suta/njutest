@@ -285,6 +285,10 @@ run = "cargo mutants --config .cargo/mutants.toml --workspace"
 # stale golden is a push nobody waits for.
 # The pre-push gate isolates the tree and not the build cache: it symlinks the developer's target/debug in, which is minutes per push and the reason every earlier "green" in this campaign was about artifacts compiled before the field they were meant to prove existed.
 # CI is always cold and never had the problem; this is the one place that needs asking.
+[tasks."build:release"]
+description = "Build the njutest binary this commit would ship, which is what a smoke test of the action runs"
+run = "cargo build --locked --release --bin njutest"
+
 [tasks."check:cold"]
 description = "Type-check the whole workspace into a target directory nothing else writes, so no earlier artifact can answer for this tree"
 run = "cargo check --locked --workspace --all-targets --all-features"

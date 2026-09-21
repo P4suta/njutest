@@ -1357,6 +1357,7 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
 /// # Errors
 /// Returns every edge the direction rule refuses, or a `cargo metadata` failure.
 pub fn deps(root: &Path) -> Result<String, GateFailure> {
+    let census = census(root)?;
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
@@ -1404,7 +1405,7 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     prohibited.dedup();
     if violations.is_empty() && prohibited.is_empty() {
         return Ok(format!(
-            "deps: {} internal edges, all in the allowed direction",
+            "deps: {} internal edges, all in the allowed direction; {census}",
             edges.len()
         ));
     }
@@ -1417,6 +1418,76 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     }
     append(&mut message, format_args!("{}", deps::RULE));
     Err(GateFailure(message))
+}
+
+/// Every cargo manifest in the tree, classified, so a fourth kind cannot appear unnoticed.
+///
+/// A manifest belongs to the root workspace, to the fuzz workspace, or to a fixture, and each class has a command that reaches it: `cargo nextest run --workspace`, `cargo xtask fuzz-clippy`, and the fate suite.
+/// `fuzz/` was the one workspace nothing compiled while testing anything, and it rotted; `compiler-surfaces` arrived as a fourth root and the seam ratchet did not see it for a campaign.
+/// What a command reaches is a fact about this tree, and a fact about this tree is something a gate can hold.
+///
+/// # Errors
+/// A manifest that belongs to none of the three, or metadata that could not be read.
+fn census(root: &Path) -> Result<String, GateFailure> {
+    let members: BTreeSet<PathBuf> = cargo_metadata::MetadataCommand::new()
+        .manifest_path(root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?
+        .workspace_packages()
+        .iter()
+        .map(|package| PathBuf::from(package.manifest_path.as_std_path()))
+        .collect();
+    let fuzz = root.join("fuzz");
+    let fixtures = root.join("fixtures");
+    let mut counted = [0_usize; 3];
+    let mut loose = Vec::new();
+    let walk = WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || entry.file_name().as_encoded_bytes().first() != Some(&b'.')
+                    && entry.file_name() != std::ffi::OsStr::new("target")
+        });
+    for entry in walk {
+        let entry = walked(entry)?;
+        let path = entry.path();
+        if !entry.file_type().is_file() || entry.file_name() != std::ffi::OsStr::new("Cargo.toml") {
+            continue;
+        }
+        let relative = relative_slash(root, path)?;
+        let at = if path == root.join("Cargo.toml") || members.contains(path) {
+            0
+        } else if path.starts_with(&fuzz) {
+            1
+        } else if path.starts_with(&fixtures) {
+            2
+        } else {
+            loose.push(relative);
+            continue;
+        };
+        if let Some(count) = counted.get_mut(at) {
+            *count = count.saturating_add(1);
+        }
+    }
+    if !loose.is_empty() {
+        return Err(GateFailure(format!(
+            "deps: {} cargo manifest(s) belong to no class this repository has a command \
+             for. A manifest is a member of the root workspace, the fuzz workspace, or a \
+             fixture, and each of those is reached by `cargo nextest run --workspace`, \
+             `cargo xtask fuzz-clippy`, and the fate suite. One in none of them is \
+             compiled by nothing that tests anything, which is how fuzz/ rotted: {loose:?}",
+            loose.len()
+        )));
+    }
+    Ok(format!(
+        "{} root-workspace manifest(s), {} under fuzz/ and {} under fixtures/, each \
+         reached by a command",
+        counted.first().copied().unwrap_or_default(),
+        counted.get(1).copied().unwrap_or_default(),
+        counted.get(2).copied().unwrap_or_default()
+    ))
 }
 
 /// Conventions of the fixture projects.
