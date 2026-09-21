@@ -33,17 +33,6 @@ fn task(name: &str) -> String {
 }
 
 /// Every gate `cargo xtask all` runs, which is what CI runs.
-const GATES: [&str; 8] = [
-    "devgates",
-    "lints",
-    "deps",
-    "fixtures",
-    "release-check",
-    "milestones",
-    "surfaces",
-    "waivers",
-];
-
 /// Every job `ci-success` waits for, and the local task that answers it first.
 ///
 /// `None` is a job this machine cannot answer, with the reason it cannot. The
@@ -65,13 +54,12 @@ const GATED: [(&str, Option<&str>); 10] = [
 #[test]
 fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
     let local = task("gates");
-    for gate in GATES {
-        assert!(
-            local.contains(&format!("cargo xtask {gate}")),
-            "`mise run gates` does not run {gate}, so a change can pass every local gate and \
-             fail the pipeline: {local}"
-        );
-    }
+    assert!(
+        local.contains("cargo xtask all"),
+        "`mise run gates` lists gates of its own rather than running the one command CI \
+         runs, which is a second enumeration of a set `gates::all` already holds and \
+         `every_gate_that_needs_no_argument_is_one_all_runs` already closes: {local}"
+    );
     let hooks = repository("lefthook.yml");
     assert!(
         hooks.contains("scripts/pre-push-check.sh"),
@@ -176,18 +164,8 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
         deny.contains("cargo deny --locked --all-features check"),
         "the local dependency policy omits feature-enabled edges: {deny}"
     );
-    let tools = repository("mise.toml");
-    assert!(
-        tools.contains("typos = \"1.50.1\""),
-        "the local typos version is not the CI version"
-    );
     let workflow = repository(".github/workflows/ci.yml");
-    for held in [
-        "typos-cli@1.50.1",
-        "run: typos",
-        "cargo-deny@0.19.7",
-        "cargo deny --locked --all-features check",
-    ] {
+    for held in ["run: typos", "cargo deny --locked --all-features check"] {
         assert!(
             workflow.contains(held),
             "CI drifted from the pinned local policy ({held:?}): {workflow}"

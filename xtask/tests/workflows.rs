@@ -123,6 +123,94 @@ fn the_real_kani_job_installs_one_exact_locked_version() {
     );
 }
 
+/// The tools `mise.toml` pins, under the names `taiki-e/install-action` knows them by.
+///
+/// Three are spelled differently there, and a handful are this machine's alone: a pinned rust toolchain, the hook runner, and the compilation cache are not things a hosted runner installs through that action.
+fn pinned() -> Vec<String> {
+    const RENAMED: [(&str, &str); 3] = [
+        ("typos", "typos-cli"),
+        ("taplo", "taplo-cli"),
+        ("mdbook", "mdbook"),
+    ];
+    const LOCAL_ONLY: [&str; 3] = ["rust", "lefthook", "sccache"];
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("mise.toml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let table = text
+        .parse::<toml::Table>()
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some(toml::Value::Table(tools)) = table.get("tools") else {
+        panic!("mise.toml declares the tools it pins")
+    };
+    let mut found = Vec::new();
+    for (name, version) in tools {
+        let name = name.trim_matches('"');
+        let bare = name.strip_prefix("cargo:").unwrap_or(name);
+        if LOCAL_ONLY.contains(&bare) {
+            continue;
+        }
+        let Some(version) = version.as_str() else {
+            panic!("{bare} is pinned to one exact version")
+        };
+        let installed = RENAMED
+            .iter()
+            .find(|(mine, _)| *mine == bare)
+            .map_or(bare, |(_, theirs)| theirs);
+        found.push(format!("{installed}@{version}"));
+    }
+    found.sort();
+    found
+}
+
+/// Every tool the pipeline installs through the pinned setup action, once each.
+fn installed() -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut pending = vec![
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(".github"),
+    ];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let path = entry.path();
+            if std::fs::metadata(&path).is_ok_and(|one| one.is_dir()) {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|kind| kind != "yml") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for line in text.lines() {
+                let Some((_, listed)) = line.split_once("tools:") else {
+                    continue;
+                };
+                found.extend(
+                    listed
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|tool| tool.contains('@'))
+                        .map(ToOwned::to_owned),
+                );
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
 #[test]
 fn executable_tools_use_the_commit_pinned_installer_and_exact_versions() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -130,18 +218,23 @@ fn executable_tools_use_the_commit_pinned_installer_and_exact_versions() {
         .join(".github/workflows/ci.yml");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    for tool in [
-        "actionlint@1.7.12",
-        "committed@1.1.11",
-        "mdbook@0.5.4",
-        "typos-cli@1.50.1",
-        "cargo-deny@0.19.7",
-    ] {
-        assert!(
-            source.contains(tool),
-            "CI no longer installs {tool} through the pinned setup action: {source}"
-        );
-    }
+    let pinned = pinned();
+    let installed = installed();
+    assert!(pinned.len() > 4, "mise pins the tools: {pinned:?}");
+    assert!(
+        installed.len() > 4,
+        "the pipeline installs them: {installed:?}"
+    );
+    let adrift: Vec<&String> = installed
+        .iter()
+        .filter(|tool| !pinned.contains(tool))
+        .collect();
+    assert!(
+        adrift.is_empty(),
+        "the pipeline installs a version mise.toml does not pin, so a local run and the \
+         pipeline answer with different tools and the only thing holding them together \
+         is a comment: {adrift:?} against {pinned:?}"
+    );
     for unverified in ["curl ", "wget ", "Invoke-WebRequest", "| tar"] {
         assert!(
             !source.contains(unverified),

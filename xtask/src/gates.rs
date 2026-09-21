@@ -1081,6 +1081,24 @@ fn waived_lines(root: &Path) -> Result<usize, GateFailure> {
     Ok(how_many)
 }
 
+/// The one number a ceiling file holds.
+///
+/// # Errors
+/// The file cannot be read, or holds anything but one number.
+fn ceiling(root: &Path, relative: &str) -> Result<usize, GateFailure> {
+    let held = counted(root, relative)?;
+    let [written] = held.as_slice() else {
+        return Err(GateFailure(format!(
+            "{relative} holds one number and nothing else."
+        )));
+    };
+    written.parse::<usize>().map_err(|_not_a_number| {
+        GateFailure(format!(
+            "{relative} holds {written}, which is not a number."
+        ))
+    })
+}
+
 /// The lines of a ledger that are not its header.
 ///
 /// # Errors
@@ -1222,7 +1240,7 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
 /// Every test source of the workspace, which is where a layout being joined freezes it.
 fn tests_under(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
     let mut found = Vec::new();
-    for base in ["crates", "xtask"] {
+    for base in SOURCE_ROOTS {
         for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
             let entry = walked(entry)?;
             let path = entry.path();
@@ -1244,7 +1262,7 @@ fn tests_under(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
 /// Any directory entry cannot be read; an incomplete source set proves no gate.
 pub fn production_sources(root: &Path) -> Result<Vec<PathBuf>, GateFailure> {
     let mut files = Vec::new();
-    for base in ["crates", "xtask"] {
+    for base in SOURCE_ROOTS {
         for entry in WalkDir::new(root.join(base)).sort_by_file_name() {
             let entry = walked(entry)?;
             let path = entry.path();
@@ -1315,8 +1333,20 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
         devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.to_string()))?;
     devgates::compare(&found, &ledger)
         .map_err(|disagreement| GateFailure(disagreement.to_string()))?;
+    let most = ceiling(root, "xtask/seam_ceiling.txt")?;
+    if ledger.len() > most {
+        return Err(GateFailure(format!(
+            "devgates: the seam ledger carries {} seam(s) and xtask/seam_ceiling.txt \
+             allows {most}. That file may shrink and never grow, so a new seam is a \
+             number going up in a file of its own — which is the review the ledger \
+             exists to ask for. The scan and the ledger agreeing is set equality: it \
+             says nothing about the set having grown, which is what this holds.",
+            ledger.len()
+        )));
+    }
     Ok(format!(
-        "devgates: {} production files scanned, {} seams recorded in the ledger",
+        "devgates: {} production files scanned, {} seam(s) recorded in the ledger, \
+         {most} allowed",
         files.len(),
         ledger.len()
     ))

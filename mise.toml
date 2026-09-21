@@ -85,22 +85,15 @@ description = "Build rustdoc with broken links and warnings denied"
 env = { RUSTDOCFLAGS = "-D warnings" }
 run = "cargo doc --locked --workspace --no-deps --document-private-items"
 
+# `cargo xtask all` rather than a list of subcommands: the list was a second enumeration of the set `gates::all` already holds, and CI runs the one command.
+# Two enumerations of one set is the defect this repository keeps closing everywhere else.
 [tasks.gates]
 description = "Run the repository gates: seam ratchet, dependency direction, fixture conventions, release consistency"
-run = [
-  "cargo xtask devgates",
-  "cargo xtask lints",
-  "cargo xtask deps",
-  "cargo xtask fixtures",
-  "cargo xtask release-check",
-  "cargo xtask milestones",
-  "cargo xtask surfaces",
-  "cargo xtask waivers",
-]
+run = "cargo xtask all"
 
 [tasks.lint]
-description = "Run clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
-depends = ["clippy", "doc", "gates", "fuzz:clippy", "committed:range"]
+description = "Run formatting, clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
+depends = ["fmt:check", "clippy", "doc", "gates", "fuzz:clippy", "committed:range"]
 run = ["typos", "actionlint"]
 
 [tasks."committed:range"]

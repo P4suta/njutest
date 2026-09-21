@@ -1,7 +1,7 @@
 version = 1
 
 [files]
-include = ["crates/**", "xtask/**"]
+include = ["crates/**", "xtask/**", "compiler-surfaces/**", "fuzz/**"]
 exclude = ["**/testdata/**", "**/target/**", "fixtures/**"]
 
 [policy]
