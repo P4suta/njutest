@@ -112,7 +112,7 @@ pub fn replay(
             skip_targets: replaying.skip_targets.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
-            ..PrepareOptions::default()
+            ..crate::assure::engine::switches()
         },
         watch.cancel,
     )?;

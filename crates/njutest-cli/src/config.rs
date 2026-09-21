@@ -312,7 +312,10 @@ impl Execution {
             features: self.features.clone(),
             all_features: self.all_features,
             no_default_features: self.no_default_features,
-            ..rust_mutants::cargo::BuildConfig::default()
+            target: None,
+            profile: None,
+            jobs: None,
+            debug: false,
         }
     }
 }
@@ -612,7 +615,8 @@ impl Configuration {
             no_default_features: self.no_default_features,
             profile: self.profile.clone(),
             target: self.target.clone(),
-            ..rust_mutants::cargo::BuildConfig::default()
+            jobs: None,
+            debug: false,
         }
     }
 }

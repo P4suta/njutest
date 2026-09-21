@@ -25,6 +25,11 @@ const SEMANTIC_DEFAULT_REMEDY: &str = "use a named constructor for execution, ev
     state. `Default` makes `..Default::default()` invent a domain conclusion without naming it, \
     and adding a variant does not make a manual implementation fail to compile. The gate keeps \
     only an exact allowlist of configuration, UI, and neutral container defaults";
+const FOREIGN_REMAINDER_REMEDY: &str = "build the whole value once in this crate, naming every \
+    field, and take the remainder from that. `..Other::default()` leaves it to whoever owns the \
+    type: a field they add next arrives here already answered, in a release that still compiles, \
+    and nobody on this side decided it. A remainder taken from a value this crate computed is \
+    fine \u{2014} it is the owner\u{2019}s idea of neutral that nothing here reviews";
 const DEFAULT_DERIVE_ALIAS_REMEDY: &str = "import `Default` by its own name; renaming the derive \
     lets another file put an enum default behind a name the enum-default gate cannot recognise";
 const DESERIALIZE_DERIVE_ALIAS_REMEDY: &str = "import `Deserialize` by its own name; a renamed \
@@ -72,7 +77,12 @@ const UNIT_DOMAIN_CONVERSION_REMEDY: &str = "give the domain state a name and co
     conversion silently chooses policy where only a unit value was supplied";
 const MANUAL_VARIANT_LIST_REMEDY: &str = "derive `njutest_macros::AllVariants` on a closed \
     fieldless enum and use its compiler-generated `ALL`; a hand-maintained array still compiles \
-    when a variant is added, which turns an exhaustive ledger into a partial one without an error";
+    when a variant is added, which turns an exhaustive ledger into a partial one without an \
+    error. Where the variants carry data no derive can invent, keep the list and put a `match` \
+    over the same set beside it, every arm named and doing nothing: it decides nothing, and it \
+    is the one thing that sends whoever adds a variant to this exact function. A list over a set \
+    declared `#[non_exhaustive]` is not asked for, because no match of it can be exhaustive \
+    either";
 const DIRECT_JSON_INPUT_REMEDY: &str = "decode through the crate's strictjson boundary, which \
     rejects duplicate object keys before converting the unique Value into a typed document. \
     serde_json's direct readers keep the last repeated key, so a production reader or test oracle \
@@ -224,6 +234,7 @@ declare_kinds! {
     ForgottenValue => "forgotten-value",
     TriStateBool => "tri-state-bool",
     OpenAndClosed => "open-and-closed",
+    ForeignRemainder => "foreign-remainder",
 }
 
 impl Kind {
@@ -271,6 +282,7 @@ impl Kind {
             Self::ForgottenValue => FORGOTTEN_VALUE_REMEDY,
             Self::TriStateBool => TRI_STATE_BOOL_REMEDY,
             Self::OpenAndClosed => OPEN_AND_CLOSED_REMEDY,
+            Self::ForeignRemainder => FOREIGN_REMAINDER_REMEDY,
         }
     }
 }
@@ -462,6 +474,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(painted(file, source));
     scan.found.extend(manual_variant_lists(&parsed, file));
     scan.found.extend(open_and_closed(&parsed, file));
+    if ships(file) {
+        scan.found.extend(foreign_remainders(&parsed, file));
+    }
     scan.found.extend(broad_expectations(&parsed, file));
     scan.found.sort();
     scan.found.dedup();
@@ -1575,6 +1590,8 @@ impl<'ast> Visit<'ast> for Catching<'_> {
 struct EnumShape {
     variants: BTreeSet<String>,
     derives_all_variants: bool,
+    /// Whether the declaration says the set may grow, which is what makes a whole list of it not a claim of completeness.
+    open: bool,
 }
 
 fn enum_shapes(parsed: &syn::File) -> BTreeMap<String, Vec<EnumShape>> {
@@ -1600,6 +1617,10 @@ impl Visit<'_> for EnumShapes<'_> {
                     .map(|variant| variant.ident.to_string())
                     .collect(),
                 derives_all_variants: item.attrs.iter().any(derives_all_variants),
+                open: item
+                    .attrs
+                    .iter()
+                    .any(|attribute| attribute.path().is_ident("non_exhaustive")),
             });
         syn::visit::visit_item_enum(self, item);
     }
@@ -1653,7 +1674,214 @@ fn manual_lists_in(
         found: &mut found,
     };
     lists.visit_file(parsed);
+    let mut whole = WholeSetLists {
+        file,
+        shapes,
+        found: &mut found,
+    };
+    whole.visit_file(parsed);
     found
+}
+
+/// The enum and variant an element of a list names, looking through what a list puts around one.
+///
+/// A generator wraps each in `Just(...)`, a screen asks each for `as_str()`,
+/// a table takes each by reference.
+/// None of those changes which set the list is over, so none of them may hide it.
+fn named_variant_of(expression: &syn::Expr) -> Option<(String, String)> {
+    let path = match expression {
+        syn::Expr::Path(path) => &path.path,
+        syn::Expr::Struct(held) => &held.path,
+        syn::Expr::Reference(held) => return named_variant_of(&held.expr),
+        syn::Expr::Group(held) => return named_variant_of(&held.expr),
+        syn::Expr::Paren(held) => return named_variant_of(&held.expr),
+        syn::Expr::MethodCall(held) => return named_variant_of(&held.receiver),
+        syn::Expr::Call(call) => {
+            let syn::Expr::Path(func) = call.func.as_ref() else {
+                return None;
+            };
+            match owned_variant(&func.path) {
+                Some(named) => return Some(named),
+                None if call.args.len() == 1 => {
+                    return call.args.first().and_then(named_variant_of);
+                }
+                None => return None,
+            }
+        }
+        _ => return None,
+    };
+    owned_variant(path)
+}
+
+/// The enum and variant a path names, when it names one of ours by its own name.
+fn owned_variant(path: &syn::Path) -> Option<(String, String)> {
+    let mut segments = path.segments.iter().rev();
+    let variant = segments.next()?.ident.to_string();
+    let owner = segments.next()?.ident.to_string();
+    let first = owner.chars().next()?;
+    (first.is_uppercase() && owner != "Self").then_some((owner, variant))
+}
+
+/// Every enum and variant a pattern names, looking through the alternatives of one arm.
+fn matched_variants(pattern: &syn::Pat, into: &mut BTreeMap<String, BTreeSet<String>>) {
+    let path = match pattern {
+        syn::Pat::Or(or) => {
+            for case in &or.cases {
+                matched_variants(case, into);
+            }
+            return;
+        }
+        syn::Pat::Paren(held) => return matched_variants(&held.pat, into),
+        syn::Pat::Reference(held) => return matched_variants(&held.pat, into),
+        syn::Pat::Guard(held) => return matched_variants(&held.pat, into),
+        syn::Pat::Path(held) => &held.path,
+        syn::Pat::TupleStruct(held) => &held.path,
+        syn::Pat::Struct(held) => &held.path,
+        _ => return,
+    };
+    if let Some((owner, variant)) = owned_variant(path) {
+        into.entry(owner).or_default().insert(variant);
+    }
+}
+
+/// Every closed set some `match` in this body covers with no arm left over.
+///
+/// The idiom this repository already writes beside a list of one value per variant: a `match` naming every one of them and doing nothing.
+/// It decides no behaviour; what it does is make the compiler send whoever adds a variant to this exact function.
+struct TotallyMatched<'a> {
+    shapes: &'a BTreeMap<String, Vec<EnumShape>>,
+    covered: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for TotallyMatched<'_> {
+    fn visit_expr_match(&mut self, matching: &'ast syn::ExprMatch) {
+        let mut named: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut catches_the_rest = false;
+        for arm in &matching.arms {
+            if catches_everything(&arm.pat).is_some() {
+                catches_the_rest = true;
+            }
+            matched_variants(&arm.pat, &mut named);
+        }
+        if !catches_the_rest {
+            for (owner, variants) in named {
+                if self
+                    .shapes
+                    .get(&owner)
+                    .is_some_and(|shapes| shapes.iter().any(|shape| shape.variants == variants))
+                {
+                    self.covered.insert(owner);
+                }
+            }
+        }
+        syn::visit::visit_expr_match(self, matching);
+    }
+}
+
+/// A list anywhere in the tree whose elements are every variant of a set this repository closes.
+struct WholeSetLists<'a> {
+    file: &'a str,
+    shapes: &'a BTreeMap<String, Vec<EnumShape>>,
+    found: &'a mut Vec<Finding>,
+}
+
+impl WholeSetLists<'_> {
+    /// Every whole-set list of one body, against the sets that body also matches totally.
+    fn body(&mut self, block: &syn::Block) {
+        let mut totals = TotallyMatched {
+            shapes: self.shapes,
+            covered: BTreeSet::new(),
+        };
+        totals.visit_block(block);
+        let mut lists = WholeSetListsIn {
+            shapes: self.shapes,
+            found: Vec::new(),
+        };
+        lists.visit_block(block);
+        for (owner, line) in lists.found {
+            if !totals.covered.contains(&owner) {
+                self.found.push(Finding {
+                    kind: Kind::ManualVariantList,
+                    file: self.file.to_owned(),
+                    line,
+                });
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for WholeSetLists<'_> {
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        self.body(&item.block);
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        self.body(&item.block);
+    }
+}
+
+/// The whole-set lists of one body, by the set each is over.
+struct WholeSetListsIn<'a> {
+    shapes: &'a BTreeMap<String, Vec<EnumShape>>,
+    found: Vec<(String, usize)>,
+}
+
+impl WholeSetListsIn<'_> {
+    /// Records a list when `elements` name a whole closed set and nothing else.
+    fn consider<'e>(&mut self, elements: impl Iterator<Item = &'e syn::Expr>, line: usize) {
+        let mut owner = None;
+        let mut named = BTreeSet::new();
+        for element in elements {
+            let Some((held, variant)) = named_variant_of(element) else {
+                return;
+            };
+            match &owner {
+                Some(one) if *one != held => return,
+                _ => owner = Some(held),
+            }
+            named.insert(variant);
+        }
+        let Some(owner) = owner else {
+            return;
+        };
+        let Some(shapes) = self.shapes.get(&owner) else {
+            return;
+        };
+        if named.len() > 1
+            && shapes
+                .iter()
+                .any(|shape| !shape.open && shape.variants == named)
+        {
+            self.found.push((owner, line));
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for WholeSetListsIn<'_> {
+    fn visit_expr_array(&mut self, array: &'ast syn::ExprArray) {
+        self.consider(
+            array.elems.iter(),
+            array.bracket_token.span.open().start().line,
+        );
+        syn::visit::visit_expr_array(self, array);
+    }
+
+    fn visit_macro(&mut self, macro_: &'ast syn::Macro) {
+        match macro_.parse_body_with(
+            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+        ) {
+            Ok(elements) => {
+                let line = macro_
+                    .path
+                    .segments
+                    .first()
+                    .map_or(0, |segment| segment.ident.span().start().line);
+                self.consider(elements.iter(), line);
+            }
+            Err(_not_a_list_of_expressions) => {}
+        }
+        syn::visit::visit_macro(self, macro_);
+    }
 }
 
 struct ManualVariantLists<'a> {
@@ -1778,6 +2006,139 @@ pub fn manual_variant_lists_across<'a>(
     found.sort();
     found.dedup();
     Ok(found)
+}
+
+/// Cargo's directories for code that measures a crate rather than being it.
+const MEASURING: [&str; 3] = ["/tests/", "/benches/", "/examples/"];
+
+/// Whether a file is compiled into what this repository publishes, rather than into what measures it.
+///
+/// A benchmark or a test taking somebody else's defaults answers no question wrongly, because it asks no question of them.
+fn ships(file: &str) -> bool {
+    !MEASURING.iter().any(|measuring| file.contains(measuring))
+}
+
+/// The crate a source file belongs to, which for a suite is the crate it is linked against.
+///
+/// A crate's own tests, benchmarks, and examples see the types it declares,
+/// so a cross-file rule that scoped them apart from `src/` was asking about a crate while holding half of it.
+#[must_use]
+pub fn crate_of(path: &str) -> String {
+    let mut directories = MEASURING.to_vec();
+    directories.push("/src/");
+    directories
+        .iter()
+        .find_map(|directory| path.split_once(directory))
+        .map_or_else(|| path.to_owned(), |(package, _rest)| package.to_owned())
+}
+
+/// Every struct literal of `parsed` that leaves its remainder to a type another crate owns.
+///
+/// A remainder is honest inside the crate that declares the fields: adding one is a single change with a single reviewer.
+/// Across a crate boundary it is a decision taken by somebody who cannot see this call, so the field they add arrives here answered and nothing fails.
+fn foreign_remainders(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut roots = BTreeMap::new();
+    let mut imports = ImportRoots { roots: &mut roots };
+    imports.visit_file(parsed);
+    let mut found = Vec::new();
+    let mut remainders = ForeignRemainders {
+        file,
+        roots: &roots,
+        found: &mut found,
+    };
+    remainders.visit_file(parsed);
+    found
+}
+
+/// Whether a struct path names a type declared outside this crate.
+///
+/// A bare name no `use` brought in is declared in this very file, which is as local as a type gets; a qualified one is rooted at whatever its first segment resolves to.
+fn is_foreign_path(path: &syn::Path, roots: &BTreeMap<String, String>) -> bool {
+    let Some(first) = path.segments.first() else {
+        return false;
+    };
+    let head = first.ident.to_string();
+    match roots.get(&head) {
+        Some(root) => !matches!(root.as_str(), "crate" | "self" | "super" | "Self"),
+        None => path.segments.len() > 1 && !matches!(head.as_str(), "crate" | "self" | "super"),
+    }
+}
+
+/// What each name a `use` brings into scope is rooted at.
+struct ImportRoots<'a> {
+    roots: &'a mut BTreeMap<String, String>,
+}
+
+impl ImportRoots<'_> {
+    /// Records every leaf of `tree` against the root segment the `use` began with.
+    fn walk(&mut self, root: Option<&str>, tree: &syn::UseTree) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                let here = path.ident.to_string();
+                let root = root.unwrap_or(here.as_str()).to_owned();
+                self.walk(Some(&root), &path.tree);
+            }
+            syn::UseTree::Name(name) => {
+                let leaf = name.ident.to_string();
+                let root = root.unwrap_or(leaf.as_str()).to_owned();
+                self.roots.insert(leaf, root);
+            }
+            syn::UseTree::Rename(rename) => {
+                let leaf = rename.rename.to_string();
+                let root = root.unwrap_or(leaf.as_str()).to_owned();
+                self.roots.insert(leaf, root);
+            }
+            syn::UseTree::Group(group) => {
+                for one in &group.items {
+                    self.walk(root, one);
+                }
+            }
+            syn::UseTree::Glob(_every) => {}
+        }
+    }
+}
+
+impl Visit<'_> for ImportRoots<'_> {
+    fn visit_item_use(&mut self, item: &syn::ItemUse) {
+        self.walk(None, &item.tree);
+    }
+}
+
+/// Struct literals whose remainder belongs to another crate.
+struct ForeignRemainders<'a> {
+    file: &'a str,
+    roots: &'a BTreeMap<String, String>,
+    found: &'a mut Vec<Finding>,
+}
+
+/// Whether an expression is somebody's `default()`, which is the remainder nothing here reviews.
+fn is_a_default(expression: &syn::Expr) -> bool {
+    let syn::Expr::Call(call) = expression else {
+        return false;
+    };
+    let syn::Expr::Path(path) = call.func.as_ref() else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|last| last.ident == "default")
+}
+
+impl<'ast> Visit<'ast> for ForeignRemainders<'_> {
+    fn visit_expr_struct(&mut self, literal: &'ast syn::ExprStruct) {
+        if literal.rest.as_deref().is_some_and(is_a_default)
+            && is_foreign_path(&literal.path, self.roots)
+            && let Some(first) = literal.path.segments.first()
+        {
+            self.found.push(Finding {
+                kind: Kind::ForeignRemainder,
+                file: self.file.to_owned(),
+                line: first.ident.span().start().line,
+            });
+        }
+        syn::visit::visit_expr_struct(self, literal);
+    }
 }
 
 /// Every enum of `parsed` that publishes its whole list and also says the list is open.

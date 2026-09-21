@@ -31,32 +31,46 @@ fn disposition() -> impl Strategy<Value = Disposition> {
         reaching: vec!["pkg/lib/pkg".to_owned()],
         fallback: Fallback::NotMeasured,
     };
-    prop_oneof![
-        Just(Disposition::Rejected {
-            diagnostic: "no".to_owned()
-        }),
-        Just(Disposition::Killed {
-            by: "pkg/lib/pkg".to_owned()
-        }),
-        Just(Disposition::StepLimitReached {
+    let every = [
+        Disposition::Rejected {
+            diagnostic: "no".to_owned(),
+        },
+        Disposition::Killed {
+            by: "pkg/lib/pkg".to_owned(),
+        },
+        Disposition::StepLimitReached {
             on: "pkg/lib/pkg".to_owned(),
             boundary: StepBoundary::new(10, 11).expect("a first count beyond the allowance"),
-        }),
-        Just(Disposition::Waited {
-            on: "pkg/lib/pkg".to_owned()
-        }),
-        Just(Disposition::Survived { route: route() }),
-        Just(Disposition::Unreached),
-        Just(Disposition::Equivalent { route: route() }),
-        Just(Disposition::Unconfirmed {
+        },
+        Disposition::Waited {
+            on: "pkg/lib/pkg".to_owned(),
+        },
+        Disposition::Survived { route: route() },
+        Disposition::Unreached,
+        Disposition::Equivalent { route: route() },
+        Disposition::Unconfirmed {
             on: "pkg/lib/pkg".to_owned(),
             why: Unconfirmed::DidNotReproduce,
-        }),
-        Just(Disposition::Errored {
+        },
+        Disposition::Errored {
             on: "pkg/lib/pkg".to_owned(),
             detail: "no binary".to_owned(),
-        }),
-    ]
+        },
+    ];
+    for one in &every {
+        match one {
+            Disposition::Rejected { .. }
+            | Disposition::Killed { .. }
+            | Disposition::StepLimitReached { .. }
+            | Disposition::Waited { .. }
+            | Disposition::Survived { .. }
+            | Disposition::Unreached
+            | Disposition::Equivalent { .. }
+            | Disposition::Unconfirmed { .. }
+            | Disposition::Errored { .. } => {}
+        }
+    }
+    proptest::sample::select(every.to_vec())
 }
 
 /// One way a mutation can be decided.

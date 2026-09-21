@@ -175,6 +175,11 @@ fn each_mode_is_its_own_identity_and_says_what_it_looked_at() {
             packages: vec!["a".to_owned(), "b".to_owned()],
         },
     ];
+    for mode in &modes {
+        match mode {
+            Mode::Full | Mode::Changed { .. } | Mode::Scoped { .. } => {}
+        }
+    }
     let mut seen = std::collections::BTreeSet::new();
     for mode in modes {
         let mut one = inputs();

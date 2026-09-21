@@ -131,7 +131,7 @@ fn a_body_that_stops_is_a_conversion_nobody_did_rather_than_a_third_category() {
 
 #[test]
 fn every_shape_says_the_reading_it_came_from() {
-    for shape in [Shape::Selects, Shape::Refuses, Shape::Decides] {
+    for shape in Shape::ALL {
         assert!(
             shape.hint().starts_with("by body shape"),
             "this is a second reading of code somebody else has already read, and one that \

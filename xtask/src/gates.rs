@@ -886,6 +886,10 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
         );
         sources.push((compiled_as(&label), label, source));
     }
+    let crates: Vec<(String, String, String)> = sources
+        .iter()
+        .map(|(_compiled, file, source)| (lint_scan::crate_of(file), file.clone(), source.clone()))
+        .collect();
     found.extend(source_universe(root, &files, &sources)?);
     found.extend(
         lint_scan::open_and_closed_across(
@@ -897,7 +901,7 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
     );
     found.extend(
         lint_scan::manual_variant_lists_across(
-            sources
+            crates
                 .iter()
                 .map(|(scope, file, source)| (scope.as_str(), file.as_str(), source.as_str())),
         )

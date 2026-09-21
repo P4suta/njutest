@@ -2159,3 +2159,161 @@ fn an_open_enum_and_its_closed_list_cannot_be_split_across_files() {
         "an Error implementation in another module keeps the public error boundary extensible"
     );
 }
+
+#[test]
+fn a_struct_from_another_crate_may_not_leave_its_remainder_to_that_crate() {
+    let source = "use other_crate::session::Options;\n\
+                  fn go() -> Options { Options { verify: true, ..Options::default() } }\n";
+    assert_eq!(
+        kinds(source),
+        [Kind::ForeignRemainder],
+        "the fields this does not name are answered by whoever owns Options, and a field \
+         they add next arrives here decided: {source}"
+    );
+}
+
+#[test]
+fn a_remainder_this_crate_computed_is_not_the_owners_idea_of_neutral() {
+    let ours = "use other_crate::session::Options;\n\
+                fn switches() -> Options { Options { verify: true, quiet: false } }\n\
+                fn go() -> Options { Options { verify: false, ..switches() } }\n";
+    assert!(
+        !kinds(ours).contains(&Kind::ForeignRemainder),
+        "a remainder taken from a value this crate built names every field somewhere, \
+         which is the whole ask: {ours}"
+    );
+    let local = "struct Options { verify: bool }\n\
+                 fn go() -> Options { Options { verify: true, ..Options::default() } }\n";
+    assert!(
+        !kinds(local).contains(&Kind::ForeignRemainder),
+        "and a type this file declares is one whose new field is the same change and the \
+         same review: {local}"
+    );
+    let rooted = "fn go() -> crate::Options { crate::Options { ..Default::default() } }\n";
+    assert!(
+        !kinds(rooted).contains(&Kind::ForeignRemainder),
+        "as is one this crate declares elsewhere: {rooted}"
+    );
+}
+
+#[test]
+fn a_renamed_import_does_not_hide_which_crate_owns_the_remainder() {
+    let renamed = "use other_crate::session::Options as Knobs;\n\
+                   fn go() -> Knobs { Knobs { verify: true, ..Default::default() } }\n";
+    assert_eq!(
+        kinds(renamed),
+        [Kind::ForeignRemainder],
+        "the name is this crate's and the fields are not: {renamed}"
+    );
+    let grouped = "use other_crate::session::{Failing, Options};\n\
+                   fn go() -> Options { Options { verify: true, ..Options::default() } }\n";
+    assert_eq!(
+        kinds(grouped),
+        [Kind::ForeignRemainder],
+        "and a grouped import roots every leaf the same way: {grouped}"
+    );
+}
+
+#[test]
+fn code_that_measures_rather_than_ships_may_take_the_owners_defaults() {
+    let source = "use other_crate::session::Options;\n\
+                  fn go() -> Options { Options { verify: true, ..Options::default() } }\n";
+    for measuring in [
+        "crates/x/tests/a.rs",
+        "crates/x/benches/a.rs",
+        "crates/x/examples/a.rs",
+    ] {
+        let found = scan_source(measuring, source).expect("the source parses");
+        assert!(
+            !found.iter().any(|one| one.kind == Kind::ForeignRemainder),
+            "{measuring} asks no question of those switches, so it answers none of them \
+             wrongly: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_whole_set_list_is_refused_wherever_it_is_written() {
+    let listed = "enum Step { One, Two, Three }\n\
+                  fn every() -> [Step; 3] { [Step::One, Step::Two, Step::Three] }\n";
+    assert_eq!(
+        kinds(listed),
+        [Kind::ManualVariantList],
+        "the rule used to read only an `impl` of the enum, so the same list in a free \
+         function, a test, or a generator was invisible: {listed}"
+    );
+    let generated = "enum Step { One, Two, Three }\n\
+                     fn every() -> [Step; 3] { Step::ALL }\n";
+    assert!(
+        !kinds(generated).contains(&Kind::ManualVariantList),
+        "{generated}"
+    );
+    let part = "enum Step { One, Two, Three }\n\
+                fn some() -> [Step; 2] { [Step::One, Step::Two] }\n";
+    assert!(
+        !kinds(part).contains(&Kind::ManualVariantList),
+        "a list of some of a set claims nothing about the rest: {part}"
+    );
+}
+
+#[test]
+fn a_generator_and_a_screen_do_not_hide_which_set_a_list_is_over() {
+    let wrapped = "enum Step { One, Two }\n\
+                   fn every() { prop_oneof![Just(Step::One), Just(Step::Two)]; }\n";
+    assert_eq!(
+        kinds(wrapped),
+        [Kind::ManualVariantList],
+        "a generator wraps each in `Just`, which changes nothing about the set: {wrapped}"
+    );
+    let asked = "enum Step { One, Two }\n\
+                 fn every() { let _ = [Step::One.name(), Step::Two.name()]; }\n";
+    assert_eq!(
+        kinds(asked),
+        [Kind::ManualVariantList],
+        "nor does asking each for its name: {asked}"
+    );
+}
+
+#[test]
+fn a_list_the_same_body_matches_totally_is_one_the_compiler_already_holds() {
+    let held = "enum Step { One, Two { at: u8 } }\n\
+                fn every() -> [Step; 2] {\n\
+                    let steps = [Step::One, Step::Two { at: 1 }];\n\
+                    for step in &steps { match step { Step::One | Step::Two { .. } => {} } }\n\
+                    steps\n\
+                }\n";
+    assert!(
+        !kinds(held).contains(&Kind::ManualVariantList),
+        "the match decides nothing and is the whole point: a variant added to Step makes \
+         this function stop compiling, which is the only thing a list of data-bearing \
+         variants can be held by: {held}"
+    );
+    let partial = "enum Step { One, Two { at: u8 } }\n\
+                   fn every() -> [Step; 2] {\n\
+                       let steps = [Step::One, Step::Two { at: 1 }];\n\
+                       for step in &steps { match step { Step::One => {}, _ => {} } }\n\
+                       steps\n\
+                   }\n";
+    assert!(
+        kinds(partial).contains(&Kind::ManualVariantList),
+        "while a match with an arm that catches the rest sends nobody anywhere: {partial}"
+    );
+    let elsewhere = "enum Step { One, Two { at: u8 } }\n\
+                     fn every() -> [Step; 2] { [Step::One, Step::Two { at: 1 }] }\n\
+                     fn apart(step: &Step) { match step { Step::One | Step::Two { .. } => {} } }\n";
+    assert!(
+        kinds(elsewhere).contains(&Kind::ManualVariantList),
+        "and a match in another function is one the next person has no reason to read: \
+         {elsewhere}"
+    );
+}
+
+#[test]
+fn a_set_that_says_it_may_grow_is_not_asked_for_a_list_nothing_could_hold() {
+    let open = "#[non_exhaustive]\nenum Step { One, Two }\n\
+                fn every() -> [Step; 2] { [Step::One, Step::Two] }\n";
+    assert!(
+        !kinds(open).contains(&Kind::ManualVariantList),
+        "no match of an open set is exhaustive either, so there is nothing to ask for: {open}"
+    );
+}

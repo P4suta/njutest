@@ -497,7 +497,7 @@ impl Default for Format {
 }
 
 /// How a run writes what it is doing while it does it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, njutest_macros::AllVariants)]
 #[value(rename_all = "lower")]
 pub enum Ui {
     /// Lines a person reads.

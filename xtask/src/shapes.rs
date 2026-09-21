@@ -13,7 +13,7 @@ use syn::visit::Visit;
 /// is the point: a reading derived from the one that put the line in the
 /// ledger would agree with it for free, and agreement bought that way is
 /// worth nothing (ADR 0023).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Shape {
     /// The rest is the answer: a literal, a unit, a `continue`, nothing at all.
     Selects,

@@ -105,7 +105,7 @@ fn a_note_is_worth_a_line_of_its_own_even_on_a_dashboard() {
 
 #[test]
 fn every_interface_survives_a_message_that_would_break_a_line() {
-    for kind in [Ui::Plain, Ui::Jsonl, Ui::Dashboard] {
+    for kind in Ui::ALL {
         let text = said(kind, |notes| notes.note("odd", "a\nb\tc\r\\d"));
         assert!(!text.is_empty(), "{kind:?}");
         assert!(

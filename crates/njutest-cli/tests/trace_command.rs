@@ -301,6 +301,13 @@ fn every_problem_a_recording_can_have_is_said_in_a_line_that_names_it() {
         },
     ];
     for problem in &problems {
+        match problem {
+            Problem::MissingRunStart
+            | Problem::MissingRunEnd
+            | Problem::SequenceGap { .. }
+            | Problem::Dropped(..)
+            | Problem::PhaseRepeated { .. } => {}
+        }
         let line = describe(problem);
         assert!(
             !line.is_empty() && !line.contains('{') && line.len() > 20,
