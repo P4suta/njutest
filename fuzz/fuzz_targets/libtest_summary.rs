@@ -7,7 +7,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use njutest_cli::assure::baseline::status_of;
-use njutest_cli::report::TargetStatus;
+use njutest_cli::report::{FindingKind, TargetStatus};
 use rust_mutants::execute::parse_summary;
 use rust_mutants::outcome::Outcome;
 
@@ -29,7 +29,8 @@ fuzz_target!(|data: &[u8]| {
         Outcome::Errored,
     ] {
         for ignored in [0u32, 1, 4096] {
-            let (status, message) = status_of(outcome, ignored, output);
+            let became = status_of(outcome, ignored, output);
+            let status = became.status;
             assert_eq!(
                 status == TargetStatus::Passed,
                 outcome == Outcome::Survived,
@@ -37,12 +38,20 @@ fuzz_target!(|data: &[u8]| {
             );
             assert_eq!(
                 status == TargetStatus::Passed,
-                message.is_none(),
+                became.message.is_none(),
                 "a target that did not pass says why, and one that passed has nothing to say"
             );
             assert!(
                 status != TargetStatus::Skipped || ignored > 0,
                 "a target is skipped only when libtest was told to skip every test of it"
+            );
+            assert_eq!(
+                became.finding.is_some_and(FindingKind::is_defect),
+                outcome == Outcome::Killed,
+                "a defect is something wrong with the code under test, and every other \
+                 way a target can end is a fact about the run or the machine: \
+                 {outcome:?} earned {:?}",
+                became.finding
             );
         }
     }
