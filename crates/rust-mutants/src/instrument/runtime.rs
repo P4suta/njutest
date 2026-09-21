@@ -59,7 +59,7 @@ pub const TOUCH_UNAVAILABLE_EXIT: i32 = 96;
 pub const MODULE_STEM: &str = "__rm";
 
 /// Marks the generated module, for a person reading the snapshot and for the drift gate.
-pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v2";
+pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v1";
 
 /// The first catalog index whose inclusive zero-based window cannot fit in a `u32` span.
 pub(super) const FIRST_UNREPRESENTABLE_INDEX: u32 = u32::MAX;

@@ -319,7 +319,7 @@ fn the_report_is_written_where_a_reader_will_look_and_validates_against_the_sche
 
     let report = document(&fixture);
     let schema_path =
-        njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v2.json");
+        njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v1.json");
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(schema_path).expect("the schema"),
     )
@@ -1009,7 +1009,7 @@ fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
 
     let store = njutest_devkit::paths::cache_beside(&fixture.root)
         .expect("a cache directory")
-        .join("njutest/outcomes-v2");
+        .join("njutest/outcomes-v1");
     std::fs::remove_file(store.join(format!("{identity}.json")))
         .expect("the answer the first run stored");
     let identity = njutest_cli::evidence::key::continuation_identity(
@@ -1019,9 +1019,9 @@ fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
     let directory = store.join("checkpoints").join(&identity);
     std::fs::create_dir_all(&directory).expect("mkdir");
     std::fs::write(
-        directory.join("checkpoint-v2.json"),
+        directory.join("checkpoint-v1.json"),
         serde_json::to_string(&serde_json::json!({
-            "schema": "njutest-assurance-checkpoint-v2",
+            "schema": "njutest-assurance-checkpoint-v1",
             "identity": identity,
             "attempts": 1,
             "targets": [{
@@ -1571,7 +1571,7 @@ fn a_run_briefs_whatever_asked_for_it_rather_than_whatever_it_guessed() {
     let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&text)
         .unwrap_or_else(|error| panic!("{error}: {text}"));
     assert_eq!(
-        document["report"]["schema"], "njutest-assurance-report-v2",
+        document["report"]["schema"], "njutest-assurance-report-v1",
         "and the document is the one on disk rather than the report serialized a second \
          time, because the second time is a second answer to compare against the first"
     );

@@ -116,7 +116,7 @@ fn a_recording_opens_with_run_start_and_closes_with_run_end() {
         panic!("a run-start first: {:?}", events[0]);
     };
     assert_eq!(start.schema, SCHEMA);
-    assert_eq!(start.schema, "njutest-trace-v2");
+    assert_eq!(start.schema, "njutest-trace-v1");
     assert_eq!(start.njutest, njutest_cli::VERSION);
     assert_eq!(start.rust_mutants, rust_mutants::VERSION);
     assert_eq!(start.run_id, "20260905T081500Z-abcdef");
@@ -553,21 +553,21 @@ fn the_reader_rejects_duplicate_keys_at_every_owned_depth() {
         1,
     );
     let duplicate_record = one.replacen(
-        "\"schema\":\"njutest-trace-v2\"",
-        "\"schema\":\"njutest-trace-v2\",\"schema\":\"njutest-trace-v2\"",
+        "\"schema\":\"njutest-trace-v1\"",
+        "\"schema\":\"njutest-trace-v1\",\"schema\":\"njutest-trace-v1\"",
         1,
     );
 
     for malformed in [duplicate_root, duplicate_payload, duplicate_record] {
         assert!(
             read_events(io::BufReader::new(malformed.as_bytes())).is_err(),
-            "every object owned by the v2 reader rejects duplicate keys: {malformed}"
+            "every object owned by the v1 reader rejects duplicate keys: {malformed}"
         );
     }
 }
 
 #[test]
-fn the_v2_reader_distinguishes_an_explicit_null_from_a_missing_field() {
+fn the_v1_reader_distinguishes_an_explicit_null_from_a_missing_field() {
     let event = Event {
         seq: 1,
         timestamp: "2027-01-15T08:00:00Z".to_owned(),
@@ -582,7 +582,7 @@ fn the_v2_reader_distinguishes_an_explicit_null_from_a_missing_field() {
     let exact = serde_json::to_string(&event).expect("an exact event");
     assert!(
         read_events(io::BufReader::new(exact.as_bytes())).is_ok(),
-        "the explicit null is part of the v2 shape"
+        "the explicit null is part of the v1 shape"
     );
 
     let mut missing = serde_json::to_value(event).expect("an event value");
@@ -593,12 +593,12 @@ fn the_v2_reader_distinguishes_an_explicit_null_from_a_missing_field() {
     let text = serde_json::to_string(&missing).expect("the malformed event");
     assert!(
         read_events(io::BufReader::new(text.as_bytes())).is_err(),
-        "missing and explicitly null are different v2 documents"
+        "missing and explicitly null are different v1 documents"
     );
 }
 
 #[test]
-fn the_published_v2_schema_accepts_every_closed_specimen_and_refuses_ambiguity() {
+fn the_published_v1_schema_accepts_every_closed_specimen_and_refuses_ambiguity() {
     fn schema(root: &Path, name: &str) -> serde_json::Value {
         let path = root.join("schema").join(name);
         let text = fs::read_to_string(&path).expect("the published schema");
@@ -606,17 +606,17 @@ fn the_published_v2_schema_accepts_every_closed_specimen_and_refuses_ambiguity()
     }
 
     let root = njutest_devkit::paths::workspace_root();
-    let engine = schema(&root, "rust-mutants-trace-v2.json");
-    let report = schema(&root, "njutest-assurance-report-v2.json");
-    let trace = schema(&root, "njutest-trace-v2.json");
+    let engine = schema(&root, "rust-mutants-trace-v1.json");
+    let report = schema(&root, "njutest-assurance-report-v1.json");
+    let trace = schema(&root, "njutest-trace-v1.json");
     let registry = jsonschema::Registry::new()
         .add(
-            "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v2.json",
+            "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v1.json",
             engine,
         )
         .expect("the engine trace schema has a canonical URI")
         .add(
-            "https://github.com/P4suta/njutest/schema/njutest-assurance-report-v2.json",
+            "https://github.com/P4suta/njutest/schema/njutest-assurance-report-v1.json",
             report,
         )
         .expect("the report schema has a canonical URI")

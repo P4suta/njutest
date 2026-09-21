@@ -337,7 +337,7 @@ pub enum RunnerError {
     /// A report could not be written or read.
     #[error(transparent)]
     Report(#[from] crate::report::json::ReportError),
-    /// A derived report projection exceeded the v2 exact counter range.
+    /// A derived report projection exceeded the v1 exact counter range.
     #[error("{}: {source}", REPORT_UNSOUND.code)]
     ReportCount {
         /// The exact counter relation that could not be represented.

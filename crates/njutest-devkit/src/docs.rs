@@ -344,35 +344,6 @@ pub fn trace_field_ledger<T: Serialize>(
     compare_trace_fields(&documented, &serialized)
 }
 
-/// Holds a historical trace documentation table to an explicitly frozen wire
-/// vocabulary.
-///
-/// Unlike [`trace_field_ledger`], this does not serialize the current Rust
-/// types. A historical contract must keep describing bytes already written;
-/// deriving it from their replacement is exactly how a newer tagged shape can
-/// overwrite the account of an older pair of fields.
-///
-/// # Errors
-/// The table is absent or malformed, repeats a type or field, or differs from
-/// `expected` in either direction.
-pub fn frozen_trace_field_ledger(
-    text: &str,
-    marker: &str,
-    expected: &[(&str, &[&str])],
-) -> Result<(), LedgerError> {
-    let documented = documented_trace_fields(text, marker)?;
-    let serialized = expected
-        .iter()
-        .map(|(type_name, fields)| {
-            (
-                (*type_name).to_owned(),
-                fields.iter().map(|field| (*field).to_owned()).collect(),
-            )
-        })
-        .collect();
-    compare_trace_fields(&documented, &serialized)
-}
-
 /// Reads the deliberately rigid, machine-readable half of a trace table.
 fn documented_trace_fields(
     text: &str,

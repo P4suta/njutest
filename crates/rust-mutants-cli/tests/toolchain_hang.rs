@@ -36,7 +36,7 @@ fn row(fixture: &Fixture, rule: &str, line: u64) -> serde_json::Value {
     let newest = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     )
-    .join("run-report-v2.json");
+    .join("run-report-v1.json");
     read(&newest, rule, line)
 }
 

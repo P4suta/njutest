@@ -164,13 +164,13 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
 
     let checkpoints = njutest_devkit::paths::cache_beside(&root)
         .expect("a cache directory")
-        .join("njutest/outcomes-v2/checkpoints");
+        .join("njutest/outcomes-v1/checkpoints");
     let seeded = checkpoints.join("an-earlier-run");
     std::fs::create_dir_all(&seeded).expect("mkdir");
     std::fs::write(
-        seeded.join("checkpoint-v2.json"),
+        seeded.join("checkpoint-v1.json"),
         serde_json::to_string(&serde_json::json!({
-            "schema": "njutest-assurance-checkpoint-v2",
+            "schema": "njutest-assurance-checkpoint-v1",
             "identity": "an-earlier-run",
             "attempts": 1,
             "targets": [],
@@ -208,7 +208,7 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
         &std::fs::read_to_string(&states[0]).expect("the state"),
     )
     .expect("the state is a document");
-    assert_eq!(state["schema"], "njutest-assurance-checkpoint-v2");
+    assert_eq!(state["schema"], "njutest-assurance-checkpoint-v1");
     assert!(
         !state["mutants"].as_array().expect("mutants").is_empty(),
         "the mutants an earlier run judged are still there: {state}"
@@ -222,7 +222,7 @@ fn written_states(root: &Path) -> Vec<PathBuf> {
         return found;
     };
     for entry in entries.map(|entry| entry.expect("every checkpoint entry is readable")) {
-        let path = entry.path().join("checkpoint-v2.json");
+        let path = entry.path().join("checkpoint-v1.json");
         if path.is_file() {
             found.push(path);
         }

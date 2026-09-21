@@ -17,7 +17,7 @@ fn replace(document: &mut serde_json::Value, pointer: &str, value: serde_json::V
 }
 
 #[test]
-fn every_nullable_v2_report_field_is_still_a_required_key() {
+fn every_nullable_v1_report_field_is_still_a_required_key() {
     fn remove(document: &mut serde_json::Value, pointer: &str) {
         let (parent, field) = pointer.rsplit_once('/').expect("a JSON pointer to a field");
         let removed = document
@@ -31,7 +31,7 @@ fn every_nullable_v2_report_field_is_still_a_required_key() {
         "../../../fuzz/seeds/run_report/one-run.json"
     ))
     .expect("the current report seed");
-    serde_json::from_value::<RunDocument>(exact.clone()).expect("the exact v2 report");
+    serde_json::from_value::<RunDocument>(exact.clone()).expect("the exact v1 report");
 
     for pointer in [
         "/score",

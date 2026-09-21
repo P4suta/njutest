@@ -18,11 +18,11 @@ const EARLIER: &str = "20260905T090000Z-1a2b3c";
 const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 const TARGET: &str = "pkg/test/lib";
-const REPORT: &str = "njutest-assurance-report-v2.json";
+const REPORT: &str = "njutest-assurance-report-v1.json";
 
 fn base() -> serde_json::Value {
     serde_json::json!({
-        "schema": "njutest-assurance-report-v2",
+        "schema": "njutest-assurance-report-v1",
         "schema_version": 2,
         "run_id": RUN,
         "run_kind": "scoped",
@@ -725,8 +725,8 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
     let root = serde_json::to_string(&base())
         .expect("report fixture")
         .replacen(
-            "\"schema\":\"njutest-assurance-report-v2\"",
-            "\"schema\":\"forged\",\"schema\":\"njutest-assurance-report-v2\"",
+            "\"schema\":\"njutest-assurance-report-v1\"",
+            "\"schema\":\"forged\",\"schema\":\"njutest-assurance-report-v1\"",
             1,
         );
 
@@ -768,7 +768,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
 
 #[test]
 fn a_document_of_another_schema_cannot_be_audited() {
-    let document = with(serde_json::json!({ "schema": "njutest-trace-v2" }));
+    let document = with(serde_json::json!({ "schema": "njutest-trace-v1" }));
     let directory = run_directory(&document);
     let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unrecognised { .. }), "{error}");

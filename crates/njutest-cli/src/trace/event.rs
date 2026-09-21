@@ -9,14 +9,10 @@ use crate::config::Contract;
 use crate::report::{ConclusionAccounting, RunKind};
 
 /// The schema name carried by every current `run-start` event.
-///
-/// Version 2 uses the engine's tagged process termination and carries typed
-/// model records; historical version 1 remains a separate documented
-/// contract.
 #[cfg(any(test, feature = "testkit"))]
-pub const SCHEMA: &str = "njutest-trace-v2";
+pub const SCHEMA: &str = "njutest-trace-v1";
 #[cfg(not(any(test, feature = "testkit")))]
-pub(super) const SCHEMA: &str = "njutest-trace-v2";
+pub(super) const SCHEMA: &str = "njutest-trace-v1";
 
 /// One event of a recording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -519,7 +515,7 @@ pub struct WireExchangeRecord {
 /// The rule and the decision are the sets the run holds them as, not their
 /// names: a doc comment listing the legal values beside a `String` is a closed
 /// set written in prose, which is the shape the compiler cannot check. The
-/// Current v2 recordings nest the answer so its fields cannot collide with
+/// Current v1 recordings nest the answer so its fields cannot collide with
 /// the fault identity or rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

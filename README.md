@@ -47,7 +47,7 @@ shared = true
 - [Architecture](docs/architecture.md) and the [decisions](docs/adr/) behind it
 - Engine: [getting started](docs/engine/getting-started.md), [command line](docs/engine/command-line.md), [reports](docs/engine/reports.md), [troubleshooting](docs/engine/troubleshooting.md)
 - [How it differs from cargo-mutants](docs/engine/comparison-with-cargo-mutants.md)
-- Contracts: [assurance](docs/assurance-contract.md), [report](docs/report-v2.md), [trace](docs/trace-v1.md), [errors](docs/errors.md)
+- Contracts: [assurance](docs/assurance-contract.md), [report](docs/report-v1.md), [trace](docs/trace-v1.md), [errors](docs/errors.md)
 
 ## Development
 

@@ -47,7 +47,7 @@ Every line is one JSON object: `seq` (monotonic from 1, delivery order is
 sequence order however many threads record), `timestamp` (RFC 3339, UTC),
 `elapsed_ms`, and a closed `payload`. The payload's `type` selects the record
 under a key named after that type. The first event is `run-start` with
-`schema: "rust-mutants-trace-v2"`,
+`schema: "rust-mutants-trace-v1"`,
 the engine version, and a closed `context`. A standalone context binds the
 canonical run id and Cargo `BuildSelection` digest. The selection covers the
 seven Cargo options controlled by the engine; toolchain and resolved host
@@ -72,7 +72,7 @@ cut at 1 MiB with a `...` marker, and records `output_path` and
 record unconditionally. `Recorder::new` takes the clock as an argument, which
 is how the goldens in `crates/rust-mutants/tests/testdata/trace/` freeze the
 shape, and every line is checked against
-[`schema/rust-mutants-trace-v2.json`](../../schema/rust-mutants-trace-v2.json).
+[`schema/rust-mutants-trace-v1.json`](../../schema/rust-mutants-trace-v1.json).
 
 ## The types
 

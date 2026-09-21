@@ -113,7 +113,7 @@ fn a_disabled_recorder_records_nothing_and_every_call_is_a_no_op() {
 
 #[test]
 fn the_schema_is_frozen() {
-    assert_eq!(SCHEMA, "rust-mutants-trace-v2");
+    assert_eq!(SCHEMA, "rust-mutants-trace-v1");
     assert_eq!(FILE_NAME, "trace.jsonl");
     assert_eq!(OUTPUT_DIRECTORY_NAME, "output");
     assert_eq!(OUTPUT_FILE_LIMIT, 1 << 20);
@@ -219,7 +219,7 @@ fn nested_trace_context_rejects_partial_extra_and_cross_ordinal_bindings() {
 fn run_start_schema_requires_the_closed_trace_context() {
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v2.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
@@ -231,7 +231,7 @@ fn run_start_schema_requires_the_closed_trace_context() {
         "elapsed_ms": 0,
         "payload": {
             "type": "run-start",
-            "schema": "rust-mutants-trace-v2",
+            "schema": "rust-mutants-trace-v1",
             "engine": "0.1.0",
             "context": {
                 "kind": "standalone",
@@ -749,7 +749,7 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
 
 #[test]
 fn the_reader_refuses_a_malformed_line_and_names_it() {
-    let text = "{\"seq\":1,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v2\",\"engine\":\"0\",\"context\":{\"kind\":\"standalone\",\"run_id\":\"test\",\"build_selection\":\"8ab0bfdf63e67552f235202347a8bd67247a83027fa8a321b61b759d3f35ab85\"}}}\nnot json\n";
+    let text = "{\"seq\":1,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\",\"context\":{\"kind\":\"standalone\",\"run_id\":\"test\",\"build_selection\":\"8ab0bfdf63e67552f235202347a8bd67247a83027fa8a321b61b759d3f35ab85\"}}}\nnot json\n";
     let error = read_events(text.as_bytes()).expect_err("the malformed line is refused");
     assert_eq!(error.line(), 2);
     assert!(error.to_string().contains("line 2"), "{error}");
@@ -758,8 +758,8 @@ fn the_reader_refuses_a_malformed_line_and_names_it() {
 #[test]
 fn the_reader_rejects_duplicate_keys_at_every_owned_depth() {
     for text in [
-        "{\"seq\":1,\"seq\":2,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v2\",\"engine\":\"0\"}}\n",
-        "{\"seq\":1,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v2\",\"schema\":\"rust-mutants-trace-v2\",\"engine\":\"0\"}}\n",
+        "{\"seq\":1,\"seq\":2,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\"}}\n",
+        "{\"seq\":1,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\"}}\n",
     ] {
         let error = read_events(text.as_bytes()).expect_err("duplicate names are ambiguous");
         assert_eq!(error.line(), 1);
@@ -771,7 +771,7 @@ fn the_reader_rejects_duplicate_keys_at_every_owned_depth() {
 }
 
 #[test]
-fn the_v2_reader_distinguishes_an_explicit_null_from_a_missing_field() {
+fn the_v1_reader_distinguishes_an_explicit_null_from_a_missing_field() {
     let event = rust_mutants::trace::Event {
         seq: 1,
         timestamp: "2027-01-15T08:00:00Z".to_owned(),
@@ -783,7 +783,7 @@ fn the_v2_reader_distinguishes_an_explicit_null_from_a_missing_field() {
     let exact = serde_json::to_string(&event).expect("an exact event");
     assert!(
         read_events(exact.as_bytes()).is_ok(),
-        "the explicitly null fields are part of the v2 shape"
+        "the explicitly null fields are part of the v1 shape"
     );
 
     let mut missing = serde_json::to_value(event).expect("an event value");
@@ -794,7 +794,7 @@ fn the_v2_reader_distinguishes_an_explicit_null_from_a_missing_field() {
     let text = serde_json::to_string(&missing).expect("the malformed event");
     assert!(
         read_events(text.as_bytes()).is_err(),
-        "missing and explicitly null are different v2 documents"
+        "missing and explicitly null are different v1 documents"
     );
 }
 
@@ -1021,7 +1021,7 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
 
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v2.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
@@ -1044,7 +1044,7 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
 fn the_schema_and_the_vocabulary_name_the_same_types() {
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v2.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
@@ -1064,7 +1064,7 @@ fn the_schema_and_the_vocabulary_name_the_same_types() {
 fn the_trace_schema_ties_step_evidence_to_exactly_the_step_outcome() {
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v2.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
@@ -1368,7 +1368,7 @@ fn a_summary_counts_how_many_times_each_program_was_started() {
 fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v2.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )

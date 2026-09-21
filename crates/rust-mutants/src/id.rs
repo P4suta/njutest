@@ -9,7 +9,8 @@ use std::ffi::OsString;
 
 use crate::span::{Span, SpanError};
 
-/// The domain separator hashed first for every mutant ID. It carries the recipe version: a future recipe becomes `rust-mutants-id-v2` so that v1 identities can never be mistaken for v2 identities.
+/// The domain separator hashed first for every mutant ID.
+/// It carries the recipe version: a future recipe becomes `rust-mutants-id-v1` so that v1 identities can never be mistaken for v1 identities.
 pub const ID_DOMAIN: &str = "rust-mutants-id-v1";
 
 /// The length of a full mutant ID in lowercase hex characters (SHA-256).

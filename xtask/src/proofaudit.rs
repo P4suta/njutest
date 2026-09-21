@@ -11,10 +11,10 @@ use std::path::Path;
 use sha2::Digest as _;
 
 /// The document a completed run leaves in its directory.
-pub const REPORT_FILE: &str = "njutest-assurance-report-v2.json";
+pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
 
 /// The schema this audit knows how to re-decide.
-pub const SCHEMA: &str = "njutest-assurance-report-v2";
+pub const SCHEMA: &str = "njutest-assurance-report-v1";
 
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;

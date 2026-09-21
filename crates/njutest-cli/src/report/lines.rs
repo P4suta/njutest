@@ -6,7 +6,7 @@
 use super::{Conclusion, Report, TargetStatus};
 
 /// The record stream inside a run directory.
-pub const FILE_NAME: &str = "njutest-assurance-report-v2.lines";
+pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
 
 /// The whole report as records, each line terminated, and where the run's document is from the project's own root.
 ///

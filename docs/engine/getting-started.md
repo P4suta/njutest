@@ -68,7 +68,7 @@ OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, 
 SCORE     100.0%  (9 detected of 9 decided)
 WORK      started=9 of 30 pairs across 3 targets; 70.0% removed (unreached=20 never-infected=1)
           tests=9 of 30; 70.0% removed
-REPORT    ./reports/mutation/<run>/run-report-v2.json
+REPORT    ./reports/mutation/<run>/run-report-v1.json
 
 $ rust-mutants explain f0d2
 NAME      src/lib.rs:max:gt-to-ge@11

@@ -79,7 +79,7 @@ fn whole(phase_ms: u64, dropped: u64) -> Vec<String> {
             0,
             &serde_json::json!({
                 "type": "run-start",
-                "schema": "rust-mutants-trace-v2",
+                "schema": "rust-mutants-trace-v1",
                 "engine": "0.1.0",
                 "context": {
                     "kind": "standalone",

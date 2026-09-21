@@ -117,7 +117,7 @@ fn the_constants_are_frozen() {
     assert_eq!(STEP_PROTOCOL_EXIT, 94);
     assert_eq!(STEP_STATE_ENV, "RUST_MUTANTS_STEP_STATE");
     assert_eq!(STEP_STATE_SCHEMA, "rust-mutants-step-state-v1");
-    assert_eq!(RUNTIME_MARKER, "rust-mutants-runtime-v2");
+    assert_eq!(RUNTIME_MARKER, "rust-mutants-runtime-v1");
 }
 
 #[test]

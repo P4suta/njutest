@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "rust-mutants-outcome-v2";
+pub const SCHEMA: &str = "rust-mutants-outcome-v1";
 
 /// The directory records live in, below the user's cache directory.
-pub const LAYOUT: &str = "rust-mutants/outcomes-v2";
+pub const LAYOUT: &str = "rust-mutants/outcomes-v1";
 
 /// Bumped when a rule changes what it writes, so a record about the old edit stops answering.
 pub const RULE_ABI: u32 = 1;

@@ -220,8 +220,7 @@ pub(crate) fn events(recorded: &str) -> Result<Vec<Value>, ReadError> {
         .collect()
 }
 
-/// Checks the current-v2 envelope, then gives the independent auditors a
-/// collision-free view with payload fields beside the envelope fields.
+/// Checks the current-v1 envelope, then gives the independent auditors a collision-free view with payload fields beside the envelope fields.
 fn nested_event(event: Value) -> Result<Value, serde_json::Error> {
     let Value::Object(mut envelope) = event else {
         return Err(serde_json::Error::custom("a trace event must be an object"));

@@ -14,10 +14,10 @@ use crate::coverage::{Block, Point};
 use crate::report::TargetStatus;
 
 /// The name of the shape.
-pub const SCHEMA: &str = "njutest-assurance-checkpoint-v2";
+pub const SCHEMA: &str = "njutest-assurance-checkpoint-v1";
 
 /// The file one identity's checkpoint is written to.
-pub const FILE_NAME: &str = "checkpoint-v2.json";
+pub const FILE_NAME: &str = "checkpoint-v1.json";
 
 /// Scheduling state for one interrupted run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

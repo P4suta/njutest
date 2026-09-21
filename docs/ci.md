@@ -114,7 +114,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools # coverage routing; without it every mutant runs everywhere
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v1
       - run: cargo install rust-mutants-cli --locked
       - run: rust-mutants doctor
       - name: Measure one part of the catalog

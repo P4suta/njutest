@@ -71,7 +71,7 @@ fn a_listing_that_is_not_one_yields_nothing_rather_than_a_guess() {
 
 #[test]
 fn a_test_is_named_by_its_package_its_unit_and_its_path() {
-    assert_eq!(TARGET_DOMAIN, "njutest-target-v2");
+    assert_eq!(TARGET_DOMAIN, "njutest-target-v1");
     let id = target_id("core", UnitKind::Lib, "core", "tests::plain").expect("bounded fields");
     assert_eq!(id.as_str().len(), 64, "{id}");
     assert!(

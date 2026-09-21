@@ -1301,7 +1301,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
 /// What a run that was stopped wrote where its successor will look.
 fn left_behind(cache: &std::path::Path) {
     let kept: Vec<serde_json::Value> =
-        std::fs::read_dir(cache.join("njutest/outcomes-v2/checkpoints"))
+        std::fs::read_dir(cache.join("njutest/outcomes-v1/checkpoints"))
             .expect("the checkpoints directory")
             .map(|entry| entry.expect("every checkpoint entry is readable"))
             .map(|entry| {

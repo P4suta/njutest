@@ -119,12 +119,10 @@ pub fn parse(text: &str) -> Result<Report, ReportError> {
     }
 }
 
-/// Reads either strict v2 document variant without erasing whether it is
-/// complete.
+/// Reads either strict v1 document variant without erasing whether it is complete.
 ///
 /// # Errors
-/// Refuses duplicate/unknown/missing fields and every cross-field invariant
-/// enforced by the variant's checked deserializer.
+/// Refuses duplicate/unknown/missing fields and every cross-field invariant enforced by the variant's checked deserializer.
 pub fn parse_any(text: &str) -> Result<ReportDocument, ReportError> {
     let value =
         crate::strictjson::from_str(text).map_err(|source| ReportError::Unreadable { source })?;

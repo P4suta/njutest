@@ -79,7 +79,7 @@ fn measured(name: &str) -> Work {
     let directory = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     );
-    let text = std::fs::read_to_string(directory.join("run-report-v2.json")).expect("the report");
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: rust_mutants::report::run::RunDocument =
         njutest_devkit::strictjson::decode_str(&text).expect("the report reads back");
     Work::of(&document).expect("valid work ledger")

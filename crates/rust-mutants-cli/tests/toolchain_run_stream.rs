@@ -112,7 +112,7 @@ fn a_json_run_streams_one_object_per_event_as_it_happens() {
     let lines = read(&text).expect("every line reads back through the engine's own reader");
 
     assert!(
-        matches!(lines.first(), Some(Line::RunStart { schema, .. }) if schema == "rust-mutants-run-stream-v2"),
+        matches!(lines.first(), Some(Line::RunStart { schema, .. }) if schema == "rust-mutants-run-stream-v1"),
         "the first line says what the stream is: {:?}",
         lines.first()
     );
@@ -227,7 +227,7 @@ fn every_line_validates_against_the_schema_published_with_it() {
     let text = njutest_devkit::process::strict_utf8(&output.stdout);
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-stream-v2.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-stream-v1.json"),
         )
         .expect("the schema"),
     )
@@ -245,7 +245,7 @@ fn every_line_validates_against_the_schema_published_with_it() {
 }
 
 #[test]
-fn the_v2_reader_requires_explicit_null_and_rejects_duplicate_keys() {
+fn the_v1_reader_requires_explicit_null_and_rejects_duplicate_keys() {
     let exact = r#"{"type":"error","code":"RM0001","message":"failed","remedy":null}"#;
     assert!(
         read_line(1, exact).is_ok(),
@@ -255,7 +255,7 @@ fn the_v2_reader_requires_explicit_null_and_rejects_duplicate_keys() {
     let missing = r#"{"type":"error","code":"RM0001","message":"failed"}"#;
     assert!(
         read_line(1, missing).is_err(),
-        "missing and explicitly null are not the same v2 document"
+        "missing and explicitly null are not the same v1 document"
     );
 
     let duplicate =

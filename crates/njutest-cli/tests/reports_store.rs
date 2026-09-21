@@ -546,14 +546,14 @@ mod unix {
         }
         assert_eq!(
             std::fs::read(kept.directory.join(SCHEMA_NAME)).expect("the copied schema"),
-            include_bytes!("../../../schema/njutest-assurance-report-v2.json"),
+            include_bytes!("../../../schema/njutest-assurance-report-v1.json"),
             "the schema beside a report is the exact schema this release publishes"
         );
         assert_eq!(
             std::fs::read_to_string(index_path(root, Index::Any),).expect("the latest index"),
             format!(
                 "{{\n  \"directory\": \"{}\",\n  \"run_id\": \"{run}\",\n  \
-             \"schema\": \"njutest-assurance-report-v2\"\n}}\n",
+             \"schema\": \"njutest-assurance-report-v1\"\n}}\n",
                 named_run(&stored_run_id(run))
             ),
             "an index is a stable newline-terminated interface, not merely JSON that happens to parse"

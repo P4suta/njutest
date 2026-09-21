@@ -14,9 +14,7 @@
 
 use njutest_cli::config::Config;
 use njutest_cli::report::{Decision, FindingKind};
-use njutest_devkit::docs::{
-    TraceSpecimen, frozen_trace_field_ledger, table_count, trace_field_ledger,
-};
+use njutest_devkit::docs::{TraceSpecimen, table_count, trace_field_ledger};
 
 fn page(relative: &str) -> String {
     let path = njutest_devkit::paths::workspace_root().join(relative);
@@ -54,7 +52,7 @@ fn a_count_a_page_states_is_read_from_the_paragraph_that_states_it() {
 
 #[test]
 fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
-    let text = page("docs/report-v2.md");
+    let text = page("docs/report-v1.md");
     let missing: Vec<&str> = rust_mutants::session::Granularity::ALL
         .iter()
         .map(|one| one.name())
@@ -76,7 +74,7 @@ fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page(
 
 #[test]
 fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
-    let text = page("docs/report-v2.md");
+    let text = page("docs/report-v1.md");
     let listed: Vec<(String, Vec<String>)> = text
         .lines()
         .skip_while(|line| !line.starts_with("| column | what decided it |"))
@@ -135,7 +133,7 @@ fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
 
 #[test]
 fn the_kinds_the_page_lists_are_the_kinds_there_are_and_it_says_which_are_defects() {
-    let text = page("docs/report-v2.md");
+    let text = page("docs/report-v1.md");
     let listed: Vec<(String, bool)> = text
         .lines()
         .skip_while(|line| !line.starts_with("| `kind` |"))
@@ -202,7 +200,7 @@ fn a_kind_a_report_carries_is_the_name_it_is_written_under() {
 
 #[test]
 fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
-    let text = page("docs/report-v2.md");
+    let text = page("docs/report-v1.md");
     let missing: Vec<&str> = FindingKind::ALL
         .into_iter()
         .map(FindingKind::name)
@@ -210,7 +208,7 @@ fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
         .collect();
     assert!(
         missing.is_empty(),
-        "docs/report-v2.md does not name these, and a report can carry every one of \
+        "docs/report-v1.md does not name these, and a report can carry every one of \
          them: a consumer that meets a kind the page does not have has no way to learn \
          what it is claiming. {missing:?}"
     );
@@ -282,7 +280,7 @@ fn every_key_the_configuration_page_shows_is_one_the_reader_accepts() {
 #[test]
 fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
     let printed = njutest_cli::cli::exit_codes();
-    let text = page("docs/report-v2.md");
+    let text = page("docs/report-v1.md");
     let table: String = text
         .lines()
         .skip_while(|line| !line.starts_with("| Code |"))
@@ -291,7 +289,7 @@ fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
         .join("\n");
     assert!(
         !table.is_empty(),
-        "docs/report-v2.md has no exit code table"
+        "docs/report-v1.md has no exit code table"
     );
 
     for line in printed.lines().skip(1) {
@@ -299,7 +297,7 @@ fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
         let listed = table
             .lines()
             .find(|row| row.starts_with(&format!("| {code} |")))
-            .unwrap_or_else(|| panic!("docs/report-v2.md has no row for exit code {code}"));
+            .unwrap_or_else(|| panic!("docs/report-v1.md has no row for exit code {code}"));
         for name in names
             .split(',')
             .map(str::trim)
@@ -333,7 +331,7 @@ fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
 
 #[test]
 fn every_trace_type_and_its_serialized_fields_are_exactly_one_row_on_the_page() {
-    let text = page("docs/trace-v2.md");
+    let text = page("docs/trace-v1.md");
     let payloads = njutest_cli::testkit::every_payload();
     let specimens: Vec<TraceSpecimen<'_, njutest_cli::trace::Payload>> = payloads
         .iter()
@@ -353,117 +351,8 @@ fn every_trace_type_and_its_serialized_fields_are_exactly_one_row_on_the_page() 
 }
 
 #[test]
-fn the_historical_v1_trace_table_cannot_be_rewritten_from_the_v2_types() {
-    const FIELDS: &[(&str, &[&str])] = &[
-        (
-            "run-start",
-            &[
-                "schema",
-                "njutest",
-                "rust_mutants",
-                "run_id",
-                "run_kind",
-                "contract",
-            ],
-        ),
-        ("phase-start", &["name", "duration_ms"]),
-        ("phase-end", &["name", "duration_ms"]),
-        (
-            "exec",
-            &[
-                "argv",
-                "dir",
-                "env_names",
-                "timeout_ms",
-                "exit_code",
-                "timed_out",
-                "duration_ms",
-                "output_bytes",
-                "output_sha256",
-                "output_truncated",
-                "output_path",
-                "error",
-            ],
-        ),
-        ("progress", &["message", "subject", "done", "total"]),
-        ("artifact", &["kind", "path", "bytes"]),
-        (
-            "route",
-            &[
-                "mutant",
-                "granularity",
-                "fallback",
-                "reaching",
-                "tests",
-                "discharged",
-                "considered",
-                "reused",
-                "refused",
-            ],
-        ),
-        (
-            "mutant-exec",
-            &[
-                "mutant",
-                "target",
-                "args",
-                "outcome",
-                "duration_ms",
-                "alone",
-            ],
-        ),
-        ("probe-exec", &["target", "outcome", "infected"]),
-        (
-            "wire-exchange",
-            &[
-                "capability",
-                "seq",
-                "during",
-                "duration_ms",
-                "wire",
-                "method",
-                "path",
-                "status",
-                "request_bytes",
-                "response_bytes",
-            ],
-        ),
-        (
-            "wire-exec",
-            &[
-                "fault",
-                "capability",
-                "seq",
-                "rule",
-                "decision",
-                "noticed_by",
-                "proof",
-            ],
-        ),
-        ("note", &["kind", "detail"]),
-        (
-            "run-end",
-            &[
-                "verdict",
-                "accounting",
-                "error",
-                "events_emitted",
-                "events_dropped",
-            ],
-        ),
-    ];
-    let text = page("docs/trace-v1.md");
-    if let Err(why) = frozen_trace_field_ledger(&text, "| Type | Fields | Records |", FIELDS) {
-        panic!(
-            "trace v1 describes already-written bytes, so a current type must not rewrite its \
-             vocabulary: {why}"
-        );
-    }
-}
-
-#[test]
 fn every_reason_a_route_can_give_for_believing_nothing_is_on_that_page_too() {
-    let text = page("docs/trace-v2.md");
+    let text = page("docs/trace-v1.md");
     let missing: Vec<&'static str> = njutest_cli::testkit::every_refusal()
         .iter()
         .map(njutest_cli::evidence::store::Refusal::name)
@@ -608,7 +497,7 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
 
     let schema = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../schema/njutest-assurance-report-v2.json"),
+            .join("../../schema/njutest-assurance-report-v1.json"),
     )
     .expect("the schema this release validates every stored report against");
 

@@ -224,7 +224,7 @@ can silently escape the rule.
 
 `cargo xtask proofaudit <run-directory> [--trace <recording>]` stands apart from
 `all`, because it is about one completed run rather than about the tree. It reads that run's
-`njutest-assurance-report-v2.json` and decides again, with code that never
+`njutest-assurance-report-v1.json` and decides again, with code that never
 calls the runner's, whether each verdict is the one the recorded evidence
 supports: whether the columns say what the records they summarise say and add
 up the way the [assurance contract](assurance-contract.md) states, whether
@@ -261,7 +261,7 @@ evidence rather than two copies of one mistake.
 
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard
 <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's
-own runs. It reads that run's `run-report-v2.json` and re-decides it in nine
+own runs. It reads that run's `run-report-v1.json` and re-decides it in nine
 layers, none of which calls the engine's code:
 
 | Layer | Re-derives |
@@ -514,12 +514,8 @@ test in each crate keeps the two equal in both directions.
 
 ## Diagnostics
 
-Everything a run does is recordable: the runner's current [trace v2](trace-v2.md)
-(with [trace v1](trace-v1.md) retained as a historical contract), the engine's
-current [trace v2](engine/trace.md), `--keep-temp`, the diagnostics bundle
-of a failed run, and the `explain` family of commands. The rule for all of it
-is [ADR 0002](adr/0002-trace-is-not-evidence.md): never a claim, never a
-failure, always honest about what was dropped.
+Everything a run does is recordable: the runner's current [trace v1](trace-v1.md) (with [trace v1](trace-v1.md) retained as a historical contract), the engine's current [trace v1](engine/trace.md), `--keep-temp`, the diagnostics bundle of a failed run, and the `explain` family of commands.
+The rule for all of it is [ADR 0002](adr/0002-trace-is-not-evidence.md): never a claim, never a failure, always honest about what was dropped.
 
 Both products bundle a run the same way. `rust-mutants doctor` says what the
 engine would find in this environment, and `rust-mutants diagnostics` gathers

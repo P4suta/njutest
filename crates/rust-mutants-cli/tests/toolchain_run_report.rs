@@ -183,7 +183,7 @@ fn the_report_validates_against_the_schema_that_is_published_with_it() {
         "{}",
         stderr(&output)
     );
-    let errors = against_schema("rust-mutants-run-report-v2.json", &stored(&fixture));
+    let errors = against_schema("rust-mutants-run-report-v1.json", &stored(&fixture));
     assert!(errors.is_empty(), "{errors:#?}");
 }
 
@@ -728,7 +728,7 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
     );
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(
-            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v2.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
         )
         .expect("the schema"),
     )
@@ -742,7 +742,7 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
 }
 
 #[test]
-fn a_v2_reader_refuses_fields_outside_its_exact_schema() {
+fn a_v1_reader_refuses_fields_outside_its_exact_schema() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked"]);
     assert!(
@@ -769,7 +769,7 @@ fn a_v2_reader_refuses_fields_outside_its_exact_schema() {
     assert_eq!(
         read.status.code(),
         Some(2),
-        "one v2 identity cannot silently acquire a later shape: {}",
+        "one v1 identity cannot silently acquire a later shape: {}",
         stderr(&read)
     );
     assert!(stderr(&read).contains("RM0007"), "{}", stderr(&read));
@@ -1297,7 +1297,7 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
     for name in ["20260101T000000000Z", "20260102T000000000Z"] {
         let directory = reports.join(name);
         std::fs::create_dir_all(&directory).expect("a second name for the same part");
-        std::fs::write(directory.join("run-report-v2.json"), &document).expect("write");
+        std::fs::write(directory.join("run-report-v1.json"), &document).expect("write");
     }
 
     let merged = against(&fixture, &["merge", "--runs", "2026010*"]);

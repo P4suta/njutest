@@ -18,7 +18,7 @@ use crate::error::{self, ErrorCode};
 use crate::watch::Watch;
 
 /// The domain separator hashed first for every target identity. It carries the recipe version.
-pub const TARGET_DOMAIN: &str = "njutest-target-v2";
+pub const TARGET_DOMAIN: &str = "njutest-target-v1";
 
 /// The complete SHA-256 target identity in lowercase hexadecimal.
 pub const TARGET_ID_HEX_LENGTH: usize = 64;
@@ -110,7 +110,7 @@ pub enum TargetIdError {
         byte: u8,
     },
     /// One identity field cannot be framed by the stable 64-bit recipe.
-    #[error("target identity field {field} is longer than the v2 64-bit frame")]
+    #[error("target identity field {field} is longer than the v1 64-bit frame")]
     FieldTooLong {
         /// The recipe field whose length could not be framed.
         field: &'static str,

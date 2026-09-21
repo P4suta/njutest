@@ -128,7 +128,7 @@ enum FixtureError {
 #[test]
 fn a_new_report_names_the_schema_the_run_and_what_it_ran_on() {
     let report = sound();
-    assert_eq!(SCHEMA, "njutest-assurance-report-v2");
+    assert_eq!(SCHEMA, "njutest-assurance-report-v1");
     let document = serde_json::to_value(&report).expect("a completed report is a document");
     assert_eq!(document["schema"], SCHEMA);
     assert_eq!(report.run_id(), "20260905t081500z-abcdef");

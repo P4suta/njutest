@@ -98,7 +98,7 @@ fn a_bundle_holds_the_report_the_evidence_the_recording_and_the_state_of_the_mac
     let bundle = bundle_of(&gathered);
     assert!(test_metadata(&bundle).is_dir(), "{}", bundle.display());
     for name in [
-        "run-report-v2.json",
+        "run-report-v1.json",
         "doctor-v1.json",
         "toolchain.txt",
         "environment.txt",
@@ -121,7 +121,7 @@ fn a_bundle_holds_the_report_the_evidence_the_recording_and_the_state_of_the_mac
         .iter()
         .filter_map(serde_json::Value::as_str)
         .collect();
-    assert!(held.contains(&"run-report-v2.json"), "{held:?}");
+    assert!(held.contains(&"run-report-v1.json"), "{held:?}");
     assert!(held.contains(&"trace"), "{held:?}");
     assert!(document["run_id"].as_str().is_some_and(|it| !it.is_empty()));
 }
@@ -231,7 +231,7 @@ fn a_bundle_goes_where_it_was_asked_to_go_and_holds_the_same_thing_there() {
     );
     assert!(
         test_metadata(&elsewhere.join("bundle.json")).is_file()
-            && test_metadata(&elsewhere.join("run-report-v2.json")).is_file(),
+            && test_metadata(&elsewhere.join("run-report-v1.json")).is_file(),
         "and it holds what a bundle holds wherever it is: {}",
         gathered.out
     );
@@ -268,7 +268,7 @@ fn a_bundle_accounts_for_every_part_it_was_gathered_from() {
         })
         .collect();
     for part in [
-        "run-report-v2.json",
+        "run-report-v1.json",
         "catalog-v1.json",
         "reached-v1.json",
         "trace",

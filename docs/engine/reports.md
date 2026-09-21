@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented.** A run writes one document, and `rust-mutants report`
 projects it into whatever a reader already has. Every projection is derived
-from the stored `run-report-v2.json` and nothing else, so a projection is
+from the stored `run-report-v1.json` and nothing else, so a projection is
 never a second measurement — it is the same run said in another vocabulary.
 
 ```console

@@ -122,7 +122,7 @@ fn newest(directory: &Path) -> PathBuf {
         .map(|entry| entry.expect("stored run directory entry"))
         .map(|entry| entry.path())
         .filter(|path| test_directory(path))
-        .map(|path| path.join("run-report-v2.json"))
+        .map(|path| path.join("run-report-v1.json"))
         .filter(|path| test_metadata(path).is_file())
         .collect();
     runs.sort();

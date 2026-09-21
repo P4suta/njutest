@@ -94,7 +94,7 @@ fn only_run(reports: &Path) -> PathBuf {
         .map(|entry| entry.expect("stored report directory entry"))
         .map(|entry| entry.path())
         .filter(|path| test_directory(path))
-        .filter(|path| test_regular_file(&path.join("run-report-v2.json")))
+        .filter(|path| test_regular_file(&path.join("run-report-v1.json")))
         .collect();
     runs.sort();
     runs.pop().expect("one stored run")
@@ -201,7 +201,7 @@ fn every_judged_mutant_leaves_one_route_record_and_an_unreached_one_leaves_no_ex
         })
         .collect();
     let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
-        &std::fs::read_to_string(run.join("run-report-v2.json")).expect("the report"),
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
     let judged = report
@@ -350,7 +350,7 @@ fn trace_diff_between_two_runs_reports_the_moved_columns() {
         .expect("reports")
         .map(|entry| entry.expect("stored report directory entry"))
         .filter(|entry| test_directory(&entry.path()))
-        .filter(|entry| test_regular_file(&entry.path().join("run-report-v2.json")))
+        .filter(|entry| test_regular_file(&entry.path().join("run-report-v1.json")))
         .map(|entry| njutest_devkit::paths::owned_utf8(entry.file_name()))
         .collect();
     runs.sort();
@@ -436,14 +436,14 @@ fn a_recording_never_costs_a_stored_run_its_place_and_neither_grows_forever() {
         .map(|entry| entry.expect("stored report directory entry"))
         .map(|entry| entry.path())
         .filter(|path| test_directory(path))
-        .filter(|path| test_regular_file(&path.join("run-report-v2.json")))
+        .filter(|path| test_regular_file(&path.join("run-report-v1.json")))
         .collect();
     assert_eq!(runs.len(), 2, "keep = 2 keeps two stored runs: {runs:?}");
     let recordings: Vec<PathBuf> = std::fs::read_dir(&stored)
         .expect("reports")
         .map(|entry| entry.expect("stored report directory entry"))
         .map(|entry| entry.path())
-        .filter(|path| test_directory(path) && !test_regular_file(&path.join("run-report-v2.json")))
+        .filter(|path| test_directory(path) && !test_regular_file(&path.join("run-report-v1.json")))
         .filter(|path| path.file_name().is_some_and(|name| name != "traces"))
         .collect();
     assert!(
@@ -472,7 +472,7 @@ fn a_mutation_a_run_leaves_out_records_why_it_was_left_out() {
     let run = only_run(&reports(&fixture));
     let events = recorded(&run.join("trace"));
     let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
-        &std::fs::read_to_string(run.join("run-report-v2.json")).expect("the report"),
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
     let unselected: Vec<String> = report
@@ -559,7 +559,7 @@ fn a_filtered_run_compiler_validates_only_the_mutants_it_selected() {
     );
 
     let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
-        &std::fs::read_to_string(run.join("run-report-v2.json")).expect("the report"),
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
     let selected: Vec<u64> = report["mutants"]
@@ -603,7 +603,7 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
     let run = only_run(&reports(&fixture));
     let events = recorded(&run.join("trace"));
     let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
-        &std::fs::read_to_string(run.join("run-report-v2.json")).expect("the report"),
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
     let executed: Vec<u64> = report

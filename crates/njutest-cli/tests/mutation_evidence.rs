@@ -309,30 +309,6 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
 }
 
 #[test]
-fn legacy_runaway_evidence_is_outside_the_current_store() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let legacy = dir.path().join("mutants-v1").join("m1.json");
-    std::fs::create_dir_all(legacy.parent().expect("a parent")).expect("legacy layout");
-    std::fs::write(
-        &legacy,
-        r#"{"schema":"njutest-mutation-evidence-v1","mutant":"m1","run_id":"old","outcome":{"kind":"runaway","target":"id-one","key":"k1k1"}}"#,
-    )
-    .expect("legacy evidence");
-
-    let held = evidence(dir.path());
-    assert_eq!(
-        said(&reuse(
-            &options(Some(held)),
-            &reaching(&["core/lib/core"]),
-            &id(1),
-        )),
-        "nothing-recorded",
-        "a v1 runaway was produced without a matched control, so the v2 reader does not \
-         open that layout and cannot revive it as a detection"
-    );
-}
-
-#[test]
 fn current_evidence_cannot_spell_runaway() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = store::path_of(dir.path(), &mutant(1));
@@ -341,12 +317,12 @@ fn current_evidence_cannot_spell_runaway() {
     std::fs::write(
         &path,
         format!(
-            r#"{{"schema":"njutest-mutation-evidence-v2","mutant":"{mutant_id}","run_id":"forged","outcome":{{"kind":"runaway","target":"id-one","key":"k1k1"}}}}"#
+            r#"{{"schema":"njutest-mutation-evidence-v1","mutant":"{mutant_id}","run_id":"forged","outcome":{{"kind":"runaway","target":"id-one","key":"k1k1"}}}}"#
         ),
     )
     .expect("forged evidence");
 
-    let error = store::read(dir.path(), &mutant(1)).expect_err("runaway is not a v2 outcome");
+    let error = store::read(dir.path(), &mutant(1)).expect_err("runaway is not a v1 outcome");
     assert_eq!(error.code().code, "NJ8004");
     assert!(
         error.to_string().contains("unknown variant `runaway`"),
@@ -407,7 +383,7 @@ fn a_run_with_nowhere_to_read_or_write_evidence_neither_believes_nor_records() {
     )
     .expect("a disabled evidence store writes nothing successfully");
     assert!(
-        !dir.path().join("mutants-v1").exists(),
+        !dir.path().join(store::LAYOUT).exists(),
         "and writes nowhere rather than choosing a place nobody asked for"
     );
 }

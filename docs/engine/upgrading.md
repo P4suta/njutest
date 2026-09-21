@@ -35,7 +35,7 @@ kill remains decisive, while any errored, bounded, waited or inconclusive
 target prevents a later passing target from manufacturing `survived`.
 
 These semantic changes are new wire versions: run reports and run streams are
-v2, traces are `rust-mutants-trace-v2`, and the outcome cache uses its v2
+v1, traces are `rust-mutants-trace-v1`, and the outcome cache uses its v1
 layout and a key containing the step allowance and policy ABI. The v1 schema
 files remain in `schema/` for readers of stored historical artifacts; new
 writes never claim the old contracts.
@@ -57,7 +57,7 @@ tree-writing tests, changed binaries and damaged records are never reused.
 `--no-cache` forces a fresh baseline as well as fresh coverage and mutant
 outcomes. Trace `verify` records gained the optional `remembered` boolean; the
 schema was v1 when that field was introduced. Current runs identify the
-independent termination-shape change above as trace v2; the historical v1
+independent termination-shape change above as trace v1; the historical v1
 schema remains immutable.
 
 **`cargo rust-mutants` works.** The engine ships a second binary under the name

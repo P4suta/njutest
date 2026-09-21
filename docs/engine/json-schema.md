@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented and validated. The catalog document is
 `schema/rust-mutants-catalog-v1.json`, the run report
-`schema/rust-mutants-run-report-v2.json`.**
+`schema/rust-mutants-run-report-v1.json`.**
 Both carry `document_type` and `schema_version`, close every object with
 `additionalProperties: false`, and are validated by tests against the
 schemas under `schema/`, so a field added without a version bump fails a
@@ -31,16 +31,12 @@ discarded key there would silently change what was asked or what was proved.
 
 ## Historical schemas
 
-Current writers emit only run report v2, run stream v2, and trace v2. The
-immutable v1 schemas remain shipped so a stored artifact can still be
-identified and validated as the artifact an earlier release wrote:
+Current writers emit only run report v1, run stream v1, and trace v1.
+The immutable v1 schemas remain shipped so a stored artifact can still be identified and validated as the artifact an earlier release wrote:
 `schema/rust-mutants-run-report-v1.json`,
-`schema/rust-mutants-run-stream-v1.json`, and
-`schema/rust-mutants-trace-v1.json`. They are historical contracts, not an
-instruction to reinterpret v1 as v2. Current independent audits require the
-v2 schema names and reject v1 explicitly; the compatibility fixture validates
-each v1 specimen against v1 and proves that the corresponding v2 schema does
-not accept it.
+`schema/rust-mutants-run-stream-v1.json`, and `schema/rust-mutants-trace-v1.json`.
+They are historical contracts, not an instruction to reinterpret v1 as v1.
+Current independent audits require the v1 schema names and reject v1 explicitly; the compatibility fixture validates each v1 specimen against v1 and proves that the corresponding v1 schema does not accept it.
 
 ## `rust-mutants/catalog` v1
 
@@ -77,10 +73,10 @@ lost nothing. `path`, `rule`, `rule_version`, `start_byte`, `end_byte`,
 identity takes, so a reader can re-mint `id` from the row and find out
 whether it is the mutant it says it is.
 
-## `rust-mutants/run-report` v2
+## `rust-mutants/run-report` v1
 
 Written by `rust-mutants run` to
-`<reports.directory>/<run id>/run-report-v2.json`, with
+`<reports.directory>/<run id>/run-report-v1.json`, with
 `<reports.directory>/latest.json` naming the newest.
 
 ```jsonc
@@ -161,11 +157,8 @@ changing catalog identity.
 
 ## The run as it happens
 
-`run --json` writes `rust-mutants-run-stream-v2`
-(`schema/rust-mutants-run-stream-v2.json`): one JSON object per line, each
-flushed as it is written, for a program rather than a person. The kinds are
-`run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`, and
-`error`, each carrying a `type`.
+`run --json` writes `rust-mutants-run-stream-v1` (`schema/rust-mutants-run-stream-v1.json`): one JSON object per line, each flushed as it is written, for a program rather than a person.
+The kinds are `run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`, and `error`, each carrying a `type`.
 
 `run-start` is written **before anything is prepared** — before the snapshot,
 the instrumented build and the validation rounds — so a consumer knows what
@@ -253,6 +246,6 @@ audit calls unaudited, which is the honest answer.
 ## Recordings
 
 `rust-mutants trace` writes JSON Lines rather than a document; its shape is
-`schema/rust-mutants-trace-v2.json` and its rules are in
+`schema/rust-mutants-trace-v1.json` and its rules are in
 [trace](trace.md). A recording is never evidence, so nothing here reads one
 to decide anything.

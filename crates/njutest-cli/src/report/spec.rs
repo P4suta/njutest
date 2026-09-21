@@ -79,7 +79,7 @@ impl Sentence {
 /// real, only whether anybody would notice it changing.
 /// # Errors
 /// Returns [`super::CountError`] if one exchange's exact question census
-/// cannot be represented by the v2 sentence counters.
+/// cannot be represented by the v1 sentence counters.
 pub fn spoken(report: &Report) -> Result<Vec<Sentence>, super::CountError> {
     let mut by_exchange: BTreeMap<(&str, u64), Sentence> = BTreeMap::new();
     let conclusion = report.conclusion()?;

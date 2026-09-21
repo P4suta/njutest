@@ -88,7 +88,7 @@ fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
     let newest = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     )
-    .join("run-report-v2.json");
+    .join("run-report-v1.json");
     let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(newest).expect("the report"),
     )

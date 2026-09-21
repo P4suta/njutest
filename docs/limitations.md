@@ -400,10 +400,10 @@ fail-closed:
 
 - Git could not be asked what the tree is (`git-metadata-unavailable`), so the
   report carries `unavailable` rather than a guess. [The report
-  contract](report-v2.md) says what that sentinel means.
+  contract](report-v1.md) says what that sentinel means.
 - The run continued one that was interrupted (`resumed-from-checkpoint`), so
   part of what it reports another run established. [The checkpoint
-  contract](checkpoint-v2.md) says what may be inherited and what is judged
+  contract](checkpoint-v1.md) says what may be inherited and what is judged
   again.
 - The run worked in a directory it does not own (`temp-directory-unclaimed`),
   so what it left there is not its to remove. A run that cleaned up somebody

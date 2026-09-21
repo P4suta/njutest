@@ -276,32 +276,6 @@ fn a_resumed_run_carries_only_kills_and_reads_nothing_else_as_one() {
 }
 
 #[test]
-fn legacy_bound_outcomes_are_outside_the_current_checkpoint_layout() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let identity = "a".repeat(64);
-    let legacy = dir.path().join(&identity).join("checkpoint-v1.json");
-    std::fs::create_dir_all(legacy.parent().expect("a directory")).expect("mkdir");
-    std::fs::write(
-        legacy,
-        format!(
-            "{{\"schema\":\"njutest-assurance-checkpoint-v1\",\"identity\":\"{identity}\",\
-             \"attempts\":1,\"targets\":[],\"mutants\":[\
-             {{\"id\":\"m1\",\"disposition\":\"runaway\",\"killed_by\":\"one\",\"duration_ms\":1}},\
-             {{\"id\":\"m2\",\"disposition\":\"timed_out\",\"killed_by\":\"one\",\"duration_ms\":1}}]}}"
-        ),
-    )
-    .expect("legacy checkpoint");
-
-    assert!(
-        read(dir.path(), &identity)
-            .expect("current layout")
-            .is_none(),
-        "v1 bound outcomes carried no matched control, so the v2 reader never opens \
-         that file and judges both mutations again"
-    );
-}
-
-#[test]
 fn a_current_kill_without_a_target_is_not_a_checkpoint() {
     let dir = tempfile::tempdir().expect("tempdir");
     let identity = "a".repeat(64);
@@ -318,7 +292,7 @@ fn a_current_kill_without_a_target_is_not_a_checkpoint() {
     .expect("forged checkpoint");
     assert!(
         read(dir.path(), &identity).is_err(),
-        "the v2 union cannot represent a kill without the target that noticed"
+        "the v1 union cannot represent a kill without the target that noticed"
     );
 }
 
@@ -486,7 +460,7 @@ fn clearing_surfaces_every_failure_other_than_absence() {
     std::fs::write(&sibling, "occupied").expect("sibling");
     let error = clear(dir.path(), &identity).expect_err("nonempty identity directory");
     assert!(matches!(error, CheckpointError::Unusable { .. }), "{error}");
-    assert!(!path.exists(), "the stale v2 checkpoint itself was removed");
+    assert!(!path.exists(), "the stale v1 checkpoint itself was removed");
 }
 
 #[test]

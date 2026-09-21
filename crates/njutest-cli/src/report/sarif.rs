@@ -75,7 +75,7 @@ fn result(finding: &Finding) -> serde_json::Value {
     );
     value.insert(
         "partialFingerprints".to_owned(),
-        serde_json::json!({ "njutestFinding/v2": fingerprint(finding) }),
+        serde_json::json!({ "njutestFinding/v1": fingerprint(finding) }),
     );
     if let Some((path, position)) = finding
         .path

@@ -8,7 +8,7 @@ use xtask::route::{self, Discharge, Routing};
 
 /// A recording as the engine writes it: the mutant by its full identity, a dense index, and the targets that ran.
 const ENGINE: &str = r#"
-{"seq":1,"timestamp":"2026-09-06T00:00:00Z","elapsed_ms":0,"payload":{"type":"run-start","schema":"rust-mutants-trace-v2","engine":"0.1.0"}}
+{"seq":1,"timestamp":"2026-09-06T00:00:00Z","elapsed_ms":0,"payload":{"type":"run-start","schema":"rust-mutants-trace-v1","engine":"0.1.0"}}
 {"seq":2,"timestamp":"2026-09-06T00:00:01Z","elapsed_ms":1,"payload":{"type":"route","route":{"mutant":"aaaaaaaaaaaaaaaaaaaa","index":3,"granularity":"block","reaching":["pkg/lib/pkg"],"executed":["pkg/lib/pkg"]}}}
 {"seq":3,"timestamp":"2026-09-06T00:00:02Z","elapsed_ms":2,"payload":{"type":"mutant-exec","mutant":{"id":"aaaaaaaaaaaaaaaaaaaa","index":3,"target":"pkg/lib/pkg","outcome":"killed","exit_code":101,"duration_ms":7,"tests_run":2}}}
 {"seq":4,"timestamp":"2026-09-06T00:00:03Z","elapsed_ms":3,"payload":{"type":"route","route":{"mutant":"bbbbbbbbbbbbbbbbbbbb","index":4,"granularity":"unreached"}}}

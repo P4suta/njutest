@@ -128,7 +128,7 @@ fn base() -> serde_json::Value {
 fn recording() -> Vec<serde_json::Value> {
     let mut events = vec![
         serde_json::json!({"seq":1,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
-            "type":"run-start","schema":"rust-mutants-trace-v2","engine":"0.1.0"}),
+            "type":"run-start","schema":"rust-mutants-trace-v1","engine":"0.1.0"}),
         serde_json::json!({"seq":2,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
             "type":"phase-start","phase":{"name":"prepare"}}),
         serde_json::json!({"seq":3,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":10,
@@ -203,7 +203,7 @@ fn with(overrides: serde_json::Value) -> serde_json::Value {
 fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(
-        directory.path().join("run-report-v2.json"),
+        directory.path().join("run-report-v1.json"),
         document.to_string(),
     )
     .expect("the report");
@@ -502,7 +502,7 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
     let run = run_directory(&base());
     let other = with(serde_json::json!({ "mutants": [{ "index": 0 }] }));
     let part = tempfile::tempdir().expect("a temporary directory");
-    let path = part.path().join("run-report-v2.json");
+    let path = part.path().join("run-report-v1.json");
     std::fs::write(&path, other.to_string()).expect("the part");
     let audit = gates::engine_audit(&gates::EngineRun {
         run: run.path(),
@@ -856,7 +856,7 @@ fn a_document_that_is_not_a_run_report_is_refused_by_name() {
         "document_type": "rust-mutants/catalog"
     }));
     std::fs::write(
-        directory.path().join("run-report-v2.json"),
+        directory.path().join("run-report-v1.json"),
         document.to_string(),
     )
     .expect("the document");
@@ -873,7 +873,7 @@ fn a_historical_report_is_not_silently_read_as_the_current_contract() {
     let document = with(serde_json::json!({ "schema_version": 1 }));
     let run = run_directory(&document);
     let error = gates::engine_audit(&asked(run.path(), None, None))
-        .expect_err("v1 and v2 assign different meanings to outcome columns");
+        .expect_err("v1 and v1 assign different meanings to outcome columns");
     assert!(
         matches!(error, AuditError::UnsupportedVersion { .. }),
         "{error}"
@@ -985,20 +985,6 @@ fn owned_evidence_is_exact_after_the_duplicate_key_boundary() {
             "{error}"
         );
     }
-}
-
-#[test]
-fn a_historical_trace_is_not_silently_read_as_the_current_contract() {
-    let run = run_directory(&base());
-    let mut events = recording();
-    events[0]["schema"] = serde_json::json!("rust-mutants-trace-v1");
-    let trace = recorded(&events);
-    let error = gates::engine_audit(&asked(run.path(), Some(trace.path()), None))
-        .expect_err("v1 and v2 assign different meanings to execution outcomes");
-    assert!(
-        matches!(error, AuditError::UnsupportedTrace { .. }),
-        "{error}"
-    );
 }
 
 /// One perturbation of the clean run, and every layer it is the business of.

@@ -20,7 +20,7 @@ use recording::{trace, work};
 use serde_json::Value;
 
 /// The document a completed run leaves in its directory.
-pub const REPORT_FILE: &str = "run-report-v2.json";
+pub const REPORT_FILE: &str = "run-report-v1.json";
 
 /// The document this audit knows how to re-decide.
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
@@ -29,7 +29,7 @@ pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 pub const SCHEMA_VERSION: u64 = 2;
 
 /// The current engine recording shape paired with [`SCHEMA_VERSION`].
-pub const TRACE_SCHEMA: &str = "rust-mutants-trace-v2";
+pub const TRACE_SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// The domain separator the engine's identities are hashed under.
 pub const ID_DOMAIN: &str = "rust-mutants-id-v1";
@@ -763,7 +763,7 @@ impl PartialEq<&str> for ClaimStanding {
     }
 }
 
-/// The complete set of findings the v2 report contract permits.
+/// The complete set of findings the v1 report contract permits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum FindingKind {

@@ -81,7 +81,7 @@ fn a_run_can_be_named_and_its_report_is_called_that() {
         test_metadata(
             &rust_mutants_cli::app::stored::Store::read(fixture.root())
                 .root()
-                .join("monday/run-report-v2.json"),
+                .join("monday/run-report-v1.json"),
         )
         .is_file(),
         "a run a person named is a run they can find again: {}",
@@ -250,7 +250,7 @@ fn reused(fixture: &Fixture) -> usize {
     let directory = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     );
-    let text = std::fs::read_to_string(directory.join("run-report-v2.json")).expect("the report");
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: serde_json::Value =
         njutest_devkit::strictjson::decode_str(&text).expect("the report is JSON");
     document["mutants"]
@@ -313,7 +313,7 @@ fn an_edit_to_a_file_a_target_compiled_is_an_answer_that_stops_answering() {
 fn stored(fixture: &Fixture) -> (std::path::PathBuf, serde_json::Value) {
     let path = rust_mutants_cli::app::stored::Store::read(fixture.root())
         .root()
-        .join("monday/run-report-v2.json");
+        .join("monday/run-report-v1.json");
     let text = std::fs::read_to_string(&path).expect("the run this test named");
     (
         path,

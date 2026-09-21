@@ -229,7 +229,7 @@ fn populated() -> Report {
 }
 
 fn schema_path() -> PathBuf {
-    njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v2.json")
+    njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v1.json")
 }
 
 fn schema() -> serde_json::Value {
@@ -258,7 +258,7 @@ fn a_model_answer_is_nested_beneath_its_identity() {
         "reason": "effect"
     });
     let Err(refused) = serde_json::from_value::<ModelRecord>(flattened) else {
-        panic!("v2 never merges answer fields into the record identity namespace")
+        panic!("v1 never merges answer fields into the record identity namespace")
     };
     drop(refused);
 }
@@ -522,30 +522,6 @@ fn undecided_model_attempts_are_one_closed_reason_evidence_pair() {
         panic!("the malformed evidence must be refused")
     };
     drop(refused);
-}
-
-#[test]
-fn historical_v1_remains_valid_but_is_not_silently_read_as_v2() {
-    let root = njutest_devkit::paths::workspace_root();
-    let schema_text = std::fs::read_to_string(root.join("schema/njutest-assurance-report-v1.json"))
-        .expect("the historical v1 schema");
-    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(&schema_text)
-        .expect("the historical schema is JSON");
-    let document_text = std::fs::read_to_string(
-        root.join("crates/njutest-cli/tests/testdata/report-v1.golden.json"),
-    )
-    .expect("the historical v1 golden");
-    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&document_text)
-        .expect("the historical document is JSON");
-    let validator = jsonschema::validator_for(&schema).expect("the v1 schema compiles");
-    assert!(
-        validator.is_valid(&document),
-        "the immutable v1 fixture remains a v1 document"
-    );
-    assert!(
-        json::parse(&document_text).is_err(),
-        "a strict v2 reader must not reinterpret a historical v1 document"
-    );
 }
 
 #[test]
@@ -1019,7 +995,7 @@ fn the_published_schema_refuses_acceptance_on_an_already_answered_mutation() {
         serde_json::json!(1);
     assert!(
         !problems(&document).is_empty(),
-        "the v2 schema admits acceptance only on a reviewable gap"
+        "the v1 schema admits acceptance only on a reviewable gap"
     );
 }
 
@@ -1129,6 +1105,6 @@ fn the_document_a_run_writes_is_a_closed_nested_decision() {
     assert_eq!(held["outcome"], "killed");
     assert_eq!(
         held["killed_by"], "0123456789abcdef",
-        "the pairing is one closed object both inside the program and on the v2 wire: {held}"
+        "the pairing is one closed object both inside the program and on the v1 wire: {held}"
     );
 }

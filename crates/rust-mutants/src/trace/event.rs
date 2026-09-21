@@ -9,7 +9,7 @@ use crate::cargo::{BuildSelection, BuildSelectionDigest};
 use crate::id::RunId;
 
 /// The schema name carried by every `run-start` event. It names the recipe version; a future incompatible shape takes a new version.
-pub const SCHEMA: &str = "rust-mutants-trace-v2";
+pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
 pub const EVERY_TYPE: [&str; 24] = [

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 /// The published schema, compiled.
 fn validator() -> jsonschema::Validator {
     let path =
-        njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v2.json");
+        njutest_devkit::paths::workspace_root().join("schema/njutest-assurance-report-v1.json");
     let text = std::fs::read_to_string(&path).expect("the published schema");
     let schema: Value = njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON");
     jsonschema::validator_for(&schema).expect("the schema compiles")

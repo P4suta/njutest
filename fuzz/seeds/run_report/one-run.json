@@ -3,7 +3,7 @@
   "schema_version": 2,
   "tool_version": "0.1.0",
   "run": {
-    "id": "current-v2",
+    "id": "current-v1",
     "started_at": "2026-09-19T17:35:51.565174Z",
     "finished_at": "2026-09-19T17:35:53.601717Z",
     "duration_ms": 130,

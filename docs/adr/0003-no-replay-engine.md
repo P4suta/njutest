@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-05, inherited from goatest ADR 0003. The scripted fakes it
 prefers are the `testkit` modules; the recording it declines to consume is
-[trace v2](../trace-v2.md).
+[trace v1](../trace-v1.md).
 
 *This record is about record/replay of process execution as a test
 technique. It is unrelated to `njutest replay ID`, which re-runs a recorded

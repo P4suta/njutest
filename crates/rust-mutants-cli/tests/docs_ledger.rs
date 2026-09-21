@@ -25,20 +25,6 @@ fn directory_entries(directory: &std::path::Path) -> Vec<std::fs::DirEntry> {
         .collect()
 }
 
-fn schema_problems(named: &str, document: &serde_json::Value) -> Vec<String> {
-    let root = njutest_devkit::paths::workspace_root();
-    let schema_text = std::fs::read_to_string(root.join("schema").join(named))
-        .unwrap_or_else(|error| panic!("schema/{named}: {error}"));
-    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(&schema_text)
-        .unwrap_or_else(|error| panic!("schema/{named}: {error}"));
-    let validator = jsonschema::validator_for(&schema)
-        .unwrap_or_else(|error| panic!("schema/{named}: {error}"));
-    validator
-        .iter_errors(document)
-        .map(|error| format!("{}: {error}", error.instance_path()))
-        .collect()
-}
-
 #[test]
 fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
     let text = page("docs/engine/json-schema.md");
@@ -286,63 +272,9 @@ fn every_schema_the_engine_ships_is_named_on_the_page_that_documents_them() {
 }
 
 #[test]
-fn historical_v1_engine_documents_remain_valid_and_are_not_current_v2() {
-    let root = njutest_devkit::paths::workspace_root();
-    let report_text = std::fs::read_to_string(
-        root.join("crates/rust-mutants-cli/tests/testdata/historical/run-report-v1.json"),
-    )
-    .expect("the historical report fixture");
-    let report: serde_json::Value = njutest_devkit::strictjson::decode_str(&report_text)
-        .expect("the historical report is JSON");
-    let stream = serde_json::json!({
-        "type": "run-start",
-        "schema": "rust-mutants-run-stream-v1",
-        "tool_version": "0.1.0",
-        "run_id": "historical-v1",
-        "root_name": "fixture",
-        "selection": {}
-    });
-    let trace = serde_json::json!({
-        "seq": 1,
-        "timestamp": "2026-09-06T19:26:09Z",
-        "elapsed_ms": 0,
-        "type": "run-start",
-        "schema": "rust-mutants-trace-v1",
-        "engine": "0.1.0"
-    });
-    for (historical, current, document) in [
-        (
-            "rust-mutants-run-report-v1.json",
-            "rust-mutants-run-report-v2.json",
-            &report,
-        ),
-        (
-            "rust-mutants-run-stream-v1.json",
-            "rust-mutants-run-stream-v2.json",
-            &stream,
-        ),
-        (
-            "rust-mutants-trace-v1.json",
-            "rust-mutants-trace-v2.json",
-            &trace,
-        ),
-    ] {
-        let historical_problems = schema_problems(historical, document);
-        assert!(
-            historical_problems.is_empty(),
-            "{historical} rejects its immutable fixture: {historical_problems:#?}"
-        );
-        assert!(
-            !schema_problems(current, document).is_empty(),
-            "{current} silently reinterprets a historical {historical} document"
-        );
-    }
-}
-
-#[test]
 fn every_reason_a_mutant_did_not_run_is_one_the_schema_and_the_pages_name() {
     let schema = std::fs::read_to_string(
-        njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v2.json"),
+        njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
     )
     .unwrap_or_else(|error| panic!("the run report schema: {error}"));
     let started = page("docs/engine/getting-started.md");
@@ -355,7 +287,7 @@ fn every_reason_a_mutant_did_not_run_is_one_the_schema_and_the_pages_name() {
         );
         assert!(
             schema.contains(&format!("\"{name}\"")),
-            "schema/rust-mutants-run-report-v2.json does not admit not_run_reason {name}"
+            "schema/rust-mutants-run-report-v1.json does not admit not_run_reason {name}"
         );
         assert!(
             started.contains(&format!("`{name}`")),

@@ -11,7 +11,7 @@ use crate::outcome::Outcome;
 use crate::run::NotRunReason;
 
 /// The document type every line of a run stream carries.
-pub const SCHEMA: &str = "rust-mutants-run-stream-v2";
+pub const SCHEMA: &str = "rust-mutants-run-stream-v1";
 
 /// One line of a run stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]

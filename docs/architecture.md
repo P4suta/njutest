@@ -47,7 +47,7 @@ subprocesses behind strict JSON protocols; core contains no network client.
 | Crates | `crates/rust-mutants` (library), `crates/rust-mutants-cli` (binary) | `crates/njutest-cli` (binary and library), `crates/njutest` (public API), `crates/njutest-macros` |
 | Family | ocaml-mutants → gleam-mutants → go-mutants → rust-mutants | goatest → njutest |
 | Role | one instrumented snapshot, every mutant behind a guard, one environment variable per test process | verdicts from coverage-routed mutation with proofs, not budgets |
-| Contracts | [engine/architecture](engine/architecture.md), [engine/operators](engine/operators.md), [engine/json-schema](engine/json-schema.md) | [assurance contract](assurance-contract.md), [report v2](report-v2.md), [checkpoint v2](checkpoint-v2.md), [trace v2](trace-v2.md) |
+| Contracts | [engine/architecture](engine/architecture.md), [engine/operators](engine/operators.md), [engine/json-schema](engine/json-schema.md) | [assurance contract](assurance-contract.md), [report v1](report-v1.md), [checkpoint v1](checkpoint-v1.md), [trace v1](trace-v1.md) |
 
 The dependency direction is fixed and gated ([ADR 0012](adr/0012-one-workspace-two-products.md)):
 the runner depends on the engine, never the reverse.

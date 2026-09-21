@@ -22,7 +22,7 @@ pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 pub const SCHEMA_VERSION: u32 = 2;
 
 /// The file one run writes under its own directory.
-pub const FILE_NAME: &str = "run-report-v2.json";
+pub const FILE_NAME: &str = "run-report-v1.json";
 
 /// The pointer file that names the newest run.
 pub const LATEST_FILE_NAME: &str = "latest.json";
@@ -318,7 +318,7 @@ pub struct ExpectationDocument {
 /// One expectation locator in the current run-report wire shape.
 ///
 /// This is deliberately distinct from the configuration locator: configuration
-/// may omit its optional hints, while a v2 report writes those keys explicitly
+/// may omit its optional hints, while a v1 report writes those keys explicitly
 /// as either a value or `null` and rejects a missing key on read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

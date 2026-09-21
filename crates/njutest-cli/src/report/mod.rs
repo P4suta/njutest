@@ -22,10 +22,10 @@ use serde::{Deserialize, Serialize};
 pub use rust_mutants::cargo::BuildSelection;
 
 /// Names the contract, and names the toolchain so a reader never confuses it with goatest's report of the same shape.
-pub const SCHEMA: &str = "njutest-assurance-report-v2";
+pub const SCHEMA: &str = "njutest-assurance-report-v1";
 
 /// The schema identity of one deliberately partial shard document.
-pub const SHARD_SCHEMA: &str = "njutest-assurance-shard-report-v2";
+pub const SHARD_SCHEMA: &str = "njutest-assurance-shard-report-v1";
 
 /// The version of that shape.
 pub const SCHEMA_VERSION: u32 = 2;
@@ -200,8 +200,8 @@ pub struct Position {
 /// counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CountError {
-    /// An in-memory ledger held more rows than the v2 wire counter can name.
-    #[error("{ledger} contains {count} rows, outside the v2 u32 counter range")]
+    /// An in-memory ledger held more rows than the v1 wire counter can name.
+    #[error("{ledger} contains {count} rows, outside the v1 u32 counter range")]
     Width {
         /// The ledger or field being counted.
         ledger: &'static str,
@@ -210,7 +210,7 @@ pub enum CountError {
     },
     /// Adding two individually representable facts exceeded their durable
     /// counter.
-    #[error("{field} exceeds the v2 u32 counter range")]
+    #[error("{field} exceeds the v1 u32 counter range")]
     Overflow {
         /// The counter whose exact sum could not be represented.
         field: &'static str,
@@ -234,7 +234,7 @@ fn add(field: &'static str, left: u32, right: u32) -> Result<u32, CountError> {
 impl Position {
     /// The position of byte `offset` within `line_text`, on line `line`.
     /// # Errors
-    /// Returns [`CountError`] when either one-based column is outside the v2
+    /// Returns [`CountError`] when either one-based column is outside the v1
     /// wire range.
     #[cfg(feature = "testkit")]
     pub fn of(line_text: &str, line: u32, offset: usize) -> Result<Self, CountError> {
@@ -1091,7 +1091,7 @@ impl SeamDecision {
 ///
 /// Each way of being decided names its own payload, so the pairing is a thing
 /// the compiler holds and the naming comes out right as a consequence.
-/// Current v2 reports nest the paired fields under `decision`; that closed
+/// Current v1 reports nest the paired fields under `decision`; that closed
 /// object refuses a pairing no run could mean.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decided {
@@ -5928,7 +5928,7 @@ impl Report {
 
     /// Re-derives the complete presentation view from the build ledger.
     /// # Errors
-    /// Returns [`CountError`] if the exact projection does not fit the v2
+    /// Returns [`CountError`] if the exact projection does not fit the v1
     /// accounting counters.
     pub fn conclusion(&self) -> Result<Conclusion, CountError> {
         let mutants = projected_mutants_with_models(&self.builds, self.models());

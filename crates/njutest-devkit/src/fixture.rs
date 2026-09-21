@@ -402,7 +402,7 @@ pub fn newest_run(reports: &Path) -> PathBuf {
 /// When there is no such run, or its report cannot be read.
 #[must_use]
 pub fn stored_report(reports: &Path) -> String {
-    let path = newest_run(reports).join("run-report-v2.json");
+    let path = newest_run(reports).join("run-report-v1.json");
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 

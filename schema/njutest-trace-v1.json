@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/P4suta/njutest/schema/njutest-trace-v2.json",
-  "title": "njutest trace v2",
+  "$id": "https://github.com/P4suta/njutest/schema/njutest-trace-v1.json",
+  "title": "njutest trace v1",
   "description": "One line of the current diagnostic trace. Every owned object is closed and every nullable field is explicitly present.",
   "$defs": {
     "processExit": {
@@ -77,7 +77,7 @@
           "properties": {
             "kind": { "const": "step-limit-reached" },
             "notice": {
-              "$ref": "rust-mutants-trace-v2.json#/$defs/step-limit-notice"
+              "$ref": "rust-mutants-trace-v1.json#/$defs/step-limit-notice"
             }
           }
         },
@@ -88,7 +88,7 @@
           "properties": {
             "kind": { "const": "step-protocol-failed" },
             "reason": {
-              "$ref": "rust-mutants-trace-v2.json#/$defs/step-protocol-failure"
+              "$ref": "rust-mutants-trace-v1.json#/$defs/step-protocol-failure"
             }
           }
         }
@@ -104,7 +104,7 @@
       }
     },
     "stepBoundary": {
-      "$ref": "njutest-assurance-report-v2.json#/$defs/stepBoundary"
+      "$ref": "njutest-assurance-report-v1.json#/$defs/stepBoundary"
     },
     "nullableString": { "type": ["string", "null"] },
     "nullableCount": { "type": ["integer", "null"], "minimum": 0 }
@@ -129,7 +129,7 @@
               "additionalProperties": false,
               "required": ["schema", "njutest", "rust_mutants", "run_id", "run_kind", "contract"],
               "properties": {
-                "schema": { "const": "njutest-trace-v2" },
+                "schema": { "const": "njutest-trace-v1" },
                 "njutest": { "type": "string", "minLength": 1 },
                 "rust_mutants": { "type": "string", "minLength": 1 },
                 "run_id": { "type": "string", "minLength": 1 },
@@ -392,7 +392,7 @@
                 "capability": { "type": "string", "minLength": 1 },
                 "seq": { "type": "integer", "minimum": 0 },
                 "rule": { "enum": ["truncate-response", "delay-response", "drop-connection", "replay-request", "stale-response", "status-server-error", "status-not-found"] },
-                "answer": { "$ref": "njutest-assurance-report-v2.json#/$defs/seamAnswer" }
+                "answer": { "$ref": "njutest-assurance-report-v1.json#/$defs/seamAnswer" }
               }
             }
           }
@@ -403,7 +403,7 @@
           "required": ["type", "model"],
           "properties": {
             "type": { "const": "model" },
-            "model": { "$ref": "njutest-assurance-report-v2.json#/$defs/model" }
+            "model": { "$ref": "njutest-assurance-report-v1.json#/$defs/model" }
           }
         },
         {
@@ -442,8 +442,8 @@
                       "additionalProperties": false,
                       "required": ["targets", "mutants", "soundness_by_build"],
                       "properties": {
-                        "targets": { "$ref": "njutest-assurance-report-v2.json#/$defs/accounting/properties/targets" },
-                        "mutants": { "$ref": "njutest-assurance-report-v2.json#/$defs/accounting/properties/mutants" },
+                        "targets": { "$ref": "njutest-assurance-report-v1.json#/$defs/accounting/properties/targets" },
+                        "mutants": { "$ref": "njutest-assurance-report-v1.json#/$defs/accounting/properties/mutants" },
                         "soundness_by_build": {
                           "type": "array",
                           "items": {
@@ -452,7 +452,7 @@
                             "required": ["build", "accounting"],
                             "properties": {
                               "build": { "type": "string", "minLength": 1 },
-                              "accounting": { "$ref": "njutest-assurance-report-v2.json#/$defs/accounting/properties/soundness" }
+                              "accounting": { "$ref": "njutest-assurance-report-v1.json#/$defs/accounting/properties/soundness" }
                             }
                           }
                         }

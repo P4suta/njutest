@@ -202,7 +202,7 @@ pub fn log(document: &RunDocument) -> Log {
 fn reported(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Reported {
     let mut fingerprints = BTreeMap::new();
     fingerprints.insert(
-        "rustMutantsMutation/v2".to_owned(),
+        "rustMutantsMutation/v1".to_owned(),
         format!(
             "{}:{}:{}:{}",
             mutant.path, mutant.item, mutant.rule, mutant.original

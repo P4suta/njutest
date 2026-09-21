@@ -349,8 +349,7 @@ kill is `flaky-mutation-kill`. Both are inconclusive evidence and prevent an
 assured verdict. A mutation that does not compile is `compile-rejected`, never
 "compile-equivalent".
 
-Every cataloged mutant has exactly one report-v2 disposition, and the columns
-say what the records say:
+Every cataloged mutant has exactly one report-v1 disposition, and the columns say what the records say:
 
 ```text
 cataloged      = rejected + executed + unreached + equivalent

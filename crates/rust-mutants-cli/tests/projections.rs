@@ -267,7 +267,7 @@ fn a_sarif_alert_carries_the_level_its_kind_earns_and_the_place_it_is_about() {
          open: {json}"
     );
     assert_eq!(
-        results[0]["partialFingerprints"]["rustMutantsMutation/v2"].as_str(),
+        results[0]["partialFingerprints"]["rustMutantsMutation/v1"].as_str(),
         Some("src/lib.rs:demo:gt-to-ge:>"),
         "an alert about a mutation carries the place it is in under the name the reader \
          groups by — not the file's bytes, which the next commit re-mints, closing every \

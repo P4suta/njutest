@@ -14,10 +14,9 @@ use crate::report::{Report, audit};
 
 /// The directory a store lives in, below the user's cache directory.
 ///
-/// V2 stores the tagged assurance-report-v2 complete document. The historical
-/// untagged V1 entries remain isolated in `outcomes-v1` and are never guessed
-/// into the current contract.
-pub const LAYOUT: &str = "njutest/outcomes-v2";
+/// The directory carries the document version, so a later contract gets its own
+/// and no reader has to guess which one an entry was written under.
+pub const LAYOUT: &str = "njutest/outcomes-v1";
 
 /// The extension of a stored answer.
 pub const ENTRY_EXTENSION: &str = "json";

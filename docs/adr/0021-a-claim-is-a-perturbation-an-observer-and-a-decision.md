@@ -74,7 +74,7 @@ no arrangement of them answers *what stands behind the verdict*.
    changes denominator. The observers are a second reading of the same
    dispositions, not a replacement for the first.
 6. **One total function maps outcomes to decisions**, `Outcome::decision`, and
-   a ledger test holds `docs/report-v2.md` to it in both directions. An outcome the page
+   a ledger test holds `docs/report-v1.md` to it in both directions. An outcome the page
    forgets is one whose standing a reader cannot tell; one it lists twice is one
    they would count twice.
 
