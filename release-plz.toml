@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# release-plz keeps one release pull request open against `main`: it bumps `[workspace.package].version` and writes CHANGELOG.md from the Conventional Commits since the last tag.
+# Merging that pull request cuts one `vX.Y.Z` tag,
+# and the tag is what starts release.yml, which builds the binaries, the SBOM,
+# and the GitHub Release.
+# Nothing here publishes to crates.io.
+
+[workspace]
+changelog_update = false
+git_release_enable = false
+git_tag_enable = false
+publish = false
+dependencies_update = false
+# `release_always` stays at its default.
+# Setting it to false tags only from a commit release-plz itself authored, so a version bumped by hand leaves the workspace permanently unreleasable: no release pull request is proposed because the version is already ahead, and no tag is cut because there was no release pull request.
+
+# Every crate shares `[workspace.package].version`, so they share one group and one tag.
+# njutest-cli owns both because the tag names the product a person installs, and the binary it builds is `njutest`.
+[[package]]
+name = "njutest-cli"
+changelog_include = ["njutest", "njutest-macros", "rust-mutants", "rust-mutants-cli"]
+changelog_path = "./CHANGELOG.md"
+changelog_update = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+version_group = "njutest"
+
+[[package]]
+name = "njutest"
+version_group = "njutest"
+
+[[package]]
+name = "njutest-macros"
+version_group = "njutest"
+
+[[package]]
+name = "rust-mutants"
+version_group = "njutest"
+
+[[package]]
+name = "rust-mutants-cli"
+version_group = "njutest"
+
+[[package]]
+name = "njutest-devkit"
+release = false
+
+[changelog]
+tag_pattern = "v[0-9].*"

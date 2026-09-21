@@ -1534,7 +1534,6 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
             .map_err(|error| GateFailure(format!("{relative}: {error}")))
     };
     let workspace = read("Cargo.toml")?;
-    let manifest = read(".release-please-manifest.json")?;
     let mut members = Vec::new();
     for entry in WalkDir::new(root.join("crates"))
         .max_depth(2)
@@ -1550,7 +1549,7 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
         .iter()
         .map(|(a, b)| (a.as_str(), b.as_str()))
         .collect();
-    let problems = release::check(&workspace, &manifest, &member_refs);
+    let problems = release::check(&workspace, &member_refs);
     if problems.is_empty() {
         let version = release::workspace_version(&workspace).unwrap_or_default();
         return Ok(format!(

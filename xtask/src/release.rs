@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Version consistency: the workspace version, the release-please manifest, and every member manifest inheriting it must agree, so a release tag names one version everywhere.
+//! Version consistency: `[workspace.package].version` and every member manifest inheriting it must agree, so a release tag names one version everywhere.
 
 /// The `[workspace.package].version` of the root manifest, if it has one.
 #[must_use]
@@ -17,29 +17,14 @@ pub fn workspace_version(root_manifest: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn manifest_version(release_manifest: &str) -> Option<String> {
-    let start = release_manifest.find("\".\"")?;
-    let rest = release_manifest.get(start.checked_add(3)?..)?;
-    let colon = rest.find(':')?;
-    let value = rest.get(colon.checked_add(1)?..)?.trim_start();
-    let value = value.strip_prefix('"')?;
-    let end = value.find('"')?;
-    value.get(..end).map(ToOwned::to_owned)
-}
-
-/// Every inconsistency between the root manifest, the release-please manifest, and the member manifests `(label, text)`.
+/// Every inconsistency between the root manifest and the member manifests `(label, text)`.
+///
+/// release-plz bumps `[workspace.package].version` and nothing else, so the root manifest is the only place a version is written; what this holds is that every member takes it from there rather than carrying its own.
 #[must_use]
-pub fn check(root_manifest: &str, release_manifest: &str, members: &[(&str, &str)]) -> Vec<String> {
+pub fn check(root_manifest: &str, members: &[(&str, &str)]) -> Vec<String> {
     let mut problems = Vec::new();
-    let workspace = workspace_version(root_manifest);
-    let release = manifest_version(release_manifest);
-    match (&workspace, &release) {
-        (Some(workspace), Some(release)) if workspace != release => problems.push(format!(
-            "Cargo.toml [workspace.package].version is {workspace} but .release-please-manifest.json says {release}"
-        )),
-        (None, _) => problems.push("Cargo.toml has no [workspace.package].version".to_owned()),
-        (_, None) => problems.push(".release-please-manifest.json has no \".\" entry".to_owned()),
-        _ => {}
+    if workspace_version(root_manifest).is_none() {
+        problems.push("Cargo.toml has no [workspace.package].version".to_owned());
     }
     for (label, text) in members {
         let Ok(table) = text.parse::<toml::Table>() else {

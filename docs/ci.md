@@ -46,7 +46,7 @@ on the verify step and upload `.njutest/trace/` with the reports.
 | `dogfood.yml` | `shard` runs the engine over its own catalog in four parts, and `audit` puts the parts back together, checks each recording, and re-decides every part against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
 | `dependabot-auto-merge.yml` | asks for the merge of a dependency bump, which GitHub performs once `ci-success` passes; the label `no-auto-merge` says not to | on a dependabot pull request |
-| `release-please.yml`, `release.yml` | the release train | when somebody asks for a release, and on a tag |
+| `release-plz.yml`, `release.yml` | the release train | every push to `main`, and on a tag |
 
 The `book` job builds `docs/` with mdbook, which refuses a summary that names
 a page the repository does not hold; `cargo test -p xtask --test docs` refuses

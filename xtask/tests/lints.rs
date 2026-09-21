@@ -1677,15 +1677,12 @@ fn the_documented_catalog_and_its_boundaries_match_the_gate() {
     }
 
     let readme = std::fs::read_to_string(root.join("README.md")).expect("the front page");
-    let readme_words = readme.split_whitespace().collect::<Vec<_>>().join(" ");
-    for statement in [
-        "The repository enforces its Rust design rules as gates",
-        "`Box<dyn Trait>`",
-        "A borrowed `&dyn Trait` remains valid",
-        "`#[expect(…, reason = \"…\")]`",
-    ] {
-        assert!(readme_words.contains(statement), "missing {statement:?}");
-    }
+    assert!(
+        readme.contains("docs/development.md"),
+        "the design rules are documented once, on the developer page, and the front \
+         page sends a reader there. It used to repeat four of them, which is two \
+         declarations of one decision and a front page nobody finishes: {readme}"
+    );
 }
 
 #[test]
