@@ -50,7 +50,6 @@ pub enum InterposeError {
 impl InterposeError {
     /// The stable code of this failure.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn code(&self) -> ErrorCode {
         match self {
@@ -179,7 +178,6 @@ impl Interposer {
 
     /// Hands back everything that has gone past so far and forgets it, without stopping.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn taken(&self) -> Vec<Exchange> {
         self.settled();
@@ -380,6 +378,7 @@ fn serve(listener: &TcpListener, serving: &Serving) -> std::io::Result<()> {
         );
         if carried.applied {
             serving.applied.store(true, Ordering::Relaxed);
+            *locked(&serving.putting) = None;
         }
         if let Some(exchange) = carried.exchange {
             if !serving.sealed.load(Ordering::Relaxed) {

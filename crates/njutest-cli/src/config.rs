@@ -403,7 +403,6 @@ impl Verified {
 
     /// The process ceiling, proven nonzero when the configuration was read.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn timeout(self) -> Duration {
         Duration::from_millis(self.timeout_ms.get())
@@ -777,7 +776,6 @@ impl ConfigError {
 
     /// The failure mode.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn kind(&self) -> ConfigErrorKind {
         self.kind

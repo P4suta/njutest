@@ -74,7 +74,6 @@ pub fn redirected(value: &str, interposer: &str) -> Option<String> {
 #[derive(Debug)]
 pub struct Watching {
     /// The capability the seam serves, which is what a fault names when it says where to go.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub capability: String,
     /// The environment the tests are given, with the named variable pointing at the interposer.
@@ -128,7 +127,6 @@ pub fn interposed(
         })
         .collect();
     Some(Watching {
-        #[cfg(any(test, feature = "testkit"))]
         #[cfg(feature = "testkit")]
         capability: lease.capability.clone(),
         environment,

@@ -63,7 +63,6 @@ pub struct CoverageError {
 impl CoverageError {
     /// The failure mode.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn kind(&self) -> CoverageErrorKind {
         self.kind

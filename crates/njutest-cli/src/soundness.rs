@@ -28,7 +28,6 @@ pub enum Kind {
 impl Kind {
     /// The canonical wire name.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn name(self) -> &'static str {
         match self {
@@ -43,7 +42,6 @@ impl Kind {
 
     /// The kind with the given wire name, if any.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn parse(name: &str) -> Option<Self> {
         #[cfg(feature = "testkit")]

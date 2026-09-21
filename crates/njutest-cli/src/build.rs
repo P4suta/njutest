@@ -96,7 +96,6 @@ pub struct Built {
     /// The test binaries, with the environment their processes run with.
     pub units: Vec<Unit>,
     /// The environment the build ran with, which is what anything compiling against its artifacts has to run with to reuse them.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub env: Vec<(OsString, OsString)>,
     /// What the compiler said, when it refused. A workspace that does not compile is a finding, not an error.
@@ -105,7 +104,6 @@ pub struct Built {
     #[cfg(feature = "testkit")]
     pub limitations: Vec<String>,
     /// The files each package's library is made of, workspace-relative, which is the coverage a documented example carries.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub library_sources: BTreeMap<String, Vec<PathBuf>>,
 }
@@ -237,7 +235,6 @@ pub fn build(
         units,
         #[cfg(feature = "testkit")]
         library_sources,
-        #[cfg(any(test, feature = "testkit"))]
         #[cfg(feature = "testkit")]
         env: spec.env.take().unwrap_or_default(),
         failure: failure_of(&messages, &built.output)?,

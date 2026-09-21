@@ -236,7 +236,6 @@ impl Position {
     /// # Errors
     /// Returns [`CountError`] when either one-based column is outside the v2
     /// wire range.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn of(line_text: &str, line: u32, offset: usize) -> Result<Self, CountError> {
         let prefix = line_text.get(..offset).unwrap_or(line_text);
@@ -812,7 +811,6 @@ pub enum Decision {
 impl Decision {
     /// What decided a mutation a report records under this outcome, or nothing if no outcome is spelled that way.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn of_outcome(outcome: &str) -> Option<Self> {
         Outcome::parse(outcome).map(Outcome::decision)
@@ -1046,7 +1044,6 @@ pub enum SeamDecision {
 impl SeamDecision {
     /// The decision this is one of.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn decision(&self) -> Decision {
         match self {
@@ -1073,7 +1070,6 @@ impl SeamDecision {
 
     /// The target that noticed, or the proof that discharged it, where either did.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn by(&self) -> Option<&str> {
         match self {
@@ -1197,7 +1193,6 @@ impl Decided {
     /// `on` produces English either way; it produces the wrong string only
     /// here.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn every() -> [Self; 11] {
         Outcome::ALL.map(|outcome| Self::specimen(outcome, outcome.name()))
@@ -1319,7 +1314,6 @@ impl StepBoundary {
         self.observed
     }
 
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     const fn specimen() -> Self {
         Self {
@@ -1431,7 +1425,6 @@ pub enum Blind {
 impl Blind {
     /// The decision this is one of.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn decision(self) -> Decision {
         match self {
@@ -3874,7 +3867,6 @@ impl ModelRecord {
         &self.answer
     }
 
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub(crate) fn specimen_ineligible(reason: ModelIneligibility) -> Self {
         Self {

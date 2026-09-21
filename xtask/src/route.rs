@@ -141,7 +141,6 @@ pub struct Routing {
 impl Routing {
     /// The route of one mutant, by the name either producer wrote.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn route(&self, mutant: &str) -> Option<&Route> {
         self.route_of(mutant, mutant)
@@ -154,7 +153,6 @@ impl Routing {
     }
 
     /// Every execution of one mutant, in the order they ran.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn execs_of<'a>(&'a self, mutant: &'a str) -> impl Iterator<Item = &'a Exec> {
         self.execs_for(mutant, mutant)

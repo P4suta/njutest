@@ -269,7 +269,6 @@ impl Audit {
 
     /// Every remark of one layer.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn of(&self, layer: Layer) -> Vec<&Remark> {
         self.remarks
@@ -280,7 +279,6 @@ impl Audit {
 
     /// Whether one layer found something the run does not support.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn violated(&self, layer: Layer) -> bool {
         self.remarks

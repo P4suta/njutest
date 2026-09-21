@@ -235,7 +235,6 @@ impl Target {
 
     /// Whether the whole binary is the target, because libtest is not there to be asked.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn is_whole_binary(&self) -> bool {
         self.path == WHOLE_BINARY
@@ -408,7 +407,6 @@ impl TargetError {
 
     /// A failure of `kind` about `unit`, saying `message`.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn new(kind: TargetErrorKind, unit: impl Into<String>, message: impl Into<String>) -> Self {
         Self {

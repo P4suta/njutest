@@ -162,7 +162,6 @@ impl Manager {
 
     /// What every test of this run sees because of the resources it holds, in name order.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn environment(&self) -> Vec<(String, String)> {
         let mut all: BTreeMap<String, String> = BTreeMap::new();

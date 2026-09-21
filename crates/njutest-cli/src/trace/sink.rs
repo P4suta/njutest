@@ -136,7 +136,6 @@ impl Sink {
         matches!(self, Self::Required(_))
     }
 
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub(crate) fn fail_durable_writes(&self) {
         match self {
@@ -344,7 +343,6 @@ impl DirSink {
         &self.directory
     }
 
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     fn fail_writes(&self) {
         self.fail_writes.store(true, Ordering::SeqCst);

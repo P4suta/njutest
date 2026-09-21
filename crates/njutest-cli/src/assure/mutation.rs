@@ -179,7 +179,6 @@ impl Disposition {
 
     /// The test that decided it, when one did.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn decided_by(&self) -> Option<&str> {
         match self {

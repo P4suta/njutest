@@ -404,6 +404,30 @@ fn a_dropped_connection_gives_the_caller_nothing_at_all() {
     drop(recorded);
 }
 
+#[test]
+fn a_fault_names_one_exchange_and_the_next_one_goes_through() {
+    let up = upstream("[]");
+    let upstream_at = up.address();
+    let interposer = injecting(upstream_at, Some(fault("drop-connection", 0)));
+
+    let dropped = ask(interposer.address(), "/orders");
+    assert!(
+        dropped.is_empty(),
+        "the exchange the fault names is the one that meets it: {dropped:?}"
+    );
+    let after = ask(interposer.address(), "/orders");
+    assert!(
+        !after.is_empty(),
+        "and the one after it does not: a run that measured two perturbed calls and \
+         reported one fault would be measuring a program nobody described. The \
+         interposer numbers an exchange only when it records one, so a rule that \
+         records nothing left every later call answering to the same number: {after:?}"
+    );
+
+    let recorded = interposer.stop();
+    drop(recorded);
+}
+
 /// A lease as a provider answered it.
 fn lease(capability: &str, named: &[(&str, &str)]) -> njutest_cli::resource::Lease {
     njutest_cli::resource::Lease {

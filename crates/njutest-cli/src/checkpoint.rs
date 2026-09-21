@@ -56,7 +56,6 @@ impl State {
 
     /// The saved target with this identity, if any.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn target(&self, id: &str) -> Option<&SavedTarget> {
         self.targets.iter().find(|target| target.id == id)
@@ -69,7 +68,6 @@ impl State {
     }
 
     /// Records one measured target, replacing what was there.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn record_target(&mut self, target: SavedTarget) {
         self.targets.retain(|saved| saved.id != target.id);
@@ -107,7 +105,6 @@ pub struct SavedTarget {
 impl SavedTarget {
     /// The coverage a restored target contributes: one block spanning each file it reached, so it is a candidate for every position in that file and narrows none of them.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn coverage(&self) -> BTreeSet<Block> {
         self.files

@@ -183,7 +183,6 @@ impl RepairError {
 
     /// The failure mode.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn kind(&self) -> RepairErrorKind {
         self.kind
@@ -191,7 +190,6 @@ impl RepairError {
 
     /// The stable code of this failure.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub const fn code(&self) -> ErrorCode {
         self.kind.code()

@@ -295,7 +295,6 @@ pub struct Baseline {
 impl Baseline {
     /// Every exchange every seam saw, in the order the seams were started.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn all(&self) -> Vec<Exchange> {
         self.per_seam.concat()

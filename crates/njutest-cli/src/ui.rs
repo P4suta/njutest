@@ -11,7 +11,6 @@ use crate::report::lines::escape;
 /// Where a run says what it is doing.
 pub enum Notes<'a> {
     /// Says nothing at all.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     Silent,
     /// Lines a person reads.
@@ -46,7 +45,6 @@ impl std::fmt::Debug for Dashboard<'_> {
 impl std::fmt::Debug for Notes<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            #[cfg(any(test, feature = "testkit"))]
             #[cfg(feature = "testkit")]
             Self::Silent => "Silent",
             Self::Plain(_) => "Plain",
@@ -77,7 +75,6 @@ impl<'a> Notes<'a> {
     pub fn finish(&mut self) -> std::io::Result<()> {
         match self {
             Self::Dashboard(dashboard) => dashboard.end(),
-            #[cfg(any(test, feature = "testkit"))]
             #[cfg(feature = "testkit")]
             Self::Silent => Ok(()),
             Self::Plain(_) | Self::Jsonl(_) => Ok(()),
@@ -90,7 +87,6 @@ impl<'a> Notes<'a> {
     /// Returns the output stream's write failure.
     pub fn phase(&mut self, name: &str) -> std::io::Result<()> {
         match self {
-            #[cfg(any(test, feature = "testkit"))]
             #[cfg(feature = "testkit")]
             Self::Silent => Ok(()),
             Self::Plain(out) => say(*out, &format!("== {}", escape(name))),
@@ -108,7 +104,6 @@ impl<'a> Notes<'a> {
     /// Returns the output stream's write failure.
     pub fn progress(&mut self, message: &str, done: u64, total: u64) -> std::io::Result<()> {
         match self {
-            #[cfg(any(test, feature = "testkit"))]
             #[cfg(feature = "testkit")]
             Self::Silent => Ok(()),
             Self::Plain(out) => say(*out, &format!("   [{done}/{total}] {}", escape(message))),
@@ -133,7 +128,6 @@ impl<'a> Notes<'a> {
     /// Returns the output stream's write failure.
     pub fn note(&mut self, kind: &str, text: &str) -> std::io::Result<()> {
         match self {
-            #[cfg(any(test, feature = "testkit"))]
             #[cfg(feature = "testkit")]
             Self::Silent => Ok(()),
             Self::Plain(out) => say(*out, &format!("   {}: {}", escape(kind), escape(text))),

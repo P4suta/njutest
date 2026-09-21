@@ -107,7 +107,6 @@ impl Rule {
 
     /// The question of that name, or nothing where it names none.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|one| one.name() == name)
