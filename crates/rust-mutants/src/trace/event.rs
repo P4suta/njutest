@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The wire shape of one trace event: an envelope of sequence number and moment around a typed record. The vocabulary grows with every phase of the engine; the envelope and the run-start / run-end pair are frozen.
+//! The wire shape of one trace event: an envelope of sequence number and moment around a typed record.
+//! The vocabulary grows with every phase of the engine; the envelope and the run-start / run-end pair are frozen.
 
 use serde::{Deserialize, Serialize};
 
 use crate::cargo::{BuildSelection, BuildSelectionDigest};
 use crate::id::RunId;
 
-/// The schema name carried by every `run-start` event. It names the recipe version; a future incompatible shape takes a new version.
+/// The schema name carried by every `run-start` event.
+/// It names the recipe version; a future incompatible shape takes a new version.
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
@@ -58,9 +60,8 @@ pub struct Event {
 #[serde(tag = "type", rename_all = "kebab-case")]
 /// What one event of a recording says.
 ///
-/// Closed, because both CLIs render it and one of them had a waiver in
-/// `xtask/wildcard_allowlist.txt` for the arm this type once forced on it. A
-/// ledger entry is what paying the cost looks like (ADR 0023).
+/// Closed, because both CLIs render it and one of them had a waiver in `xtask/wildcard_allowlist.txt` for the arm this type once forced on it.
+/// A ledger entry is what paying the cost looks like (ADR 0023).
 #[serde(deny_unknown_fields)]
 pub enum Payload {
     /// The first event of every recording.
@@ -69,8 +70,7 @@ pub enum Payload {
         schema: String,
         /// The engine version that recorded.
         engine: String,
-        /// Whether the engine was invoked directly or as one bound build of
-        /// an `njutest` run.
+        /// Whether the engine was invoked directly or as one bound build of an `njutest` run.
         context: TraceContext,
     },
     /// A phase began.
@@ -192,9 +192,7 @@ pub enum Payload {
 
 /// The invocation boundary a recording belongs to.
 ///
-/// This is a closed union rather than optional `njutest` fields: a standalone
-/// engine run and a runner-owned configured build cannot be confused by
-/// partially populated JSON.
+/// This is a closed union rather than optional `njutest` fields: a standalone engine run and a runner-owned configured build cannot be confused by partially populated JSON.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
@@ -213,8 +211,7 @@ pub enum TraceContext {
     },
 }
 
-/// The immutable binding between one nested engine trace and its configured
-/// `njutest` build.
+/// The immutable binding between one nested engine trace and its configured `njutest` build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NjutestBuild {
     final_run_id: RunId,
@@ -225,13 +222,11 @@ pub struct NjutestBuild {
 }
 
 impl NjutestBuild {
-    /// Constructs a nested trace binding after proving that the internal run
-    /// id is the canonical id for this final run and ordinal, and that the
-    /// report-visible build name is nonempty.
+    /// Constructs a nested trace binding after proving that the internal run id is the canonical id for this final run and ordinal, and that the report-visible build name is nonempty.
     ///
     /// # Errors
-    /// Returns the violated binding invariant. No partial nested context is
-    /// representable.
+    /// Returns the violated binding invariant.
+    /// No partial nested context is representable.
     pub fn new(
         final_run_id: RunId,
         ordinal: u32,
@@ -310,8 +305,7 @@ impl<'de> Deserialize<'de> for NjutestBuild {
 /// Why a nested engine trace binding cannot be constructed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NjutestBuildError {
-    /// A report-visible build name must contain non-whitespace and carry its
-    /// canonical unpadded spelling.
+    /// A report-visible build name must contain non-whitespace and carry its canonical unpadded spelling.
     #[error("configured build name {name:?} must be nonempty and have no surrounding whitespace")]
     InvalidName {
         /// The refused name.
@@ -327,8 +321,7 @@ pub enum NjutestBuildError {
         /// Why the composed id was invalid.
         source: crate::id::RunIdError,
     },
-    /// The supplied internal id is not the one derived from the final run and
-    /// ordinal.
+    /// The supplied internal id is not the one derived from the final run and ordinal.
     #[error("nested trace internal run id {actual} must be {expected}")]
     InternalRunId {
         /// The only canonical internal id for the binding.
@@ -489,7 +482,8 @@ pub struct ExecRecord {
     /// The working directory.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub dir: Option<String>,
-    /// The names of the environment variables set for the process. Never a value: the recorder strips `=value` from every entry.
+    /// The names of the environment variables set for the process.
+    /// Never a value: the recorder strips `=value` from every entry.
     pub env_names: Vec<String>,
     /// The timeout, if one applied.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
@@ -511,7 +505,8 @@ pub struct ExecRecord {
     /// The failure to start or wait, rendered.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub error: Option<String>,
-    /// The raw capture, for a sink that preserves it. Never serialized.
+    /// The raw capture, for a sink that preserves it.
+    /// Never serialized.
     #[serde(skip)]
     pub output: Vec<u8>,
 }

@@ -97,8 +97,7 @@ pub struct Asked<'a> {
 /// Everything known about the one mutant `asked` names.
 ///
 /// # Errors
-/// [`ExplainError::Nothing`] and [`ExplainError::Several`] for a prefix that
-/// does not name exactly one mutant.
+/// [`ExplainError::Nothing`] and [`ExplainError::Several`] for a prefix that does not name exactly one mutant.
 pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
     let matching: Vec<&MutantDocument> = asked
         .catalog
@@ -180,7 +179,8 @@ fn changed(
     ))
 }
 
-/// The command that puts one mutation back to the tests. How a reader names this mutation again, which has to hold after they have changed the file.
+/// The command that puts one mutation back to the tests.
+/// How a reader names this mutation again, which has to hold after they have changed the file.
 #[must_use]
 pub fn names(mutant: &MutantDocument) -> String {
     if mutant.item.is_empty() || mutant.path.is_empty() {

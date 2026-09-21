@@ -1,5 +1,0 @@
-error: njutest::unit takes no arguments
- --> tests/ui/unit_takes_no_arguments.rs:1:17
-  |
-1 | #[njutest::unit("postgres")]
-  |                 ^^^^^^^^^^

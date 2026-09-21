@@ -59,9 +59,7 @@ pub fn references(text: &str) -> BTreeSet<String> {
 
 /// Whether `word` has the deliberately narrow milestone spelling.
 ///
-/// Compiler diagnostics such as `E0369` are intentionally outside it: a
-/// milestone has one or two decimal digits, and every identifier in the
-/// roadmap registry is therefore distinguishable from a Rust error code.
+/// Compiler diagnostics such as `E0369` are intentionally outside it: a milestone has one or two decimal digits, and every identifier in the roadmap registry is therefore distinguishable from a Rust error code.
 fn milestone(word: &str) -> bool {
     let mut characters = word.chars();
     let Some(prefix) = characters.next() else {

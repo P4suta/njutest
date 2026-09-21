@@ -286,7 +286,8 @@ impl Audit {
             .any(|remark| remark.layer == layer && remark.standing == Standing::Violated)
     }
 
-    /// The exit code this audit earns. A run that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
+    /// The exit code this audit earns.
+    /// A run that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
         u8::from(self.violations() > 0)
@@ -498,8 +499,7 @@ impl<'a> Notes<'a> {
 /// What an independent re-decision makes of the run report in `text`.
 ///
 /// # Errors
-/// [`AuditError::Unparsable`] for a document that is not JSON, and
-/// [`AuditError::Unrecognised`] for one that is not a run report.
+/// [`AuditError::Unparsable`] for a document that is not JSON, and [`AuditError::Unrecognised`] for one that is not a run report.
 pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, AuditError> {
     let document = wire::decode(text).map_err(|source| AuditError::Unparsable {
         path: path.to_owned(),
@@ -656,8 +656,8 @@ impl fmt::Display for NotRunReason {
     }
 }
 
-/// A complete routing decision. Its absence is represented once, by the
-/// enclosing `Option`, rather than by five mutually inconsistent sentinels.
+/// A complete routing decision.
+/// Its absence is represented once, by the enclosing `Option`, rather than by five mutually inconsistent sentinels.
 #[derive(Debug, Clone)]
 struct RouteDecision {
     granularity: Granularity,
@@ -887,9 +887,8 @@ fn number(value: &Value, key: &str) -> Option<u64> {
     value.get(key)?.as_u64()
 }
 
-/// A count widened without a fallible or truncating conversion. Rust supports
-/// only pointer widths that fit the report's `u64` count contract; an unknown
-/// future width fails this crate at compile time instead of inventing a value.
+/// A count widened without a fallible or truncating conversion.
+/// Rust supports only pointer widths that fit the report's `u64` count contract; an unknown future width fails this crate at compile time instead of inventing a value.
 #[cfg(target_pointer_width = "64")]
 const fn count(value: usize) -> u64 {
     u64::from_be_bytes(value.to_be_bytes())

@@ -178,13 +178,8 @@ fn sorted(dir: &Path) -> Vec<std::fs::DirEntry> {
 
 /// `path` resolved, in the one spelling the products hold a directory in.
 ///
-/// Windows answers `canonicalize` with the extended form, `\\?\C:\...`, and the
-/// products put what they resolved back into the plain one: the engine states
-/// the rule in `rust_mutants::canonical`, and the dependency direction
-/// `cargo xtask deps` holds keeps this crate below it rather than above, so the
-/// rule is stated again here for the suites. A fixture that handed a run the
-/// extended spelling would have the run answer in a name no assertion here
-/// writes.
+/// Windows answers `canonicalize` with the extended form, `\\?\C:\...`, and the products put what they resolved back into the plain one: the engine states the rule in `rust_mutants::canonical`, and the dependency direction `cargo xtask deps` holds keeps this crate below it rather than above, so the rule is stated again here for the suites.
+/// A fixture that handed a run the extended spelling would have the run answer in a name no assertion here writes.
 fn canonical(path: &Path) -> PathBuf {
     let resolved = path.canonicalize().expect("the fixture path exists");
     #[cfg(windows)]
@@ -370,13 +365,11 @@ fn readme_of(name: &str) -> String {
 
 /// The directory of the newest stored run under `reports`, followed from the pointer a run writes.
 ///
-/// Where a project stores its runs is the project's to say, so the caller
-/// names the directory. A kit that guessed it would decide the layout for
-/// every test that uses it.
+/// Where a project stores its runs is the project's to say, so the caller names the directory.
+/// A kit that guessed it would decide the layout for every test that uses it.
 ///
 /// # Panics
-/// When the pointer is not there or does not name a document, which means no
-/// run stored a report under `reports`.
+/// When the pointer is not there or does not name a document, which means no run stored a report under `reports`.
 #[must_use]
 pub fn newest_run(reports: &Path) -> PathBuf {
     let directory = reports.to_path_buf();

@@ -148,8 +148,7 @@ fn children(dir: &Path) -> Result<Vec<(String, PathBuf)>, CheckError> {
 /// Every convention `dir` breaks, one line each, sorted.
 ///
 /// # Errors
-/// A directory entry or source file could not be read, so no claim is made
-/// about the part of the fixture that was hidden.
+/// A directory entry or source file could not be read, so no claim is made about the part of the fixture that was hidden.
 pub fn check_fixture(dir: &Path) -> Result<Vec<String>, CheckError> {
     let mut problems = Vec::new();
     let manifest_path = dir.join("Cargo.toml");

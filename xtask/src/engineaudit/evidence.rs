@@ -741,8 +741,7 @@ fn claimed(report: &Report) -> Vec<Discharged> {
         .collect()
 }
 
-/// What a guard record establishes about one event, without encoding a third
-/// state as `Option<bool>`.
+/// What a guard record establishes about one event, without encoding a third state as `Option<bool>`.
 enum Observation {
     Observed,
     Absent,

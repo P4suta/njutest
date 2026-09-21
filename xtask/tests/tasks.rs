@@ -35,9 +35,8 @@ fn task(name: &str) -> String {
 /// Every gate `cargo xtask all` runs, which is what CI runs.
 /// Every job `ci-success` waits for, and the local task that answers it first.
 ///
-/// `None` is a job this machine cannot answer, with the reason it cannot. The
-/// list is the whole of what a push has to wait for CI to find out, so adding
-/// to it is a decision rather than an omission.
+/// `None` is a job this machine cannot answer, with the reason it cannot.
+/// The list is the whole of what a push has to wait for CI to find out, so adding to it is a decision rather than an omission.
 const GATED: [(&str, Option<&str>); 10] = [
     ("test", Some("mise run test")),
     ("lint", Some("mise run lint")),
@@ -140,7 +139,7 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
         "mktemp -d",
         "export CARGO_TARGET_DIR=\"$install_root/target\"",
         "cargo package --locked --workspace",
-        "cargo install --locked --path crates/njutest-cli --root \"$install_root\"",
+        "cargo install --locked --path crates/njutest --root \"$install_root\"",
         "cargo install --locked --path crates/rust-mutants-cli --root \"$install_root\"",
         "\"$install_root/bin/njutest\" --version",
         "\"$install_root/bin/rust-mutants\" --version",
@@ -245,7 +244,7 @@ fn pre_push_type_checks_windows_cfg_with_the_pinned_target() {
 #[test]
 fn benchmarks_are_one_explicit_optional_feature_per_benchmarking_crate() {
     for (manifest_name, expected_benches) in [
-        ("crates/njutest-cli/Cargo.toml", ["report", "evidence"]),
+        ("crates/njutest/Cargo.toml", ["report", "evidence"]),
         ("crates/rust-mutants/Cargo.toml", ["foundation", "pipeline"]),
     ] {
         let manifest_text = repository(manifest_name);
@@ -749,21 +748,29 @@ const MEASURED: [&str; 5] = [
     "",
     "crates/rust-mutants",
     "crates/rust-mutants-cli",
-    "crates/njutest-cli",
+    "crates/njutest",
     "xtask",
 ];
 
+/// The crate that holds no Rust of its own: it recompiles other crates' sources privately, which llvm-cov counts a second time at nothing per cent.
+const SURFACES: &str = "compiler-surfaces";
+
 /// Every place in this tree that holds Rust a coverage report can count.
-const PLACES: [&str; 8] = [
-    "crates/rust-mutants",
-    "crates/rust-mutants-cli",
-    "crates/njutest",
-    "crates/njutest-cli",
-    "crates/njutest-macros",
-    "crates/njutest-devkit",
-    "xtask",
-    "fuzz",
-];
+///
+/// The members cargo names, plus the one workspace that is not a member; a crate added or renamed joins this on the day it does, rather than when somebody remembers the list.
+fn places(root: &Path) -> Vec<String> {
+    let mut found: Vec<String> = njutest_devkit::census::members(root)
+        .into_iter()
+        .filter(|member| member.name != SURFACES)
+        .map(|member| match member.directory.strip_prefix(root) {
+            Ok(at) => at.display().to_string().replace('\\', "/"),
+            Err(error) => panic!("{} is not under the workspace: {error}", member.name),
+        })
+        .collect();
+    found.push("fuzz".to_owned());
+    found.sort();
+    found
+}
 
 /// The paths one `--ignore-filename-regex` leaves out, with its one alternation spelled out.
 fn left_out(pattern: &str) -> Vec<String> {
@@ -803,16 +810,21 @@ fn every_coverage_floor_measures_the_one_crate_it_is_about() {
         "a floor was added or removed and this table did not follow: {patterns:?}"
     );
     let under = |place: &str| format!("{place}/");
+    let every = places(
+        &std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
+            .expect("the workspace root"),
+    );
     for (measured, pattern) in MEASURED.into_iter().zip(patterns) {
         let out = left_out(pattern);
-        let left_in: Vec<&str> = PLACES
-            .into_iter()
+        let left_in: Vec<&str> = every
+            .iter()
+            .map(String::as_str)
             .filter(|place| !out.iter().any(|one| under(place).starts_with(one.as_str())))
             .collect();
         if measured.is_empty() {
             assert_eq!(
                 left_in.len(),
-                PLACES.len(),
+                every.len(),
                 "the workspace floor leaves a place out, so what it prints is not the \
                  workspace's coverage: {pattern}"
             );
@@ -905,4 +917,31 @@ fn rust_sources_under(at: &Path) -> Vec<std::path::PathBuf> {
     }
     found.sort();
     found
+}
+
+#[test]
+fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
+    let root = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
+        .unwrap_or_else(|error| panic!("the workspace root: {error}"));
+    let workflow = repository(".github/workflows/mutation.yml");
+    let listed: BTreeSet<String> = workflow
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("package: ["))
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or_else(|| panic!("mutation.yml declares a package matrix: {workflow}"))
+        .split(',')
+        .map(|name| name.trim().to_owned())
+        .collect();
+    let wanted: BTreeSet<String> = njutest_devkit::census::members(&root)
+        .into_iter()
+        .filter(|member| member.name != SURFACES && member.name != "xtask")
+        .map(|member| member.name)
+        .collect();
+    assert_eq!(
+        listed, wanted,
+        "the weekly measurement of how strong this suite is runs one leg per crate, and \
+         the list was written by hand: a rename made it name one crate twice and \
+         njutest-devkit not at all, so one leg did the same work as another and one \
+         crate was never measured"
+    );
 }

@@ -76,19 +76,24 @@ pub struct Found {
     pub candidate: Candidate,
     /// Where the edit starts.
     pub position: Position,
-    /// The item the edit sits in, as a reader writes it: `mod::path::Type::method`, or `<Type as Trait>::method`. Empty at the top level of a file.
+    /// The item the edit sits in, as a reader writes it: `mod::path::Type::method`, or `<Type as Trait>::method`.
+    /// Empty at the top level of a file.
     pub item: String,
     /// The rewrite site.
     pub hint: SiteHint,
-    /// What a branch proof about this edit would rest on, once the compiler has vouched for its witnesses. `None` where the syntax supports no proof.
+    /// What a branch proof about this edit would rest on, once the compiler has vouched for its witnesses.
+    /// `None` where the syntax supports no proof.
     pub branch: Option<branch::Claim>,
-    /// What the compiler must vouch for before this guard's two branches may be compared, so a run can record whether they ever differed. `None` where the syntax does not allow comparing them.
+    /// What the compiler must vouch for before this guard's two branches may be compared, so a run can record whether they ever differed.
+    /// `None` where the syntax does not allow comparing them.
     pub comparable: Option<branch::Comparable>,
-    /// What a probe of this edit would ask, when evaluating the expression a second time is not itself an event. `None` where no probe can be stated.
+    /// What a probe of this edit would ask, when evaluating the expression a second time is not itself an event.
+    /// `None` where no probe can be stated.
     pub probe: Option<crate::probe::Question>,
 }
 
-/// Why a place produced no candidate. Declared in rank order, which is the order skips are reported in.
+/// Why a place produced no candidate.
+/// Declared in rank order, which is the order skips are reported in.
 #[derive(
     Debug,
     Clone,
@@ -232,7 +237,8 @@ impl SkipReason {
     }
 }
 
-/// How many candidates one reason suppressed in one file. Ordered by (reason rank, path).
+/// How many candidates one reason suppressed in one file.
+/// Ordered by (reason rank, path).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Skip {
@@ -269,7 +275,8 @@ pub struct Claim {
     pub line: u32,
     /// The reason its author wrote.
     pub reason: String,
-    /// Whether a place a rule targets starts inside what it speaks about. A marker that hid nothing is one somebody should take out.
+    /// Whether a place a rule targets starts inside what it speaks about.
+    /// A marker that hid nothing is one somebody should take out.
     pub matched: bool,
 }
 
@@ -307,8 +314,7 @@ impl FileDiscovery {
     /// The trace record of this discovery.
     ///
     /// # Errors
-    /// Returns the exact candidate count when it does not fit the trace's u32
-    /// counter; no saturated trace record is produced.
+    /// Returns the exact candidate count when it does not fit the trace's u32 counter; no saturated trace record is produced.
     pub fn trace_record(&self) -> Result<DiscoverFileRecord, TraceRecordError> {
         let candidates =
             u32::try_from(self.candidates.len()).map_err(|_overflow| TraceRecordError {
@@ -574,7 +580,8 @@ fn tally(path: &str, counts: BTreeMap<SkipReason, u32>) -> Vec<Skip> {
         .collect()
 }
 
-/// Strips what `syn::parse_file` would strip — a byte order mark and a shebang line — and returns the byte offset the remainder starts at, so every span can be made absolute. The shebang's newline is kept, which keeps the parser's line numbers equal to the file's.
+/// Strips what `syn::parse_file` would strip — a byte order mark and a shebang line — and returns the byte offset the remainder starts at, so every span can be made absolute.
+/// The shebang's newline is kept, which keeps the parser's line numbers equal to the file's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("a {bytes}-byte Rust source prefix does not fit its u32 offset")]
 pub(crate) struct PrefixError {

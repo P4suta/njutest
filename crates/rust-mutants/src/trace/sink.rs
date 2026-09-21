@@ -19,7 +19,8 @@ pub const FILE_NAME: &str = "trace.jsonl";
 /// The subdirectory of a directory sink that holds preserved output.
 pub const OUTPUT_DIRECTORY_NAME: &str = "output";
 
-/// Caps one preserved output file. A capture larger than the limit is cut to it; the event still digests the whole capture.
+/// Caps one preserved output file.
+/// A capture larger than the limit is cut to it; the event still digests the whole capture.
 pub const OUTPUT_FILE_LIMIT: usize = 1 << 20;
 
 /// Ends a preserved output file that did not fit.
@@ -32,15 +33,13 @@ pub enum Sink {
     Memory(MemorySink),
     /// A channel a reader on another thread takes events from: how a progress display watches a run without the engine knowing there is one.
     Channel(ChannelSink),
-    /// A durable directory that must keep every event, plus optional
-    /// best-effort observers that have no authority over durability.
+    /// A durable directory that must keep every event, plus optional best-effort observers that have no authority over durability.
     Required(RequiredSink),
 }
 
 /// One durable trace authority and its explicitly non-authoritative observers.
 ///
-/// The fields are private so a channel or ring can never accidentally become
-/// the authority that hides a failed durable write.
+/// The fields are private so a channel or ring can never accidentally become the authority that hides a failed durable write.
 #[derive(Debug)]
 pub struct RequiredSink {
     authority: DirSink,
@@ -50,14 +49,12 @@ pub struct RequiredSink {
 /// Whether a best-effort observer can account for what it retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObserverState {
-    /// The observer is internally consistent and names how many events it
-    /// deliberately could not retain.
+    /// The observer is internally consistent and names how many events it deliberately could not retain.
     Complete {
         /// Events evicted or refused by the observer.
         dropped: u64,
     },
-    /// Mutex poisoning or counter overflow made its diagnostic accounting
-    /// unknowable.
+    /// Mutex poisoning or counter overflow made its diagnostic accounting unknowable.
     Corrupt,
 }
 
@@ -110,10 +107,8 @@ impl ChannelSink {
         }
     }
 
-    /// Offers an event to this non-authoritative observer. Any loss is made
-    /// sticky in [`ObserverState`] by [`Self::emit`]; it cannot affect the
-    /// durable authority's result and it is not silently mistaken for a kept
-    /// event.
+    /// Offers an event to this non-authoritative observer.
+    /// Any loss is made sticky in [`ObserverState`] by [`Self::emit`]; it cannot affect the durable authority's result and it is not silently mistaken for a kept event.
     fn observe(&self, event: &Event) {
         match self.emit(event) {
             Ok(()) => {}
@@ -133,8 +128,7 @@ impl ChannelSink {
 }
 
 impl Sink {
-    /// Makes `authority` the only sink whose failure determines whether a
-    /// requested recording completed durably.
+    /// Makes `authority` the only sink whose failure determines whether a requested recording completed durably.
     #[must_use]
     pub const fn required(authority: DirSink) -> Self {
         Self::Required(RequiredSink {
@@ -143,8 +137,7 @@ impl Sink {
         })
     }
 
-    /// Makes `authority` durable while a progress channel observes events on
-    /// a best-effort basis.
+    /// Makes `authority` durable while a progress channel observes events on a best-effort basis.
     #[must_use]
     pub fn required_with_channel(authority: DirSink, observer: ChannelSink) -> Self {
         Self::Required(RequiredSink {
@@ -156,8 +149,8 @@ impl Sink {
     /// Keeps one event.
     ///
     /// # Errors
-    /// The reason the event was not kept. The recorder counts it and moves
-    /// on.
+    /// The reason the event was not kept.
+    /// The recorder counts it and moves on.
     pub fn emit(&self, event: &Event) -> io::Result<()> {
         match self {
             Self::Memory(sink) => sink.emit(event),
@@ -253,7 +246,8 @@ impl RequiredSink {
     }
 }
 
-/// Keeps the most recent events in memory: the sink of a test and of an in-process reader. A full ring drops its oldest event and counts it.
+/// Keeps the most recent events in memory: the sink of a test and of an in-process reader.
+/// A full ring drops its oldest event and counts it.
 #[derive(Debug)]
 pub struct MemorySink {
     capacity: Option<usize>,
@@ -306,7 +300,8 @@ impl MemorySink {
 }
 
 impl MemorySink {
-    /// Keeps one event, dropping the oldest when the ring is full. Memory does not fail: what a full ring loses it counts.
+    /// Keeps one event, dropping the oldest when the ring is full.
+    /// Memory does not fail: what a full ring loses it counts.
     fn emit(&self, event: &Event) -> io::Result<()> {
         let evicted = {
             let mut events = self.events.lock().map_err(|_poisoned| {
@@ -356,8 +351,7 @@ impl MemorySink {
         }
     }
 
-    /// How many events the ring evicted, unless its accounting became
-    /// unknowable.
+    /// How many events the ring evicted, unless its accounting became unknowable.
     fn dropped(&self) -> Option<u64> {
         match self.state() {
             ObserverState::Complete { dropped } => Some(dropped),
@@ -393,9 +387,8 @@ impl DirSink {
     /// Creates `directory` and opens its stream.
     ///
     /// # Errors
-    /// The failure to create the directory (including `AlreadyExists`) or to
-    /// open the stream. An explicit trace caller treats this as a setup
-    /// failure; an unrequested trace never constructs a directory sink.
+    /// The failure to create the directory (including `AlreadyExists`) or to open the stream.
+    /// An explicit trace caller treats this as a setup failure; an unrequested trace never constructs a directory sink.
     pub fn create(directory: &Path) -> io::Result<Self> {
         #[expect(
             clippy::create_dir,
@@ -436,7 +429,9 @@ impl DirSink {
         self.fail_writes.store(true, Ordering::SeqCst);
     }
 
-    /// Writes the captured output of an exec event beside the stream and returns the event pointing at the file. Best effort: an output that cannot be written costs its path, not the event. The event is copied so a sink sharing it with others never leaks this sink's paths.
+    /// Writes the captured output of an exec event beside the stream and returns the event pointing at the file.
+    /// Best effort: an output that cannot be written costs its path, not the event.
+    /// The event is copied so a sink sharing it with others never leaks this sink's paths.
     fn preserve_output(&self, event: &Event) -> Option<Event> {
         let Payload::Exec { exec } = &event.payload else {
             return None;
@@ -546,7 +541,8 @@ impl DirSink {
         self.dropped.load(Ordering::SeqCst)
     }
 
-    /// Flushes and closes the stream. Everything written afterwards fails, which is the reachable form of "the disk is gone".
+    /// Flushes and closes the stream.
+    /// Everything written afterwards fails, which is the reachable form of "the disk is gone".
     ///
     /// # Errors
     /// The failure to flush.

@@ -61,8 +61,7 @@ pub(crate) fn failed(
     )
 }
 
-/// Closes a successful run stream after every fallible postcondition has
-/// succeeded: every finding, then exactly one terminal line.
+/// Closes a successful run stream after every fallible postcondition has succeeded: every finding, then exactly one terminal line.
 pub(crate) fn ended(
     stream: &mut dyn Write,
     document: &rust_mutants::report::run::RunDocument,

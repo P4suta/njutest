@@ -78,10 +78,8 @@ impl Color {
 
 /// `name` in the style this engine draws `outcome` in, painted or not as the stream will take.
 ///
-/// The style is `rust_mutants::telling`'s and so is the escape. This module
-/// used to spell three of its own, which is how the same run came to draw a
-/// timed-out mutation amber here and green in the dashboard: two modules had
-/// each decided what a timeout was worth, and neither knew the other had.
+/// The style is `rust_mutants::telling`'s and so is the escape.
+/// This module used to spell three of its own, which is how the same run came to draw a timed-out mutation amber here and green in the dashboard: two modules had each decided what a timeout was worth, and neither knew the other had.
 #[must_use]
 pub fn paint(outcome: rust_mutants::outcome::Outcome, name: &str, paints: bool) -> String {
     rust_mutants::telling::Style::of(outcome).painted(name, paints)
@@ -105,10 +103,7 @@ struct Tally {
 impl Tally {
     /// Puts one judgement in its column.
     ///
-    /// Named rather than defaulted: an outcome added later and left to a `_`
-    /// arm would be counted as a harness failure, which is a tally telling
-    /// somebody their machine is broken about a thing the run established
-    /// perfectly well (ADR 0023).
+    /// Named rather than defaulted: an outcome added later and left to a `_` arm would be counted as a harness failure, which is a tally telling somebody their machine is broken about a thing the run established perfectly well (ADR 0023).
     const fn count(&mut self, judged: &Judged) {
         let slot = match judged.outcome {
             rust_mutants::outcome::Outcome::Killed => &mut self.killed,

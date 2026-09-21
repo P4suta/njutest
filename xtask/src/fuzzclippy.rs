@@ -57,8 +57,7 @@ struct Lint {
 
 /// The rustc/Clippy flags represented by the root workspace lint policy.
 ///
-/// This is deliberately derived rather than copied: changing `Cargo.toml`
-/// changes both workspaces' next Clippy invocation.
+/// This is deliberately derived rather than copied: changing `Cargo.toml` changes both workspaces' next Clippy invocation.
 /// # Errors
 ///
 /// Returns a typed error when the workspace lint table is absent or malformed.
@@ -125,13 +124,12 @@ fn lint_priority(setting: &toml::Table) -> i64 {
     priority
 }
 
-/// Runs `cargo` Clippy over every fuzz target under the root workspace lint
-/// policy. The composition root supplies the exact cargo program.
+/// Runs `cargo` Clippy over every fuzz target under the root workspace lint policy.
+/// The composition root supplies the exact cargo program.
 ///
 /// # Errors
 ///
-/// Returns a typed error when the root policy cannot be read or when the fuzz
-/// workspace does not satisfy it.
+/// Returns a typed error when the root policy cannot be read or when the fuzz workspace does not satisfy it.
 pub fn check(root: &Path, cargo: &OsStr) -> Result<String, FuzzClippyError> {
     let root_manifest = root.join("Cargo.toml");
     let manifest =

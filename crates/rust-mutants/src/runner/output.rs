@@ -5,13 +5,16 @@
 
 use std::sync::Mutex;
 
-/// How many bytes of combined output [`super::run`] keeps when the spec does not say. One mebibyte is far more than a readable test failure needs and far less than an unbounded logger can produce.
+/// How many bytes of combined output [`super::run`] keeps when the spec does not say.
+/// One mebibyte is far more than a readable test failure needs and far less than an unbounded logger can produce.
 pub const DEFAULT_OUTPUT_LIMIT: usize = 1 << 20;
 
-/// The smallest cap honoured. The truncation notice has to fit inside the budget for `output.len() <= limit` to hold.
+/// The smallest cap honoured.
+/// The truncation notice has to fit inside the budget for `output.len() <= limit` to hold.
 pub const MIN_OUTPUT_LIMIT: usize = 256;
 
-/// Begins the first line of an output that lost bytes. Stable, because reports quote it.
+/// Begins the first line of an output that lost bytes.
+/// Stable, because reports quote it.
 pub const OUTPUT_TRUNCATED_PREFIX: &str = "[rust-mutants] output truncated";
 
 /// Captures the last `limit` bytes written to it and counts the rest.
@@ -60,8 +63,7 @@ impl TailBuffer {
     /// Appends `bytes`, keeping only the tail.
     ///
     /// # Errors
-    /// Refuses a poisoned capture state or a byte count that no longer fits
-    /// the durable counter.
+    /// Refuses a poisoned capture state or a byte count that no longer fits the durable counter.
     pub fn write(&self, bytes: &[u8]) -> Result<(), OutputError> {
         let written =
             u64::try_from(bytes.len()).map_err(|_overflow| OutputError::ByteCountOverflow)?;
@@ -97,11 +99,11 @@ impl TailBuffer {
         Ok(())
     }
 
-    /// The output as a result carries it: the bytes as written when nothing was lost, otherwise the truncation notice followed by as much of the tail as the remaining budget allows. `capture().len() <= limit` always.
+    /// The output as a result carries it: the bytes as written when nothing was lost, otherwise the truncation notice followed by as much of the tail as the remaining budget allows.
+    /// `capture().len() <= limit` always.
     ///
     /// # Errors
-    /// Refuses a poisoned capture state or an internal size relation that no
-    /// longer preserves the configured cap.
+    /// Refuses a poisoned capture state or an internal size relation that no longer preserves the configured cap.
     pub fn capture(&self) -> Result<Vec<u8>, OutputError> {
         let (total, buf) = {
             let state = self
@@ -139,7 +141,8 @@ impl TailBuffer {
     }
 }
 
-/// The line prepended to a capped capture. It reports only the total the child produced, which the writer knows before it decides how much to keep.
+/// The line prepended to a capped capture.
+/// It reports only the total the child produced, which the writer knows before it decides how much to keep.
 #[must_use]
 pub fn truncation_notice(total: u64) -> String {
     format!(
@@ -178,8 +181,7 @@ impl HeadBuffer {
     /// Appends `bytes`, keeping what still fits.
     ///
     /// # Errors
-    /// Refuses a poisoned capture state, an exhausted byte counter, or a
-    /// broken capacity invariant.
+    /// Refuses a poisoned capture state, an exhausted byte counter, or a broken capacity invariant.
     pub fn write(&self, bytes: &[u8]) -> Result<(), OutputError> {
         let written =
             u64::try_from(bytes.len()).map_err(|_overflow| OutputError::ByteCountOverflow)?;

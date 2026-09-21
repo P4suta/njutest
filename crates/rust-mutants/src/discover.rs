@@ -21,11 +21,14 @@ use crate::trace::{DiscoverFileRecord, Recorder, SkipClaimRecord, SkipCount};
 pub struct DiscoverOptions<'r> {
     /// The rules to apply.
     pub selection: Selection<'r>,
-    /// Patterns a file must match to be mutable, against its workspace-relative path. Empty includes everything.
+    /// Patterns a file must match to be mutable, against its workspace-relative path.
+    /// Empty includes everything.
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again; an exclude always wins.
     pub exclude: Vec<Pattern>,
-    /// The member packages to discover in, by name. Empty means every member. A package left out is not a skip: nothing was decided about it.
+    /// The member packages to discover in, by name.
+    /// Empty means every member.
+    /// A package left out is not a skip: nothing was decided about it.
     pub packages: Vec<String>,
     /// The places a reviewer configured the run to pass over, each with the reason they gave.
     pub skips: Vec<SkipRule>,
@@ -36,9 +39,11 @@ pub struct DiscoverOptions<'r> {
 pub struct SkipRule {
     /// The paths it speaks about, as a glob against the workspace-relative path.
     pub path: Pattern,
-    /// The lines it speaks about, inclusive and 1-based. `None` is every line of the file.
+    /// The lines it speaks about, inclusive and 1-based.
+    /// `None` is every line of the file.
     pub lines: Option<(u32, u32)>,
-    /// The item it speaks about, by a suffix of the item path. `None` is every item.
+    /// The item it speaks about, by a suffix of the item path.
+    /// `None` is every item.
     pub item: Option<String>,
     /// Why its author wrote it.
     pub reason: String,
@@ -125,7 +130,8 @@ pub struct Discovery {
     pub candidates: Vec<Located>,
     /// Every skip, in (reason, path) order.
     pub skips: Vec<Skip>,
-    /// Every `rust-mutants: skip` marker of a file the run measures, in (path, line) order. A marker in a file the run passed over is a marker about nothing this run decided.
+    /// Every `rust-mutants: skip` marker of a file the run measures, in (path, line) order.
+    /// A marker in a file the run passed over is a marker about nothing this run decided.
     pub claims: Vec<SkipClaim>,
     /// Every decision the walk took, in (path, offset) order, for a reader asking about one place rather than about a tally.
     pub decisions: Vec<Decided>,
@@ -133,7 +139,8 @@ pub struct Discovery {
     pub catalog: Catalog,
 }
 
-/// Why discovery failed. Rendered as `<code>: discover: <what>`.
+/// Why discovery failed.
+/// Rendered as `<code>: discover: <what>`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DiscoverError {
@@ -251,7 +258,8 @@ pub struct Input<'a> {
     pub units: &'a [Unit],
 }
 
-/// Finds every candidate in the workspace, walking the files its units compiled. The trace receives one `discover-file` event per file.
+/// Finds every candidate in the workspace, walking the files its units compiled.
+/// The trace receives one `discover-file` event per file.
 ///
 /// # Errors
 /// See [`DiscoverError`].
@@ -663,8 +671,7 @@ pub fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
     )
 }
 
-/// Whether one crate attribute, including a conditional attribute, forbids a
-/// lint the generated support module must allow.
+/// Whether one crate attribute, including a conditional attribute, forbids a lint the generated support module must allow.
 fn generated_module_forbidden_by(meta: &syn::Meta) -> Result<bool, syn::Error> {
     let syn::Meta::List(list) = meta else {
         return Ok(false);

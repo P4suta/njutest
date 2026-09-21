@@ -10,7 +10,8 @@ pub struct ErrorCode {
     pub code: &'static str,
     /// One line saying what the code means.
     pub summary: &'static str,
-    /// What to do about it. Every code carries one.
+    /// What to do about it.
+    /// Every code carries one.
     pub remedy: Option<&'static str>,
 }
 
@@ -44,7 +45,8 @@ pub const INTERRUPTED: ErrorCode = ErrorCode {
     remedy: Some("nothing was left half-done; run it again when you are ready"),
 };
 
-/// A configuration file that could not be read. The command line reports it; the ledger of `RM` codes is one, so it lives here.
+/// A configuration file that could not be read.
+/// The command line reports it; the ledger of `RM` codes is one, so it lives here.
 pub const CONFIG_UNREADABLE: ErrorCode = ErrorCode {
     code: "RM0002",
     summary: "a configuration file that could not be read",
@@ -183,7 +185,8 @@ pub const CACHE_UNREADABLE: ErrorCode = ErrorCode {
     ),
 };
 
-/// Declares one error code. There is no form without a remedy, on purpose.
+/// Declares one error code.
+/// There is no form without a remedy, on purpose.
 macro_rules! snapshot_code {
     ($name:ident, $code:literal, $summary:literal, $remedy:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {

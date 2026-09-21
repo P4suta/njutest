@@ -1263,22 +1263,13 @@ dependencies = [
 name = "njutest"
 version = "0.1.0"
 dependencies = [
- "njutest-devkit",
- "njutest-macros",
- "trybuild",
-]
-
-[[package]]
-name = "njutest-cli"
-version = "0.1.0"
-dependencies = [
  "clap",
  "criterion",
  "getrandom 0.3.4",
  "hex",
  "jiff",
  "jsonschema",
- "njutest-cli",
+ "njutest",
  "njutest-devkit",
  "njutest-macros",
  "proc-macro2",

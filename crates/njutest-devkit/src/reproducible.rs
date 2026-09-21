@@ -14,8 +14,7 @@ type Built = BTreeMap<String, String>;
 /// Whether a tree built, changed, and built back comes out as the bytes it came out as.
 ///
 /// # Panics
-/// When the fixture cannot be copied, which is a setup failure rather than an
-/// answer.
+/// When the fixture cannot be copied, which is a setup failure rather than an answer.
 #[must_use]
 pub fn builds_the_same_twice() -> bool {
     let fixture = crate::fixture::Fixture::copy("fixture-equivalent");

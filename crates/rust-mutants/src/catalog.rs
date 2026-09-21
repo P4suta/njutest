@@ -58,7 +58,8 @@ mod named_rule {
 /// The domain separator of the catalog digest.
 pub const CATALOG_DOMAIN: &str = "rust-mutants-catalog-v1";
 
-/// One proposed edit: replace the bytes of `span` in `path` with `replacement`. The unit discovery produces and the catalog consumes.
+/// One proposed edit: replace the bytes of `span` in `path` with `replacement`.
+/// The unit discovery produces and the catalog consumes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
@@ -71,7 +72,8 @@ pub struct Candidate {
     pub span: Span,
     /// Exactly the bytes `span` covers in the source file.
     pub original: Vec<u8>,
-    /// What those bytes become. Empty for a deletion, and never equal to `original`: replacing bytes with themselves is not a mutation.
+    /// What those bytes become.
+    /// Empty for a deletion, and never equal to `original`: replacing bytes with themselves is not a mutation.
     pub replacement: Vec<u8>,
     /// The lowercase hex SHA-256 of the whole source file.
     pub source_digest: String,
@@ -131,8 +133,7 @@ impl Candidate {
     /// Whether the candidate is internally coherent.
     ///
     /// # Errors
-    /// Returns the first incoherence: an invalid identity, an original text
-    /// that is not the span's length, or a replacement identical to it.
+    /// Returns the first incoherence: an invalid identity, an original text that is not the span's length, or a replacement identical to it.
     pub fn validate(&self) -> Result<(), CandidateError> {
         self.identity().validate()?;
         if u32::try_from(self.original.len()) != Ok(self.span.len()) {
@@ -239,7 +240,8 @@ impl fmt::Display for DuplicateReason {
     }
 }
 
-/// A candidate the catalog dropped. Kept rather than discarded so `explain` can answer "why is there no mutant for this rule here?".
+/// A candidate the catalog dropped.
+/// Kept rather than discarded so `explain` can answer "why is there no mutant for this rule here?".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Duplicate {
@@ -247,7 +249,8 @@ pub struct Duplicate {
     pub reason: DuplicateReason,
     /// The losing candidate.
     pub dropped: Candidate,
-    /// The losing candidate's mutant ID. Equal to `winner_id` for an identical duplicate.
+    /// The losing candidate's mutant ID.
+    /// Equal to `winner_id` for an identical duplicate.
     pub dropped_id: MutantId,
     /// The ID of the mutant that was kept.
     pub winner_id: MutantId,
@@ -389,11 +392,11 @@ impl Builder {
         self.candidates.is_empty()
     }
 
-    /// Validates a candidate and queues it. Insertion order does not affect the resulting catalog.
+    /// Validates a candidate and queues it.
+    /// Insertion order does not affect the resulting catalog.
     ///
     /// # Errors
-    /// Returns the refusal: an incoherent candidate, an unregistered rule, or
-    /// a contradiction with a candidate already queued.
+    /// Returns the refusal: an incoherent candidate, an unregistered rule, or a contradiction with a candidate already queued.
     pub fn add(&mut self, candidate: Candidate) -> Result<(), CandidateError> {
         candidate.validate()?;
         self.registry.verify(candidate.rule)?;
@@ -439,8 +442,7 @@ impl Builder {
     /// Produces the catalog.
     ///
     /// # Errors
-    /// Returns the first candidate that cannot be identified, a display ID
-    /// collision, or a candidate count the runtime index cannot address.
+    /// Returns the first candidate that cannot be identified, a display ID collision, or a candidate count the runtime index cannot address.
     pub fn build(self) -> Result<Catalog, BuildError> {
         let count = self.candidates.len();
         if u32::try_from(count).is_err() {
@@ -653,7 +655,8 @@ impl Catalog {
             .find(|mutant| mutant.display_id.as_str() == display_id)
     }
 
-    /// Resolves a user-supplied ID prefix, as `--mutant` accepts. It refuses to guess: a prefix matching two mutants is an error naming both.
+    /// Resolves a user-supplied ID prefix, as `--mutant` accepts.
+    /// It refuses to guess: a prefix matching two mutants is an error naming both.
     ///
     /// # Errors
     /// Returns an invalid, unmatched, or ambiguous prefix.

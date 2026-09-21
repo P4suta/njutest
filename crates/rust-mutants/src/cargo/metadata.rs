@@ -12,7 +12,8 @@ use super::{CargoError, CargoErrorKind, Driver};
 use crate::runner::run;
 use crate::trace::ExecRecord;
 
-/// How much `cargo metadata` output is kept. A workspace whose metadata is larger than this is not one the engine is going to instrument anyway.
+/// How much `cargo metadata` output is kept.
+/// A workspace whose metadata is larger than this is not one the engine is going to instrument anyway.
 const METADATA_OUTPUT_LIMIT: usize = 256 << 20;
 
 /// Configures [`Metadata::load`].
@@ -77,7 +78,8 @@ pub struct Node {
 pub struct NodeDep {
     /// The package depended on.
     pub pkg: String,
-    /// How it is depended on. A dependency may be several kinds at once.
+    /// How it is depended on.
+    /// A dependency may be several kinds at once.
     #[serde(default)]
     pub dep_kinds: Vec<DepKind>,
     #[serde(flatten)]
@@ -311,8 +313,7 @@ impl Metadata {
     /// Runs `cargo metadata --format-version 1` in the driver's directory and parses it.
     ///
     /// # Errors
-    /// [`CargoErrorKind::CommandFailed`] with cargo's own words when the
-    /// command fails, and [`CargoErrorKind::MetadataUnparsable`] otherwise.
+    /// [`CargoErrorKind::CommandFailed`] with cargo's own words when the command fails, and [`CargoErrorKind::MetadataUnparsable`] otherwise.
     pub fn load(driver: &Driver<'_>, options: MetadataOptions) -> Result<Self, CargoError> {
         Self::run(driver, options, false)
     }

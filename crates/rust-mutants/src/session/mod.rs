@@ -42,7 +42,8 @@ use crate::workspace::{SessionError, Workspace};
 pub struct Locator {
     /// The workspace-relative path with forward slashes.
     pub path: String,
-    /// The item, as a reader writes it. A suffix is enough: `clamp`, `Type::method`, `mod::path::Type::method`.
+    /// The item, as a reader writes it.
+    /// A suffix is enough: `clamp`, `Type::method`, `mod::path::Type::method`.
     pub item: String,
     /// The rule's name.
     pub rule: String,
@@ -115,7 +116,8 @@ fn names(item: &str, wanted: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Failing {
-    /// End the preparation and name the target. A person who asked for a measurement wants to hear that there was nothing to measure.
+    /// End the preparation and name the target.
+    /// A person who asked for a measurement wants to hear that there was nothing to measure.
     Refuse,
     /// Report it and leave the target out of every route, so a caller with a verdict of its own can give it.
     Exclude,
@@ -123,8 +125,7 @@ pub enum Failing {
 
 /// What reach measurement established about one mutation.
 ///
-/// This is deliberately not `Option<bool>`: not measuring a place is a fact
-/// distinct from measuring it and observing that no target reached it.
+/// This is deliberately not `Option<bool>`: not measuring a place is a fact distinct from measuring it and observing that no target reached it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Reachability {
     /// Neither coverage nor the instrumented guards measured the place.
@@ -137,12 +138,8 @@ pub enum Reachability {
 
 /// How many times the active mutant's guard may be taken before its process is stopped, when nobody says.
 ///
-/// Fifty million takes of one site is a number a test written by a person does
-/// not approach and a loop that cannot terminate passes in about a second, so
-/// the ceiling stops an unbounded execution long before the clock would and stops it by a
-/// number every machine agrees on. A person who has a test that really does
-/// drive one site that hard raises it, and a run that would rather have only
-/// the clock sets it to zero.
+/// Fifty million takes of one site is a number a test written by a person does not approach and a loop that cannot terminate passes in about a second, so the ceiling stops an unbounded execution long before the clock would and stops it by a number every machine agrees on.
+/// A person who has a test that really does drive one site that hard raises it, and a run that would rather have only the clock sets it to zero.
 pub const DEFAULT_MUTANT_STEPS: u64 = 50_000_000;
 
 /// Configures [`Workspace::prepare`].
@@ -155,7 +152,8 @@ pub const DEFAULT_MUTANT_STEPS: u64 = 50_000_000;
 pub struct PrepareOptions {
     /// Which tier of rules to apply when `operators` is empty.
     pub tier: Tier,
-    /// Exactly these rules, by name. Empty means the tier.
+    /// Exactly these rules, by name.
+    /// Empty means the tier.
     pub operators: Vec<String>,
     /// Start every test process in a directory of its own rather than where cargo would.
     pub scratch_working_directory: bool,
@@ -163,7 +161,8 @@ pub struct PrepareOptions {
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again.
     pub exclude: Vec<Pattern>,
-    /// The member packages to mutate. Empty means every member.
+    /// The member packages to mutate.
+    /// Empty means every member.
     pub packages: Vec<String>,
     /// The places a reviewer configured the run to pass over, each with the reason they gave.
     pub skips: Vec<discover::SkipRule>,
@@ -187,18 +186,11 @@ pub struct PrepareOptions {
     pub mutant_timeout: Timeout,
     /// How many times the active mutant's guard may be taken before its process is stopped.
     ///
-    /// A mutant that does not terminate has to be stopped by something, and a
-    /// clock is the wrong something: the same mutant on a loaded machine and
-    /// on a quiet one is two verdicts. A count of guard takes is the number
-    /// every machine agrees on, and the guard of the selected mutant sits
-    /// where the mutation does — so a loop whose condition was mutated takes
-    /// it once an iteration and an unbounded execution is counted as it runs.
+    /// A mutant that does not terminate has to be stopped by something, and a clock is the wrong something: the same mutant on a loaded machine and on a quiet one is two verdicts.
+    /// A count of guard takes is the number every machine agrees on, and the guard of the selected mutant sits where the mutation does — so a loop whose condition was mutated takes it once an iteration and an unbounded execution is counted as it runs.
     ///
-    /// It is an allowance rather than a measurement of the tree: nothing is
-    /// known in advance about how often a test reaches a site, so the number
-    /// is a ceiling a person may lower and the default is one no test written
-    /// by a person approaches. `None`, and zero, count nothing and leave the
-    /// timeout as the only bound.
+    /// It is an allowance rather than a measurement of the tree: nothing is known in advance about how often a test reaches a site, so the number is a ceiling a person may lower and the default is one no test written by a person approaches.
+    /// `None`, and zero, count nothing and leave the timeout as the only bound.
     pub mutant_steps: Option<u64>,
     /// Run a library's documented examples as a target of their own.
     pub doctests: bool,
@@ -247,13 +239,17 @@ impl Default for PrepareOptions {
 pub struct Request {
     /// The mutant, by full identity or by any prefix of at least four hex characters that names exactly one.
     pub mutant: String,
-    /// The target to run it against. `None` runs every target until one kills it, which is what "does any test catch this?" means.
+    /// The target to run it against.
+    /// `None` runs every target until one kills it, which is what "does any test catch this?"
+    /// means.
     pub target: Option<String>,
-    /// One test to run, by its libtest path. `None` runs the whole target.
+    /// One test to run, by its libtest path.
+    /// `None` runs the whole target.
     pub test: Option<String>,
     /// Further arguments for the harness.
     pub args: Vec<String>,
-    /// How long the process may take. `None` uses the session's default.
+    /// How long the process may take.
+    /// `None` uses the session's default.
     pub timeout: Option<Duration>,
 }
 
@@ -295,8 +291,8 @@ impl Request {
         self
     }
 
-    /// Repeats the exact test, arguments, and bound against the target whose
-    /// clock result is being confirmed. A different target cannot confirm it.
+    /// Repeats the exact test, arguments, and bound against the target whose clock result is being confirmed.
+    /// A different target cannot confirm it.
     fn retrying_target(&self, target: &str) -> Self {
         self.clone().with_target(target)
     }
@@ -311,7 +307,8 @@ pub struct Session {
     skips: Vec<Skip>,
     claims: Vec<SkipClaim>,
     validated: Validated,
-    /// The catalog indices compiler validation was asked about. Every other index is an explicitly unvalidated candidate, never an accepted one.
+    /// The catalog indices compiler validation was asked about.
+    /// Every other index is an explicitly unvalidated candidate, never an accepted one.
     eligible: BTreeSet<u32>,
     targets: Vec<TestTarget>,
     scratch: PathBuf,
@@ -335,8 +332,7 @@ pub struct Session {
     /// What the one run of every target with nothing active established, empty when nothing was verified.
     verified: Verified,
     /// The answers and counter produced while establishing filtered test sets,
-    /// kept under one lock so a report cannot observe a counter detached from
-    /// the routing state that produced it.
+    /// kept under one lock so a report cannot observe a counter detached from the routing state that produced it.
     established: std::sync::Mutex<EstablishmentState>,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
@@ -469,9 +465,7 @@ impl Session {
     /// The one mutant a locator names.
     ///
     /// # Errors
-    /// Returns [`LocateError::Nothing`] when the catalog holds no such
-    /// mutation and [`LocateError::Several`] when it holds more than one and
-    /// the line does not separate them.
+    /// Returns [`LocateError::Nothing`] when the catalog holds no such mutation and [`LocateError::Several`] when it holds more than one and the line does not separate them.
     pub fn locate(&self, locator: &Locator) -> Result<&Mutant, LocateError> {
         match self.locate_all(locator)?.as_slice() {
             [one] => Ok(one),
@@ -492,11 +486,7 @@ impl Session {
     /// Every mutation of the catalog a locator names, which is one unless it states a count.
     ///
     /// # Errors
-    /// Returns [`LocateError::Nothing`] when the catalog holds no such
-    /// mutation, [`LocateError::Several`] when it holds more than one and
-    /// neither the line nor a count separates them, and
-    /// [`LocateError::Counted`] when a count is stated and another number of
-    /// them is what the catalog holds.
+    /// Returns [`LocateError::Nothing`] when the catalog holds no such mutation, [`LocateError::Several`] when it holds more than one and neither the line nor a count separates them, and [`LocateError::Counted`] when a count is stated and another number of them is what the catalog holds.
     pub fn locate_all(&self, locator: &Locator) -> Result<Vec<&Mutant>, LocateError> {
         let matching: Vec<&Mutant> = self
             .catalog
@@ -558,9 +548,7 @@ impl Session {
     /// Every mutable source as it stood before this session instrumented it,
     /// in stable path order.
     ///
-    /// A proof layer must restore the complete set, rather than only the file
-    /// containing its subject, before it treats a copy of the prepared tree as
-    /// pristine proof context.
+    /// A proof layer must restore the complete set, rather than only the file containing its subject, before it treats a copy of the prepared tree as pristine proof context.
     pub fn pristine_sources(&self) -> impl Iterator<Item = (&str, &[u8])> {
         self.sources
             .iter()
@@ -639,8 +627,7 @@ impl Session {
     /// How many tests this session started to establish that a set of them answers on its own.
     ///
     /// # Errors
-    /// Returns a typed session failure when a panic poisoned the routing
-    /// accounting state.
+    /// Returns a typed session failure when a panic poisoned the routing accounting state.
     pub fn established_tests(&self) -> Result<u64, EngineError> {
         self.established
             .lock()
@@ -684,8 +671,7 @@ impl Session {
     /// The budget one execution of `target` is given, and where it came from.
     ///
     /// # Errors
-    /// Refuses when deriving a timeout from the target baseline would overflow
-    /// [`Duration`].
+    /// Refuses when deriving a timeout from the target baseline would overflow [`Duration`].
     pub fn timeout_for(
         &self,
         request: &Request,
@@ -995,8 +981,7 @@ impl Session {
     /// The name of the directory the source root sits in, which is what a report calls the workspace.
     ///
     /// # Errors
-    /// Returns an engine error when the platform spelling cannot cross the
-    /// catalog's UTF-8 boundary without changing its bytes.
+    /// Returns an engine error when the platform spelling cannot cross the catalog's UTF-8 boundary without changing its bytes.
     pub fn root_name(&self) -> Result<String, EngineError> {
         let Some(name) = self.workspace.root().file_name() else {
             return Ok(String::new());
@@ -1075,8 +1060,7 @@ impl Session {
     /// Runs one mutant and reports what the tests said.
     ///
     /// # Errors
-    /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
-    /// [`SessionError::NoTargets`].
+    /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
         let mutant = self.executable(&request.mutant)?;
         let chosen = self.chosen(request, mutant, Asking::Anything);
@@ -1096,8 +1080,7 @@ impl Session {
     /// What one mutant is, decided: executed, and when a budget expired, confirmed with the machine to itself.
     ///
     /// # Errors
-    /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
-    /// [`SessionError::NoTargets`].
+    /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and [`SessionError::NoTargets`].
     pub fn judge(
         &self,
         request: &Request,
@@ -1311,10 +1294,8 @@ impl Session {
     }
 
     /// Runs the targets that can observe anything with no mutant active,
-    /// skipping harness targets whose own summary says they ran no tests: a
-    /// target with nothing to say cannot veto a control that passed
-    /// everywhere it ran. Verdict aggregation over mutations keeps the
-    /// universal claim; this is the boundary a candidate check stands on.
+    /// skipping harness targets whose own summary says they ran no tests: a target with nothing to say cannot veto a control that passed everywhere it ran.
+    /// Verdict aggregation over mutations keeps the universal claim; this is the boundary a candidate check stands on.
     ///
     /// # Errors
     /// [`SessionError::NoTargets`] when every selected target ran nothing.
@@ -1614,10 +1595,9 @@ struct EstablishmentState {
 
 /// A non-empty ledger of one mutant's executions.
 ///
-/// The first execution is structurally mandatory. A retry can only be added
-/// from a waited attempt, and its conclusion is reconciled before it enters
-/// the ledger. The effective result and the retry bit are consequently
-/// projections, not independently writable state.
+/// The first execution is structurally mandatory.
+/// A retry can only be added from a waited attempt, and its conclusion is reconciled before it enters the ledger.
+/// The effective result and the retry bit are consequently projections, not independently writable state.
 ///
 /// A caller cannot fabricate an empty or unreconciled ledger:
 ///
@@ -1741,9 +1721,11 @@ impl InitialAttempt {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Judgement {
-    /// The non-empty, ordered execution ledger. Its last entry is the result.
+    /// The non-empty, ordered execution ledger.
+    /// Its last entry is the result.
     pub attempts: AttemptLedger,
-    /// Every target that was actually asked, in the order they were asked, with what each answered. A target that reaches a mutation and is absent from this was never given the chance: one before it detected, or the run was cancelled.
+    /// Every target that was actually asked, in the order they were asked, with what each answered.
+    /// A target that reaches a mutation and is absent from this was never given the chance: one before it detected, or the run was cancelled.
     pub asked: Vec<MutantResult>,
     /// The budget the target that answered was given.
     pub timeout: Duration,
@@ -1814,8 +1796,7 @@ pub const DEFAULT_MUTANT_TIMEOUT: Duration = Duration::from_secs(300);
 /// The budget derived from one target's own baseline.
 ///
 /// # Errors
-/// Refuses when multiplying the baseline by [`TIMEOUT_MULTIPLE`] exceeds the
-/// largest [`Duration`].
+/// Refuses when multiplying the baseline by [`TIMEOUT_MULTIPLE`] exceeds the largest [`Duration`].
 pub fn derived(baseline: Duration) -> Result<Duration, SessionError> {
     baseline
         .checked_mul(TIMEOUT_MULTIPLE)
@@ -1827,8 +1808,7 @@ impl Timeout {
     /// The budget and where it came from, for a target whose baseline took `baseline`.
     ///
     /// # Errors
-    /// Refuses when an automatic timeout derived from `baseline` exceeds the
-    /// largest [`Duration`].
+    /// Refuses when an automatic timeout derived from `baseline` exceeds the largest [`Duration`].
     pub fn of(self, baseline: Option<Duration>) -> Result<(Duration, TimeoutSource), SessionError> {
         match self {
             Self::Fixed(chosen) => Ok((chosen, TimeoutSource::Configured)),
@@ -1855,10 +1835,8 @@ const fn spoke(result: &MutantResult) -> bool {
 
 /// The strongest fact all selected targets jointly establish.
 ///
-/// `Survived` is deliberately the weakest non-empty state: every selected
-/// target must reach it before the aggregate may stay there. A kill decides
-/// the mutation; every other non-affirmative result prevents a survival
-/// claim, with a stable precedence so target order cannot decide the report.
+/// `Survived` is deliberately the weakest non-empty state: every selected target must reach it before the aggregate may stay there.
+/// A kill decides the mutation; every other non-affirmative result prevents a survival claim, with a stable precedence so target order cannot decide the report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TargetAggregate {
     Empty,
@@ -2274,11 +2252,8 @@ fn aggregate_outcomes(
         .fold(TargetAggregate::Empty, TargetAggregate::include)
 }
 
-/// The verdict of one mutant over the targets it was put to: a target whose
-/// harness ran no tests is silent, and a silent target contributes no
-/// reaching test, so it cannot turn a survived verdict inconclusive. When
-/// every target was silent the aggregate says so instead of inventing
-/// survival.
+/// The verdict of one mutant over the targets it was put to: a target whose harness ran no tests is silent, and a silent target contributes no reaching test, so it cannot turn a survived verdict inconclusive.
+/// When every target was silent the aggregate says so instead of inventing survival.
 fn verdict_result(results: &[MutantResult]) -> Option<MutantResult> {
     let speaking: Vec<&MutantResult> = results.iter().filter(|result| spoke(result)).collect();
     if speaking.is_empty() {

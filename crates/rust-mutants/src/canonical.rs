@@ -13,8 +13,7 @@ const VERBATIM: &str = r"\\?\";
 /// `path` resolved, spelled the way the rest of this run spells one.
 ///
 /// # Errors
-/// Whatever [`std::fs::canonicalize`] reports: the path does not exist, or it
-/// could not be read.
+/// Whatever [`std::fs::canonicalize`] reports: the path does not exist, or it could not be read.
 pub fn canonical(path: &Path) -> io::Result<PathBuf> {
     path.canonicalize().map(|resolved| plainly(&resolved))
 }

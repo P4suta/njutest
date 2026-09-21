@@ -1011,7 +1011,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "njutest-cli"
+name = "njutest"
 version = "0.1.0"
 dependencies = [
  "clap",
@@ -1527,7 +1527,7 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "libfuzzer-sys",
- "njutest-cli",
+ "njutest",
  "njutest-devkit",
  "rust-mutants",
  "rust-mutants-cli",

@@ -17,7 +17,7 @@ The public API and the document schemas are versioned and may still change befor
 Not on crates.io yet; from a clone:
 
 ```console
-cargo install --path crates/njutest-cli      # njutest, cargo-njutest
+cargo install --path crates/njutest      # njutest, cargo-njutest
 cargo install --path crates/rust-mutants-cli # rust-mutants, cargo-rust-mutants
 ```
 

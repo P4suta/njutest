@@ -3,7 +3,7 @@
 
 [package]
 name = "njutest-macros"
-description = "Procedural macros of the njutest workspace. Published because the command lines depend on it; install njutest-cli or rust-mutants-cli."
+description = "Procedural macros of the njutest workspace. Published because the command lines depend on it; install njutest or rust-mutants-cli."
 keywords = ["testing", "assurance", "macro"]
 categories = ["development-tools::testing"]
 version.workspace = true

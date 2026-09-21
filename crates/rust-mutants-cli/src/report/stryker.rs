@@ -97,8 +97,7 @@ pub struct Position {
 /// Projects one run report from the sources it names, with the thresholds a reader colours by.
 ///
 /// # Errors
-/// [`crate::error::CliError::SourceUnreadable`] when a file the report names is not under
-/// `root`.
+/// [`crate::error::CliError::SourceUnreadable`] when a file the report names is not under `root`.
 pub fn project(
     document: &RunDocument,
     root: &Path,

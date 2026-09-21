@@ -523,8 +523,7 @@ struct Coverage {
 /// Audits a complete Kani 0.68 export against every production law.
 ///
 /// # Errors
-/// Returns a typed refusal for unreadable bytes, schema drift, a missing or
-/// duplicated harness, an unreachable assertion, or an unsatisfied cover.
+/// Returns a typed refusal for unreadable bytes, schema drift, a missing or duplicated harness, an unreachable assertion, or an unsatisfied cover.
 pub(crate) fn audit(path: &Path, workspace: &Path) -> Result<(), AuditError> {
     let bytes = std::fs::read(path).map_err(|source| AuditError::Read {
         path: path.to_path_buf(),

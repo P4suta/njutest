@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a run report looks like to a person. The document is the contract a program reads; these lines are the contract a reader reads, and both are fixed.
+//! What a run report looks like to a person.
+//! The document is the contract a program reads; these lines are the contract a reader reads, and both are fixed.
 
 #![expect(
     clippy::expect_used,

@@ -38,8 +38,7 @@ fn from_slice(bytes: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
 
 /// Deserializes an explicitly present nullable field.
 ///
-/// Putting this on an `Option<T>` disables serde's implicit "missing means
-/// `None`" rule while continuing to accept the JSON value `null`.
+/// Putting this on an `Option<T>` disables serde's implicit "missing means `None`" rule while continuing to accept the JSON value `null`.
 pub(crate) fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,

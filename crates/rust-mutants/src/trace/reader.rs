@@ -9,7 +9,8 @@ use serde::Deserialize as _;
 
 use super::event::{Event, Payload};
 
-/// Why a stream could not be read. Fail-closed: a malformed line is an error naming the line, never an event skipped in silence.
+/// Why a stream could not be read.
+/// Fail-closed: a malformed line is an error naming the line, never an event skipped in silence.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReadError {
@@ -42,7 +43,8 @@ impl ReadError {
     }
 }
 
-/// Reads every event of a JSON Lines stream, in stream order. Blank lines are skipped; anything else that is not one event is an error.
+/// Reads every event of a JSON Lines stream, in stream order.
+/// Blank lines are skipped; anything else that is not one event is an error.
 ///
 /// # Errors
 /// See [`ReadError`].
@@ -89,7 +91,8 @@ pub enum Problem {
     },
 }
 
-/// Says what is wrong with a recording: a missing start or end, sequence gaps, and the drops the run-end admits to. Empty for a complete recording.
+/// Says what is wrong with a recording: a missing start or end, sequence gaps, and the drops the run-end admits to.
+/// Empty for a complete recording.
 #[must_use]
 pub fn check(events: &[Event]) -> Vec<Problem> {
     let mut problems = Vec::new();

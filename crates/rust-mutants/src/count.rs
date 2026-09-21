@@ -10,8 +10,8 @@ use std::marker::PhantomData;
 /// A run counts six different things and used to count them all in `u64`.
 /// Nothing stopped a line printing a count of pairs beside a count of mutants,
 /// and one did: a reader who added them was adding two different quantities,
-/// and the only way to find out was to try. The unit is in the type now, so
-/// the addition does not compile and the line has to say which it is showing.
+/// and the only way to find out was to try.
+/// The unit is in the type now, so the addition does not compile and the line has to say which it is showing.
 pub trait Unit {
     /// The word a reader sees, plural, because a count of one is the exception.
     const PLURAL: &'static str;
@@ -59,9 +59,7 @@ impl Unit for Places {
 
 /// How many of `U` there are.
 ///
-/// There is no `Display`: a count cannot reach a reader without the code
-/// saying which unit it is in, which is what [`Count::said`] does and what the
-/// line that lost a reader did not.
+/// There is no `Display`: a count cannot reach a reader without the code saying which unit it is in, which is what [`Count::said`] does and what the line that lost a reader did not.
 pub struct Count<U: Unit> {
     of: u64,
     unit: PhantomData<U>,
@@ -109,16 +107,14 @@ impl<U: Unit> Count<U> {
 
     /// What share of `whole` this is, or nothing where the whole is nothing.
     ///
-    /// A share of nothing is not nought per cent, and a reader shown one reads
-    /// a run that measured everything as a run that measured nothing.
+    /// A share of nothing is not nought per cent, and a reader shown one reads a run that measured everything as a run that measured nothing.
     #[must_use]
     pub fn share_of(self, whole: Self) -> Option<f64> {
         ratio(self.of, whole.of)
     }
 }
 
-/// `part / whole` without truncating either 64-bit count to an apparently
-/// valid smaller count.
+/// `part / whole` without truncating either 64-bit count to an apparently valid smaller count.
 #[must_use]
 pub(crate) fn ratio(part: u64, whole: u64) -> Option<f64> {
     (whole != 0).then(|| widen(part) / widen(whole))
@@ -134,11 +130,7 @@ fn widen(value: u64) -> f64 {
 impl Count<Mutants> {
     /// These mutants put to every one of `targets`, which is that many pairs.
     ///
-    /// This is the only way to get from one unit to the other, and it is the
-    /// conversion the arithmetic used to make in silence: a line that showed
-    /// mutants beside the pairs they came to invited a reader to add two
-    /// different quantities, and the multiplication that joins them was a bare
-    /// `*` nobody had to name.
+    /// This is the only way to get from one unit to the other, and it is the conversion the arithmetic used to make in silence: a line that showed mutants beside the pairs they came to invited a reader to add two different quantities, and the multiplication that joins them was a bare `*` nobody had to name.
     #[must_use]
     pub const fn checked_against(self, targets: Count<Targets>) -> Option<Count<Pairs>> {
         match self.of.checked_mul(targets.of) {

@@ -31,11 +31,10 @@ const SCRATCH_ATTEMPTS: u32 = 1024;
 /// The schema a scratch directory's owner marker names, so a reader can tell a run's working area from a build cache.
 pub const SCRATCH_OWNER_SCHEMA: &str = "rust-mutants-scratch-owner-v1";
 
-/// One physical spelling of the existing directory that owns every
-/// disposable artifact of a workspace.
+/// One physical spelling of the existing directory that owns every disposable artifact of a workspace.
 ///
-/// Cargo canonicalizes paths in compiler and metadata messages. Resolving the
-/// temporary root once at the input boundary keeps the snapshot, build cache,
+/// Cargo canonicalizes paths in compiler and metadata messages.
+/// Resolving the temporary root once at the input boundary keeps the snapshot, build cache,
 /// scratch directory, and those emitted paths in the same identity domain.
 #[derive(Debug)]
 struct TemporaryRoot {
@@ -115,14 +114,13 @@ fn claim_scratch(
 pub struct OpenOptions {
     /// The cargo to use: a path, or a bare name to find on `search_path`.
     pub cargo: Option<PathBuf>,
-    /// The `PATH` a bare cargo name is searched on. The composition root reads the process environment; the engine never does.
+    /// The `PATH` a bare cargo name is searched on.
+    /// The composition root reads the process environment; the engine never does.
     pub search_path: Option<OsString>,
     /// The complete environment every command and test process runs with.
     pub env: Vec<(OsString, OsString)>,
-    /// The existing absolute directory snapshots and target directories are
-    /// created in. An argument for the same reason `env` is; the composition
-    /// root creates and names the operating system's temporary directory, and
-    /// this layer binds its physical identity before minting any child path.
+    /// The existing absolute directory snapshots and target directories are created in.
+    /// An argument for the same reason `env` is; the composition root creates and names the operating system's temporary directory, and this layer binds its physical identity before minting any child path.
     pub temp_directory: PathBuf,
     /// The configured report directory as a source-root-relative path, so the snapshot excludes it.
     pub report_directory: Option<String>,
@@ -136,7 +134,8 @@ pub struct OpenOptions {
     pub locked: bool,
     /// Directories outside the root the workspace may read code from, each copied into the snapshot at the position it has relative to the root.
     pub allow_outside: Vec<PathBuf>,
-    /// Where the run records what it did. [`Recorder::disabled`] by default.
+    /// Where the run records what it did.
+    /// [`Recorder::disabled`] by default.
     pub trace: Recorder,
 }
 
@@ -153,7 +152,8 @@ fn within(root: &Path, path: &Path) -> Result<Option<String>, crate::id::Slashed
     Ok((!named.is_empty()).then_some(named))
 }
 
-/// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it. A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
+/// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it.
+/// A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
 fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempowner::Owner> {
     if std::fs::create_dir_all(dir).is_err() {
         return None;
@@ -300,8 +300,7 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
-    /// The temporary root could not be bound to one physical directory
-    /// spelling before snapshot paths were minted.
+    /// The temporary root could not be bound to one physical directory spelling before snapshot paths were minted.
     #[error(
         "{}: cannot resolve temporary root {} to one physical directory: {source}",
         error::SESSION_WRITE_FAILED.code,
@@ -595,16 +594,14 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
-    /// A workspace-relative path cannot be recorded exactly in the UTF-8
-    /// catalog representation.
+    /// A workspace-relative path cannot be recorded exactly in the UTF-8 catalog representation.
     #[error("{}: {source}", error::SESSION_WRITE_FAILED.code)]
     WorkspacePathNotUtf8 {
         /// The exact platform path that cannot cross the UTF-8 boundary.
         #[from]
         source: crate::id::SlashedPathError,
     },
-    /// Mutation source bytes cannot cross the catalog's UTF-8 wire boundary
-    /// without changing their value.
+    /// Mutation source bytes cannot cross the catalog's UTF-8 wire boundary without changing their value.
     #[error(
         "{}: mutation {mutant} has non-UTF-8 {field} bytes and cannot be written to the catalog: {source}",
         error::SESSION_WRITE_FAILED.code
@@ -750,8 +747,7 @@ impl Workspace {
     /// Sweeps the temporary area, copies `root` into a snapshot, and locates the toolchain inside the copy.
     ///
     /// # Errors
-    /// The snapshot's refusals, and whatever stopped the toolchain from
-    /// being located or `cargo metadata` from being read.
+    /// The snapshot's refusals, and whatever stopped the toolchain from being located or `cargo metadata` from being read.
     pub fn open(
         root: &Path,
         options: OpenOptions,
@@ -904,29 +900,22 @@ impl Workspace {
         self.snapshot.workspace_digest()
     }
 
-    /// Re-hashes the private source tree against the manifest captured while
-    /// it was copied. Proof layers use this after restoring a temporary edit
-    /// so a build script or verifier cannot silently write proof context for
-    /// a later question.
+    /// Re-hashes the private source tree against the manifest captured while it was copied.
+    /// Proof layers use this after restoring a temporary edit so a build script or verifier cannot silently write proof context for a later question.
     ///
     /// # Errors
-    /// Returns a snapshot walk or read failure rather than treating an
-    /// unreadable tree as unchanged.
+    /// Returns a snapshot walk or read failure rather than treating an unreadable tree as unchanged.
     pub fn changes(&self) -> Result<Vec<snapshot::Drift>, snapshot::SnapshotError> {
         self.snapshot.redigest()
     }
 
-    /// Makes the private tree as it stands now the baseline for later
-    /// [`Self::changes`] checks.
+    /// Makes the private tree as it stands now the baseline for later [`Self::changes`] checks.
     ///
-    /// Proof layers use this only after independently checking the copied
-    /// tree's digest and restoring every mutable source to its pristine
-    /// bytes. That gives each proof attempt a baseline which contains neither
-    /// instrumentation nor output written by an earlier process.
+    /// Proof layers use this only after independently checking the copied tree's digest and restoring every mutable source to its pristine bytes.
+    /// That gives each proof attempt a baseline which contains neither instrumentation nor output written by an earlier process.
     ///
     /// # Errors
-    /// Returns a snapshot walk or read failure instead of accepting a tree
-    /// that could not be completely observed.
+    /// Returns a snapshot walk or read failure instead of accepting a tree that could not be completely observed.
     pub fn reseal(&mut self) -> Result<Vec<snapshot::Drift>, snapshot::SnapshotError> {
         self.snapshot.reseal()
     }

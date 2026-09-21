@@ -27,10 +27,8 @@ const UNKNOWN_ROLE_EXIT: u8 = 99;
 
 /// What the orders service calls the order it was asked to place.
 ///
-/// The same every time on purpose. A caller cannot tell a replayed request
-/// from one delivery when the answer does not move, which is the whole of
-/// what `replay-request` asks of a suite, and an identifier that counted up
-/// would answer that question with an artifact of this program instead.
+/// The same every time on purpose.
+/// A caller cannot tell a replayed request from one delivery when the answer does not move, which is the whole of what `replay-request` asks of a suite, and an identifier that counted up would answer that question with an artifact of this program instead.
 const PLACED: &str = "order-1";
 
 fn main() -> ExitCode {

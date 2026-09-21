@@ -14,11 +14,15 @@ use crate::runner::{Bound, Cancel, PROBE, PROBE_OUTPUT_LIMIT, Spec, run};
 /// Configures [`Toolchain::locate`].
 #[derive(Debug, Clone, Default)]
 pub struct LocateOptions {
-    /// The cargo to use: a path, or a bare name to find on `search_path`. `None` means the bare name `cargo`.
+    /// The cargo to use: a path, or a bare name to find on `search_path`.
+    /// `None` means the bare name `cargo`.
     pub cargo: Option<PathBuf>,
-    /// The `PATH` a bare name is searched on. The composition root reads the process environment; this module never does. `None` refuses every bare name.
+    /// The `PATH` a bare name is searched on.
+    /// The composition root reads the process environment; this module never does.
+    /// `None` refuses every bare name.
     pub search_path: Option<OsString>,
-    /// The complete environment every cargo command runs with. `None` inherits this process's environment.
+    /// The complete environment every cargo command runs with.
+    /// `None` inherits this process's environment.
     pub env: Option<Vec<(OsString, OsString)>>,
 }
 
@@ -38,8 +42,7 @@ impl Toolchain {
     ///
     /// # Errors
     /// [`CargoErrorKind::ToolchainNotFound`] when an executable is missing,
-    /// [`CargoErrorKind::CommandFailed`] when a banner could not be read, and
-    /// [`CargoErrorKind::VersionUnreadable`] when it could not be parsed.
+    /// [`CargoErrorKind::CommandFailed`] when a banner could not be read, and [`CargoErrorKind::VersionUnreadable`] when it could not be parsed.
     pub fn locate(
         options: &LocateOptions,
         dir: &Path,
@@ -130,7 +133,8 @@ impl Toolchain {
         self.env.as_deref()
     }
 
-    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise. The length of a build or a test run is the project's, so the caller assigns [`Spec::timeout`] with the number that applies to it; the caller adds an output limit or a structured stdout as the command warrants.
+    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise.
+    /// The length of a build or a test run is the project's, so the caller assigns [`Spec::timeout`] with the number that applies to it; the caller adds an output limit or a structured stdout as the command warrants.
     pub fn command<I, S>(&self, dir: &Path, args: I) -> Spec
     where
         I: IntoIterator<Item = S>,
@@ -260,8 +264,8 @@ fn first_executable(
 }
 
 /// Whether the shell-compatible candidate resolves to a regular file.
-/// Metadata failures other than absence remain failures rather than becoming
-/// an apparently clean search miss. Following a tool symlink is deliberate:
+/// Metadata failures other than absence remain failures rather than becoming an apparently clean search miss.
+/// Following a tool symlink is deliberate:
 /// that is the executable the shell would run too.
 fn executable_file(path: &Path) -> Result<bool, CargoError> {
     match std::fs::metadata(path) {

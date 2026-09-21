@@ -96,7 +96,8 @@ pub struct Invocation {
     /// Files it writes after the delay and before it answers, so their absence is the process having been stopped rather than a clock a test read.
     #[serde(default)]
     pub writes_after: Vec<WriteFile>,
-    /// How many times it may answer. `None` is every time.
+    /// How many times it may answer.
+    /// `None` is every time.
     #[serde(default)]
     pub times: Option<u32>,
 }
@@ -241,8 +242,7 @@ impl Installed {
 /// The fake, as `cargo build --examples` leaves it beside the test binaries.
 ///
 /// # Panics
-/// When the example is not there and cannot be built, with the command that
-/// builds it.
+/// When the example is not there and cannot be built, with the command that builds it.
 #[must_use]
 pub fn locate() -> PathBuf {
     example("fake_cargo")
@@ -251,8 +251,7 @@ pub fn locate() -> PathBuf {
 /// The example named `name`, as `cargo build --examples` leaves it beside the test binaries.
 ///
 /// # Panics
-/// When the example is not there and cannot be built, with the command that
-/// builds it.
+/// When the example is not there and cannot be built, with the command that builds it.
 #[must_use]
 pub fn example(name: &str) -> PathBuf {
     let current = std::env::current_exe().expect("the test binary's own path");

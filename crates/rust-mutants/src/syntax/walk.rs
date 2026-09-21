@@ -204,8 +204,7 @@ pub(super) struct Walked {
     pub(super) annotations: Vec<Claim>,
 }
 
-/// A walk whose internal offsets or exact counters contradicted the bounded
-/// source established at discovery entry.
+/// A walk whose internal offsets or exact counters contradicted the bounded source established at discovery entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct WalkBoundsError;
 
@@ -264,9 +263,8 @@ pub(super) struct Walker<'a> {
     /// The items the walk is inside, outermost first: modules, impls, traits, and the function or constant itself.
     items: Vec<String>,
     includes: Vec<Include>,
-    /// Poisoned on the first impossible conversion or counter overflow. The
-    /// walk may keep traversing, but [`Self::finish`] then fails closed and
-    /// releases none of its candidates.
+    /// Poisoned on the first impossible conversion or counter overflow.
+    /// The walk may keep traversing, but [`Self::finish`] then fails closed and releases none of its candidates.
     bounds_failed: Cell<bool>,
 }
 
@@ -300,7 +298,8 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The results, unsorted. Hands the walk the markers it is to honour, before it starts.
+    /// The results, unsorted.
+    /// Hands the walk the markers it is to honour, before it starts.
     pub(super) fn annotate(&mut self, markers: Vec<Marker>) {
         self.matched = vec![false; markers.len()];
         self.markers = markers;
@@ -508,7 +507,8 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// Proposes one edit. Under a suppression it is counted rather than kept; without a site it is an unsupported-site skip.
+    /// Proposes one edit.
+    /// Under a suppression it is counted rather than kept; without a site it is an unsupported-site skip.
     fn emit(&mut self, rule_name: &str, edit: Edit) {
         let Some(rule) = self.selection.rule(rule_name) else {
             return;
@@ -632,7 +632,8 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The leading arguments of an assertion macro, walked as the expressions they are. Answers whether they were.
+    /// The leading arguments of an assertion macro, walked as the expressions they are.
+    /// Answers whether they were.
     fn walk_assertion(&mut self, mac: &Macro) -> bool {
         let Some(arity) = assertion_arity(&mac.path) else {
             return false;

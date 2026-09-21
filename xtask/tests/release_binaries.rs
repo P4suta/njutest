@@ -169,16 +169,10 @@ fn what_binstall_looks_in_is_the_archive_the_release_builds() {
 #[test]
 fn every_benchmark_the_workspace_declares_is_one_the_task_runs() {
     let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
-    for member in [
-        "crates/njutest-cli",
-        "crates/rust-mutants",
-        "crates/njutest",
-    ] {
-        let manifest = read(&format!("{member}/Cargo.toml"));
-        let package = member
-            .rsplit('/')
-            .next()
-            .unwrap_or_else(|| panic!("{member} names a package"));
+    for member in njutest_devkit::census::members(&root()) {
+        let manifest = std::fs::read_to_string(member.directory.join("Cargo.toml"))
+            .unwrap_or_else(|error| panic!("{}: {error}", member.name));
+        let package = member.name.as_str();
         for stanza in manifest.split("[[bench]]").skip(1) {
             let Some(name) = stanza
                 .lines()

@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::repair;
+use njutest::repair;
 
 #[expect(
     clippy::manual_ok_err,

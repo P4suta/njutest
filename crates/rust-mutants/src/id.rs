@@ -16,17 +16,17 @@ pub const ID_DOMAIN: &str = "rust-mutants-id-v1";
 /// The length of a full mutant ID in lowercase hex characters (SHA-256).
 pub const ID_HEX_LENGTH: usize = 64;
 
-/// The length of the short ID shown in the console and accepted by `--mutant`. The catalog builder proves the prefix is unique within a run.
+/// The length of the short ID shown in the console and accepted by `--mutant`.
+/// The catalog builder proves the prefix is unique within a run.
 pub const DISPLAY_ID_LENGTH: usize = 20;
 
-/// The shortest `--mutant` prefix the catalog resolves. Anything shorter is rejected as a typo rather than silently matching half the run.
+/// The shortest `--mutant` prefix the catalog resolves.
+/// Anything shorter is rejected as a typo rather than silently matching half the run.
 pub const MIN_PREFIX_LENGTH: usize = 4;
 
 /// A full lowercase SHA-256 value safe to use as one filesystem component.
 ///
-/// Identities and cache keys share an encoding, but an arbitrary string never
-/// reaches `Path::join`: construction proves the exact width and alphabet
-/// first.
+/// Identities and cache keys share an encoding, but an arbitrary string never reaches `Path::join`: construction proves the exact width and alphabet first.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HexDigest(String);
 
@@ -50,8 +50,7 @@ impl HexDigest {
         self.0
     }
 
-    /// Finishes a SHA-256 computation directly into the only canonical text
-    /// representation this type admits.
+    /// Finishes a SHA-256 computation directly into the only canonical text representation this type admits.
     #[must_use]
     pub fn finish(hasher: Sha256) -> Self {
         Self(hex::encode(hasher.finalize()))
@@ -92,10 +91,8 @@ impl TryFrom<String> for HexDigest {
 
 /// The complete stable identity of one mutant.
 ///
-/// Although mutant identities and arbitrary SHA-256 digests have the same
-/// representation, they are deliberately different types.  A cache digest
-/// must not accidentally select a mutant merely because both happen to be 64
-/// lowercase hexadecimal characters.
+/// Although mutant identities and arbitrary SHA-256 digests have the same representation, they are deliberately different types.
+/// A cache digest must not accidentally select a mutant merely because both happen to be 64 lowercase hexadecimal characters.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MutantId(HexDigest);
 
@@ -154,13 +151,10 @@ impl TryFrom<String> for MutantId {
     }
 }
 
-/// The fixed-width identity shown to people and accepted as the canonical
-/// short spelling of a mutant.
+/// The fixed-width identity shown to people and accepted as the canonical short spelling of a mutant.
 ///
 /// Construction proves the exact 20-character lowercase-hex representation.
-/// A container that also carries a [`MutantId`] must additionally call
-/// [`Self::belongs_to`] (or construct it with [`MutantId::display`]) so two
-/// individually valid identities cannot be paired incorrectly.
+/// A container that also carries a [`MutantId`] must additionally call [`Self::belongs_to`] (or construct it with [`MutantId::display`]) so two individually valid identities cannot be paired incorrectly.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DisplayId(String);
 
@@ -225,10 +219,8 @@ impl TryFrom<String> for DisplayId {
 
 /// A canonical name for a newly-written run directory.
 ///
-/// The alphabet is deliberately narrower than what one operating system may
-/// accept. Dots are excluded because Windows trims trailing dots, device names
-/// are rejected even when the current host is Unix, and letters must be
-/// lowercase so case-insensitive filesystems cannot alias two writable IDs.
+/// The alphabet is deliberately narrower than what one operating system may accept.
+/// Dots are excluded because Windows trims trailing dots, device names are rejected even when the current host is Unix, and letters must be lowercase so case-insensitive filesystems cannot alias two writable IDs.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunId(String);
 
@@ -243,11 +235,9 @@ pub struct RunIdError {
 
 /// A path-safe run name read from a previously-published store.
 ///
-/// Published v1 artifacts used uppercase `T` and `Z`, so readers retain that
-/// spelling. This type deliberately has no conversion to [`RunId`]: historical
-/// compatibility must never accidentally acquire write capability. New IDs
-/// convert in the other direction because every canonical writable ID is also
-/// safe to read.
+/// Published v1 artifacts used uppercase `T` and `Z`, so readers retain that spelling.
+/// This type deliberately has no conversion to [`RunId`]: historical compatibility must never accidentally acquire write capability.
+/// New IDs convert in the other direction because every canonical writable ID is also safe to read.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StoredRunId(String);
 
@@ -325,8 +315,7 @@ impl StoredRunId {
         self.0
     }
 
-    /// The filesystem-independent comparison key used to detect aliases on
-    /// case-insensitive stores before any run is selected or removed.
+    /// The filesystem-independent comparison key used to detect aliases on case-insensitive stores before any run is selected or removed.
     #[must_use]
     pub fn case_folded(&self) -> String {
         self.0.to_ascii_lowercase()
@@ -595,7 +584,8 @@ pub struct Identity {
     pub path: String,
     /// The operator rule name, for example `eq-to-neq`.
     pub rule_name: String,
-    /// The rule's version. Bumping it re-mints every mutant the rule produces, which is how a behaviour change invalidates cached outcomes.
+    /// The rule's version.
+    /// Bumping it re-mints every mutant the rule produces, which is how a behaviour change invalidates cached outcomes.
     pub rule_version: u32,
     /// The byte range of the original text being replaced.
     pub span: Span,
@@ -603,7 +593,8 @@ pub struct Identity {
     pub source_digest: String,
     /// The SHA-256 of the original span bytes.
     pub original_digest: String,
-    /// The SHA-256 of the replacement bytes. For a deletion, the digest of the empty string.
+    /// The SHA-256 of the replacement bytes.
+    /// For a deletion, the digest of the empty string.
     pub replacement_digest: String,
 }
 
@@ -613,8 +604,7 @@ pub fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-/// A path whose platform spelling cannot be represented by the UTF-8 catalog
-/// format without changing its bytes.
+/// A path whose platform spelling cannot be represented by the UTF-8 catalog format without changing its bytes.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("path {path:?} is not valid UTF-8")]
 pub struct SlashedPathError {
@@ -670,7 +660,8 @@ pub fn normalize_path(path: &str) -> Result<String, PathError> {
     Ok(cleaned)
 }
 
-/// A volume name is an ASCII letter followed by a colon. Both halves are checked: a colon after something that is not a letter (`1:`) is a directory whose name contains a colon, which POSIX allows.
+/// A volume name is an ASCII letter followed by a colon.
+/// Both halves are checked: a colon after something that is not a letter (`1:`) is a directory whose name contains a colon, which POSIX allows.
 fn has_volume_name(path: &str) -> bool {
     let bytes = path.as_bytes();
     matches!((bytes.first(), bytes.get(1)), (Some(letter), Some(b':')) if letter.is_ascii_alphabetic())
@@ -700,7 +691,8 @@ fn clean(path: &str) -> String {
 }
 
 impl Identity {
-    /// Whether the identity is complete and canonical. Every field that feeds the hash is checked, because a malformed field would otherwise produce a plausible-looking ID for a mutant that cannot be resolved back to a source location.
+    /// Whether the identity is complete and canonical.
+    /// Every field that feeds the hash is checked, because a malformed field would otherwise produce a plausible-looking ID for a mutant that cannot be resolved back to a source location.
     ///
     /// # Errors
     /// Returns the first field that is not canonical.
@@ -772,7 +764,8 @@ impl Identity {
     }
 }
 
-/// Appends `enc(s)` to `hasher`: a 4-byte big-endian byte length followed by the raw bytes. Every hash the engine builds from a list of fields uses this one encoding.
+/// Appends `enc(s)` to `hasher`: a 4-byte big-endian byte length followed by the raw bytes.
+/// Every hash the engine builds from a list of fields uses this one encoding.
 ///
 /// # Errors
 /// Returns [`IdentityError::FieldTooLong`] when `s` does not fit the prefix.
@@ -784,7 +777,8 @@ pub fn write_length_prefixed(hasher: &mut Sha256, s: &str) -> Result<(), Identit
     Ok(())
 }
 
-/// The short form of a full mutant ID. Uniqueness of the short form is a property of a whole catalog, proven by the catalog builder; this only truncates.
+/// The short form of a full mutant ID.
+/// Uniqueness of the short form is a property of a whole catalog, proven by the catalog builder; this only truncates.
 ///
 /// # Errors
 /// Returns [`IdentityError::InvalidId`] when `full` is not a full ID.
@@ -813,7 +807,8 @@ pub fn is_digest(s: &str) -> bool {
     s.len() == ID_HEX_LENGTH && is_lower_hex(s)
 }
 
-/// Whether every character of `s` is a lowercase hex digit. Uppercase is rejected rather than folded: identities are compared as strings, so exactly one spelling may exist.
+/// Whether every character of `s` is a lowercase hex digit.
+/// Uppercase is rejected rather than folded: identities are compared as strings, so exactly one spelling may exist.
 #[must_use]
 pub fn is_lower_hex(s: &str) -> bool {
     s.bytes()

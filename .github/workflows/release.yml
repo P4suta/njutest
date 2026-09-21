@@ -42,7 +42,7 @@ jobs:
         run: |
           cargo xtask release-check
           version="$(cargo metadata --format-version 1 --no-deps --locked \
-            | jq --raw-output '.packages[] | select(.name == "njutest-cli") | .version')"
+            | jq --raw-output '.packages[] | select(.name == "njutest") | .version')"
           if [ "v${version}" != "${TAG}" ]; then
             echo "the tag ${TAG} does not name version ${version}" >&2
             exit 1

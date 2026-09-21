@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The current report reader distinguishes an explicitly absent fact from a
-//! field the document omitted.
+//! The current report reader distinguishes an explicitly absent fact from a field the document omitted.
 
 #![expect(
     clippy::expect_used,

@@ -358,8 +358,7 @@ fn routed(report: &Report, routing: &crate::route::Routing, notes: &mut Notes<'_
     }
 }
 
-/// The route copied into the durable report must be the route the recording
-/// actually committed, field for field.
+/// The route copied into the durable report must be the route the recording actually committed, field for field.
 fn reported_route(row: &Row, recorded: &crate::route::Route, notes: &mut Notes<'_>) {
     let Some(reported) = row.route.as_ref() else {
         notes.violated(
@@ -562,7 +561,8 @@ fn discharged(
     }
 }
 
-/// The ledger of accepted survivors, against the run that was asked to hold to it. The work the report claims, against the routes it claims it from and the recording of what ran.
+/// The ledger of accepted survivors, against the run that was asked to hold to it.
+/// The work the report claims, against the routes it claims it from and the recording of what ran.
 pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Work);
     let targets = report.targets.len();

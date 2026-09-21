@@ -32,11 +32,8 @@ outputs:
 runs:
   using: composite
   steps:
-    # A workflow that already put njutest on the path has said which one it
-    # wants: a build of the commit under test, a cached binary, a package from
-    # somewhere else. Installing over it would answer a question nobody asked
-    # and would leave this action untestable before its first release, since
-    # every step after it needs a binary that only a release provides.
+    # A workflow that already put njutest on the path has said which one it wants: a build of the commit under test, a cached binary, a package from somewhere else.
+    # Installing over it would answer a question nobody asked and would leave this action untestable before its first release, since every step after it needs a binary that only a release provides.
     - name: Decide whether njutest has to be installed
       id: present
       shell: bash
@@ -67,9 +64,8 @@ runs:
           cargo binstall --no-confirm --locked njutest
         fi
     # A verdict is not a failure of the step: a DEFECT is what the run is for,
-    # and swallowing the exit code here would hide it. The status is kept and
-    # re-raised after the findings have been uploaded, so a person reads them
-    # in code scanning rather than in a log.
+    # and swallowing the exit code here would hide it.
+    # The status is kept and re-raised after the findings have been uploaded, so a person reads them in code scanning rather than in a log.
     - name: Verify
       id: verify
       shell: bash

@@ -112,9 +112,8 @@ manual_let_else = "allow"
 
 [workspace.dependencies]
 # Internal crates. Version and path together so a member can be published.
-njutest-cli = { version = "0.1.0", path = "crates/njutest-cli" }
-rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
 njutest = { version = "0.1.0", path = "crates/njutest" }
+rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
 njutest-macros = { version = "0.1.0", path = "crates/njutest-macros" }
 njutest-devkit = { version = "0.1.0", path = "crates/njutest-devkit" }
 

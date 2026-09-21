@@ -44,11 +44,8 @@ pub struct Environment {
     pub temp_directory: PathBuf,
     /// This program's own path, which `doctor` copies to measure what running a newly written file costs.
     ///
-    /// An argument for the same reason the temporary directory is: the
-    /// composition root is where the operating system is asked. It has to be a
-    /// program somebody may copy and run — a system binary is signed in place
-    /// and is killed when it is run from anywhere else — and this one is both
-    /// to hand and known to run.
+    /// An argument for the same reason the temporary directory is: the composition root is where the operating system is asked.
+    /// It has to be a program somebody may copy and run — a system binary is signed in place and is killed when it is run from anywhere else — and this one is both to hand and known to run.
     pub program: PathBuf,
     /// The user's cache directory, which what earlier runs established is kept under.
     pub cache_directory: PathBuf,
@@ -246,7 +243,8 @@ pub fn ended(code: u8, signalled: &std::sync::atomic::AtomicUsize) -> std::proce
     })
 }
 
-/// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given. `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
+/// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given.
+/// `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
 #[cfg(feature = "testkit")]
 pub fn run_from<I>(args: I, environment: &Environment, cancel: &Cancel, streams: Streams<'_>) -> u8
 where

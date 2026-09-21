@@ -172,7 +172,8 @@ pub(super) fn type_name(ty: &Type) -> String {
     }
 }
 
-/// The guard an arm's pattern carries, when it carries one. In `syn` the guard is part of the pattern rather than of the arm.
+/// The guard an arm's pattern carries, when it carries one.
+/// In `syn` the guard is part of the pattern rather than of the arm.
 pub(super) fn guard_of(pat: &Pat) -> Option<&Expr> {
     match pat {
         Pat::Guard(one) => Some(&one.guard),

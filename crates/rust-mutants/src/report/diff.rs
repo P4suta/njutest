@@ -16,8 +16,7 @@ pub struct DiffError;
 /// The unified diff between two texts, with `CONTEXT` lines either side of what differs.
 ///
 /// # Errors
-/// Refuses inconsistent or overflowing line geometry rather than emitting a
-/// valid-looking truncated hunk.
+/// Refuses inconsistent or overflowing line geometry rather than emitting a valid-looking truncated hunk.
 pub fn unified(path: &str, before: &str, after: &str) -> Result<String, DiffError> {
     let old: Vec<&str> = before.lines().collect();
     let new: Vec<&str> = after.lines().collect();
@@ -75,9 +74,8 @@ pub fn unified(path: &str, before: &str, after: &str) -> Result<String, DiffErro
     Ok(text)
 }
 
-/// Extends a hunk to its requested context, clipping only at the real end of
-/// the file. Arithmetic overflow means the real end is necessarily nearer
-/// than the requested context and therefore has the same clipped answer.
+/// Extends a hunk to its requested context, clipping only at the real end of the file.
+/// Arithmetic overflow means the real end is necessarily nearer than the requested context and therefore has the same clipped answer.
 fn context_end(change_end: usize, file_end: usize) -> usize {
     match change_end.checked_add(CONTEXT) {
         Some(with_context) => with_context.min(file_end),

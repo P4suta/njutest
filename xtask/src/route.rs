@@ -173,8 +173,8 @@ impl Routing {
 /// Reads the routes and executions out of a recording, ignoring every valid event that is neither.
 ///
 /// # Errors
-/// A non-empty line that is not JSON is rejected. An audit must never turn a
-/// corrupt evidence stream into an apparently empty one.
+/// A non-empty line that is not JSON is rejected.
+/// An audit must never turn a corrupt evidence stream into an apparently empty one.
 pub fn read(recorded: &str) -> Result<Routing, ReadError> {
     Ok(from_events(&events(recorded)?))
 }

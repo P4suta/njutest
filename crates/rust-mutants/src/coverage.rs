@@ -15,9 +15,8 @@ use crate::runner::Watch;
 
 /// How long one of the LLVM tools may spend on the profiles of one run.
 ///
-/// These do work rather than answer a question, and the work is proportional
-/// to a project's own size, so the bound is generous. What it refuses is the
-/// tool that never returns, which is a run nobody can stop by waiting.
+/// These do work rather than answer a question, and the work is proportional to a project's own size, so the bound is generous.
+/// What it refuses is the tool that never returns, which is a run nobody can stop by waiting.
 const TOOL_WORK: std::time::Duration = std::time::Duration::from_mins(15);
 
 /// What the tree is built with so that every region is instrumented.
@@ -26,7 +25,8 @@ pub const INSTRUMENT_FLAG: &str = "-C instrument-coverage";
 /// Where a test process writes what it executed.
 pub const PROFILE_ENV: &str = "LLVM_PROFILE_FILE";
 
-/// The region kind that is ordinary code. Every other kind — an expansion, a skipped region, a gap, a branch — says something about the shape of the source rather than about what ran.
+/// The region kind that is ordinary code.
+/// Every other kind — an expansion, a skipped region, a gap, a branch — says something about the shape of the source rather than about what ran.
 pub const REGION_KIND_CODE: u32 = 0;
 
 /// A place in a file: a 1-based line and a 1-based byte column, which is the unit `llvm-cov` reports regions in.
@@ -76,7 +76,8 @@ pub struct Block {
 }
 
 impl Block {
-    /// Whether `position` in `file` lies inside this block. The column is a byte column; see the module documentation.
+    /// Whether `position` in `file` lies inside this block.
+    /// The column is a byte column; see the module documentation.
     #[must_use]
     pub fn contains(&self, file: &Path, position: Point) -> bool {
         self.file == file && position >= self.start && position < self.end
@@ -332,8 +333,7 @@ impl Tools {
     /// Finds the tools beside the compiler that will build the tree.
     ///
     /// # Errors
-    /// [`CoverageErrorKind::ToolsMissing`] when rustc could not be asked or
-    /// the component is not installed.
+    /// [`CoverageErrorKind::ToolsMissing`] when rustc could not be asked or the component is not installed.
     pub fn locate<W: Watch>(
         toolchain: &crate::cargo::Toolchain,
         dir: &Path,
@@ -443,8 +443,7 @@ impl Tools {
     /// Turns a merged profile and the binaries it may name into regions.
     ///
     /// # Errors
-    /// [`CoverageErrorKind::ToolFailed`] and the refusals of
-    /// [`parse_export`].
+    /// [`CoverageErrorKind::ToolFailed`] and the refusals of [`parse_export`].
     pub fn export<W: Watch>(
         &self,
         profile: &Path,
@@ -492,9 +491,7 @@ impl Tools {
     }
 }
 
-/// Renders bounded tool output without changing invalid bytes into Unicode
-/// replacement characters which could make two different failures look the
-/// same.
+/// Renders bounded tool output without changing invalid bytes into Unicode replacement characters which could make two different failures look the same.
 fn diagnostic_output(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
         Ok(text) => text.trim().to_owned(),

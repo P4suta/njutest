@@ -49,8 +49,7 @@ pub fn at(path: &str, position: Position) -> String {
 /// The position of a mutant's edit, found by counting the lines of the file it came from.
 ///
 /// # Errors
-/// Returns the exact source-position invariant that prevents a lossless
-/// one-based position from being represented.
+/// Returns the exact source-position invariant that prevents a lossless one-based position from being represented.
 pub fn position_in(
     source: &str,
     offset: u32,
@@ -509,8 +508,7 @@ fn work_line(document: &run::RunDocument) -> Result<String, rust_mutants::work::
 /// The stored run as the lines a person reads.
 ///
 /// # Errors
-/// Returns the exact work-ledger refusal when the stored counts cannot be
-/// projected without truncation or overflow.
+/// Returns the exact work-ledger refusal when the stored counts cannot be projected without truncation or overflow.
 pub fn lines(document: &run::RunDocument) -> Result<String, rust_mutants::work::WorkError> {
     let mut text = String::new();
     let written = write!(

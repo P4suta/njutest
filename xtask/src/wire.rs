@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! An independent re-derivation of the faults a run's seam recording licensed. Nothing here calls the runner's catalogue: the rules and the identity recipe are written out again from the runner trace and assurance contracts, so a run and this audit agreeing means two implementations agreed.
+//! An independent re-derivation of the faults a run's seam recording licensed.
+//! Nothing here calls the runner's catalogue: the rules and the identity recipe are written out again from the runner trace and assurance contracts, so a run and this audit agreeing means two implementations agreed.
 
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -66,8 +67,7 @@ pub struct Watched {
     pub execs: Vec<Exec>,
 }
 
-/// Why the independent audit could not mint the identity that the producer
-/// is required to mint.
+/// Why the independent audit could not mint the identity that the producer is required to mint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityError {
     /// A length-prefixed identity field lies outside the v1 recipe.
@@ -107,8 +107,7 @@ pub fn read(recorded: &str) -> Result<Watched, crate::route::ReadError> {
 /// Every fault an exchange licenses, re-derived rather than read back.
 ///
 /// # Errors
-/// Returns [`IdentityError::FieldTooLong`] when any field lies outside the
-/// length-prefixed v1 identity recipe.
+/// Returns [`IdentityError::FieldTooLong`] when any field lies outside the length-prefixed v1 identity recipe.
 pub fn licensed(exchange: &Exchange) -> Result<Vec<(String, String)>, IdentityError> {
     let mut rules: Vec<&str> = UNPARSED.to_vec();
     if exchange.seq > 0 {
@@ -126,8 +125,7 @@ pub fn licensed(exchange: &Exchange) -> Result<Vec<(String, String)>, IdentityEr
 /// The identity of one question about one exchange, minted from those alone.
 ///
 /// # Errors
-/// Returns [`IdentityError::FieldTooLong`] when any field lies outside the
-/// length-prefixed v1 identity recipe.
+/// Returns [`IdentityError::FieldTooLong`] when any field lies outside the length-prefixed v1 identity recipe.
 pub fn identity(exchange: &Exchange, rule: &str) -> Result<String, IdentityError> {
     let spoken = if exchange.wire == "http" {
         format!(

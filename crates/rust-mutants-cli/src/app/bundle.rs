@@ -19,9 +19,11 @@ use crate::report::run as run_report;
 /// Which run to gather, and where to put it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Gathering<'a> {
-    /// The workspace root. Defaults to the working directory.
+    /// The workspace root.
+    /// Defaults to the working directory.
     pub(super) root: Option<&'a Path>,
-    /// The run, by its identity. The newest when none is named.
+    /// The run, by its identity.
+    /// The newest when none is named.
     pub(super) run: Option<&'a str>,
     /// Where the bundle goes, when it does not go beside the run.
     pub(super) output: Option<&'a Path>,
@@ -30,8 +32,7 @@ pub(super) struct Gathering<'a> {
 /// Gathers everything one run established into one directory.
 ///
 /// # Errors
-/// [`CliError::ReportMissing`] when no stored run answers to what was asked
-/// for, and [`CliError::WriteFailed`] when the bundle cannot be written.
+/// [`CliError::ReportMissing`] when no stored run answers to what was asked for, and [`CliError::WriteFailed`] when the bundle cannot be written.
 pub(super) fn bundle(
     asked: &Gathering<'_>,
     environment: &Environment,

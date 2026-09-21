@@ -33,7 +33,8 @@ fn baseline_count(quantity: BaselineQuantity, count: usize) -> Result<u64, Basel
         .map_err(|_outside_range| BaselineCacheError::CountOutsideRange { quantity, count })
 }
 
-/// Runs every target once with nothing active. A tree whose instrumented baseline fails is one whose every later result would be about the instrumentation rather than about a mutant.
+/// Runs every target once with nothing active.
+/// A tree whose instrumented baseline fails is one whose every later result would be about the instrumentation rather than about a mutant.
 pub(super) fn verify(
     workspace: &Workspace,
     targets: &mut [TestTarget],
@@ -250,7 +251,8 @@ fn again(
 /// Why a passing baseline could not safely become an answer for another run.
 const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
-/// The recipe of a remembered baseline. The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
+/// The recipe of a remembered baseline.
+/// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
 const BASELINE_ABI: u32 = 1;
 
 /// The on-disk shape of one passing baseline.
@@ -458,7 +460,8 @@ pub enum BaselineCacheError {
 }
 
 impl Remembering {
-    /// Names a baseline by every input visible to its processes or to the engine interpreting their answers. The actual executable bytes are checked on read as well: source equality never stands in for program equality.
+    /// Names a baseline by every input visible to its processes or to the engine interpreting their answers.
+    /// The actual executable bytes are checked on read as well: source equality never stands in for program equality.
     fn of(
         targets: &[TestTarget],
         scratch: &Path,
@@ -540,7 +543,8 @@ impl Remembering {
         self.directory.join(format!("baseline-{}.json", self.key))
     }
 
-    /// Reads only a whole, passing document for the exact binaries that are about to be run. Any malformed or stale part turns the whole document into a miss.
+    /// Reads only a whole, passing document for the exact binaries that are about to be run.
+    /// Any malformed or stale part turns the whole document into a miss.
     fn read(
         &self,
         targets: &[TestTarget],
@@ -619,7 +623,8 @@ impl Remembering {
         Ok(true)
     }
 
-    /// Writes only a passing answer and the byte identity of every executable. A write failure merely makes the next run measure again.
+    /// Writes only a passing answer and the byte identity of every executable.
+    /// A write failure merely makes the next run measure again.
     fn write(
         &self,
         verified: &Verified,
@@ -730,7 +735,8 @@ fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCac
     })
 }
 
-/// Integrity of the remembered answer itself. The input key prevents a stale answer being selected; this prevents a parseable partial edit from being mistaken for the whole answer that was written.
+/// Integrity of the remembered answer itself.
+/// The input key prevents a stale answer being selected; this prevents a parseable partial edit from being mistaken for the whole answer that was written.
 fn answer_digest(
     artifacts: &BTreeMap<String, String>,
     targets: &BTreeMap<String, RememberedBaseline>,
@@ -820,7 +826,8 @@ fn trace_touch(
     Ok(())
 }
 
-/// The actual programs built now, keyed by target. Repeated paths (notably Cargo for doctest targets) are hashed once.
+/// The actual programs built now, keyed by target.
+/// Repeated paths (notably Cargo for doctest targets) are hashed once.
 fn artifacts(targets: &[TestTarget]) -> Result<BTreeMap<String, String>, BaselineCacheError> {
     let mut files: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut found = BTreeMap::new();
@@ -1187,13 +1194,9 @@ pub struct Verified {
 
 /// What one target's baseline came to, in the two cases that mean different things.
 ///
-/// The distinction used to be a method somebody had to remember to call. A
-/// target whose own tests do not pass answers every mutation with the same
-/// failure, so a run that judged against one would report a kill for every
-/// mutation it put to it and not one of those kills would be about a mutation.
-/// Taking a baseline out of here now makes the caller say which case they are
-/// in, and only one of the two hands back something a mutation can be judged
-/// against.
+/// The distinction used to be a method somebody had to remember to call.
+/// A target whose own tests do not pass answers every mutation with the same failure, so a run that judged against one would report a kill for every mutation it put to it and not one of those kills would be about a mutation.
+/// Taking a baseline out of here now makes the caller say which case they are in, and only one of the two hands back something a mutation can be judged against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Measured {
     /// A baseline a mutation may be put to.
@@ -1234,8 +1237,7 @@ impl Measured {
 
 /// A baseline that passed, which is the only kind a mutation may be judged against.
 ///
-/// There is no way to make one from a baseline that did not, so a function
-/// that takes this has been given the check rather than asked to remember it.
+/// There is no way to make one from a baseline that did not, so a function that takes this has been given the check rather than asked to remember it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Passing(Baseline);
 
@@ -1260,9 +1262,8 @@ impl Verified {
 
     /// The baseline a mutation may be judged against for `target`, and nothing where there is none.
     ///
-    /// The only way to a baseline a result may rest on. Everything else hands
-    /// back what the target came to for an account of it, which is a different
-    /// question and reads differently at the call site.
+    /// The only way to a baseline a result may rest on.
+    /// Everything else hands back what the target came to for an account of it, which is a different question and reads differently at the call site.
     #[must_use]
     pub fn judgeable(&self, target: &str) -> Option<&Passing> {
         self.targets.get(target).and_then(Measured::judgeable)

@@ -12,11 +12,9 @@ use crate::id::HexDigest;
 /// Domain separator for the canonical build-input digest.
 pub const BUILD_SELECTION_DOMAIN: &str = "rust-mutants-build-selection-v1";
 
-/// A canonical SHA-256 digest specifically naming the Cargo options selected
-/// by [`BuildConfig`].
+/// A canonical SHA-256 digest specifically naming the Cargo options selected by [`BuildConfig`].
 ///
-/// This is nominally distinct from mutant, catalog, workspace, and cache
-/// digests even though all use the same lowercase-hex encoding.
+/// This is nominally distinct from mutant, catalog, workspace, and cache digests even though all use the same lowercase-hex encoding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BuildSelectionDigest(HexDigest);
 
@@ -57,13 +55,10 @@ impl<'de> Deserialize<'de> for BuildSelectionDigest {
 
 /// Every [`BuildConfig`] field, in a canonical and self-authenticating form.
 ///
-/// This is deliberately a *selection*, not a binary identity: a `None` target
-/// is resolved by the host and compiler/toolchain inputs are bound separately
-/// by run evidence.
+/// This is deliberately a *selection*, not a binary identity: a `None` target is resolved by the host and compiler/toolchain inputs are bound separately by run evidence.
 ///
-/// The fields are private so callers cannot construct a digest that disagrees
-/// with the inputs it claims to bind. Deserialization applies the same
-/// canonicalization checks as construction from [`BuildConfig`].
+/// The fields are private so callers cannot construct a digest that disagrees with the inputs it claims to bind.
+/// Deserialization applies the same canonicalization checks as construction from [`BuildConfig`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct BuildSelection {
     features: Vec<String>,
@@ -154,8 +149,7 @@ impl BuildSelection {
 impl BuildConfig {
     /// Captures every selected build field in canonical form.
     ///
-    /// The exhaustive pattern is intentional: adding a field to
-    /// [`BuildConfig`] is a compile error here until the cache, checkpoint,
+    /// The exhaustive pattern is intentional: adding a field to [`BuildConfig`] is a compile error here until the cache, checkpoint,
     /// and report identity protocol decides how to bind it.
     #[must_use]
     pub fn selection(&self) -> BuildSelection {
@@ -322,9 +316,8 @@ const fn boolean(value: bool) -> &'static str {
     if value { "true" } else { "false" }
 }
 
-/// Appends an architecture-independent decimal byte length, a separator, and
-/// the raw bytes. The prefix makes adjacent fields injective without a fallible
-/// fixed-width conversion from `usize`.
+/// Appends an architecture-independent decimal byte length, a separator, and the raw bytes.
+/// The prefix makes adjacent fields injective without a fallible fixed-width conversion from `usize`.
 fn field(hasher: &mut Sha256, value: &str) {
     hasher.update(value.len().to_string().as_bytes());
     hasher.update(b":");

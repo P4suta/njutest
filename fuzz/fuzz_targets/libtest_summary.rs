@@ -6,8 +6,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::assure::baseline::status_of;
-use njutest_cli::report::{FindingKind, TargetStatus};
+use njutest::assure::baseline::status_of;
+use njutest::report::{FindingKind, TargetStatus};
 use rust_mutants::execute::parse_summary;
 use rust_mutants::outcome::Outcome;
 

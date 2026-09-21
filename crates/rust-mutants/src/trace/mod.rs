@@ -28,8 +28,7 @@ pub use sink::{
     ObserverState, Sink, TRUNCATION_MARKER,
 };
 
-/// Why a supervised process record cannot be represented exactly by the
-/// trace wire.
+/// Why a supervised process record cannot be represented exactly by the trace wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ExecRecordError {
     /// Whole milliseconds did not fit the wire's u64 field.
@@ -73,7 +72,8 @@ fn trace_env_names(
 }
 
 impl ExecRecord {
-    /// The record of one supervised run: the spec's command line, directory, environment names, and timeout, and the result's exit code, timeout flag, duration, output, and error. The recorder digests the output and strips the environment values on emission.
+    /// The record of one supervised run: the spec's command line, directory, environment names, and timeout, and the result's exit code, timeout flag, duration, output, and error.
+    /// The recorder digests the output and strips the environment values on emission.
     ///
     /// # Errors
     /// A timeout or measured duration does not fit the trace wire exactly.
@@ -312,7 +312,9 @@ impl Recorder {
         }
     }
 
-    /// Records the beginning of a phase and returns the guard that ends it. The guard ends the phase once, on [`Phase::end`] or on drop, so a caller may hold it for a scope. Phases may nest; each guard times its own.
+    /// Records the beginning of a phase and returns the guard that ends it.
+    /// The guard ends the phase once, on [`Phase::end`] or on drop, so a caller may hold it for a scope.
+    /// Phases may nest; each guard times its own.
     pub fn phase(&self, name: impl Into<String>) -> Phase {
         let name = name.into();
         let started = self.now();
@@ -366,8 +368,7 @@ impl Recorder {
         self.emit(Payload::Exec { exec: record });
     }
 
-    /// Records a checked process record, or makes its representational
-    /// failure a sticky finalization error.
+    /// Records a checked process record, or makes its representational failure a sticky finalization error.
     pub fn exec_result(&self, record: Result<ExecRecord, ExecRecordError>) {
         match record {
             Ok(record) => self.exec(record),
@@ -681,7 +682,8 @@ fn primary_with_close(primary: std::io::Error, close: std::io::Result<()>) -> st
     }
 }
 
-/// The sorted, deduplicated variable names of an environment description. Entries arriving as `NAME=value` are reduced to `NAME`, which is the only half a trace is allowed to keep.
+/// The sorted, deduplicated variable names of an environment description.
+/// Entries arriving as `NAME=value` are reduced to `NAME`, which is the only half a trace is allowed to keep.
 fn environment_names(entries: &[String]) -> Vec<String> {
     let mut names: Vec<String> = entries
         .iter()

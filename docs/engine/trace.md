@@ -5,81 +5,54 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Engine trace
 
-**Status: implemented.** `rust_mutants::trace` holds the `Recorder`, the
-`Sink` enum with best-effort `MemorySink`/`ChannelSink`, durable `DirSink`,
-and a closed `RequiredSink` that keeps the durable authority distinct from
-its observers; `read_events` and
-`check` for reading a stream back, and `summary` for reading one as numbers.
-The command line records under `--trace[=DIR]` and reads a recording back
-with `rust-mutants trace summary|check|diff`.
+**Status: implemented.** `rust_mutants::trace` holds the `Recorder`, the `Sink` enum with best-effort `MemorySink`/`ChannelSink`, durable `DirSink`,
+and a closed `RequiredSink` that keeps the durable authority distinct from its observers; `read_events` and `check` for reading a stream back, and `summary` for reading one as numbers.
+The command line records under `--trace[=DIR]` and reads a recording back with `rust-mutants trace summary|check|diff`.
 
-The rules are those of
-[ADR 0002](../adr/0002-trace-is-not-evidence.md): a recording is never a
-claim and is honest about what it dropped. When no trace was requested, an
-in-memory progress observer remains best effort. An explicit `--trace` is a
-durability request: failure to claim its directory refuses the command before
-execution, and any later loss or final-sync failure makes finalization fail.
+The rules are those of [ADR 0002](../adr/0002-trace-is-not-evidence.md): a recording is never a claim and is honest about what it dropped.
+When no trace was requested, an in-memory progress observer remains best effort.
+An explicit `--trace` is a durability request: failure to claim its directory refuses the command before execution, and any later loss or final-sync failure makes finalization fail.
 An observer channel cannot hide a failure of that durable authority.
 
 ## Where a recording goes
 
-`--trace` names a directory, and without one the engine picks the place a
-reader would look. A run records beside its own report, under
-`<reports.directory>/<run id>/trace/`; every other command records under
-`<reports.directory>/traces/<run id>-<command>/`, which is outside what a
-snapshot copies. The run is named before the workspace is opened, so the
-opening itself is recorded. `--trace --no-report` still makes the run's
-directory. Both places are pruned by `reports.keep`, counted separately, so a
-recording never costs a stored report its place.
+`--trace` names a directory, and without one the engine picks the place a reader would look.
+A run records beside its own report, under `<reports.directory>/<run id>/trace/`; every other command records under `<reports.directory>/traces/<run id>-<command>/`, which is outside what a snapshot copies.
+The run is named before the workspace is opened, so the opening itself is recorded.
+`--trace --no-report` still makes the run's directory.
+Both places are pruned by `reports.keep`, counted separately, so a recording never costs a stored report its place.
 
-A recording owns its directory: a directory that is already there is refused
-rather than appended to, which is what keeps two runs from writing one
-stream.
+A recording owns its directory: a directory that is already there is refused rather than appended to, which is what keeps two runs from writing one stream.
 
-When `njutest` owns the run, each configured build has a distinct engine
-recording under `builds/<zero-padded ordinal>/engine/`. A raw configuration
-name never becomes a path. All namespaces are claimed before the first build
-starts, so a requested multibuild trace cannot degrade into a partial set.
+When `njutest` owns the run, each configured build has a distinct engine recording under `builds/<zero-padded ordinal>/engine/`.
+A raw configuration name never becomes a path.
+All namespaces are claimed before the first build starts, so a requested multibuild trace cannot degrade into a partial set.
 
 ## What a line is
 
-Every line is one JSON object: `seq` (monotonic from 1, delivery order is
-sequence order however many threads record), `timestamp` (RFC 3339, UTC),
-`elapsed_ms`, and a closed `payload`. The payload's `type` selects the record
-under a key named after that type. The first event is `run-start` with
-`schema: "rust-mutants-trace-v1"`,
-the engine version, and a closed `context`. A standalone context binds the
-canonical run id and Cargo `BuildSelection` digest. The selection covers the
-seven Cargo options controlled by the engine; toolchain and resolved host
-inputs are separate evidence rather than being overclaimed by this digest. An
-`njutest`
-context binds the final run id, build-internal run id, zero-based ordinal,
-configured name, and that same canonical build digest. The last event is
-`run-end` with `outcome`,
-`events_emitted`, and `events_dropped`, where a sink that counts its own
-drops (a full ring, a failed write) is the authority and the recorder's
-observed failures fill in otherwise. The outcome is the word the
-command's exit code is named after: `detected` when everything the run
-executed was noticed and there is nothing to report, `undetected` when
-something was not, `failed` when the command itself could not finish, and
-`interrupted` when it was stopped.
+Every line is one JSON object: `seq` (monotonic from 1, delivery order is sequence order however many threads record), `timestamp` (RFC 3339, UTC),
+`elapsed_ms`, and a closed `payload`.
+The payload's `type` selects the record under a key named after that type.
+The first event is `run-start` with `schema: "rust-mutants-trace-v1"`,
+the engine version, and a closed `context`.
+A standalone context binds the canonical run id and Cargo `BuildSelection` digest.
+The selection covers the seven Cargo options controlled by the engine; toolchain and resolved host inputs are separate evidence rather than being overclaimed by this digest.
+An `njutest` context binds the final run id, build-internal run id, zero-based ordinal,
+configured name, and that same canonical build digest.
+The last event is `run-end` with `outcome`,
+`events_emitted`, and `events_dropped`, where a sink that counts its own drops (a full ring, a failed write) is the authority and the recorder's observed failures fill in otherwise.
+The outcome is the word the command's exit code is named after: `detected` when everything the run executed was noticed and there is nothing to report, `undetected` when something was not, `failed` when the command itself could not finish, and `interrupted` when it was stopped.
 
-An `exec` record carries environment variable *names* only (the recorder
-strips `=value`), and the output as `output_bytes` plus `output_sha256`; a
-`DirSink` preserves the capture beside the stream under `output/<seq>.txt`,
-cut at 1 MiB with a `...` marker, and records `output_path` and
-`output_truncated`. The disabled trace is `Recorder::disabled()`; call sites
-record unconditionally. `Recorder::new` takes the clock as an argument, which
-is how the goldens in `crates/rust-mutants/tests/testdata/trace/` freeze the
-shape, and every line is checked against
-[`schema/rust-mutants-trace-v1.json`](../../schema/rust-mutants-trace-v1.json).
+An `exec` record carries environment variable *names* only (the recorder strips `=value`), and the output as `output_bytes` plus `output_sha256`; a `DirSink` preserves the capture beside the stream under `output/<seq>.txt`,
+cut at 1 MiB with a `...` marker, and records `output_path` and `output_truncated`.
+The disabled trace is `Recorder::disabled()`; call sites record unconditionally.
+`Recorder::new` takes the clock as an argument, which is how the goldens in `crates/rust-mutants/tests/testdata/trace/` freeze the shape, and every line is checked against [`schema/rust-mutants-trace-v1.json`](../../schema/rust-mutants-trace-v1.json).
 
 ## The types
 
-`Fields` is the exact set of keys the record object can serialize, not a
-summary. Optional keys are still named. Tests serialize non-empty specimens
-and compare both directions, so adding, removing, or repeating a key cannot
-leave this table green.
+`Fields` is the exact set of keys the record object can serialize, not a summary.
+Optional keys are still named.
+Tests serialize non-empty specimens and compare both directions, so adding, removing, or repeating a key cannot leave this table green.
 
 | Type | Fields | Records |
 | --- | --- | --- |
@@ -110,21 +83,14 @@ leave this table green.
 
 ## Reading one back
 
-`rust-mutants trace summary` reads the newest recording under the report
-directory and counts it: how many events of each type, what every phase took
-by its path through the nesting, how long each program was in, the slowest
-commands, how the executions and the routes came out, and how many rounds and
-bisections it cost. `--run ID` reads a named one and `--dir DIR` reads one
-anywhere.
+`rust-mutants trace summary` reads the newest recording under the report directory and counts it: how many events of each type, what every phase took by its path through the nesting, how long each program was in, the slowest commands, how the executions and the routes came out, and how many rounds and bisections it cost.
+`--run ID` reads a named one and `--dir DIR` reads one anywhere.
 
-`rust-mutants trace check` says whether a recording is complete: it begins
-with `run-start`, ends with `run-end`, skipped no sequence number, dropped
-nothing, and closed every phase it opened. It exits 1 when it is not, which
-is what a pipeline asks before it believes a recording.
+`rust-mutants trace check` says whether a recording is complete: it begins with `run-start`, ends with `run-end`, skipped no sequence number, dropped nothing, and closed every phase it opened.
+It exits 1 when it is not, which is what a pipeline asks before it believes a recording.
 
 `rust-mutants trace diff A B` names every count that is not the same in both,
-which is what to read when a run got slower or a proof layer stopped
-removing work.
+which is what to read when a run got slower or a proof layer stopped removing work.
 
 `rust-mutants explain <id>` renders what the catalog knows about one mutant,
 and `rust-mutants why-skipped` tallies the skip reasons of a tree.

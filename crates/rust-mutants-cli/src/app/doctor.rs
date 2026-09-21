@@ -278,11 +278,8 @@ fn tests_something(target: &rust_mutants::cargo::Target) -> bool {
 /// Whether the temporary directory has room for the snapshots and target directories a run makes.
 /// Whether there is room, said in whole gigabytes.
 ///
-/// The figure is rounded because it is read twice: a check that reported the
-/// exact free bytes disagreed with itself between two invocations a moment
-/// apart, which is the same thing that made the execution check unreadable
-/// before it was made to rest on a ratio. Whole gigabytes is the granularity a
-/// person decides at, and it does not move while they are looking.
+/// The figure is rounded because it is read twice: a check that reported the exact free bytes disagreed with itself between two invocations a moment apart, which is the same thing that made the execution check unreadable before it was made to rest on a ratio.
+/// Whole gigabytes is the granularity a person decides at, and it does not move while they are looking.
 fn disk_check(temp: &Path) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well, Warn};
     const GIB: u64 = 1024 * 1024 * 1024;

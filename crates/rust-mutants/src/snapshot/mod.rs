@@ -27,7 +27,8 @@ use crate::glob::Pattern;
 use crate::id::normalize_path;
 use crate::tempowner::{self, ClaimError, Owner};
 
-/// The domain separator hashed first for every workspace digest. It carries the recipe version; see the module documentation.
+/// The domain separator hashed first for every workspace digest.
+/// It carries the recipe version; see the module documentation.
 pub const WORKSPACE_DOMAIN: &str = "rust-mutants-workspace-v1";
 
 /// Begins the name of every snapshot directory, the stable one and the fallback alike.
@@ -45,8 +46,8 @@ pub const CLEANUP_ATTEMPTS: usize = 5;
 /// The pause before the second removal attempt; it doubles for each attempt after that, so the ladder is 20, 40, 80, 160 ms and the whole loop costs at most a third of a second.
 pub const CLEANUP_BACKOFF: Duration = Duration::from_millis(20);
 
-/// The complete bounded retry schedule. Its array length is checked against
-/// [`CLEANUP_ATTEMPTS`] by the compiler.
+/// The complete bounded retry schedule.
+/// Its array length is checked against [`CLEANUP_ATTEMPTS`] by the compiler.
 const CLEANUP_DELAYS: [Option<Duration>; CLEANUP_ATTEMPTS] = [
     None,
     Some(CLEANUP_BACKOFF),
@@ -64,15 +65,18 @@ const COPY_BUFFER: usize = 64 * 1024;
 /// Configures [`create`].
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// Patterns matched against each entry's `/`-normalized path relative to the source root. A matching directory is skipped whole.
+    /// Patterns matched against each entry's `/`-normalized path relative to the source root.
+    /// A matching directory is skipped whole.
     pub exclude: Vec<Pattern>,
     /// Where the tree and every directory it reads outside itself are placed inside the copy.
     pub layout: Layout,
-    /// Where the caller writes its reports, as a source-root-relative path, excluded from the snapshot. `None` is a caller that writes none inside the tree.
+    /// Where the caller writes its reports, as a source-root-relative path, excluded from the snapshot.
+    /// `None` is a caller that writes none inside the tree.
     pub report_dir: Option<String>,
     /// The directory cargo builds into, as a source-root-relative path, when it is inside the root.
     pub build_dir: Option<String>,
-    /// The absolute directory the snapshot is created in. The composition root decides where the temporary area is; this module never asks the process environment.
+    /// The absolute directory the snapshot is created in.
+    /// The composition root decides where the temporary area is; this module never asks the process environment.
     pub dest_parent: PathBuf,
 }
 
@@ -154,7 +158,8 @@ impl DriftKind {
     }
 }
 
-/// One disagreement between the manifest and the snapshot as it stands now. Both sides are carried where they exist, so a caller can report "1.2 kB became 0 bytes" without walking the tree a second time.
+/// One disagreement between the manifest and the snapshot as it stands now.
+/// Both sides are carried where they exist, so a caller can report "1.2 kB became 0 bytes" without walking the tree a second time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Drift {
     /// A file the manifest does not know.
@@ -225,7 +230,8 @@ pub enum SnapshotErrorKind {
     Destination,
     /// A failure while copying the tree into the snapshot.
     Copy,
-    /// A cleanup that was refused because the recorded directory does not look like one this module created. It is the guard that stands between a bug in rust-mutants and a user's source tree.
+    /// A cleanup that was refused because the recorded directory does not look like one this module created.
+    /// It is the guard that stands between a bug in rust-mutants and a user's source tree.
     CleanupRefused,
     /// A snapshot directory that survived every removal attempt, usually a file still locked by a test binary on Windows.
     CleanupFailed,
@@ -309,7 +315,8 @@ impl SnapshotError {
         self.kind.code()
     }
 
-    /// The path the error is about: a `/`-normalized path relative to the tree being walked wherever one exists, because that is the spelling the manifest, the report, and the exclude patterns all use. It is an absolute path only when the error is about a root or a destination, which have no relative spelling.
+    /// The path the error is about: a `/`-normalized path relative to the tree being walked wherever one exists, because that is the spelling the manifest, the report, and the exclude patterns all use.
+    /// It is an absolute path only when the error is about a root or a destination, which have no relative spelling.
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
@@ -343,12 +350,8 @@ impl fmt::Display for SnapshotError {
 
 /// The three ways a tree entry can fail to be a regular file or a directory.
 ///
-/// Its own set rather than a `SnapshotErrorKind`, because only three of that
-/// enum's eleven can reach the walk, and the sentence a reader is given here
-/// is only true of those three. Passing the wider type meant a catch-all
-/// handing eight other kinds a description of a thing they are not — wrong
-/// the moment any of them arrived, and unable to arrive only by an argument
-/// nothing in the code made.
+/// Its own set rather than a `SnapshotErrorKind`, because only three of that enum's eleven can reach the walk, and the sentence a reader is given here is only true of those three.
+/// Passing the wider type meant a catch-all handing eight other kinds a description of a thing they are not — wrong the moment any of them arrived, and unable to arrive only by an argument nothing in the code made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NotARegularFile {
     /// A symbolic link.
@@ -557,8 +560,7 @@ fn path_of(root: &Path, rel: &str) -> PathBuf {
 /// Computes the frozen digest of a manifest.
 ///
 /// # Errors
-/// Returns an exact-encoding error if a digest field exceeds the recipe's
-/// 32-bit length prefix.
+/// Returns an exact-encoding error if a digest field exceeds the recipe's 32-bit length prefix.
 pub fn workspace_digest(entries: &[Entry]) -> Result<String, SnapshotError> {
     digest_of(entries, &[])
 }
@@ -566,8 +568,7 @@ pub fn workspace_digest(entries: &[Entry]) -> Result<String, SnapshotError> {
 /// The digest of a manifest and of what the walk passed over, so that two trees differing only in a link they hold are two trees.
 ///
 /// # Errors
-/// Returns an exact-encoding error if a digest field exceeds the recipe's
-/// 32-bit length prefix.
+/// Returns an exact-encoding error if a digest field exceeds the recipe's 32-bit length prefix.
 pub fn digest_of(entries: &[Entry], passed_over: &[PassedOver]) -> Result<String, SnapshotError> {
     let mut hasher = Sha256::new();
     write_length_prefixed(&mut hasher, WORKSPACE_DOMAIN)?;
@@ -602,9 +603,8 @@ fn write_length_prefixed(hasher: &mut Sha256, s: &str) -> Result<(), SnapshotErr
 
 /// Builds the pattern list: what no snapshot of a git tree wants, then what the caller named.
 ///
-/// The engine excludes the one directory it knows about whatever the caller
-/// is. Where the caller writes its own output is the caller's to say, and an
-/// engine that guessed it excluded a directory of somebody else's source.
+/// The engine excludes the one directory it knows about whatever the caller is.
+/// Where the caller writes its own output is the caller's to say, and an engine that guessed it excluded a directory of somebody else's source.
 fn exclusions(options: &Options) -> Result<Vec<Pattern>, SnapshotError> {
     let capacity = options.exclude.len().checked_add(3).ok_or_else(|| {
         SnapshotError::new(
@@ -691,7 +691,8 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// Reads one directory and recurses. Entries are visited in name order so the traversal is deterministic; the lists are sorted by relative path at the end because per-directory name order and whole-path order are not the same ordering.
+    /// Reads one directory and recurses.
+    /// Entries are visited in name order so the traversal is deterministic; the lists are sorted by relative path at the end because per-directory name order and whole-path order are not the same ordering.
     fn walk(&mut self, rel_dir: &str) -> Result<(), SnapshotError> {
         let dir = self.path_of(rel_dir);
         let listing = fs::read_dir(&dir).map_err(|source| {
@@ -813,7 +814,8 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The spelling an error about `rel` should carry: the relative path wherever one exists, and the absolute root when it does not. The root is reachable: a redigest of a snapshot whose tree has been removed cannot list it, and an error carrying "" would name nothing.
+    /// The spelling an error about `rel` should carry: the relative path wherever one exists, and the absolute root when it does not.
+    /// The root is reachable: a redigest of a snapshot whose tree has been removed cannot list it, and an error carrying "" would name nothing.
     fn err_path(&self, rel: &str) -> String {
         if rel.is_empty() {
             self.root.display().to_string()
@@ -843,7 +845,8 @@ impl<'a> Walker<'a> {
         self.reject(kind.kind(), rel, kind.refusal());
     }
 
-    /// Fails with the refused entry that sorts first by relative path, if any. Reporting the first in path order rather than in visit order means a user who fixes it and runs again is told about the next one, in an order that does not depend on how the filesystem laid the directory out.
+    /// Fails with the refused entry that sorts first by relative path, if any.
+    /// Reporting the first in path order rather than in visit order means a user who fixes it and runs again is told about the next one, in an order that does not depend on how the filesystem laid the directory out.
     fn rejection(&mut self) -> Result<(), SnapshotError> {
         let Some(position) = self
             .rejected
@@ -1094,7 +1097,9 @@ impl Snapshot {
         &self.source_root
     }
 
-    /// The absolute path of the copy. Everything downstream — the build, the test binaries' working directories, the instrumented rewrites — happens under here. It is [`TREE_NAME`] inside [`Snapshot::dir`].
+    /// The absolute path of the copy.
+    /// Everything downstream — the build, the test binaries' working directories, the instrumented rewrites — happens under here.
+    /// It is [`TREE_NAME`] inside [`Snapshot::dir`].
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
@@ -1106,13 +1111,15 @@ impl Snapshot {
         &self.dir
     }
 
-    /// The directory [`Snapshot::dir`] was created in. It is the answer to "where does a sibling of this snapshot belong", which the scratch directories beside it have to ask.
+    /// The directory [`Snapshot::dir`] was created in.
+    /// It is the answer to "where does a sibling of this snapshot belong", which the scratch directories beside it have to ask.
     #[must_use]
     pub fn parent(&self) -> &Path {
         &self.dest_parent
     }
 
-    /// Every regular file in the snapshot, sorted by path. Directories are not listed; they are recreated faithfully but contribute nothing a build can observe.
+    /// Every regular file in the snapshot, sorted by path.
+    /// Directories are not listed; they are recreated faithfully but contribute nothing a build can observe.
     #[must_use]
     pub fn manifest(&self) -> &[Entry] {
         &self.manifest
@@ -1231,8 +1238,7 @@ impl Snapshot {
     /// Preserves the directory instead of removing it, and records in the owner marker that this was asked for.
     ///
     /// # Errors
-    /// A keep the marker did not record is not a keep: the error is returned
-    /// and the snapshot stays removable.
+    /// A keep the marker did not record is not a keep: the error is returned and the snapshot stays removable.
     pub fn keep(&mut self) -> Result<(), SnapshotError> {
         if let Some(owner) = &mut self.owner {
             owner.keep().map_err(|error| {
@@ -1251,9 +1257,7 @@ impl Snapshot {
     /// Removes the snapshot directory.
     ///
     /// # Errors
-    /// [`SnapshotErrorKind::CleanupRefused`] when the guard fires, and
-    /// [`SnapshotErrorKind::CleanupFailed`] when the directory survived every
-    /// attempt or its lock could not be released.
+    /// [`SnapshotErrorKind::CleanupRefused`] when the guard fires, and [`SnapshotErrorKind::CleanupFailed`] when the directory survived every attempt or its lock could not be released.
     pub fn cleanup(self) -> Result<(), SnapshotError> {
         self.cleanup_with(&|dir: &Path| fs::remove_dir_all(dir), &std::thread::sleep)
     }
@@ -1402,7 +1406,8 @@ mod platform {
             .open(dst)
     }
 
-    /// Sets the copied file's permissions to the source's exactly. It goes through the descriptor rather than the path so the bits land on the file that was just written, whatever has happened to the name.
+    /// Sets the copied file's permissions to the source's exactly.
+    /// It goes through the descriptor rather than the path so the bits land on the file that was just written, whatever has happened to the name.
     pub(super) fn finalize_file_permissions(file: &File, meta: &Metadata) -> io::Result<()> {
         file.set_permissions(fs::Permissions::from_mode(
             meta.permissions().mode() & 0o777,
@@ -1420,7 +1425,8 @@ mod platform {
     /// Nothing to clear: removing a file depends on the containing directory's permissions rather than the file's own.
     pub(super) const fn clear_read_only(_: &Path) {}
 
-    /// Whether two paths name the same directory, for the cleanup guard. A comparison of spellings and not of inodes on purpose: the guard asks whether the directory is still the path `create` produced, and a symlink since pointed at it is not an answer of yes.
+    /// Whether two paths name the same directory, for the cleanup guard.
+    /// A comparison of spellings and not of inodes on purpose: the guard asks whether the directory is still the path `create` produced, and a symlink since pointed at it is not an answer of yes.
     pub(super) fn paths_equal(a: &Path, b: &Path) -> bool {
         !a.as_os_str().is_empty() && a.components().eq(b.components())
     }
@@ -1437,7 +1443,8 @@ mod platform {
 
     use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
 
-    /// Whether the entry is a reparse point of any kind. Symbolic links and junctions are caught by `is_symlink` first; this is for every other name surrogate.
+    /// Whether the entry is a reparse point of any kind.
+    /// Symbolic links and junctions are caught by `is_symlink` first; this is for every other name surrogate.
     pub(super) fn is_reparse_point(meta: &Metadata) -> bool {
         meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     }
@@ -1459,7 +1466,8 @@ mod platform {
         Ok(())
     }
 
-    /// Clears the read-only attribute from every file under `dir`, which is the one removal failure that does not clear by waiting. Best effort: the removal that follows reports what is still in the way.
+    /// Clears the read-only attribute from every file under `dir`, which is the one removal failure that does not clear by waiting.
+    /// Best effort: the removal that follows reports what is still in the way.
     pub(super) fn clear_read_only(dir: &Path) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;

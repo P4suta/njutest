@@ -53,8 +53,7 @@ impl<'source> LineIndex<'source> {
     /// Indexes `source` without truncating any line or column.
     ///
     /// # Errors
-    /// Returns [`PositionError::SourceTooLarge`] when one-based u32 positions
-    /// cannot represent every byte of the source.
+    /// Returns [`PositionError::SourceTooLarge`] when one-based u32 positions cannot represent every byte of the source.
     pub fn new(source: &'source str) -> Result<Self, PositionError> {
         let source_len_u32 = bounded_source_len(source.len())?;
         let mut starts = vec![0];
@@ -78,13 +77,12 @@ impl<'source> LineIndex<'source> {
         })
     }
 
-    /// The position of byte `offset` in `source`. An offset past the end lands
-    /// at the end of the last line; an offset inside a UTF-8 scalar uses that
-    /// scalar's column.
+    /// The position of byte `offset` in `source`.
+    /// An offset past the end lands at the end of the last line; an offset inside a UTF-8 scalar uses that scalar's column.
     ///
     /// # Errors
-    /// Returns an exact source/index mismatch, platform conversion failure, or
-    /// internal ordering contradiction. No saturated position is produced.
+    /// Returns an exact source/index mismatch, platform conversion failure, or internal ordering contradiction.
+    /// No saturated position is produced.
     pub fn position(&self, offset: u32) -> Result<Position, PositionError> {
         let bounded = offset.min(self.source_len_u32);
         let line = self.starts.partition_point(|&start| start <= bounded);

@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 
 pub use lock::{Lock, acquire};
 
-/// The marker's schema field. It carries the version, so a later document shape can never be read as this one.
+/// The marker's schema field.
+/// It carries the version, so a later document shape can never be read as this one.
 pub const SCHEMA: &str = "rust-mutants-temp-owner-v1";
 /// The advisory lock file inside a claimed directory.
 pub const LOCK_NAME: &str = "owner.lock";
@@ -24,30 +25,36 @@ pub const MARKER_NAME: &str = "owner.json";
 /// How long an unowned directory must have been untouched before [`sweep`] treats it as a leftover.
 pub const LEGACY_MAX_AGE: Duration = Duration::from_hours(24);
 
-/// What a claimed directory is for. A scratch belongs to one run and goes away with it; a cache is meant to outlive the run that filled it, which is what makes a second run fast.
+/// What a claimed directory is for.
+/// A scratch belongs to one run and goes away with it; a cache is meant to outlive the run that filled it, which is what makes a second run fast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Role {
-    /// One run's working tree. A sweep reclaims it as soon as nobody holds its lock.
+    /// One run's working tree.
+    /// A sweep reclaims it as soon as nobody holds its lock.
     Scratch,
-    /// A build cache. A sweep spares it however old it is; only a caller that asks for it by name reclaims it.
+    /// A build cache.
+    /// A sweep spares it however old it is; only a caller that asks for it by name reclaims it.
     Cache,
 }
 
-/// The JSON document in a claimed directory. Written once at creation and rewritten only to record a deliberate keep.
+/// The JSON document in a claimed directory.
+/// Written once at creation and rewritten only to record a deliberate keep.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Marker {
     /// [`SCHEMA`].
     pub schema: String,
-    /// The process that claimed the directory. Diagnostic only: liveness is the lock's job.
+    /// The process that claimed the directory.
+    /// Diagnostic only: liveness is the lock's job.
     pub pid: u32,
     /// When the directory was claimed, in UTC.
     pub started: Timestamp,
     /// Whether the directory was preserved on purpose and is not an orphan.
     pub kept: bool,
-    /// What the directory is for. Absent in a marker written before roles existed, which means a scratch.
+    /// What the directory is for.
+    /// Absent in a marker written before roles existed, which means a scratch.
     #[serde(default = "scratch_role")]
     pub role: Role,
     /// The tree a cache is keyed to, so a sweep can tell a cache a run will look up from one nothing can name again.
@@ -101,7 +108,8 @@ pub enum ClaimError {
     },
 }
 
-/// A claimed directory: the lock is held open and the marker is written. Releasing or keeping it closes the lock; neither removes anything.
+/// A claimed directory: the lock is held open and the marker is written.
+/// Releasing or keeping it closes the lock; neither removes anything.
 #[derive(Debug)]
 pub struct Owner {
     dir: PathBuf,
@@ -112,8 +120,7 @@ pub struct Owner {
 /// Writes the marker pair into an existing directory and takes its lock.
 ///
 /// # Errors
-/// Returns [`ClaimError::Owned`] when another process holds the lock, and
-/// the I/O failure otherwise.
+/// Returns [`ClaimError::Owned`] when another process holds the lock, and the I/O failure otherwise.
 pub fn claim(dir: &Path, now: Timestamp) -> Result<Owner, ClaimError> {
     claim_as(dir, now, SCHEMA)
 }
@@ -244,7 +251,8 @@ impl Owner {
         &self.marker
     }
 
-    /// Closes the lock without touching the directory. Idempotent, and it must be called before the directory is removed: on Windows an open handle inside a directory is what makes the removal fail.
+    /// Closes the lock without touching the directory.
+    /// Idempotent, and it must be called before the directory is removed: on Windows an open handle inside a directory is what makes the removal fail.
     ///
     /// # Errors
     /// Returns the unlock or close failure.
@@ -340,7 +348,8 @@ pub struct SweepFailure {
     pub source: io::Error,
 }
 
-/// What one [`sweep`] did. Diagnostic: no report, no schema, and no exit code depends on it, because collecting somebody else's leftovers is housekeeping a run does on the way.
+/// What one [`sweep`] did.
+/// Diagnostic: no report, no schema, and no exit code depends on it, because collecting somebody else's leftovers is housekeeping a run does on the way.
 #[derive(Debug, Default)]
 pub struct SweepResult {
     /// The absolute path of every directory the sweep deleted.
@@ -353,7 +362,8 @@ pub struct SweepResult {
     pub kept: usize,
     /// How many are build caches, which a sweep spares.
     pub cached: usize,
-    /// The directories that could not be judged or removed. A failure does not stop the sweep of the others.
+    /// The directories that could not be judged or removed.
+    /// A failure does not stop the sweep of the others.
     pub failures: Vec<SweepFailure>,
     /// How many prefixed directories the sweep never reached, because it had spent its budget.
     pub unreached: usize,
@@ -422,11 +432,8 @@ pub fn sweep_with(
 
 /// What one pass over the temporary directory looks for.
 ///
-/// A failure about one directory is recorded against that directory and the
-/// pass goes on. Propagating it would throw away everything the pass had
-/// already established — every directory removed, every byte counted, every
-/// other failure — and answer with the temporary root's name, which is not
-/// the directory that refused.
+/// A failure about one directory is recorded against that directory and the pass goes on.
+/// Propagating it would throw away everything the pass had already established — every directory removed, every byte counted, every other failure — and answer with the temporary root's name, which is not the directory that refused.
 struct Pass<'a> {
     prefixes: &'a [&'a str],
     now: Timestamp,
@@ -577,7 +584,8 @@ fn checked_count(count: usize, subject: &str) -> io::Result<usize> {
         .ok_or_else(|| io::Error::other(format!("{subject} count overflowed")))
 }
 
-/// What the sweep decided about one directory. Only `Abandoned` removes.
+/// What the sweep decided about one directory.
+/// Only `Abandoned` removes.
 enum Verdict {
     Abandoned,
     /// Somebody holds the lock.
@@ -586,7 +594,8 @@ enum Verdict {
     Kept,
     /// The marker says it is a build cache, which outlives the run that filled it.
     Cache,
-    /// Left alone without being counted: an unowned directory too young to judge. Not a fact about a live owner, so not a number in the result.
+    /// Left alone without being counted: an unowned directory too young to judge.
+    /// Not a fact about a live owner, so not a number in the result.
     Spared,
 }
 
@@ -623,7 +632,8 @@ fn orphaned(keyed_to: Option<&str>) -> io::Result<bool> {
     }
 }
 
-/// A directory with no marker at all: one created before this convention, or one whose marker was lost. Age is the only evidence there is, and a young one is left alone because it may be a run in progress.
+/// A directory with no marker at all: one created before this convention, or one whose marker was lost.
+/// Age is the only evidence there is, and a young one is left alone because it may be a run in progress.
 fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     let modified = match entry.metadata() {
         Ok(metadata) => metadata.modified()?,
@@ -644,9 +654,9 @@ fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
 
 /// Adds up the regular files under `dir`.
 ///
-/// A path which vanishes while it is being counted contributes nothing. That is
-/// the normal race with another collector. Every other read failure is reported
-/// rather than producing a smaller, apparently exact count.
+/// A path which vanishes while it is being counted contributes nothing.
+/// That is the normal race with another collector.
+/// Every other read failure is reported rather than producing a smaller, apparently exact count.
 ///
 /// # Errors
 /// Returns an I/O error when the directory cannot be enumerated completely.

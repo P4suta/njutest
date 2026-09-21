@@ -40,8 +40,7 @@ impl ScriptedCompile {
     /// Discovers `source` at `path` under `tier` and plans its instrumentation, refusing nothing until [`ScriptedCompile::refusing`] says so.
     ///
     /// # Panics
-    /// When the source does not discover, catalog, or plan, which is a broken
-    /// test rather than a fact about the engine.
+    /// When the source does not discover, catalog, or plan, which is a broken test rather than a fact about the engine.
     #[must_use]
     pub fn from_source(path: &str, source: &str, tier: Tier) -> Self {
         let selection = Selection::tier(&REGISTRY, tier);

@@ -7,7 +7,8 @@ use std::fmt;
 
 use crate::span::Span;
 
-/// One candidate rewrite: the bytes it replaces, plus whatever the caller needs to recognise it again. The payload is opaque here.
+/// One candidate rewrite: the bytes it replaces, plus whatever the caller needs to recognise it again.
+/// The payload is opaque here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item<T> {
     /// The byte range this candidate rewrites.
@@ -21,7 +22,8 @@ pub struct Item<T> {
 pub struct Node<T> {
     /// The byte range this site rewrites.
     pub span: Span,
-    /// The payload of every item with exactly this span, in the order the caller supplied them. They are mutually exclusive rewrites of the same bytes: the instrumenter emits them as one guard chain.
+    /// The payload of every item with exactly this span, in the order the caller supplied them.
+    /// They are mutually exclusive rewrites of the same bytes: the instrumenter emits them as one guard chain.
     pub alternatives: Vec<T>,
     /// The sites nested strictly inside this one, ordered by start offset, pairwise disjoint, each hanging off the smallest site that encloses it.
     pub children: Vec<Self>,
@@ -39,12 +41,14 @@ impl<T> Default for Forest<T> {
     }
 }
 
-/// Why an item could not be placed in the forest. Surfaced verbatim as a skip reason, beside the reasons discovery produces.
+/// Why an item could not be placed in the forest.
+/// Surfaced verbatim as a skip reason, beside the reasons discovery produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Reason {
     /// The item straddles the boundary of a site already in the forest.
     PartialOverlap,
-    /// The item covers no bytes. An empty span is a legal catalog span, but the forest is precisely the structure that cannot hold one: `[3,3)` is at once enclosed by an open `[3,5)` and disjoint from it.
+    /// The item covers no bytes.
+    /// An empty span is a legal catalog span, but the forest is precisely the structure that cannot hold one: `[3,3)` is at once enclosed by an open `[3,5)` and disjoint from it.
     EmptySpan,
 }
 
@@ -150,7 +154,8 @@ struct Site<T> {
     children: Vec<usize>,
 }
 
-/// Turns the arena into owned nodes. Children have greater ids than their parents, so popping from the end builds every child before its parent.
+/// Turns the arena into owned nodes.
+/// Children have greater ids than their parents, so popping from the end builds every child before its parent.
 fn assemble<T>(mut arena: Vec<Site<T>>, roots: &[usize]) -> Vec<Node<T>> {
     let mut built: Vec<Option<Node<T>>> = arena.iter().map(|_| None).collect();
     while let Some(site) = arena.pop() {

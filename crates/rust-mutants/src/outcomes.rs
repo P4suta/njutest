@@ -23,7 +23,8 @@ pub const RULE_ABI: u32 = 1;
 /// Bumped when a guard changes shape, so a record about the old instrumentation stops answering.
 pub const INSTRUMENTATION_ABI: u32 = 2;
 
-/// Bumped when the policy interpreting a finite step allowance changes. A step limit is an execution bound in this ABI, never a detected mutant.
+/// Bumped when the policy interpreting a finite step allowance changes.
+/// A step limit is an execution bound in this ABI, never a detected mutant.
 pub const STEP_POLICY_ABI: u32 = 1;
 
 /// Bumped when a record changes what it holds, or when the recipe changes what a key is computed from.
@@ -32,8 +33,7 @@ pub const CACHE_ABI: u32 = 6;
 /// An outcome strong enough to answer a later identical run.
 ///
 /// Keeping this set separate from [`Outcome`] makes an inconclusive execution,
-/// a finite bound, or a harness failure impossible to put in the cache through
-/// the typed API.
+/// a finite bound, or a harness failure impossible to put in the cache through the typed API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheOutcome {
@@ -86,7 +86,8 @@ pub struct Keyed {
     pub args: Vec<String>,
     /// The budget one execution may take, as the configuration spells it: `auto`, or a duration.
     pub timeout: String,
-    /// How many times an active guard may be entered before the execution is stopped. Zero disables the bound.
+    /// How many times an active guard may be entered before the execution is stopped.
+    /// Zero disables the bound.
     pub steps: u64,
     /// The cargo arguments the tree was compiled with, because the same tree compiled two ways is two programs.
     pub build: Vec<String>,
@@ -177,8 +178,7 @@ impl Store {
     /// What an earlier run established for `key`, when a record is there and is the record it claims to be.
     ///
     /// # Errors
-    /// Returns every I/O or decoding failure; a corrupt cache entry is not an
-    /// absent one.
+    /// Returns every I/O or decoding failure; a corrupt cache entry is not an absent one.
     pub fn get(
         &self,
         key: &HexDigest,
@@ -210,8 +210,7 @@ impl Store {
     /// Records what this run established.
     ///
     /// # Errors
-    /// Returns serialization and filesystem failures rather than silently
-    /// turning a durable result into a cache miss on the next run.
+    /// Returns serialization and filesystem failures rather than silently turning a durable result into a cache miss on the next run.
     pub fn put(&self, key: &HexDigest, record: &Record) -> Result<PathBuf, StoreError> {
         let path = self.entry(key);
         let text = serde_json::to_string(record).map_err(|error| StoreError::Corrupt {
@@ -280,9 +279,8 @@ impl Store {
 
 /// Hashes an address-space length as one platform-independent 128-bit frame.
 ///
-/// `usize` cannot hold a value wider than the language's widest integer. The
-/// zero-extension is expressed bytewise so neither a cast nor a truncating
-/// fallback can weaken that invariant on a different target width.
+/// `usize` cannot hold a value wider than the language's widest integer.
+/// The zero-extension is expressed bytewise so neither a cast nor a truncating fallback can weaken that invariant on a different target width.
 fn hash_length(hasher: &mut Sha256, length: usize) {
     let native = length.to_be_bytes();
     let mut canonical = [0u8; size_of::<u128>()];

@@ -83,7 +83,8 @@ pub struct Reported {
     pub level: String,
     /// What a reader is told.
     pub message: Message,
-    /// Where it is. Empty when the finding is not about a place in the code.
+    /// Where it is.
+    /// Empty when the finding is not about a place in the code.
     pub locations: Vec<Location>,
     /// What makes two runs' findings the same finding.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -194,11 +195,9 @@ pub fn log(document: &RunDocument) -> Log {
 
 /// What makes two runs' findings the same finding, which has to survive the commit between them.
 ///
-/// Code scanning carries alert state on this — a dismissal, a "won't fix", a
-/// reviewer's comment. An identity is a function of the whole file, so keying
-/// on it closes every alert in a file and opens them again as new on any
-/// commit that touches it, taking the dismissals with them. The place is what
-/// stays: one file, one item, one rule, one original text.
+/// Code scanning carries alert state on this — a dismissal, a "won't fix", a reviewer's comment.
+/// An identity is a function of the whole file, so keying on it closes every alert in a file and opens them again as new on any commit that touches it, taking the dismissals with them.
+/// The place is what stays: one file, one item, one rule, one original text.
 fn reported(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Reported {
     let mut fingerprints = BTreeMap::new();
     fingerprints.insert(

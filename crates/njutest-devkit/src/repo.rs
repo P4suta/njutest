@@ -30,8 +30,7 @@ impl Repo {
     /// An empty temporary directory to build a workspace in.
     ///
     /// # Panics
-    /// When a temporary directory cannot be made, which a test cannot
-    /// continue without.
+    /// When a temporary directory cannot be made, which a test cannot continue without.
     #[must_use]
     pub fn new() -> Self {
         let dir = tempfile::Builder::new()
@@ -98,8 +97,7 @@ impl Repo {
     /// Makes the tree a git repository with one commit holding everything written so far.
     ///
     /// # Panics
-    /// When git is not there or refuses, which a test asking for a
-    /// repository cannot continue without.
+    /// When git is not there or refuses, which a test asking for a repository cannot continue without.
     pub fn commit(&self) {
         commit_tree(&self.root);
     }
@@ -108,8 +106,7 @@ impl Repo {
 /// Makes `root` a git repository with one commit holding everything in it.
 ///
 /// # Panics
-/// When git is not there or refuses, which a test asking for a repository
-/// cannot continue without.
+/// When git is not there or refuses, which a test asking for a repository cannot continue without.
 pub fn commit_tree(root: &Path) {
     let run = |args: &[&str]| -> String {
         let output = Command::new("git")

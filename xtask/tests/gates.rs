@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The gates, applied to this repository. This is the ratchet inside `cargo test`: a seam without a ledger line, a dependency in the wrong direction, a fixture without its lock file, or a version that drifted fails the suite, not only `cargo xtask`.
+//! The gates, applied to this repository.
+//! This is the ratchet inside `cargo test`: a seam without a ledger line, a dependency in the wrong direction, a fixture without its lock file, or a version that drifted fails the suite, not only `cargo xtask`.
 
 use xtask::gates;
 
-/// A test setup or gate refusal that should reach the test harness without a
-/// second, panic-shaped failure path.
+/// A test setup or gate refusal that should reach the test harness without a second, panic-shaped failure path.
 #[derive(Debug, thiserror::Error)]
 enum TestFailure {
     /// A repository gate refused the tree.
@@ -195,7 +195,7 @@ fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestFailure> {
     )?;
     std::fs::write(
         root.path().join("crates/njutest-macros/src/lib.rs"),
-        "use proc_macro::TokenStream;\n#[proc_macro_derive(AllVariants)]\npub fn all_variants(input: TokenStream) -> TokenStream { input }\n#[proc_macro_attribute]\npub fn integration(_args: TokenStream, input: TokenStream) -> TokenStream { input }\n#[proc_macro_attribute]\npub fn unit(_args: TokenStream, input: TokenStream) -> TokenStream { input }\n",
+        "use proc_macro::TokenStream;\n#[proc_macro_derive(AllVariants)]\npub fn all_variants(input: TokenStream) -> TokenStream { input }\n",
     )?;
     std::fs::write(root.path().join("xtask/empty.rs"), "")?;
     std::fs::write(root.path().join("xtask/wildcard_allowlist.txt"), "")?;

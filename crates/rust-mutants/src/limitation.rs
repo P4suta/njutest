@@ -62,8 +62,7 @@ pub const ALL: [&str; 13] = [
 /// What a log a runtime appends to says, keeping the failure where the file is there and this run could not read it.
 ///
 /// # Errors
-/// Whatever the filesystem said, less the one answer that means the process
-/// never wrote.
+/// Whatever the filesystem said, less the one answer that means the process never wrote.
 pub fn appended(read: std::io::Result<String>) -> std::io::Result<String> {
     match read {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),

@@ -96,8 +96,7 @@ fn in_body(proof: &Proof, path: &Path, block: &crate::coverage::Block) -> bool {
 /// Every mutant whose branch proof the compiler accepted, with the proof.
 ///
 /// # Errors
-/// Only a failure to write the tree or to put it back, which leaves the
-/// snapshot in a state no later phase could trust.
+/// Only a failure to write the tree or to put it back, which leaves the snapshot in a state no later phase could trust.
 pub fn establish(
     asking: &Asking<'_>,
     cancel: &Cancel,
@@ -297,7 +296,8 @@ pub struct Established {
     pub probed: BTreeMap<u32, crate::probe::Question>,
 }
 
-/// The position one past the body's last byte. A body's end is exclusive, and a reader looking at the closing brace wants where it is rather than where the next thing starts.
+/// The position one past the body's last byte.
+/// A body's end is exclusive, and a reader looking at the closing brace wants where it is rather than where the next thing starts.
 fn end_of(index: &LineIndex<'_>, offset: u32) -> Result<Position, crate::syntax::PositionError> {
     let last = match offset.checked_sub(1) {
         Some(last) => last,
@@ -485,7 +485,8 @@ struct Written {
     unasked: BTreeSet<String>,
 }
 
-/// Puts the pristine sources back. A tree left witnessed is one every later phase would be about the wrong program.
+/// Puts the pristine sources back.
+/// A tree left witnessed is one every later phase would be about the wrong program.
 fn restore(root: &Path, sources: &BTreeMap<String, Vec<u8>>) -> Result<(), EngineError> {
     for (path, source) in sources {
         std::fs::write(root.join(path), source).map_err(|error| SessionError::WriteFailed {

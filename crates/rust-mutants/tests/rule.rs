@@ -480,3 +480,16 @@ fn tiers_never_decrease_down_the_table() {
     }
     assert_eq!(highest, Tier::All);
 }
+
+#[test]
+fn the_declared_order_of_a_family_is_the_order_the_table_first_names_it() {
+    let canonical = Registry::canonical().families();
+    assert_eq!(
+        Family::ALL.to_vec(),
+        canonical,
+        "`Family::ALL` and the canonical table each say what order the families come in, \
+         and they disagreed: `SaturatingArithmetic` was ninth in the enum and last in the \
+         table. Nothing reads `ALL` for its order today, which is exactly when two \
+         declarations of one fact are cheapest to bring together"
+    );
+}

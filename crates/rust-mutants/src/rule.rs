@@ -65,8 +65,6 @@ pub enum Family {
     ReturnReplacement,
     /// `?` propagation.
     ErrorPropagation,
-    /// `saturating_add` ↔ `wrapping_add`, and its siblings: one operation, the other boundary.
-    SaturatingArithmetic,
     /// Deleting a match arm, and removing the guard that narrows one.
     MatchArm,
     /// `break` ↔ `continue`.
@@ -83,6 +81,8 @@ pub enum Family {
     StatementDeletion,
     /// Moving an integer literal by one, and emptying a string.
     Literal,
+    /// `saturating_add` ↔ `wrapping_add`, and its siblings: one operation, the other boundary.
+    SaturatingArithmetic,
 }
 
 impl Family {
@@ -427,7 +427,8 @@ pub enum RuleError {
     },
 }
 
-/// An ordered, immutable set of rules. Position in the registry is table order, family-major, and is the deterministic tiebreak the catalog uses when two families produce the same byte edit.
+/// An ordered, immutable set of rules.
+/// Position in the registry is table order, family-major, and is the deterministic tiebreak the catalog uses when two families produce the same byte edit.
 #[derive(Debug, Clone, Copy)]
 pub struct Registry {
     rules: &'static [Rule],
@@ -573,7 +574,8 @@ impl Registry {
             .collect()
     }
 
-    /// Whether `rule` is registered with exactly this metadata. A name match with a different version or family is an error, never a near miss.
+    /// Whether `rule` is registered with exactly this metadata.
+    /// A name match with a different version or family is an error, never a near miss.
     ///
     /// # Errors
     /// Returns [`RuleError::UnknownRule`] or [`RuleError::Mismatch`].

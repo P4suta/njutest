@@ -7,9 +7,8 @@ use std::fmt::Arguments;
 
 /// Appends formatted text through `String`'s infallible growth API.
 ///
-/// `fmt::Write` exposes a fallible result even when its concrete writer is a
-/// `String`. Converting the arguments to owned text first keeps the impossible
-/// error out of every renderer instead of teaching callers to discard it.
+/// `fmt::Write` exposes a fallible result even when its concrete writer is a `String`.
+/// Converting the arguments to owned text first keeps the impossible error out of every renderer instead of teaching callers to discard it.
 #[expect(
     clippy::redundant_pub_crate,
     reason = "the compiler-surface harness re-exports this crate-visible boundary"

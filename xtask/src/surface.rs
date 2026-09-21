@@ -69,13 +69,13 @@ pub struct Harness {
 
 /// The product crate included by a compiler-surface source.
 ///
-/// A target name is only a label. The dead-code proof exists only when the
-/// target's actual syntax includes the product library as a private module.
+/// A target name is only a label.
+/// The dead-code proof exists only when the target's actual syntax includes the product library as a private module.
 ///
 /// # Errors
 ///
-/// Returns the parser error when the harness is not valid Rust. Invalid syntax
-/// cannot prove that the product has a private, dead-code-checked surface.
+/// Returns the parser error when the harness is not valid Rust.
+/// Invalid syntax cannot prove that the product has a private, dead-code-checked surface.
 pub fn harness_product(source: &str, harness_source: &Path) -> syn::Result<Option<PathBuf>> {
     let parsed = syn::parse_file(source)?;
     Ok(parsed.items.iter().find_map(|item| {
@@ -111,10 +111,8 @@ pub fn harness_product(source: &str, harness_source: &Path) -> syn::Result<Optio
 
 /// Whether the harness root makes any item externally reachable.
 ///
-/// A binary-root `pub` item is exempt from `dead_code`; allowing even a
-/// wrapper would therefore let the harness make arbitrary product code look
-/// used. Root macros are rejected outright: an unexpanded syntax tree cannot
-/// prove that a macro or `include!` does not manufacture such a wrapper.
+/// A binary-root `pub` item is exempt from `dead_code`; allowing even a wrapper would therefore let the harness make arbitrary product code look used.
+/// Root macros are rejected outright: an unexpanded syntax tree cannot prove that a macro or `include!` does not manufacture such a wrapper.
 #[must_use]
 pub fn has_public_root(source: &str) -> bool {
     let Ok(parsed) = syn::parse_file(source) else {

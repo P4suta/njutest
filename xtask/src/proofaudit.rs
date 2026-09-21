@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! An independent re-decision of what a completed run recorded. [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
+//! An independent re-decision of what a completed run recorded.
+//! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -191,7 +192,8 @@ impl Audit {
         self.standing(Standing::Unaudited)
     }
 
-    /// The exit code this audit earns. A recording that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
+    /// The exit code this audit earns.
+    /// A recording that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
         u8::from(self.violations() > 0)
@@ -328,13 +330,11 @@ struct Equation<'a> {
     because: &'a str,
 }
 
-/// Re-decides a report and, when `run` is present, re-reads every retained
-/// model-checker artifact from that exact run directory.
+/// Re-decides a report and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
 ///
 /// # Errors
 /// [`AuditError::Unparsable`] for a document that is not JSON,
-/// [`AuditError::Unrecognised`] for one that is not the assurance report, and
-/// the corresponding retained-artifact error when `run` cannot be re-read.
+/// [`AuditError::Unrecognised`] for one that is not the assurance report, and the corresponding retained-artifact error when `run` cannot be re-read.
 pub fn audit_at(
     path: &str,
     text: &str,
@@ -416,9 +416,7 @@ struct MutantRow {
 
 /// The three distinct facts a report can state about row-local review acceptance.
 ///
-/// Keeping the missing case as its own variant prevents an absent field from being
-/// confused with an explicit rejection while the independent audit is re-deriving
-/// answerability.
+/// Keeping the missing case as its own variant prevents an absent field from being confused with an explicit rejection while the independent audit is re-deriving answerability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AcceptanceFact {
     Missing,
@@ -966,10 +964,9 @@ fn u32_value(value: &serde_json::Value) -> Option<u32> {
     }
 }
 
-/// Validates the published cross-platform spelling without consulting the
-/// producer's path normalizer. Every component is already in its final form:
-/// no separator conversion, dot elimination, or volume interpretation remains
-/// for a different host to perform.
+/// Validates the published cross-platform spelling without consulting the producer's path normalizer.
+/// Every component is already in its final form:
+/// no separator conversion, dot elimination, or volume interpretation remains for a different host to perform.
 fn canonical_workspace_path(path: &str) -> bool {
     if path.is_empty()
         || path.contains(['\0', '\\'])
@@ -1282,15 +1279,12 @@ fn model_columns(recording: &Recording<'_>, notes: &mut Notes<'_>) {
 /// Whether any layer removed a target that then killed the mutation it removed.
 /// The targets the recording says noticed nothing, held to the findings that name them.
 ///
-/// Re-derived from the executions alone. A target is asked about a mutation
-/// only after every target before it in the route survived it, so every
-/// execution the recording holds is one where that target had its chance —
-/// except one nobody decided, which is a chance the run could not give it and
-/// is left out of the count rather than held against it.
+/// Re-derived from the executions alone.
+/// A target is asked about a mutation only after every target before it in the route survived it, so every execution the recording holds is one where that target had its chance —
+/// except one nobody decided, which is a chance the run could not give it and is left out of the count rather than held against it.
 ///
-/// A part of a catalog is not held to this at all. Whether a target notices
-/// anything is a statement about the whole catalog, and a part has seen a
-/// slice: a target silent in this part may have noticed something in another,
+/// A part of a catalog is not held to this at all.
+/// Whether a target notices anything is a statement about the whole catalog, and a part has seen a slice: a target silent in this part may have noticed something in another,
 /// and demanding a finding here would demand one the whole would contradict.
 fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Hollow);
@@ -1403,10 +1397,7 @@ fn named_hollow_targets<'a>(recording: &'a Recording<'_>) -> BTreeSet<&'a str> {
 
 /// The faults a seam recording licensed, re-derived here and held to what the run says became of them.
 ///
-/// The catalogue is minted again from the exchanges alone, by the rules and
-/// the identity recipe written out in `crate::wire`, so a fault this audit
-/// does not derive is one the run invented and a fault it derives that the
-/// run never put is a question the report is quiet about.
+/// The catalogue is minted again from the exchanges alone, by the rules and the identity recipe written out in `crate::wire`, so a fault this audit does not derive is one the run invented and a fault it derives that the run never put is a question the report is quiet about.
 fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Wire);
     let Some(watched) = watched else {
@@ -2368,7 +2359,8 @@ fn reuse(recording: &Recording<'_>, audit: &mut Audit) {
     }
 }
 
-/// A string the recording says something in. Whitespace is nothing to say, and reads here as the absent value it is.
+/// A string the recording says something in.
+/// Whitespace is nothing to say, and reads here as the absent value it is.
 fn field(value: &serde_json::Value, key: &str) -> Option<String> {
     let said = value.get(key)?.as_str()?.trim();
     (!said.is_empty()).then(|| said.to_owned())

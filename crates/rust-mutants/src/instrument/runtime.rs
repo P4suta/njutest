@@ -22,8 +22,8 @@ pub const STALE_CATALOG_EXIT: i32 = 97;
 
 /// Names the number of times the active mutant's guard may be taken before the process is stopped.
 ///
-/// The per-process allowance for takes of the selected mutant's guard. It is
-/// an execution bound, not a proof that the program would not terminate.
+/// The per-process allowance for takes of the selected mutant's guard.
+/// It is an execution bound, not a proof that the program would not terminate.
 /// Unset, or `0`, spends nothing and counts nothing.
 pub const STEPS_ENV: &str = "RUST_MUTANTS_STEPS";
 
@@ -42,8 +42,7 @@ pub const STEP_STATE_SCHEMA: &str = "rust-mutants-step-state-v1";
 /// The first field of every complete step notice.
 pub const STEP_NOTICE_SCHEMA: &str = "rust-mutants-step-notice-v1";
 
-/// The exit status of a bounded test process whose generated runtime could not
-/// publish its nonce-correlated step notice.
+/// The exit status of a bounded test process whose generated runtime could not publish its nonce-correlated step notice.
 pub const STEP_PROTOCOL_EXIT: i32 = 94;
 
 /// Names the file the guards append to, saying which of the process's threads reached them.
@@ -87,8 +86,7 @@ pub enum RuntimeRenderError {
 ///
 /// # Errors
 ///
-/// Returns [`ModuleNameError`] when `text` is not a Rust token stream or the
-/// collision suffix namespace cannot be searched without overflow.
+/// Returns [`ModuleNameError`] when `text` is not a Rust token stream or the collision suffix namespace cannot be searched without overflow.
 pub fn module_name(path: &str, text: &str) -> Result<String, ModuleNameError> {
     module_named(text, &format!("{MODULE_STEM}_{}", short_digest(path)))
 }
@@ -135,9 +133,8 @@ fn collect_identifiers(tokens: proc_macro2::TokenStream, names: &mut BTreeSet<St
     }
 }
 
-/// Defines the transition once for both the engine's test/Kani surface and
-/// every generated runtime. Adding a state or action makes the compiler reject
-/// both consumers until their exhaustive matches account for it.
+/// Defines the transition once for both the engine's test/Kani surface and every generated runtime.
+/// Adding a state or action makes the compiler reject both consumers until their exhaustive matches account for it.
 macro_rules! step_machine {
     ($consumer:ident) => {
         $consumer! {
@@ -231,8 +228,8 @@ macro_rules! stringify_step_machine {
 
 const STEP_MACHINE_SOURCE: &str = step_machine!(stringify_step_machine);
 
-/// The expression-grouping macro, emitted only into files whose guards call
-/// it. A statement-only file has no unused generated macro to excuse.
+/// The expression-grouping macro, emitted only into files whose guards call it.
+/// A statement-only file has no unused generated macro to excuse.
 const VALUE_MACRO: &str = r"    // The invocation is an expression boundary before expansion, while the
     // expansion is exactly the user's expression. That groups generated
     // boolean chains without adding lint-producing parentheses, a temporary
@@ -244,7 +241,8 @@ const VALUE_MACRO: &str = r"    // The invocation is an expression boundary befo
 
 ";
 
-/// The invariant text of the runtime, with the per-file parts as placeholders. Written as one literal so a reader sees the generated module exactly as it will appear in the snapshot.
+/// The invariant text of the runtime, with the per-file parts as placeholders.
+/// Written as one literal so a reader sees the generated module exactly as it will appear in the snapshot.
 const TEMPLATE: &str = r#"#[doc(hidden)]
 {{GENERATED_MODULE_ALLOW}}
 mod {{MODULE}} {
@@ -1088,8 +1086,7 @@ mod {{MODULE}} {
 ///
 /// # Errors
 ///
-/// Returns [`RuntimeRenderError`] when the inclusive catalog-index window
-/// cannot be represented without overflow.
+/// Returns [`RuntimeRenderError`] when the inclusive catalog-index window cannot be represented without overflow.
 pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
     let Rendering {
         module,

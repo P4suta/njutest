@@ -115,11 +115,11 @@ fn is_rust(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }
 
-/// The units of a compilation, each with the sources its dep-info names, resolved against `workspace_root` (the directory rustc ran in). Build scripts are left out: they are never mutated.
+/// The units of a compilation, each with the sources its dep-info names, resolved against `workspace_root` (the directory rustc ran in).
+/// Build scripts are left out: they are never mutated.
 ///
 /// # Errors
-/// [`CargoErrorKind::DepInfoMissing`] when an artifact's dep-info cannot be
-/// read, and [`CargoErrorKind::DepInfoUnreadable`] when it has no rule.
+/// [`CargoErrorKind::DepInfoMissing`] when an artifact's dep-info cannot be read, and [`CargoErrorKind::DepInfoUnreadable`] when it has no rule.
 pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>, CargoError> {
     let mut units = Vec::new();
     for message in messages {
@@ -208,9 +208,8 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
     })
 }
 
-/// The first existing regular candidate. Missing candidates are expected for
-/// Cargo's uplifted copies; an unreadable or irregular one is not silently
-/// skipped in favour of a different view of the same compilation.
+/// The first existing regular candidate.
+/// Missing candidates are expected for Cargo's uplifted copies; an unreadable or irregular one is not silently skipped in favour of a different view of the same compilation.
 fn regular_dep_info(candidates: &[PathBuf]) -> Result<Option<PathBuf>, CargoError> {
     for path in candidates {
         match std::fs::symlink_metadata(path) {

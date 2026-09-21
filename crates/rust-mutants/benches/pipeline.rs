@@ -42,7 +42,8 @@ fn source(functions: usize) -> String {
     text
 }
 
-/// A coverage export naming `functions` functions with four regions each. A match of `arms` arms, half of them guarded, ending in a bare wildcard.
+/// A coverage export naming `functions` functions with four regions each.
+/// A match of `arms` arms, half of them guarded, ending in a bare wildcard.
 fn arms(count: usize) -> String {
     let mut text =
         String::from("//! A generated match.\n\npub fn pick(n: i32) -> i32 {\n    match n {\n");

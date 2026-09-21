@@ -27,8 +27,7 @@ pub const FILE_NAME: &str = "run-report-v1.json";
 /// The pointer file that names the newest run.
 pub const LATEST_FILE_NAME: &str = "latest.json";
 
-/// Reads one complete run document without allowing a repeated object key to
-/// replace an earlier fact.
+/// Reads one complete run document without allowing a repeated object key to replace an earlier fact.
 ///
 /// # Errors
 /// The input is not one exact current run document, contains trailing data,
@@ -95,7 +94,8 @@ pub struct RunMeta {
     pub shard: Option<String>,
 }
 
-/// What a run counted. Every mutant is in exactly one of the outcome columns.
+/// What a run counted.
+/// Every mutant is in exactly one of the outcome columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Accounting {
@@ -131,15 +131,14 @@ pub struct Accounting {
 
 /// One count of a set that adds up to a stated whole.
 ///
-/// The three counts in an accounting are three different things, and every
-/// renderer that put them in one list got the same defect: a reader adding a
-/// column of them gets more than there are. They are told apart here rather
-/// than in each renderer, because there were four renderers and they disagreed.
+/// The three counts in an accounting are three different things, and every renderer that put them in one list got the same defect: a reader adding a column of them gets more than there are.
+/// They are told apart here rather than in each renderer, because there were four renderers and they disagreed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Of(u32);
 
-/// One count of *some of* another count. Adding it to that count's siblings counts it twice.
+/// One count of *some of* another count.
+/// Adding it to that count's siblings counts it twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Within(u32);
@@ -149,17 +148,15 @@ pub struct Within(u32);
 #[serde(transparent)]
 pub struct Beside(u32);
 
-/// A report accounting value exceeded its durable `u32` representation or
-/// contradicted a subset relation required by that representation.
+/// A report accounting value exceeded its durable `u32` representation or contradicted a subset relation required by that representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("run accounting exceeds or contradicts its durable counters")]
 pub struct CountOverflow;
 
 /// Declares the three kinds with the same shape, and no `Display`.
 ///
-/// None of them can be written into a message by `{}`. That is the point: a
-/// renderer reaching for one has to say which kind it is holding, and the type
-/// is what carries the answer to the place the columns are laid out.
+/// None of them can be written into a message by `{}`.
+/// That is the point: a renderer reaching for one has to say which kind it is holding, and the type is what carries the answer to the place the columns are laid out.
 macro_rules! counted {
     ($($name:ident),+) => {
         $(impl $name {
@@ -275,7 +272,8 @@ pub struct RunMutantDocument {
     /// Which targets could have noticed it, and which of them ran.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub route: Option<RouteDocument>,
-    /// What comparison of the compiler artifacts established. Never a claim that the mutation is equivalent.
+    /// What comparison of the compiler artifacts established.
+    /// Never a claim that the mutation is equivalent.
     pub identical: crate::run::CodegenIdentity,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
@@ -299,7 +297,8 @@ pub struct ExpectationDocument {
     pub reason: String,
     /// The outcome claimed.
     pub outcome: Outcome,
-    /// The mutant it resolved to, when it resolved. The one that decided the standing, when it named several.
+    /// The mutant it resolved to, when it resolved.
+    /// The one that decided the standing, when it named several.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub mutant: Option<String>,
     /// How many mutants the claim was resolved against, when the locator stated a count.
@@ -317,9 +316,7 @@ pub struct ExpectationDocument {
 
 /// One expectation locator in the current run-report wire shape.
 ///
-/// This is deliberately distinct from the configuration locator: configuration
-/// may omit its optional hints, while a v1 report writes those keys explicitly
-/// as either a value or `null` and rejects a missing key on read.
+/// This is deliberately distinct from the configuration locator: configuration may omit its optional hints, while a v1 report writes those keys explicitly as either a value or `null` and rejects a missing key on read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocatorDocument {
@@ -933,8 +930,7 @@ fn target_documents(session: &Session) -> Vec<TargetDocument> {
 /// The run as one document.
 ///
 /// # Errors
-/// Returns an engine error when established-test accounting or any exact
-/// duration projection cannot be represented by the report schema.
+/// Returns an engine error when established-test accounting or any exact duration projection cannot be represented by the report schema.
 pub fn document(
     session: &Session,
     run: &Run,
@@ -1157,7 +1153,8 @@ pub struct RouteDocument {
     pub discharged: Vec<DischargeDocument>,
     /// Every target that ran, in the order the run asked them.
     pub executed: Vec<String>,
-    /// For each target the measurement narrowed to some of its tests, exactly those tests. A target absent from this ran every test it has.
+    /// For each target the measurement narrowed to some of its tests, exactly those tests.
+    /// A target absent from this ran every test it has.
     pub tests: BTreeMap<String, Vec<String>>,
 }
 
@@ -1277,7 +1274,8 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
     Ok(merged)
 }
 
-/// The columns the merged records add up to. What no part executed — refusals and skips — is a fact about the catalog rather than about a part, so it is taken from one of them rather than summed.
+/// The columns the merged records add up to.
+/// What no part executed — refusals and skips — is a fact about the catalog rather than about a part, so it is taken from one of them rather than summed.
 fn accounting_of(
     mutants: &[RunMutantDocument],
     first: &RunDocument,

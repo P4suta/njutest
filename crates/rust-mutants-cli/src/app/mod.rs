@@ -194,7 +194,9 @@ fn kept_command(
     }
 }
 
-/// A run composes its own activation. An inherited one would silently decide what every test process measures. Whether the command is one whose whole job is to say what is wrong here.
+/// A run composes its own activation.
+/// An inherited one would silently decide what every test process measures.
+/// Whether the command is one whose whole job is to say what is wrong here.
 const fn diagnoses(command: &cli::Command) -> bool {
     matches!(
         command,
@@ -414,8 +416,7 @@ const fn streaming(command: &cli::Command) -> bool {
     )
 }
 
-/// Whether the command's successful result is a whole-run document whose
-/// pending terminal state already closes, prunes, and then publishes itself.
+/// Whether the command's successful result is a whole-run document whose pending terminal state already closes, prunes, and then publishes itself.
 const fn whole_run(command: &cli::Command) -> bool {
     matches!(
         command,
@@ -655,7 +656,8 @@ fn selected(
     )
 }
 
-/// What a command that only needs discovery prints. Refuses a `--file` that names no file the walk considered.
+/// What a command that only needs discovery prints.
+/// Refuses a `--file` that names no file the walk considered.
 ///
 /// # Errors
 /// [`CliError::InvalidValue`] naming the path and how many files there are.
@@ -691,9 +693,8 @@ fn narrowed(considered: &[String], named: &[String]) -> Result<(), CliError> {
 
 /// The three names most like `named`, so a typo is answered with what was meant.
 ///
-/// A refusal that says "not one of the four hundred files this run reads" and
-/// stops has told somebody they are wrong and left them to find out how. The
-/// names are in hand.
+/// A refusal that says "not one of the four hundred files this run reads" and stops has told somebody they are wrong and left them to find out how.
+/// The names are in hand.
 fn nearest(named: &str, considered: &[String]) -> Result<String, CliError> {
     let mut ranked = Vec::with_capacity(considered.len());
     for held in considered {
@@ -800,9 +801,8 @@ struct Prepared<'a> {
 
 /// What remains after a prepared command has stopped using its session.
 ///
-/// A whole run cannot publish its terminal line until closing the session and
-/// pruning its store have both succeeded. Keeping that terminal document in a
-/// distinct state makes publishing it early impossible at the call site.
+/// A whole run cannot publish its terminal line until closing the session and pruning its store have both succeeded.
+/// Keeping that terminal document in a distinct state makes publishing it early impossible at the call site.
 #[derive(Debug)]
 enum PreparedOutcome {
     /// No terminal run document remains to be published.
@@ -828,8 +828,7 @@ impl PreparedOutcome {
         Self::Complete(Box::new(CompletedCommand { code }))
     }
 
-    /// Performs the work that must follow a successfully closed session, then
-    /// publishes the one terminal answer.
+    /// Performs the work that must follow a successfully closed session, then publishes the one terminal answer.
     fn finish(self, settings: &Settings, stdout: &mut dyn Write) -> Result<u8, CliError> {
         match self {
             Self::Complete(command) => Ok(command.code),
@@ -976,7 +975,8 @@ fn one(
     Ok(report::exit_code(result.outcome()))
 }
 
-/// Every accepted mutant, with the expectations verified and a report written. Everything a whole run needs beyond the session.
+/// Every accepted mutant, with the expectations verified and a report written.
+/// Everything a whole run needs beyond the session.
 struct Whole<'a> {
     settings: &'a Settings,
     /// How the workspace was opened, so the equivalence layer can open a tree of its own the same way.
@@ -1131,10 +1131,8 @@ fn concluded(
 
 /// Where a reader goes from a wall of findings, which is the next thing they want and the one thing the run does not say.
 ///
-/// A survivor is a decision to make, not a fact to file: either the tests have
-/// a gap or the code has a claim in it somebody should write down. `explain`
-/// is where both are answered — it prints what reached the mutation, and the
-/// block that records a reason — and nothing on the way there named it.
+/// A survivor is a decision to make, not a fact to file: either the tests have a gap or the code has a claim in it somebody should write down.
+/// `explain` is where both are answered — it prints what reached the mutation, and the block that records a reason — and nothing on the way there named it.
 fn onward(document: &run_report::RunDocument) -> String {
     let Some(first) = document
         .mutants
@@ -1210,15 +1208,11 @@ fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outc
 /// A `--file` whose lines are not a range.
 /// Refuses a rule or family name this release does not know.
 ///
-/// A name that names nothing narrows a run to nothing and the run reports that
-/// nothing was missed, or widens a skip to nothing and the rule a person meant
-/// to pass over runs anyway. Both are answers they cannot tell from the ones
-/// they asked for, and the set of names is compiled into the release, so
-/// nothing has to be built to say which it is.
+/// A name that names nothing narrows a run to nothing and the run reports that nothing was missed, or widens a skip to nothing and the rule a person meant to pass over runs anyway.
+/// Both are answers they cannot tell from the ones they asked for, and the set of names is compiled into the release, so nothing has to be built to say which it is.
 ///
 /// # Errors
-/// [`CliError::InvalidValue`] naming the flag, the value, and where the names
-/// are.
+/// [`CliError::InvalidValue`] naming the flag, the value, and where the names are.
 fn known(flag: &str, named: &[String], rules: bool) -> Result<(), CliError> {
     let registry = rust_mutants::rule::Registry::canonical();
     for one in named {
@@ -1294,7 +1288,8 @@ fn filter(
     Ok(filter)
 }
 
-/// Compiles the run's syntactic selection before the expensive compiler validation begins. Existence checks still happen against the complete session catalog afterwards; this step only gives preparation the same predicate the run will use.
+/// Compiles the run's syntactic selection before the expensive compiler validation begins.
+/// Existence checks still happen against the complete session catalog afterwards; this step only gives preparation the same predicate the run will use.
 fn filter_before_preparation(
     command: &cli::Command,
     settings: &Settings,
@@ -1336,7 +1331,8 @@ fn filter_before_preparation(
     })
 }
 
-/// Which candidates a run already knows it can leave out before it compiles the instrumented tree. Shards deliberately stay out of this predicate: each shard report currently carries the shared validation result, so that result must remain identical across all parts until merge records a partitioned validation proof of its own.
+/// Which candidates a run already knows it can leave out before it compiles the instrumented tree.
+/// Shards deliberately stay out of this predicate: each shard report currently carries the shared validation result, so that result must remain identical across all parts until merge records a partitioned validation proof of its own.
 fn validation_filter(
     command: &cli::Command,
     settings: &Settings,
@@ -1472,8 +1468,7 @@ fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String 
 /// What a stored run said about one mutant, when a stored run said anything.
 ///
 /// # Errors
-/// [`CliError::ReportMissing`] when `run` names no stored run, or when the
-/// report a name resolves to cannot be read as one.
+/// [`CliError::ReportMissing`] when `run` names no stored run, or when the report a name resolves to cannot be read as one.
 fn recorded(
     settings: &Settings,
     run: Option<&str>,
@@ -1495,12 +1490,9 @@ fn recorded(
 
 /// The stored row for the same mutation, when the identity no longer matches.
 ///
-/// An identity is a function of the file's bytes, so the edit a reader makes
-/// before replaying — adding the test that kills the survivor — re-mints it.
-/// Matching on the identity alone then finds nothing, and the replay says "was
-/// nothing, now killed" about a mutation the run had measured and called
-/// survived. Where the identity has moved, the place has not: one file, one
-/// rule, one original text and one replacement is the same mutation.
+/// An identity is a function of the file's bytes, so the edit a reader makes before replaying — adding the test that kills the survivor — re-mints it.
+/// Matching on the identity alone then finds nothing, and the replay says "was nothing, now killed" about a mutation the run had measured and called survived.
+/// Where the identity has moved, the place has not: one file, one rule, one original text and one replacement is the same mutation.
 fn same_place(
     stored: Vec<run_report::RunMutantDocument>,
     found: &rust_mutants::catalog::Mutant,
@@ -1967,7 +1959,8 @@ fn json_line<T: serde::Serialize>(value: &T) -> Result<String, CliError> {
     Ok(text)
 }
 
-/// Puts the reports of the parts of one catalog back together. The reports of the parts of one catalog, named directly or found under a report directory.
+/// Puts the reports of the parts of one catalog back together.
+/// The reports of the parts of one catalog, named directly or found under a report directory.
 ///
 /// # Errors
 /// [`CliError::ReportMissing`] when a name or a glob matches no stored run.
@@ -2050,7 +2043,8 @@ fn merge(
     Ok(merged.run.exit_code)
 }
 
-/// A closed stream is the reader's choice, not a failure of ours. The claims the file wrote, as the engine reads them.
+/// A closed stream is the reader's choice, not a failure of ours.
+/// The claims the file wrote, as the engine reads them.
 fn expectations(settings: &Settings) -> Vec<Expectation> {
     settings
         .config

@@ -105,26 +105,18 @@ pub enum ExecCostError {
 
 /// How long a probe may take before the measurement is abandoned.
 ///
-/// The bound is generous rather than tight: the phenomenon this measures is
-/// minutes long, so a deadline that fired at the ordinary case would report
-/// nothing on the machine that needed the answer. What it prevents is a probe
-/// on a wedged filesystem hanging instead of reporting the slow execution it
-/// was there to find.
+/// The bound is generous rather than tight: the phenomenon this measures is minutes long, so a deadline that fired at the ordinary case would report nothing on the machine that needed the answer.
+/// What it prevents is a probe on a wedged filesystem hanging instead of reporting the slow execution it was there to find.
 ///
-/// macOS evaluates a newly written Mach-O before it may run and Windows scans
-/// a newly written executable, so both are machines this measures; what varies
-/// is only the name the copy has to have.
+/// macOS evaluates a newly written Mach-O before it may run and Windows scans a newly written executable, so both are machines this measures; what varies is only the name the copy has to have.
 pub const PROBE_LIMIT: Duration = Duration::from_secs(600);
 
 /// Copies a program nobody has run from this path before, runs it twice, and hands back what each run took.
 ///
-/// The pair is the evidence and neither number means anything alone: one slow
-/// run could be a slow disk, and a slow run beside a fast run of the same file
-/// cannot be anything else.
+/// The pair is the evidence and neither number means anything alone: one slow run could be a slow disk, and a slow run beside a fast run of the same file cannot be anything else.
 ///
 /// # Errors
-/// What stopped the measurement, which is itself a thing to be told: a silence
-/// here reads as a machine that is well.
+/// What stopped the measurement, which is itself a thing to be told: a silence here reads as a machine that is well.
 pub fn exec_twice(temp: &Path, program: &Path) -> Result<(Duration, Duration), ExecCostError> {
     let dir = temp.join(format!(
         "{}exec-{}",

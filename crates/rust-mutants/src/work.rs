@@ -175,8 +175,7 @@ impl Work {
     /// The ledger of one stored run.
     ///
     /// # Errors
-    /// Refuses any count, arithmetic result, or route partition that cannot be
-    /// represented exactly by the durable ledger.
+    /// Refuses any count, arithmetic result, or route partition that cannot be represented exactly by the durable ledger.
     pub fn of(document: &RunDocument) -> Result<Self, WorkError> {
         let targets = count_u32(WorkQuantity::Targets, document.targets.len())?;
         let cataloged = count_u32(WorkQuantity::CatalogedMutants, document.mutants.len())?;
@@ -246,8 +245,7 @@ impl Work {
     /// Whether every pair a whole run would have started is one this run started or one something named removed.
     ///
     /// # Errors
-    /// Refuses when summing the removed pairs or adding them to the started
-    /// pairs exceeds the durable counter.
+    /// Refuses when summing the removed pairs or adding them to the started pairs exceeds the durable counter.
     pub fn balances(&self) -> Result<bool, WorkError> {
         Ok(checked_add(self.pairs(), self.skipped()?, WorkQuantity::BalancedPairs)? == self.whole)
     }
@@ -261,8 +259,7 @@ impl Work {
     /// Every pair something removed.
     ///
     /// # Errors
-    /// Refuses when the exact sum of removed pairs exceeds the durable
-    /// counter.
+    /// Refuses when the exact sum of removed pairs exceeds the durable counter.
     pub fn skipped(&self) -> Result<u64, WorkError> {
         self.removed.iter().try_fold(0_u64, |total, one| {
             checked_add(total, one.pairs, WorkQuantity::SkippedPairs)
@@ -293,8 +290,7 @@ impl Work {
     /// The share of a whole run this one did not do, between 0 and 1.
     ///
     /// # Errors
-    /// Refuses when the exact sum of removed pairs exceeds the durable
-    /// counter.
+    /// Refuses when the exact sum of removed pairs exceeds the durable counter.
     pub fn saved(&self) -> Result<f64, WorkError> {
         Ok(match crate::count::ratio(self.skipped()?, self.whole) {
             Some(share) => share,

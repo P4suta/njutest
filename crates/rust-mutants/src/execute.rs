@@ -24,7 +24,8 @@ use crate::runner::{
 };
 use crate::trace::{ExecRecord, Recorder};
 
-/// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
+/// Every variable the engine owns.
+/// A test process sees exactly the ones this run set, never one an outer run left behind.
 pub const RESERVED_ENV: [&str; 7] = [
     ACTIVE_ENV,
     CATALOG_ENV,
@@ -136,15 +137,15 @@ pub struct TestTarget {
     pub harness: bool,
     /// What a run could not establish about this target, each named.
     pub limitations: Vec<String>,
-    /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself. Empty for a binary, and then `executable` is the binary.
+    /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself.
+    /// Empty for a binary, and then `executable` is the binary.
     pub through: Vec<OsString>,
 }
 
 impl TestTarget {
     /// One built test binary, by everything cargo says about it that is not optional.
     ///
-    /// The identity is derived rather than given: it was a sixth argument that
-    /// had to equal `target_id(package, kind, name)` and nothing checked it,
+    /// The identity is derived rather than given: it was a sixth argument that had to equal `target_id(package, kind, name)` and nothing checked it,
     /// so a report could name a target that no run could route to.
     #[must_use]
     #[expect(
@@ -263,8 +264,7 @@ pub struct LibtestOutputError;
 /// Reads every `test <name> ... <verdict>` line of a captured output.
 ///
 /// # Errors
-/// Refuses output that is not exact UTF-8 instead of inventing replacement
-/// characters in test identities.
+/// Refuses output that is not exact UTF-8 instead of inventing replacement characters in test identities.
 pub fn parse_lines(output: &[u8]) -> Result<Lines, LibtestOutputError> {
     let text = std::str::from_utf8(output).map_err(|_not_utf8| LibtestOutputError)?;
     Ok(parse_lines_text(text))
@@ -360,11 +360,8 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
 
 /// How a test process came to an end, which is one thing and not four flags.
 ///
-/// Four booleans and an exit code could say a process was both unstarted and
-/// killed by a clock, and the precedence that made that impossible lived in
-/// the order of a chain of `if`s. A process ends exactly one way, so the type
-/// says so and the policy reading it is a total match rather than a sequence
-/// somebody has to keep in the right order (ADR 0023).
+/// Four booleans and an exit code could say a process was both unstarted and killed by a clock, and the precedence that made that impossible lived in the order of a chain of `if`s.
+/// A process ends exactly one way, so the type says so and the policy reading it is a total match rather than a sequence somebody has to keep in the right order (ADR 0023).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Stopped {
@@ -396,8 +393,7 @@ pub enum Stopped {
     },
 }
 
-/// Why a bounded execution's nonce-correlated, structurally verified step
-/// protocol failed.
+/// Why a bounded execution's nonce-correlated, structurally verified step protocol failed.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum StepProtocolFailure {
@@ -521,15 +517,11 @@ pub struct StepLimitNotice {
 
 /// The closed set of source boundaries a step notice can count.
 ///
-/// Macro expansions and dependency code are not rewritten by the workspace
-/// instrumenter. A computation that enters either without re-entering an
-/// instrumented function or closure can therefore end only by itself or by
-/// the wall-clock supervisor, whose outcome is
-/// [`crate::outcome::Outcome::Waited`].
+/// Macro expansions and dependency code are not rewritten by the workspace instrumenter.
+/// A computation that enters either without re-entering an instrumented function or closure can therefore end only by itself or by the wall-clock supervisor, whose outcome is [`crate::outcome::Outcome::Waited`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StepBoundaryScope {
-    /// Non-const function entries, loop bodies, async blocks, and every
-    /// closure invocation in mutable workspace source.
+    /// Non-const function entries, loop bodies, async blocks, and every closure invocation in mutable workspace source.
     InstrumentedWorkspaceSource,
 }
 
@@ -663,7 +655,8 @@ impl StepLimitNotice {
 }
 
 impl Stopped {
-    /// How a generic supervised run came to an end. Execution-specific code replaces a monitored stop with its verified protocol fact.
+    /// How a generic supervised run came to an end.
+    /// Execution-specific code replaces a monitored stop with its verified protocol fact.
     #[must_use]
     pub fn of(result: &RunResult) -> Self {
         match &result.termination {
@@ -1130,7 +1123,8 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What one run of a test binary establishes about the mutant that was active during it. See the module documentation for the order.
+/// What one run of a test binary establishes about the mutant that was active during it.
+/// See the module documentation for the order.
 #[must_use]
 pub const fn outcome_of(
     observed: &Observation,
@@ -1230,8 +1224,7 @@ fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, O
 /// The environment one test process runs with: the base the workspace was opened with, the variables cargo sets for the target, the activation, and a temporary directory of the worker's own.
 ///
 /// # Errors
-/// Returns an I/O error when the toolchain's target-library directory cannot
-/// be inspected exactly.
+/// Returns an I/O error when the toolchain's target-library directory cannot be inspected exactly.
 pub fn environment(
     context: &Context<'_>,
     target: &TestTarget,
@@ -1429,7 +1422,8 @@ impl<'a> ExecRequest<'a> {
         self.target
     }
 
-    /// The command line the binary receives. Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
+    /// The command line the binary receives.
+    /// Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
         let mut argv = vec![self.target.executable.clone().into_os_string()];
@@ -1453,22 +1447,22 @@ pub struct Context<'a> {
     pub base_env: &'a [(OsString, OsString)],
     /// The cargo that built the tree, which cargo itself puts in `CARGO` for every process it runs.
     pub cargo: Option<&'a Path>,
-    /// The toolchain directory a dynamically linked test binary finds `libstd` under. `None` starts it with whatever the environment already said.
+    /// The toolchain directory a dynamically linked test binary finds `libstd` under.
+    /// `None` starts it with whatever the environment already said.
     pub sysroot: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
-    /// How many instrumented workspace boundaries the process may cross after
-    /// the selected guard activates before it is stopped. `None` counts
-    /// nothing.
+    /// How many instrumented workspace boundaries the process may cross after the selected guard activates before it is stopped.
+    /// `None` counts nothing.
     ///
-    /// A mutant that does not terminate has to be stopped by something, and a
-    /// count is a number every machine agrees on where a clock is not. It is
-    /// spent per process because the process is what a run activates a mutant
-    /// in and what it would otherwise kill by that clock.
+    /// A mutant that does not terminate has to be stopped by something, and a count is a number every machine agrees on where a clock is not.
+    /// It is spent per process because the process is what a run activates a mutant in and what it would otherwise kill by that clock.
     pub steps: Option<u64>,
-    /// Where the guards append which of the process's threads reached them, and the catalog the record is about. `None` runs a process whose guards record nothing.
+    /// Where the guards append which of the process's threads reached them, and the catalog the record is about.
+    /// `None` runs a process whose guards record nothing.
     pub touch: Option<Touching<'a>>,
-    /// Where a coverage-instrumented process writes what it executed. `None` runs a process that measures nothing.
+    /// Where a coverage-instrumented process writes what it executed.
+    /// `None` runs a process that measures nothing.
     pub profile: Option<&'a Path>,
 }
 
@@ -1484,8 +1478,7 @@ pub struct Touching<'a> {
 /// The one fact a mutant execution established.
 ///
 /// A finite step boundary carries its verified notice in the same variant.
-/// There is no representation for `StepLimitReached` without evidence, or for
-/// evidence attached to any other outcome.
+/// There is no representation for `StepLimitReached` without evidence, or for evidence attached to any other outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MutantConclusion {
     /// The execution did not run to an answer.
@@ -1723,7 +1716,8 @@ pub struct BuildOptions {
     pub locked: bool,
     /// Pass `--offline`.
     pub offline: bool,
-    /// The member packages whose test binaries are wanted. Empty is the whole workspace.
+    /// The member packages whose test binaries are wanted.
+    /// Empty is the whole workspace.
     pub packages: Vec<String>,
     /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
     pub build: crate::cargo::BuildConfig,
@@ -1732,8 +1726,7 @@ pub struct BuildOptions {
 /// Builds the test binaries of a tree and reports them.
 ///
 /// # Errors
-/// Whatever stopped cargo from building, and a message stream that could
-/// not be read.
+/// Whatever stopped cargo from building, and a message stream that could not be read.
 pub fn build(
     driver: &Driver<'_>,
     packages: &[Package],
@@ -1764,8 +1757,7 @@ pub fn build(
 /// The test binaries a build produced, in target id order.
 ///
 /// # Errors
-/// Refuses a cargo message stream that names two different executable paths
-/// for the same package target.
+/// Refuses a cargo message stream that names two different executable paths for the same package target.
 pub fn targets_of(
     messages: &[Message],
     packages: &[Package],

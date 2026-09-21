@@ -66,8 +66,7 @@ pub enum EvidenceError {
         /// The exact in-memory size.
         bytes: usize,
     },
-    /// The catalog could not be represented without changing workspace or
-    /// mutation bytes.
+    /// The catalog could not be represented without changing workspace or mutation bytes.
     #[error("constructing retained catalog evidence: {source}")]
     Catalog {
         /// The exact catalog construction failure.
@@ -79,8 +78,8 @@ pub enum EvidenceError {
 /// Writes everything an audit re-derives a run's proofs from, and reports what it wrote.
 ///
 /// # Errors
-/// Returns the first directory, serialization, exact-size, or durable-write
-/// failure. No document is claimed unless its complete bytes were committed.
+/// Returns the first directory, serialization, exact-size, or durable-write failure.
+/// No document is claimed unless its complete bytes were committed.
 pub fn write(
     session: &Session,
     directory: &Path,

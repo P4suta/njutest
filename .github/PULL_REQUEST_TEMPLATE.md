@@ -10,8 +10,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Red
 
 <!--
-Paste the output of the test failing for the stated reason, before the change.
-A test that passed before the change is not evidence. See CONTRIBUTING.md.
+ Paste the output of the test failing for the stated reason, before the change.
+ A test that passed before the change is not evidence.
+ See CONTRIBUTING.md.
 -->
 
 ```console

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a session is asked, in the words a caller says it in. Nothing here starts a toolchain.
+//! What a session is asked, in the words a caller says it in.
+//! Nothing here starts a toolchain.
 
 #![expect(
     clippy::expect_used,

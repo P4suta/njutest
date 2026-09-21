@@ -44,8 +44,7 @@ pub enum ChildError {
         #[source]
         source: std::io::Error,
     },
-    /// Waiting or collecting one or both output pipes failed after ownership
-    /// had been closed by reaping the child.
+    /// Waiting or collecting one or both output pipes failed after ownership had been closed by reaping the child.
     #[error(
         "the supervised child's output could not be collected (wait={wait:?}, stdout={stdout:?}, stderr={stderr:?})"
     )]
@@ -162,12 +161,11 @@ impl SupervisedChild {
     }
 }
 
-/// The one place a raw `Child` exists. Keeping this type private prevents a
-/// caller from separating the handle from its mandatory reap-on-drop policy.
+/// The one place a raw `Child` exists.
+/// Keeping this type private prevents a caller from separating the handle from its mandatory reap-on-drop policy.
 #[derive(Debug)]
 struct ChildOwner {
-    /// `Some` is the live ownership capability; `None` is reachable only
-    /// after a successful wait or reap.
+    /// `Some` is the live ownership capability; `None` is reachable only after a successful wait or reap.
     child: Option<Child>,
 }
 

@@ -434,7 +434,8 @@ fn remembering(
     ))
 }
 
-/// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed. The gate a run stands on, and what discovery found on the tree it passed.
+/// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed.
+/// The gate a run stands on, and what discovery found on the tree it passed.
 ///
 /// # Errors
 /// The pristine gate and the failures of discovery.
@@ -606,9 +607,7 @@ pub fn prepare(
 
 /// Turns the mutable-file snapshot into the text a prepared session exposes.
 ///
-/// Discovery parses Rust source as UTF-8, but the immutable session boundary
-/// checks that fact again instead of allowing every later position lookup to
-/// reinterpret an encoding failure as an absent position.
+/// Discovery parses Rust source as UTF-8, but the immutable session boundary checks that fact again instead of allowing every later position lookup to reinterpret an encoding failure as an absent position.
 fn prepared_sources(
     sources: BTreeMap<String, Vec<u8>>,
 ) -> Result<BTreeMap<String, String>, EngineError> {
@@ -751,10 +750,8 @@ fn resealed(
         .collect())
 }
 
-/// Reads every mutable file of the snapshot and pairs its candidates with
-/// their catalog entries. Files without a candidate are retained because a
-/// mutation activated elsewhere can enter their loops or functions later in
-/// the same process, and those boundaries share the same step allowance.
+/// Reads every mutable file of the snapshot and pairs its candidates with their catalog entries.
+/// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
 fn plan_tree(
@@ -829,9 +826,8 @@ fn eligible(
     Ok(selected)
 }
 
-/// Keeps only placements validation was asked to decide, without renumbering
-/// them. Empty files remain in the plan so their function and loop boundaries
-/// still charge a mutation selected in another file.
+/// Keeps only placements validation was asked to decide, without renumbering them.
+/// Empty files remain in the plan so their function and loop boundaries still charge a mutation selected in another file.
 fn selected_placements(
     placements: BTreeMap<String, Vec<Placement>>,
     eligible: &BTreeSet<u32>,
@@ -929,8 +925,7 @@ struct TreeCompiler<'a> {
 }
 
 impl TreeCompiler<'_> {
-    /// Instruments and writes one planned file, reporting whether its bytes
-    /// changed since the preceding validation round.
+    /// Instruments and writes one planned file, reporting whether its bytes changed since the preceding validation round.
     fn instrument_one(
         &mut self,
         path: &str,

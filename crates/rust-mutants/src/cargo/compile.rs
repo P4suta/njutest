@@ -61,11 +61,14 @@ pub struct BuildConfig {
     pub all_features: bool,
     /// Pass `--no-default-features`.
     pub no_default_features: bool,
-    /// The target triple to compile for. `None` is the host.
+    /// The target triple to compile for.
+    /// `None` is the host.
     pub target: Option<String>,
-    /// The cargo profile to compile with. `None` is the command's own default.
+    /// The cargo profile to compile with.
+    /// `None` is the command's own default.
     pub profile: Option<String>,
-    /// How many compilation jobs cargo may run at once. `None` lets cargo choose.
+    /// How many compilation jobs cargo may run at once.
+    /// `None` lets cargo choose.
     pub jobs: Option<u32>,
     /// Whether the compiler writes debug information into what it builds.
     pub debug: bool,
@@ -122,7 +125,8 @@ impl BuildConfig {
 pub struct CompileOptions {
     /// Which command to run.
     pub kind: CompileKind,
-    /// `--target-dir`. `None` lets cargo choose, which inside a snapshot is the snapshot's own `target`.
+    /// `--target-dir`.
+    /// `None` lets cargo choose, which inside a snapshot is the snapshot's own `target`.
     pub target_dir: Option<PathBuf>,
     /// Pass `--locked`.
     pub locked: bool,
@@ -132,7 +136,8 @@ pub struct CompileOptions {
     pub timeout: Option<Duration>,
     /// What this compilation alone adds to the toolchain's environment, such as the flags a coverage build needs.
     pub env: Vec<(OsString, OsString)>,
-    /// The member packages this compilation is about. Empty is the whole workspace, and a check is always about the whole workspace whatever this says.
+    /// The member packages this compilation is about.
+    /// Empty is the whole workspace, and a check is always about the whole workspace whatever this says.
     pub packages: Vec<String>,
     /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
     pub build: BuildConfig,
@@ -189,16 +194,15 @@ pub struct Compiled {
     pub success: bool,
     /// Every message, in order, for attribution.
     pub messages: Vec<Message>,
-    /// The units that produced an artifact, with their sources. A failed unit produces none, so on a failed check this is partial.
+    /// The units that produced an artifact, with their sources.
+    /// A failed unit produces none, so on a failed check this is partial.
     pub units: Vec<Unit>,
 }
 
 /// Compiles the tree in the driver's directory and reads what it said.
 ///
 /// # Errors
-/// [`CargoErrorKind::CommandFailed`] when cargo itself could not run or
-/// timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is
-/// not messages, and the dep-info errors of [`units_of`].
+/// [`CargoErrorKind::CommandFailed`] when cargo itself could not run or timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is not messages, and the dep-info errors of [`units_of`].
 pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled, CargoError> {
     let mut spec = driver
         .toolchain

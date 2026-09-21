@@ -31,8 +31,8 @@ pub fn cargo_binary() -> PathBuf {
 /// Borrows the exact UTF-8 spelling of a path used by a textual test protocol.
 ///
 /// # Panics
-/// The path is not UTF-8. A test that passed replacement characters to the
-/// subject would exercise a different path and could not support its claim.
+/// The path is not UTF-8.
+/// A test that passed replacement characters to the subject would exercise a different path and could not support its claim.
 #[must_use]
 #[track_caller]
 #[expect(
@@ -49,12 +49,11 @@ pub fn utf8(path: &Path) -> &str {
     }
 }
 
-/// Owns the exact UTF-8 spelling of a filesystem name used by a textual test
-/// protocol.
+/// Owns the exact UTF-8 spelling of a filesystem name used by a textual test protocol.
 ///
 /// # Panics
-/// The name is not UTF-8. Replacing bytes would let two filesystem entries
-/// become one test-oracle value.
+/// The name is not UTF-8.
+/// Replacing bytes would let two filesystem entries become one test-oracle value.
 #[must_use]
 #[track_caller]
 #[expect(
@@ -96,8 +95,8 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 /// `path`, escaped the way a JSON string escapes its contents, without the quotes.
 ///
 /// # Panics
-/// A test fixture path is not UTF-8. Fixture paths enter textual Cargo and
-/// JSON protocols, so accepting a lossy spelling would test a different path.
+/// A test fixture path is not UTF-8.
+/// Fixture paths enter textual Cargo and JSON protocols, so accepting a lossy spelling would test a different path.
 #[must_use]
 #[expect(
     clippy::expect_used,
@@ -201,18 +200,11 @@ const CACHE: &str = "sccache";
 
 /// The parent's compiler wrapper, when it is a compilation cache and nothing else.
 ///
-/// A nested run builds a fixture from scratch, three hundred times over
-/// thirty-eight fixtures, each under its own target directory because sharing
-/// one would let a test pick up another's instrumented artifact (ADR 0019).
-/// The isolation is the point and it stays; what it costs is recompiling
-/// identical units, and a cache keyed on content removes that without
-/// touching it.
+/// A nested run builds a fixture from scratch, three hundred times over thirty-eight fixtures, each under its own target directory because sharing one would let a test pick up another's instrumented artifact (ADR 0019).
+/// The isolation is the point and it stays; what it costs is recompiling identical units, and a cache keyed on content removes that without touching it.
 ///
-/// Read by value rather than forwarded, because this variable is where
-/// `cargo-llvm-cov` puts a shim that instruments whatever it wraps — and a
-/// coverage run of this suite that let that reach a fixture would be
-/// measuring its own instrumentation. Two different things under one name
-/// (ADR 0023); only one of them is wanted here.
+/// Read by value rather than forwarded, because this variable is where `cargo-llvm-cov` puts a shim that instruments whatever it wraps — and a coverage run of this suite that let that reach a fixture would be measuring its own instrumentation.
+/// Two different things under one name (ADR 0023); only one of them is wanted here.
 fn compilation_cache() -> Option<std::ffi::OsString> {
     environment_for_a_run()
         .into_iter()

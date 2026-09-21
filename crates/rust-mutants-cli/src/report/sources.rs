@@ -33,8 +33,7 @@ impl Held {
 /// Every file the report's mutants name, read from `root`.
 ///
 /// # Errors
-/// [`CliError::SourceUnreadable`] when a file the report names is not under
-/// `root`, which is `RM0012`.
+/// [`CliError::SourceUnreadable`] when a file the report names is not under `root`, which is `RM0012`.
 pub fn read(document: &RunDocument, root: &Path) -> Result<BTreeMap<String, Held>, CliError> {
     let mut held: BTreeMap<String, Held> = BTreeMap::new();
     for mutant in &document.mutants {

@@ -465,10 +465,8 @@ fn a_target_that_did_not_pass_the_first_time_is_run_once_more_before_the_session
 
 /// A target whose own tests fail hands back nothing a result may rest on.
 ///
-/// The check used to be a method every caller had to remember to call, and a
-/// caller who forgot would report a kill for every mutation put to a target
-/// that answers every one of them with the same failure. There is no longer a
-/// way from a failing baseline to something a judgement can take.
+/// The check used to be a method every caller had to remember to call, and a caller who forgot would report a kill for every mutation put to a target that answers every one of them with the same failure.
+/// There is no longer a way from a failing baseline to something a judgement can take.
 #[test]
 fn a_failing_baseline_is_not_something_a_result_can_rest_on() {
     let fixture = Fixture::copy("fixture-verify-fails");

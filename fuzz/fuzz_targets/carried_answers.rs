@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::cache::store::Store;
+use njutest::cache::store::Store;
 
 /// One store for the whole process: a directory made per iteration would fuzz the operating system.
 fn store() -> &'static Store {

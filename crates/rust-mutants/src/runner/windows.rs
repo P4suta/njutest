@@ -28,8 +28,7 @@ pub(super) const SUPERVISOR_KIND: &str = "job-object";
 /// A Job Object is an inescapable process-tree container.
 pub(super) const SUPERVISION_BOUNDARY: SupervisionBoundary = SupervisionBoundary::ContainedTree;
 
-/// Makes an anonymous pipe reader pollable so its owner can cancel and join it
-/// even when a descendant retained the write handle.
+/// Makes an anonymous pipe reader pollable so its owner can cancel and join it even when a descendant retained the write handle.
 pub(super) fn configure_reader(reader: &io::PipeReader) -> io::Result<()> {
     let mode = PIPE_NOWAIT;
     #[expect(
@@ -51,7 +50,8 @@ pub(super) fn configure_reader(reader: &io::PipeReader) -> io::Result<()> {
     }
 }
 
-/// The status `TerminateJobObject` stamps on every process in the job. It never reaches a caller.
+/// The status `TerminateJobObject` stamps on every process in the job.
+/// It never reaches a caller.
 const TERMINATED_JOB_EXIT_CODE: u32 = 1;
 
 /// Owns a Windows Job Object holding one child process tree.
@@ -116,7 +116,8 @@ impl Supervisor {
         command.creation_flags(CREATE_SUSPENDED);
     }
 
-    /// Assigns the suspended child to the job and resumes it. Before assignment the caller owns the suspended child; after assignment this supervisor's Job Object owns it even when resuming fails.
+    /// Assigns the suspended child to the job and resumes it.
+    /// Before assignment the caller owns the suspended child; after assignment this supervisor's Job Object owns it even when resuming fails.
     pub(super) fn adopt(&mut self, child: &Child) -> Result<(), RunnerError> {
         let process: HANDLE = child.as_raw_handle();
         #[expect(unsafe_code, reason = "AssignProcessToJobObject has no safe binding")]
@@ -177,8 +178,8 @@ impl Drop for Supervisor {
     }
 }
 
-/// Observes leader exit without reaping it. The Job Object independently
-/// retains ownership of every contained descendant.
+/// Observes leader exit without reaping it.
+/// The Job Object independently retains ownership of every contained descendant.
 pub(super) fn exit_observed(child: &Child) -> io::Result<bool> {
     #[expect(
         unsafe_code,

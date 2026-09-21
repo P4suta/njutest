@@ -7,7 +7,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::testkit::{ModelResultClass, model_result};
+use njutest::testkit::{ModelResultClass, model_result};
 
 fuzz_target!(|data: &[u8]| {
     match model_result(data) {

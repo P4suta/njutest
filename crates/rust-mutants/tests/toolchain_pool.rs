@@ -59,11 +59,9 @@ fn prepared(fixture: &Fixture) -> Session {
 /// A prepared session whose executions are bounded by `timeout`.
 /// A session over `fixture`, with an allowance small enough that the count is never in a race with `timeout`.
 ///
-/// The engine reads no configuration file, so the default of fifty million
-/// would apply here -- about a second and a half, against bounds these tests
-/// set at two seconds. Which of the two answered would then be decided by the
-/// machine's load, and a test that asserts an outcome would pass or fail by
-/// it. A million takes fires in about thirty milliseconds (ADR 0023).
+/// The engine reads no configuration file, so the default of fifty million would apply here -- about a second and a half, against bounds these tests set at two seconds.
+/// Which of the two answered would then be decided by the machine's load, and a test that asserts an outcome would pass or fail by it.
+/// A million takes fires in about thirty milliseconds (ADR 0023).
 fn prepared_within(fixture: &Fixture, timeout: Timeout, steps: u64) -> Session {
     let workspace = Workspace::open(
         fixture.root(),

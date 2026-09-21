@@ -24,8 +24,7 @@ pub const DEFAULT_TIMEOUT: Timeout = Timeout::Auto;
 
 /// Where run reports are written when the file does not say.
 ///
-/// Reached through [`crate::app::stored::Store`] and never joined anywhere
-/// else: a command that joins it is a command that ignores the configuration.
+/// Reached through [`crate::app::stored::Store`] and never joined anywhere else: a command that joins it is a command that ignores the configuration.
 pub(crate) const DEFAULT_REPORTS_DIRECTORY: &str = "reports/mutation";
 
 /// How many run directories are kept when the file does not say.
@@ -43,7 +42,8 @@ pub const ALLOWED_TEST_ARGS: [&str; 4] = [
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
-    /// The schema version. Only `1` is understood.
+    /// The schema version.
+    /// Only `1` is understood.
     pub version: u32,
     /// What is mutated.
     pub project: Project,
@@ -85,7 +85,8 @@ impl Default for Config {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Project {
-    /// The cargo packages to mutate. Empty is every workspace member.
+    /// The cargo packages to mutate.
+    /// Empty is every workspace member.
     pub packages: Vec<String>,
     /// Workspace-relative globs a file must match to be mutable.
     pub include: Vec<String>,
@@ -105,11 +106,14 @@ pub struct Build {
     pub all_features: bool,
     /// Leave the default features off.
     pub no_default_features: bool,
-    /// The target triple to compile for. Empty is the host.
+    /// The target triple to compile for.
+    /// Empty is the host.
     pub target: String,
-    /// The cargo profile to compile with. Empty is each command's own default.
+    /// The cargo profile to compile with.
+    /// Empty is each command's own default.
     pub profile: String,
-    /// How many compilation jobs cargo may run at once. Zero lets cargo choose.
+    /// How many compilation jobs cargo may run at once.
+    /// Zero lets cargo choose.
     pub jobs: u32,
     /// Write debug information into what a run builds.
     pub debug: bool,
@@ -144,14 +148,18 @@ pub struct Mutation {
     /// Which tier of operators to apply when `operators` is empty.
     #[serde(deserialize_with = "tier", serialize_with = "tier_name")]
     pub tier: Tier,
-    /// Exactly these rules, by name. Empty means the tier.
+    /// Exactly these rules, by name.
+    /// Empty means the tier.
     pub operators: Vec<String>,
-    /// How long one mutant execution may take before it is confirmed with the machine to itself. `auto` is a multiple of what the target's own baseline took.
+    /// How long one mutant execution may take before it is confirmed with the machine to itself.
+    /// `auto` is a multiple of what the target's own baseline took.
     #[serde(deserialize_with = "timeout", serialize_with = "timeout_text")]
     pub timeout: Timeout,
-    /// How many times the active mutant's guard may be taken before its process is stopped. `0` disables this execution bound.
+    /// How many times the active mutant's guard may be taken before its process is stopped.
+    /// `0` disables this execution bound.
     pub steps: u64,
-    /// How long a build may take. `None` is no bound.
+    /// How long a build may take.
+    /// `None` is no bound.
     #[serde(
         deserialize_with = "optional_duration",
         serialize_with = "optional_duration_text"
@@ -196,7 +204,8 @@ pub struct Expect {
     /// How many mutations the locator names, when one reason is written for a set of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
-    /// Why the outcome is what it is. Required.
+    /// Why the outcome is what it is.
+    /// Required.
     pub reason: String,
     /// The outcome the run must confirm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -262,13 +271,15 @@ impl Expect {
 pub struct Skip {
     /// The paths it speaks about, as a glob against the workspace-relative path.
     pub path: String,
-    /// The lines it speaks about, as `from-to`, inclusive and 1-based. Only with a literal path.
+    /// The lines it speaks about, as `from-to`, inclusive and 1-based.
+    /// Only with a literal path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lines: Option<String>,
     /// The item it speaks about, by a suffix of the item path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<String>,
-    /// Why its author wrote it. Required.
+    /// Why its author wrote it.
+    /// Required.
     pub reason: String,
 }
 
@@ -340,7 +351,8 @@ pub struct Execution {
     pub doctests: bool,
     /// Targets never to start, by the id a report names them with.
     pub skip_targets: Vec<String>,
-    /// How many mutants to measure at once. Zero is as many as the machine has, capped at four.
+    /// How many mutants to measure at once.
+    /// Zero is as many as the machine has, capped at four.
     pub jobs: usize,
 }
 
@@ -381,7 +393,8 @@ impl Default for Reports {
     }
 }
 
-/// The thresholds a Stryker reader colours by. Nothing in this engine decides anything by them: a verdict is a claim a reader can check, and a percentage is not.
+/// The thresholds a Stryker reader colours by.
+/// Nothing in this engine decides anything by them: a verdict is a claim a reader can check, and a percentage is not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Stryker {
@@ -813,7 +826,8 @@ fn tier_name<S: Serializer>(value: &Tier, serializer: S) -> Result<S::Ok, S::Err
     serializer.serialize_str(value.name())
 }
 
-/// The annotated skeleton `rust-mutants init` writes. Every uncommented line is already the default, so the file a person starts from changes nothing.
+/// The annotated skeleton `rust-mutants init` writes.
+/// Every uncommented line is already the default, so the file a person starts from changes nothing.
 #[must_use]
 pub fn skeleton() -> String {
     format!(

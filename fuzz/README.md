@@ -22,7 +22,7 @@ and `kind` in the dictionary it learned.
 So `fuzz/seeds/<target>/` is committed and the workflow copies it into the
 corpus before running. Three gates keep it honest: `xtask/tests/fuzz_ledger.rs`
 refuses a seed directory that names no target or holds nothing, and
-`crates/njutest-cli/tests/fuzz_seeds.rs` — with the three whose readers live
+`crates/njutest/tests/fuzz_seeds.rs` — with the three whose readers live
 on the other side in `crates/rust-mutants-cli/tests/fuzz_seeds.rs` — puts
 every seed to the reader its target uses. **A seed the reader refuses is not
 a seed**: the target returns on the first line and the run explores what it

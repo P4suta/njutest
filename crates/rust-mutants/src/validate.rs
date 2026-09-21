@@ -35,9 +35,8 @@ pub trait Compile {
     /// Instruments the tree leaving out `condemned`, compiles it, and reports what the compiler said.
     ///
     /// # Errors
-    /// Whatever stopped the attempt from happening at all. A tree that
-    /// merely fails to compile is a successful attempt with
-    /// [`Attempt::success`] false.
+    /// Whatever stopped the attempt from happening at all.
+    /// A tree that merely fails to compile is a successful attempt with [`Attempt::success`] false.
     fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError>;
 }
 
@@ -264,8 +263,7 @@ pub struct Validating<'a> {
 /// Establishes which of a catalog's mutants compile.
 ///
 /// # Errors
-/// [`ValidateError::NotMutantInduced`] when the tree does not compile with
-/// nothing live, and whatever [`Compile::attempt`] reports.
+/// [`ValidateError::NotMutantInduced`] when the tree does not compile with nothing live, and whatever [`Compile::attempt`] reports.
 pub fn validate(
     catalog: &Catalog,
     compile: &mut dyn Compile,

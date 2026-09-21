@@ -61,8 +61,7 @@ struct Source<'text, 'index> {
 /// Every marker in one file, in source order.
 ///
 /// # Errors
-/// Returns the first marker that names no reason or an unknown directive, or
-/// a parser/source offset that cannot be represented exactly.
+/// Returns the first marker that names no reason or an unknown directive, or a parser/source offset that cannot be represented exactly.
 pub(super) fn markers<'text>(
     text: &'text str,
     base: u32,

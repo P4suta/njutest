@@ -132,8 +132,7 @@ impl MutantLine {
     /// What a stream says about one judged mutant of `session`.
     ///
     /// # Errors
-    /// Returns an exact-projection error when the execution duration does not
-    /// fit the stream schema's millisecond field.
+    /// Returns an exact-projection error when the execution duration does not fit the stream schema's millisecond field.
     pub fn of(
         session: &crate::session::Session,
         judged: &crate::run::Judged,
@@ -202,8 +201,7 @@ pub fn read_line(at: u64, text: &str) -> Result<Line, StreamError> {
 /// Every line of a stream, read back in order.
 ///
 /// # Errors
-/// The first line that is not one of this stream's, by its number, or an input
-/// too large for the stream's exact line-number field.
+/// The first line that is not one of this stream's, by its number, or an input too large for the stream's exact line-number field.
 pub fn read(text: &str) -> Result<Vec<Line>, StreamError> {
     text.lines()
         .map(str::trim)

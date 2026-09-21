@@ -6,7 +6,8 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-/// Why some text is not a duration. Every case names the text, so a configuration error points at the line a person wrote.
+/// Why some text is not a duration.
+/// Every case names the text, so a configuration error points at the line a person wrote.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DurationError {

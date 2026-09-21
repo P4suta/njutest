@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Repository gates. Each gate is a pure function over the tree it is given, so a test can hand it a synthetic tree and watch it refuse the right things; the command line only points it at this repository.
+//! Repository gates.
+//! Each gate is a pure function over the tree it is given, so a test can hand it a synthetic tree and watch it refuse the right things; the command line only points it at this repository.
 
 #![forbid(unsafe_code)]
 
@@ -80,7 +81,8 @@ enum Gate {
         /// The directory the run left its recording in, which is what the trace layer is re-derived from.
         #[arg(long)]
         trace: Option<std::path::PathBuf>,
-        /// The reports of the other parts of this catalog, when the run was one part. Repeatable.
+        /// The reports of the other parts of this catalog, when the run was one part.
+        /// Repeatable.
         #[arg(long = "shard", value_name = "REPORT")]
         shards: Vec<std::path::PathBuf>,
         /// The configuration file whose accepted survivors the run is held to.
@@ -103,14 +105,15 @@ enum Gate {
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
     },
-    /// A second opinion, by body shape alone, on every catch-all the ledger waives. Refuses nothing.
+    /// A second opinion, by body shape alone, on every catch-all the ledger waives.
+    /// Refuses nothing.
     Waivers,
     /// Every gate, in order.
     All,
 }
 
-/// Runs the gate named by `args` against the workspace and reports. `cargo` is
-/// the exact program selected by the process-environment composition root.
+/// Runs the gate named by `args` against the workspace and reports.
+/// `cargo` is the exact program selected by the process-environment composition root.
 pub fn run_from<I>(
     args: I,
     cargo: &OsStr,
@@ -218,8 +221,7 @@ fn audit_run(
     }
 }
 
-/// Applies process policy after the composition root has attempted its only
-/// observable output.
+/// Applies process policy after the composition root has attempted its only observable output.
 fn after_output(written: std::io::Result<()>, intended: ExitCode) -> ExitCode {
     match written {
         Ok(()) => intended,

@@ -99,9 +99,8 @@ pub struct Summary {
 /// Folds one event into the numbers, which is every kind of event a recording holds.
 ///
 /// Every payload the summary does not count is named rather than swept up,
-/// because a kind nobody counted reads exactly like a kind that happened
-/// nought times. Naming them makes the next one somebody adds a question the
-/// compiler asks here.
+/// because a kind nobody counted reads exactly like a kind that happened nought times.
+/// Naming them makes the next one somebody adds a question the compiler asks here.
 fn counted(
     summary: &mut Summary,
     open: &mut Vec<String>,

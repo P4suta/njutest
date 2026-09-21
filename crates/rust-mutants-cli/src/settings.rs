@@ -24,7 +24,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Reads the configuration a scope names and folds the flags into it. A flag given on the command line wins over the file; a list given on the command line replaces the file's list rather than adding to it.
+    /// Reads the configuration a scope names and folds the flags into it.
+    /// A flag given on the command line wins over the file; a list given on the command line replaces the file's list rather than adding to it.
     ///
     /// # Errors
     /// Returns what is wrong with the configuration, or with a duration a flag spells.

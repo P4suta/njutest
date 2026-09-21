@@ -1086,7 +1086,7 @@ fn named_domain_defaults_and_non_unit_conversions_remain_explicit() {
 fn only_exact_configuration_and_ui_defaults_are_allowlisted() {
     let contract = "//! A file.\npub enum Contract { Standard, Deep }\nimpl Default for Contract { fn default() -> Self { Self::Standard } }\n";
     assert_eq!(
-        scan_source("crates/njutest-cli/src/config.rs", contract)
+        scan_source("crates/njutest/src/config.rs", contract)
             .expect("the source parses")
             .into_iter()
             .map(|finding| finding.kind)
@@ -1094,7 +1094,7 @@ fn only_exact_configuration_and_ui_defaults_are_allowlisted() {
         []
     );
     assert_eq!(
-        scan_source("crates/njutest-cli/src/report/mod.rs", contract)
+        scan_source("crates/njutest/src/report/mod.rs", contract)
             .expect("the source parses")
             .into_iter()
             .map(|finding| finding.kind)
@@ -1454,7 +1454,7 @@ fn current_owned_inputs_cannot_invent_or_ambiguously_absorb_data() {
     }
     let provider_default = "//! A file.\n#[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] struct Response { #[serde(default)] message: Option<String> }\n";
     assert!(
-        scan_source("crates/njutest-cli/src/provider.rs", provider_default)
+        scan_source("crates/njutest/src/provider.rs", provider_default)
             .expect("it parses")
             .iter()
             .any(|finding| finding.kind == Kind::OpenDeserialization),
@@ -1473,7 +1473,7 @@ fn output_only_options_are_not_input_escapes_and_owned_v1_is_still_exact() {
     );
     let historical = "//! A file.\n#[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] struct Exchange { #[serde(flatten)] spoken: Spoken }\n";
     assert!(
-        scan_source("crates/njutest-cli/src/wire/mod.rs", historical)
+        scan_source("crates/njutest/src/wire/mod.rs", historical)
             .expect("it parses")
             .iter()
             .any(|finding| finding.kind == Kind::OpenDeserialization),
@@ -1858,7 +1858,7 @@ fn a_test_that_decides_the_layout_is_refused() {
         "and one without a separator is a name, which is a thing worth exporting"
     );
 
-    let test = "use njutest_cli::app::reports::LAYOUT;\nlet path = root.join(LAYOUT);\n";
+    let test = "use njutest::app::reports::LAYOUT;\nlet path = root.join(LAYOUT);\n";
     assert!(xtask::lints::joins(test, "LAYOUT"));
     assert_eq!(
         xtask::lints::imported_from(test, "LAYOUT").as_deref(),
@@ -1866,7 +1866,7 @@ fn a_test_that_decides_the_layout_is_refused() {
         "the import is what tells four constants of the same name apart"
     );
 
-    let asking = "use njutest_cli::app::reports::Store;\nlet path = Store::read(root).runs();\n";
+    let asking = "use njutest::app::reports::Store;\nlet path = Store::read(root).runs();\n";
     assert!(
         !xtask::lints::joins(asking, "LAYOUT"),
         "a test that asks the type that owns the layout decides nothing"

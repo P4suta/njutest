@@ -33,9 +33,8 @@ pub struct CatalogDocument {
 
 /// What a catalog-v1 preparation asked for.
 ///
-/// The current run-report and stream carry additional execution controls.  A
-/// separate type keeps those fields from silently changing the historical
-/// catalog-v1 identity.
+/// The current run-report and stream carry additional execution controls.
+/// A separate type keeps those fields from silently changing the historical catalog-v1 identity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogSelectionDocument {
@@ -197,8 +196,7 @@ pub struct SkipDocument {
 /// The catalog of a prepared session as a document.
 ///
 /// # Errors
-/// Returns an engine error when a workspace name or mutation byte sequence
-/// cannot cross the catalog's exact UTF-8 wire boundary.
+/// Returns an engine error when a workspace name or mutation byte sequence cannot cross the catalog's exact UTF-8 wire boundary.
 pub fn document(
     session: &Session,
     options: &PrepareOptions,
@@ -223,8 +221,7 @@ pub fn document(
 /// The tree a session read, as a document.
 ///
 /// # Errors
-/// Returns an engine error when the workspace name cannot cross the catalog's
-/// exact UTF-8 wire boundary.
+/// Returns an engine error when the workspace name cannot cross the catalog's exact UTF-8 wire boundary.
 pub fn workspace_document(session: &Session) -> Result<WorkspaceDocument, crate::EngineError> {
     let host = session.toolchain().host().to_owned();
     let (arch, os) = host.split_once('-').unwrap_or((&host, ""));
@@ -309,8 +306,7 @@ pub fn skip_documents(session: &Session) -> Vec<SkipDocument> {
 /// One accepted mutant, as a document.
 ///
 /// # Errors
-/// Returns an engine error when the original or replacement bytes are not
-/// exact UTF-8 and therefore cannot inhabit the catalog wire type.
+/// Returns an engine error when the original or replacement bytes are not exact UTF-8 and therefore cannot inhabit the catalog wire type.
 pub fn mutant_document(
     session: &Session,
     mutant: &Mutant,

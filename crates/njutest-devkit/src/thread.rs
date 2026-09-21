@@ -37,8 +37,8 @@ impl<T: Send + 'static> JoinedThread<T> {
     }
 }
 
-/// A scoped thread. The scope itself is the early-return cleanup proof; this
-/// value additionally makes the normal-path join and panic branch explicit.
+/// A scoped thread.
+/// The scope itself is the early-return cleanup proof; this value additionally makes the normal-path join and panic branch explicit.
 #[derive(Debug)]
 pub struct ScopedThread<'scope, T> {
     owner: ScopedThreadOwner<'scope, T>,

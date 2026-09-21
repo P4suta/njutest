@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled. The end-to-end tests drive the cargo that built this test binary against the fixtures, offline.
+//! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled.
+//! The end-to-end tests drive the cargo that built this test binary against the fixtures, offline.
 
 #![expect(
     clippy::panic,

@@ -8,11 +8,13 @@ use crate::span::{Span, SpanError};
 /// One byte-range replacement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Splice {
-    /// The half-open byte range this replaces. An empty span is an insertion at that offset.
+    /// The half-open byte range this replaces.
+    /// An empty span is an insertion at that offset.
     pub span: Span,
     /// The bytes the span is expected to cover.
     pub original: Vec<u8>,
-    /// Written in their place. Empty deletes the span.
+    /// Written in their place.
+    /// Empty deletes the span.
     pub replacement: Vec<u8>,
 }
 
@@ -325,10 +327,9 @@ impl OffsetMap {
         }
     }
 
-    /// Translates an original endpoint to the output immediately before an
-    /// insertion at that exact endpoint. Replacements ending there are still
-    /// included. This is the right affinity for the exclusive end of a
-    /// nonempty source span.
+    /// Translates an original endpoint to the output immediately before an insertion at that exact endpoint.
+    /// Replacements ending there are still included.
+    /// This is the right affinity for the exclusive end of a nonempty source span.
     fn to_output_before_insertion(&self, offset: u32) -> (u32, bool) {
         if offset > self.src_len {
             return (self.out_len, false);
@@ -369,11 +370,11 @@ impl OffsetMap {
         }
     }
 
-    /// Translates a whole span into output coordinates. Both endpoints must translate exactly; a span that encloses splices grows or shrinks by their net effect, which is the case the nested-rewrite path depends on.
+    /// Translates a whole span into output coordinates.
+    /// Both endpoints must translate exactly; a span that encloses splices grows or shrinks by their net effect, which is the case the nested-rewrite path depends on.
     ///
     /// # Errors
-    /// Returns a span that is invalid, out of range, or starts or ends inside
-    /// replaced bytes.
+    /// Returns a span that is invalid, out of range, or starts or ends inside replaced bytes.
     pub fn map_span(&self, span: Span) -> Result<Span, SpliceError> {
         span.validate()
             .map_err(|source| SpliceError::Span { index: 0, source })?;
@@ -402,7 +403,8 @@ impl OffsetMap {
     }
 }
 
-/// The number of line breaks in `bytes`. Only `\n` is counted: a CRLF file has exactly one `\n` per line break just as an LF file does.
+/// The number of line breaks in `bytes`.
+/// Only `\n` is counted: a CRLF file has exactly one `\n` per line break just as an LF file does.
 #[must_use]
 #[expect(
     clippy::naive_bytecount,

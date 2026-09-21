@@ -8,19 +8,14 @@ use std::time::{Duration, Instant};
 
 /// How long taking things back may take before the rest is left for next time.
 ///
-/// Removing a directory is usually instant and occasionally is not: one a
-/// wedged device still holds takes minutes to refuse, and a loop over a few
-/// hundred of those runs for a day. Every reclamation here is housekeeping
-/// done on the way to the work or on the way out of it, so it is the one thing
-/// that has to be faster than what it is cleaning up after.
+/// Removing a directory is usually instant and occasionally is not: one a wedged device still holds takes minutes to refuse, and a loop over a few hundred of those runs for a day.
+/// Every reclamation here is housekeeping done on the way to the work or on the way out of it, so it is the one thing that has to be faster than what it is cleaning up after.
 pub const BUDGET: Duration = Duration::from_secs(10);
 
 /// What a reclamation did, and what it did not.
 ///
-/// The second half is the part that was being dropped everywhere: a directory
-/// that refused and a directory that was never reached both stay on the disk,
-/// and a caller that is handed only a count of successes has nothing to put in
-/// a ledger and nothing to tell a person.
+/// The second half is the part that was being dropped everywhere: a directory that refused and a directory that was never reached both stay on the disk,
+/// and a caller that is handed only a count of successes has nothing to put in a ledger and nothing to tell a person.
 #[derive(Debug, Default)]
 pub struct Reclaimed {
     /// Every directory that went.

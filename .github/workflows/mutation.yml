@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# cargo-mutants, the external mutation tester, against this repository: one of
-# the two independent measurements of how strong this suite is (the other is
-# `mise run dogfood`, njutest and rust-mutants run on themselves). A survivor
-# is a test to write or an acceptance to record with a reason.
+# cargo-mutants, the external mutation tester, against this repository: one of the two independent measurements of how strong this suite is (the other is `mise run dogfood`, njutest and rust-mutants run on themselves).
+# A survivor is a test to write or an acceptance to record with a reason.
 name: mutation
 
 on:
@@ -28,7 +26,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        package: [rust-mutants, rust-mutants-cli, njutest, njutest-cli, njutest-macros]
+        package: [rust-mutants, rust-mutants-cli, njutest, njutest-macros, njutest-devkit]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

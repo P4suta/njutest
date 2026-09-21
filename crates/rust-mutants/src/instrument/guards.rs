@@ -33,19 +33,20 @@ pub(super) struct Alternative {
     pub(super) probe: Option<crate::probe::Question>,
 }
 
-/// A composed guard: its text, where each alternative's own text sits in it, and where the original branch does. The offsets are relative to the start of the text.
+/// A composed guard: its text, where each alternative's own text sits in it, and where the original branch does.
+/// The offsets are relative to the start of the text.
 pub(super) struct Composed {
     pub(super) text: String,
     /// One entry per alternative, in the order given: the mutant index and the byte range its text occupies.
     pub(super) alternatives: Vec<(u32, std::ops::Range<usize>)>,
     /// Where the original branch's text starts.
     pub(super) original_at: usize,
-    /// Every mutant this guard evaluates beside what it replaces, ascending. A form that cannot compare reports none, whatever it was offered.
+    /// Every mutant this guard evaluates beside what it replaces, ascending.
+    /// A form that cannot compare reports none, whatever it was offered.
     pub(super) compared: Vec<u32>,
 }
 
-/// A guard whose byte offsets cannot be represented by the platform's string
-/// index type.
+/// A guard whose byte offsets cannot be represented by the platform's string index type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct OffsetOverflow;
 
@@ -132,10 +133,9 @@ impl Paths<'_> {
     }
 }
 
-/// Form C: a boolean selector with no block, so the site introduces no
-/// temporary scope of its own. The outer generated macro invocation is load
-/// bearing: a nested Form C site sits inside its parent's `&&` chain, where
-/// `&&` binds tighter than the `||` this composes. Unlike a generic function,
+/// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own.
+/// The outer generated macro invocation is load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.
+/// Unlike a generic function,
 /// the identity macro preserves the surrounding expression's coercion site.
 fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
     let path = paths.active();
@@ -184,9 +184,8 @@ enum Probing {
     Refused,
 }
 
-/// Forms E and S: a branch chain. Both have the same branches; Form E is
-/// grouped by the generated identity macro because it stands where a value
-/// does.
+/// Forms E and S: a branch chain.
+/// Both have the same branches; Form E is grouped by the generated identity macro because it stands where a value does.
 fn chain(
     paths: &Paths<'_>,
     alternatives: &[Alternative],

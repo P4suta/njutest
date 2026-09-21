@@ -101,16 +101,16 @@ fn validate_closed_source_inventory(root: &Path) -> Result<(), GateFailure> {
 
 const ALLOWED_PATH_REDIRECTS: [(&str, &str); 8] = [
     (
-        "compiler-surfaces/src/bin/njutest_cli.rs",
-        "../../../crates/njutest-cli/src/lib.rs",
+        "compiler-surfaces/src/bin/njutest.rs",
+        "../../../crates/njutest/src/lib.rs",
     ),
     (
-        "compiler-surfaces/src/bin/njutest_cli.rs",
-        "../../../crates/njutest-cli/src/bin/cargo-njutest/main.rs",
+        "compiler-surfaces/src/bin/njutest.rs",
+        "../../../crates/njutest/src/bin/cargo-njutest/main.rs",
     ),
     (
-        "compiler-surfaces/src/bin/njutest_cli.rs",
-        "../../../crates/njutest-cli/src/main.rs",
+        "compiler-surfaces/src/bin/njutest.rs",
+        "../../../crates/njutest/src/main.rs",
     ),
     (
         "compiler-surfaces/src/bin/rust_mutants_cli.rs",
@@ -748,11 +748,7 @@ fn validate_proc_macros(
         .iter()
         .map(|export| (export.kind, export.name.as_str()))
         .collect::<Vec<_>>();
-    let expected = [
-        ("attribute", "integration"),
-        ("attribute", "unit"),
-        ("derive", "AllVariants"),
-    ];
+    let expected = [("derive", "AllVariants")];
     if observed != expected {
         return Err(GateFailure(format!(
             "lints: njutest-macros exports {observed:?}, expected exactly {expected:?}"
@@ -763,9 +759,7 @@ fn validate_proc_macros(
 
 /// Whether a waiving file and a declaring file are compiled as one crate, which is what decides whether an arm could have been left out.
 ///
-/// An integration test is its own crate, so an enum that says it may grow
-/// forces a place to be left for the growth there even though the same match
-/// inside the declaring crate would not need one.
+/// An integration test is its own crate, so an enum that says it may grow forces a place to be left for the growth there even though the same match inside the declaring crate would not need one.
 fn shares_a_crate(waiving: &str, declaring: &str) -> bool {
     compiled_as(waiving) == compiled_as(declaring)
 }
@@ -778,12 +772,9 @@ fn compiled_as(path: &str) -> String {
 
 /// A second opinion on every catch-all the ledger still waives, taken from the shape of its body.
 ///
-/// This never refuses anything. The ledger is a reviewed list and the review
-/// is a person's; what a machine can add is a reading that was not derived
-/// from theirs, so the two can disagree. An audit that shares the
-/// implementation it audits agrees with it for free
-/// (ADR 0023), which is why this reads only the syntax and says so in every line it
-/// prints.
+/// This never refuses anything.
+/// The ledger is a reviewed list and the review is a person's; what a machine can add is a reading that was not derived from theirs, so the two can disagree.
+/// An audit that shares the implementation it audits agrees with it for free (ADR 0023), which is why this reads only the syntax and says so in every line it prints.
 ///
 /// # Errors
 /// A file the ledger names that cannot be read.
@@ -936,16 +927,11 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
 /// Every exported constant that more than one module joins onto a path for itself.
 ///
 /// This is the shape the report layout had: a `pub const` spelling a structure,
-/// joined in six places and in the tests, so the configuration could not own
-/// it and moving it meant moving all of them. One module joining its own
-/// constant is not that — it is a name it happens to have written down — and a
-/// document type or a URL is not a path at all, which is why this counts the
-/// Every catch-all over a set this repository closes, over the whole tree at once.
+/// joined in six places and in the tests, so the configuration could not own it and moving it meant moving all of them.
+/// One module joining its own constant is not that — it is a name it happens to have written down — and a document type or a URL is not a path at all, which is why this counts the Every catch-all over a set this repository closes, over the whole tree at once.
 ///
-/// Two passes, because whether an arm may catch everything depends on who owns
-/// the enum, and that is a fact about the workspace rather than about the file
-/// being read. A foreign enum keeps its catch-all: the values of `syn::Expr`
-/// are not ours to list, so an arm that stands for the rest is the handling.
+/// Two passes, because whether an arm may catch everything depends on who owns the enum, and that is a fact about the workspace rather than about the file being read.
+/// A foreign enum keeps its catch-all: the values of `syn::Expr` are not ours to list, so an arm that stands for the rest is the handling.
 fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
     let (ours, open) = sets(root, files)?;
     let mut standing: Vec<Waived> = Vec::new();
@@ -985,9 +971,7 @@ fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, 
 
 /// The enums this repository declares, and which of those say they may grow, by the file that declared them.
 ///
-/// Two answers from one read of the tree, because a caller that needs the
-/// second always needs the first and two walks would be two chances to
-/// disagree about what an enum of ours is.
+/// Two answers from one read of the tree, because a caller that needs the second always needs the first and two walks would be two chances to disagree about what an enum of ours is.
 ///
 /// # Errors
 /// A file that cannot be read.
@@ -1018,9 +1002,7 @@ fn sets(
 
 /// The file, the item and the set a ledger name is made of.
 ///
-/// A name carries no line, which is the point of it, so the second reading
-/// finds the arms for itself rather than being handed a coordinate that may
-/// by now be pointing at something else.
+/// A name carries no line, which is the point of it, so the second reading finds the arms for itself rather than being handed a coordinate that may by now be pointing at something else.
 fn parted(entry: &str) -> Result<(&str, &str, &str, usize), GateFailure> {
     let Some((place, rest)) = entry.split_once(" over ") else {
         return Err(GateFailure(format!(
@@ -1051,12 +1033,8 @@ fn parted(entry: &str) -> Result<(&str, &str, &str, usize), GateFailure> {
 
 /// How many waivers the catch-all ledger still carries, held to the ceiling beside it.
 ///
-/// In the pass line because a number somebody sees every run is a number they
-/// notice moving, and a file of forty-four that nobody could shorten was a
-/// file nobody opened. Held to `xtask/waiver_ceiling.txt` because noticing is
-/// not holding: the ledger's header has always said it may shrink and never
-/// grow, and until now the count was printed and compared against nothing, so
-/// a waiver could be granted by the same hand that wrote the code wanting one.
+/// In the pass line because a number somebody sees every run is a number they notice moving, and a file of forty-four that nobody could shorten was a file nobody opened.
+/// Held to `xtask/waiver_ceiling.txt` because noticing is not holding: the ledger's header has always said it may shrink and never grow, and until now the count was printed and compared against nothing, so a waiver could be granted by the same hand that wrote the code wanting one.
 ///
 /// # Errors
 /// Either file cannot be read, or the ledger has grown past the ceiling.
@@ -1121,15 +1099,11 @@ fn counted(root: &Path, relative: &str) -> Result<Vec<String>, GateFailure> {
 
 /// Which of these the ledger still waives, and which nobody has reviewed.
 ///
-/// The ledger may shrink and never grow. A line that is still there is
-/// reported as nothing; a catch-all that is not on it is refused, so writing
-/// one is not a thing anybody decides while writing — it is a line somebody
-/// else reads.
+/// The ledger may shrink and never grow.
+/// A line that is still there is reported as nothing; a catch-all that is not on it is refused, so writing one is not a thing anybody decides while writing — it is a line somebody else reads.
 /// A group of catch-all arms the ledger either waives or has never been shown.
 ///
-/// `name` is what the ledger holds and `line` is only where to look: a
-/// coordinate cannot say what is being waived, and a ledger that keyed on
-/// one waived whatever happened to be standing there when it was next read.
+/// `name` is what the ledger holds and `line` is only where to look: a coordinate cannot say what is being waived, and a ledger that keyed on one waived whatever happened to be standing there when it was next read.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Waived {
     name: String,
@@ -1566,8 +1540,7 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
 /// Every milestone-shaped name in the book resolves to exactly one row in the roadmap.
 ///
 /// # Errors
-/// The roadmap registry is malformed, a page cannot be read, or a page names
-/// a milestone the registry does not declare.
+/// The roadmap registry is malformed, a page cannot be read, or a page names a milestone the registry does not declare.
 pub fn milestones(root: &Path) -> Result<String, GateFailure> {
     let roadmap_path = root.join("docs/roadmap.md");
     let roadmap = std::fs::read_to_string(&roadmap_path)
@@ -1609,12 +1582,10 @@ pub fn milestones(root: &Path) -> Result<String, GateFailure> {
     ))
 }
 
-/// Every workspace crate declares what Rust visibility means for it, and every
-/// incidental surface is named by the private compiler harness.
+/// Every workspace crate declares what Rust visibility means for it, and every incidental surface is named by the private compiler harness.
 ///
 /// # Errors
-/// Cargo metadata is unreadable, a declaration is absent or contradictory, or
-/// the compiler harness and the incidental declarations are not the same set.
+/// Cargo metadata is unreadable, a declaration is absent or contradictory, or the compiler harness and the incidental declarations are not the same set.
 pub fn surfaces(root: &Path) -> Result<String, GateFailure> {
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
@@ -1947,8 +1918,7 @@ fn read_probe_logs(path: &Path) -> Result<Vec<String>, engineaudit::AuditError> 
 /// What a release is made of, as a `CycloneDX` document.
 ///
 /// # Errors
-/// A `cargo metadata` that could not be run or read, or a file that could not
-/// be written.
+/// A `cargo metadata` that could not be run or read, or a file that could not be written.
 pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
     let asked = std::process::Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--locked"])

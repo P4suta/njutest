@@ -144,7 +144,7 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
         vec![
             "rust-mutants".to_owned(),
             "rust-mutants-cli".to_owned(),
-            "njutest-cli".to_owned(),
+            "njutest".to_owned(),
             "xtask".to_owned(),
         ],
         "the ledger measures every package of this workspace: the engine, the command line it \
@@ -331,7 +331,7 @@ fn every_schema_this_workspace_ships_is_one_a_test_holds_a_real_document_to() {
     assert!(!shipped.is_empty(), "this workspace ships schemas");
 
     let mut suites = Vec::new();
-    for crate_name in ["njutest-cli", "rust-mutants-cli", "rust-mutants", "njutest"] {
+    for crate_name in ["njutest", "rust-mutants-cli", "rust-mutants", "njutest"] {
         let directory = root.join("crates").join(crate_name).join("tests");
         for entry in directory_entries(&directory) {
             if entry.path().extension().is_some_and(|one| one == "rs") {
@@ -379,7 +379,7 @@ fn every_finding_kind_a_report_can_carry_is_one_a_test_names() {
 fn suites() -> String {
     let root = njutest_devkit::paths::workspace_root();
     let mut read = String::new();
-    for crate_name in ["njutest-cli", "rust-mutants-cli", "rust-mutants", "njutest"] {
+    for crate_name in ["njutest", "rust-mutants-cli", "rust-mutants", "njutest"] {
         let directory = root.join("crates").join(crate_name).join("tests");
         for entry in directory_entries(&directory) {
             if entry.path().extension().is_some_and(|one| one == "rs") {

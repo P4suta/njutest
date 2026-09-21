@@ -16,10 +16,8 @@ use crate::report::run as run_report;
 
 /// Where this project keeps what its runs leave behind, and the only thing that knows it.
 ///
-/// The directory is configuration, so every command has to ask the same
-/// question the same way. Three of them used to join the default instead, and
-/// a project that had moved the directory got two commands reading a place
-/// nothing was written to.
+/// The directory is configuration, so every command has to ask the same question the same way.
+/// Three of them used to join the default instead, and a project that had moved the directory got two commands reading a place nothing was written to.
 #[derive(Debug, Clone)]
 pub struct Store {
     root: PathBuf,
@@ -85,9 +83,8 @@ pub fn run_id(now: Timestamp) -> Result<RunId, RunIdError> {
 /// Writes the report under `directory/<id>/`, and the pointer that names the newest run.
 ///
 /// # Errors
-/// [`CliError::WriteFailed`] when either the report or the pointer cannot be
-/// written. A report stored under a pointer that still names the run before it
-/// is read as that run's, so both are written or the run says it failed.
+/// [`CliError::WriteFailed`] when either the report or the pointer cannot be written.
+/// A report stored under a pointer that still names the run before it is read as that run's, so both are written or the run says it failed.
 pub fn store(
     directory: &Path,
     id: &RunId,
@@ -129,7 +126,8 @@ fn disowned(directory: &Path) -> Result<(), CliError> {
     std::fs::write(&path, b"*\n").map_err(|source| CliError::writing(&path, source))
 }
 
-/// Keeps the newest `keep` stored runs and the newest `keep` recordings of the other commands. Both sort chronologically by name, so the oldest are the first.
+/// Keeps the newest `keep` stored runs and the newest `keep` recordings of the other commands.
+/// Both sort chronologically by name, so the oldest are the first.
 ///
 /// # Errors
 /// [`CliError::StoredRunsUnreadable`] when the directories cannot be enumerated completely.
@@ -181,11 +179,8 @@ pub fn kept(directory: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), CliError> 
 
 /// Removes everything but the newest `keep` of `directories`, within a budget.
 ///
-/// This runs on every run that stores a report, so it is the one thing here
-/// that must be faster than what it is cleaning up after: a directory on a
-/// wedged mount takes minutes to refuse, and the run cannot exit until it
-/// does. What is not reached stays, is still the oldest, and is what the next
-/// run starts with.
+/// This runs on every run that stores a report, so it is the one thing here that must be faster than what it is cleaning up after: a directory on a wedged mount takes minutes to refuse, and the run cannot exit until it does.
+/// What is not reached stays, is still the oldest, and is what the next run starts with.
 ///
 /// # Errors
 /// Returns the exact count-conversion or cleanup failure; a partial cleanup is never called whole.
@@ -221,8 +216,8 @@ pub fn oldest(directories: &[PathBuf], keep: u32) -> Result<(), CliError> {
 /// Every directory directly under `directory`, in name order.
 ///
 /// # Errors
-/// [`CliError::StoredRunsUnreadable`] when opening the directory, reading an entry, or reading its
-/// type fails. A partial list is never reported as the complete set of stored runs.
+/// [`CliError::StoredRunsUnreadable`] when opening the directory, reading an entry, or reading its type fails.
+/// A partial list is never reported as the complete set of stored runs.
 pub fn subdirectories(directory: &Path) -> Result<Vec<PathBuf>, CliError> {
     let unreadable = |source| CliError::StoredRunsUnreadable {
         path: directory.to_path_buf(),
@@ -247,8 +242,7 @@ pub fn subdirectories(directory: &Path) -> Result<Vec<PathBuf>, CliError> {
 /// The report of the run a command was told to read, or of the newest when it was told nothing.
 ///
 /// # Errors
-/// [`CliError::ReportMissing`] when `named` is not a stored run under
-/// `directory`, and whatever [`newest`] refuses when nothing is named.
+/// [`CliError::ReportMissing`] when `named` is not a stored run under `directory`, and whatever [`newest`] refuses when nothing is named.
 pub fn report_of(directory: &Path, named: Option<&str>) -> Result<PathBuf, CliError> {
     let Some(named) = named else {
         return newest(directory);

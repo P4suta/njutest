@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The engine trace: diagnostic exhaust under the rules of ADR 0002. Never a claim, never a failure, honest about drops.
+//! The engine trace: diagnostic exhaust under the rules of ADR 0002.
+//! Never a claim, never a failure, honest about drops.
 
 #![expect(
     clippy::expect_used,
@@ -76,10 +77,8 @@ fn broken(dir: &std::path::Path) -> Sink {
 
 /// One recorded execution of a process that ran and exited zero.
 ///
-/// Written out rather than filled from a `Default`. A process ends exactly one
-/// way, so the record has no value meaning nobody said which — and a builder
-/// that took one would put "could not be started" on a process that ran
-/// (ADR 0023).
+/// Written out rather than filled from a `Default`.
+/// A process ends exactly one way, so the record has no value meaning nobody said which — and a builder that took one would put "could not be started" on a process that ran (ADR 0023).
 fn exec(argv: &[&str]) -> ExecRecord {
     ExecRecord {
         argv: argv.iter().map(|s| (*s).to_owned()).collect(),

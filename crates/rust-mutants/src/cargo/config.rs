@@ -132,8 +132,7 @@ pub fn home(env: &[(OsString, OsString)]) -> Option<PathBuf> {
 /// The value of `CARGO_ENCODED_RUSTFLAGS` for a command, or nothing when there is nothing to say and the project's own configuration keeps applying.
 ///
 /// # Errors
-/// Refuses a non-UTF-8 flag variable instead of changing its bytes with a
-/// lossy conversion.
+/// Refuses a non-UTF-8 flag variable instead of changing its bytes with a lossy conversion.
 pub fn encoded(
     env: &[(OsString, OsString)],
     configured: &Configured,

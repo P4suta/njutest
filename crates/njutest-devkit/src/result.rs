@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Closed branch shapes for assertions that inspect a `Result` or `Option`
-//! before extracting its payload.
+//! Closed branch shapes for assertions that inspect a `Result` or `Option` before extracting its payload.
 
 /// Which branch a [`Result`] inhabits, without discarding either payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,8 +12,7 @@ pub enum ResultState {
     Refused,
 }
 
-/// Returns the branch of `result` while leaving its payload available to the
-/// caller's following exhaustive match.
+/// Returns the branch of `result` while leaving its payload available to the caller's following exhaustive match.
 #[must_use]
 pub const fn result_state<T, E>(result: &Result<T, E>) -> ResultState {
     match result {
@@ -32,8 +30,7 @@ pub enum OptionState {
     Absent,
 }
 
-/// Returns the branch of `option` while leaving its payload available to the
-/// caller's following exhaustive match.
+/// Returns the branch of `option` while leaving its payload available to the caller's following exhaustive match.
 #[must_use]
 pub const fn option_state<T>(option: Option<&T>) -> OptionState {
     match option {

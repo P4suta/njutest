@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 version: 2
 updates:
-  # Both lock files, in one pull request. `fuzz/` is a workspace of its own
-  # that path-depends on the crates here, so a bump in this one moves versions
-  # in that one's lock too. Left to itself it would be a pull request that
-  # cannot pass:
+  # Both lock files, in one pull request.
+  # `fuzz/` is a workspace of its own that path-depends on the crates here, so a bump in this one moves versions in that one's lock too.
+  # Left to itself it would be a pull request that cannot pass:
   #
   #     error: cannot update the lock file fuzz/Cargo.lock because --locked
   #     was passed to prevent this
@@ -34,8 +33,7 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: chore
-    # `dtolnay/rust-toolchain@<ref>`: the toolchain comes from
-    # rust-toolchain.toml, and the action ref is pinned by hand.
+    # `dtolnay/rust-toolchain@<ref>`: the toolchain comes from rust-toolchain.toml, and the action ref is pinned by hand.
     ignore:
       - dependency-name: "dtolnay/rust-toolchain"
     groups:

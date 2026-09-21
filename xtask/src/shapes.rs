@@ -9,10 +9,8 @@ use syn::visit::Visit;
 
 /// What a catch-all arm's body does with everything the named arms did not take.
 ///
-/// Read off the syntax, so it knows nothing about why the arm is there. That
-/// is the point: a reading derived from the one that put the line in the
-/// ledger would agree with it for free, and agreement bought that way is
-/// worth nothing (ADR 0023).
+/// Read off the syntax, so it knows nothing about why the arm is there.
+/// That is the point: a reading derived from the one that put the line in the ledger would agree with it for free, and agreement bought that way is worth nothing (ADR 0023).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Shape {
     /// The rest is the answer: a literal, a unit, a `continue`, nothing at all.
@@ -94,9 +92,8 @@ fn stopping(path: &syn::Path) -> Shape {
 
 /// Whether a path used as an answer names a value of a set this repository closes.
 ///
-/// `None` and `Ordering::Equal` are the rest, said once. A variant of one of
-/// our own enums is a verdict, and a verdict handed to everything nobody
-/// named is the arm somebody's next variant falls into.
+/// `None` and `Ordering::Equal` are the rest, said once.
+/// A variant of one of our own enums is a verdict, and a verdict handed to everything nobody named is the arm somebody's next variant falls into.
 fn named(path: &syn::Path, ours: &[String]) -> Shape {
     let head = path
         .segments

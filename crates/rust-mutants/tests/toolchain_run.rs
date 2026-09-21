@@ -21,12 +21,9 @@ use rust_mutants::workspace::{OpenOptions, Workspace};
 
 /// A session over `fixture`, bounded so that each half of its contract is answered by the thing that should answer it.
 ///
-/// The engine reads no configuration file, so a fixture's own `steps` does not
-/// reach here and the default of fifty million would apply. That spends in
-/// about a second and a half, against a two-second bound chosen so a four
-/// second pause can beat it -- a margin of a quarter, which load closes. A
-/// million takes fires in about thirty milliseconds and is not in the race
-/// (ADR 0023).
+/// The engine reads no configuration file, so a fixture's own `steps` does not reach here and the default of fifty million would apply.
+/// That spends in about a second and a half, against a two-second bound chosen so a four second pause can beat it -- a margin of a quarter, which load closes.
+/// A million takes fires in about thirty milliseconds and is not in the race (ADR 0023).
 fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
     let mut vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
     for (name, value) in env {

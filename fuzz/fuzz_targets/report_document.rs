@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::report::{audit, json};
+use njutest::report::{audit, json};
 
 fuzz_target!(|text: &str| {
     let Ok(report) = json::parse(text) else {
@@ -24,7 +24,7 @@ fuzz_target!(|text: &str| {
     let reparsed = json::parse(&rendered).expect("it reads back");
     assert_eq!(reparsed, report);
 
-    let Ok(stream) = njutest_cli::report::lines::stream(&report) else {
+    let Ok(stream) = njutest::report::lines::stream(&report) else {
         return;
     };
     let verdicts = stream

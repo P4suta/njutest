@@ -212,10 +212,8 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
 
 /// Whether a detail names a thing rather than only asserting a state.
 ///
-/// A number, a path, a variable or a quoted name is something a reader can go
-/// and look at. "Nothing is left over" is a claim about somewhere nobody
-/// identified, and a reader whose `TMPDIR` is not what they think has been
-/// given a clean bill for the wrong place.
+/// A number, a path, a variable or a quoted name is something a reader can go and look at.
+/// "Nothing is left over" is a claim about somewhere nobody identified, and a reader whose `TMPDIR` is not what they think has been given a clean bill for the wrong place.
 fn names_something(detail: &str) -> bool {
     detail.chars().any(|one| one.is_ascii_digit())
         || detail.contains('/')
@@ -228,10 +226,8 @@ fn names_something(detail: &str) -> bool {
 
 /// A check that passed says what it looked at, not only that it was well.
 ///
-/// Two of them said "nothing is left over" and "no reserved variable is set"
-/// and named neither the directory nor the variables, so a reader whose
-/// `TMPDIR` was not what they thought got a clean bill for somewhere nobody
-/// had identified. A pass a reader cannot check is a pass they learn to skip,
+/// Two of them said "nothing is left over" and "no reserved variable is set" and named neither the directory nor the variables, so a reader whose `TMPDIR` was not what they thought got a clean bill for somewhere nobody had identified.
+/// A pass a reader cannot check is a pass they learn to skip,
 /// and the failing branch of each of those checks already named the thing.
 #[test]
 fn every_check_that_passed_names_what_it_looked_at() {

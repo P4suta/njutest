@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::config::Config;
+use njutest::config::Config;
 
 fuzz_target!(|text: &str| {
     let Ok(config) = Config::parse(text, std::path::Path::new(".njutest.toml")) else {

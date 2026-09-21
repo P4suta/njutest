@@ -60,9 +60,7 @@ pub const DIFFERENT_TARGETS: &str =
 /// The digest of each executable, by target identity.
 ///
 /// # Errors
-/// Returns the path of the first executable that could not be read: a build
-/// that said it produced a file this cannot read is not a build this run may
-/// draw a conclusion from.
+/// Returns the path of the first executable that could not be read: a build that said it produced a file this cannot read is not a build this run may draw a conclusion from.
 pub fn digests<'a, I>(executables: I) -> Result<Artifacts, ArtifactError>
 where
     I: IntoIterator<Item = (&'a str, &'a Path)>,

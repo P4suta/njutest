@@ -254,7 +254,7 @@ fn every_fixture_is_driven_by_a_test_that_names_it() {
     for crate_name in [
         "rust-mutants",
         "rust-mutants-cli",
-        "njutest-cli",
+        "njutest",
         "njutest",
         "njutest-devkit",
     ] {

@@ -304,9 +304,8 @@ const RAW_REMOVAL: &str = "remove_dir_all";
 
 /// What writing a terminal sequence looks like: the introducer and what must follow it, spelled either way.
 ///
-/// The introducer alone is not enough. A renderer that measures how wide a
-/// painted line is has to *read* one to skip it, and refusing that would
-/// refuse the one function that makes a caret land under the right column.
+/// The introducer alone is not enough.
+/// A renderer that measures how wide a painted line is has to *read* one to skip it, and refusing that would refuse the one function that makes a caret land under the right column.
 /// What is refused is putting a sequence together.
 const ESCAPES: [&str; 6] = [
     "\u{1b}[", "\u{1b}]", "\\u{1b}[", "\\u{1b}]", "\\x1b[", "\\x1b]",
@@ -320,16 +319,14 @@ const PAINT_RULE: [&str; 2] = ["xtask/src/lints.rs", "xtask/tests/lints.rs"];
 
 /// The module that is allowed to make it in a loop, being the one that bounds it.
 ///
-/// A test may make it too: what a test removes is what it made, and it is
-/// standing there watching.
+/// A test may make it too: what a test removes is what it made, and it is standing there watching.
 const RECLAIMER: &str = "crates/rust-mutants/src/reclaim.rs";
 
 /// The only modules allowed to touch `serde_json`'s last-key-wins readers.
 ///
-/// Repository-relative equality matters: a suffix match would let an
-/// arbitrary nested `strictjson.rs` grant itself the parser capability.
+/// Repository-relative equality matters: a suffix match would let an arbitrary nested `strictjson.rs` grant itself the parser capability.
 const STRICT_JSON_READERS: [&str; 5] = [
-    "crates/njutest-cli/src/strictjson.rs",
+    "crates/njutest/src/strictjson.rs",
     "crates/njutest-devkit/src/strictjson.rs",
     "crates/rust-mutants-cli/src/strictjson.rs",
     "crates/rust-mutants/src/strictjson.rs",
@@ -337,7 +334,8 @@ const STRICT_JSON_READERS: [&str; 5] = [
 ];
 
 /// State-bearing modules where an overflow changes identity, evidence,
-/// accounting, or a stored fact. Presentation geometry is deliberately absent:
+/// accounting, or a stored fact.
+/// Presentation geometry is deliberately absent:
 /// it owns a visibly saturating UI policy rather than a persisted assertion.
 fn overflow_sensitive(file: &str) -> bool {
     const EXACT: &[&str] = &[
@@ -352,23 +350,23 @@ fn overflow_sensitive(file: &str) -> bool {
         "crates/rust-mutants/src/session/verify.rs",
         "crates/rust-mutants/src/trace/mod.rs",
         "crates/rust-mutants/src/trace/summary.rs",
-        "crates/njutest-cli/src/cache/store.rs",
-        "crates/njutest-cli/src/checkpoint.rs",
-        "crates/njutest-cli/src/evidence/digest.rs",
-        "crates/njutest-cli/src/evidence/key.rs",
-        "crates/njutest-cli/src/evidence/store.rs",
-        "crates/njutest-cli/src/evidence/tree.rs",
-        "crates/njutest-cli/src/assure/run.rs",
-        "crates/njutest-cli/src/wire/derive.rs",
-        "crates/njutest-cli/src/wire/interpose.rs",
-        "crates/njutest-cli/src/wire/mod.rs",
+        "crates/njutest/src/cache/store.rs",
+        "crates/njutest/src/checkpoint.rs",
+        "crates/njutest/src/evidence/digest.rs",
+        "crates/njutest/src/evidence/key.rs",
+        "crates/njutest/src/evidence/store.rs",
+        "crates/njutest/src/evidence/tree.rs",
+        "crates/njutest/src/assure/run.rs",
+        "crates/njutest/src/wire/derive.rs",
+        "crates/njutest/src/wire/interpose.rs",
+        "crates/njutest/src/wire/mod.rs",
         "crates/rust-mutants-cli/src/app/stored.rs",
         "crates/rust-mutants-cli/src/kept.rs",
     ];
     EXACT.contains(&file)
         || file.starts_with("crates/rust-mutants/src/report/")
         || file.starts_with("crates/rust-mutants-cli/src/report/")
-        || file.starts_with("crates/njutest-cli/src/report/")
+        || file.starts_with("crates/njutest/src/report/")
         || file.starts_with("xtask/src/engineaudit/")
         || file == "xtask/src/proofaudit.rs"
 }
@@ -418,8 +416,7 @@ pub enum SourceRedirect {
 /// One exported entry point of a procedural-macro crate.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProcMacroExport {
-    /// `attribute`, `derive`, or `function`; `conditional` is a refused export
-    /// hidden behind `cfg_attr` rather than an accepted entry point.
+    /// `attribute`, `derive`, or `function`; `conditional` is a refused export hidden behind `cfg_attr` rather than an accepted entry point.
     pub kind: &'static str,
     /// The name callers write.
     pub name: String,
@@ -485,9 +482,8 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
 
 /// Every source-file redirect visible in one parsed file.
 ///
-/// Literal direct redirects are returned for the repository gate to resolve
-/// against its complete source set. Redirects manufactured inside another
-/// macro are opaque and are returned as refusals instead.
+/// Literal direct redirects are returned for the repository gate to resolve against its complete source set.
+/// Redirects manufactured inside another macro are opaque and are returned as refusals instead.
 ///
 /// # Errors
 /// The source is not Rust this compiler version can parse.
@@ -586,12 +582,10 @@ fn conditional_proc_macro_export(meta: &syn::Meta) -> Result<bool, syn::Error> {
 
 /// Opaque token constructors in a workspace procedural macro.
 ///
-/// The permitted implementation vocabulary keeps emitted Rust literal in a
-/// `quote!` body or passes through compiler-provided input. Parsing strings,
-/// constructing token primitives, formatting identifiers, or composing
-/// independently quoted fragments through interpolation makes the output
-/// invisible to the repository's token walk and is therefore refused. The one
-/// interpolated template is the exact closed `AllVariants` implementation.
+/// The permitted implementation vocabulary keeps emitted Rust literal in a `quote!` body or passes through compiler-provided input.
+/// Parsing strings,
+/// constructing token primitives, formatting identifiers, or composing independently quoted fragments through interpolation makes the output invisible to the repository's token walk and is therefore refused.
+/// The one interpolated template is the exact closed `AllVariants` implementation.
 ///
 /// # Errors
 /// The source is not Rust this compiler version can parse.
@@ -1106,11 +1100,9 @@ fn meta_broadly_expects(meta: &syn::Meta) -> bool {
 
 /// Every enum `source` declares, by name.
 ///
-/// The question a catch-all has to answer is whether the values can be listed
-/// from this repository's own source. An enum declared here can; `syn::Expr`
-/// and `toml::Value` cannot, and a catch-all over one of those is the
-/// handling rather than a default. So the gate is told what is ours before it
-/// is asked what is refused.
+/// The question a catch-all has to answer is whether the values can be listed from this repository's own source.
+/// An enum declared here can; `syn::Expr` and `toml::Value` cannot, and a catch-all over one of those is the handling rather than a default.
+/// So the gate is told what is ours before it is asked what is refused.
 ///
 /// # Errors
 /// The source is not Rust this compiler version can parse.
@@ -1148,10 +1140,7 @@ pub fn open_enums(source: &str) -> Result<Vec<String>, syn::Error> {
 
 /// Every line of `source` where a match over one of `ours` ends in a catch-all.
 ///
-/// Read from the arms rather than from the scrutinee, because the scrutinee is
-/// an expression whose type this gate cannot know: an arm spelling
-/// `Decision::Tests` says what is being matched, and nothing else has to be
-/// resolved to know it.
+/// Read from the arms rather than from the scrutinee, because the scrutinee is an expression whose type this gate cannot know: an arm spelling `Decision::Tests` says what is being matched, and nothing else has to be resolved to know it.
 ///
 /// # Errors
 /// The source is not Rust this compiler version can parse.
@@ -1168,32 +1157,26 @@ pub fn wildcards(source: &str, ours: &[String]) -> Result<Vec<usize>, syn::Error
 
 /// A catch-all over a set this repository closes, said as what it is rather than where it is.
 ///
-/// A line number is a coordinate, and a coordinate is not a place. The arm
-/// standing at one can be swapped for a catch-all over a different set
-/// without the number moving — change `Message::BuildFinished` to
-/// `Decision::Tests` on the line above and a ledger keyed by the coordinate
-/// waives the second having reviewed the first, with no diff for anybody to
-/// read. That was measured rather than supposed: the gate exited 0. The item
-/// and the set change exactly when what is being waived changes, and a
-/// renamed binding or a reformatted body leaves both alone.
+/// A line number is a coordinate, and a coordinate is not a place.
+/// The arm standing at one can be swapped for a catch-all over a different set without the number moving — change `Message::BuildFinished` to `Decision::Tests` on the line above and a ledger keyed by the coordinate waives the second having reviewed the first, with no diff for anybody to read.
+/// That was measured rather than supposed: the gate exited 0. The item and the set change exactly when what is being waived changes, and a renamed binding or a reformatted body leaves both alone.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Wildcard {
-    /// The items enclosing it, outermost first, joined by `::`. Empty at the top of a file.
+    /// The items enclosing it, outermost first, joined by `::`.
+    /// Empty at the top of a file.
     pub item: String,
     /// The enum whose remaining variants it absorbs.
     pub over: String,
-    /// The line it is on, for the sentence a person reads. Never part of the key.
+    /// The line it is on, for the sentence a person reads.
+    /// Never part of the key.
     pub line: usize,
 }
 
 impl Wildcard {
     /// How the ledger names the group of catch-all arms that share this item and this set.
     ///
-    /// `many` is part of the name because several arms absorbing one set in
-    /// one item are one claim — *the rest of this set, here* — and one more
-    /// is a claim nobody read. Leaving the count out would let a group's
-    /// waiver cover an arm written after it was granted, which is the defect
-    /// this key exists to remove, one layer down.
+    /// `many` is part of the name because several arms absorbing one set in one item are one claim — *the rest of this set, here* — and one more is a claim nobody read.
+    /// Leaving the count out would let a group's waiver cover an arm written after it was granted, which is the defect this key exists to remove, one layer down.
     #[must_use]
     pub fn key(&self, file: &str, many: usize) -> String {
         let arms = if many == 1 { "arm" } else { "arms" };
@@ -1207,11 +1190,9 @@ impl Wildcard {
 
 /// The same arms, each with the item it sits in and the enum whose arms told this gate what was being matched.
 ///
-/// The name is what lets a caller ask the question this walk cannot: whether
-/// the arm could have been left out at all. An enum that says it may grow,
-/// read from another crate, forces one — and a gate asking for a waiver
-/// against something the compiler requires is asking for a decision nobody
-/// made (ADR 0023).
+/// The name is what lets a caller ask the question this walk cannot: whether the arm could have been left out at all.
+/// An enum that says it may grow,
+/// read from another crate, forces one — and a gate asking for a waiver against something the compiler requires is asking for a decision nobody made (ADR 0023).
 ///
 /// # Errors
 /// The source is not Rust this compiler version can parse.
@@ -1470,10 +1451,8 @@ impl Visit<'_> for EnumImports<'_> {
 
 /// The enum an arm names, where the pattern is a path with one before the variant.
 ///
-/// Free rather than private to the walk, because the body-shape hint has to
-/// speak about exactly the lines this gate names. Two answers to *which lines
-/// catch everything left* would disagree with each other about the question instead
-/// of about the code.
+/// Free rather than private to the walk, because the body-shape hint has to speak about exactly the lines this gate names.
+/// Two answers to *which lines catch everything left* would disagree with each other about the question instead of about the code.
 pub(crate) fn named_variant(pattern: &syn::Pat) -> Option<String> {
     let path = match pattern {
         syn::Pat::Or(or) => return or.cases.iter().find_map(named_variant),
@@ -1490,21 +1469,14 @@ pub(crate) fn named_variant(pattern: &syn::Pat) -> Option<String> {
 
 /// Whether the compiler asks for an arm catching everything left because no variant is covered unconditionally.
 ///
-/// A guard makes an arm conditional, so a match whose every variant-naming
-/// arm carries one is not exhaustive however many variants it lists, and the
-/// arm that catches the rest is required rather than chosen. Asking for a
-/// reviewed waiver against something the compiler demands is asking somebody
-/// to decide what they could not have decided (ADR 0023).
+/// A guard makes an arm conditional, so a match whose every variant-naming arm carries one is not exhaustive however many variants it lists, and the arm that catches the rest is required rather than chosen.
+/// Asking for a reviewed waiver against something the compiler demands is asking somebody to decide what they could not have decided (ADR 0023).
 ///
-/// Conservative on purpose: one unguarded naming arm and this says no, which
-/// costs a ledger line rather than a blind spot.
+/// Conservative on purpose: one unguarded naming arm and this says no, which costs a ledger line rather than a blind spot.
 /// Where an arm catches everything left, which is a bare `_` or a name bound to the whole.
 ///
-/// Deliberately not looked through a guard, which is the opposite of what
-/// [`named_variant`] does with one. `_ if ready()` catches nothing on its own
-/// and the compiler still asks for the rest, so it is not the arm that absorbs
-/// a new variant; `Decision::Tests if ready()` still says what is being
-/// matched, which is all that one is read for.
+/// Deliberately not looked through a guard, which is the opposite of what [`named_variant`] does with one.
+/// `_ if ready()` catches nothing on its own and the compiler still asks for the rest, so it is not the arm that absorbs a new variant; `Decision::Tests if ready()` still says what is being matched, which is all that one is read for.
 pub(crate) fn catches_everything(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
     match pattern {
         syn::Pat::Wild(held) => Some(held.underscore_token.span),
@@ -2143,8 +2115,7 @@ impl<'ast> Visit<'ast> for ForeignRemainders<'_> {
 
 /// Every enum of `parsed` that publishes its whole list and also says the list is open.
 ///
-/// Read from the syntax rather than spelled, because what makes this a
-/// contradiction is two declarations about one type rather than any text.
+/// Read from the syntax rather than spelled, because what makes this a contradiction is two declarations about one type rather than any text.
 fn open_and_closed(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let open = open_enum_declarations(parsed);
     let listed = listed_enum_declarations(parsed);
@@ -2163,9 +2134,8 @@ fn open_and_closed(parsed: &syn::File, file: &str) -> Vec<Finding> {
 
 /// Contradictory open and closed declarations, including declarations split across source files.
 ///
-/// `scope` is the compiler unit that owns the files. Matching names in
-/// different crates are unrelated, while an enum and an inherent impl in two
-/// modules of one crate can name the same type through a path or import.
+/// `scope` is the compiler unit that owns the files.
+/// Matching names in different crates are unrelated, while an enum and an inherent impl in two modules of one crate can name the same type through a path or import.
 ///
 /// # Errors
 /// A source file that this compiler version cannot parse.
@@ -2437,21 +2407,17 @@ const OPEN: &str = "non_exhaustive";
 
 /// The constant by which a type publishes every one of its variants.
 ///
-/// Public, because that is when the promise is made. A crate keeping its own
-/// list of its own enum has told nobody anything, and a gate that refused
-/// that would be refusing somebody for knowing what they wrote.
+/// Public, because that is when the promise is made.
+/// A crate keeping its own list of its own enum has told nobody anything, and a gate that refused that would be refusing somebody for knowing what they wrote.
 const WHOLE_LIST: &str = "ALL";
 
 /// Every place `source` writes a terminal escape out by hand.
 ///
-/// Spelled rather than parsed, because the thing being refused is a sequence
-/// of bytes and a program that meant to write one can reach it through a
-/// literal, a constant, a macro argument or a format string. What matters is
-/// that the bytes are in the file at all.
+/// Spelled rather than parsed, because the thing being refused is a sequence of bytes and a program that meant to write one can reach it through a literal, a constant, a macro argument or a format string.
+/// What matters is that the bytes are in the file at all.
 ///
 /// A test may spell one: what it is doing is reading what the painter wrote,
-/// and a test that asserted on a style rather than on the bytes would be
-/// asserting that the code does what it does.
+/// and a test that asserted on a style rather than on the bytes would be asserting that the code does what it does.
 fn painted(file: &str, source: &str) -> Vec<Finding> {
     if file.contains(PAINTER)
         || file.contains("/tests/")
@@ -2473,10 +2439,7 @@ fn painted(file: &str, source: &str) -> Vec<Finding> {
 
 /// Every exported `&str` constant of `source`, by name, with the line it is on.
 ///
-/// The cross-file pass needs these because what makes a constant a layout is
-/// not how it is spelled — `"rust-mutants/explain"` is a document type and
-/// `"reports/runs"` is a structure, and they look the same — but that more
-/// than one module joins it onto a path.
+/// The cross-file pass needs these because what makes a constant a layout is not how it is spelled — `"rust-mutants/explain"` is a document type and `"reports/runs"` is a structure, and they look the same — but that more than one module joins it onto a path.
 #[must_use]
 pub fn exported_strings(source: &str) -> Vec<(String, usize)> {
     declared(source)
@@ -2504,10 +2467,8 @@ fn declared(source: &str) -> impl Iterator<Item = (usize, &str, &str)> {
 
 /// The first path segment of every directory the configuration is allowed to move.
 ///
-/// A default a configuration field falls back to is a directory somebody can
-/// rename, so a test that writes it down decides it for them. Reading the
-/// defaults rather than a list here means a directory added later is gated
-/// the day its default is written.
+/// A default a configuration field falls back to is a directory somebody can rename, so a test that writes it down decides it for them.
+/// Reading the defaults rather than a list here means a directory added later is gated the day its default is written.
 #[must_use]
 pub fn configured_directories(source: &str) -> Vec<String> {
     declared(source)
@@ -2522,9 +2483,8 @@ pub fn configured_directories(source: &str) -> Vec<String> {
 
 /// Every line of `source` that spells one of `directories` as the head of a path literal.
 ///
-/// A directory the configuration can move is one no file may write down. The
-/// literal is what makes it immovable, whether it is joined onto a root, asked
-/// to exist, or handed to the engine as the place this tool writes.
+/// A directory the configuration can move is one no file may write down.
+/// The literal is what makes it immovable, whether it is joined onto a root, asked to exist, or handed to the engine as the place this tool writes.
 #[must_use]
 pub fn spelled(source: &str, directories: &[String]) -> Vec<usize> {
     let mut found = Vec::new();
@@ -2568,8 +2528,8 @@ pub fn joins(source: &str, name: &str) -> bool {
 
 /// Which module `source` imports `name` from, when it imports it by name.
 ///
-/// A bare `FILE_NAME` is four different constants in this tree, and only one
-/// of them spells a structure. Reading the import is what tells them apart,
+/// A bare `FILE_NAME` is four different constants in this tree, and only one of them spells a structure.
+/// Reading the import is what tells them apart,
 /// and a name nothing imports is one this cannot speak about.
 #[must_use]
 pub fn imported_from(source: &str, name: &str) -> Option<String> {
@@ -2619,12 +2579,10 @@ fn by_use(source: &str, name: &str) -> Option<String> {
 
 /// Every format string that hands a reader a command with an identity in it.
 ///
-/// An identity is a function of the whole file, so the edit a reader makes
-/// next — the test that closes the survivor, in the file the survivor is in —
-/// re-mints it. A command printed with one in it stops working the moment it
-/// is followed, and a configuration record written with one stops naming
-/// anything. This finds them by the shape they have: a string that tells
-/// somebody what to type, built in the same expression as an identity.
+/// An identity is a function of the whole file, so the edit a reader makes next — the test that closes the survivor, in the file the survivor is in —
+/// re-mints it.
+/// A command printed with one in it stops working the moment it is followed, and a configuration record written with one stops naming anything.
+/// This finds them by the shape they have: a string that tells somebody what to type, built in the same expression as an identity.
 fn handles(file: &str, source: &str) -> Vec<Finding> {
     if file.contains("/tests/") || file.contains("/testkit/") {
         return Vec::new();
@@ -2844,8 +2802,8 @@ struct TypeDeclaration {
     held: syn::Type,
 }
 
-/// One imported name. Macro and type namespaces are both considered because
-/// `Default` inhabits each of them.
+/// One imported name.
+/// Macro and type namespaces are both considered because `Default` inhabits each of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Rename {
     source: String,
@@ -2894,8 +2852,8 @@ impl<'ast> Visit<'ast> for AliasDeclarations {
     }
 }
 
-/// Meanings a syntax-only walk can recover without pretending to be name
-/// resolution. Ambiguous names are deliberately forgotten rather than guessed.
+/// Meanings a syntax-only walk can recover without pretending to be name resolution.
+/// Ambiguous names are deliberately forgotten rather than guessed.
 #[derive(Default)]
 struct Aliases {
     types: BTreeMap<String, TypeMeaning>,
@@ -3640,11 +3598,11 @@ fn manual_default_allowed(file: &str, item: &str) -> bool {
     const ALLOWED: &[(&str, &[&str])] = &[
         ("crates/njutest-devkit/src/fake_cargo.rs", &["Script"]),
         ("crates/njutest-devkit/src/repo.rs", &["Repo"]),
-        ("crates/njutest-cli/src/app/lsp.rs", &["Encoding"]),
-        ("crates/njutest-cli/src/build.rs", &["Selection"]),
-        ("crates/njutest-cli/src/cli.rs", &["Format", "Ui"]),
+        ("crates/njutest/src/app/lsp.rs", &["Encoding"]),
+        ("crates/njutest/src/build.rs", &["Selection"]),
+        ("crates/njutest/src/cli.rs", &["Format", "Ui"]),
         (
-            "crates/njutest-cli/src/config.rs",
+            "crates/njutest/src/config.rs",
             &[
                 "Cache",
                 "Config",
@@ -3654,17 +3612,14 @@ fn manual_default_allowed(file: &str, item: &str) -> bool {
                 "Reports",
             ],
         ),
-        ("crates/njutest-cli/src/kept.rs", &["Ledger"]),
+        ("crates/njutest/src/kept.rs", &["Ledger"]),
         (
-            "crates/njutest-cli/src/presentation/mod.rs",
+            "crates/njutest/src/presentation/mod.rs",
             &["Glyphs", "Reader", "Terminal", "Wanted"],
         ),
-        (
-            "crates/njutest-cli/src/report/mod.rs",
-            &["Tool", "Toolchain"],
-        ),
-        ("crates/njutest-cli/src/trace/mod.rs", &["Recorder"]),
-        ("crates/njutest-cli/src/wire/mod.rs", &["Wire"]),
+        ("crates/njutest/src/report/mod.rs", &["Tool", "Toolchain"]),
+        ("crates/njutest/src/trace/mod.rs", &["Recorder"]),
+        ("crates/njutest/src/wire/mod.rs", &["Wire"]),
         (
             "crates/rust-mutants-cli/src/config.rs",
             &["Config", "Execution", "Mutation", "Reports", "Stryker"],
@@ -5771,10 +5726,8 @@ fn result_into_iter(expression: &syn::Expr) -> bool {
     result_method(expression, "into_iter")
 }
 
-/// The binding that suppresses the compiler's unused-value diagnostics, if a
-/// pattern has one. A wildcard is the most direct spelling; a named binding
-/// beginning with `_` also opts out of the diagnostic and can be nested in a
-/// destructuring pattern.
+/// The binding that suppresses the compiler's unused-value diagnostics, if a pattern has one.
+/// A wildcard is the most direct spelling; a named binding beginning with `_` also opts out of the diagnostic and can be nested in a destructuring pattern.
 fn ignored_binding_span(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
     if let syn::Pat::Wild(wild) = pattern {
         return Some(wild.underscore_token.span);
@@ -5782,10 +5735,9 @@ fn ignored_binding_span(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
     ignored_named_binding_span(pattern)
 }
 
-/// Finds a named opt-out anywhere in a destructuring pattern. A nested
-/// wildcard discards one component after the initializer itself was consumed;
-/// it does not suppress the initializer's `must_use` diagnostic as `let _ =`
-/// does.
+/// Finds a named opt-out anywhere in a destructuring pattern.
+/// A nested wildcard discards one component after the initializer itself was consumed;
+/// it does not suppress the initializer's `must_use` diagnostic as `let _ =` does.
 fn ignored_named_binding_span(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
     match pattern {
         syn::Pat::Ident(ident) if ident.ident.to_string().starts_with('_') => {
@@ -5806,9 +5758,8 @@ fn ignored_named_binding_span(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
     }
 }
 
-/// Whether an initializer performs work whose `must_use` result an ignored
-/// binding could hide. Wrappers preserve that property; a path or literal
-/// does not become work merely by being ignored.
+/// Whether an initializer performs work whose `must_use` result an ignored binding could hide.
+/// Wrappers preserve that property; a path or literal does not become work merely by being ignored.
 fn ignored_computation(expression: &syn::Expr) -> bool {
     match expression {
         syn::Expr::Call(_) | syn::Expr::MethodCall(_) | syn::Expr::Macro(_) => true,
@@ -5872,8 +5823,7 @@ fn ignored_computations_in_tokens_with(
     }
 }
 
-/// An unparsable macro body that can choose the binding and initializer at
-/// expansion time is rejected rather than assumed to produce a used value.
+/// An unparsable macro body that can choose the binding and initializer at expansion time is rejected rather than assumed to produce a used value.
 fn opaque_ignored_binding(tokens: &proc_macro2::TokenStream) -> Option<proc_macro2::Span> {
     let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
     for (at, tree) in trees.iter().enumerate() {
@@ -5908,8 +5858,7 @@ fn opaque_ignored_binding(tokens: &proc_macro2::TokenStream) -> Option<proc_macr
     None
 }
 
-/// Whether `drop(expression)` computes a fresh value instead of ending the
-/// lifetime of a value already named by the program.
+/// Whether `drop(expression)` computes a fresh value instead of ending the lifetime of a value already named by the program.
 fn dropped_computation(expression: &syn::Expr) -> bool {
     match expression {
         syn::Expr::Group(group) => dropped_computation(&group.expr),

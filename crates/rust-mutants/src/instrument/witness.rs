@@ -50,7 +50,8 @@ pub struct WitnessFile {
     pub text: String,
     /// Where each condition's witnesses landed.
     pub sites: Vec<Site>,
-    /// Whether anything was rewritten. A file with no claim comes back byte for byte.
+    /// Whether anything was rewritten.
+    /// A file with no claim comes back byte for byte.
     pub witnessed: bool,
 }
 
@@ -117,8 +118,7 @@ const BINDING: &str = "__rmw_value";
 /// Writes every claim's witnesses into `source`.
 ///
 /// # Errors
-/// [`InstrumentErrorKind::LinesMoved`] when a rewrite would move a line, which
-/// no witness may do, and the splice's own refusals.
+/// [`InstrumentErrorKind::LinesMoved`] when a rewrite would move a line, which no witness may do, and the splice's own refusals.
 pub fn witness_file(
     path: &str,
     source: &[u8],
@@ -253,8 +253,8 @@ fn statements(
 /// What one rewrite carries: the mutants whose claims rest on it, and what it is.
 type Owned = (Vec<u32>, Placed);
 
-/// One complete witness rewrite plan. Ownership stays paired with the splice
-/// whose output span it describes.
+/// One complete witness rewrite plan.
+/// Ownership stays paired with the splice whose output span it describes.
 struct Plan {
     splices: Vec<Splice>,
     placed: Vec<Owned>,
@@ -463,8 +463,7 @@ fn qualified(module: &str, depth: u32, function: &str) -> String {
     path
 }
 
-/// Reads an exact byte span, refusing platforms on which the catalog offset
-/// cannot index memory and refusing stale spans.
+/// Reads an exact byte span, refusing platforms on which the catalog offset cannot index memory and refusing stale spans.
 fn source_bytes<'a>(
     path: &str,
     source: &'a [u8],
@@ -535,7 +534,8 @@ fn runtime(module: &str) -> String {
     )
 }
 
-/// The sealed traits and the two functions. `W` names the types whose comparison the standard library defines, and nothing else, which is exactly the question the syntax could not answer.
+/// The sealed traits and the two functions.
+/// `W` names the types whose comparison the standard library defines, and nothing else, which is exactly the question the syntax could not answer.
 const IMPLS: &str = "\
     extern crate std as __rmw_std;
     pub(crate) trait W {}

@@ -170,12 +170,10 @@ pub enum LedgerError {
     },
 }
 
-/// Holds the count stated in the paragraph immediately above a table to the
-/// count derived from code.
+/// Holds the count stated in the paragraph immediately above a table to the count derived from code.
 ///
 /// # Errors
-/// The table marker is absent, or its immediately preceding paragraph does
-/// not state `many` `noun` in English.
+/// The table marker is absent, or its immediately preceding paragraph does not state `many` `noun` in English.
 ///
 pub fn table_count(text: &str, marker: &str, many: usize, noun: &str) -> Result<(), LedgerError> {
     let Some(table) = text.find(marker) else {
@@ -200,21 +198,17 @@ pub fn table_count(text: &str, marker: &str, many: usize, noun: &str) -> Result<
     })
 }
 
-/// One closed specimen of a tagged trace payload and the key under which its
-/// record is nested.
+/// One closed specimen of a tagged trace payload and the key under which its record is nested.
 ///
-/// `record` is `None` only when the record's fields sit directly beside the
-/// `type` tag. A ledger normally passes the wrapper chosen by its payload
-/// variant (`exec`, `phase`, and so on), which also refuses an unexpected
-/// top-level field rather than silently counting it as part of the record.
+/// `record` is `None` only when the record's fields sit directly beside the `type` tag.
+/// A ledger normally passes the wrapper chosen by its payload variant (`exec`, `phase`, and so on), which also refuses an unexpected top-level field rather than silently counting it as part of the record.
 #[derive(Debug, Clone, Copy)]
 pub struct TraceSpecimen<'a, T> {
     value: &'a T,
     record: Option<&'static str>,
 }
 
-/// A JSON value whose object reader refuses a repeated key rather than keeping
-/// whichever value a map happened to see last.
+/// A JSON value whose object reader refuses a repeated key rather than keeping whichever value a map happened to see last.
 #[derive(Debug)]
 enum UniqueValue {
     Object(BTreeMap<String, Self>),
@@ -228,8 +222,7 @@ impl<'de> Deserialize<'de> for UniqueValue {
     }
 }
 
-/// Reads JSON recursively so duplicate keys at a flattened record boundary
-/// are visible before it becomes a map.
+/// Reads JSON recursively so duplicate keys at a flattened record boundary are visible before it becomes a map.
 struct UniqueVisitor;
 
 impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
@@ -317,19 +310,16 @@ impl<'a, T> TraceSpecimen<'a, T> {
     }
 }
 
-/// Holds a documentation table's field list to the union of fields actually
-/// serialized by closed payload specimens.
+/// Holds a documentation table's field list to the union of fields actually serialized by closed payload specimens.
 ///
 /// The table starts at `marker` and has exactly three columns: `Type`,
-/// `Fields`, and prose. Every type and field is one backticked name; fields are
-/// comma-separated. More than one specimen may carry a type so enum and
-/// flattened variants can contribute all of their fields. Optional fields
-/// therefore belong in specimens with non-empty values.
+/// `Fields`, and prose.
+/// Every type and field is one backticked name; fields are comma-separated.
+/// More than one specimen may carry a type so enum and flattened variants can contribute all of their fields.
+/// Optional fields therefore belong in specimens with non-empty values.
 ///
 /// # Errors
-/// The table is absent or malformed; a type or field is repeated; a specimen
-/// is not a tagged object with the stated record wrapper; or the documented
-/// and serialized type/field sets differ in either direction.
+/// The table is absent or malformed; a type or field is repeated; a specimen is not a tagged object with the stated record wrapper; or the documented and serialized type/field sets differ in either direction.
 pub fn trace_field_ledger<T: Serialize>(
     text: &str,
     marker: &str,

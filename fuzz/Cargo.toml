@@ -20,7 +20,7 @@ cargo-fuzz = true
 arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
 njutest-devkit = { path = "../crates/njutest-devkit" }
-njutest-cli = { path = "../crates/njutest-cli", features = ["testkit"] }
+njutest = { path = "../crates/njutest", features = ["testkit"] }
 rust-mutants = { path = "../crates/rust-mutants" }
 rust-mutants-cli = { path = "../crates/rust-mutants-cli" }
 serde_json = "1"

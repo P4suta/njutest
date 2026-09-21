@@ -2,13 +2,13 @@
 
 **Status: implemented.** Every code here is one the engine or the runner can return, and a test keeps this table and `rust_mutants::error::error_codes` in step in both directions.
 
-Every failure the engine and the runner report carries a stable code. The
-code is the searchable name of the failure: grep this file, the issue tracker,
-and a trace for it. A test in each crate keeps this table and the code's own
-list equal in both directions, so a code is either here or it does not exist.
+Every failure the engine and the runner report carries a stable code.
+The code is the searchable name of the failure: grep this file, the issue tracker,
+and a trace for it.
+A test in each crate keeps this table and the code's own list equal in both directions, so a code is either here or it does not exist.
 
-Codes are `RM` (rust-mutants) or `NJ` (njutest) followed by four digits. The
-first digit names an area:
+Codes are `RM` (rust-mutants) or `NJ` (njutest) followed by four digits.
+The first digit names an area:
 
 | Digit | rust-mutants | njutest |
 | ---: | --- | --- |

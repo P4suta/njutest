@@ -11,8 +11,7 @@ use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 /// Decodes one complete JSON value only after proving every object key unique.
 ///
 /// # Errors
-/// The input is malformed, contains trailing data or a duplicate key, or does
-/// not deserialize as `T`.
+/// The input is malformed, contains trailing data or a duplicate key, or does not deserialize as `T`.
 pub fn decode_str<T>(text: &str) -> Result<T, serde_json::Error>
 where
     T: serde::de::DeserializeOwned,
@@ -23,12 +22,10 @@ where
     serde_json::from_value(value)
 }
 
-/// Decodes one complete UTF-8 JSON byte stream only after proving every object
-/// key unique.
+/// Decodes one complete UTF-8 JSON byte stream only after proving every object key unique.
 ///
 /// # Errors
-/// The input is malformed, contains trailing data or a duplicate key, or does
-/// not deserialize as `T`.
+/// The input is malformed, contains trailing data or a duplicate key, or does not deserialize as `T`.
 pub fn decode_slice<T>(bytes: &[u8]) -> Result<T, serde_json::Error>
 where
     T: serde::de::DeserializeOwned,

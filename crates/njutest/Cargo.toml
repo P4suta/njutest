@@ -3,12 +3,10 @@
 
 [package]
 name = "njutest"
-description = "Attach integration-resource metadata to ordinary Rust tests for the njutest assurance runner"
-keywords = ["testing", "assurance", "integration-tests"]
-categories = ["development-tools::testing"]
-# Not published: no runner reads these attributes yet, so a crate on crates.io would be an API a user can write and nothing acts on.
-# `surface = unreleased` is that state as a declaration the surfaces gate keeps.
-publish = false
+description = "njutest, an audit-oriented assurance runner for Rust, at the command line: njutest and cargo-njutest"
+keywords = ["mutation-testing", "testing", "assurance", "coverage", "cli"]
+categories = ["development-tools::testing", "command-line-utilities"]
+default-run = "njutest"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,14 +17,71 @@ authors.workspace = true
 readme.workspace = true
 
 [package.metadata.njutest]
-surface = "unreleased"
+surface = "incidental"
+
+[[bin]]
+name = "njutest"
+path = "src/main.rs"
+doc = false
+
+[[bin]]
+name = "cargo-njutest"
+path = "src/bin/cargo-njutest/main.rs"
+doc = false
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/njutest-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "njutest-{ version }-{ target }/{ bin }{ binary-ext }"
+
+[features]
+benchmarks = ["dep:criterion"]
+testkit = ["rust-mutants/testkit"]
 
 [dependencies]
 njutest-macros = { workspace = true }
+clap = { workspace = true }
+criterion = { workspace = true, optional = true }
+jiff = { workspace = true, features = ["serde"] }
+hex = { workspace = true }
+rust-mutants = { workspace = true }
+sha2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+syn = { workspace = true }
+proc-macro2 = { workspace = true }
+signal-hook = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+unicode-width = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+getrandom = { workspace = true }
+rustix = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
 
 [dev-dependencies]
+hex = { workspace = true }
+njutest = { workspace = true, features = ["testkit"] }
+proptest = { workspace = true }
+sha2 = { workspace = true }
+rustix = { workspace = true }
+rust-mutants = { workspace = true, features = ["testkit"] }
+jsonschema = { workspace = true }
 njutest-devkit = { workspace = true }
-trybuild = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "report"
+harness = false
+required-features = ["benchmarks"]
+
+[[bench]]
+name = "evidence"
+harness = false
+required-features = ["benchmarks"]
 
 [lints]
 workspace = true

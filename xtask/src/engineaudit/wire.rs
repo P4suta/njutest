@@ -15,8 +15,7 @@ use super::{
     Report, RouteDecision, Row, StepNotice,
 };
 
-/// Reads a nullable value while leaving absence for serde to reject at the
-/// enclosing struct boundary.
+/// Reads a nullable value while leaving absence for serde to reject at the enclosing struct boundary.
 fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -25,8 +24,7 @@ where
     Option::<T>::deserialize(deserializer)
 }
 
-/// The selection is compared between shards as a closed value, rather than
-/// being round-tripped through an untyped JSON tree.
+/// The selection is compared between shards as a closed value, rather than being round-tripped through an untyped JSON tree.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Selection {
@@ -317,9 +315,7 @@ struct Mutant {
 
 /// A required wire field whose explicit value is one of null, false, or true.
 ///
-/// Keeping the three states nominal prevents an absent field from being
-/// confused with an explicit null while also avoiding `Option<bool>` as a
-/// domain state.
+/// Keeping the three states nominal prevents an absent field from being confused with an explicit null while also avoiding `Option<bool>` as a domain state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NullableBoolean {
     Null,
@@ -650,8 +646,7 @@ impl FindingWire {
     }
 }
 
-/// Proves that a reached-v1 document has its exact owned shape before the
-/// independent audit reads facts out of its JSON value.
+/// Proves that a reached-v1 document has its exact owned shape before the independent audit reads facts out of its JSON value.
 pub(super) fn validate_reached(value: &Value) -> Result<(), serde_json::Error> {
     match serde_json::from_value::<ReachedEvidence>(value.clone()) {
         Ok(document) => {
@@ -662,8 +657,7 @@ pub(super) fn validate_reached(value: &Value) -> Result<(), serde_json::Error> {
     }
 }
 
-/// Proves that a touched-v1 document has its exact owned shape before the
-/// independent audit interprets absence as evidence.
+/// Proves that a touched-v1 document has its exact owned shape before the independent audit interprets absence as evidence.
 pub(super) fn validate_touched(value: &Value) -> Result<(), serde_json::Error> {
     let document = serde_json::from_value::<TouchedEvidence>(value.clone())?;
     reject_touched_nulls(value)?;

@@ -350,7 +350,8 @@ impl fmt::Display for Disagreement {
     }
 }
 
-/// Compares the scan against the ledger. `Ok(())` means exact agreement.
+/// Compares the scan against the ledger.
+/// `Ok(())` means exact agreement.
 ///
 /// # Errors
 /// Returns every seam missing from either side.

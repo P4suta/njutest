@@ -12,7 +12,8 @@ use crate::runner::{Bound, Spec, Watch, run};
 /// The revision a change set is computed against when the caller names none.
 pub const DEFAULT_BASE: &str = "HEAD";
 
-/// The pattern a run about an empty change set mutates within. No file is called this.
+/// The pattern a run about an empty change set mutates within.
+/// No file is called this.
 pub const NOTHING_CHANGED: &str = ".rust-mutants-nothing-changed";
 
 /// Where to ask git, with what environment, and under whose watch.
@@ -46,7 +47,8 @@ pub struct Change {
     pub base: String,
     /// The commit both branches share, when git could name one.
     pub merge_base: Option<String>,
-    /// Every file that differs, as workspace-relative paths, sorted. What is not committed counts too.
+    /// Every file that differs, as workspace-relative paths, sorted.
+    /// What is not committed counts too.
     pub files: Vec<String>,
 }
 
@@ -123,9 +125,8 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
 
 /// The Rust files a change set names, as the patterns a run mutates within, keeping only what `include` already admits when it admits anything.
 /// # Errors
-/// Refuses a changed path which cannot be represented by the mutation glob
-/// language. Silently omitting such a path would make a partial change set
-/// indistinguishable from the complete one the caller asked for.
+/// Refuses a changed path which cannot be represented by the mutation glob language.
+/// Silently omitting such a path would make a partial change set indistinguishable from the complete one the caller asked for.
 pub fn within(change: &Change, include: &[Pattern]) -> Result<Vec<Pattern>, GlobError> {
     let sources: Vec<&String> = change
         .files
@@ -142,14 +143,16 @@ pub fn within(change: &Change, include: &[Pattern]) -> Result<Vec<Pattern>, Glob
         .collect()
 }
 
-/// Whether an empty answer is an answer. A `HEAD` that resolves to nothing is nothing; a diff that lists nothing is a diff that lists nothing.
+/// Whether an empty answer is an answer.
+/// A `HEAD` that resolves to nothing is nothing; a diff that lists nothing is a diff that lists nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Empty {
     Refuse,
     Accept,
 }
 
-/// Whether the leading whitespace of an answer carries meaning. It does in `status --porcelain`, where the first two columns are the status and a space is one of the values they take.
+/// Whether the leading whitespace of an answer carries meaning.
+/// It does in `status --porcelain`, where the first two columns are the status and a space is one of the values they take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shape {
     Trimmed,
@@ -176,9 +179,7 @@ fn porcelain_path(line: &str) -> Option<String> {
 /// The output of one git command, or nothing when it could not be run or did not succeed.
 /// Every variable that tells git to answer about a repository other than the one it is standing in.
 ///
-/// A closed set, because leaving one out is the defect rather than a smaller
-/// version of it: each of these is enough on its own to make git answer about
-/// somewhere else.
+/// A closed set, because leaving one out is the defect rather than a smaller version of it: each of these is enough on its own to make git answer about somewhere else.
 const REDIRECTING: [&str; 10] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -194,13 +195,9 @@ const REDIRECTING: [&str; 10] = [
 
 /// `env` with the variables that would point git somewhere else taken out.
 ///
-/// A run names the repository it verified. `GIT_DIR` in the environment it
-/// happened to be started with — which is what a git hook sets, and what any
-/// wrapper may — makes git answer about that one instead, and the report then
-/// names another repository's commit as the thing it established something
-/// about. That is a conclusion drawn from how the run was invoked rather than
-/// from what it looked at, so the invocation is not allowed to reach the
-/// question.
+/// A run names the repository it verified.
+/// `GIT_DIR` in the environment it happened to be started with — which is what a git hook sets, and what any wrapper may — makes git answer about that one instead, and the report then names another repository's commit as the thing it established something about.
+/// That is a conclusion drawn from how the run was invoked rather than from what it looked at, so the invocation is not allowed to reach the question.
 fn about_the_tree(env: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
     env.iter()
         .filter(|(name, _value)| {

@@ -116,8 +116,8 @@ pub struct Touches {
 /// Every touch the log records, gathered by the thread that made it.
 ///
 /// # Errors
-/// See [`TouchError`]. Every failure yields no facts at all, never the prefix
-/// that parsed.
+/// See [`TouchError`].
+/// Every failure yields no facts at all, never the prefix that parsed.
 pub fn read(text: &str, catalog: &str, count: u32) -> Result<Touches, TouchError> {
     let mut touches = Touches::default();
     let mut seen_header = false;

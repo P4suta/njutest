@@ -22,9 +22,7 @@ impl Quiet {
     /// Runs `work` beside whatever else this run is measuring.
     ///
     /// # Errors
-    /// Returns a typed session failure after any panic poisons the coordination
-    /// lock; continuing could otherwise run a supposedly isolated retry beside
-    /// work whose state is unknown.
+    /// Returns a typed session failure after any panic poisons the coordination lock; continuing could otherwise run a supposedly isolated retry beside work whose state is unknown.
     pub fn shared<R>(&self, work: impl FnOnce() -> R) -> Result<R, EngineError> {
         let held = self
             .0
@@ -57,7 +55,8 @@ pub struct Expectation {
     pub id: Option<String>,
     /// The mutant by where it is and what it edits.
     pub locator: Option<Locator>,
-    /// Why the outcome is what it is. Required: an expectation without a reason is a suppression, and a report cannot audit one.
+    /// Why the outcome is what it is.
+    /// Required: an expectation without a reason is a suppression, and a report cannot audit one.
     pub reason: String,
     /// The outcome the run must confirm.
     pub outcome: Outcome,
@@ -92,8 +91,7 @@ pub const EXIT_FAILED: u8 = 2;
 
 /// What the optional compiler-artifact comparison established.
 ///
-/// `NotMeasured` and `NotEstablished` are different: the latter says the
-/// layer ran but its premises did not support either identity or difference.
+/// `NotMeasured` and `NotEstablished` are different: the latter says the layer ran but its premises did not support either identity or difference.
 #[derive(
     Debug,
     Clone,
@@ -151,7 +149,8 @@ pub struct Judged {
     pub not_run_reason: Option<NotRunReason>,
     /// Which targets could have noticed it, and which of them ran.
     pub route: Option<crate::report::run::RouteDocument>,
-    /// Whether this run measured it, rather than reusing what an earlier one established or never reaching it. A measurement records its own route.
+    /// Whether this run measured it, rather than reusing what an earlier one established or never reaching it.
+    /// A measurement records its own route.
     pub measured: bool,
     /// What comparison of the compiler artifacts established.
     pub identical: CodegenIdentity,
@@ -192,7 +191,8 @@ pub struct Verified {
     pub reason: String,
     /// The outcome claimed.
     pub outcome: Outcome,
-    /// The mutant it resolved to, when it resolved. The one that decided the standing, when it named several.
+    /// The mutant it resolved to, when it resolved.
+    /// The one that decided the standing, when it named several.
     pub mutant: Option<String>,
     /// How many mutants the claim was resolved against, which is one unless the locator stated a count.
     pub covered: u32,
@@ -312,7 +312,8 @@ pub struct Tally {
     pub survived: u32,
     /// How many reached the per-process guard-take limit without deciding the mutation.
     pub step_limit_reached: u32,
-    /// How many this machine stopped waiting for, twice over. Not caught: the run established that it stopped waiting.
+    /// How many this machine stopped waiting for, twice over.
+    /// Not caught: the run established that it stopped waiting.
     pub waited: u32,
     /// How many the run could not decide.
     pub inconclusive: u32,
@@ -361,11 +362,11 @@ pub struct Run {
 }
 
 impl Run {
-    /// The outcomes folded. An outcome this release does not know counts with the harness failures: nothing it says can be read as detection.
+    /// The outcomes folded.
+    /// An outcome this release does not know counts with the harness failures: nothing it says can be read as detection.
     ///
     /// # Errors
-    /// Refuses when the number of rows or any exact folded counter exceeds the
-    /// durable `u32` report representation.
+    /// Refuses when the number of rows or any exact folded counter exceeds the durable `u32` report representation.
     pub fn tally(&self) -> Result<Tally, SessionError> {
         let mut tally = Tally {
             cataloged: count(self.judged.len())?,
@@ -413,8 +414,7 @@ impl Run {
     /// The share of decided mutants the tests noticed, or `None` when the run decided nothing.
     ///
     /// # Errors
-    /// Refuses when the run's exact accounting does not fit its durable
-    /// counters.
+    /// Refuses when the run's exact accounting does not fit its durable counters.
     pub fn score(&self) -> Result<Option<Score>, SessionError> {
         let tally = self.tally()?;
         let detected = tally.killed;
@@ -428,7 +428,8 @@ impl Run {
         }))
     }
 
-    /// Everything that stops the run from being clean, mutants first and in catalog order. An outcome this release does not know counts as a harness failure: nothing it says can be read as detection.
+    /// Everything that stops the run from being clean, mutants first and in catalog order.
+    /// An outcome this release does not know counts as a harness failure: nothing it says can be read as detection.
     #[must_use]
     pub fn findings(&self) -> Vec<Finding> {
         let mut findings = Vec::new();
@@ -584,11 +585,11 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
     }
 }
 
-/// One length as a count. A catalog larger than a `u32` is one no run could hold in memory to begin with.
+/// One length as a count.
+/// A catalog larger than a `u32` is one no run could hold in memory to begin with.
 ///
 /// # Errors
-/// Refuses a host collection whose exact cardinality does not fit the durable
-/// run counter.
+/// Refuses a host collection whose exact cardinality does not fit the durable run counter.
 pub fn count(value: usize) -> Result<u32, SessionError> {
     u32::try_from(value).map_err(|_outside_range| SessionError::RunCountTooLarge { count: value })
 }
@@ -596,21 +597,27 @@ pub fn count(value: usize) -> Result<u32, SessionError> {
 /// What a run needs beyond the session itself.
 #[derive(Debug, Clone, Copy)]
 pub struct Options<'a> {
-    /// How long one execution may take before it is retried serially. The claims to verify.
+    /// How long one execution may take before it is retried serially.
+    /// The claims to verify.
     pub expectations: &'a [Expectation],
     /// The machine, which a confirming retry takes to itself.
     pub quiet: &'a Quiet,
-    /// The tree the equivalence layer builds and mutates, when a run asks it. `None` asks nothing.
+    /// The tree the equivalence layer builds and mutates, when a run asks it.
+    /// `None` asks nothing.
     pub equivalence: Option<&'a Equivalence<'a>>,
-    /// How many mutants to measure at once. Zero is [`jobs`]'s own answer.
+    /// How many mutants to measure at once.
+    /// Zero is [`jobs`]'s own answer.
     pub jobs: usize,
     /// Further arguments for the harness.
     pub args: &'a [String],
-    /// Which part of the catalog this run is about. `None` is all of it.
+    /// Which part of the catalog this run is about.
+    /// `None` is all of it.
     pub shard: Option<Shard>,
-    /// Where what earlier runs of this exact tree established is kept, and this run's own name. `None` establishes everything afresh.
+    /// Where what earlier runs of this exact tree established is kept, and this run's own name.
+    /// `None` establishes everything afresh.
     pub outcomes: Option<Reusing<'a>>,
-    /// Which of the catalog's mutants this run is about. `None` is every one the shard holds.
+    /// Which of the catalog's mutants this run is about.
+    /// `None` is every one the shard holds.
     pub filter: Option<&'a Filter>,
     /// Stop at the first finding rather than measuring the rest.
     pub fail_fast: bool,
@@ -619,17 +626,21 @@ pub struct Options<'a> {
 /// Which of a catalog's mutants a run is about.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
-    /// Rules by name. Empty selects every rule.
+    /// Rules by name.
+    /// Empty selects every rule.
     pub rules: Vec<String>,
-    /// Families by name. Empty selects every family.
+    /// Families by name.
+    /// Empty selects every family.
     pub families: Vec<String>,
     /// Rules never to select.
     pub skip_rules: Vec<String>,
     /// Families never to select.
     pub skip_families: Vec<String>,
-    /// Paths, each with the lines of it the filter is about. Empty selects every file.
+    /// Paths, each with the lines of it the filter is about.
+    /// Empty selects every file.
     pub files: Vec<(String, Option<(u32, u32)>)>,
-    /// The identities, or prefixes of them, this run is about. `None` where nothing named any, which selects every mutant; a list that names none selects none, because a source of identities that came up empty is an answer rather than the absence of a question.
+    /// The identities, or prefixes of them, this run is about.
+    /// `None` where nothing named any, which selects every mutant; a list that names none selects none, because a source of identities that came up empty is an answer rather than the absence of a question.
     pub ids: Option<Vec<String>>,
 }
 
@@ -756,7 +767,8 @@ impl std::fmt::Display for Shard {
 /// Runs every accepted mutant of `session` once, retrying a timeout serially before believing it, and reports what the run established.
 ///
 /// # Errors
-/// Returns what the engine could not do. A mutant the engine refuses to execute is recorded as errored rather than ending the run.
+/// Returns what the engine could not do.
+/// A mutant the engine refuses to execute is recorded as errored rather than ending the run.
 pub fn run<O: Observer>(
     session: &Session,
     options: &Options<'_>,
@@ -945,7 +957,8 @@ pub struct Equivalence<'a> {
     pub options: crate::equivalence::ProveOptions,
 }
 
-/// How many mutants a run measures at once. Zero is the default: as many as the machine has, capped at four.
+/// How many mutants a run measures at once.
+/// Zero is the default: as many as the machine has, capped at four.
 #[must_use]
 pub fn jobs(configured: usize) -> usize {
     if configured > 0 {
@@ -1020,9 +1033,8 @@ mod pool {
     use crate::runner::Cancel;
     use crate::workspace::SessionError;
 
-    /// The sole owner of one scoped worker. Consuming `join` is the only
-    /// successful way out of the scope, so a panic is an engine fact rather
-    /// than a detached background failure.
+    /// The sole owner of one scoped worker.
+    /// Consuming `join` is the only successful way out of the scope, so a panic is an engine fact rather than a detached background failure.
     struct JoinedWorker<'scope>(std::thread::ScopedJoinHandle<'scope, ()>);
 
     impl<'scope> JoinedWorker<'scope> {
@@ -1051,9 +1063,8 @@ mod pool {
         }
     }
 
-    /// Which catalog position a worker owns next, and whether fail-fast closed
-    /// the queue. Both fields move under one lock so no worker can claim after
-    /// the stop transition.
+    /// Which catalog position a worker owns next, and whether fail-fast closed the queue.
+    /// Both fields move under one lock so no worker can claim after the stop transition.
     struct WorkState {
         next: usize,
         stopped: bool,
@@ -1330,7 +1341,8 @@ pub trait Observer {
     /// A mutant is about to be judged.
     fn started(&mut self, _mutant: &Mutant) {}
 
-    /// A mutant has been judged. `completed` counts what has been delivered, of `total`.
+    /// A mutant has been judged.
+    /// `completed` counts what has been delivered, of `total`.
     fn judged(&mut self, _judged: &Judged, _completed: u32, _total: u32) {}
 
     /// Every mutant has been judged, and the run took `duration`.
@@ -1549,7 +1561,8 @@ fn reuse(
     }))
 }
 
-/// Records what this run established, for the next run of this exact tree. Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
+/// Records what this run established, for the next run of this exact tree.
+/// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
 fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), EngineError> {
     let Some(reusing) = options.outcomes else {
         return Ok(());
@@ -1608,8 +1621,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
 /// Resolves every declared expectation against what the run established, and marks the mutants a reviewer accounted for.
 ///
 /// # Errors
-/// Refuses when one expectation resolves to more mutants than the durable
-/// coverage counter can represent.
+/// Refuses when one expectation resolves to more mutants than the durable coverage counter can represent.
 pub fn verify(
     session: &Session,
     expectations: &[Expectation],

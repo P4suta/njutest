@@ -20,8 +20,7 @@ inputs:
 runs:
   using: composite
   steps:
-    # No `toolchain` input: the action reads rust-toolchain.toml, which is the
-    # one place the version is pinned.
+    # No `toolchain` input: the action reads rust-toolchain.toml, which is the one place the version is pinned.
     - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # stable branch, toolchain from rust-toolchain.toml
       with:
         components: ${{ inputs.components }}

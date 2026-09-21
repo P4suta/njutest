@@ -727,11 +727,8 @@ fn the_stryker_projection_of_a_run_with_every_side_to_it_is_the_one_reviewed() {
 
 /// Every projection of one run lays the accounting out from the same arrangement.
 ///
-/// Four of them used to lay it out each for itself, and all four made the same
-/// mistake — a subset printed beside the count it is part of — while two also
-/// disagreed about which columns exist. The arrangement is one value now, and
-/// this holds them to it: a projection that reaches past `Tally` to the raw
-/// counts is one that can drift again.
+/// Four of them used to lay it out each for itself, and all four made the same mistake — a subset printed beside the count it is part of — while two also disagreed about which columns exist.
+/// The arrangement is one value now, and this holds them to it: a projection that reaches past `Tally` to the raw counts is one that can drift again.
 #[test]
 fn every_projection_lays_the_accounting_out_from_the_one_arrangement() {
     let document = document();

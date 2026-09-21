@@ -71,9 +71,7 @@ pub enum Route {
 
 /// Why a target that could have been asked about a mutation was not.
 ///
-/// A closed set rather than a name, because the report carries these into a
-/// schema and an audit re-derives them: a proof spelled one way in one place
-/// and another way elsewhere is a discharge nobody can hold the run to.
+/// A closed set rather than a name, because the report carries these into a schema and an audit re-derives them: a proof spelled one way in one place and another way elsewhere is a discharge nobody can hold the run to.
 #[derive(
     Debug,
     Clone,
@@ -158,7 +156,8 @@ impl Granularity {
     }
 }
 
-/// Why a route is wider than a measurement alone would make it. Every one of these runs more, never less.
+/// Why a route is wider than a measurement alone would make it.
+/// Every one of these runs more, never less.
 #[derive(
     Debug,
     Clone,
@@ -449,8 +448,7 @@ impl Route {
     /// Every test this route would start, counted, which is the work it asks for.
     ///
     /// # Errors
-    /// Returns [`RouteAccountingError`] instead of truncating or saturating an unrepresentable
-    /// test count.
+    /// Returns [`RouteAccountingError`] instead of truncating or saturating an unrepresentable test count.
     pub fn started<F: Fn(&str) -> u32>(&self, of: F) -> Result<Count<Tests>, RouteAccountingError> {
         let total = match self {
             Self::Block { reaching, .. } => reaching.iter().try_fold(0u64, |total, one| {
@@ -472,8 +470,7 @@ impl Route {
     /// What this route would take, as the share of each target's own baseline the tests it names come to.
     ///
     /// # Errors
-    /// Returns [`RouteAccountingError`] instead of truncating a named-test count or saturating a
-    /// projected duration.
+    /// Returns [`RouteAccountingError`] instead of truncating a named-test count or saturating a projected duration.
     pub fn costing<F: Fn(&str) -> Timing>(
         &self,
         of: F,

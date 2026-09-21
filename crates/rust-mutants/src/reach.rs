@@ -34,16 +34,19 @@ pub use crate::limitation::COVERAGE_TOOLS_MISSING as TOOLS_MISSING;
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Reached {
-    /// Every target that ran, by identity, with the blocks its run covered. Empty when nothing was measured.
+    /// Every target that ran, by identity, with the blocks its run covered.
+    /// Empty when nothing was measured.
     pub targets: BTreeMap<String, BTreeSet<Block>>,
-    /// Every block the coverage build instrumented at all, whether or not it ran. A place outside this is a place the measurement says nothing about — code in another binary, code the instrumented build did not compile — and nothing about it may be concluded.
+    /// Every block the coverage build instrumented at all, whether or not it ran.
+    /// A place outside this is a place the measurement says nothing about — code in another binary, code the instrumented build did not compile — and nothing about it may be concluded.
     pub instrumented: BTreeSet<Block>,
     /// Why the measurement is not what it could be, in the order it was found out.
     pub limitations: Vec<String>,
 }
 
 impl Reached {
-    /// Whether anything was measured at all. Nothing measured routes every mutant to every target.
+    /// Whether anything was measured at all.
+    /// Nothing measured routes every mutant to every target.
     #[must_use]
     pub fn measured(&self) -> bool {
         !self.targets.is_empty()
@@ -89,8 +92,7 @@ pub struct Asking<'a> {
 /// Measures which target reached what, on the tree as it stands.
 ///
 /// # Errors
-/// Only a failure to make the directory the profiles are written to, which
-/// no later phase could work around.
+/// Only a failure to make the directory the profiles are written to, which no later phase could work around.
 pub fn establish(
     asking: &Asking<'_>,
     cancel: &Cancel,

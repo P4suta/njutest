@@ -12,8 +12,7 @@ use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 ///
 /// # Errors
 ///
-/// Returns the ordinary JSON syntax error, a trailing-data error, a duplicate
-/// key error, or the requested type's deserialization error.
+/// Returns the ordinary JSON syntax error, a trailing-data error, a duplicate key error, or the requested type's deserialization error.
 pub fn decode_str<T>(text: &str) -> Result<T, serde_json::Error>
 where
     T: serde::de::DeserializeOwned,
@@ -24,8 +23,7 @@ where
 /// Parses one complete JSON value without `serde_json`'s last-key-wins loss.
 ///
 /// # Errors
-/// Returns the ordinary JSON syntax error, a trailing-data error, or an error
-/// naming the first duplicate object key at any depth.
+/// Returns the ordinary JSON syntax error, a trailing-data error, or an error naming the first duplicate object key at any depth.
 pub fn from_str(text: &str) -> Result<serde_json::Value, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let value = StrictValue::deserialize(&mut deserializer)?.0;
@@ -36,8 +34,7 @@ pub fn from_str(text: &str) -> Result<serde_json::Value, serde_json::Error> {
 /// Parses one complete UTF-8 JSON byte stream without a last-key-wins loss.
 ///
 /// # Errors
-/// Returns the ordinary JSON syntax error, a trailing-data error, or an error
-/// naming the first duplicate object key at any depth.
+/// Returns the ordinary JSON syntax error, a trailing-data error, or an error naming the first duplicate object key at any depth.
 pub fn from_slice(bytes: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = StrictValue::deserialize(&mut deserializer)?.0;

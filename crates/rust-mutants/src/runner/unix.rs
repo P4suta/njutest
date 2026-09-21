@@ -20,8 +20,7 @@ pub(super) const SUPERVISOR_KIND: &str = "process-group";
 pub(super) const SUPERVISION_BOUNDARY: SupervisionBoundary =
     SupervisionBoundary::InheritedProcessGroup;
 
-/// Makes a pipe read cancellable by letting its owned reader poll for data and
-/// its stop instruction instead of blocking forever in the kernel.
+/// Makes a pipe read cancellable by letting its owned reader poll for data and its stop instruction instead of blocking forever in the kernel.
 pub(super) fn configure_reader(reader: &io::PipeReader) -> io::Result<()> {
     let flags = rustix::fs::fcntl_getfl(reader)?;
     rustix::fs::fcntl_setfl(reader, flags | rustix::fs::OFlags::NONBLOCK).map_err(io::Error::from)
@@ -45,12 +44,14 @@ impl Supervisor {
         Ok(Self { pgid: None })
     }
 
-    /// Asks the kernel to put the child in a new process group of its own. Descendants inherit that group unless they deliberately leave it.
+    /// Asks the kernel to put the child in a new process group of its own.
+    /// Descendants inherit that group unless they deliberately leave it.
     pub(super) fn configure(&self, command: &mut Command) {
         command.process_group(0);
     }
 
-    /// Records the group id. Nothing can fail: had the group not been set up the child would not have started at all.
+    /// Records the group id.
+    /// Nothing can fail: had the group not been set up the child would not have started at all.
     pub(super) fn adopt(&mut self, child: &Child) -> Result<(), RunnerError> {
         let raw =
             i32::try_from(child.id()).map_err(|error| RunnerError::SupervisionUnavailable {
@@ -78,7 +79,8 @@ impl Supervisor {
         self.signal(Signal::TERM)
     }
 
-    /// SIGKILL to the whole group, after the grace period a hung test ignores. The kill goes to the group while the child is still un-reaped, so the pid the group is named after cannot yet have been recycled.
+    /// SIGKILL to the whole group, after the grace period a hung test ignores.
+    /// The kill goes to the group while the child is still un-reaped, so the pid the group is named after cannot yet have been recycled.
     pub(super) fn terminate_forcefully(&self, leader: LeaderObservation) -> io::Result<()> {
         #[cfg(target_os = "macos")]
         if leader == LeaderObservation::ExitedWaitable {
@@ -243,8 +245,7 @@ fn signal_result(result: rustix::io::Result<()>) -> io::Result<()> {
     }
 }
 
-/// Observes leader exit without reaping it, so its PID continues to pin the
-/// process-group id until the supervisor has forcefully signalled that group.
+/// Observes leader exit without reaping it, so its PID continues to pin the process-group id until the supervisor has forcefully signalled that group.
 pub(super) fn exit_observed(child: &Child) -> io::Result<bool> {
     let raw = i32::try_from(child.id())
         .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;

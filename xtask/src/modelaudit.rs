@@ -3,9 +3,8 @@
 
 //! Independent verification of one affirmative `verified-v1` report record.
 //!
-//! This module deliberately shares no parser or decision type with
-//! `njutest-cli`. It reads the retained source and Kani export again and
-//! re-derives the answer from the pinned protocol.
+//! This module deliberately shares no parser or decision type with `njutest`.
+//! It reads the retained source and Kani export again and re-derives the answer from the pinned protocol.
 
 use std::collections::BTreeSet;
 use std::io::Read as _;
@@ -58,8 +57,8 @@ pub struct Input<'a> {
     pub evidence: &'a serde_json::Value,
 }
 
-/// Report and filesystem facts needed to validate one non-affirmative model
-/// attempt. This never upgrades the attempt into an affirmative answer.
+/// Report and filesystem facts needed to validate one non-affirmative model attempt.
+/// This never upgrades the attempt into an affirmative answer.
 #[derive(Debug, Clone, Copy)]
 pub struct AttemptInput<'a> {
     /// Directory that contains the report and retained artifacts.
@@ -332,8 +331,7 @@ pub fn verify(input: Input<'_>) -> Result<(), Failure> {
 /// it can never establish equality or difference.
 ///
 /// # Errors
-/// Returns a typed refusal for every missing, open-shaped, or contradictory
-/// retained fact.
+/// Returns a typed refusal for every missing, open-shaped, or contradictory retained fact.
 pub fn verify_attempt(input: AttemptInput<'_>) -> Result<(), Failure> {
     let evidence: AttemptEvidence =
         serde_json::from_value(input.evidence.clone()).map_err(Failure::Report)?;
@@ -917,9 +915,8 @@ fn canonical_workspace_path(path: &str) -> bool {
         .all(|component| !component.is_empty() && !matches!(component, "." | ".."))
 }
 
-/// Re-derives the mutation identity and the differential wiring from the
-/// generated Rust itself. This intentionally does not call the producer's
-/// eligibility or rendering code.
+/// Re-derives the mutation identity and the differential wiring from the generated Rust itself.
+/// This intentionally does not call the producer's eligibility or rendering code.
 fn validate_generated(rendered: &str, identity: &Identity) -> Result<(), Failure> {
     syn::parse_file(rendered)
         .map_err(|_error| Failure::Evidence("generated source is not parseable Rust"))?;

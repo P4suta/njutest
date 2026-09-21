@@ -37,12 +37,10 @@ pub fn memory_recorder() -> Recorder {
     )
 }
 
-/// A stable standalone trace binding for tests that exercise the engine below
-/// its CLI boundary.
+/// A stable standalone trace binding for tests that exercise the engine below its CLI boundary.
 ///
 /// # Panics
-/// Panics only if the fixed test run identity ceases to be canonical, which is
-/// a defect in this testkit rather than a condition a test can recover from.
+/// Panics only if the fixed test run identity ceases to be canonical, which is a defect in this testkit rather than a condition a test can recover from.
 #[must_use]
 pub fn standalone_context() -> TraceContext {
     let run_id = crate::id::RunId::try_from("test")
@@ -63,11 +61,9 @@ pub fn type_names(events: &[Event]) -> Vec<&'static str> {
         .collect()
 }
 
-/// The wrapper whose object is the record documented for `payload`, or none
-/// where the record's fields sit directly beside the `type` tag.
+/// The wrapper whose object is the record documented for `payload`, or none where the record's fields sit directly beside the `type` tag.
 ///
-/// An exhaustive match makes a new payload variant add its serialization
-/// shape here before a documentation ledger can compile.
+/// An exhaustive match makes a new payload variant add its serialization shape here before a documentation ledger can compile.
 #[must_use]
 pub const fn record_key(payload: &Payload) -> Option<&'static str> {
     match payload {
@@ -97,16 +93,13 @@ pub const fn record_key(payload: &Payload) -> Option<&'static str> {
     }
 }
 
-/// Closed specimens whose union serializes every top-level field of every
-/// trace record.
+/// Closed specimens whose union serializes every top-level field of every trace record.
 ///
-/// Optional collections and values are non-empty. `exec` has one specimen per
-/// [`crate::execute::Stopped`] variant, so a new way a process can stop makes
-/// this testkit fail to compile until its wire shape is represented.
+/// Optional collections and values are non-empty.
+/// `exec` has one specimen per [`crate::execute::Stopped`] variant, so a new way a process can stop makes this testkit fail to compile until its wire shape is represented.
 ///
 /// # Panics
-/// Panics only if a hard-coded specimen violates the testkit's own nonempty
-/// record-name invariant.
+/// Panics only if a hard-coded specimen violates the testkit's own nonempty record-name invariant.
 #[must_use]
 #[expect(
     clippy::too_many_lines,
@@ -360,8 +353,7 @@ pub fn every_payload() -> Vec<Payload> {
     payloads
 }
 
-/// Every way a process can stop, named so extending the enum extends the
-/// specimen ledger at compile time.
+/// Every way a process can stop, named so extending the enum extends the specimen ledger at compile time.
 #[must_use]
 pub fn every_stopped() -> [crate::execute::Stopped; 9] {
     use crate::execute::Stopped;
@@ -471,8 +463,7 @@ pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 18
     failures
 }
 
-/// Every process-owned exit shape, named so extending the nested enum extends
-/// the specimen ledger at compile time as well.
+/// Every process-owned exit shape, named so extending the nested enum extends the specimen ledger at compile time as well.
 fn every_process_exit() -> [crate::runner::ProcessExit; 3] {
     use crate::runner::ProcessExit;
 

@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# rust-mutants against its own engine, in four parts, and then an independent
-# re-decision of what it reported. This is the second of the two measurements
-# of how strong this suite is; the other is cargo-mutants (mutation.yml). A
-# survivor the ledger does not accept fails the merge job.
+# rust-mutants against its own engine, in four parts, and then an independent re-decision of what it reported.
+# This is the second of the two measurements of how strong this suite is; the other is cargo-mutants (mutation.yml).
+# A survivor the ledger does not accept fails the merge job.
 name: dogfood
 
 on:
@@ -57,9 +56,8 @@ jobs:
           SHARD: ${{ matrix.shard }}
           TIER: ${{ inputs.tier || 'balanced' }}
           INCLUDE: ${{ inputs.include }}
-        # The exit code says what the run found, and what it found is the
-        # merge job's business. A part that reports a survivor is not a part
-        # that failed.
+        # The exit code says what the run found, and what it found is the merge job's business.
+        # A part that reports a survivor is not a part that failed.
         run: >-
           ./target/release/rust-mutants run
           --shard "$SHARD/4" --tier "$TIER" --probe --jobs 4 --trace
@@ -117,10 +115,8 @@ jobs:
       - name: Say what moved since the last complete run
         env:
           GH_TOKEN: ${{ github.token }}
-        # A run that reports what a previous one did not is a change somebody
-        # made. There is nothing to compare on the first run of a workflow, and
-        # a diff against nothing is not a failure; a diff that cannot be read
-        # is.
+        # A run that reports what a previous one did not is a change somebody made.
+        # There is nothing to compare on the first run of a workflow, and a diff against nothing is not a failure; a diff that cannot be read is.
         run: |
           set -euo pipefail
           previous=$(gh run list --workflow dogfood.yml --status success \

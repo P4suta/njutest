@@ -121,7 +121,7 @@ run = "rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"
 [tasks."check:windows"]
 description = "Type-check every non-benchmark target with every non-benchmark feature for Windows; real Windows CI covers feature-complete benchmarks"
 depends = ["setup:windows-target"]
-run = "cargo check --locked --workspace --all-targets --features njutest-cli/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc"
+run = "cargo check --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc"
 
 [tasks."build:examples"]
 description = "Build the scripted cargo the suite drives, which no test build produces"
@@ -160,7 +160,7 @@ run = ["mise run test:fast", "mise run test:slow", "mise run test:doc"]
 [tasks."kani:verified"]
 description = "Run the generated-harness and strict-result protocol suite with the pinned Kani 0.68 installation"
 depends = ["kani:laws"]
-run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked -p njutest-cli --lib real_kani_068 -- --test-threads=1"
+run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked -p njutest --lib real_kani_068 -- --test-threads=1"
 
 [tasks."kani:laws"]
 description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation"
@@ -210,11 +210,11 @@ cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fa
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
   --ignore-filename-regex 'compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 87 \
-  --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
+  --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 83 \
-  --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
+  --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 81 \
-  --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
+  --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
   --ignore-filename-regex 'crates/|fuzz/|compiler-surfaces/'
 """
@@ -229,7 +229,7 @@ cleanup() { rm -rf -- "$install_root"; }
 trap cleanup EXIT HUP INT TERM
 export CARGO_TARGET_DIR="$install_root/target"
 cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
-cargo install --locked --path crates/njutest-cli --root "$install_root"
+cargo install --locked --path crates/njutest --root "$install_root"
 cargo install --locked --path crates/rust-mutants-cli --root "$install_root"
 "$install_root/bin/njutest" --version
 "$install_root/bin/rust-mutants" --version
@@ -319,8 +319,8 @@ run = """
 set -euo pipefail
 cargo bench -p rust-mutants --bench foundation -- "$@"
 cargo bench -p rust-mutants --bench pipeline -- "$@"
-cargo bench -p njutest-cli --bench report -- "$@"
-cargo bench -p njutest-cli --bench evidence -- "$@"
+cargo bench -p njutest --bench report -- "$@"
+cargo bench -p njutest --bench evidence -- "$@"
 """
 
 [tasks.dogfood]

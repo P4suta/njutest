@@ -13,8 +13,7 @@ pub mod witness;
 ///
 /// # Errors
 ///
-/// Returns [`ModuleNameError`] when `text` is not a Rust token stream or the
-/// collision suffix namespace cannot be searched without overflow.
+/// Returns [`ModuleNameError`] when `text` is not a Rust token stream or the collision suffix namespace cannot be searched without overflow.
 pub fn module_named_for(text: &str, stem: &str) -> Result<String, ModuleNameError> {
     runtime::module_named(text, stem)
 }
@@ -57,8 +56,8 @@ const fn conflicting() -> [&'static str; 4] {
     [warnings, unused, dead_code, unused_qualifications]
 }
 
-/// The exact, private exception carried by repository-generated support
-/// modules. It never decorates user-authored code.
+/// The exact, private exception carried by repository-generated support modules.
+/// It never decorates user-authored code.
 pub const GENERATED_MODULE_ALLOW_ATTRIBUTE: &str = "#[allow(dead_code, unused_qualifications)]";
 
 /// One mutant placed at its rewrite site.
@@ -140,9 +139,8 @@ pub struct FileOutput {
     pub marked: Vec<u32>,
     /// The name the runtime module took.
     pub module: String,
-    /// Whether anything was rewritten. Every mutable file receives control-flow
-    /// checkpoints, including one with no mutant of its own, so a mutation in
-    /// another file cannot escape its process-wide step allowance here.
+    /// Whether anything was rewritten.
+    /// Every mutable file receives control-flow checkpoints, including one with no mutant of its own, so a mutation in another file cannot escape its process-wide step allowance here.
     pub instrumented: bool,
 }
 
@@ -234,8 +232,7 @@ impl std::error::Error for InstrumentError {}
 /// Pairs the candidates discovered in one file with their catalog entries.
 ///
 /// # Errors
-/// [`InstrumentErrorKind::UnknownMutant`] for a candidate the catalog does
-/// not hold, which means the two were computed from different trees.
+/// [`InstrumentErrorKind::UnknownMutant`] for a candidate the catalog does not hold, which means the two were computed from different trees.
 pub fn plan_file(
     catalog: &Catalog,
     path: &str,
@@ -299,8 +296,7 @@ pub struct Instrumenting<'a> {
     pub catalog_digest: &'a str,
 }
 
-/// The pristine source after process-wide checkpoints have been inserted and
-/// every catalog position has been mapped into that intermediate source.
+/// The pristine source after process-wide checkpoints have been inserted and every catalog position has been mapped into that intermediate source.
 struct Checkpointed {
     source: Vec<u8>,
     module: String,
@@ -573,8 +569,7 @@ impl File<'_> {
         InstrumentError::new(kind, self.path, message)
     }
 
-    /// Appends the generated runtime after every source rewrite has kept its
-    /// line boundary intact.
+    /// Appends the generated runtime after every source rewrite has kept its line boundary intact.
     fn append_runtime(
         &self,
         text: &mut String,
@@ -655,7 +650,8 @@ impl File<'_> {
         Ok(())
     }
 
-    /// Arranges the sites by containment. Sites come from the syntax tree, so they nest; a partial overlap is an engine bug and is refused.
+    /// Arranges the sites by containment.
+    /// Sites come from the syntax tree, so they nest; a partial overlap is an engine bug and is refused.
     fn forest(
         &self,
         placements: &[Placement],
@@ -683,9 +679,8 @@ impl File<'_> {
         Ok(forest)
     }
 
-    /// Applies every guard to the file's bytes, and reports where each
-    /// alternative landed in the result. The markers that can be written
-    /// where they are, which is every one outside every guard's own site.
+    /// Applies every guard to the file's bytes, and reports where each alternative landed in the result.
+    /// The markers that can be written where they are, which is every one outside every guard's own site.
     fn markable(markers: &[Marker], forest: &interval::Forest<Placement>) -> Vec<Marker> {
         markers
             .iter()
@@ -739,8 +734,7 @@ impl File<'_> {
         Ok(Span { start, end })
     }
 
-    /// Converts a composed guard's platform offsets and places its nested
-    /// branches inside the original arm.
+    /// Converts a composed guard's platform offsets and places its nested branches inside the original arm.
     fn composed_branches(
         &self,
         composed: &guards::Composed,

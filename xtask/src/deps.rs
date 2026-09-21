@@ -36,15 +36,14 @@ impl fmt::Display for Edge {
 }
 
 /// The rule, for the failure message.
-pub const RULE: &str = "The allowed direction is: njutest-cli -> rust-mutants, njutest-cli -> njutest, \
+pub const RULE: &str = "The allowed direction is: njutest -> rust-mutants, \
     rust-mutants-cli -> rust-mutants; every crate may use the dependency-free compiler declarations \
     in njutest-macros and may dev-depend on njutest-devkit. Apart from that, xtask depends on no \
     workspace crate. compiler-surfaces may depend on the engine only to compile the two incidental \
     CLIs as private modules. Nothing else, in particular nothing from the engine towards the runner.";
 
-const ALLOWED_NORMAL: [(&str, &str); 4] = [
-    ("njutest-cli", "rust-mutants"),
-    ("njutest-cli", "njutest"),
+const ALLOWED_NORMAL: [(&str, &str); 3] = [
+    ("njutest", "rust-mutants"),
     ("rust-mutants-cli", "rust-mutants"),
     ("compiler-surfaces", "rust-mutants"),
 ];
@@ -52,8 +51,7 @@ const ALLOWED_NORMAL: [(&str, &str); 4] = [
 /// Dependencies whose API turns typed failures into an open, downcast-based bag.
 const ERASED_ERRORS: [&str; 4] = ["anyhow", "eyre", "color-eyre", "miette"];
 
-/// Procedural macros that can manufacture an owned trait object after the
-/// repository's source gate has inspected the unexpanded input.
+/// Procedural macros that can manufacture an owned trait object after the repository's source gate has inspected the unexpanded input.
 const OWNED_DYN_GENERATORS: [&str; 3] = ["async-trait", "async-recursion", "typetag"];
 
 fn allowed(edge: &Edge) -> bool {
@@ -82,8 +80,7 @@ pub fn check(edges: &[Edge]) -> Vec<Edge> {
 
 /// Every direct dependency whose API or expansion defeats a repository type invariant.
 ///
-/// Dependency names are canonical package names from Cargo metadata, so
-/// renaming one in a manifest does not hide it from this gate.
+/// Dependency names are canonical package names from Cargo metadata, so renaming one in a manifest does not hide it from this gate.
 #[must_use]
 pub fn prohibited_direct_dependencies<'a>(
     dependencies: impl IntoIterator<Item = (&'a str, &'a str)>,

@@ -48,7 +48,8 @@ enum LeaderObservation {
     ExitedWaitable,
 }
 
-/// How long a POSIX process group is given to shut down after SIGTERM before it is sent SIGKILL. Windows has no equivalent phase.
+/// How long a POSIX process group is given to shut down after SIGTERM before it is sent SIGKILL.
+/// Windows has no equivalent phase.
 pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
 /// How long [`run`] waits for the output pipe to reach EOF after the child itself has exited.
@@ -69,7 +70,8 @@ impl Cancel {
         Self(Arc::new(AtomicBool::new(false)))
     }
 
-    /// Requests cancellation. Idempotent.
+    /// Requests cancellation.
+    /// Idempotent.
     pub fn cancel(&self) {
         self.0.store(true, Ordering::SeqCst);
     }
@@ -80,7 +82,8 @@ impl Cancel {
         self.0.load(Ordering::SeqCst)
     }
 
-    /// The flag itself, so a composition root can raise it from a signal handler. This crate never installs one: a signal is the process's business, not a library's.
+    /// The flag itself, so a composition root can raise it from a signal handler.
+    /// This crate never installs one: a signal is the process's business, not a library's.
     #[must_use]
     pub fn flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.0)
@@ -89,11 +92,8 @@ impl Cancel {
 
 /// How long a child may run before this process stops it.
 ///
-/// A required argument rather than a field with a default, because a wait
-/// nobody bounded is a wait that can be forever: five commands here asked a
-/// tool for its version with no bound at all, and one of them held a Windows
-/// runner for forty minutes until the job's own timeout killed it. There is no
-/// value of this that can be reached by forgetting.
+/// A required argument rather than a field with a default, because a wait nobody bounded is a wait that can be forever: five commands here asked a tool for its version with no bound at all, and one of them held a Windows runner for forty minutes until the job's own timeout killed it.
+/// There is no value of this that can be reached by forgetting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bound {
     /// Stopped after this long, and reported as [`Termination::TimedOut`].
@@ -104,8 +104,7 @@ pub enum Bound {
 
 /// How long a tool asked a question it already knows the answer to may take.
 ///
-/// A version banner, a path the compiler prints, a line from git: none of them
-/// does work, so a minute is already an answer of its own.
+/// A version banner, a path the compiler prints, a line from git: none of them does work, so a minute is already an answer of its own.
 pub const PROBE: Duration = Duration::from_secs(60);
 
 impl Bound {
@@ -123,19 +122,27 @@ impl Bound {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Spec {
-    /// The argument vector, executable first. Each element becomes exactly one argument to the child. A bare program name is resolved through `PATH`; anything with a separator is used as given.
+    /// The argument vector, executable first.
+    /// Each element becomes exactly one argument to the child.
+    /// A bare program name is resolved through `PATH`; anything with a separator is used as given.
     pub argv: Vec<OsString>,
-    /// The child's working directory. `None` means this process's directory.
+    /// The child's working directory.
+    /// `None` means this process's directory.
     pub dir: Option<PathBuf>,
-    /// The child's complete environment. `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
+    /// The child's complete environment.
+    /// `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
     pub env: Option<Vec<(OsString, OsString)>>,
-    /// Bounds the child's wall-clock run time. `None` means no timeout.
+    /// Bounds the child's wall-clock run time.
+    /// `None` means no timeout.
     pub timeout: Option<Duration>,
-    /// Caps the retained combined output in bytes. `None` selects [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised to it so the truncation notice still fits inside the budget.
+    /// Caps the retained combined output in bytes.
+    /// `None` selects [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised to it so the truncation notice still fits inside the budget.
     pub output_limit: Option<usize>,
-    /// Captures stdout on its own, head-capped at this many bytes, for a child that writes structured data (JSON lines) to stdout and chatter to stderr — `cargo metadata`, `cargo check --message-format=json`. `None` merges stdout into [`RunResult::output`] with stderr.
+    /// Captures stdout on its own, head-capped at this many bytes, for a child that writes structured data (JSON lines) to stdout and chatter to stderr — `cargo metadata`, `cargo check --message-format=json`.
+    /// `None` merges stdout into [`RunResult::output`] with stderr.
     pub structured_stdout: Option<usize>,
-    /// A private side-channel file whose appearance asks the supervisor to stop the declared process set. The execution layer validates its contents before drawing any conclusion.
+    /// A private side-channel file whose appearance asks the supervisor to stop the declared process set.
+    /// The execution layer validates its contents before drawing any conclusion.
     pub(crate) stop_file: Option<PathBuf>,
     /// Test-only terminal ownership fault selected explicitly by the composition root.
     reaping: Reaping,
@@ -179,7 +186,8 @@ enum Reaping {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RunnerError {
-    /// The platform's declared process set could not be placed under supervision. Always fatal to the run.
+    /// The platform's declared process set could not be placed under supervision.
+    /// Always fatal to the run.
     #[error("could not supervise the child process set: {message}")]
     SupervisionUnavailable {
         /// What failed.
@@ -281,7 +289,8 @@ pub enum RunnerError {
         #[source]
         source: io::Error,
     },
-    /// Both the cooperative and forceful process-set controls failed. Both failures are retained because either can explain members remaining in the declared process set.
+    /// Both the cooperative and forceful process-set controls failed.
+    /// Both failures are retained because either can explain members remaining in the declared process set.
     #[error(
         "could not terminate the supervised process set: gentle control failed: {gentle}; forceful control failed: {forceful}"
     )]
@@ -344,7 +353,8 @@ pub enum MonitorFailure {
 pub enum ProcessExit {
     /// The process returned this status code.
     Code(i32),
-    /// The process was ended by this signal. Only POSIX platforms produce it.
+    /// The process was ended by this signal.
+    /// Only POSIX platforms produce it.
     Signal(i32),
     /// The operating system returned a status that exposed neither a code nor a signal.
     Unknown,
@@ -490,7 +500,8 @@ pub struct RunResult {
     pub termination: Termination,
     /// The wall-clock time the run took, supervision and killing included: the engine derives mutant timeouts from baseline durations, and a budget that excluded this overhead would be one the same work could exceed.
     pub duration: Duration,
-    /// Combined stdout and stderr in the order the child wrote them, capped at the effective output limit by keeping the tail. Stderr alone when [`Spec::structured_stdout`] is set.
+    /// Combined stdout and stderr in the order the child wrote them, capped at the effective output limit by keeping the tail.
+    /// Stderr alone when [`Spec::structured_stdout`] is set.
     pub output: Vec<u8>,
     /// The child's stdout when [`Spec::structured_stdout`] is set, head-capped at that many bytes; empty otherwise.
     pub stdout: Vec<u8>,
@@ -828,7 +839,8 @@ struct Failed {
     output: Vec<u8>,
 }
 
-/// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption. On any failure the child, if any, is dead.
+/// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption.
+/// On any failure the child, if any, is dead.
 fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     let failed = |error: RunnerError| Failed {
         error,
@@ -978,7 +990,9 @@ struct Wired {
     structured: Option<(usize, io::PipeReader)>,
 }
 
-/// Builds the command and the pipes it writes to. No stdin: a test binary that reads from the terminal would hang. One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
+/// Builds the command and the pipes it writes to.
+/// No stdin: a test binary that reads from the terminal would hang.
+/// One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
 fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     let (merged, stderr) = io::pipe()?;
     let mut command = Command::new(resolved(spec, program)?);
@@ -1338,11 +1352,9 @@ fn classify_monitor(inspected: io::Result<std::fs::Metadata>) -> MonitorState {
 
 /// Signals the supervised process set, politely first where the platform has a polite phase, and waits a bounded time for the leader to become waitable.
 ///
-/// The wait after the forceful signal is about the leader only. Exhausting its
-/// bound is a terminal ownership failure because this owner cannot drop a live
-/// leader. On POSIX, another inherited group member may remain in an
-/// uninterruptible kernel wait after receiving SIGKILL; the process-group
-/// boundary promises signal delivery, not kernel quiescence.
+/// The wait after the forceful signal is about the leader only.
+/// Exhausting its bound is a terminal ownership failure because this owner cannot drop a live leader.
+/// On POSIX, another inherited group member may remain in an uninterruptible kernel wait after receiving SIGKILL; the process-group boundary promises signal delivery, not kernel quiescence.
 fn terminate(supervisor: &sys::Supervisor, child: &SupervisedChild) -> Result<(), RunnerError> {
     let gentle = supervisor.terminate_gently();
     let leader_exited_during_grace = gentle.is_ok() && reap_or_abort(child, TERMINATION_GRACE);
@@ -1415,7 +1427,8 @@ use windows as sys;
 /// How long a forceful end waits to see the child reaped before aborting the supervising process.
 pub const REAPING_GRACE: Duration = Duration::from_secs(10);
 
-/// The mechanism this platform supervises with: `process-group` or `job-object`. Diagnostic, for traces and `doctor`.
+/// The mechanism this platform supervises with: `process-group` or `job-object`.
+/// Diagnostic, for traces and `doctor`.
 pub const SUPERVISOR_KIND: &str = sys::SUPERVISOR_KIND;
 
 /// The containment boundary this platform supervisor enforces.
