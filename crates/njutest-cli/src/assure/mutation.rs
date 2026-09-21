@@ -618,7 +618,10 @@ fn establish(
             if let Some(routed) = routing.as_mut() {
                 routed.answered = asked;
             }
-            keep(options, mutant.id.as_str(), &route, &established)?;
+            match keep(options, mutant.id.as_str(), &route, &established)? {
+                Kept::Written => {}
+                Kept::NotKept(_costs_the_next_run_its_time_and_this_one_no_verdict) => {}
+            }
             established
         }
     };
@@ -788,6 +791,48 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
     }
 }
 
+/// What became of one run's attempt to record what it established for the next one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kept {
+    /// The record is on disk.
+    Written,
+    /// Nothing was written, for a reason this run can name.
+    NotKept(NotKept),
+}
+
+/// Why a run that established something recorded nothing for the next one.
+///
+/// The mirror of [`store::Refusal`], which says why a record already on disk is not believed.
+/// Both are fail-safe: an answer nobody can reuse costs the next run its time and costs this one's verdict nothing.
+/// What it may not do is look the same as having had nothing to say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotKept {
+    /// This run keeps no evidence directory.
+    NoStore,
+    /// The target the kill names is not one this run measured a baseline for.
+    TargetUnknown {
+        /// The target with no identity.
+        target: String,
+    },
+    /// This run's own baseline did not see a target pass on the original tree, so it can vouch for nothing about it.
+    NotPassing {
+        /// The target this run cannot vouch for.
+        target: String,
+    },
+    /// The route names a target this run's baseline has no identity for.
+    RouteUnreadable {
+        /// What reading the route said.
+        refusal: store::Refusal,
+    },
+    /// A survival that reached no target at all, which says nothing a later run could check.
+    NothingReached,
+    /// The disposition is not one a later run may inherit.
+    NotAVerdict {
+        /// What this run concluded.
+        disposition: &'static str,
+    },
+}
+
 /// Records what this run established for a later run whose targets retain the
 /// same behaviour keys.
 ///
@@ -802,9 +847,9 @@ pub fn keep(
     mutant: &str,
     route: &Route,
     disposition: &Disposition,
-) -> Result<(), store::StoreError> {
+) -> Result<Kept, store::StoreError> {
     let Some(evidence) = options.evidence.as_ref() else {
-        return Ok(());
+        return Ok(Kept::NotKept(NotKept::NoStore));
     };
     let mutant = rust_mutants::id::HexDigest::try_from(mutant).map_err(|error| {
         store::StoreError::Corrupt {
@@ -815,10 +860,12 @@ pub fn keep(
     let outcome = match disposition {
         Disposition::Killed { by } => {
             let Some(target) = evidence.identity(by) else {
-                return Ok(());
+                return Ok(Kept::NotKept(NotKept::TargetUnknown { target: by.clone() }));
             };
             let Some(key) = evidence.standing.passing.get(target) else {
-                return Ok(());
+                return Ok(Kept::NotKept(NotKept::NotPassing {
+                    target: target.to_owned(),
+                }));
             };
             store::Outcome::Killed {
                 target: target.to_owned(),
@@ -827,17 +874,20 @@ pub fn keep(
         }
         Disposition::Survived { .. } => {
             let mut targets = BTreeMap::new();
-            let Ok(named) = answered(route, evidence) else {
-                return Ok(());
+            let named = match answered(route, evidence) {
+                Ok(named) => named,
+                Err(refusal) => {
+                    return Ok(Kept::NotKept(NotKept::RouteUnreadable { refusal }));
+                }
             };
             for target in named {
                 let Some(key) = evidence.standing.passing.get(&target) else {
-                    return Ok(());
+                    return Ok(Kept::NotKept(NotKept::NotPassing { target }));
                 };
                 targets.insert(target, key.clone());
             }
             if targets.is_empty() {
-                return Ok(());
+                return Ok(Kept::NotKept(NotKept::NothingReached));
             }
             store::Outcome::Survived { targets }
         }
@@ -847,13 +897,17 @@ pub fn keep(
         | Disposition::Unreached
         | Disposition::Equivalent { .. }
         | Disposition::Unconfirmed { .. }
-        | Disposition::Errored { .. } => return Ok(()),
+        | Disposition::Errored { .. } => {
+            return Ok(Kept::NotKept(NotKept::NotAVerdict {
+                disposition: disposition.name(),
+            }));
+        }
     };
     store::write(
         &evidence.root,
         &store::record(mutant, &evidence.run_id, outcome),
     )?;
-    Ok(())
+    Ok(Kept::Written)
 }
 
 /// The targets a route's answer is about: the ones it named, or every target this run saw pass when the package suite is what answered.
