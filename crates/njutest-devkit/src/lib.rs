@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod census;
 pub mod docs;
 pub mod fake_cargo;
 pub mod fixture;

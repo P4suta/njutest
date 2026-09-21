@@ -16,25 +16,36 @@ use rust_mutants::telling::Hue;
 use crate::report::run::{RunDocument, RunMutantDocument};
 use crate::report::sources::Held;
 
-/// Every outcome a browser can narrow to, in the order the key cycles them.
-pub const OUTCOMES: [&str; 8] = [
-    "all",
-    Outcome::Killed.as_str(),
-    Outcome::Survived.as_str(),
-    Outcome::StepLimitReached.as_str(),
-    Outcome::Waited.as_str(),
-    Outcome::Inconclusive.as_str(),
-    Outcome::Errored.as_str(),
-    Outcome::NotRun.as_str(),
-];
+/// What every row of a stored run is narrowed to when the reader has asked for no column.
+pub const EVERY: &str = "all";
+
+/// Where in the reader's cycle one outcome sits.
+const fn place(outcome: Outcome) -> u8 {
+    match outcome {
+        Outcome::Killed => 0,
+        Outcome::Survived => 1,
+        Outcome::StepLimitReached => 2,
+        Outcome::Waited => 3,
+        Outcome::Inconclusive => 4,
+        Outcome::Errored => 5,
+        Outcome::NotRun => 6,
+    }
+}
+
+/// Every outcome a run can record, in the order the key cycles them.
+fn cycle() -> [Outcome; Outcome::ALL.len()] {
+    let mut order = Outcome::ALL;
+    order.sort_unstable_by_key(|one| place(*one));
+    order
+}
 
 /// The outcomes a digit goes straight to, in the order the digits name them.
-pub const SHORTCUTS: [&str; 5] = [
-    "all",
-    Outcome::Survived.as_str(),
-    Outcome::Killed.as_str(),
-    Outcome::NotRun.as_str(),
-    Outcome::Errored.as_str(),
+pub const SHORTCUTS: [Option<Outcome>; 5] = [
+    None,
+    Some(Outcome::Survived),
+    Some(Outcome::Killed),
+    Some(Outcome::NotRun),
+    Some(Outcome::Errored),
 ];
 
 /// How many rows a page moves by.
@@ -104,8 +115,8 @@ impl Pane {
 /// What the reader has narrowed the rows to.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
-    /// Which of [`OUTCOMES`] is wanted.
-    outcome: usize,
+    /// The one column wanted, or every row when the reader has asked for no column.
+    outcome: Option<Outcome>,
     /// The text a row has to hold somewhere.
     query: String,
     /// Whether the query is being typed rather than only applied.
@@ -116,8 +127,7 @@ impl Filter {
     /// Whether this row is one the reader asked for.
     #[must_use]
     pub fn admits(&self, mutant: &RunMutantDocument) -> bool {
-        let wanted = OUTCOMES.get(self.outcome).copied().unwrap_or("all");
-        if wanted != "all" && mutant.outcome.as_str() != wanted {
+        if self.outcome.is_some_and(|wanted| wanted != mutant.outcome) {
             return false;
         }
         if self.query.is_empty() {
@@ -157,7 +167,7 @@ impl Browser {
             sources,
             selected: 0,
             filter: Filter {
-                outcome: 0,
+                outcome: None,
                 query: String::new(),
                 typing: false,
             },
@@ -185,7 +195,7 @@ impl Browser {
     /// What the filter is narrowed to.
     #[must_use]
     pub fn narrowing(&self) -> &'static str {
-        OUTCOMES.get(self.filter.outcome).copied().unwrap_or("all")
+        self.filter.outcome.map_or(EVERY, Outcome::as_str)
     }
 
     /// What the reader is searching for.
@@ -235,18 +245,24 @@ impl Browser {
     }
 
     /// Narrows to the next outcome, and starts again at the first mutant it admits.
-    pub const fn narrow(&mut self) {
-        let next = self.filter.outcome.saturating_add(1);
-        self.filter.outcome = if next < OUTCOMES.len() { next } else { 0 };
-        self.selected = 0;
+    pub fn narrow(&mut self) {
+        let order = cycle();
+        let after = match self.filter.outcome {
+            None => order.first().copied(),
+            Some(here) => order
+                .iter()
+                .position(|one| *one == here)
+                .and_then(|at| at.checked_add(1))
+                .and_then(|next| order.get(next))
+                .copied(),
+        };
+        self.narrowed(after);
     }
 
-    /// Narrows straight to `outcome`, when it is one this browser knows.
-    pub fn narrow_to(&mut self, outcome: &str) {
-        if let Some(at) = OUTCOMES.iter().position(|one| *one == outcome) {
-            self.filter.outcome = at;
-            self.selected = 0;
-        }
+    /// Narrows straight to one outcome, or to every row, and goes back to the first it admits.
+    pub const fn narrowed(&mut self, outcome: Option<Outcome>) {
+        self.filter.outcome = outcome;
+        self.selected = 0;
     }
 
     /// Shows `pane`, or the mutant again when it is already showing.
@@ -306,7 +322,7 @@ pub fn pressed(browser: &mut Browser, key: Key) -> Flow {
                 .and_then(|one| one.checked_sub(1))
                 .and_then(|one| SHORTCUTS.get(one))
             {
-                browser.narrow_to(wanted);
+                browser.narrowed(*wanted);
             }
         }
         Key::Char(_) | Key::Backspace | Key::Enter => {}

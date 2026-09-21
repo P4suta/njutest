@@ -223,7 +223,8 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
     );
     assert!(
         text.contains(&format!(
-            "#[allow(dead_code, unused_qualifications)]\nmod {module} {{"
+            "{allow}\nmod {module} {{",
+            allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
         )),
         "only the private generated module owns the exact lint exception: {text}"
     );

@@ -398,3 +398,33 @@ fn escape_puts_a_pane_away_before_it_leaves() {
     assert_eq!(browser.pane(), Pane::Mutants);
     assert_eq!(pressed(&mut browser, Key::Escape), Flow::Quit);
 }
+
+#[test]
+fn every_outcome_a_run_can_record_is_one_the_browser_narrows_to() {
+    let mut browser = browser();
+    assert_eq!(browser.narrowing(), "all");
+    let mut visited = Vec::new();
+    for _step in 0..Outcome::ALL.len() {
+        assert_eq!(pressed(&mut browser, Key::Char('f')), Flow::Continue);
+        visited.push(browser.narrowing());
+    }
+    let mut wanted: Vec<&str> = Outcome::ALL.iter().map(|one| one.as_str()).collect();
+    let mut reached = visited.clone();
+    wanted.sort_unstable();
+    reached.sort_unstable();
+    assert_eq!(
+        reached, wanted,
+        "the key that cycles the filter is the reader's only way to a column, so an \
+         outcome it never reaches is one a stored run can hold and nobody can look at"
+    );
+    assert_eq!(pressed(&mut browser, Key::Char('f')), Flow::Continue);
+    assert_eq!(browser.narrowing(), "all", "and then it comes back round");
+    for outcome in Outcome::ALL {
+        browser.narrowed(Some(outcome));
+        assert_eq!(
+            browser.narrowing(),
+            outcome.as_str(),
+            "and narrowing straight to one names it"
+        );
+    }
+}

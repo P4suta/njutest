@@ -369,29 +369,26 @@ fn the_inner_loop_starts_no_toolchain_and_the_whole_suite_still_runs_everything(
 fn every_suite_that_starts_a_toolchain_says_so_in_its_name() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut wrong = Vec::new();
-    for crate_name in ["rust-mutants", "rust-mutants-cli", "njutest-cli"] {
-        let tests = root.join("crates").join(crate_name).join("tests");
-        let entries = std::fs::read_dir(&tests)
-            .unwrap_or_else(|error| panic!("{}: {error}", tests.display()));
-        for entry in entries {
-            let entry =
-                entry.unwrap_or_else(|error| panic!("entry under {}: {error}", tests.display()));
-            let path = entry.path();
-            if path.extension().is_none_or(|extension| extension != "rs") {
-                continue;
-            }
-            let name = match entry.file_name().into_string() {
-                Ok(name) => name,
-                Err(name) => panic!("a test file name is not UTF-8: {name:?}"),
-            };
+    let members = njutest_devkit::census::members(&root);
+    let suited: Vec<&njutest_devkit::census::Member> = members
+        .iter()
+        .filter(|member| !member.suites().is_empty())
+        .collect();
+    assert!(
+        suited.len() > 3,
+        "the crates are read from cargo so that the crate somebody adds next is covered \
+         the day it arrives, and this found almost none: {suited:?}"
+    );
+    for member in &suited {
+        let crate_name = &member.name;
+        for (name, path) in member.suites() {
             let source = std::fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             let scripted = source.contains("fake_cargo::");
-            let starts_cargo = !scripted
-                && (source.contains("Workspace::open") || source.contains("cargo_binary()"))
-                || (!scripted
-                    && source.contains("CARGO_BIN_EXE")
-                    && source.contains("Fixture::copy"));
+            let against_a_fixture = source.contains("Fixture::copy")
+                && (source.contains("cargo_binary()") || source.contains("CARGO_BIN_EXE"));
+            let starts_cargo =
+                !scripted && (source.contains("Workspace::open") || against_a_fixture);
             if starts_cargo && !name.starts_with("toolchain_") {
                 wrong.push(format!("{crate_name}/{name}"));
             }
@@ -399,7 +396,8 @@ fn every_suite_that_starts_a_toolchain_says_so_in_its_name() {
     }
     assert!(
         wrong.is_empty(),
-        "these suites start a toolchain and are in the inner loop: {wrong:?}"
+        "these suites build a cargo project and are in the inner loop, which is the half \
+         of the pipeline that is supposed to answer in seconds: {wrong:?}"
     );
 }
 

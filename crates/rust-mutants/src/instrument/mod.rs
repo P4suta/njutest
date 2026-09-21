@@ -41,15 +41,25 @@ pub use runtime::{
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
 pub const STALE_CATALOG_MARKER: &str = "rust-mutants: this binary was built from catalog ";
 
-/// Lint groups whose `forbid` level also makes the generated module's two
-/// exact allowances illegal.
-pub(crate) const GENERATED_MODULE_CONFLICTING_LINTS: [&str; 4] =
-    ["warnings", "unused", "dead_code", "unused_qualifications"];
+/// The lints the generated module's one allowance names, in the order it names them.
+pub const GENERATED_MODULE_ALLOWED_LINTS: [&str; 2] = ["dead_code", "unused_qualifications"];
+
+/// The rustc lint groups that hold every lint the generated module allows.
+const GENERATED_MODULE_ALLOWING_GROUPS: [&str; 2] = ["warnings", "unused"];
+
+/// Every name whose `forbid` level makes the generated module's allowance illegal.
+pub(crate) const GENERATED_MODULE_CONFLICTING_LINTS: [&str; 4] = conflicting();
+
+/// The allowed lints together with the groups that hold them.
+const fn conflicting() -> [&'static str; 4] {
+    let [dead_code, unused_qualifications] = GENERATED_MODULE_ALLOWED_LINTS;
+    let [warnings, unused] = GENERATED_MODULE_ALLOWING_GROUPS;
+    [warnings, unused, dead_code, unused_qualifications]
+}
 
 /// The exact, private exception carried by repository-generated support
 /// modules. It never decorates user-authored code.
-pub(super) const GENERATED_MODULE_ALLOW_ATTRIBUTE: &str =
-    "#[allow(dead_code, unused_qualifications)]";
+pub const GENERATED_MODULE_ALLOW_ATTRIBUTE: &str = "#[allow(dead_code, unused_qualifications)]";
 
 /// One mutant placed at its rewrite site.
 #[derive(Debug, Clone, PartialEq, Eq)]

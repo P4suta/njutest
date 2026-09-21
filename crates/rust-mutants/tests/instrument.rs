@@ -764,8 +764,25 @@ fn generated_guards_do_not_change_the_user_functions_lint_policy() {
     assert!(!body.contains("#[allow"), "{body}");
     assert!(!runtime.contains("allow(warnings"), "{runtime}");
     assert!(
-        runtime.contains("#[allow(dead_code, unused_qualifications)]"),
+        runtime.contains(rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE),
         "{runtime}"
+    );
+}
+
+#[test]
+fn the_generated_allowance_names_the_lints_a_forbid_of_which_is_a_conflict() {
+    let allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE;
+    let named: Vec<&str> = allow
+        .trim_start_matches("#[allow(")
+        .trim_end_matches(")]")
+        .split(", ")
+        .collect();
+    assert_eq!(
+        named,
+        rust_mutants::instrument::GENERATED_MODULE_ALLOWED_LINTS,
+        "the attribute goes into somebody else's tree and the conflicting-lints list decides \
+         whether their `forbid` is refused before it does, so a lint in one and not the other \
+         is a build this engine breaks and says nothing about: {allow}"
     );
 }
 
