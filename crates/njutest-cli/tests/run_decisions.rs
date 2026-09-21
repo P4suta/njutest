@@ -11,8 +11,8 @@
 use njutest_cli::app::plan::{Planned, line};
 use njutest_cli::assure::baseline::{Baseline, Measured};
 use njutest_cli::assure::run::{
-    Request, alone, first_line, kind_of, measurable, requested, resolve_acceptances, resolved,
-    reusable, selected, stated,
+    Narrowing, Request, alone, first_line, kind_of, measurable, requested, resolve_acceptances,
+    resolved, reusable, selected, stated,
 };
 use njutest_cli::config::{Acceptance, Config};
 use njutest_cli::report::{FindingKind, RunKind, TargetStatus};
@@ -165,7 +165,7 @@ fn what_a_run_is_about_is_what_it_was_asked_for_narrowed_to_what_is_there() {
 
     let whole = request(Config::default(), &[]);
     assert!(
-        requested(&whole).is_empty() && resolved(&whole, &members).is_empty(),
+        requested(&whole).is_empty() && resolved(&whole, &members) == Narrowing::Whole,
         "a run that named nothing is about the workspace, and says so by naming \
          nothing rather than by listing what it happens to hold today: a list would \
          make two runs of one workspace differ because somebody added a package"
@@ -174,15 +174,15 @@ fn what_a_run_is_about_is_what_it_was_asked_for_narrowed_to_what_is_there() {
     let named = request(Config::default(), &["app"]);
     assert_eq!(
         resolved(&named, &members),
-        ["app"],
+        Narrowing::Named(vec!["app".to_owned()]),
         "a run that named a package is about that one"
     );
-    let elsewhere: Vec<String> = resolved(&named, &["core".to_owned()]);
-    assert!(
-        elsewhere.is_empty(),
-        "and a package the workspace does not hold is not something this run is about, \
-         however it was asked for: reporting it would put a name in the scope that \
-         nothing under it was ever measured"
+    assert_eq!(
+        njutest_cli::assure::run::unknown_package(&named, &["core".to_owned()]),
+        Some("app".to_owned()),
+        "and a package the workspace does not hold is named back rather than dropped: \
+         dropping it left a narrowing nothing narrowed, which every reader of it took \
+         for the whole workspace"
     );
 
     let mut configured = Config::default();
@@ -353,13 +353,32 @@ fn metadata(packages: &[(&str, &str)]) -> rust_mutants::cargo::Metadata {
 }
 
 #[test]
+fn a_scope_that_named_something_the_workspace_does_not_hold_measures_nothing_wider() {
+    let workspace = metadata(&[
+        ("core", "/w/core/Cargo.toml"),
+        ("edge", "/w/edge/Cargo.toml"),
+    ]);
+    let members = ["core".to_owned(), "edge".to_owned()];
+    let typo = request(Config::default(), &["cor"]);
+    let scope = resolved(&typo, &members);
+    assert_ne!(
+        selected(&scope, &workspace).len(),
+        workspace.packages.len(),
+        "a reader who asked for one package and misspelled it had the whole workspace \
+         measured and was told the scope was assured: an empty resolved list means both \
+         `nothing was asked for` and `what was asked for is not here`, and the widening \
+         answers the first"
+    );
+}
+
+#[test]
 fn the_packages_an_inventory_walks_are_the_ones_in_scope_that_have_somewhere_to_walk() {
     let workspace = metadata(&[
         ("core", "/w/core/Cargo.toml"),
         ("edge", "/w/edge/Cargo.toml"),
     ]);
     assert_eq!(
-        selected(&[], &workspace),
+        selected(&Narrowing::Whole, &workspace),
         vec![
             ("core".to_owned(), std::path::PathBuf::from("/w/core")),
             ("edge".to_owned(), std::path::PathBuf::from("/w/edge")),
@@ -369,14 +388,14 @@ fn the_packages_an_inventory_walks_are_the_ones_in_scope_that_have_somewhere_to_
          with no unsafe in it"
     );
     assert_eq!(
-        selected(&["edge".to_owned()], &workspace),
+        selected(&Narrowing::Named(vec!["edge".to_owned()]), &workspace),
         vec![("edge".to_owned(), std::path::PathBuf::from("/w/edge"))],
         "and a scope that names one package walks that one"
     );
 
     for named in ["Cargo.toml", ""] {
         assert_eq!(
-            selected(&[], &metadata(&[("nowhere", named)])),
+            selected(&Narrowing::Whole, &metadata(&[("nowhere", named)])),
             Vec::new(),
             "while a package whose manifest names no directory is left out rather than \
              entered under one nobody has: an inventory is the files under a directory, \

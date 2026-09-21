@@ -146,12 +146,12 @@ pub fn run(
     opened(&mut report, request, environment, (&scratch, watch))?;
 
     let (toolchain, metadata) = locate(request, environment, watch)?;
-    surveyed(&mut report, request, (&toolchain, &metadata));
+    let narrowing = surveyed(&mut report, request, (&toolchain, &metadata))?;
     let mut model = model::Preparation::for_contract(request.config.contract, toolchain.host());
 
     notes.phase("soundness")?;
     watch.trace.stage("soundness");
-    let unsafe_packages = take_inventory(&mut report, request, &metadata)?;
+    let unsafe_packages = take_inventory(&mut report, request, &metadata, &narrowing)?;
     deepened(&mut report, request, (&toolchain, environment), watch)?;
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
@@ -357,7 +357,7 @@ fn surveyed(
     report: &mut BuildReport,
     request: &Request,
     found: (&rust_mutants::cargo::Toolchain, &Metadata),
-) {
+) -> Result<Narrowing, RunnerError> {
     let (toolchain, metadata) = found;
     report.toolchain = describe(toolchain);
     report.repository.packages = metadata
@@ -365,7 +365,14 @@ fn surveyed(
         .iter()
         .map(|package| package.name.clone())
         .collect();
-    report.scope.resolved_packages = resolved(request, &report.repository.packages);
+    if let Some(name) = unknown_package(request, &report.repository.packages) {
+        return Err(RunnerError::Engine(
+            rust_mutants::discover::DiscoverError::UnknownPackage { name }.into(),
+        ));
+    }
+    let narrowing = resolved(request, &report.repository.packages);
+    report.scope.resolved_packages = narrowing.names().to_vec();
+    Ok(narrowing)
 }
 
 /// What the `deep-v1` contract adds to a run: the suite interpreted under Miri, and run again under every sanitizer the configuration asks for.
@@ -1070,8 +1077,9 @@ fn take_inventory(
     report: &mut BuildReport,
     request: &Request,
     metadata: &Metadata,
+    narrowing: &Narrowing,
 ) -> Result<BTreeSet<String>, crate::report::CountError> {
-    let selected = selected(&report.scope.resolved_packages, metadata);
+    let selected = selected(narrowing, metadata);
     let Ok(taken) = soundness::inventory(&request.root, &selected) else {
         report.limitations.push(Limitation::new(
             crate::limitation::SOUNDNESS_SOURCE_UNREADABLE,
@@ -1091,11 +1099,11 @@ fn take_inventory(
 
 /// The packages a run's scope names, each with the directory its manifest is in.
 #[must_use]
-pub fn selected(resolved: &[String], metadata: &Metadata) -> Vec<(String, PathBuf)> {
+pub fn selected(narrowing: &Narrowing, metadata: &Metadata) -> Vec<(String, PathBuf)> {
     metadata
         .packages
         .iter()
-        .filter(|package| resolved.is_empty() || resolved.contains(&package.name))
+        .filter(|package| narrowing.holds(&package.name))
         .filter_map(|package| {
             let directory = package.manifest_path.parent()?;
             if directory.as_os_str().is_empty() {
@@ -1679,18 +1687,59 @@ pub fn asked_for(named: &[String], config: &Config) -> Vec<String> {
     }
 }
 
+/// How much of a workspace one run is about.
+///
+/// An empty list of names meant both `nothing narrowed this run` and `what narrowed it is not here`, and every reader of it answered the first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Narrowing {
+    /// Every member, because nothing named any.
+    Whole,
+    /// Exactly these members, each one the workspace holds.
+    Named(Vec<String>),
+}
+
+impl Narrowing {
+    /// The members this names, which is none when it names the workspace.
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        match self {
+            Self::Whole => &[],
+            Self::Named(named) => named,
+        }
+    }
+
+    /// Whether `name` is one of the packages the run is about.
+    #[must_use]
+    pub fn holds(&self, name: &str) -> bool {
+        match self {
+            Self::Whole => true,
+            Self::Named(named) => named.iter().any(|held| held == name),
+        }
+    }
+}
+
 /// The packages the run settled on: what was asked for, or every member.
 #[must_use]
-pub fn resolved(request: &Request, members: &[String]) -> Vec<String> {
+pub fn resolved(request: &Request, members: &[String]) -> Narrowing {
     let asked = requested(request);
     if asked.is_empty() {
-        Vec::new()
+        Narrowing::Whole
     } else {
-        asked
-            .into_iter()
-            .filter(|name| members.contains(name))
-            .collect()
+        Narrowing::Named(
+            asked
+                .into_iter()
+                .filter(|name| members.contains(name))
+                .collect(),
+        )
     }
+}
+
+/// The first package a run was narrowed to that the workspace does not hold, if one is.
+#[must_use]
+pub fn unknown_package(request: &Request, members: &[String]) -> Option<String> {
+    requested(request)
+        .into_iter()
+        .find(|name| !members.contains(name))
 }
 
 /// The name a person calls the workspace.
