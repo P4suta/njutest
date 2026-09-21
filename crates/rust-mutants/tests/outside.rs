@@ -93,3 +93,29 @@ fn a_package_outside_the_tree_is_not_asked_what_it_depends_on() {
          the registry cache, which a copy of the tree does not need to hold"
     );
 }
+
+#[test]
+fn a_manifest_that_is_there_and_will_not_parse_is_a_refusal_rather_than_nothing() {
+    let held = tempfile::tempdir().expect("a temporary directory");
+    let manifest = held.path().join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        b"[patch.crates-io\nserde = { path = \"../serde\" }\n",
+    )
+    .expect("the manifest is written");
+    let refused = rust_mutants::cargo::manifest::patches(held.path());
+    let error = match refused {
+        Ok(found) => panic!(
+            "a manifest that does not parse said the tree patches nothing, which is the \
+             same answer as a tree that patches nothing: {found:?}"
+        ),
+        Err(error) => error,
+    };
+    assert_eq!(error.code().code, "RM1020", "{error}");
+    let absent = rust_mutants::cargo::manifest::patches(&held.path().join("nowhere"));
+    assert_eq!(
+        absent.map_err(|error| error.to_string()),
+        Ok(Vec::new()),
+        "while a manifest that is not there is a tree with no patches, which it is"
+    );
+}

@@ -142,26 +142,31 @@ pub struct TestTarget {
 
 impl TestTarget {
     /// One built test binary, by everything cargo says about it that is not optional.
+    ///
+    /// The identity is derived rather than given: it was a sixth argument that
+    /// had to equal `target_id(package, kind, name)` and nothing checked it,
+    /// so a report could name a target that no run could route to.
     #[must_use]
     #[expect(
         clippy::too_many_arguments,
-        reason = "these six are what cargo says about a target and none of them has a sensible \
-                  default: a builder that let one be forgotten would build a target that names \
-                  no package or runs in no directory"
+        reason = "these five are what cargo says about a target and none of them has a \
+                  sensible default: a builder that let one be forgotten would build a \
+                  target that names no package or runs in no directory"
     )]
     pub fn new(
-        id: impl Into<String>,
         package: impl Into<String>,
         kind: TargetKind,
         name: impl Into<String>,
         executable: PathBuf,
         cwd: PathBuf,
     ) -> Self {
+        let package = package.into();
+        let name = name.into();
         Self {
-            id: id.into(),
-            package: package.into(),
+            id: target_id(&package, kind, &name),
+            package,
             kind,
-            name: name.into(),
+            name,
             executable,
             cwd,
             harness: true,
@@ -1795,9 +1800,13 @@ pub fn targets_of(
         };
         let mut env = cargo_environment(package, kind, target_dir, package_binaries);
         env.extend(built_by_a_script(messages, &artifact.package_id));
-        let harness = harnesses
-            .entry(package.id.clone())
-            .or_insert_with(|| crate::cargo::manifest::harnesses(&package.manifest_path))
+        let held = match harnesses.entry(package.id.clone()) {
+            std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
+            std::collections::btree_map::Entry::Vacant(empty) => {
+                empty.insert(crate::cargo::manifest::harnesses(&package.manifest_path)?)
+            }
+        };
+        let harness = held
             .get(&(kind.name().to_owned(), artifact.target.name.clone()))
             .copied();
         let harness = match harness {
@@ -1806,7 +1815,6 @@ pub fn targets_of(
         };
         targets.push(
             TestTarget::new(
-                target_id(&package.name, kind, &artifact.target.name),
                 package.name.clone(),
                 kind,
                 artifact.target.name.clone(),
@@ -1871,7 +1879,6 @@ pub fn documentation_targets(
             through.push(OsString::from(&package.name));
             targets.push(
                 TestTarget::new(
-                    target_id(&package.name, TargetKind::Doc, &target.name),
                     package.name.clone(),
                     TargetKind::Doc,
                     target.name.clone(),

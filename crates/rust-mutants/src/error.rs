@@ -309,6 +309,12 @@ snapshot_code!(
     "--allow-outside takes an existing absolute directory outside the tree and on the same filesystem root as it; a copy reproduces the shape of what it copies, and cannot hold a directory that is the tree, holds it, or lies across a volume"
 );
 snapshot_code!(
+    MANIFEST_UNREADABLE,
+    "RM1020",
+    "a manifest a run has to read is there and could not be read",
+    "read the manifest the message names yourself: a run decides what it may copy, which targets carry a harness, and which lints a crate forbids from it, and an empty answer to any of those is a different run rather than a missing one"
+);
+snapshot_code!(
     DEP_INFO_UNREADABLE,
     "RM2001",
     "a dep-info file has no rule to read",
@@ -573,6 +579,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         WORKSPACE_REACHES_OUTSIDE,
         ROOT_IS_NOT_THE_WORKSPACE,
         SNAPSHOT_LAYOUT,
+        MANIFEST_UNREADABLE,
         DEP_INFO_UNREADABLE,
         DEP_INFO_MISSING,
         DISCOVER_FILE_UNREADABLE,

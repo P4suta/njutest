@@ -731,7 +731,7 @@ impl Workspace {
                 Err(_allowed_path_does_not_exist_yet) => path.clone(),
             })
             .collect();
-        let patches = crate::cargo::manifest::patches(root);
+        let patches = crate::cargo::manifest::patches(root)?;
         for outside in crate::cargo::reaching_outside(&metadata, root, &patches) {
             if allowed.iter().any(|allow| outside.path.starts_with(allow)) {
                 continue;

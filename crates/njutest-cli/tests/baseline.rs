@@ -15,7 +15,6 @@ use rust_mutants::limitation::{CUSTOM_HARNESS, DOCTESTS_NONE, DOCTESTS_ROUTED_BY
 
 fn target(id: &str, kind: TargetKind, states: &[&str]) -> TestTarget {
     let mut target = TestTarget::new(
-        id,
         id.split('/').next().unwrap_or_default(),
         kind,
         id.rsplit('/').next().unwrap_or_default(),

@@ -163,6 +163,8 @@ pub enum DiscoverError {
     Catalog(#[from] BuildError),
     /// A candidate was incoherent.
     Candidate(#[from] CandidateError),
+    /// A manifest discovery has to read is there and could not be read.
+    Manifest(#[from] crate::cargo::CargoError),
     /// A selected package is not a member.
     UnknownPackage {
         /// The name.
@@ -191,6 +193,7 @@ impl std::fmt::Display for DiscoverError {
             }
             Self::Catalog(error) => write!(f, "{error}"),
             Self::Candidate(error) => write!(f, "{error}"),
+            Self::Manifest(error) => write!(f, "{error}"),
             Self::UnknownPackage { name } => {
                 write!(f, "package {name:?} is not a workspace member")
             }
@@ -216,6 +219,7 @@ impl DiscoverError {
                 error::DISCOVER_CATALOG_FAILED
             }
             Self::UnknownPackage { .. } => error::DISCOVER_UNKNOWN_PACKAGE,
+            Self::Manifest(error) => error.code(),
         }
     }
 }
@@ -577,7 +581,7 @@ impl Assigner<'_> {
         let forbidden = crate::cargo::manifest::forbidden(
             &package.manifest_path,
             Some(&self.workspace_manifest),
-        );
+        )?;
         let forbids = crate_root_forbids_guard_noise(self.root, &crate_root, &forbidden)?;
         for unit in &compiled {
             for source in &unit.sources {

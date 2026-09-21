@@ -239,7 +239,6 @@ fn a_target_is_named_by_package_kind_and_name() {
 
 fn target() -> TestTarget {
     TestTarget::new(
-        "demo/test/cli",
         "demo",
         TargetKind::Test,
         "cli",
@@ -457,7 +456,6 @@ fn a_request_names_the_arguments_the_binary_receives() {
 #[test]
 fn a_test_process_learns_which_cargo_built_it() {
     let target = TestTarget::new(
-        "core/lib/core",
         "core",
         TargetKind::Lib,
         "core",
@@ -660,7 +658,6 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
 #[test]
 fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
     let built = TestTarget::new(
-        "demo/lib/demo",
         "demo",
         TargetKind::Lib,
         "demo",
@@ -681,7 +678,6 @@ fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
     assert_eq!(built.through.len(), 2);
 
     let plain = TestTarget::new(
-        "demo/lib/demo",
         "demo",
         TargetKind::Lib,
         "demo",

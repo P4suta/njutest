@@ -63,6 +63,8 @@ pub enum CargoErrorKind {
     MetadataUnparsable,
     /// A `--message-format=json` line is not a message.
     MessageUnparsable,
+    /// A manifest a run must read is there and could not be read or parsed.
+    ManifestUnreadable,
     /// A dep-info file has no rule to read.
     DepInfoUnreadable,
     /// An artifact's dep-info file could not be read.
@@ -81,6 +83,7 @@ impl CargoErrorKind {
             Self::CommandFailed => error::CARGO_COMMAND_FAILED,
             Self::MetadataUnparsable => error::CARGO_METADATA_UNPARSABLE,
             Self::MessageUnparsable => error::CARGO_MESSAGE_UNPARSABLE,
+            Self::ManifestUnreadable => error::MANIFEST_UNREADABLE,
             Self::DepInfoUnreadable => error::DEP_INFO_UNREADABLE,
             Self::DepInfoMissing => error::DEP_INFO_MISSING,
             Self::Cancelled => error::INTERRUPTED,
