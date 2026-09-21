@@ -285,6 +285,7 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
 }
 
 /// Where the profiles an instrumented build script writes go.
+///
 /// They are the build's, not any test's, and no target's coverage is ever merged from them; naming a directory inside the scratch keeps them out of the tree under verification, which would otherwise be a different tree after every run.
 pub const BUILD_PROFILES: &str = "build-profiles";
 

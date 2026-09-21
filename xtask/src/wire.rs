@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! An independent re-derivation of the faults a run's seam recording licensed.
+//!
 //! Nothing here calls the runner's catalogue: the rules and the identity recipe are written out again from the runner trace and assurance contracts, so a run and this audit agreeing means two implementations agreed.
 
 use serde_json::Value;

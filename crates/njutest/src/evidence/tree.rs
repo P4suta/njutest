@@ -71,6 +71,7 @@ impl Excluded {
 }
 
 /// Where fuzz corpora live.
+///
 /// They are digested apart from the tree because a corpus grows without the code changing, and a run that only grew its corpus is a different run without being a different program.
 pub const CORPUS_DIRECTORY: &str = "fuzz/corpus";
 

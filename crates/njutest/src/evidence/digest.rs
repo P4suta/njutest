@@ -68,6 +68,7 @@ fn write(hasher: &mut Sha256, value: &str) {
 }
 
 /// How much of the workspace a run looked at.
+///
 /// It is part of the identity: a run that looked at one package established less than one that looked at everything, and the two must never share a cached answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {

@@ -244,6 +244,7 @@ pub fn ended(code: u8, signalled: &std::sync::atomic::AtomicUsize) -> std::proce
 }
 
 /// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given.
+///
 /// `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
 #[cfg(feature = "testkit")]
 pub fn run_from<I>(args: I, environment: &Environment, cancel: &Cancel, streams: Streams<'_>) -> u8

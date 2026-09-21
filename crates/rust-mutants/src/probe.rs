@@ -138,6 +138,7 @@ impl Question {
 }
 
 /// Whether the literal is one a probe can be stated about at all.
+///
 /// A float is refused outright: `-0.0 == 0.0` holds and `-0.0` is not what `Default::default()` writes, so a probe would say the mutation changed nothing when it changed the sign of a zero.
 #[must_use]
 pub const fn is_probeable_literal(lit: &Lit) -> bool {
