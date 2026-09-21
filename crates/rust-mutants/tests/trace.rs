@@ -1390,9 +1390,9 @@ fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
     };
     assert_eq!(
         named("granularity"),
-        rust_mutants::session::Route::GRANULARITIES
+        rust_mutants::session::Granularity::ALL
             .iter()
-            .map(|one| (*one).to_owned())
+            .map(|one| one.name().to_owned())
             .collect::<BTreeSet<String>>(),
         "a route the engine can record is one the schema accepts"
     );

@@ -5,6 +5,7 @@
 #
 # Strictness policy:
 # - pre-commit is the gentle pass: format-and-restage, deny obvious mistakes.
+#   `ocomment` was a second, weaker, unpinned opinion about the rule `cargo xtask lints` already holds, and the only step here without the `|| true` its neighbours have: a fresh clone that ran bootstrap.sh had every commit fail, with no diagnosis, on a tool nothing told them to install.
 #   Nothing here analyses the whole workspace, and a clippy run is the thing
 #   that was taken out to make that true. `glob` decides whether a command
 #   runs, not what it runs over, and clippy is a whole-crate analysis with no
@@ -40,8 +41,6 @@ pre-commit:
       stage_fixed: true
     typos:
       run: typos
-    ocomment:
-      run: command -v ocomment >/dev/null 2>&1 \&\& ocomment check
     taplo:
       glob: "*.toml"
       run: command -v taplo >/dev/null 2>&1 && taplo fmt {staged_files} || true

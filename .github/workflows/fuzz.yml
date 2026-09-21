@@ -12,9 +12,8 @@
 # wants hours, and none of it gates anything: `ci-success` does not wait for
 # it, so a crash it found could not have stopped a merge anyway. What guards a
 # pull request is that the targets still compile against the API they fuzz,
-# which `lint` answers in seconds as `mise run fuzz:check`. What finds a crash
-# is time, which the weekly run spends and `mise run fuzz:smoke` spends on the
-# machine of whoever is changing a parser.
+# which `lint` answers in seconds as `mise run fuzz:clippy`.
+# What finds a crash is time, which the weekly run spends and `mise run fuzz:smoke` spends on the machine of whoever is changing a parser.
 name: fuzz
 
 on:

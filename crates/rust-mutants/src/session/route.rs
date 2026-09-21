@@ -288,10 +288,6 @@ pub struct Routing<'a> {
 }
 
 impl Route {
-    /// Every name [`Route::granularity`] can answer, which is what a schema and an audit have to know in full.
-    pub const GRANULARITIES: [&'static str; 5] =
-        ["all", "block", "test", "discharged", "unreached"];
-
     /// Which targets a measurement puts at `position` of `path`, out of `targets`.
     #[must_use]
     pub fn decide(

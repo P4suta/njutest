@@ -511,6 +511,10 @@ fn fallible_values_cannot_be_erased_through_convenience_methods() {
         "core::result::Result::ok",
         "core::result::Result::unwrap_or",
         "core::result::Result::unwrap_or_default",
+        "core::result::Result::map_or",
+        "core::result::Result::map_or_else",
+        "core::result::Result::or",
+        "core::result::Result::or_else",
         "std::path::Path::exists",
         "std::path::Path::is_file",
         "std::path::Path::is_dir",
@@ -520,6 +524,31 @@ fn fallible_values_cannot_be_erased_through_convenience_methods() {
             "{method} erases an error and must stay in the compiler-backed disallowed-methods gate"
         );
     }
+}
+
+#[test]
+fn the_gate_catalogue_names_the_compiler_backed_methods_the_policy_holds() {
+    let configured = repository("clippy.toml");
+    let named: Vec<&str> = configured
+        .lines()
+        .filter_map(|line| line.split_once("path = \""))
+        .filter_map(|(_, rest)| rest.split_once('"'))
+        .map(|(path, _)| path)
+        .filter(|path| path.starts_with("core::result::Result::"))
+        .filter_map(|path| path.rsplit("::").next())
+        .collect();
+    assert!(named.len() > 4, "the policy names them: {named:?}");
+    let page = repository("docs/development.md");
+    let unstated: Vec<&&str> = named
+        .iter()
+        .filter(|method| !page.contains(&format!("`Result::{method}`")))
+        .collect();
+    assert!(
+        unstated.is_empty(),
+        "the gate catalogue is what a reader consults before writing the shape it \
+         refuses, and a method the policy refuses that the page does not name is one \
+         they meet as a compiler error instead: {unstated:?}"
+    );
 }
 
 #[test]
@@ -553,5 +582,116 @@ fn the_pipeline_builds_the_scripted_toolchain_before_it_runs_the_suite() {
     assert!(
         built < tested,
         "the suite runs before the scripted cargo it drives is built"
+    );
+}
+
+/// Every file under `.github/workflows`, and `mise.toml`, as one text.
+fn everything_that_runs_a_gate() -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut found = repository("mise.toml");
+    let Ok(entries) = std::fs::read_dir(root.join(".github/workflows")) else {
+        panic!("the workflows are readable")
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        found.push('\n');
+        found.push_str(&text);
+    }
+    found
+}
+
+#[test]
+fn nothing_that_runs_a_gate_turns_a_comparison_into_a_recording() {
+    let running = everything_that_runs_a_gate();
+    for lever in ["UPDATE_GOLDEN", "UPDATE_FATES", "TRYBUILD"] {
+        assert!(
+            !running.contains(lever),
+            "a task or a workflow setting {lever} turns 59 goldens from a comparison \
+             into a recording, and every golden test passes forever after. It is set by \
+             hand, by somebody reading the diff it writes, and never by a pipeline"
+        );
+    }
+}
+
+#[test]
+fn nothing_shrinks_what_a_gate_sees_from_a_file_of_its_own() {
+    let nextest = repository(".config/nextest.toml");
+    assert!(
+        !nextest.contains("default-filter"),
+        "a default filter in the nextest profile removes tests from the local run and \
+         from the pipeline at once, and both stay green: what a run does not execute is \
+         named where somebody asks for it, on the command line: {nextest}"
+    );
+    let cargo = repository(".cargo/config.toml");
+    for key in ["paths", "rustflags", "[patch", "[source"] {
+        assert!(
+            !cargo.contains(key),
+            "{key} in .cargo/config.toml redirects or de-lints what every gate reads, \
+             from a file no gate reads: the closed source universe proves what it can \
+             see, and this is the one place that can change what that is: {cargo}"
+        );
+    }
+    let deny = repository("deny.toml");
+    assert!(
+        deny.contains("ignore = []"),
+        "a waived advisory is a decision somebody made about a vulnerability, and an \
+         ignore list that grows without a number going up in a file of its own is the \
+         ledger this repository refuses everywhere else: {deny}"
+    );
+}
+
+#[test]
+fn every_task_a_page_or_a_workflow_names_is_one_mise_declares() {
+    let declared = repository("mise.toml");
+    let mut named: Vec<String> = Vec::new();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut pending = vec![root.join("docs"), root.join(".github")];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let path = entry.path();
+            if std::fs::metadata(&path).is_ok_and(|one| one.is_dir()) {
+                pending.push(path);
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for part in text.split("mise run ").skip(1) {
+                let task: String = part
+                    .chars()
+                    .take_while(|one| one.is_ascii_alphanumeric() || *one == ':' || *one == '-')
+                    .collect();
+                if !task.is_empty() {
+                    named.push(task);
+                }
+            }
+        }
+    }
+    named.sort();
+    named.dedup();
+    assert!(named.len() > 5, "the pages name the tasks: {named:?}");
+    let gone: Vec<&String> = named
+        .iter()
+        .filter(|task| {
+            !declared.contains(&format!("[tasks.{task}]"))
+                && !declared.contains(&format!("[tasks.\"{task}\"]"))
+        })
+        .collect();
+    assert!(
+        gone.is_empty(),
+        "a page or a workflow tells a reader to run a task mise does not declare, which \
+         is prose about a command that does not exist and, where the page says a gate \
+         covers something, a gate nobody runs: {gone:?}"
     );
 }

@@ -243,11 +243,6 @@ run = "cargo deny --locked --all-features check"
 description = "Check the dependency graph against the RustSec advisory database"
 run = "cargo audit --deny warnings"
 
-[tasks."fuzz:check"]
-description = "Type-check every cargo-fuzz target on the toolchain the workspace uses, so one cannot rot against an API change unnoticed"
-dir = "fuzz"
-run = "cargo check --locked --all-targets"
-
 [tasks."fuzz:clippy"]
 description = "Lint every cargo-fuzz target with the root workspace's exact rustc and Clippy policy"
 env = { CARGO_NET_OFFLINE = "false" }
