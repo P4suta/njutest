@@ -342,7 +342,11 @@ fn metadata(packages: &[(&str, &str)]) -> rust_mutants::cargo::Metadata {
         "packages": packages
             .iter()
             .map(|(name, manifest)| serde_json::json!({
-                "id": format!("path+file:///w#{name}"),
+                "id": njutest_devkit::cargo_double::package_id(
+                    std::path::Path::new("/w").join(name).as_path(),
+                    name,
+                    "0.1.0",
+                ),
                 "name": name,
                 "version": "0.1.0",
                 "manifest_path": manifest,

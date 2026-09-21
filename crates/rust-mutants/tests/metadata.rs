@@ -12,56 +12,56 @@ fn the_closure_of_a_package_is_what_goes_into_its_test_binary() {
       "version": 1,
       "workspace_root": "/w",
       "target_directory": "/w/target",
-      "workspace_members": ["app 0.1.0 (path+file:///w)"],
+      "workspace_members": ["path+file:///w#app@0.1.0"],
       "packages": [],
       "resolve": {
         "root": null,
         "nodes": [
           {
-            "id": "app 0.1.0 (path+file:///w)",
+            "id": "path+file:///w#app@0.1.0",
             "deps": [
-              { "pkg": "lib 1.0.0 (registry+x)", "dep_kinds": [{ "kind": null }] },
-              { "pkg": "gen 1.0.0 (registry+x)", "dep_kinds": [{ "kind": "build" }] },
-              { "pkg": "helper 1.0.0 (registry+x)", "dep_kinds": [{ "kind": "dev" }] }
+              { "pkg": "registry+x#lib@1.0.0", "dep_kinds": [{ "kind": null }] },
+              { "pkg": "registry+x#gen@1.0.0", "dep_kinds": [{ "kind": "build" }] },
+              { "pkg": "registry+x#helper@1.0.0", "dep_kinds": [{ "kind": "dev" }] }
             ]
           },
           {
-            "id": "lib 1.0.0 (registry+x)",
+            "id": "registry+x#lib@1.0.0",
             "deps": [
-              { "pkg": "deep 1.0.0 (registry+x)", "dep_kinds": [{ "kind": null }] },
-              { "pkg": "theirs 1.0.0 (registry+x)", "dep_kinds": [{ "kind": "dev" }] }
+              { "pkg": "registry+x#deep@1.0.0", "dep_kinds": [{ "kind": null }] },
+              { "pkg": "registry+x#theirs@1.0.0", "dep_kinds": [{ "kind": "dev" }] }
             ]
           },
-          { "id": "gen 1.0.0 (registry+x)", "deps": [] },
-          { "id": "helper 1.0.0 (registry+x)", "deps": [] },
-          { "id": "deep 1.0.0 (registry+x)", "deps": [] },
-          { "id": "theirs 1.0.0 (registry+x)", "deps": [] }
+          { "id": "registry+x#gen@1.0.0", "deps": [] },
+          { "id": "registry+x#helper@1.0.0", "deps": [] },
+          { "id": "registry+x#deep@1.0.0", "deps": [] },
+          { "id": "registry+x#theirs@1.0.0", "deps": [] }
         ]
       }
     }"#;
     let metadata = Metadata::parse(document.as_bytes());
     assert_eq!(result_state(&metadata), Returned, "metadata: {metadata:?}");
     let Ok(metadata) = metadata else { return };
-    let closure = metadata.closure("app 0.1.0 (path+file:///w)");
-    assert!(closure.contains(&"app 0.1.0 (path+file:///w)".to_owned()));
+    let closure = metadata.closure("path+file:///w#app@0.1.0");
+    assert!(closure.contains(&"path+file:///w#app@0.1.0".to_owned()));
     assert!(
-        closure.contains(&"lib 1.0.0 (registry+x)".to_owned()),
+        closure.contains(&"registry+x#lib@1.0.0".to_owned()),
         "a normal dependency"
     );
     assert!(
-        closure.contains(&"deep 1.0.0 (registry+x)".to_owned()),
+        closure.contains(&"registry+x#deep@1.0.0".to_owned()),
         "transitively"
     );
     assert!(
-        closure.contains(&"gen 1.0.0 (registry+x)".to_owned()),
+        closure.contains(&"registry+x#gen@1.0.0".to_owned()),
         "a build dependency"
     );
     assert!(
-        closure.contains(&"helper 1.0.0 (registry+x)".to_owned()),
+        closure.contains(&"registry+x#helper@1.0.0".to_owned()),
         "the package's own tests link its development dependencies"
     );
     assert!(
-        !closure.contains(&"theirs 1.0.0 (registry+x)".to_owned()),
+        !closure.contains(&"registry+x#theirs@1.0.0".to_owned()),
         "somebody else's development dependency is not linked into this binary"
     );
 
@@ -81,7 +81,7 @@ fn a_document_with_no_resolved_graph_keys_on_every_package_it_names() {
       "target_directory": "/w/target",
       "workspace_members": [],
       "packages": [
-        { "id": "a 0.1.0 (path+file:///w)", "name": "a", "version": "0.1.0",
+        { "id": "path+file:///w#a@0.1.0", "name": "a", "version": "0.1.0",
           "manifest_path": "/w/Cargo.toml" }
       ]
     }"#;
@@ -91,7 +91,7 @@ fn a_document_with_no_resolved_graph_keys_on_every_package_it_names() {
     assert!(metadata.resolve.is_none());
     assert_eq!(
         metadata.closure("anything"),
-        ["a 0.1.0 (path+file:///w)"],
+        ["path+file:///w#a@0.1.0"],
         "with no graph to narrow with, everything counts"
     );
 }

@@ -827,3 +827,82 @@ fn every_coverage_floor_measures_the_one_crate_it_is_about() {
         );
     }
 }
+
+#[test]
+fn no_double_spells_a_package_identity_the_way_cargo_stopped_spelling_one() {
+    let root = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
+        .unwrap_or_else(|error| panic!("the workspace root: {error}"));
+    let mut written = Vec::new();
+    for member in njutest_devkit::census::members(&root) {
+        let mut files: Vec<std::path::PathBuf> = member
+            .suites()
+            .into_iter()
+            .map(|(_name, path)| path)
+            .collect();
+        files.extend(rust_sources_under(&member.directory.join("src")));
+        for path in files {
+            let relative = match path.strip_prefix(&root) {
+                Ok(at) => at.display().to_string().replace('\\', "/"),
+                Err(error) => panic!("{}: {error}", path.display()),
+            };
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            if source.lines().any(retired_identity) {
+                written.push(relative);
+            }
+        }
+    }
+    written.sort();
+    assert!(
+        written.is_empty(),
+        "cargo stopped spelling a package identity `<name> <version> (<source>)` in 1.77 \
+         and spells one `path+file:///abs#version`, or `#name@version` where the \
+         directory is not named after the package. Five spellings of one identity were \
+         written by hand across this tree and one of them was cargo's, so every double \
+         carrying another was asking the reader about a document cargo does not print. \
+         `njutest_devkit::cargo_double::package_id` is the one held against real cargo by \
+         `rust-mutants::toolchain_metadata_double`: {written:?}"
+    );
+}
+
+/// Whether a line carries `<name> <version> (<source>)`, the identity cargo printed before 1.77.
+fn retired_identity(line: &str) -> bool {
+    ["(path+", "(registry+", "(git+"]
+        .iter()
+        .filter_map(|source| line.split_once(source))
+        .any(|(before, _after)| {
+            let mut words = before.split_whitespace().rev();
+            words.next().is_some_and(is_a_version) && words.next().is_some()
+        })
+}
+
+/// Whether a word is three dot-separated numbers, which is how cargo wrote a version into one.
+fn is_a_version(word: &str) -> bool {
+    let parts: Vec<&str> = word.split('.').collect();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty() && part.chars().all(|character| character.is_ascii_digit())
+        })
+}
+
+/// Every `.rs` file under `at`, however deep, and nothing when there is no such directory.
+fn rust_sources_under(at: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let entries = match std::fs::read_dir(at) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return found,
+        Err(error) => panic!("{}: {error}", at.display()),
+    };
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| panic!("{}: {error}", at.display()));
+        let path = entry.path();
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => found.extend(rust_sources_under(&path)),
+            Ok(_file) if path.extension().is_some_and(|one| one == "rs") => found.push(path),
+            Ok(_other) => {}
+            Err(error) => panic!("{}: {error}", path.display()),
+        }
+    }
+    found.sort();
+    found
+}

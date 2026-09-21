@@ -27,7 +27,6 @@ use rust_mutants::runner::Cancel;
 
 const CARGO_BANNER: &str = "cargo 1.98.0 (abc 2026-08-05)\nrelease: 1.98.0\ncommit-hash: abc\ncommit-date: 2026-08-05\nhost: x86_64-unknown-linux-gnu\n";
 const RUSTC_BANNER: &str = "rustc 1.98.0 (abc 2026-08-05)\nbinary: rustc\nrelease: 1.98.0\nhost: x86_64-unknown-linux-gnu\nLLVM version: 20.1.0\n";
-const PACKAGE_ID: &str = "demo 0.1.0 (path+file:///fixture)";
 
 struct Said {
     code: u8,
@@ -86,15 +85,31 @@ fn asked(environment: &Environment, extra: &[&str]) -> Said {
     }
 }
 
+/// The identity cargo gives the one package these tests are about, spelled the way cargo spells one.
+fn package_id(root: &Path) -> String {
+    njutest_devkit::cargo_double::package_id(root, "demo", "0.1.0")
+}
+
+/// The identity cargo gives a package of `name` whose manifest sits in `directory`.
+fn package_id_of(directory: &Path, name: &str) -> String {
+    njutest_devkit::cargo_double::package_id(directory, name, "0.1.0")
+}
+
+/// The synthetic root the compiler messages below are about.
+fn fixture_root() -> &'static Path {
+    Path::new("/fixture")
+}
+
 fn metadata(root: &Path) -> String {
+    let package_id = package_id(fixture_root());
     serde_json::json!({
         "version": 1,
         "workspace_root": root,
         "target_directory": root.join("target"),
-        "workspace_members": [PACKAGE_ID],
-        "workspace_default_members": [PACKAGE_ID],
+        "workspace_members": [package_id],
+        "workspace_default_members": [package_id],
         "packages": [{
-            "id": PACKAGE_ID,
+            "id": package_id,
             "name": "demo",
             "version": "0.1.0",
             "manifest_path": root.join("Cargo.toml"),
@@ -136,7 +151,7 @@ fn successful_build(executable: Option<&str>) -> String {
         lines.push(
             serde_json::json!({
                 "reason": "compiler-artifact",
-                "package_id": PACKAGE_ID,
+                "package_id": package_id(fixture_root()),
                 "target": {
                     "name": "demo",
                     "kind": ["lib"],
@@ -819,7 +834,7 @@ fn compiler_failures_prefer_each_rendered_error_and_have_a_nonempty_fallback() {
     let messages = stream(&[
         serde_json::json!({
             "reason": "compiler-message",
-            "package_id": PACKAGE_ID,
+            "package_id": package_id(fixture_root()),
             "target": target,
             "message": {
                 "message": "first fallback",
@@ -829,7 +844,7 @@ fn compiler_failures_prefer_each_rendered_error_and_have_a_nonempty_fallback() {
         }),
         serde_json::json!({
             "reason": "compiler-message",
-            "package_id": PACKAGE_ID,
+            "package_id": package_id(fixture_root()),
             "target": target_document(repo.root(), "demo", &["lib"], &["lib"]),
             "message": {
                 "message": "second fallback",
@@ -839,7 +854,7 @@ fn compiler_failures_prefer_each_rendered_error_and_have_a_nonempty_fallback() {
         }),
         serde_json::json!({
             "reason": "compiler-message",
-            "package_id": PACKAGE_ID,
+            "package_id": package_id(fixture_root()),
             "target": target_document(repo.root(), "demo", &["lib"], &["lib"]),
             "message": { "message": "not an error", "level": "warning" },
         }),
@@ -938,7 +953,7 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
     let messages = stream(&[
         artifact(
             repo.root(),
-            PACKAGE_ID,
+            &package_id(fixture_root()),
             "demo",
             &["lib"],
             &["lib"],
@@ -946,7 +961,7 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
         ),
         artifact(
             repo.root(),
-            PACKAGE_ID,
+            &package_id(fixture_root()),
             "demo-bin",
             &["bin"],
             &["bin"],
@@ -954,7 +969,7 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
         ),
         artifact(
             repo.root(),
-            PACKAGE_ID,
+            &package_id(fixture_root()),
             "demo-proc",
             &["proc-macro"],
             &["proc-macro"],
@@ -962,7 +977,7 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
         ),
         artifact(
             repo.root(),
-            "foreign 0.1.0 (path+file:///foreign)",
+            &package_id_of(Path::new("/foreign"), "foreign"),
             "foreign",
             &["lib"],
             &["lib"],
@@ -1054,7 +1069,7 @@ fn library_sources_are_only_workspace_library_inputs_and_dep_info_failure_is_an_
     let messages = stream(&[
         artifact(
             repo.root(),
-            PACKAGE_ID,
+            &package_id(fixture_root()),
             "missing",
             &["lib"],
             &["lib"],
@@ -1101,13 +1116,13 @@ fn each_unit_gets_cargos_environment_over_the_parent_environment() {
     let messages = stream(&[
         serde_json::json!({
             "reason": "build-script-executed",
-            "package_id": PACKAGE_ID,
+            "package_id": package_id(fixture_root()),
             "out_dir": out_dir,
             "env": [["DUPLICATE", "child"], ["ONLY_CHILD", "yes"]],
         }),
         artifact(
             repo.root(),
-            PACKAGE_ID,
+            &package_id(fixture_root()),
             "demo",
             &["lib"],
             &["lib"],

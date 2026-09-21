@@ -282,16 +282,7 @@ fn a_temporary_root_alias_is_resolved_before_any_workspace_path_is_minted()
 fn opening_a_member_directory_names_the_workspace_root_and_the_flag() {
     let fixture = Fixture::copy("fixture-simple");
     let elsewhere = fixture.temp().join("the-workspace");
-    let document = metadata_document(fixture.root()).replace(
-        &format!(
-            "\"workspace_root\":\"{}\"",
-            njutest_devkit::paths::in_json(fixture.root())
-        ),
-        &format!(
-            "\"workspace_root\":\"{}\"",
-            njutest_devkit::paths::in_json(&elsewhere)
-        ),
-    );
+    let document = metadata_document_rooted(fixture.root(), &elsewhere);
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
     let (opened, installed_toolchain) = opened(&fixture, &script);
@@ -317,10 +308,8 @@ fn opening_a_member_directory_names_the_workspace_root_and_the_flag() {
 #[test]
 fn a_path_dependency_outside_the_root_is_named_before_any_copy() {
     let fixture = Fixture::copy("fixture-simple");
-    let document = metadata_document(fixture.root()).replace(
-        "\"targets\":[",
-        "\"dependencies\":[{\"name\":\"outside\",\"kind\":null,\"path\":\"../../../elsewhere\"}],\"targets\":[",
-    );
+    let elsewhere = fixture.temp().join("elsewhere");
+    let document = metadata_document_reading(fixture.root(), "outside", &elsewhere);
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
     let (opened, installed_toolchain) = opened(&fixture, &script);
@@ -361,13 +350,7 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
     );
     let source = std::fs::write(allowed.join("src/lib.rs"), "pub fn f() {}\n");
     assert_eq!(result_state(&source), Returned, "its source: {source:?}");
-    let document = metadata_document(fixture.root()).replace(
-        "\"targets\":[",
-        &format!(
-            "\"dependencies\":[{{\"name\":\"outside\",\"kind\":null,\"path\":\"{}\"}}],\"targets\":[",
-            njutest_devkit::paths::in_json(&allowed)
-        ),
-    );
+    let document = metadata_document_reading(fixture.root(), "outside", &allowed);
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
     let installed = install(&script);
@@ -445,17 +428,34 @@ fn folded(path: &Path) -> PathBuf {
     parts.iter().collect()
 }
 
+/// The one package every document below reports, at `root`.
+fn demo(root: &Path) -> njutest_devkit::cargo_double::Package {
+    use njutest_devkit::cargo_double::{Package, Target};
+
+    Package::at("demo", root).building(Target::library("demo", &root.join("src/lib.rs")))
+}
+
 /// A `cargo metadata` document for a one-package workspace at `root`.
 fn metadata_document(root: &Path) -> String {
-    let manifest = root.join("Cargo.toml");
-    let source = root.join("src/lib.rs");
-    format!(
-        r#"{{"packages":[{{"name":"demo","version":"0.1.0","id":"demo 0.1.0","manifest_path":"{manifest}","targets":[{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"{source}","edition":"2024","test":true,"doctest":true,"harness":true}}]}}],"workspace_members":["demo 0.1.0"],"workspace_root":"{root}","target_directory":"{target}","version":1,"resolve":null}}"#,
-        manifest = njutest_devkit::paths::in_json(&manifest),
-        source = njutest_devkit::paths::in_json(&source),
-        root = njutest_devkit::paths::in_json(root),
-        target = njutest_devkit::paths::in_json(&root.join("target")),
-    )
+    njutest_devkit::cargo_double::Document::of(root)
+        .holding(demo(root))
+        .json()
+}
+
+/// The same, for a workspace cargo says is rooted somewhere else.
+fn metadata_document_rooted(root: &Path, workspace_root: &Path) -> String {
+    njutest_devkit::cargo_double::Document::of(workspace_root)
+        .holding(demo(root))
+        .json()
+}
+
+/// The same, where the one package reads `name` from `directory`.
+fn metadata_document_reading(root: &Path, name: &str, directory: &Path) -> String {
+    use njutest_devkit::cargo_double::{Document, PathDependency};
+
+    Document::of(root)
+        .holding(demo(root).reading(PathDependency::on(name, directory)))
+        .json()
 }
 
 #[test]

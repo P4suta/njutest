@@ -219,7 +219,8 @@ fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
 #[test]
 fn every_configuration_key_a_reader_may_write_is_on_the_configuration_page() {
     let text = page("docs/configuration.md");
-    let default = toml::to_string(&Config::default()).expect("the defaults serialise");
+    let default = toml::to_string(&njutest_cli::testkit::documented_specimen())
+        .expect("the specimen serialises");
     let missing: Vec<String> = default
         .lines()
         .filter_map(|line| {
@@ -237,12 +238,16 @@ fn every_configuration_key_a_reader_may_write_is_on_the_configuration_page() {
     );
 }
 
-/// Whether the page shows `key`, which for a section of named tables is a table with a name in it.
+/// Whether the page shows `key`, which for a section of named tables is a table with any name in it.
+///
+/// `[resources.api]` is not a key a reader copies: `resources` is theirs to name a thing inside, and the page shows one called something else.
+/// What has to be documented is the section.
 fn documented(text: &str, key: &str) -> bool {
     text.contains(key)
         || key
             .strip_suffix(']')
             .is_some_and(|section| text.contains(&format!("{section}.")))
+        || named_table(key).is_some_and(|section| text.contains(&format!("[{section}.")))
 }
 
 #[test]
@@ -508,4 +513,62 @@ fn suites() -> String {
     }
     assert!(read.len() > 100_000, "the suites are read: {}", read.len());
     read
+}
+
+/// The section of a `[section.name]` key, where the name is the reader's to choose.
+fn named_table(key: &str) -> Option<&str> {
+    let inside = key.strip_prefix('[')?.strip_suffix(']')?;
+    let (section, name) = inside.split_once('.')?;
+    (!section.is_empty() && !name.is_empty() && !name.contains('.')).then_some(section)
+}
+
+#[test]
+fn the_configuration_the_ledger_walks_has_a_member_in_every_collection_it_holds() {
+    let text = toml::to_string(&njutest_cli::testkit::documented_specimen())
+        .expect("the specimen serialises");
+    let value: toml::Value = toml::from_str(&text).expect("what was just written reads back");
+    let mut empty = Vec::new();
+    nothing_in(&value, String::new(), &mut empty);
+    empty.sort();
+    assert!(
+        empty.is_empty(),
+        "the ledger below learns which keys a reader may write by walking this value, so a \
+         collection with nothing in it hides every key of whatever goes in it: the eight of \
+         a `[resources.*]` table, the three of `[generation]`, and the ten of an \
+         `[[acceptance]]` entry were invisible for exactly that reason. {empty:?}"
+    );
+}
+
+/// Every path of `value` that holds an empty table or array, which is a shape the walk above cannot see into.
+fn nothing_in(value: &toml::Value, at: String, into: &mut Vec<String>) {
+    match value {
+        toml::Value::Table(table) => {
+            if table.is_empty() {
+                into.push(at);
+                return;
+            }
+            for (key, held) in table {
+                let under = if at.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{at}.{key}")
+                };
+                nothing_in(held, under, into);
+            }
+        }
+        toml::Value::Array(array) => {
+            if array.is_empty() {
+                into.push(at);
+                return;
+            }
+            for (index, held) in array.iter().enumerate() {
+                nothing_in(held, format!("{at}[{index}]"), into);
+            }
+        }
+        toml::Value::String(..)
+        | toml::Value::Integer(..)
+        | toml::Value::Float(..)
+        | toml::Value::Boolean(..)
+        | toml::Value::Datetime(..) => {}
+    }
 }

@@ -408,23 +408,24 @@ fn what_a_target_links_is_read_from_the_resolved_graph() {
           "version": 1,
           "workspace_root": "{root}",
           "target_directory": "{root}/target",
-          "workspace_members": ["demo 0.1.0 (path+file://{root})"],
+          "workspace_members": ["{package_id}"],
           "packages": [
-            {{ "id": "demo 0.1.0 (path+file://{root})", "name": "demo", "version": "0.1.0",
+            {{ "id": "{package_id}", "name": "demo", "version": "0.1.0",
                "manifest_path": "{root}/Cargo.toml" }},
-            {{ "id": "far 1.0.0 (registry+x)", "name": "far", "version": "1.0.0",
+            {{ "id": "registry+x#far@1.0.0", "name": "far", "version": "1.0.0",
                "manifest_path": "/elsewhere/Cargo.toml" }}
           ],
           "resolve": {{
             "root": null,
             "nodes": [
-              {{ "id": "demo 0.1.0 (path+file://{root})",
-                 "deps": [{{ "pkg": "far 1.0.0 (registry+x)", "dep_kinds": [{{ "kind": null }}] }}] }},
-              {{ "id": "far 1.0.0 (registry+x)", "deps": [] }}
+              {{ "id": "{package_id}",
+                 "deps": [{{ "pkg": "registry+x#far@1.0.0", "dep_kinds": [{{ "kind": null }}] }}] }},
+              {{ "id": "registry+x#far@1.0.0", "deps": [] }}
             ]
           }}
         }}"#,
-        root = njutest_devkit::paths::in_json(repo.root())
+        root = njutest_devkit::paths::in_json(repo.root()),
+        package_id = njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0")
     );
     let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
     let dependencies = "b".repeat(64);
@@ -435,7 +436,7 @@ fn what_a_target_links_is_read_from_the_resolved_graph() {
             root: repo.root(),
             dependencies: &dependencies,
         },
-        &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
+        &njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0"),
     )
     .expect("the package links were read");
     assert_eq!(linked.packages, ["demo@0.1.0", "far@1.0.0"]);
@@ -519,17 +520,18 @@ fn keyed(repo: &Repo) -> String {
           "version": 1,
           "workspace_root": "{root}",
           "target_directory": "{root}/target",
-          "workspace_members": ["demo 0.1.0 (path+file://{root})"],
+          "workspace_members": ["{package_id}"],
           "packages": [
-            {{ "id": "demo 0.1.0 (path+file://{root})", "name": "demo", "version": "0.1.0",
+            {{ "id": "{package_id}", "name": "demo", "version": "0.1.0",
                "manifest_path": "{root}/Cargo.toml" }}
           ],
           "resolve": {{
             "root": null,
-            "nodes": [{{ "id": "demo 0.1.0 (path+file://{root})", "deps": [] }}]
+            "nodes": [{{ "id": "{package_id}", "deps": [] }}]
           }}
         }}"#,
-        root = njutest_devkit::paths::in_json(repo.root())
+        root = njutest_devkit::paths::in_json(repo.root()),
+        package_id = njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0")
     );
     let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
     let dependencies = "b".repeat(64);
@@ -540,7 +542,7 @@ fn keyed(repo: &Repo) -> String {
             root: repo.root(),
             dependencies: &dependencies,
         },
-        &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
+        &njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0"),
     )
     .expect("the package links were read");
     linked
@@ -635,37 +637,43 @@ fn four_kinds(repo: &Repo) -> Metadata {
     repo.write("crates/quiet/src/lib.rs", "pub fn g() {}\n");
 
     let root = njutest_devkit::paths::in_json(repo.root());
+    let package_id = njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0");
+    let deep =
+        njutest_devkit::cargo_double::package_id(&repo.root().join("crates/deep"), "deep", "0.1.0");
+    let quiet = njutest_devkit::cargo_double::package_id(
+        &repo.root().join("crates/quiet"),
+        "quiet",
+        "0.1.0",
+    );
     let document = format!(
         r#"{{
           "version": 1,
           "workspace_root": "{root}",
           "target_directory": "{root}/target",
-          "workspace_members": ["demo 0.1.0 (path+file://{root})"],
+          "workspace_members": ["{package_id}"],
           "packages": [
-            {{ "id": "demo 0.1.0 (path+file://{root})", "name": "demo", "version": "0.1.0",
+            {{ "id": "{package_id}", "name": "demo", "version": "0.1.0",
                "manifest_path": "{root}/Cargo.toml" }},
-            {{ "id": "far 1.0.0 (registry+x)", "name": "far", "version": "1.0.0",
+            {{ "id": "registry+x#far@1.0.0", "name": "far", "version": "1.0.0",
                "manifest_path": "/elsewhere/Cargo.toml" }},
-            {{ "id": "deep 0.1.0 (path+file://{root}/crates/deep)", "name": "deep",
+            {{ "id": "{deep}", "name": "deep",
                "version": "0.1.0", "manifest_path": "{root}/crates/deep/Cargo.toml" }},
-            {{ "id": "quiet 0.1.0 (path+file://{root}/crates/quiet)", "name": "quiet",
+            {{ "id": "{quiet}", "name": "quiet",
                "version": "0.1.0", "manifest_path": "{root}/crates/quiet/Cargo.toml" }}
           ],
           "resolve": {{
             "root": null,
             "nodes": [
-              {{ "id": "demo 0.1.0 (path+file://{root})", "deps": [
-                 {{ "pkg": "ghost 9.9.9 (registry+x)", "dep_kinds": [{{ "kind": null }}] }},
-                 {{ "pkg": "far 1.0.0 (registry+x)", "dep_kinds": [{{ "kind": null }}] }},
-                 {{ "pkg": "deep 0.1.0 (path+file://{root}/crates/deep)",
-                    "dep_kinds": [{{ "kind": null }}] }},
-                 {{ "pkg": "quiet 0.1.0 (path+file://{root}/crates/quiet)",
-                    "dep_kinds": [{{ "kind": null }}] }}
+              {{ "id": "{package_id}", "deps": [
+                 {{ "pkg": "registry+x#ghost@9.9.9", "dep_kinds": [{{ "kind": null }}] }},
+                 {{ "pkg": "registry+x#far@1.0.0", "dep_kinds": [{{ "kind": null }}] }},
+                 {{ "pkg": "{deep}", "dep_kinds": [{{ "kind": null }}] }},
+                 {{ "pkg": "{quiet}", "dep_kinds": [{{ "kind": null }}] }}
               ] }},
-              {{ "id": "ghost 9.9.9 (registry+x)", "deps": [] }},
-              {{ "id": "far 1.0.0 (registry+x)", "deps": [] }},
-              {{ "id": "deep 0.1.0 (path+file://{root}/crates/deep)", "deps": [] }},
-              {{ "id": "quiet 0.1.0 (path+file://{root}/crates/quiet)", "deps": [] }}
+              {{ "id": "registry+x#ghost@9.9.9", "deps": [] }},
+              {{ "id": "registry+x#far@1.0.0", "deps": [] }},
+              {{ "id": "{deep}", "deps": [] }},
+              {{ "id": "{quiet}", "deps": [] }}
             ]
           }}
         }}"#
@@ -686,14 +694,14 @@ fn every_package_of_a_closure_is_reached_whatever_the_ones_before_it_were() {
             root: repo.root(),
             dependencies: &dependencies,
         },
-        &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
+        &njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0"),
     )
     .expect("the package links were read");
 
     assert!(
         linked
             .packages
-            .contains(&"ghost 9.9.9 (registry+x)".to_owned()),
+            .contains(&"registry+x#ghost@9.9.9".to_owned()),
         "a package the resolved graph names and the package list does not is named by \
          the id it was asked about, because a key that leaves it out is a key that says \
          two closures are one: {:?}",

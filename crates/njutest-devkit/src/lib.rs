@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cargo_double;
 pub mod census;
 pub mod docs;
 pub mod fake_cargo;

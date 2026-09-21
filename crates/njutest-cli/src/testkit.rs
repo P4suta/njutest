@@ -658,3 +658,104 @@ fn every_seam_decision() -> [crate::report::SeamDecision; 4] {
     }
     decisions
 }
+
+/// A configuration with one member in every collection it has, so a ledger that walks one sees every key a reader may write.
+///
+/// The key ledger read `Config::default()`, whose collections are empty: the eight keys of a `[resources.*]` table, the three of `[generation]`, and the ten of an `[[acceptance]]` entry were invisible to it, documented or not.
+/// No `..Default::default()` appears below, so a field added to any of these is a field somebody has to give a value here before the tree compiles.
+#[cfg(feature = "testkit")]
+#[must_use]
+pub fn documented_specimen() -> crate::config::Config {
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    use crate::config::{
+        Acceptance, Cache, Config, Configuration, Contract, Execution, Fuzz, Generation, Mutation,
+        Project, Reports, Resource, Soundness, Verification,
+    };
+
+    Config {
+        version: 1,
+        contract: Contract::default(),
+        project: Project {
+            packages: vec!["demo".to_owned()],
+            include: vec!["src/**/*.rs".to_owned()],
+            exclude: vec!["src/generated/**".to_owned()],
+        },
+        execution: Execution {
+            features: vec!["slow".to_owned()],
+            all_features: false,
+            no_default_features: false,
+            test_binary_args: vec!["--test-threads=1".to_owned()],
+            environment: vec!["RUST_LOG=info".to_owned()],
+            timeout: Duration::from_mins(10),
+            steps: 50_000_000,
+            build_timeout: Some(Duration::from_mins(15)),
+            jobs: 1,
+            skip_targets: vec!["demo/lib/demo".to_owned()],
+        },
+        cache: Cache {
+            max_bytes: 5_368_709_120,
+            ttl: Duration::from_hours(24 * 30),
+        },
+        mutation: Mutation { equivalence: true },
+        verification: Verification {
+            unwind: Some(8),
+            timeout: Some(Duration::from_mins(2)),
+        },
+        reports: Reports {
+            keep: 20,
+            directory: match crate::config::ReportDirectory::try_from("reports") {
+                Ok(directory) => directory,
+                Err(refusal) => unreachable!("the default report directory: {refusal}"),
+            },
+        },
+        soundness: Soundness {
+            miri_flags: vec!["-Zmiri-strict-provenance".to_owned()],
+            sanitizers: vec!["address".to_owned()],
+        },
+        fuzz: Fuzz {
+            run: true,
+            max_total_time: Duration::from_secs(60),
+            targets: vec!["libtest_summary".to_owned()],
+        },
+        resources: BTreeMap::from([(
+            "api".to_owned(),
+            Resource {
+                command: vec!["docker".to_owned(), "compose".to_owned(), "up".to_owned()],
+                timeout: Duration::from_secs(60),
+                shared: true,
+                exclusive: false,
+                environment: vec!["BASE_URL=http://127.0.0.1:8080".to_owned()],
+                interpose: "BASE_URL".to_owned(),
+                wire: crate::wire::Wire::Http,
+                hold: Duration::from_secs(30),
+            },
+        )]),
+        generation: Some(Generation {
+            command: vec!["write-tests".to_owned()],
+            allowed_paths: vec!["tests/**".to_owned()],
+            environment: vec!["MODEL=none".to_owned()],
+        }),
+        acceptance: vec![Acceptance {
+            id: "0123456789abcdef".to_owned(),
+            path: Some("src/lib.rs".to_owned()),
+            item: Some("demo::add".to_owned()),
+            rule: Some("add-to-sub".to_owned()),
+            original: Some("a + b".to_owned()),
+            line: Some(12),
+            reason: "the difference is unobservable through the public surface".to_owned(),
+            expires: Some(jiff::Timestamp::UNIX_EPOCH),
+            owner: Some("a reviewer".to_owned()),
+            ticket: Some("NJU-1".to_owned()),
+        }],
+        configuration: vec![Configuration {
+            name: "no-default".to_owned(),
+            features: vec!["slow".to_owned()],
+            all_features: false,
+            no_default_features: true,
+            profile: Some("release".to_owned()),
+            target: Some("x86_64-unknown-linux-gnu".to_owned()),
+        }],
+    }
+}

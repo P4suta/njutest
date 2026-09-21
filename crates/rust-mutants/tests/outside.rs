@@ -10,23 +10,20 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::cargo_double::{Document, Package, PathDependency};
 use rust_mutants::cargo::manifest::Patch;
 use rust_mutants::cargo::{Metadata, reaching_outside};
 
-/// A metadata document for one member at `root/crates/a` with the given path dependencies.
+/// A metadata document for one member at `root/crates/a` reading from the given directories.
+///
+/// Every path is absolute, which is the only kind cargo reports; the document this replaced gave relative ones, so each conclusion below was drawn from an input that cannot arrive.
+/// `toolchain_metadata_double` is where that is held against cargo itself.
 fn document(root: &Path, dependencies: &[(&str, &str)]) -> Metadata {
-    let manifest = root.join("crates/a/Cargo.toml");
-    let deps: Vec<String> = dependencies
-        .iter()
-        .map(|(name, path)| format!(r#"{{"name":"{name}","kind":null,"path":"{path}"}}"#))
-        .collect();
-    let json = format!(
-        r#"{{"packages":[{{"name":"a","version":"0.1.0","id":"a 0.1.0","manifest_path":"{manifest}","targets":[],"dependencies":[{deps}]}}],"workspace_members":["a 0.1.0"],"workspace_root":"{root}","target_directory":"{target}","version":1,"resolve":null}}"#,
-        manifest = njutest_devkit::paths::in_json(&manifest),
-        root = njutest_devkit::paths::in_json(root),
-        target = njutest_devkit::paths::in_json(&root.join("target")),
-        deps = deps.join(","),
-    );
+    let mut package = Package::at("a", &root.join("crates/a"));
+    for (name, at) in dependencies {
+        package = package.reading(PathDependency::on(name, Path::new(at)));
+    }
+    let json = Document::of(root).holding(package).json();
     Metadata::parse(json.as_bytes()).expect("the document parses")
 }
 
@@ -35,7 +32,7 @@ fn a_path_dependency_inside_the_tree_reaches_nowhere() {
     let root = Path::new("/w");
     let metadata = document(
         root,
-        &[("b", "../b"), ("c", "./vendor/c"), ("d", "../../d")],
+        &[("b", "/w/b"), ("c", "/w/crates/a/vendor/c"), ("d", "/w/d")],
     );
     assert!(
         reaching_outside(&metadata, root, &[]).is_empty(),
@@ -47,7 +44,7 @@ fn a_path_dependency_inside_the_tree_reaches_nowhere() {
 #[test]
 fn a_path_dependency_outside_the_tree_is_named_with_the_manifest_that_declares_it() {
     let root = Path::new("/w");
-    let metadata = document(root, &[("outside", "../../../elsewhere")]);
+    let metadata = document(root, &[("outside", "/elsewhere")]);
     let found = reaching_outside(&metadata, root, &[]);
     assert_eq!(found.len(), 1, "{found:?}");
     let one = found.first().expect("one");
@@ -86,7 +83,7 @@ fn a_patch_that_points_outside_the_tree_is_named_too() {
 #[test]
 fn a_package_outside_the_tree_is_not_asked_what_it_depends_on() {
     let root = Path::new("/w");
-    let mut metadata = document(root, &[("outside", "../../../elsewhere")]);
+    let mut metadata = document(root, &[("outside", "/elsewhere")]);
     for package in &mut metadata.packages {
         package.manifest_path = PathBuf::from("/registry/a-0.1.0/Cargo.toml");
     }
