@@ -97,6 +97,10 @@ impl Repository {
     }
 
     fn push_over(&self, local: &str, remote: &str) -> Output {
+        self.push_terminated(local, remote, "\n")
+    }
+
+    fn push_terminated(&self, local: &str, remote: &str, end: &str) -> Output {
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("the workspace root")
@@ -111,7 +115,7 @@ impl Repository {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = SupervisedChild::launch(&mut command).expect("the pre-push gate");
-        let line = format!("refs/heads/local {local} refs/heads/remote {remote}\n");
+        let line = format!("refs/heads/local {local} refs/heads/remote {remote}{end}");
         child
             .take_stdin()
             .expect("the gate's stdin")
@@ -202,6 +206,31 @@ fn an_existing_remote_ancestor_is_accepted() {
 
     let output = repository.push_over(&local, &repository.head);
     assert!(output.status.success(), "{}", stderr(&output));
+}
+
+#[test]
+fn a_ref_update_nothing_terminates_is_the_same_ref_update() {
+    let repository =
+        Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
+    std::fs::write(repository.directory.path().join("tracked"), "after\n")
+        .expect("a second revision");
+    command(repository.directory.path(), "git", &["add", "tracked"]);
+    command(
+        repository.directory.path(),
+        "git",
+        &["commit", "--quiet", "-m", "fast-forward"],
+    );
+    let local = object_id(repository.directory.path(), "HEAD");
+
+    let output = repository.push_terminated(&local, &repository.head, "");
+    assert!(
+        output.status.success(),
+        "the dispatcher that feeds this gate captures the ref list with `$(cat)` and \
+         replays it with `printf '%s'`, so the last line arrives with nothing after it. \
+         A gate that drops it sees an empty push and refuses every one of them, which is \
+         what it did: {}",
+        stderr(&output)
+    );
 }
 
 #[test]

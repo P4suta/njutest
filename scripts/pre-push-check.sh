@@ -13,7 +13,9 @@ zero=0000000000000000000000000000000000000000
 head=$(git rev-parse --verify HEAD)
 seen=0
 
-while read -r local_ref local_oid remote_ref remote_oid; do
+# `|| [[ -n ... ]]` so the last line is read even when nothing terminates it.
+# The global dispatcher captures the ref list with `$(cat)`, which strips the trailing newline, and replays it with `printf '%s'`; a bare `read` returns non-zero at that EOF and drops the line it had already filled in, so the whole gate saw an empty push and refused a fast-forward it should have checked.
+while read -r local_ref local_oid remote_ref remote_oid || [[ -n "${local_ref}" ]]; do
   if [[ -z "${local_ref}" || -z "${local_oid}" || -z "${remote_ref}" || -z "${remote_oid}" ]]; then
     echo "pre-push: git supplied an incomplete ref update" >&2
     exit 1
