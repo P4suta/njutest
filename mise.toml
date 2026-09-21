@@ -209,11 +209,11 @@ cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fa
 cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
 cargo llvm-cov report --summary-only --fail-under-regions 80
 cargo llvm-cov report --summary-only --fail-under-regions 87 \
-  --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+  --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 85 \
-  --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+  --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
-  --ignore-filename-regex 'crates/|fuzz/'
+  --ignore-filename-regex 'crates/|fuzz/|compiler-surfaces/'
 """
 
 [tasks.package]

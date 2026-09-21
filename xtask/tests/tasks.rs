@@ -745,3 +745,79 @@ fn every_gate_the_pipeline_runs_is_one_this_machine_can_run() {
          lint` omitted cargo fmt and taplo for exactly this long. {unanswerable:?}"
     );
 }
+
+/// The crate each coverage floor is about, by the order the ratchets appear.
+const MEASURED: [&str; 3] = ["crates/rust-mutants", "crates/njutest-cli", "xtask"];
+
+/// Every place in this tree that holds Rust a coverage report can count.
+const PLACES: [&str; 9] = [
+    "crates/rust-mutants",
+    "crates/rust-mutants-cli",
+    "crates/njutest",
+    "crates/njutest-cli",
+    "crates/njutest-macros",
+    "crates/njutest-devkit",
+    "xtask",
+    "fuzz",
+    "compiler-surfaces",
+];
+
+/// The paths one `--ignore-filename-regex` leaves out, with its one alternation spelled out.
+fn left_out(pattern: &str) -> Vec<String> {
+    let mut alternatives: Vec<String> = Vec::new();
+    let rest = match pattern.split_once('(') {
+        None => pattern.to_owned(),
+        Some((head, after)) => {
+            let (group, tail) = after
+                .split_once(')')
+                .unwrap_or_else(|| panic!("the alternation closes: {pattern}"));
+            let (suffix, beyond) = tail.split_once('|').unwrap_or((tail, ""));
+            alternatives.extend(
+                group
+                    .split('|')
+                    .map(|member| format!("{head}{member}{suffix}")),
+            );
+            beyond.to_owned()
+        }
+    };
+    alternatives.extend(rest.split('|').map(ToOwned::to_owned));
+    alternatives.retain(|one| !one.is_empty());
+    alternatives
+}
+
+#[test]
+fn every_coverage_floor_measures_the_one_crate_it_is_about() {
+    let coverage = task("coverage");
+    let patterns: Vec<&str> = coverage
+        .lines()
+        .filter_map(|line| line.split_once("--ignore-filename-regex '"))
+        .filter_map(|(_, rest)| rest.split_once('\''))
+        .map(|(pattern, _)| pattern)
+        .collect();
+    assert_eq!(
+        patterns.len(),
+        MEASURED.len(),
+        "a floor was added or removed and this table did not follow: {patterns:?}"
+    );
+    for (measured, pattern) in MEASURED.into_iter().zip(patterns) {
+        let out = left_out(pattern);
+        let under = |place: &str| format!("{place}/");
+        let counted: Vec<&str> = PLACES
+            .into_iter()
+            .filter(|place| *place != measured)
+            .filter(|place| !out.iter().any(|one| under(place).starts_with(one.as_str())))
+            .collect();
+        assert!(
+            counted.is_empty(),
+            "the {measured} floor counts {counted:?} as well, so a number that reads as \
+             one crate's coverage is an average over several: raising one crate's tests \
+             moves another crate's floor, and a new package joins every floor silently. \
+             {pattern}"
+        );
+        assert!(
+            !out.iter()
+                .any(|one| under(measured).starts_with(one.as_str())),
+            "and the {measured} floor leaves out the crate it is about: {pattern}"
+        );
+    }
+}

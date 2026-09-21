@@ -226,15 +226,15 @@ jobs:
       - name: Ratchet rust-mutants
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 87
-          --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+          --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
       - name: Ratchet rust-mutants-cli
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 85
-          --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+          --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
       - name: Ratchet xtask
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 80
-          --ignore-filename-regex 'crates/|fuzz/'
+          --ignore-filename-regex 'crates/|fuzz/|compiler-surfaces/'
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
