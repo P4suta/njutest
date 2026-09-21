@@ -5,13 +5,13 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance report v2
 
-**Status: implemented.** Current runs write
-`njutest-assurance-report-v2`; the v1 page and schema describe historical
-artifacts only. The canonical JSON Schema is
-`schema/njutest-assurance-report-v2.json`, and every object it declares is
-closed. Rust deserialization additionally enforces relationships that JSON
-Schema cannot express, including the exact `limit + 1 == observed` step
-boundary.
+**Status: implemented.** Current runs write `njutest-assurance-report-v2`; the v1 page and schema describe historical artifacts only.
+The canonical JSON Schema is `schema/njutest-assurance-report-v2.json`, and every object it declares is closed.
+Rust deserialization additionally enforces relationships that JSON Schema cannot express, including the exact `limit + 1 == observed` step boundary.
+
+Every closed set the schema declares is held to the names this release produces, in both directions.
+The store boundary already refused a report carrying a name the schema does not admit, so that direction failed in every run that produced one; the other failed in no run at all, and a name the schema admitted that nothing emits is a branch a consumer writes and never reaches.
+`docs_ledger::every_closed_set_the_schema_declares_is_one_this_release_produces` reads the schema's thirty-five `enum` and `const` sets and compares each against the Rust set that produces it — `Outcome`, `FindingKind`, `Blind`, `Fallback`, `Granularity`, `Proof`, `Contract`, the nine `Model*` sets, and the rest — so a set the schema gains and nothing on this side answers is a refusal rather than a row nobody reads.
 
 Each completed run owns an immutable directory under `[reports].directory`.
 The canonical document is `njutest-assurance-report-v2.json`; HTML, SARIF,

@@ -759,3 +759,49 @@ pub fn documented_specimen() -> crate::config::Config {
         }],
     }
 }
+
+/// One value of every shape a proof's uncertainty takes.
+///
+/// The schema splits this one tagged set across nine branches, eight of them a single `kind`, and nothing on this side was held to the nine.
+/// The match below decides nothing; it is what makes the compiler refuse this function the day somebody adds a variant.
+#[cfg(feature = "testkit")]
+#[must_use]
+pub fn every_model_uncertainty() -> Vec<crate::report::ModelUncertainty> {
+    use crate::report::{
+        ModelAffirmative, ModelArtifactFailure, ModelConfiguration, ModelProcessFailure,
+        ModelPropertyStatus, ModelProtocol, ModelToolFailure, ModelUncertainty,
+    };
+
+    let every = vec![
+        ModelUncertainty::BoundExhausted,
+        ModelUncertainty::Cutoff,
+        ModelUncertainty::Cancelled,
+        ModelUncertainty::Configuration(ModelConfiguration::Package),
+        ModelUncertainty::Tool(ModelToolFailure::Unavailable),
+        ModelUncertainty::Process(ModelProcessFailure::NotStarted),
+        ModelUncertainty::Artifact(ModelArtifactFailure::Missing),
+        ModelUncertainty::ExitMismatch {
+            expected: ModelAffirmative::Proved,
+            actual: 1,
+        },
+        ModelUncertainty::Protocol(ModelProtocol::Schema),
+        ModelUncertainty::Property(ModelPropertyStatus::Unknown),
+        ModelUncertainty::OtherFailure("another property failed".to_owned()),
+    ];
+    for one in &every {
+        match one {
+            ModelUncertainty::BoundExhausted
+            | ModelUncertainty::Cutoff
+            | ModelUncertainty::Cancelled
+            | ModelUncertainty::Configuration(..)
+            | ModelUncertainty::Tool(..)
+            | ModelUncertainty::Process(..)
+            | ModelUncertainty::Artifact(..)
+            | ModelUncertainty::ExitMismatch { .. }
+            | ModelUncertainty::Protocol(..)
+            | ModelUncertainty::Property(..)
+            | ModelUncertainty::OtherFailure(..) => {}
+        }
+    }
+    every
+}

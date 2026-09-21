@@ -3236,7 +3236,9 @@ pub enum ModelProcess {
 }
 
 /// An affirmative property answer whose required exit code can be re-derived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelAffirmative {
     /// Equality requires exit zero.
@@ -3486,7 +3488,9 @@ impl<'de> Deserialize<'de> for ModelAttemptEvidence {
 }
 
 /// A signature, source, or expression feature outside the closed proof fragment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelIneligibility {
     /// The source bytes are not UTF-8 Rust text.
@@ -3522,7 +3526,9 @@ pub enum ModelIneligibility {
 }
 
 /// A build selection the closed Kani command refuses to reinterpret.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelConfiguration {
     /// The owning Cargo package name is absent.
@@ -3548,7 +3554,9 @@ pub enum ModelConfiguration {
 }
 
 /// A failure to establish the pinned Kani executable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelToolFailure {
     /// The pinned executable could not be started.
@@ -3568,7 +3576,9 @@ pub enum ModelToolFailure {
 }
 
 /// A verifier process termination that has no property meaning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelProcessFailure {
     /// The verifier could not be started.
@@ -3588,7 +3598,9 @@ pub enum ModelProcessFailure {
 }
 
 /// A raw-export failure that prevents independent audit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelArtifactFailure {
     /// A stale path existed before the invocation.
@@ -3606,7 +3618,9 @@ pub enum ModelArtifactFailure {
 }
 
 /// A broken invariant of the Kani 0.68 export protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelProtocol {
     /// The bytes do not match the closed JSON schema.
@@ -3628,7 +3642,9 @@ pub enum ModelProtocol {
 }
 
 /// Every non-affirmative Kani 0.68 property status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelPropertyStatus {
     /// A counterexample exists.

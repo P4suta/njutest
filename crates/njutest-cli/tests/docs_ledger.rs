@@ -572,3 +572,263 @@ fn nothing_in(value: &toml::Value, at: String, into: &mut Vec<String>) {
         | toml::Value::Datetime(..) => {}
     }
 }
+
+/// The wire name a value serialises to, which for a closed set is the only name it has.
+fn wire<T: serde::Serialize>(value: &T) -> String {
+    let rendered = serde_json::to_value(value).expect("a closed set serialises");
+    match rendered {
+        serde_json::Value::String(name) => name,
+        other => panic!("a closed set renders as one string, not {other}"),
+    }
+}
+
+/// Every wire name a closed set produces, in the order it declares them.
+fn names<T: serde::Serialize>(all: &[T]) -> Vec<String> {
+    all.iter().map(wire).collect()
+}
+
+#[test]
+fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
+    const BRANCHES: [&str; 8] = [
+        "/$defs/modelUncertainty/oneOf/1/properties/kind",
+        "/$defs/modelUncertainty/oneOf/2/properties/kind",
+        "/$defs/modelUncertainty/oneOf/3/properties/kind",
+        "/$defs/modelUncertainty/oneOf/4/properties/kind",
+        "/$defs/modelUncertainty/oneOf/5/properties/kind",
+        "/$defs/modelUncertainty/oneOf/6/properties/kind",
+        "/$defs/modelUncertainty/oneOf/7/properties/kind",
+        "/$defs/modelUncertainty/oneOf/8/properties/kind",
+    ];
+    use njutest_cli::report::{
+        Blind, ModelAffirmative, ModelArtifactFailure, ModelConfiguration, ModelIneligibility,
+        ModelProcessFailure, ModelPropertyStatus, ModelProtocol, ModelToolFailure, Outcome,
+        TargetStatus,
+    };
+    use rust_mutants::session::{Fallback, Granularity, Proof};
+
+    let schema = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schema/njutest-assurance-report-v2.json"),
+    )
+    .expect("the schema this release validates every stored report against");
+
+    let outcomes = names(&Outcome::ALL);
+    let decided = njutest_cli::report::Decided::every_against("0123456789abcdef");
+    let counted: Vec<String> = vec![wire(&Outcome::StepLimitReached)];
+    let settled: Vec<String> = decided
+        .iter()
+        .filter(|one| one.decided_by().is_some() && one.outcome() != Outcome::StepLimitReached)
+        .map(|one| wire(&one.outcome()))
+        .collect();
+    let unrouted: Vec<String> = decided
+        .iter()
+        .filter(|one| one.decided_by().is_none())
+        .map(|one| wire(&one.outcome()))
+        .collect();
+    assert_eq!(
+        settled.len() + counted.len() + unrouted.len(),
+        outcomes.len(),
+        "the schema splits a decision three ways by what it may carry beside the outcome, \
+         and those three are that split: every outcome this release produces is in exactly \
+         one of them, so a new one is a branch somebody has to place"
+    );
+
+    let mut tags: Vec<String> = njutest_cli::testkit::every_model_uncertainty()
+        .iter()
+        .map(|one| {
+            let rendered = serde_json::to_value(one).expect("an uncertainty serialises");
+            match rendered.get("kind") {
+                Some(serde_json::Value::String(kind)) => kind.clone(),
+                other => panic!("an uncertainty is tagged by one name, not {other:?}"),
+            }
+        })
+        .collect();
+    let shared = tags.split_off(UNCERTAIN_KINDS.len());
+    assert_eq!(
+        tags, UNCERTAIN_KINDS,
+        "the three the schema puts in one branch are the three that carry nothing"
+    );
+    assert_eq!(
+        shared.len(),
+        8,
+        "and each of the rest is a branch of its own: {shared:?}"
+    );
+
+    let mut rows: Vec<(&str, Vec<String>)> = vec![
+        (
+            "/properties/document_type",
+            DOCUMENT_TYPES.iter().map(|one| (*one).to_owned()).collect(),
+        ),
+        (
+            "/$defs/candidates/items/properties/kind",
+            njutest_cli::repair::Kind::ALL
+                .iter()
+                .map(|one| (*one).name().to_owned())
+                .collect(),
+        ),
+        (
+            "/$defs/seam/properties/rule",
+            names(&njutest_cli::wire::rule::Rule::ALL),
+        ),
+        ("/$defs/target/properties/status", names(&TargetStatus::ALL)),
+        ("/$defs/finding/properties/kind", names(&FindingKind::ALL)),
+        ("/$defs/blindIn/properties/decision", names(&Blind::ALL)),
+        ("/$defs/discharged/properties/proof", names(&Proof::ALL)),
+        (
+            "/$defs/routing/properties/granularity",
+            names(&Granularity::ALL),
+        ),
+        (
+            "/$defs/routing/properties/fallback/oneOf/0",
+            names(&Fallback::ALL),
+        ),
+        ("/$defs/answered/properties/outcome", outcomes),
+        ("/$defs/mutantDecision/oneOf/0/properties/outcome", unrouted),
+        ("/$defs/mutantDecision/oneOf/1/properties/outcome", settled),
+        ("/$defs/mutantDecision/oneOf/2/properties/outcome", counted),
+        (
+            "/$defs/mutant/allOf/0/then/properties/decision/properties/outcome",
+            Outcome::ALL
+                .into_iter()
+                .filter(|one| one.review_answerable())
+                .map(|one| wire(&one))
+                .collect(),
+        ),
+        (
+            "/$defs/completeReport/properties/contract",
+            names(&njutest_cli::config::Contract::ALL),
+        ),
+        (
+            "/$defs/shardReport/properties/contract",
+            names(&njutest_cli::config::Contract::ALL),
+        ),
+        ("/$defs/completeReport/properties/run_kind", run_kinds()),
+        ("/$defs/shardReport/properties/run_kind", run_kinds()),
+        (
+            "/$defs/modelAnswer/oneOf/0/properties/reason",
+            names(&ModelIneligibility::ALL),
+        ),
+        (
+            "/$defs/modelProcess/oneOf/1/properties/kind",
+            process_kinds(),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/0/properties/kind",
+            UNCERTAIN_KINDS
+                .iter()
+                .map(|one| (*one).to_owned())
+                .collect(),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/1/properties/detail",
+            names(&ModelConfiguration::ALL),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/2/properties/detail",
+            names(&ModelToolFailure::ALL),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/3/properties/detail",
+            names(&ModelProcessFailure::ALL),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/4/properties/detail",
+            names(&ModelArtifactFailure::ALL),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/5/properties/detail/properties/expected",
+            names(&ModelAffirmative::ALL),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/6/properties/detail",
+            names(&ModelProtocol::ALL),
+        ),
+        (
+            "/$defs/modelUncertainty/oneOf/7/properties/detail",
+            names(&ModelPropertyStatus::ALL),
+        ),
+    ];
+    for (pointer, tag) in BRANCHES.into_iter().zip(shared) {
+        rows.push((pointer, vec![tag]));
+    }
+    let borrowed: Vec<(&str, Vec<&str>)> = rows
+        .iter()
+        .map(|(pointer, names)| {
+            (
+                *pointer,
+                names.iter().map(String::as_str).collect::<Vec<&str>>(),
+            )
+        })
+        .collect();
+    let expected: Vec<(&str, &[&str])> = borrowed
+        .iter()
+        .map(|(pointer, names)| (*pointer, names.as_slice()))
+        .collect();
+    if let Err(refusal) = njutest_devkit::docs::schema_enum_ledger(&schema, &expected) {
+        panic!("{refusal}");
+    }
+}
+
+/// What a run was narrowed to, by the type that decides it.
+fn run_kinds() -> Vec<String> {
+    use njutest_cli::evidence::digest::Mode;
+
+    let every = [
+        Mode::Full,
+        Mode::Changed {
+            base: "HEAD~1".to_owned(),
+        },
+        Mode::Scoped {
+            packages: vec!["demo".to_owned()],
+        },
+    ];
+    for one in &every {
+        match one {
+            Mode::Full | Mode::Changed { .. } | Mode::Scoped { .. } => {}
+        }
+    }
+    every.iter().map(|one| one.name().to_owned()).collect()
+}
+
+/// The two documents a run may store.
+const DOCUMENT_TYPES: [&str; 2] = ["complete", "shard"];
+
+/// The ends of a proof process that carry no exit code, by the type that ends one.
+fn process_kinds() -> Vec<String> {
+    use njutest_cli::report::ModelProcess;
+
+    let every = [
+        ModelProcess::NotRun,
+        ModelProcess::Cutoff,
+        ModelProcess::Cancelled,
+        ModelProcess::Failed,
+    ];
+    for one in &[
+        ModelProcess::NotRun,
+        ModelProcess::Exited(0),
+        ModelProcess::Cutoff,
+        ModelProcess::Cancelled,
+        ModelProcess::Failed,
+    ] {
+        match one {
+            ModelProcess::NotRun
+            | ModelProcess::Exited(..)
+            | ModelProcess::Cutoff
+            | ModelProcess::Cancelled
+            | ModelProcess::Failed => {}
+        }
+    }
+    every
+        .iter()
+        .map(|one| {
+            let rendered = serde_json::to_value(one).expect("a process end serialises");
+            match rendered.get("kind") {
+                Some(serde_json::Value::String(kind)) => kind.clone(),
+                other => panic!("a process end is tagged by one name, not {other:?}"),
+            }
+        })
+        .collect()
+}
+
+/// Why a proof answered nothing.
+const UNCERTAIN_KINDS: [&str; 3] = ["bound-exhausted", "cutoff", "cancelled"];

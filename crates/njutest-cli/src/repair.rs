@@ -96,7 +96,7 @@ pub struct Candidate {
 }
 
 /// What a candidate would do to a tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Kind {
     /// A test file.
     Patch,

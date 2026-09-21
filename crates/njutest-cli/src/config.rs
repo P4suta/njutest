@@ -144,7 +144,9 @@ pub const ALLOWED_TEST_ARGS: [&str; 4] = [
 pub const RESERVED_ENV_PREFIX: &str = "RUST_TEST_";
 
 /// Which assurance contract a run answers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, njutest_macros::AllVariants,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Contract {
     /// The soundness phase is a static inventory, and a non-empty one is a limitation rather than a failure.

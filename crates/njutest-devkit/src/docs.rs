@@ -39,6 +39,31 @@ pub enum LedgerError {
         /// The count whose wording must be added explicitly.
         many: usize,
     },
+    /// The schema could not be read as JSON.
+    #[error("the schema is not JSON")]
+    SchemaJson(#[source] serde_json::Error),
+    /// The schema closes a set the ledger below does not name, or names one the schema no longer closes.
+    #[error(
+        "a closed set on the wire is one a reader writes a `match` over, and the schema is the only place some of them are written down. These pointers are in the schema and not in the ledger: {unheld:?}; these are in the ledger and not in the schema: {gone:?}"
+    )]
+    SchemaSetsDiffer {
+        /// Pointers the schema closes that no ledger row names.
+        unheld: Vec<String>,
+        /// Pointers the ledger names that the schema no longer closes.
+        gone: Vec<String>,
+    },
+    /// A set the schema closes holds names the ledger does not, or the other way round.
+    #[error(
+        "{pointer}: the schema admits {schema:?} and this release produces {rust:?}. A name the schema admits and nothing emits is a name a consumer writes a branch for and never reaches; one it refuses and a run emits fails every run that produces it"
+    )]
+    SchemaSetDiffers {
+        /// The pointer of the set that differs.
+        pointer: String,
+        /// What the schema admits.
+        schema: Vec<String>,
+        /// What the ledger says this release produces.
+        rust: Vec<String>,
+    },
     /// A trace table has no Markdown divider.
     #[error("the trace field table {marker} has no divider")]
     MissingDivider {
@@ -569,4 +594,145 @@ fn spelled(many: usize) -> Result<&'static str, LedgerError> {
         },
     };
     Ok(word)
+}
+
+/// Every closed set a JSON Schema declares, by the pointer that declares it.
+///
+/// # Errors
+/// The schema is not JSON.
+pub fn schema_enum_sets(schema: &str) -> Result<BTreeMap<String, Vec<String>>, LedgerError> {
+    let document: serde_json::Value =
+        crate::strictjson::decode_str(schema).map_err(LedgerError::SchemaJson)?;
+    let mut found = BTreeMap::new();
+    collect_enum_sets(&document, "", &mut found);
+    let mut single = BTreeMap::new();
+    collect_const_values(&document, "", &mut single);
+    for (at, only) in single {
+        if beside_a_vocabulary(&at, &found) {
+            found.insert(at, only);
+        }
+    }
+    Ok(found)
+}
+
+/// Whether a one-value set stands where a sibling branch of the same choice spells a whole one.
+///
+/// A schema writes a discriminator, a version, and a boolean as `const` too,
+/// and none of those is a vocabulary a consumer branches over.
+/// What is one is the branch of a `oneOf` that admits a single name where its siblings admit several: the third arm of a three-way split is a closed set with one member, and reading only the arrays left it held by nothing.
+fn beside_a_vocabulary(at: &str, sets: &BTreeMap<String, Vec<String>>) -> bool {
+    let Some((before, rest)) = at.rsplit_once("/oneOf/") else {
+        return false;
+    };
+    let Some(after) = rest.split_once('/').map(|(_branch, tail)| tail) else {
+        return false;
+    };
+    sets.keys().any(|other| {
+        other
+            .rsplit_once("/oneOf/")
+            .and_then(|(theirs, tail)| Some((theirs, tail.split_once('/')?.1)))
+            .is_some_and(|(theirs, tail)| theirs == before && tail == after)
+    })
+}
+
+/// Every `const` under `node`, keyed by the JSON pointer that reaches it.
+fn collect_const_values(
+    node: &serde_json::Value,
+    at: &str,
+    into: &mut BTreeMap<String, Vec<String>>,
+) {
+    match node {
+        serde_json::Value::Object(map) => {
+            if let Some(only) = map.get("const") {
+                into.insert(at.to_owned(), vec![named(only)]);
+            }
+            for (key, held) in map {
+                collect_const_values(held, &format!("{at}/{key}"), into);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for (index, held) in values.iter().enumerate() {
+                collect_const_values(held, &format!("{at}/{index}"), into);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+/// One admitted value, as the name a reader compares against.
+fn named(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Every `enum` array and `const` under `node`, keyed by the JSON pointer that reaches it.
+///
+/// A one-value set is spelled `const` rather than `enum`, and it is a closed set with one member: reading only the arrays left the third branch of a three-way split held by nothing.
+fn collect_enum_sets(node: &serde_json::Value, at: &str, into: &mut BTreeMap<String, Vec<String>>) {
+    match node {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::Array(values)) = map.get("enum") {
+                into.insert(at.to_owned(), values.iter().map(named).collect());
+            }
+            for (key, held) in map {
+                collect_enum_sets(held, &format!("{at}/{key}"), into);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for (index, held) in values.iter().enumerate() {
+                collect_enum_sets(held, &format!("{at}/{index}"), into);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+/// Holds every closed set a JSON Schema declares to the names this release produces.
+///
+/// The store boundary already refuses a report carrying a name the schema does not admit, so that direction fails in every run that produces one.
+/// The other direction fails in no run at all: a name the schema admits and nothing emits is a branch a consumer writes and never reaches, and there were twenty-seven sets here that nothing on the Rust side was held to.
+///
+/// # Errors
+/// The schema is not JSON, closes a set no row names, or disagrees with a row.
+pub fn schema_enum_ledger(schema: &str, expected: &[(&str, &[&str])]) -> Result<(), LedgerError> {
+    let declared = schema_enum_sets(schema)?;
+    let held: BTreeMap<&str, &[&str]> = expected.iter().copied().collect();
+    let unheld: Vec<String> = declared
+        .keys()
+        .filter(|pointer| !held.contains_key(pointer.as_str()))
+        .cloned()
+        .collect();
+    let gone: Vec<String> = held
+        .keys()
+        .filter(|pointer| !declared.contains_key(**pointer))
+        .map(|pointer| (*pointer).to_owned())
+        .collect();
+    if !unheld.is_empty() || !gone.is_empty() {
+        return Err(LedgerError::SchemaSetsDiffer { unheld, gone });
+    }
+    for (pointer, names) in &declared {
+        let Some(rust) = held.get(pointer.as_str()) else {
+            continue;
+        };
+        let mut schema_names = names.clone();
+        let mut rust_names: Vec<String> = rust.iter().map(|name| (*name).to_owned()).collect();
+        schema_names.sort();
+        rust_names.sort();
+        if schema_names != rust_names {
+            return Err(LedgerError::SchemaSetDiffers {
+                pointer: pointer.clone(),
+                schema: schema_names,
+                rust: rust_names,
+            });
+        }
+    }
+    Ok(())
 }

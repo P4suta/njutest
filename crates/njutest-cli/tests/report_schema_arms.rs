@@ -58,24 +58,19 @@ fn recorded(outcome: &str, killed_by: Value) -> Value {
     document
 }
 
-/// Every disposition the schema declares, and whether it names a target.
-const DISPOSITIONS: [(&str, bool); 11] = [
-    ("compile-rejected", false),
-    ("killed", true),
-    ("model-noticed", false),
-    ("model-proved", false),
-    ("step-limit-reached", true),
-    ("waited", true),
-    ("survived", false),
-    ("unreached", false),
-    ("equivalent", false),
-    ("unconfirmed", true),
-    ("errored", true),
-];
+/// Every disposition a report can carry, and whether it names a target.
+///
+/// Derived, because the list this replaced held eleven string literals beside an eleven-variant set and a twelfth would have been in neither.
+fn dispositions() -> Vec<(&'static str, bool)> {
+    njutest_cli::report::Decided::every_against("0123456789abcdef")
+        .iter()
+        .map(|decided| (decided.outcome().name(), decided.decided_by().is_some()))
+        .collect()
+}
 
 #[test]
 fn the_published_schema_accepts_a_document_for_every_disposition_it_declares() {
-    for (outcome, names_a_target) in DISPOSITIONS {
+    for (outcome, names_a_target) in dispositions() {
         let named = if names_a_target {
             json!("0123456789abcdef")
         } else {
@@ -93,7 +88,7 @@ fn the_published_schema_accepts_a_document_for_every_disposition_it_declares() {
 
 #[test]
 fn a_disposition_that_names_a_target_is_not_one_that_names_nobody() {
-    for (outcome, names_a_target) in DISPOSITIONS {
+    for (outcome, names_a_target) in dispositions() {
         let wrong = if names_a_target {
             Value::Null
         } else {
