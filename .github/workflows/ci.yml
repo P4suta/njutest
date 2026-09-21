@@ -82,7 +82,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
-          tools: taplo-cli@0.10.0, typos-cli@1.50.1, actionlint@1.7.12, committed@1.1.11
+          tools: committed@1.1.11
+          mise-tools: taplo typos actionlint
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -280,7 +281,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          tools: mdbook@0.5.4
+          mise-tools: mdbook
       - name: build the book, which refuses a summary naming a page nobody holds
         run: mdbook build docs
 

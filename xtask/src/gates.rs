@@ -1523,12 +1523,22 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
         .iter()
         .map(|(a, b)| (a.as_str(), b.as_str()))
         .collect();
-    let problems = release::check(&workspace, &member_refs);
+    let mut problems = release::check(&workspace, &member_refs);
+    let train = read("release-plz.toml")?;
+    let mut every = members.clone();
+    for directory in release::plain_members(&workspace) {
+        let label = format!("{directory}/Cargo.toml");
+        every.push((label.clone(), read(&label)?));
+    }
+    let names = release::member_names(&every);
+    let member_names: Vec<&str> = names.iter().map(String::as_str).collect();
+    problems.extend(release::release_train(&train, &member_names));
     if problems.is_empty() {
         let version = release::workspace_version(&workspace).unwrap_or_default();
         return Ok(format!(
-            "release-check: version {version} is consistent across {} member manifests",
-            members.len()
+            "release-check: version {version} is consistent across {} member manifests, and the release train names {} of them",
+            members.len(),
+            member_names.len()
         ));
     }
     Err(GateFailure(format!(

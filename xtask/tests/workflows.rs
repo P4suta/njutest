@@ -123,15 +123,11 @@ fn the_real_kani_job_installs_one_exact_locked_version() {
     );
 }
 
-/// The tools `mise.toml` pins, under the names `taiki-e/install-action` knows them by.
+/// Every tool `mise.toml` pins, split by the key that says who installs it.
 ///
-/// Three are spelled differently there, and a handful are this machine's alone: a pinned rust toolchain, the hook runner, and the compilation cache are not things a hosted runner installs through that action.
-fn pinned() -> Vec<String> {
-    const RENAMED: [(&str, &str); 3] = [
-        ("typos", "typos-cli"),
-        ("taplo", "taplo-cli"),
-        ("mdbook", "mdbook"),
-    ];
+/// A `cargo:` prefix is a crate and carries its exact version to `taiki-e/install-action`; a bare name is a tool mise fetches, and carries no version because mise reads the same pin this does.
+/// A pinned rust toolchain, the hook runner, and the compilation cache are this machine's alone: a hosted runner gets its toolchain from `rust-toolchain.toml`, runs no hooks, and keeps no cache between jobs.
+fn pinned() -> (Vec<String>, Vec<String>) {
     const LOCAL_ONLY: [&str; 3] = ["rust", "lefthook", "sccache"];
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -145,29 +141,43 @@ fn pinned() -> Vec<String> {
     let Some(toml::Value::Table(tools)) = table.get("tools") else {
         panic!("mise.toml declares the tools it pins")
     };
-    let mut found = Vec::new();
+    let mut crates = Vec::new();
+    let mut fetched = Vec::new();
     for (name, version) in tools {
         let name = name.trim_matches('"');
-        let bare = name.strip_prefix("cargo:").unwrap_or(name);
-        if LOCAL_ONLY.contains(&bare) {
-            continue;
-        }
         let Some(version) = version.as_str() else {
-            panic!("{bare} is pinned to one exact version")
+            panic!("{name} is pinned to one exact version")
         };
-        let installed = RENAMED
-            .iter()
-            .find(|(mine, _)| *mine == bare)
-            .map_or(bare, |(_, theirs)| theirs);
-        found.push(format!("{installed}@{version}"));
+        if let Some(crate_name) = name.strip_prefix("cargo:") {
+            crates.push(format!("{crate_name}@{version}"));
+        } else if !LOCAL_ONLY.contains(&name) {
+            fetched.push(name.to_owned());
+        }
+    }
+    crates.sort();
+    fetched.sort();
+    (crates, fetched)
+}
+
+/// Every tool named to mise by a workflow, once each.
+fn mise_installed() -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for text in workflow_sources() {
+        for line in text.lines() {
+            let Some((_, listed)) = line.split_once("mise-tools:") else {
+                continue;
+            };
+            found.extend(listed.split_whitespace().map(ToOwned::to_owned));
+        }
     }
     found.sort();
+    found.dedup();
     found
 }
 
-/// Every tool the pipeline installs through the pinned setup action, once each.
-fn installed() -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
+/// Every `.yml` under `.github`, read once.
+fn workflow_sources() -> Vec<String> {
+    let mut found = Vec::new();
     let mut pending = vec![
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -189,21 +199,32 @@ fn installed() -> Vec<String> {
             if path.extension().is_none_or(|kind| kind != "yml") {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&path) else {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            found.push(text);
+        }
+    }
+    found
+}
+
+/// Every crate the pipeline installs through the pinned installer, once each.
+fn installed() -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for text in workflow_sources() {
+        for line in text.lines() {
+            if line.contains("mise-tools:") {
+                continue;
+            }
+            let Some((_, listed)) = line.split_once("tools:") else {
                 continue;
             };
-            for line in text.lines() {
-                let Some((_, listed)) = line.split_once("tools:") else {
-                    continue;
-                };
-                found.extend(
-                    listed
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|tool| tool.contains('@'))
-                        .map(ToOwned::to_owned),
-                );
-            }
+            found.extend(
+                listed
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|tool| tool.contains('@'))
+                    .map(ToOwned::to_owned),
+            );
         }
     }
     found.sort();
@@ -218,22 +239,34 @@ fn executable_tools_use_the_commit_pinned_installer_and_exact_versions() {
         .join(".github/workflows/ci.yml");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    let pinned = pinned();
+    let (crates, fetched) = pinned();
     let installed = installed();
-    assert!(pinned.len() > 4, "mise pins the tools: {pinned:?}");
+    let by_mise = mise_installed();
+    assert!(crates.len() > 4, "mise pins the crates: {crates:?}");
     assert!(
         installed.len() > 4,
         "the pipeline installs them: {installed:?}"
     );
     let adrift: Vec<&String> = installed
         .iter()
-        .filter(|tool| !pinned.contains(tool))
+        .filter(|tool| !crates.contains(tool))
         .collect();
     assert!(
         adrift.is_empty(),
-        "the pipeline installs a version mise.toml does not pin, so a local run and the \
-         pipeline answer with different tools and the only thing holding them together \
-         is a comment: {adrift:?} against {pinned:?}"
+        "the pipeline hands install-action something mise.toml does not pin as a crate. \
+         Either the version drifted, or the tool is pinned without a `cargo:` prefix and so \
+         is one mise fetches rather than a crate — install-action would look for a crates.io \
+         name it may not have, at a version it carries its own list of. Name it under \
+         `mise-tools:` instead: {adrift:?} against {crates:?}"
+    );
+    let unpinned: Vec<&String> = by_mise
+        .iter()
+        .filter(|tool| !fetched.contains(tool))
+        .collect();
+    assert!(
+        unpinned.is_empty(),
+        "the pipeline asks mise for a tool mise.toml does not pin, so the runner resolves \
+         a version nothing in this tree names: {unpinned:?} against {fetched:?}"
     );
     for unverified in ["curl ", "wget ", "Invoke-WebRequest", "| tar"] {
         assert!(

@@ -16,6 +16,10 @@ inputs:
     description: 'Comma-separated cargo tools for taiki-e/install-action, e.g. "cargo-nextest@0.9.140". Pin to mise.toml.'
     required: false
     default: ""
+  mise-tools:
+    description: 'Space-separated tools mise installs, named without a version, e.g. "actionlint typos". The version is mise.toml''s, which is what makes this runner and a developer''s machine resolve the same one.'
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -36,6 +40,13 @@ runs:
         install: false
         cache: true
     - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+    # `mise.toml` pins two kinds of tool and the key says which: a `cargo:` prefix is a crate, and a bare name is a tool mise fetches itself.
+    # install-action only knows the first kind, and it knows a crate by its crates.io name rather than the tool's own, which is why translating the bare ones into its vocabulary needed a rename table.
+    # It also carries its own list of versions, so a pin bumped here failed the pipeline until install-action shipped a release that had heard of it — and for `actionlint`, a Go program that is on no registry it reads, the fallback could never succeed at any version.
+    # So each kind is installed by the thing that owns it. No version is written below: mise reads the same `mise.toml` a developer's machine does, which is the whole point of pinning them in one file.
+    - if: ${{ inputs.mise-tools != '' }}
+      shell: bash
+      run: mise install ${{ inputs.mise-tools }}
     - if: ${{ inputs.tools != '' }}
       uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
       with:
