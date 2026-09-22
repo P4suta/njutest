@@ -16,14 +16,14 @@ use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::Quiet;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{PrepareOptions, Request, Session, Timeout, TimeoutSource};
+use rust_mutants::session::{Judgement, PrepareOptions, Request, Session, Timeout, TimeoutSource};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 /// A session over `fixture`, bounded so that each half of its contract is answered by the thing that should answer it.
 ///
 /// The engine reads no configuration file, so a fixture's own `steps` does not reach here and the default of fifty million would apply.
-/// That spends in about a second and a half, against a two-second bound chosen so a four second pause can beat it -- a margin of a quarter, which load closes.
-/// A million takes fires in about thirty milliseconds and is not in the race (ADR 0023).
+/// A hundred takes spend about 789ms on Windows against this two-second bound, a margin of two and a half that load closes; ten spend 129ms and do not.
+/// What settles the race is the cost of the count, not the length of the bound: a longer bound wins it by making every failure wait the bound out twice, which is the worst moment to make a suite slow to read (ADR 0023).
 fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
     let mut vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
     for (name, value) in env {
@@ -50,12 +50,28 @@ fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
             &PrepareOptions {
                 tier: Tier::All,
                 mutant_timeout: Timeout::Fixed(Duration::from_secs(2)),
-                mutant_steps: Some(100),
+                mutant_steps: Some(10),
                 ..PrepareOptions::default()
             },
             &Cancel::new(),
         )
         .expect("prepare")
+}
+
+/// What to add to a failure when the judgement says the clock answered instead of the count, and nothing when it does not.
+///
+/// Both stoppers are timers, so which one answers is whichever arrives first, and on a slow enough machine that is the bound.
+/// Left alone this fails saying only that `Waited` was not `StepLimitReached`, which reads as a broken step protocol and sends the reader into machinery that is working.
+/// The allowance takes roughly a fifteenth of the bound here, so losing it means a take cost fifteen times what it costs on the machine this was measured on.
+fn outran_by_the_clock(judged: &Judgement) -> String {
+    if judged.result().outcome() != Outcome::Waited || judged.result().step_notice().is_some() {
+        return String::new();
+    }
+    "\n\nThe bound answered before the count did, which is this machine being slow rather than \
+     the step protocol being broken: no step notice was left, because the allowance was never \
+     reached. Lower `mutant_steps` here — it costs nothing, and is bounded below only by what \
+     an ordinary execution of this fixture spends, which is five"
+        .to_owned()
 }
 
 /// The mutation of `rule` at `line`.
@@ -103,7 +119,8 @@ fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_
         Outcome::StepLimitReached,
         "the mutation deletes the step of a loop's counter, so the guard at its site is \
          taken once an iteration and the allowance is spent long before the bound. This says \
-         where the execution stopped; it does not prove that the mutant cannot terminate"
+         where the execution stopped; it does not prove that the mutant cannot terminate.{}",
+        outran_by_the_clock(&stopped)
     );
     assert!(stopped.result().step_notice().is_some());
     assert!(

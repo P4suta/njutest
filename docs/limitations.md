@@ -310,27 +310,45 @@ The count and the exact `N + 1` boundary are stable across machines, but they do
 The outcome is therefore unresolved and excluded from both score and cache.
 The guard can reach that boundary only where it is *inside* the part that keeps running.
 
-A guard sits where its mutation does, and `active` spends a step only for the mutant a run selected.
-So a mutation of the loop — its condition, or a statement in its body — is taken once an iteration and reaches the allowance in about a second.
-A mutation *outside* the loop that makes the loop non-terminating is taken **once**:
+The guard is not only where the mutation is.
+Every mutable file is given control-flow checkpoints — function entries, loop bodies, async blocks, and closure invocations — including a file with no mutant of its own, and a checkpoint charges the allowance once the selected mutation has been reached.
+So a mutation *outside* a loop that makes the loop non-terminating is caught by the count as surely as one inside it:
 
 ```rust
-let step = 1;              // a mutation of this literal is taken once
-while i < n { i += step; } // and this never ends
+let step = 1;              // mutated to 0
+while i < n { i += step; } // and this never ends — the loop body is a checkpoint
 ```
 
-Nothing counts after that, so the allowance is never reached and the bound on the execution is what stops the process.
-The run reports `waited`, which says nothing was established — and for this mutation that is true of the run and misleading about the code, because something *could* have noticed: the program hangs.
-A reader who sees `waited` is told the machine ran out of time, and the honest reading of that is *ask again*, which is what they would do.
+Run against a workspace of that shape, the mutation of the literal reports `step_limit_reached` at `N + 1` and never `waited`, and it does so with the loop in a second file the run is not mutating.
+This paragraph said the opposite until that was measured; what it described was the instrumenter before it placed checkpoints across a whole workspace.
+No fixture in this tree pins it yet, which is the next thing this claim wants.
 
-This is the safe direction and it is still a gap.
+How long the allowance takes to reach belongs to the platform, not to the count.
+The durable step protocol pays one locked state-file round trip per take, and that round trip is measured here at about 7.4ms on Windows: a hundred takes cost 789ms, where the machines this figure was first chosen on spend a fraction of that.
+Where an allowance and a bound are sized against each other, that difference is a race, and the clock winning it reports a proved non-termination as a mere `waited` with no notice — the safe direction again, and again a worse answer than the one available.
+The lever is the allowance rather than the bound.
+Lengthening the bound wins the race by moving its cost to the moment the count breaks, when every non-terminating mutant waits the whole bound out and is then asked again: the suite that has just started failing is also the suite that has just become slow to read, which is the worst moment for it.
+A bound is also what says a hang is a hang, so what a short bound buys is not worth spending.
+Lowering the allowance costs nothing anywhere and widens the same difference, down to the floor of what an ordinary execution of the same tests spends — and that floor is a count, not a duration, so it is the same number on every platform and can be measured once.
+Spend the headroom there rather than above the floor: crossing the floor fails the same way on every machine and says so, where losing to the clock arrives as a test that passed until the machine was busy.
+What remains is that both stoppers are timers, and no allowance makes that difference infinite.
+So the assertion says what a loss means when it loses: that the machine was slow, that the protocol is not the thing to go looking at, and which number to change.
+
+Where the clock is still the only bound is where the instrumenter could not put a checkpoint.
+Macro expansions and dependency crates are not rewritten, so a computation that stays inside either — a loop in a crate the workspace only calls, an expansion the source never spells — reaches no boundary and raises no count.
+Nothing counts there, the allowance is never reached, and the bound on the execution is what stops the process.
+
+The run reports `waited`, which says nothing was established, and for such a mutation that is true of the run and misleading about the code, because something *could* have noticed: the program hangs.
+A reader who sees `waited` is told the machine ran out of time, and the honest reading of that is *ask again*, which is what they would do.
+This is the safe direction and it is still a gap, now a narrower one than the workspace-wide gap this section used to describe.
+
 Neither `waited` nor `step_limit_reached` counts as a detection, so no mutation is called caught on the strength of a clock or a finite prefix.
 Raising `[mutation] timeout` does not close it when the count is not rising: the clock is the only thing that can stop that process, and lowering it would only make the run give up sooner.
 
 A positive divergence proof needs more than the notice: the original control must complete under the same target, test and arguments, and the mutant must reproduce the same step boundary.
 Until that comparison is recorded, the report stays unresolved.
 
-Closing it means a guard somewhere the loop passes rather than only where the mutation is, which is a guard in code the run is not mutating — a cost every execution pays for a case that is a minority of non-termination.
+Closing what is left means a checkpoint in code this workspace does not own, which is a different undertaking from placing one in code it does.
 It is not closed here, and a report that says `waited` is saying exactly what it knows.
 
 ## Places a run passed over

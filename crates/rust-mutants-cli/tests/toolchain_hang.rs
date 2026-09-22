@@ -31,6 +31,26 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
     command.output().expect("rust-mutants runs")
 }
 
+/// What to add to a failure when the row says the clock answered instead of the count, and nothing when it does not.
+///
+/// The count and the bound are both timers, so which one answers is the one that arrives first, and on a machine slow enough that is the bound.
+/// This test then fails saying only that an outcome was `waited` where `step_limit_reached` was wanted, which reads as a broken step protocol and is not one: the reader goes looking at machinery that is working.
+/// The allowance is sized so that it takes roughly a fifteenth of the bound, so a run that lost this is a run where a take cost fifteen times what it costs here, and the number to change is in the fixture rather than in the engine.
+fn outran_by_the_clock(row: &serde_json::Value) -> String {
+    if row["outcome"].as_str() != Some("waited") || !row["step_notice"].is_null() {
+        return String::new();
+    }
+    format!(
+        "\n\nThe bound answered before the count did, which is this machine being slow rather \
+         than the step protocol being broken: the execution took {duration}ms of a bound \
+         that the allowance is sized to reach in about a fifteenth of, and left no step \
+         notice because it never reached the allowance. Lower `[mutation] steps` in \
+         fixtures/fixture-hang/.rust-mutants.toml — it costs nothing and is bounded below \
+         only by what an ordinary execution of this fixture spends, which is five",
+        duration = row["duration_ms"].as_u64().unwrap_or_default()
+    )
+}
+
 /// The row of the mutation one rule proposed at one line.
 fn row(fixture: &Fixture, rule: &str, line: u64) -> serde_json::Value {
     let newest = njutest_devkit::fixture::newest_run(
@@ -68,13 +88,14 @@ fn a_mutant_that_never_returns_is_stopped_by_a_count_and_not_asked_again() {
         stopped["outcome"].as_str(),
         Some("step_limit_reached"),
         "deleting what ends the loop reaches the guard allowance. The report preserves \
-         that execution fact without claiming it proved nontermination: {stopped}"
+         that execution fact without claiming it proved nontermination.{}: {stopped}",
+        outran_by_the_clock(&stopped)
     );
-    assert_eq!(stopped["step_notice"]["limit"], 100);
+    assert_eq!(stopped["step_notice"]["limit"], 10);
     assert!(
         stopped["step_notice"]["observed"]
             .as_u64()
-            .is_some_and(|observed| observed > 100),
+            .is_some_and(|observed| observed > 10),
         "the boundary names the first count beyond the allowance: {stopped}"
     );
     assert_eq!(
@@ -150,6 +171,7 @@ fn a_mutation_that_never_returns_is_stopped_rather_than_left_running() {
     assert!(
         text.contains("step_limit_reached=2") && text.contains("waited=0"),
         "the run ends rather than waiting on the process it started, and what ended it is \
-         a count rather than this machine's clock: {text}"
+         a count rather than this machine's clock.{}: {text}",
+        outran_by_the_clock(&row(&fixture, "delete-compound-assignment", 13))
     );
 }

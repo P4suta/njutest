@@ -4,20 +4,48 @@
 # The two halves of this fixture pull the bound in opposite directions, so each
 # is given a prop of its own rather than made to share one.
 #
-# `count_to` has mutations that never return. The count stops them: the
-# durable step protocol pays one locked state-file round trip per take, so a
-# guard taken a hundred times fires in well under half a second, several times
-# inside the bound below, and no amount of load can let the clock answer
-# first. The engine's default of fifty million is sized for the in-memory
-# counter this protocol replaced and is unreachable at durable cost.
+# The count half is a race against the clock, and what settles it is how much
+# the count costs rather than how long the bound is. Lengthening the bound
+# would win the race by moving its cost to the moment the count breaks: every
+# non-terminating mutant would then wait out the whole bound, twice, and the
+# person reading a suite that had just started failing would read it slowly.
+# A bound is also what says a hang is a hang, so it stays short and the count
+# is made cheap instead.
+#
+# `count_to` has mutations that never return, and the count is what stops them.
+# The durable step protocol pays one locked state-file round trip per take, and
+# what that round trip costs belongs to the platform rather than the protocol:
+# measured on Windows it is about 7.3ms against a fixed 55ms of starting, where
+# the machines this fixture was first written on spend a fraction of it. A
+# hundred takes cost 789ms of the two seconds below — a margin of two and a
+# half, which a CI runner on slower storage closed, and a proved
+# non-termination arrived as a mere `waited` with no notice.
+#
+# Ten takes cost 129ms, which is that margin made six times wider for nothing.
+# The floor is what an ordinary execution of this fixture spends, and that is a
+# count rather than a duration, so it is the same number on every platform: five
+# exactly. At five a killed mutant is reported as having reached the allowance;
+# at six it is not.
+#
+# Ten keeps only twice the floor, and that is the right way round. Crossing the
+# floor is deterministic — the same source spends the same count everywhere, so
+# it fails the same way on every machine and says so plainly. Losing to the
+# clock is not: it depends on what else the machine was doing, so it arrives as
+# a test that passes until it does not. Headroom is worth more where the failure
+# would be flaky than where it would be reproducible, so what there is of it
+# goes to the clock.
+#
+# The engine's default of fifty million is sized for the in-memory counter this
+# protocol replaced and is unreachable at durable cost.
 #
 # `clamp_positive` is merely slow, under FIXTURE_HANG_PAUSE_MS, and the clock is
 # what has to answer for it. That wants a bound a four-second sleep can beat,
-# which is why the bound stays low. A sleep only gets longer under load, so this
-# half has the margin the other one did not.
+# which is the other reason the bound stays where it is. A sleep only gets
+# longer under load, so a machine can only make the clock answer sooner than
+# the sleep, never later: that half needs no margin at all.
 
 version = 1
 
 [mutation]
 timeout = "2s"
-steps = 100
+steps = 10

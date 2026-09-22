@@ -177,7 +177,7 @@ fn a_slow_mutant_does_not_delay_the_delivery_of_the_ones_that_finished() {
     let session = prepared_within(
         &fixture,
         Timeout::Fixed(std::time::Duration::from_secs(2)),
-        100,
+        10,
     );
     let mut delivered = Delivered::default();
     let finished = measured(&session, 4, &mut delivered);
