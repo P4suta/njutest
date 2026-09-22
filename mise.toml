@@ -329,8 +329,6 @@ run = [
   "mise run kani:verified",
   "mise run deny",
   "mise run audit",
-  "mise run book",
-  "mise run package",
 ]
 
 # Every target triple this machine can read without the machine.
@@ -341,9 +339,17 @@ run = [
 description = "Type-check and lint the other platforms this machine can read"
 run = ["mise run check:windows", "mise run lint:linux"]
 
+# The release profile and the book, which a push does not wait for.
+#
+# `package` compiles the workspace again under a second profile and `doc` and `book` render it again; for a change to the engine core that is three more full passes on top of the debug build the tests already need.
+# CI builds and installs the packages and the book on its own runners, so the question is answered there rather than twice here.
+[tasks."check:release"]
+description = "Build the documentation and the packages a release would ship"
+run = ["mise run book", "mise run package"]
+
 [tasks."check:full"]
 description = "Everything a push waits for, and the passes CI also runs"
-run = ["mise run check", "mise run check:cross", "mise run test:slow"]
+run = ["mise run check", "mise run check:cross", "mise run check:release", "mise run test:slow"]
 
 [tasks.bench]
 description = "Observe what every stage costs. Numbers, never gates"

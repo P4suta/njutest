@@ -360,14 +360,29 @@ fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
     );
 
     let check = task("check");
+    let full = task("\"check:full\"");
+    let cross = task("\"check:cross\"");
+    let release = task("\"check:release\"");
+    let reachable = format!("{check}{full}{cross}{release}");
     for (job, locally) in GATED {
         let Some(locally) = locally else {
             continue;
         };
         assert!(
-            check.contains(locally),
-            "`{job}` is a gate this machine can answer, but `mise run check` does not run \
-             `{locally}`, so a push waits for the pipeline to say what it knew: {check}"
+            reachable.contains(locally),
+            "`{job}` is a gate this machine can answer and nothing local runs `{locally}` any \
+             more, so the only way to hear it is to push and wait: {reachable}"
+        );
+    }
+    for chained in [
+        "mise run check",
+        "mise run check:cross",
+        "mise run check:release",
+    ] {
+        assert!(
+            full.contains(chained),
+            "`check:full` no longer reaches `{chained}`, so a list a push skips has nothing \
+             that runs it: {full}"
         );
     }
 }
