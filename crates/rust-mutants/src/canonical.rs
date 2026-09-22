@@ -19,18 +19,19 @@ pub fn canonical(path: &Path) -> io::Result<PathBuf> {
 }
 
 /// `path` without the prefix Windows adds to an extended-length path, when taking it off names the same place.
+///
+/// The prefix comes off the spelling rather than the components: `Path::strip_prefix` matches whole components, and `\\?\C:\…` parses as one verbatim-disk prefix that no pattern spells, so it never matched and every canonicalized path kept the form cargo does not print.
 #[must_use]
 pub fn plainly(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
-        match path.strip_prefix(VERBATIM) {
-            Ok(rest)
-                if !rest.as_os_str().as_encoded_bytes().starts_with(b"UNC\\")
-                    && rest.is_absolute() =>
-            {
-                return rest.to_path_buf();
+        if let Some(rest) = path.to_str().and_then(|text| text.strip_prefix(VERBATIM))
+            && !rest.starts_with("UNC\\")
+        {
+            let plain = Path::new(rest);
+            if plain.is_absolute() {
+                return plain.to_path_buf();
             }
-            Ok(_) | Err(_) => {}
         }
     }
     path.to_path_buf()
