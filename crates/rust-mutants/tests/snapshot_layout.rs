@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Where a copy puts the tree and what it reads beside itself, as path arithmetic and nothing else.
+//!
+//! Every fixture here is a POSIX absolute path, and a leading slash is not absolute on Windows without a drive: `Layout::plan` refuses one as "a relative path names no place a copy can reproduce", which is the right answer to the wrong question.
+//! The arithmetic is the same on both, so what Windows needs is drive-rooted and UNC fixtures of its own rather than these ones bent to fit.
 
+#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,

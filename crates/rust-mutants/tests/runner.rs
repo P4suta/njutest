@@ -513,7 +513,7 @@ fn shell(script: &str) -> Spec {
 #[cfg(windows)]
 #[test]
 fn a_windows_child_that_fails_is_data_not_an_error() {
-    let result = run(&shell("echo out & exit /b 3"), &Cancel::new());
+    let result = run(&shell("echo out && exit 3"), &Cancel::new());
     assert!(result.error().is_none(), "{:?}", result.error());
     assert_eq!(result.conventional_exit_code(), 3);
     assert!(!result.timed_out());
