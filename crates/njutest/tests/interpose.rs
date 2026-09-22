@@ -156,6 +156,14 @@ fn upstream(body: &'static str) -> Upstream {
 }
 
 /// One request through `address`, and what came back.
+/// A baseline in which the target these tests report is passing, which is what makes a later failure attributable to a fault.
+fn passing_baseline() -> Vec<njutest::wire::settle::Answered> {
+    vec![njutest::wire::settle::Answered {
+        target: "pkg/test/it".to_owned(),
+        passed: true,
+    }]
+}
+
 fn ask(address: std::net::SocketAddr, path: &str) -> String {
     let mut stream = TcpStream::connect(address).expect("the interposer is listening");
     let request = format!("GET {path} HTTP/1.1\r\nHost: test\r\n\r\n");
@@ -665,6 +673,7 @@ fn every_question_a_seam_licensed_is_put_to_the_suite_one_at_a_time() {
     let went_past = seams.observing(|| {
         let recorded = ask(seams.watching[0].interposer.address(), "/orders");
         drop(recorded);
+        passing_baseline()
     });
     let done = njutest::assure::wire::asking(
         &seams,
@@ -782,6 +791,7 @@ fn a_question_the_seam_never_reached_is_reported_as_a_hole_and_never_as_a_surviv
     let went_past = seams.observing(|| {
         let recorded = ask(seams.watching[0].interposer.address(), "/orders");
         drop(recorded);
+        passing_baseline()
     });
     let done = njutest::assure::wire::asking(
         &seams,
@@ -948,6 +958,7 @@ fn an_exchange_says_which_target_caused_it_where_the_run_can_tell() {
         let second = ask(at, "/rows");
         drop(second);
         seams.during(None);
+        passing_baseline()
     });
 
     let who: Vec<Option<String>> = went_past
@@ -984,6 +995,7 @@ fn a_catalogue_holds_one_run_of_the_suite_and_never_the_runs_around_it() {
     let went_past = seams.observing(|| {
         let measured = ask(at, "/orders");
         drop(measured);
+        passing_baseline()
     });
     for _mutation in 0..4 {
         let after = ask(at, "/orders");
@@ -1029,6 +1041,7 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
     let went_past = seams.observing(|| {
         let baseline = ask(seams.watching[0].interposer.address(), "/orders");
         drop(baseline);
+        passing_baseline()
     });
     let done = njutest::assure::wire::asking(
         &seams,

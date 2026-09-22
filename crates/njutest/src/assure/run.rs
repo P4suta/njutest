@@ -250,7 +250,8 @@ fn attributed(
     session: &rust_mutants::session::Session,
     timeout: std::time::Duration,
     watch: Watch<'_>,
-) -> Result<(), RunnerError> {
+) -> Result<Vec<crate::wire::settle::Answered>, RunnerError> {
+    let mut answered = Vec::new();
     for target in session.targets() {
         seams.during(Some(target.id.as_str()));
         let asked = rust_mutants::session::Request::new(String::new())
@@ -264,9 +265,13 @@ fn attributed(
             }
             .into());
         }
+        answered.push(crate::wire::settle::Answered {
+            passed: ran.outcome() == rust_mutants::outcome::Outcome::Survived,
+            target: ran.target,
+        });
     }
     seams.during(None);
-    Ok(())
+    Ok(answered)
 }
 
 /// Puts every question the seams recorded back to the suite, and says whether it put any.
@@ -324,8 +329,11 @@ fn wired(
     };
     let mut observation_error = None;
     let went_past = seams.observing(|| match attributed(seams, session, timeout, watch) {
-        Ok(()) => {}
-        Err(error) => observation_error = Some(error),
+        Ok(answered) => answered,
+        Err(error) => {
+            observation_error = Some(error);
+            Vec::new()
+        }
     });
     if let Some(error) = observation_error {
         return Err(error);

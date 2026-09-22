@@ -30,9 +30,19 @@ fn answered(target: &str, passed: bool) -> Answered {
     }
 }
 
+/// A baseline in which `targets` passed, which is what makes a later failure attributable to a fault.
+fn before(targets: &[&str]) -> njutest::wire::settle::Before {
+    njutest::wire::settle::Before::of(
+        &targets
+            .iter()
+            .map(|target| answered(target, true))
+            .collect::<Vec<_>>(),
+    )
+}
+
 #[test]
 fn a_fault_nothing_ran_is_one_the_run_established_nothing_about() {
-    let settled = settle(&fault(), &put(&[]));
+    let settled = settle(&fault(), &put(&[]), &before(&["a"]));
     assert_eq!(
         settled.decision,
         SeamDecision::Unreached,
@@ -49,7 +59,11 @@ fn a_fault_nothing_ran_is_one_the_run_established_nothing_about() {
 
 #[test]
 fn a_fault_every_test_passed_with_is_one_nothing_noticed() {
-    let settled = settle(&fault(), &put(&[answered("a", true), answered("b", true)]));
+    let settled = settle(
+        &fault(),
+        &put(&[answered("a", true), answered("b", true)]),
+        &before(&["a", "b"]),
+    );
     assert_eq!(
         settled.decision,
         SeamDecision::Unnoticed,
@@ -68,6 +82,7 @@ fn a_fault_a_test_failed_with_is_one_the_tests_noticed_and_it_says_which() {
             answered("b", false),
             answered("c", false),
         ]),
+        &before(&["a", "b", "c"]),
     );
     assert_eq!(
         settled.decision,
@@ -83,14 +98,27 @@ fn a_fault_a_test_failed_with_is_one_the_tests_noticed_and_it_says_which() {
 
 #[test]
 fn putting_a_fault_to_one_more_test_never_makes_a_run_look_better() {
-    let before = settle(&fault(), &put(&[answered("a", true)]));
+    let baseline = before(&["a", "b"]);
+    let fewer = settle(&fault(), &put(&[answered("a", true)]), &baseline);
     for also in [answered("b", true), answered("b", false)] {
-        let after = settle(&fault(), &put(&[answered("a", true), also]));
+        let after = settle(&fault(), &put(&[answered("a", true), also]), &baseline);
         assert!(
-            after.decision.standing() >= before.decision.standing(),
+            after.decision.standing() >= fewer.decision.standing(),
             "asking one more test can leave a fault where it was or have somebody \
              notice it; a rule that let it come out worse would make measuring more \
              a way of finding less"
         );
     }
+}
+
+#[test]
+fn a_target_that_was_already_failing_is_not_evidence_that_anything_noticed() {
+    let settled = settle(&fault(), &put(&[answered("a", false)]), &before(&["other"]));
+    assert_eq!(
+        settled.decision,
+        SeamDecision::Unreached,
+        "a target that was red before the fault went in is one that cannot notice it. \
+         Reading its failure as a detection lets a broken suite report wire coverage it \
+         has none of, which is the one direction this phase must never fail in"
+    );
 }

@@ -43,11 +43,24 @@ fn answered(target: &str, passed: bool) -> Answered {
     }
 }
 
+/// A baseline in which `targets` all passed, which is what makes a later failure attributable to a fault.
+fn before(targets: &[&str]) -> njutest::wire::settle::Before {
+    njutest::wire::settle::Before::of(
+        &targets
+            .iter()
+            .map(|target| answered(target, true))
+            .collect::<Vec<_>>(),
+    )
+}
+
 #[test]
 fn a_run_that_observed_no_seam_measures_nothing_and_claims_nothing() {
     let held = watching!();
     let done = measure(
-        &Measuring { observed: &[] },
+        &Measuring {
+            observed: &[],
+            before: &before(&["a"]),
+        },
         |_fault| njutest::wire::settle::Asked::Answered(vec![answered("a", true)]),
         njutest::watch::Watch::new(&held.0, &held.1),
     )
@@ -62,6 +75,7 @@ fn a_fault_the_suite_carried_on_through_is_a_finding_that_says_what_it_asked() {
     let done = measure(
         &Measuring {
             observed: &observed(),
+            before: &before(&["pkg/test/it"]),
         },
         |_fault| njutest::wire::settle::Asked::Answered(vec![answered("pkg/test/it", true)]),
         njutest::watch::Watch::new(&held.0, &held.1),
@@ -100,6 +114,7 @@ fn a_fault_the_tests_noticed_is_not_a_finding() {
     let done = measure(
         &Measuring {
             observed: &observed(),
+            before: &before(&["pkg/test/it"]),
         },
         |_fault| njutest::wire::settle::Asked::Answered(vec![answered("pkg/test/it", false)]),
         njutest::watch::Watch::new(&held.0, &held.1),
@@ -120,6 +135,7 @@ fn a_fault_nothing_ran_is_reported_as_a_hole_rather_than_as_a_survivor() {
     let done = measure(
         &Measuring {
             observed: &observed(),
+            before: &before(&["pkg/test/it"]),
         },
         |_fault| njutest::wire::settle::Asked::Answered(Vec::new()),
         njutest::watch::Watch::new(&held.0, &held.1),
@@ -168,6 +184,7 @@ fn a_question_the_run_put_and_could_not_read_is_not_one_nothing_put() {
     let done = measure(
         &Measuring {
             observed: &observed(),
+            before: &before(&["pkg/test/it"]),
         },
         |_fault| njutest::wire::settle::Asked::NotMeasured(rust_mutants::outcome::Outcome::Waited),
         njutest::watch::Watch::new(&held.0, &held.1),
@@ -187,5 +204,46 @@ fn a_question_the_run_put_and_could_not_read_is_not_one_nothing_put() {
     assert!(
         named.contains(&njutest::assure::wire::NOT_MEASURED),
         "and what it says instead names the run's own silence: {named:?}"
+    );
+}
+
+#[test]
+fn a_question_no_passing_target_answered_is_a_hole_and_says_which_hole() {
+    let held = watching!();
+    let done = measure(
+        &Measuring {
+            observed: &observed(),
+            before: &before(&["pkg/test/other"]),
+        },
+        |_fault| njutest::wire::settle::Asked::Answered(vec![answered("pkg/test/it", false)]),
+        njutest::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("the fault catalogue derives");
+    assert!(
+        done.findings
+            .iter()
+            .all(|one| one.kind == FindingKind::NotMeasured),
+        "the one target that answered was already failing, so its failure is not \
+         attributable to the fault: crediting it would let a broken suite report wire \
+         coverage it has none of: {:?}",
+        done.findings
+    );
+    assert!(
+        done.findings
+            .iter()
+            .any(|one| one.subject == njutest::assure::wire::ALREADY_FAILING),
+        "and the hole says which hole it is, because `unreached` reaches a reader \
+         through the finding that tells its causes apart: {:?}",
+        done.findings
+            .iter()
+            .map(|one| &one.subject)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        done.seams.iter().all(|row| row.decision
+            != njutest::report::SeamDecision::Tests {
+                noticed_by: "pkg/test/it".to_owned()
+            }),
+        "and no row claims the already-failing target noticed anything"
     );
 }

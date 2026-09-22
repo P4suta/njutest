@@ -16,11 +16,16 @@ pub const NOT_PUT: &str = "wire-fault-not-put";
 /// What a finding is about when a question was put and the run could not read what the suite did with it.
 pub const NOT_MEASURED: &str = "wire-fault-not-measured";
 
+/// What a finding is about when the only targets that failed with a question in place were ones already failing without it.
+pub const ALREADY_FAILING: &str = "wire-fault-not-attributable";
+
 /// What the phase is asked about.
 #[derive(Debug, Clone, Copy)]
 pub struct Measuring<'a> {
     /// Every exchange the baseline saw go past a seam.
     pub observed: &'a [Exchange],
+    /// What each target did before any fault went in, which is what makes a failure attributable to one.
+    pub before: &'a crate::wire::settle::Before,
 }
 
 /// What it established about the seams.
@@ -34,6 +39,71 @@ pub struct Measured {
     pub limitations: Vec<Limitation>,
     /// Every question the recording licensed, and what became of it, so a finding's name can be looked up.
     pub seams: Vec<crate::report::SeamRecord>,
+}
+
+/// What a run put and could not conclude from, counted by the reason it could not.
+///
+/// Three reasons reach a reader as `unreached` and a decision cannot tell them apart, so each is counted where it happens and stated once at the end.
+#[derive(Debug, Default)]
+struct Holes {
+    /// Questions derived from a recording that were put to no test.
+    unput: usize,
+    /// Questions put whose only answering targets were already failing.
+    unattributable: usize,
+    /// Questions put whose outcome the run could not read.
+    unmeasured: Vec<rust_mutants::outcome::Outcome>,
+}
+
+impl Holes {
+    /// Adds one finding per reason that has something to say.
+    fn stated(&self, done: &mut Measured) {
+        if self.unput > 0 {
+            done.findings.push(Finding::new(
+                FindingKind::NotMeasured,
+                NOT_PUT,
+                &format!(
+                    "{} question(s) this run derived from what went past a seam were \
+                     put to no test, so it says nothing about whether anything would have \
+                     noticed them",
+                    self.unput
+                ),
+            ));
+        }
+        if self.unattributable > 0 {
+            done.findings.push(Finding::new(
+                FindingKind::NotMeasured,
+                ALREADY_FAILING,
+                &format!(
+                    "{} question(s) were put and not one target that answered them was \
+                     passing without the fault, so no failure is attributable to it and the \
+                     run says nothing about whether anything would have noticed: fix the \
+                     failing tests and ask again",
+                    self.unattributable
+                ),
+            ));
+        }
+        if !self.unmeasured.is_empty() {
+            let mut how: Vec<&str> = self
+                .unmeasured
+                .iter()
+                .map(|outcome| outcome.name())
+                .collect();
+            how.sort_unstable();
+            how.dedup();
+            done.findings.push(Finding::new(
+                FindingKind::NotMeasured,
+                NOT_MEASURED,
+                &format!(
+                    "{} question(s) were put to the suite and the run could not read what it \
+                     did with them ({}), so it says nothing about whether anything noticed: \
+                     the exchange did come past, and reporting it as one nothing put would \
+                     name the wrong thing",
+                    self.unmeasured.len(),
+                    how.join(", ")
+                ),
+            ));
+        }
+    }
 }
 
 /// Puts every fault the recording licensed to the tests, by whatever `run` does to run them.
@@ -57,8 +127,7 @@ where
         executed: true,
         ..Measured::default()
     };
-    let mut unput = Vec::new();
-    let mut unmeasured = Vec::new();
+    let mut holes = Holes::default();
     for fault in &faults {
         if watch.cancel.is_cancelled() {
             break;
@@ -67,7 +136,7 @@ where
         let decision = crate::wire::prove::discharges(fault, measuring.observed).map_or_else(
             || {
                 let put = run(fault);
-                let decision = settle(fault, &put).decision;
+                let decision = settle(fault, &put, measuring.before).decision;
                 asked = Some(put);
                 decision
             },
@@ -86,12 +155,17 @@ where
             SeamDecision::Tests { .. } | SeamDecision::Proved { .. } => {}
             SeamDecision::Unreached => match asked {
                 Some(crate::wire::settle::Asked::NotMeasured(outcome)) => {
-                    unmeasured.push(outcome);
+                    holes.unmeasured.push(outcome);
+                }
+                Some(ref answered)
+                    if crate::wire::settle::nothing_could_answer(answered, measuring.before) =>
+                {
+                    holes.unattributable = holes.unattributable.saturating_add(1);
                 }
                 Some(crate::wire::settle::Asked::Answered(_none_of_them)) => {
-                    unput.push(());
+                    holes.unput = holes.unput.saturating_add(1);
                 }
-                None => unput.push(()),
+                None => holes.unput = holes.unput.saturating_add(1),
             },
             SeamDecision::Unnoticed => {
                 done.findings.push(unnoticed(fault, measuring.observed));
@@ -99,35 +173,7 @@ where
         }
         asked_about(&mut done, measuring, (fault, decision));
     }
-    if !unput.is_empty() {
-        done.findings.push(Finding::new(
-            FindingKind::NotMeasured,
-            NOT_PUT,
-            &format!(
-                "{} question(s) this run derived from what went past a seam were \
-                 put to no test, so it says nothing about whether anything would have \
-                 noticed them",
-                unput.len()
-            ),
-        ));
-    }
-    if !unmeasured.is_empty() {
-        let mut how: Vec<&str> = unmeasured.iter().map(|outcome| outcome.name()).collect();
-        how.sort_unstable();
-        how.dedup();
-        done.findings.push(Finding::new(
-            FindingKind::NotMeasured,
-            NOT_MEASURED,
-            &format!(
-                "{} question(s) were put to the suite and the run could not read what it \
-                 did with them ({}), so it says nothing about whether anything noticed: \
-                 the exchange did come past, and reporting it as one nothing put would \
-                 name the wrong thing",
-                unmeasured.len(),
-                how.join(", ")
-            ),
-        ));
-    }
+    holes.stated(&mut done);
     Ok(done)
 }
 
@@ -216,7 +262,10 @@ where
             watch.trace.wire_exchange(recorded(exchange));
         }
         let measured = measure(
-            &Measuring { observed },
+            &Measuring {
+                observed,
+                before: &baseline.before,
+            },
             |fault| {
                 for one in &seams.watching {
                     one.interposer.putting(None);
@@ -310,6 +359,8 @@ pub fn licensing(
 pub struct Baseline {
     /// One recording per seam, in the order the seams were started.
     per_seam: Vec<Vec<Exchange>>,
+    /// What each target did with no fault in place, which is what makes a later failure attributable to one.
+    before: crate::wire::settle::Before,
 }
 
 impl Baseline {
@@ -354,18 +405,19 @@ impl Seams {
     #[must_use]
     pub fn observing<R>(&self, mut run: R) -> Baseline
     where
-        R: FnMut(),
+        R: FnMut() -> Vec<crate::wire::settle::Answered>,
     {
         for one in &self.watching {
             one.interposer.restart();
         }
-        run();
+        let answered = run();
         Baseline {
             per_seam: self
                 .watching
                 .iter()
                 .map(|one| one.interposer.seal())
                 .collect(),
+            before: crate::wire::settle::Before::of(&answered),
         }
     }
 

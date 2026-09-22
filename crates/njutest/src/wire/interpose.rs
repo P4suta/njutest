@@ -80,11 +80,12 @@ impl Interposer {
     /// # Errors
     /// [`InterposeError::CannotListen`] when no port can be had.
     pub fn start(interposing: &Interposing) -> Result<Self, InterposeError> {
-        let listener =
-            TcpListener::bind("127.0.0.1:0").map_err(|source| InterposeError::CannotListen {
+        let listener = bound_after_waiting_out_a_busy_machine().map_err(|source| {
+            InterposeError::CannotListen {
                 upstream: interposing.upstream,
                 source,
-            })?;
+            }
+        })?;
         let address = listener
             .local_addr()
             .map_err(|source| InterposeError::CannotListen {
@@ -724,5 +725,31 @@ fn opening(bytes: &[u8]) -> Option<String> {
     match std::str::from_utf8(line) {
         Ok(line) => Some(line.to_owned()),
         Err(_) => None,
+    }
+}
+
+/// How long a seam waits for an ephemeral port before deciding the machine has none to give.
+///
+/// A port comes free as connections leave `TIME_WAIT`, so this is long enough to outlast a burst and short enough that a machine genuinely out of ports still says so promptly.
+const A_PORT_COMES_FREE_WITHIN: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// How often a seam asks again for a port while the machine has none.
+const ASK_AGAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Takes an ephemeral port, waiting out a machine that momentarily has none rather than giving the seam up.
+///
+/// A single attempt made a busy runner into an unwatched seam: the run carried on, derived its questions from the one seam left, and reported a block half the size with no row saying the other seam was never watched.
+/// Asking once for something that is transiently scarce is what turned port pressure into a gap in an assurance report.
+fn bound_after_waiting_out_a_busy_machine() -> std::io::Result<TcpListener> {
+    let started = std::time::Instant::now();
+    loop {
+        match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => return Ok(listener),
+            Err(error) if started.elapsed() < A_PORT_COMES_FREE_WITHIN => {
+                drop(error);
+                std::thread::sleep(ASK_AGAIN_EVERY);
+            }
+            Err(error) => return Err(error),
+        }
     }
 }

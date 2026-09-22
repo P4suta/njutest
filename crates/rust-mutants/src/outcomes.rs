@@ -185,9 +185,9 @@ impl Store {
         mutant: &HexDigest,
     ) -> Result<Option<(Outcome, Record)>, StoreError> {
         let path = self.entry(key);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        let text = match read_through_a_replacement(&path) {
+            Ok(Some(text)) => text,
+            Ok(None) => return Ok(None),
             Err(source) => return Err(StoreError::Io { path, source }),
         };
         let record: Record =
@@ -288,4 +288,38 @@ fn hash_length(hasher: &mut Sha256, length: usize) {
         *destination = *source;
     }
     hasher.update(canonical);
+}
+
+/// How long a reader waits out a replacement before deciding a refusal is about permissions rather than timing.
+///
+/// A replacement is a rename and clears in microseconds, so this is orders of magnitude more than it needs and still nothing a person waits on.
+const REPLACEMENT_CLEARS_WITHIN: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// How often the reader looks again while a replacement is in flight.
+const LOOK_AGAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(1);
+
+/// Reads `path` whole, waiting out a replacement that is in flight rather than reporting it as a failure.
+///
+/// POSIX `rename` is atomic for a reader holding the old inode, so this returns on the first attempt there.
+/// Windows gives an *opener* no such guarantee: while a replacement is in flight the name is briefly delete-pending and opening it answers `ERROR_ACCESS_DENIED`, so a reader racing a writer sees a refusal where the store's contract promises a whole record or nothing.
+/// Answering `None` to any refusal would read an unreadable directory as a permanent cache miss, which is the same fault pointing the other way, so a refusal that outlasts a replacement is returned as itself.
+fn read_through_a_replacement(path: &Path) -> io::Result<Option<String>> {
+    let started = std::time::Instant::now();
+    loop {
+        match std::fs::read_to_string(path) {
+            Ok(text) => return Ok(Some(text)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if in_flight(&error) && started.elapsed() < REPLACEMENT_CLEARS_WITHIN => {
+                std::thread::sleep(LOOK_AGAIN_EVERY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Whether a refusal to open is the one a replacement in flight produces.
+///
+/// `ERROR_SHARING_VIOLATION` is 32 and has no `ErrorKind` of its own on every supported compiler, so it is read by number.
+fn in_flight(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied || error.raw_os_error() == Some(32)
 }
