@@ -36,7 +36,8 @@ jobs:
       # The cost of not knowing is a round trip per platform, serialised.
       #
       # Two macOS versions on purpose.
-      # `macos-26` is the one a developer here runs, so a failure on it is reproducible by the person who caused it.
+      # `macos-26` is the newest macOS image GitHub publishes, which is not the newest macOS: the machine this is developed on runs 27, and no runner image answers for it.
+      # So the newest row is the closest CI can stand to where the code is written, and the gap is a reason to keep reading a macOS failure rather than a reason to assume the local gate saw it.
       # `macos-15` is the oldest still supported, and it is not ballast: it is where `proc_listpgrppids` reports an empty process group after a timeout, which the supervisor read as a failure and turned into `abort()`.
       # The newer kernel still listed the waitable leader, so the machine that wrote the code could never have seen it.
       fail-fast: false
