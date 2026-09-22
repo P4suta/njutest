@@ -81,13 +81,14 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 git -C "${repository}" worktree add --quiet --detach "${checkout}" "${head}"
-mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/release"
+mkdir -p "${repository}/target/debug" "${repository}/target/release"
 mkdir "${checkout}/target"
-ln -s "${repository}/target/pre-push/debug" "${checkout}/target/debug"
-ln -s "${repository}/target/pre-push/release" "${checkout}/target/release"
+ln -s "${repository}/target/debug" "${checkout}/target/debug"
+ln -s "${repository}/target/release" "${checkout}/target/release"
 require_exact_tree
 (cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check)
-# The tree is isolated and the build cache is not: `target/debug` and `target/release` are the developer's, which is minutes per push and the reason every earlier "green" in this campaign was about artifacts compiled before the field they were meant to prove existed.
-# One cold check, into a target directory nothing else writes, is what the cache cannot answer.
+# The tree is isolated and the build cache is not: `target/debug` and `target/release` are the developer's, which is minutes per push rather than half an hour.
+# A cache only pushes ever write is cold at every push by construction, which is what a separate `target/pre-push` made it, and the work it repeated was work this machine had already done.
+# What the shared cache cannot answer is whether a green came from an artifact older than the field it is meant to prove, so that question is asked separately and coldly below.
 (cd "${checkout}" && mise run check:cold)
 require_exact_tree
