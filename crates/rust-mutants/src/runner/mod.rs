@@ -1386,7 +1386,13 @@ fn terminate(supervisor: &sys::Supervisor, child: &SupervisedChild) -> Result<()
 
 fn force_signal_or_abort(supervisor: &sys::Supervisor, leader: LeaderObservation) {
     if let Err(why) = supervisor.terminate_forcefully(leader) {
-        note_ownership_failure("signalling the process group forcefully", &why);
+        note_ownership_failure(
+            &format!(
+                "signalling the process group forcefully, {}",
+                supervisor.state()
+            ),
+            &why,
+        );
         terminal_process_ownership_failure();
     }
 }

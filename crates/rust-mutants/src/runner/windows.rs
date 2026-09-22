@@ -155,6 +155,11 @@ impl Supervisor {
     }
 
     /// Closing the last handle kills whatever is still in the job.
+    /// What the supervisor can say about the set it owns, for the note before an abort.
+    pub(super) fn state(&self) -> String {
+        "holding a job object".to_owned()
+    }
+
     pub(super) fn release(&mut self) -> io::Result<()> {
         if self.job.is_null() {
             return Ok(());

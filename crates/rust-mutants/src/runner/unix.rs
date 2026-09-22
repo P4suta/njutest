@@ -167,6 +167,25 @@ impl Supervisor {
         }
     }
 
+    /// What the supervisor can say about the group it owns, for the note before an abort.
+    pub(super) fn state(&self) -> String {
+        let pgid = match self.pgid {
+            Some(pgid) => pgid.as_raw_nonzero().get(),
+            None => return "holding no process group".to_owned(),
+        };
+        #[cfg(target_os = "macos")]
+        {
+            let members = match self.has_member_besides_leader() {
+                Ok(true) => "a member besides its leader".to_owned(),
+                Ok(false) => "no member besides its leader".to_owned(),
+                Err(why) => format!("members it could not list ({why})"),
+            };
+            format!("group {pgid} with {members}")
+        }
+        #[cfg(not(target_os = "macos"))]
+        format!("group {pgid}")
+    }
+
     fn signal(&self, signal: Signal) -> io::Result<()> {
         let pgid = self.pgid.ok_or_else(|| {
             io::Error::new(
