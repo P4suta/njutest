@@ -96,7 +96,7 @@ run = "cargo xtask all"
 
 [tasks.lint]
 description = "Run formatting, clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
-depends = ["fmt:check", "clippy", "gates", "fuzz:clippy", "committed:range"]
+depends = ["fmt:check", "clippy", "doc", "gates", "fuzz:clippy", "committed:range"]
 run = ["typos", "actionlint"]
 
 [tasks."committed:range"]
@@ -345,7 +345,7 @@ run = ["mise run check:windows", "mise run lint:linux"]
 # CI builds and installs the packages and the book on its own runners, so the question is answered there rather than twice here.
 [tasks."check:release"]
 description = "Build the documentation and the packages a release would ship"
-run = ["mise run doc", "mise run book", "mise run package"]
+run = ["mise run book", "mise run package"]
 
 [tasks."check:full"]
 description = "Everything a push waits for, and the passes CI also runs"
