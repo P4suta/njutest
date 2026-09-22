@@ -113,16 +113,23 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [[ -e "${checkout}" ]]; then
-  git -C "${repository}" worktree remove --force "${checkout}" >/dev/null 2>&1 || rm -rf "${checkout}"
-fi
-git -C "${repository}" worktree prune
+# Moved to, not recreated.
+#
+# `git worktree add` writes every file afresh, and cargo fingerprints on mtime, so a tree with identical content still rebuilds the workspace from nothing.
+# That is the last thing that made a push cost twenty minutes with a cache that was already warm: measured in this very worktree, `build` is 1s and `clippy` is 0s once the mtimes stop moving.
+# A checkout in place touches only the files that differ, which is exactly the set that should be recompiled.
 mkdir -p "$(dirname "${checkout}")"
-git -C "${repository}" worktree add --quiet --detach "${checkout}" "${head}"
-mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/release"
-mkdir "${checkout}/target"
-ln -s "${repository}/target/pre-push/debug" "${checkout}/target/debug"
-ln -s "${repository}/target/pre-push/release" "${checkout}/target/release"
+git -C "${repository}" worktree prune
+if [[ -e "${checkout}/.git" ]]; then
+  git -C "${checkout}" checkout --quiet --force --detach "${head}"
+  git -C "${checkout}" clean --quiet -fd -e /target
+else
+  rm -rf "${checkout}"
+  git -C "${repository}" worktree add --quiet --detach "${checkout}" "${head}"
+fi
+mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/release" "${checkout}/target"
+ln -sfn "${repository}/target/pre-push/debug" "${checkout}/target/debug"
+ln -sfn "${repository}/target/pre-push/release" "${checkout}/target/release"
 require_exact_tree
 within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
 # The tree is isolated and so is the cache, which is now warm because the path above no longer changes: the developer's own `target/debug` stays out of the answer, and the gate still does not recompile what the previous push compiled.
