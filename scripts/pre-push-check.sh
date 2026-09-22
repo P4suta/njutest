@@ -9,14 +9,19 @@
 
 set -euo pipefail
 
-# A budget the gate is held to, rather than one it is hoped to meet.
+# Two numbers, because one cannot be both the detector and the backstop.
 #
 # A gate that quietly takes an hour is not a slow gate, it is a broken one, and the way that breaks is always the same: something stopped being cached and nobody noticed, because waiting looks exactly like working.
-# Exceeding this is a defect report about the gate, not a reason to wait longer.
-# Raise it deliberately, in a commit that says what got slower and why that is now correct.
+# What catches that is `expected_seconds`, which only says so: a warning on a run that finished is read, and costs the push nothing.
+# What stops the hour is `budget_seconds`, and a backstop that fires on the normal path is not one -- it is a guillotine that throws away the compile it interrupted, so the next run is slow for the same reason and the ratchet only turns one way.
+#
+# Measured on this machine, against the checkout this script keeps: 300s warm, and about 650s on the first run after a merge that touches the workspace, because `mise run check` compiles it twice over -- once with clippy's fingerprints and once with the test harness's, as `[tasks.check]` says.
+# So 420s is what a warm run should beat and 900s is what no honest run reaches; the regression this was built to catch ran 1720s.
+# Raise either deliberately, in a commit that says what got slower and why that is now correct.
 #
 # `set -m` puts the check in its own process group so the whole tree of cargo, nextest and rustc goes down with it; killing the shell alone would leave the compile running and the budget unenforced.
-budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-600}"
+budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-900}"
+expected_seconds="${NJUTEST_PUSH_EXPECTED_SECONDS:-420}"
 
 within_budget() {
   local started elapsed job
@@ -39,6 +44,11 @@ within_budget() {
     sleep 2
   done
   wait "${job}"
+  elapsed=$(( $(date +%s) - started ))
+  if (( elapsed >= expected_seconds )); then
+    echo "pre-push: the gate passed in ${elapsed}s, over the ${expected_seconds}s a warm run should beat" >&2
+    echo "pre-push: that is the reading to act on while it is still cheap. A first run after a merge is expected here; a second one that is still slow means something stopped being cached" >&2
+  fi
 }
 
 zero=0000000000000000000000000000000000000000

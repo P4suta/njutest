@@ -76,6 +76,7 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
         "mise run check",
         "within_budget",
         "NJUTEST_PUSH_BUDGET_SECONDS",
+        "NJUTEST_PUSH_EXPECTED_SECONDS",
     ] {
         assert!(
             pre_push.contains(held),
