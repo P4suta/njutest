@@ -607,7 +607,7 @@ fn validate_context(document: &Document, workspace: &Path) -> Result<(), AuditEr
             });
         }
     }
-    if !document.tools.goto_cc.ends_with(GOTO_CC_BACKEND) {
+    if !document.tools.goto_cc.contains(GOTO_CC_BACKEND) {
         return Err(AuditError::Toolchain {
             field: "goto-cc",
             found: document.tools.goto_cc.clone(),
