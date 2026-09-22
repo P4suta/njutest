@@ -231,6 +231,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
     let root = tempfile::Builder::new()
@@ -328,6 +329,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
 }
 
 /// Every stage a whole run goes through names itself, to a person and to a recording.
+#[cfg(unix)]
 fn stages_of(complained: &str, root: &std::path::Path) {
     let said: Vec<&str> = complained
         .lines()
@@ -401,6 +403,7 @@ fn stages_of(complained: &str, root: &std::path::Path) {
 }
 
 /// What a run records about each mutation it judged, which is the only account of that phase a person has afterwards.
+#[cfg(unix)]
 fn judged(events: &[njutest::trace::Event]) {
     let phases: Vec<&str> = events
         .iter()
@@ -485,6 +488,7 @@ fn report_of(root: &std::path::Path) -> serde_json::Value {
 }
 
 /// The document the latest run of `root` wrote, found without the index: a run that judged one part of a catalog writes a document and no index naming it.
+#[cfg(unix)]
 fn latest_report_of(root: &std::path::Path) -> serde_json::Value {
     let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(
         root.join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
@@ -512,6 +516,7 @@ fn part_of(report: &serde_json::Value) -> &serde_json::Value {
 }
 
 /// The verdict the latest run of `root` reached, read back the way a reader does: the document no longer carries it.
+#[cfg(unix)]
 fn verdict_of(root: &std::path::Path) -> njutest::report::Verdict {
     let run = njutest::app::reports::pointed_at(root, njutest::app::reports::Index::Any)
         .expect("the index is readable")
@@ -529,6 +534,7 @@ fn verdict_of(root: &std::path::Path) -> njutest::report::Verdict {
 }
 
 /// What a run whose every measurement was slow exactly once concludes.
+#[cfg(unix)]
 fn once_slow(report: &serde_json::Value) {
     assert_eq!(
         (
@@ -554,6 +560,7 @@ fn once_slow(report: &serde_json::Value) {
 }
 
 /// Every stage the latest recording under `root` names, in the order it named them.
+#[cfg(unix)]
 fn recorded_stages(root: &std::path::Path) -> Vec<String> {
     events_of(root)
         .iter()
@@ -566,6 +573,7 @@ fn recorded_stages(root: &std::path::Path) -> Vec<String> {
 }
 
 /// What each route of the latest recording said about the answer an earlier run had left: the run it took, and why it took none.
+#[cfg(unix)]
 fn consulted(root: &std::path::Path) -> Vec<(Option<String>, Option<String>)> {
     events_of(root)
         .iter()
@@ -578,6 +586,7 @@ fn consulted(root: &std::path::Path) -> Vec<(Option<String>, Option<String>)> {
 }
 
 /// Every mutation execution a recording holds.
+#[cfg(unix)]
 fn executions(events: &[njutest::trace::Event]) -> Vec<&njutest::trace::MutantExecRecord> {
     events
         .iter()
@@ -586,6 +595,7 @@ fn executions(events: &[njutest::trace::Event]) -> Vec<&njutest::trace::MutantEx
 }
 
 /// Every event the latest recording under `root` holds.
+#[cfg(unix)]
 fn events_of(root: &std::path::Path) -> Vec<njutest::trace::Event> {
     let mut recordings: Vec<std::path::PathBuf> = std::fs::read_dir(root.join(".njutest/trace"))
         .expect("the trace directory")
@@ -603,6 +613,7 @@ fn events_of(root: &std::path::Path) -> Vec<njutest::trace::Event> {
     .expect("the events read back")
 }
 
+#[cfg(unix)]
 #[test]
 fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose_it_is() {
     let dir = tempfile::Builder::new()
@@ -687,6 +698,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
 }
 
 /// What the second run of one tree says about the answers the first one left.
+#[cfg(unix)]
 fn read_back(root: &std::path::Path, run_id: &str) {
     let report = report_of(root);
     assert_eq!(
@@ -726,6 +738,7 @@ fn read_back(root: &std::path::Path, run_id: &str) {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_passes_over() {
     let dir = tempfile::Builder::new()
@@ -795,6 +808,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_tests_ran_it() {
     let dir = tempfile::Builder::new()
@@ -866,6 +880,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
 }
 
 /// What the equivalence layer decided, and the one survivor it may not take.
+#[cfg(unix)]
 fn proved_equivalent(root: &std::path::Path) {
     let report = report_of(root);
     if !njutest_devkit::reproducible::builds_the_same_twice() {
@@ -902,6 +917,7 @@ fn proved_equivalent(root: &std::path::Path) {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
     let dir = tempfile::Builder::new()
@@ -980,6 +996,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
 }
 
 /// What a report says about the one resource a run was told to hold.
+#[cfg(unix)]
 fn leased(report: &serde_json::Value) {
     let held = part_of(report)["resources"]
         .as_array()
@@ -1013,8 +1030,10 @@ fn leased(report: &serde_json::Value) {
 }
 
 /// The test a generation provider offers to close the gap the ignored test left.
+#[cfg(unix)]
 const OFFERED: &str = "Ly8gU1BEWC1GaWxlQ29weXJpZ2h0VGV4dDogMjAyNiBtanV0ZXN0IGNvbnRyaWJ1dG9ycwovLyBTUERYLUxpY2Vuc2UtSWRlbnRpZmllcjogTUlUIE9SIEFwYWNoZS0yLjAKCi8vISBPZmZlcmVkIGJ5IGEgZ2VuZXJhdGlvbiBwcm92aWRlciB0byBjbG9zZSB0aGUgZ2FwIHRoZSBpZ25vcmVkIHRlc3QgbGVmdC4KCiNbdGVzdF0KZm4gemVyb19oYXNfYV9zaWduX29mX2l0c19vd24oKSB7CiAgICBhc3NlcnRfZXEhKGZpeHR1cmVfYmFzZWxpbmU6OnNpZ24oMCksICJ6ZXJvIik7Cn0K";
 
+#[cfg(unix)]
 #[test]
 fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
     let dir = tempfile::Builder::new()
@@ -1104,6 +1123,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
 }
 
 /// What a run tells a generation provider about the gap it is asking to close.
+#[cfg(unix)]
 fn questioned(asked: &std::path::Path) {
     let put = std::fs::read_to_string(asked).expect("what the generator was asked");
     let question: serde_json::Value =
@@ -1132,6 +1152,7 @@ fn questioned(asked: &std::path::Path) {
 }
 
 /// What a run records about a candidate it put to the tests.
+#[cfg(unix)]
 fn offered_and_checked(report: &serde_json::Value, root: &std::path::Path) {
     let offered = part_of(report)["candidates"]
         .as_array()
@@ -1168,6 +1189,7 @@ fn offered_and_checked(report: &serde_json::Value, root: &std::path::Path) {
 }
 
 /// A candidate that holds up and has nowhere to be kept.
+#[cfg(unix)]
 fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Environment) {
     let root = from;
     let blocked = dir.join("fixture-blocked");
@@ -1226,11 +1248,13 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
 }
 
 /// A stream that raises `cancel` once a run has judged a mutation and started saying so about the next.
+#[cfg(unix)]
 struct Interrupting<'a> {
     cancel: &'a Cancel,
     said: String,
 }
 
+#[cfg(unix)]
 impl Write for Interrupting<'_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         self.said
@@ -1250,6 +1274,7 @@ impl Write for Interrupting<'_> {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
     let dir = tempfile::Builder::new()
@@ -1299,6 +1324,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
 }
 
 /// What a run that was stopped wrote where its successor will look.
+#[cfg(unix)]
 fn left_behind(cache: &std::path::Path) {
     let kept: Vec<serde_json::Value> =
         std::fs::read_dir(cache.join("njutest/outcomes-v1/checkpoints"))
@@ -1342,6 +1368,7 @@ fn left_behind(cache: &std::path::Path) {
 }
 
 /// What the next run of the same tree does with it.
+#[cfg(unix)]
 fn resumed(root: &std::path::Path, environment: Environment) {
     let environment = Environment {
         cancel: Cancel::new(),
@@ -1422,6 +1449,7 @@ fn once(
     report_of(&root)
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_of_one_tree_says_the_same_thing_however_many_times_and_however_widely_it_is_run() {
     let dir = tempfile::Builder::new()
@@ -1468,6 +1496,7 @@ fn a_run_of_one_tree_says_the_same_thing_however_many_times_and_however_widely_i
 }
 
 /// One shard document, read back from a run that judged part of a catalog.
+#[cfg(unix)]
 fn shard_of(document: &serde_json::Value) -> njutest::report::ShardReport {
     match njutest::report::json::parse_any(&document.to_string()).expect("a part reads back") {
         njutest::report::ReportDocument::Shard(shard) => shard,
@@ -1478,6 +1507,7 @@ fn shard_of(document: &serde_json::Value) -> njutest::report::ShardReport {
 }
 
 /// One part of `fixture`'s catalog, judged in this process.
+#[cfg(unix)]
 fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_json::Value {
     let scratch = dir.join(format!("part-{}-scratch", shard.replace('/', "-")));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
@@ -1516,6 +1546,7 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
     latest_report_of(root)
 }
 
+#[cfg(unix)]
 #[test]
 fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have() {
     let dir = tempfile::Builder::new()
@@ -1678,6 +1709,7 @@ fn the_contract_that_promises_the_suite_is_interpreted_interprets_it() {
 }
 
 /// A tree holding one fuzz target, which `builds` says whether cargo could build.
+#[cfg(unix)]
 fn with_fuzz_target(root: &std::path::Path, builds: bool) {
     let targets = root.join("fuzz/fuzz_targets");
     std::fs::create_dir_all(&targets).expect("a fuzz directory");
@@ -1699,6 +1731,7 @@ fn with_fuzz_target(root: &std::path::Path, builds: bool) {
     .expect("a fuzz crate");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_nothing() {
     let dir = tempfile::Builder::new()
@@ -1772,6 +1805,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
 }
 
 /// A run in this process against `fixture`, and what it left behind.
+#[cfg(unix)]
 fn verified_in_process(
     fixture: &str,
     dir: &std::path::Path,
@@ -1830,6 +1864,7 @@ fn verified_in_process(
     )
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wait() {
     let dir = tempfile::Builder::new()
@@ -1903,6 +1938,7 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
     let dir = tempfile::Builder::new()
@@ -1992,6 +2028,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
 }
 
 /// What a whole run's report says about the targets and the mutations it judged.
+#[cfg(unix)]
 fn accounted(report: &serde_json::Value, root: &std::path::Path) {
     let targets = part_of(report)["targets"]
         .as_array()
@@ -2038,6 +2075,7 @@ fn accounted(report: &serde_json::Value, root: &std::path::Path) {
 }
 
 /// What a report says about the thing it is about and what produced it.
+#[cfg(unix)]
 fn provenance(report: &serde_json::Value) {
     for named in ["rustc", "cargo", "target", "os", "arch"] {
         assert!(
@@ -2065,6 +2103,7 @@ fn provenance(report: &serde_json::Value) {
 }
 
 /// What a whole run of the baseline fixture concludes about the mutations it judged.
+#[cfg(unix)]
 fn concluded(report: &serde_json::Value, root: &std::path::Path) {
     assert_eq!(verdict_of(root), njutest::report::Verdict::Insufficient);
     assert_eq!(
@@ -2094,6 +2133,7 @@ fn concluded(report: &serde_json::Value, root: &std::path::Path) {
 }
 
 /// That the phase counted its mutations off one at a time to whoever was watching.
+#[cfg(unix)]
 fn paced(report: &serde_json::Value, root: &std::path::Path) {
     let counted = part_of(report)["accounting"]["mutants"]["cataloged"]
         .as_u64()

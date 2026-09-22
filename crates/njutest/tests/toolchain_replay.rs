@@ -3,6 +3,7 @@
 
 //! The commands that read what a run left behind: `report`, `trace`, `diagnostics`, and the one that says what a run would do without doing it, `plan`.
 
+#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,

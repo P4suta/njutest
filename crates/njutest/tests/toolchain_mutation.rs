@@ -73,6 +73,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
     }
 }
 
+#[cfg(unix)]
 fn document_text(fixture: &Fixture) -> String {
     let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
         .expect("the index is readable")
@@ -86,6 +87,7 @@ fn document_text(fixture: &Fixture) -> String {
     std::fs::read_to_string(path).expect("the document")
 }
 
+#[cfg(unix)]
 fn document(fixture: &Fixture) -> serde_json::Value {
     let whole: serde_json::Value =
         njutest_devkit::strictjson::decode_str(&document_text(fixture)).expect("JSON");
@@ -93,10 +95,12 @@ fn document(fixture: &Fixture) -> serde_json::Value {
     whole["report"].clone()
 }
 
+#[cfg(unix)]
 fn part(fixture: &Fixture) -> serde_json::Value {
     document(fixture)["builds"][0]["parts"][0].clone()
 }
 
+#[cfg(unix)]
 fn verdict(fixture: &Fixture) -> &'static str {
     njutest::report::json::parse(&document_text(fixture))
         .expect("the report reads back")
@@ -104,6 +108,7 @@ fn verdict(fixture: &Fixture) -> &'static str {
         .name()
 }
 
+#[cfg(unix)]
 #[test]
 fn a_suite_that_notices_every_change_is_assured() {
     let fixture = fixture("fixture-assured");
@@ -136,6 +141,7 @@ fn a_suite_that_notices_every_change_is_assured() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
     let fixture = fixture("fixture-baseline");
@@ -185,6 +191,7 @@ fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
     let fixture = fixture("fixture-baseline");
@@ -227,6 +234,7 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
     assert_eq!(report["findings"].as_array().expect("findings").len(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_acceptance_that_names_no_single_catalog_entry_suppresses_nothing() {
     let fixture = fixture("fixture-baseline");
@@ -269,6 +277,7 @@ fn an_acceptance_that_names_no_single_catalog_entry_suppresses_nothing() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn every_mutant_is_routed_to_the_tests_that_reach_it_and_no_others() {
     let fixture = fixture("fixture-assured");
@@ -308,18 +317,22 @@ fn every_mutant_is_routed_to_the_tests_that_reach_it_and_no_others() {
     }
 }
 
+#[cfg(unix)]
 fn njutest(fixture: &Fixture, args: &[&str]) -> Output {
     asked(&of(&fixture.root, &[]), args)
 }
 
+#[cfg(unix)]
 fn survivors(fixture: &Fixture) -> Vec<String> {
     named(fixture, &["survived"])
 }
 
+#[cfg(unix)]
 fn unanswered(fixture: &Fixture) -> Vec<String> {
     named(fixture, &["survived", "unreached"])
 }
 
+#[cfg(unix)]
 fn named(fixture: &Fixture, outcomes: &[&str]) -> Vec<String> {
     part(fixture)["mutants"]
         .as_array()
@@ -334,6 +347,7 @@ fn named(fixture: &Fixture, outcomes: &[&str]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
 fn explain_says_everything_the_run_recorded_about_one_mutant() {
     let fixture = fixture("fixture-baseline");
@@ -354,6 +368,7 @@ fn explain_says_everything_the_run_recorded_about_one_mutant() {
     assert!(text.contains("FINDING\tsurviving-mutant"), "{text}");
 }
 
+#[cfg(unix)]
 #[test]
 fn explain_refuses_a_prefix_that_names_more_than_one() {
     let fixture = fixture("fixture-baseline");
@@ -364,6 +379,7 @@ fn explain_refuses_a_prefix_that_names_more_than_one() {
     assert!(stderr.contains("names 14 mutants"), "{stderr}");
 }
 
+#[cfg(unix)]
 #[test]
 fn accept_records_the_decision_where_the_next_run_will_read_it() {
     let fixture = fixture("fixture-baseline");
@@ -403,6 +419,7 @@ fn accept_records_the_decision_where_the_next_run_will_read_it() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn accept_refuses_a_mutant_that_did_not_survive() {
     let fixture = fixture("fixture-assured");
@@ -421,6 +438,7 @@ fn accept_refuses_a_mutant_that_did_not_survive() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn what_a_run_concludes_does_not_depend_on_how_many_workers_measured_it() {
     let alone = fixture("fixture-baseline");
@@ -447,6 +465,7 @@ fn what_a_run_concludes_does_not_depend_on_how_many_workers_measured_it() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn accept_records_a_mutation_no_test_reaches() {
     let fixture = fixture("fixture-unreached");
@@ -489,6 +508,7 @@ fn accept_records_a_mutation_no_test_reaches() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn accept_keeps_the_comments_of_the_file_it_edits() {
     let fixture = fixture("fixture-baseline");
@@ -509,6 +529,7 @@ fn accept_keeps_the_comments_of_the_file_it_edits() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutant_no_test_reaches_that_a_reviewer_accepted_is_counted_as_accepted() {
     let fixture = fixture("fixture-unreached");
@@ -553,6 +574,7 @@ fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
     environment(root, &cache, named)
 }
 
+#[cfg(unix)]
 #[test]
 fn a_test_that_writes_into_the_tree_while_it_is_measured_is_said_to_have_done_so() {
     let fixture = fixture("fixture-writes-tree");
@@ -591,6 +613,7 @@ fn a_test_that_writes_into_the_tree_while_it_is_measured_is_said_to_have_done_so
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_suite_that_writes_nothing_says_nothing_about_a_tree_that_was_written_to() {
     let fixture = fixture("fixture-assured");
@@ -615,6 +638,7 @@ fn a_suite_that_writes_nothing_says_nothing_about_a_tree_that_was_written_to() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn recording_an_acceptance_keeps_the_configuration_a_person_wrote() {
     let fixture = fixture("fixture-baseline");
@@ -691,6 +715,7 @@ fn recording_an_acceptance_keeps_the_configuration_a_person_wrote() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_configuration_nobody_can_parse_is_refused_rather_than_rewritten() {
     let fixture = fixture("fixture-baseline");
@@ -725,6 +750,7 @@ fn a_configuration_nobody_can_parse_is_refused_rather_than_rewritten() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_file_the_configuration_excludes_is_not_mutated_and_is_still_built_and_run() {
     let fixture = fixture("fixture-workspace");
@@ -778,6 +804,7 @@ fn a_file_the_configuration_excludes_is_not_mutated_and_is_still_built_and_run()
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_features_the_configuration_turns_on_are_the_features_the_run_compiles() {
     let fixture = fixture("fixture-features");
@@ -833,6 +860,7 @@ fn a_plan_is_about_the_run_the_configuration_describes() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_harness_arguments_the_configuration_writes_are_the_ones_the_suite_runs_with() {
     let plain = fixture("fixture-ignored");
@@ -873,6 +901,7 @@ fn the_harness_arguments_the_configuration_writes_are_the_ones_the_suite_runs_wi
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_configured_target_is_left_out_by_name_and_the_report_says_so() {
     let fixture = fixture("fixture-workspace");
@@ -972,6 +1001,7 @@ fn a_configured_skip_that_names_no_target_is_refused() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_packages_the_configuration_names_are_the_packages_the_run_measures() {
     let fixture = fixture("fixture-workspace");
@@ -1029,6 +1059,7 @@ fn a_package_the_configuration_names_that_nobody_wrote_is_refused() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn an_acceptance_whose_expiry_has_passed_answers_for_nothing() {
     let fixture = fixture("fixture-baseline");
@@ -1071,6 +1102,7 @@ fn an_acceptance_whose_expiry_has_passed_answers_for_nothing() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn accept_writes_the_expiry_it_is_given_and_a_run_reads_it() {
     let fixture = fixture("fixture-baseline");
@@ -1110,10 +1142,12 @@ fn accept_writes_the_expiry_it_is_given_and_a_run_reads_it() {
 }
 
 /// What a command wrote to standard output.
+#[cfg(unix)]
 fn said(output: &Output) -> String {
     njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
+#[cfg(unix)]
 #[test]
 fn every_surface_that_prints_a_command_names_the_mutation_the_same_way() {
     let fixture = fixture("fixture-baseline");

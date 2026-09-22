@@ -3,6 +3,7 @@
 
 //! The language server on the process's own streams: what an editor that starts `njutest lsp` gets back.
 
+#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
