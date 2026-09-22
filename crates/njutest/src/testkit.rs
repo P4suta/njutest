@@ -26,13 +26,6 @@ pub enum ModelResultClass {
     Undecided,
 }
 
-/// The fixture's workspace root, absolute the way this platform means it, because a leading slash is not absolute on Windows without a drive.
-const FIXTURE_ROOT: &str = if cfg!(windows) {
-    "C:/fixture"
-} else {
-    "/fixture"
-};
-
 /// Feeds arbitrary bytes through the production Kani 0.68 result parser.
 ///
 /// It uses a fixed, closed expectation.
@@ -40,6 +33,13 @@ const FIXTURE_ROOT: &str = if cfg!(windows) {
 #[must_use]
 #[cfg(feature = "testkit")]
 pub fn model_result(bytes: &[u8]) -> ModelResultClass {
+    /// The fixture's workspace root, absolute the way this platform means it, because a leading slash is not absolute on Windows without a drive.
+    const FIXTURE_ROOT: &str = if cfg!(windows) {
+        "C:/fixture"
+    } else {
+        "/fixture"
+    };
+
     let harness = crate::assure::model::parser_fixture();
     let parsed = crate::assure::model::result::parse(
         bytes,
