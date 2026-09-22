@@ -10,3 +10,5 @@ fixtures/*/target/
 /mutants.out*/
 *.profraw
 *.profdata
+/.handoff.md
+/.opencode/
