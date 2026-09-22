@@ -9,6 +9,38 @@
 
 set -euo pipefail
 
+# A budget the gate is held to, rather than one it is hoped to meet.
+#
+# A gate that quietly takes an hour is not a slow gate, it is a broken one, and the way that breaks is always the same: something stopped being cached and nobody noticed, because waiting looks exactly like working.
+# Exceeding this is a defect report about the gate, not a reason to wait longer.
+# Raise it deliberately, in a commit that says what got slower and why that is now correct.
+#
+# `set -m` puts the check in its own process group so the whole tree of cargo, nextest and rustc goes down with it; killing the shell alone would leave the compile running and the budget unenforced.
+budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-900}"
+
+within_budget() {
+  local started elapsed job
+  started=$(date +%s)
+  set -m
+  "$@" &
+  job=$!
+  set +m
+  while kill -0 "${job}" 2>/dev/null; do
+    elapsed=$(( $(date +%s) - started ))
+    if (( elapsed >= budget_seconds )); then
+      kill -TERM "-${job}" 2>/dev/null || kill -TERM "${job}" 2>/dev/null || true
+      sleep 5
+      kill -KILL "-${job}" 2>/dev/null || kill -KILL "${job}" 2>/dev/null || true
+      wait "${job}" 2>/dev/null || true
+      echo "pre-push: the gate passed its ${budget_seconds}s budget and was stopped at ${elapsed}s" >&2
+      echo "pre-push: that is a report about the gate. Find what stopped being cached, or raise NJUTEST_PUSH_BUDGET_SECONDS in a commit that says why" >&2
+      return 124
+    fi
+    sleep 2
+  done
+  wait "${job}"
+}
+
 zero=0000000000000000000000000000000000000000
 head=$(git rev-parse --verify HEAD)
 seen=0
@@ -62,33 +94,36 @@ require_exact_tree() {
 }
 
 repository=$(git rev-parse --show-toplevel)
-temporary=$(mktemp -d "${TMPDIR:-/tmp}/njutest-pre-push.XXXXXX")
-checkout=${temporary}/tree
+# One path, reused by every push, and that is the whole point.
+#
+# Cargo writes the package's own directory into each crate's fingerprint, so a worktree at a fresh `mktemp -d` makes every workspace crate a guaranteed miss however warm the target directory is.
+# That is what made this gate a full rebuild each time, and no choice of `target/debug` against `target/pre-push` could have touched it.
+# The tree is still exactly the pushed object, checked out again from scratch below, so nothing about the isolation is traded for the cache: what is reused is the path, not the contents.
+checkout=${repository}/target/pre-push/tree
 
 cleanup() {
   if [[ -e "${checkout}/.git" ]]; then
     git -C "${checkout}" restore --staged --worktree :/ >/dev/null 2>&1 || true
-    if ! git -C "${repository}" worktree remove "${checkout}" >/dev/null; then
-      echo "pre-push: could not remove temporary worktree ${checkout}" >&2
-      return
-    fi
   fi
-  rmdir "${temporary}" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if [[ -e "${checkout}" ]]; then
+  git -C "${repository}" worktree remove --force "${checkout}" >/dev/null 2>&1 || rm -rf "${checkout}"
+fi
+git -C "${repository}" worktree prune
+mkdir -p "${repository}/target/pre-push"
 git -C "${repository}" worktree add --quiet --detach "${checkout}" "${head}"
-mkdir -p "${repository}/target/debug" "${repository}/target/release"
+mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/release"
 mkdir "${checkout}/target"
-ln -s "${repository}/target/debug" "${checkout}/target/debug"
-ln -s "${repository}/target/release" "${checkout}/target/release"
+ln -s "${repository}/target/pre-push/debug" "${checkout}/target/debug"
+ln -s "${repository}/target/pre-push/release" "${checkout}/target/release"
 require_exact_tree
-(cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check)
-# The tree is isolated and the build cache is not: `target/debug` and `target/release` are the developer's, which is minutes per push rather than half an hour.
-# A cache only pushes ever write is cold at every push by construction, which is what a separate `target/pre-push` made it, and the work it repeated was work this machine had already done.
-# What the shared cache cannot answer is whether a green came from an artifact older than the field it is meant to prove, so that question is asked separately and coldly below.
-(cd "${checkout}" && mise run check:cold)
+within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
+# The tree is isolated and so is the cache, which is now warm because the path above no longer changes: the developer's own `target/debug` stays out of the answer, and the gate still does not recompile what the previous push compiled.
+# What a warm cache cannot answer is whether a green came from an artifact older than the field it is meant to prove, so that question is asked separately and coldly below.
+within_budget bash -c 'cd "$1" && exec mise run check:cold' _ "${checkout}"
 require_exact_tree
