@@ -14,6 +14,17 @@ use njutest_devkit::cargo_double::{Document, Package, PathDependency};
 use rust_mutants::cargo::manifest::Patch;
 use rust_mutants::cargo::{Metadata, reaching_outside};
 
+/// A leading slash spelled the way this platform spells an absolute path.
+///
+/// `Path::is_absolute` is false for `/w` on Windows, where absolute means a drive, so a document written with one is not a document cargo could have printed and the double that takes it refuses.
+fn absolute(path: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(format!("C:{path}"))
+    } else {
+        PathBuf::from(path)
+    }
+}
+
 /// A metadata document for one member at `root/crates/a` reading from the given directories.
 ///
 /// Every path is absolute, which is the only kind cargo reports; the document this replaced gave relative ones, so each conclusion below was drawn from an input that cannot arrive.
@@ -21,7 +32,7 @@ use rust_mutants::cargo::{Metadata, reaching_outside};
 fn document(root: &Path, dependencies: &[(&str, &str)]) -> Metadata {
     let mut package = Package::at("a", &root.join("crates/a"));
     for (name, at) in dependencies {
-        package = package.reading(PathDependency::on(name, Path::new(at)));
+        package = package.reading(PathDependency::on(name, &absolute(at)));
     }
     let json = Document::of(root).holding(package).json();
     Metadata::parse(json.as_bytes()).expect("the document parses")
@@ -29,7 +40,8 @@ fn document(root: &Path, dependencies: &[(&str, &str)]) -> Metadata {
 
 #[test]
 fn a_path_dependency_inside_the_tree_reaches_nowhere() {
-    let root = Path::new("/w");
+    let root = absolute("/w");
+    let root = root.as_path();
     let metadata = document(
         root,
         &[("b", "/w/b"), ("c", "/w/crates/a/vendor/c"), ("d", "/w/d")],
@@ -43,19 +55,21 @@ fn a_path_dependency_inside_the_tree_reaches_nowhere() {
 
 #[test]
 fn a_path_dependency_outside_the_tree_is_named_with_the_manifest_that_declares_it() {
-    let root = Path::new("/w");
+    let root = absolute("/w");
+    let root = root.as_path();
     let metadata = document(root, &[("outside", "/elsewhere")]);
     let found = reaching_outside(&metadata, root, &[]);
     assert_eq!(found.len(), 1, "{found:?}");
     let one = found.first().expect("one");
     assert_eq!(one.name, "outside");
-    assert_eq!(one.manifest, PathBuf::from("/w/crates/a/Cargo.toml"));
-    assert_eq!(one.path, PathBuf::from("/elsewhere"));
+    assert_eq!(one.manifest, absolute("/w/crates/a/Cargo.toml"));
+    assert_eq!(one.path, absolute("/elsewhere"));
 }
 
 #[test]
 fn a_patch_that_points_outside_the_tree_is_named_too() {
-    let root = Path::new("/w");
+    let root = absolute("/w");
+    let root = root.as_path();
     let metadata = document(root, &[]);
     let patches = vec![
         Patch {
@@ -75,17 +89,18 @@ fn a_patch_that_points_outside_the_tree_is_named_too() {
     assert_eq!(one.name, "serde");
     assert_eq!(
         one.manifest,
-        PathBuf::from("/w/Cargo.toml"),
+        absolute("/w/Cargo.toml"),
         "a patch is declared by the root manifest, whatever member reads it"
     );
 }
 
 #[test]
 fn a_package_outside_the_tree_is_not_asked_what_it_depends_on() {
-    let root = Path::new("/w");
+    let root = absolute("/w");
+    let root = root.as_path();
     let mut metadata = document(root, &[("outside", "/elsewhere")]);
     for package in &mut metadata.packages {
-        package.manifest_path = PathBuf::from("/registry/a-0.1.0/Cargo.toml");
+        package.manifest_path = absolute("/registry/a-0.1.0/Cargo.toml");
     }
     assert!(
         reaching_outside(&metadata, root, &[]).is_empty(),

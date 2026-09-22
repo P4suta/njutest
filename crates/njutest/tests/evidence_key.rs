@@ -425,7 +425,9 @@ fn what_a_target_links_is_read_from_the_resolved_graph() {
           }}
         }}"#,
         root = njutest_devkit::paths::in_json(repo.root()),
-        package_id = njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0")
+        package_id = njutest_devkit::paths::text_in_json(
+            &njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0")
+        )
     );
     let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
     let dependencies = "b".repeat(64);
@@ -531,7 +533,9 @@ fn keyed(repo: &Repo) -> String {
           }}
         }}"#,
         root = njutest_devkit::paths::in_json(repo.root()),
-        package_id = njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0")
+        package_id = njutest_devkit::paths::text_in_json(
+            &njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0")
+        )
     );
     let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
     let dependencies = "b".repeat(64);
@@ -637,14 +641,19 @@ fn four_kinds(repo: &Repo) -> Metadata {
     repo.write("crates/quiet/src/lib.rs", "pub fn g() {}\n");
 
     let root = njutest_devkit::paths::in_json(repo.root());
-    let package_id = njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0");
-    let deep =
-        njutest_devkit::cargo_double::package_id(&repo.root().join("crates/deep"), "deep", "0.1.0");
-    let quiet = njutest_devkit::cargo_double::package_id(
+    let package_id = njutest_devkit::paths::text_in_json(
+        &njutest_devkit::cargo_double::package_id(repo.root(), "demo", "0.1.0"),
+    );
+    let deep = njutest_devkit::paths::text_in_json(&njutest_devkit::cargo_double::package_id(
+        &repo.root().join("crates/deep"),
+        "deep",
+        "0.1.0",
+    ));
+    let quiet = njutest_devkit::paths::text_in_json(&njutest_devkit::cargo_double::package_id(
         &repo.root().join("crates/quiet"),
         "quiet",
         "0.1.0",
-    );
+    ));
     let document = format!(
         r#"{{
           "version": 1,

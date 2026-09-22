@@ -103,7 +103,21 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     reason = "a test fixture path must be UTF-8 and JSON string serialization cannot fail"
 )]
 pub fn in_json(path: &Path) -> String {
-    let text = utf8(path);
+    text_in_json(utf8(path))
+}
+
+/// `text`, escaped the way a JSON string escapes its contents, without the quotes.
+///
+/// A package identity spells a path inside itself, and on Windows that path holds backslashes a JSON string reads as escapes, so a document built by pasting one in is not the document cargo prints.
+///
+/// # Panics
+/// Never: JSON string serialization of a `str` cannot fail.
+#[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "JSON string serialization of a str cannot fail, and a test that lost the spelling would assert about a different package"
+)]
+pub fn text_in_json(text: &str) -> String {
     let quoted = serde_json::to_string(text).expect("a string serializes to JSON");
     quoted
         .strip_prefix('"')
