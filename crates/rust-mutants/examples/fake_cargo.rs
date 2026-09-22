@@ -83,6 +83,7 @@ enum ExpandError {
 }
 
 fn main() -> ExitCode {
+    entered();
     let started = match started() {
         Ok(started) => started,
         Err(why) => {
@@ -116,6 +117,22 @@ fn main() -> ExitCode {
         return refuse(program, args, format!("cannot record the answer: {error}"));
     }
     answer(entry, &script_path, &started)
+}
+
+/// Leaves a mark beside this program saying it reached `main`, so a status with no output can be told from one that never started.
+///
+/// A Windows runner reports `cargo.exe -vV exited with 101` for this program and captures nothing, where 101 is Rust's panic status and this program's own refusal is 99.
+/// A process that exits without writing has either died before its first write or never run at all, and those want opposite fixes.
+/// The mark is a file rather than a line on stderr because the scripted answers are asserted exactly.
+fn entered() {
+    let Some(executable) = std::env::args_os().next() else {
+        return;
+    };
+    let mut marker = PathBuf::from(executable);
+    marker.as_mut_os_string().push(".entered");
+    match std::fs::write(&marker, b"entered\n") {
+        Ok(()) | Err(_) => {}
+    }
 }
 
 fn started() -> Result<Started, StartedError> {
