@@ -99,7 +99,9 @@ repository=$(git rev-parse --show-toplevel)
 # Cargo writes the package's own directory into each crate's fingerprint, so a worktree at a fresh `mktemp -d` makes every workspace crate a guaranteed miss however warm the target directory is.
 # That is what made this gate a full rebuild each time, and no choice of `target/debug` against `target/pre-push` could have touched it.
 # The tree is still exactly the pushed object, checked out again from scratch below, so nothing about the isolation is traded for the cache: what is reused is the path, not the contents.
-checkout=${repository}/target/pre-push/tree
+# It lives outside the repository because the `lints` gate resolves declared paths against the four source roots, and a worktree under `target/` makes every crate in it look like a path outside them. Keyed by the repository so two checkouts of this project do not share one tree.
+key=$(printf '%s' "${repository}" | shasum | cut -c1-12)
+checkout="${TMPDIR:-/tmp}/njutest-pre-push-${key}/tree"
 
 cleanup() {
   if [[ -e "${checkout}/.git" ]]; then
@@ -115,7 +117,7 @@ if [[ -e "${checkout}" ]]; then
   git -C "${repository}" worktree remove --force "${checkout}" >/dev/null 2>&1 || rm -rf "${checkout}"
 fi
 git -C "${repository}" worktree prune
-mkdir -p "${repository}/target/pre-push"
+mkdir -p "$(dirname "${checkout}")"
 git -C "${repository}" worktree add --quiet --detach "${checkout}" "${head}"
 mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/release"
 mkdir "${checkout}/target"
