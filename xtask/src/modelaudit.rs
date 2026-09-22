@@ -2795,6 +2795,15 @@ mod tests {
         }
     }
 
+    /// The fixture's workspace root, absolute the way this platform means it.
+    fn fixture_root() -> &'static str {
+        if cfg!(windows) {
+            "C:/fixture"
+        } else {
+            "/fixture"
+        }
+    }
+
     fn document(identity: &Identity, target: &str, answer: Answer) -> serde_json::Value {
         let (status, passed, failed) = match answer {
             Answer::Proved => ("Success", 1, 0),
@@ -2807,8 +2816,8 @@ mod tests {
                 "kani_version": KANI, "target": target, "build_mode": super::BUILD_MODE
             },
             "project": {
-                "crate_name": [super::MODEL_CRATE_NAME], "workspace_root": "/fixture",
-                "output_dir": "/fixture/target/kani"
+                "crate_name": [super::MODEL_CRATE_NAME], "workspace_root": fixture_root(),
+                "output_dir": format!("{}/target/kani", fixture_root())
             },
             "tools": {
                 "kani": KANI, "rustc": RUSTC, "cbmc": super::CBMC,
@@ -2818,7 +2827,7 @@ mod tests {
             "harness_metadata": [{
                 "pretty_name": harness, "mangled_name": "mangled", "crate_name": super::MODEL_CRATE_NAME,
                 "source": {"file": super::MODEL_SOURCE_PATH, "start_line": 1, "end_line": 1},
-                "goto_file": "/fixture/target/kani/harness.goto",
+                "goto_file": format!("{}/target/kani/harness.goto", fixture_root()),
                 "attributes": {"kind": "Proof", "should_panic": false},
                 "contract": {"contracted_function_name": null, "recursion_tracker": null},
                 "has_loop_contracts": false, "is_automatically_generated": false,

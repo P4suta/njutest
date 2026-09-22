@@ -26,6 +26,13 @@ pub enum ModelResultClass {
     Undecided,
 }
 
+/// The fixture's workspace root, absolute the way this platform means it, because a leading slash is not absolute on Windows without a drive.
+const FIXTURE_ROOT: &str = if cfg!(windows) {
+    "C:/fixture"
+} else {
+    "/fixture"
+};
+
 /// Feeds arbitrary bytes through the production Kani 0.68 result parser.
 ///
 /// It uses a fixed, closed expectation.
@@ -39,8 +46,8 @@ pub fn model_result(bytes: &[u8]) -> ModelResultClass {
         crate::assure::model::result::Expectation {
             harness: &harness,
             target: "test-target",
-            root: Path::new("/fixture"),
-            target_dir: Path::new("/fixture/target/kani"),
+            root: Path::new(FIXTURE_ROOT),
+            target_dir: &std::path::PathBuf::from(format!("{FIXTURE_ROOT}/target/kani")),
             package: "fixture",
         },
     );

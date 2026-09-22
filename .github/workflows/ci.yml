@@ -30,14 +30,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
-      # One platform failing means the commit is red whatever the others say, and a person who has to wait for the slowest to be told so waits for the wrong reason.
-      # `mise run check` already answered for this machine before the push; what these add is every platform it is not.
+      # Each platform answers for itself.
+      # `fail-fast: true` read "this commit is red" as "stop asking", and the platforms it stopped asking were the ones nothing else can answer for: a Windows failure cancelled both macOS jobs on four consecutive pushes, so a macOS fix went four rounds without ever being run.
+      # The cost of the other three finishing is minutes of runner time.
+      # The cost of not knowing is a round trip per platform, serialised.
       #
       # Two macOS versions on purpose.
       # `macos-26` is the one a developer here runs, so a failure on it is reproducible by the person who caused it.
       # `macos-15` is the oldest still supported, and it is not ballast: it is where `proc_listpgrppids` reports an empty process group after a timeout, which the supervisor read as a failure and turned into `abort()`.
       # The newer kernel still listed the waitable leader, so the machine that wrote the code could never have seen it.
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-26, macos-15, windows-2025]
     steps:
