@@ -320,9 +320,11 @@ env = { CARGO_TARGET_DIR = "target/cold" }
 # `mise run check:full` is the same list with it back in, for when a change is about the engine's own execution rather than about the code around it.
 [tasks.check]
 description = "Run every local gate a push waits for, the ones that answer quickest first"
+# `build` is not here because `test:fast` runs `--all-targets`, which builds the same thing and then runs it.
+# What a push compiles is twice over: once with clippy's fingerprints and once with the test harness's.
+# Everything else reuses one of those.
 run = [
   "mise run fmt:check",
-  "mise run build",
   "mise run lint",
   "mise run test:fast",
   "mise run test:doc",
@@ -349,7 +351,13 @@ run = ["mise run book", "mise run package"]
 
 [tasks."check:full"]
 description = "Everything a push waits for, and the passes CI also runs"
-run = ["mise run check", "mise run check:cross", "mise run check:release", "mise run test:slow"]
+run = [
+  "mise run check",
+  "mise run check:cold",
+  "mise run check:cross",
+  "mise run check:release",
+  "mise run test:slow",
+]
 
 [tasks.bench]
 description = "Observe what every stage costs. Numbers, never gates"

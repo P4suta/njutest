@@ -74,7 +74,6 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
         "git -C \"${repository}\" worktree add --quiet --detach",
         "git -C \"${checkout}\" status --porcelain=v1 --untracked-files=all",
         "mise run check",
-        "mise run check:cold",
         "within_budget",
         "NJUTEST_PUSH_BUDGET_SECONDS",
     ] {

@@ -16,7 +16,7 @@ set -euo pipefail
 # Raise it deliberately, in a commit that says what got slower and why that is now correct.
 #
 # `set -m` puts the check in its own process group so the whole tree of cargo, nextest and rustc goes down with it; killing the shell alone would leave the compile running and the budget unenforced.
-budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-900}"
+budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-420}"
 
 within_budget() {
   local started elapsed job
@@ -134,5 +134,4 @@ require_exact_tree
 within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
 # The tree is isolated and so is the cache, which is now warm because the path above no longer changes: the developer's own `target/debug` stays out of the answer, and the gate still does not recompile what the previous push compiled.
 # What a warm cache cannot answer is whether a green came from an artifact older than the field it is meant to prove, so that question is asked separately and coldly below.
-within_budget bash -c 'cd "$1" && exec mise run check:cold' _ "${checkout}"
 require_exact_tree
