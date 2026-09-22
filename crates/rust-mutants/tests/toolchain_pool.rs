@@ -372,9 +372,7 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
         survivors.iter().map(|one| one.identical).collect();
     assert!(
         if twice {
-            answered
-                .iter()
-                .any(|identity| *identity == rust_mutants::run::CodegenIdentity::Identical)
+            answered.contains(&rust_mutants::run::CodegenIdentity::Identical)
         } else {
             answered
                 .iter()
