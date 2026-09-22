@@ -9,7 +9,9 @@ use std::mem::size_of_val;
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::process::{Child, Command, ExitStatus};
 
-use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
+use rustix::process::{
+    Pid, Signal, WaitId, WaitIdOptions, kill_process, kill_process_group, waitid,
+};
 
 use super::{LeaderObservation, ProcessExit, RunnerError, SupervisionBoundary};
 
@@ -90,22 +92,31 @@ impl Supervisor {
     )]
     pub(super) fn terminate_forcefully(&self, leader: LeaderObservation) -> io::Result<()> {
         #[cfg(target_os = "macos")]
-        if leader == LeaderObservation::ExitedWaitable {
-            if !self.has_member_besides_leader()? {
-                return Ok(());
-            }
-            let signalled = self.signal(Signal::KILL);
-            if matches!(
-                &signalled,
-                Err(error)
-                    if error.raw_os_error() == Some(rustix::io::Errno::PERM.raw_os_error())
-            ) && !self.has_member_besides_leader()?
-            {
-                return Ok(());
-            }
-            return signalled;
+        if leader == LeaderObservation::ExitedWaitable && !self.has_member_besides_leader()? {
+            return Ok(());
         }
-        self.signal(Signal::KILL)
+        let signalled = self.signal(Signal::KILL);
+        if matches!(
+            &signalled,
+            Err(error) if error.raw_os_error() == Some(rustix::io::Errno::PERM.raw_os_error())
+        ) {
+            return self.end_the_child_this_process_started();
+        }
+        signalled
+    }
+
+    /// Ends the one process this supervisor started, for a group the kernel will not let it signal whole.
+    ///
+    /// A group signal is refused for the whole group when any member is beyond this process's authority, and on a runner that is an Apple-signed binary a toolchain reached: protected from its own parent, and no more killable after this process ends than before.
+    /// What is answerable is the child that was started here, which is the group's leader, so it is signalled by name and a group that has already gone is still success.
+    fn end_the_child_this_process_started(&self) -> io::Result<()> {
+        let pgid = self.pgid.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the supervisor has no adopted process group",
+            )
+        })?;
+        signal_result(kill_process(pgid, Signal::KILL))
     }
 
     #[cfg(target_os = "macos")]
