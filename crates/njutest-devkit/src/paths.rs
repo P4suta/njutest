@@ -98,10 +98,6 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 /// A test fixture path is not UTF-8.
 /// Fixture paths enter textual Cargo and JSON protocols, so accepting a lossy spelling would test a different path.
 #[must_use]
-#[expect(
-    clippy::expect_used,
-    reason = "a test fixture path must be UTF-8 and JSON string serialization cannot fail"
-)]
 pub fn in_json(path: &Path) -> String {
     text_in_json(utf8(path))
 }
