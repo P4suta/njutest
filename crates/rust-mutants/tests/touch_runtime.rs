@@ -298,7 +298,18 @@ fn publication_failure_never_persists_a_stopping_state_without_a_final_notice() 
     let wanted = format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1\tstopping\t2\n");
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let observed = std::fs::read_to_string(&state).expect("inspect state");
+        let read = std::fs::read_to_string(&state);
+        let observed = match read {
+            Ok(observed) => observed,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the recoverable publisher's state stayed unreadable: {error}"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+                continue;
+            }
+        };
         if observed == wanted {
             break;
         }

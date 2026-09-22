@@ -107,6 +107,9 @@ fn corpora() -> BTreeSet<String> {
         .collect()
 }
 
+/// The seeds spell every path with a leading slash, which is absolute where the fuzzer runs and not where absolute means a drive, and no one spelling is both.
+/// What a seed is for is giving a fuzz target a document it takes, and the targets are built and run on unix.
+#[cfg(unix)]
 #[test]
 fn every_seed_is_a_document_the_reader_it_is_for_accepts() {
     for (target, reader) in READERS {

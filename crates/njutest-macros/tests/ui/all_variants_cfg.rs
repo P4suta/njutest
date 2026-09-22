@@ -1,7 +1,7 @@
 #[derive(njutest_macros::AllVariants)]
 enum Conditional {
     Always,
-    #[cfg(unix)]
+    #[cfg(not(test))]
     Platform,
 }
 
