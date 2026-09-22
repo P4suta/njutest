@@ -235,10 +235,8 @@ unsafe extern "C" {
 
 impl Drop for Supervisor {
     fn drop(&mut self) {
-        if self.pgid.is_some() {
-            match self.signal(Signal::KILL) {
-                Ok(()) | Err(_) => std::process::abort(),
-            }
+        if self.pgid.is_some() && self.signal(Signal::KILL).is_err() {
+            std::process::abort();
         }
     }
 }

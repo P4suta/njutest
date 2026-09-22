@@ -1385,7 +1385,8 @@ fn terminate(supervisor: &sys::Supervisor, child: &SupervisedChild) -> Result<()
 }
 
 fn force_signal_or_abort(supervisor: &sys::Supervisor, leader: LeaderObservation) {
-    if supervisor.terminate_forcefully(leader).is_err() {
+    if let Err(why) = supervisor.terminate_forcefully(leader) {
+        note_ownership_failure("signalling the process group forcefully", &why);
         terminal_process_ownership_failure();
     }
 }
@@ -1411,6 +1412,20 @@ fn reap_or_abort(child: &SupervisedChild, bound: Duration) -> bool {
             return false;
         };
         thread::sleep(remaining.min(POLL_INTERVAL));
+    }
+}
+
+/// Says why the process set could not be owned, before the abort that says nothing.
+///
+/// `SIGABRT` names no place, and the site that fires on a machine the author does not have is the one worth naming.
+#[cold]
+fn note_ownership_failure(step: &str, why: &io::Error) {
+    use io::Write as _;
+    match writeln!(
+        io::stderr(),
+        "rust-mutants: {step}: {why}: the supervised process set could not be owned to the end, so this process ends rather than leave it running"
+    ) {
+        Ok(()) | Err(_) => {}
     }
 }
 
