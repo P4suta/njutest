@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The language server: what it says about a report, and what it refuses to do about it.
+//!
+//! Every test here needs a published report, and `Store::keep` answers `NJ6004` on Windows because publication is rooted at a POSIX directory capability. `docs/limitations.md` says so; these say it by not existing there.
 
+#![cfg(unix)]
 #![expect(
     clippy::assigning_clones,
     clippy::expect_used,

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What goes into the bundle somebody sends when a run went wrong, and what the bundle says is missing.
+//!
+//! Every test here needs a published report, and `Store::keep` answers `NJ6004` on Windows because publication is rooted at a POSIX directory capability. `docs/limitations.md` says so; these say it by not existing there.
 
+#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
