@@ -148,11 +148,13 @@ require_exact_tree
 # A budget large enough for the first is too large to catch anything, and one sized for the second kills four pushes out of five on work that was proceeding normally -- and each kill throws away the compile, so the retry is cold again.
 # One kill did worse than waste time: starved of CPU by its own cold compile, a test passed nextest's per-test timeout and the gate reported a test failure that did not exist.
 #
-# So both fingerprint sets are warmed first, outside the budget and timed out loud, and the budget then measures the incremental work -- which is the thing that is supposed to be fast, and the thing that stops being fast when caching breaks.
-# Neither warming command decides anything: `mise run check` is the authority and runs afterwards either way, so a failure here is left for it to report properly rather than surfaced as a bare cargo error.
+# So the work is warmed first, outside the budget and timed out loud, and the budget then measures the second pass -- the incremental one, which is the thing that is supposed to be fast and the thing that stops being fast when caching breaks.
+# The warming pass decides nothing: its output goes nowhere and its exit status is discarded, because the budgeted pass below runs either way and is the one whose report a person reads.
+# Warmed by running the very thing that is about to be measured, because naming the compiles by hand got it wrong twice.
+# `build` and `clippy` are not all of them: `lint` also runs `doc` and `fuzz:clippy`, each with fingerprints of its own, and those two left 600s of compiling inside a budget that was supposed to see none.
+# One pass that compiles and one that measures needs no list and cannot fall behind one.
 warming=$(date +%s)
-( cd "${checkout}" && mise run build >/dev/null 2>&1 ) || true
-( cd "${checkout}" && cargo clippy --locked --workspace --all-targets --all-features >/dev/null 2>&1 ) || true
+( cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check >/dev/null 2>&1 ) || true
 echo "pre-push: compiled in $(( $(date +%s) - warming ))s, which the budget does not count" >&2
 
 within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
