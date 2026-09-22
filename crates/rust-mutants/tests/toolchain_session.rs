@@ -1342,3 +1342,69 @@ fn a_mutation_reaches_the_documentation_of_its_own_library_and_no_other() {
     }
     session.close().expect("the session closes");
 }
+
+/// How many targets the coverage phase says it measured, from the note it leaves.
+fn targets_measured_under_coverage(skip_targets: Vec<String>) -> usize {
+    use rust_mutants::trace::{MemorySink, Recorder, Sink};
+
+    let fixture = Fixture::copy("fixture-coverage");
+    let recorder = Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            trace: recorder.clone(),
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
+        },
+        &Cancel::new(),
+    )
+    .expect("open");
+    let session = workspace
+        .prepare(
+            &PrepareOptions {
+                coverage: true,
+                skip_targets,
+                ..PrepareOptions::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("prepare");
+    session.close().expect("close");
+    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .events()
+        .iter()
+        .find_map(|event| match &event.payload {
+            Payload::Note { note } if note.kind == "coverage" => {
+                match note.detail.split_whitespace().next() {
+                    Some(count) => match count.parse::<usize>() {
+                        Ok(measured) => Some(measured),
+                        Err(_the_note_does_not_begin_with_a_count) => None,
+                    },
+                    None => None,
+                }
+            }
+            _ => None,
+        })
+        .expect("the coverage phase says how many targets it measured")
+}
+
+#[test]
+fn a_target_the_configuration_skips_is_not_started_by_the_coverage_measurement() {
+    let every = targets_measured_under_coverage(Vec::new());
+    assert!(
+        every > 1,
+        "the fixture has to have more than one target for skipping one to be visible: {every}"
+    );
+    let fewer = targets_measured_under_coverage(vec!["fixture-coverage/test/upper".to_owned()]);
+    assert_eq!(
+        fewer,
+        every - 1,
+        "`docs/limitations.md` says a target named in `[execution] skip_targets` is never \
+         started. The reachability measurement builds its own target list from the same \
+         build messages and runs before the skip list is applied, so a target somebody \
+         took out ran anyway -- once, to the end, under coverage"
+    );
+}

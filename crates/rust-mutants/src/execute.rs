@@ -1754,6 +1754,20 @@ pub fn build(
     targets_of(&compiled.messages, packages, options.target_dir.as_deref())
 }
 
+/// The targets a run may start, which is every one `skipped` does not name.
+///
+/// Two paths build a target list from the same build messages: the one that prepares the mutants, and the coverage reachability measurement that runs before it.
+/// Only the first applied this, so a target named in `[execution] skip_targets` was started once, under coverage, against a page that promises it is never started.
+/// The rule lives here so a third path cannot be written without it.
+#[must_use]
+pub fn startable(targets: &[TestTarget], skipped: &[String]) -> Vec<TestTarget> {
+    targets
+        .iter()
+        .filter(|target| !skipped.iter().any(|one| one == &target.id))
+        .cloned()
+        .collect()
+}
+
 /// The test binaries a build produced, in target id order.
 ///
 /// # Errors

@@ -247,7 +247,7 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
         })
         .collect();
     let skipped = left_out(workspace, &targets, &options.skip_targets)?;
-    targets.retain(|target| !skipped.contains(&target.id));
+    targets = execute::startable(&targets, &skipped);
     let mut details = built;
     for detail in &mut details {
         if skipped.contains(&detail.id) {

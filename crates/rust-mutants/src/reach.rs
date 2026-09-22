@@ -151,11 +151,14 @@ fn measure(
     if !built.success {
         return Ok(refused(UNBUILDABLE, trace));
     }
-    let targets = execute::targets_of(
-        &built.messages,
-        &workspace.metadata.packages,
-        Some(&target_dir),
-    )?;
+    let targets = execute::startable(
+        &execute::targets_of(
+            &built.messages,
+            &workspace.metadata.packages,
+            Some(&target_dir),
+        )?,
+        &options.skip_targets,
+    );
     if targets.is_empty() {
         return Ok(refused(UNMEASURED, trace));
     }
