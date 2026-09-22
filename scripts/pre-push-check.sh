@@ -15,12 +15,12 @@ set -euo pipefail
 # What catches that is `expected_seconds`, which only says so: a warning on a run that finished is read, and costs the push nothing.
 # What stops the hour is `budget_seconds`, and a backstop that fires on the normal path is not one -- it is a guillotine that throws away the compile it interrupted, so the next run is slow for the same reason and the ratchet only turns one way.
 #
-# Measured on this machine, against the checkout this script keeps: 300s warm, and about 650s on the first run after a merge that touches the workspace, because `mise run check` compiles it twice over -- once with clippy's fingerprints and once with the test harness's, as `[tasks.check]` says.
-# So 420s is what a warm run should beat and 900s is what no honest run reaches; the regression this was built to catch ran 1720s.
+# Measured on this machine, against the checkout this script keeps and with the compile lifted out of the budget below: `mise run check` is about 340s with both fingerprint sets warm.
+# So 420s is what a run should beat and 600s is what no honest one reaches; the regression this was built to catch ran 1720s.
 # Raise either deliberately, in a commit that says what got slower and why that is now correct.
 #
 # `set -m` puts the check in its own process group so the whole tree of cargo, nextest and rustc goes down with it; killing the shell alone would leave the compile running and the budget unenforced.
-budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-900}"
+budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-600}"
 expected_seconds="${NJUTEST_PUSH_EXPECTED_SECONDS:-420}"
 
 within_budget() {
@@ -141,6 +141,20 @@ mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/re
 ln -sfn "${repository}/target/pre-push/debug" "${checkout}/target/debug"
 ln -sfn "${repository}/target/pre-push/release" "${checkout}/target/release"
 require_exact_tree
+# Compiling is not what the budget is about, and budgeting it made the budget a guillotine.
+#
+# `mise run check` compiles this workspace twice over, once with clippy's fingerprints and once with the test harness's, and a commit that touches a core library recompiles everything downstream in both.
+# Measured here: about 900s from a cold `target/pre-push`, against 340s once both sets are warm.
+# A budget large enough for the first is too large to catch anything, and one sized for the second kills four pushes out of five on work that was proceeding normally -- and each kill throws away the compile, so the retry is cold again.
+# One kill did worse than waste time: starved of CPU by its own cold compile, a test passed nextest's per-test timeout and the gate reported a test failure that did not exist.
+#
+# So both fingerprint sets are warmed first, outside the budget and timed out loud, and the budget then measures the incremental work -- which is the thing that is supposed to be fast, and the thing that stops being fast when caching breaks.
+# Neither warming command decides anything: `mise run check` is the authority and runs afterwards either way, so a failure here is left for it to report properly rather than surfaced as a bare cargo error.
+warming=$(date +%s)
+( cd "${checkout}" && mise run build >/dev/null 2>&1 ) || true
+( cd "${checkout}" && cargo clippy --locked --workspace --all-targets --all-features >/dev/null 2>&1 ) || true
+echo "pre-push: compiled in $(( $(date +%s) - warming ))s, which the budget does not count" >&2
+
 within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
 # The tree is isolated and so is the cache, which is now warm because the path above no longer changes: the developer's own `target/debug` stays out of the answer, and the gate still does not recompile what the previous push compiled.
 # What a warm cache cannot answer is whether a green came from an artifact older than the field it is meant to prove, so that question is asked separately and coldly below.
