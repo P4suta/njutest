@@ -132,8 +132,15 @@ mod sys {
         )]
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         #[expect(unsafe_code, reason = "UnlockFileEx has no safe binding")]
-        let ok =
-            unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, std::ptr::addr_of_mut!(overlapped)) };
+        let ok = unsafe {
+            UnlockFileEx(
+                file.as_raw_handle(),
+                0,
+                1,
+                0,
+                std::ptr::addr_of_mut!(overlapped),
+            )
+        };
         if ok != 0 {
             Ok(())
         } else {
