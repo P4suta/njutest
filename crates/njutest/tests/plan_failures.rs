@@ -540,6 +540,7 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
             features: Vec::new(),
             all_features: false,
             default_features: true,
+            skip_targets: Vec::new(),
         }
     );
     assert_eq!(BUILD_OUTPUT_LIMIT, 67_108_864);
@@ -588,6 +589,7 @@ fn build_defaults_command_environment_limit_and_trace_are_exact() {
         features: vec!["one".to_owned(), "two".to_owned()],
         all_features: true,
         default_features: false,
+        skip_targets: Vec::new(),
     };
     build_options.flavour = Flavour::Coverage;
     build_options.timeout = Some(std::time::Duration::from_millis(4321));

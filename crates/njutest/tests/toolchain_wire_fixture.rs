@@ -48,6 +48,16 @@ fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
         lost.join("\n"),
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
+    let not_green = limitation(&report, njutest::assure::wire::SUITE_NOT_GREEN);
+    assert!(
+        not_green.is_none(),
+        "the fixture's own suite did not pass without a fault, so no question it licensed \
+         could be answered by anything and the phase put none of them. That is the run \
+         being honest; what it says about this machine is that the provider or the tests \
+         it serves did not come up: {}\n\n{}",
+        not_green.unwrap_or_default(),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
     let found = rows(&report);
     assert!(
         !found.is_empty(),
@@ -156,6 +166,17 @@ fn document(fixture: &Fixture) -> serde_json::Value {
     )
     .expect("the report is a document");
     whole["report"]["builds"][0]["parts"][0].clone()
+}
+
+/// The detail of the one limitation `named`, when the report carries it.
+fn limitation(report: &serde_json::Value, named: &str) -> Option<String> {
+    report["limitations"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|one| one["name"].as_str() == Some(named))
+        .find_map(|one| one["detail"].as_str().map(str::to_owned))
 }
 
 /// Every seam the configuration named that this run could not put an interposer in front of, and why.

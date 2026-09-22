@@ -53,6 +53,12 @@ impl Before {
     pub fn could_notice(&self, target: &str) -> bool {
         self.passed.contains(target)
     }
+
+    /// Whether no target passed with no fault in place, so nothing in the suite can answer a question about one.
+    #[must_use]
+    pub fn nothing_passed(&self) -> bool {
+        self.passed.is_empty()
+    }
 }
 
 /// What a run establishes about one fault, and who established it.

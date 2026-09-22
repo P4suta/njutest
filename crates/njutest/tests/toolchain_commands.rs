@@ -652,3 +652,62 @@ fn a_plan_refuses_a_package_that_is_not_one_the_same_way_a_verification_does() {
         njutest_devkit::process::strict_utf8(&planned.stderr)
     );
 }
+
+/// The fixture with `[execution] skip_targets` naming `entries`.
+fn skipping(entries: &[&str]) -> Fixture {
+    let fixture = fixture("fixture-baseline");
+    let named = entries
+        .iter()
+        .map(|entry| format!("\"{entry}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(
+        fixture.root.join(".njutest.toml"),
+        format!("version = 1\n\n[execution]\nskip_targets = [{named}]\n"),
+    )
+    .expect("the configuration");
+    fixture
+}
+
+#[test]
+fn plan_reads_the_key_that_decides_which_targets_a_run_starts() {
+    let whole = njutest(
+        &fixture("fixture-baseline"),
+        &["plan", "--offline", "--locked"],
+    );
+    let whole = njutest_devkit::process::strict_utf8(&whole.stdout);
+    assert!(whole.contains("TARGETS\t2"), "{whole}");
+
+    let fixture = skipping(&["fixture-baseline/test/doubling"]);
+    let output = njutest(&fixture, &["plan", "--offline", "--locked"]);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
+    assert!(
+        text.lines().any(|line| line.starts_with("SKIPPED\t")
+            && line.ends_with("fixture-baseline/test/doubling")),
+        "a plan is the cheap look before a long run, so the key that decides what the run \
+         starts is one it has to show: {text}"
+    );
+    assert!(
+        text.contains("TARGETS\t1"),
+        "and the count is what a run would measure, not what the build produced: {text}"
+    );
+}
+
+#[test]
+fn plan_refuses_a_skip_entry_naming_no_target_the_way_a_run_does() {
+    let fixture = skipping(&["doubling"]);
+    let output = njutest(&fixture, &["plan", "--offline", "--locked"]);
+    let complaint = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "`verify` refuses this tree with RM5004. A plan that exits 0 over the same \
+         configuration makes two commands answer one question two ways, and the cheap \
+         one says there is nothing wrong: {complaint}"
+    );
+    assert!(
+        complaint.contains("RM5004"),
+        "and it is the same refusal, with the engine's code, rather than a second \
+         opinion of its own: {complaint}"
+    );
+}

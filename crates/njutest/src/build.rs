@@ -47,6 +47,8 @@ pub struct Selection {
     /// Whether the default features stay on.
     /// `false` is `--no-default-features`, written positively so a reader of a configuration is not counting negations.
     pub default_features: bool,
+    /// The target ids `[execution] skip_targets` names, carried here so a command that reads the configuration cannot answer about the run without them.
+    pub skip_targets: Vec<String>,
 }
 
 impl Default for Selection {
@@ -57,6 +59,7 @@ impl Default for Selection {
             features: Vec::new(),
             all_features: false,
             default_features: true,
+            skip_targets: Vec::new(),
         }
     }
 }

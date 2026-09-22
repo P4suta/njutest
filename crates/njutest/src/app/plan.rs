@@ -40,6 +40,9 @@ enum PlanError {
     /// A requested package is not a workspace member.
     #[error(transparent)]
     Discovery(#[from] rust_mutants::discover::DiscoverError),
+    /// A `[execution] skip_targets` entry names no declared target.
+    #[error(transparent)]
+    Session(#[from] rust_mutants::workspace::SessionError),
     /// Cargo completed normally but reported a compilation failure.
     #[error(
         "{}: the workspace does not compile, so there is nothing to plan:\n{failure}",
@@ -82,10 +85,15 @@ fn planned(arguments: &Arguments, environment: &Environment) -> Result<Vec<Strin
 
     let selection = compiled(&root, arguments)?;
     let packages = selection.packages.clone();
+    let skipped = selection.skip_targets.clone();
 
     let (toolchain, metadata) = locate(&root, environment, cargo, &cancel)?;
 
     if let Some(refusal) = unknown_package(&packages, &metadata.packages) {
+        return Err(refusal.into());
+    }
+    let members: Vec<&rust_mutants::cargo::Package> = metadata.members().collect();
+    if let Some(refusal) = unknown_skip_target(&skipped, &members) {
         return Err(refusal.into());
     }
 
@@ -107,13 +115,23 @@ fn planned(arguments: &Arguments, environment: &Environment) -> Result<Vec<Strin
         });
     }
 
-    let selected = selected(&built.units, watch)?;
+    let planned = selected(&built.units, watch)?;
+    let (selected, left_out): (Vec<&Planned>, Vec<&Planned>) = planned
+        .iter()
+        .partition(|one| !skipped.iter().any(|named| named == &one.target.name()));
     let mut lines = Vec::new();
     if arguments.why {
         lines.push(format!("SCOPE\t{}", scope(arguments, &packages)));
     }
     for target in &selected {
         lines.push(line(target, arguments.why));
+    }
+    for target in &left_out {
+        lines.push(format!(
+            "SKIPPED\t{}\t{}",
+            target.target.id,
+            target.target.name()
+        ));
     }
     lines.push(format!("TARGETS\t{}", selected.len()));
     Ok(lines)
@@ -231,7 +249,28 @@ pub fn compiled(
         features: config.execution.features,
         all_features: config.execution.all_features,
         default_features: !config.execution.no_default_features,
+        skip_targets: config.execution.skip_targets,
     })
+}
+
+/// The refusal a `[execution] skip_targets` entry naming no declared target deserves, which is the one a run gives.
+///
+/// `plan` is the cheap look before a long run, and it read none of this key: an entry that matched nothing went unsaid and exit was 0, while `verify` over the same tree refused it.
+/// One configuration answered two ways by two commands is worse than either answer.
+fn unknown_skip_target(
+    named: &[String],
+    members: &[&rust_mutants::cargo::Package],
+) -> Option<rust_mutants::workspace::SessionError> {
+    let declared = rust_mutants::execute::declared_targets(members);
+    named
+        .iter()
+        .find(|name| !declared.contains(name.as_str()))
+        .map(
+            |name| rust_mutants::workspace::SessionError::SkippedTargetUnknown {
+                name: name.clone(),
+                available: declared.iter().cloned().collect(),
+            },
+        )
 }
 
 /// What put the targets in scope, in the words the reader would recognise.

@@ -19,6 +19,9 @@ pub const NOT_MEASURED: &str = "wire-fault-not-measured";
 /// What a finding is about when the only targets that failed with a question in place were ones already failing without it.
 pub const ALREADY_FAILING: &str = "wire-fault-not-attributable";
 
+/// What a limitation is named when no target passed without a fault, so the suite can answer nothing about one.
+pub const SUITE_NOT_GREEN: &str = "wire-baseline-not-green";
+
 /// What the phase is asked about.
 #[derive(Debug, Clone, Copy)]
 pub struct Measuring<'a> {
@@ -122,6 +125,17 @@ where
     let faults = derive(measuring.observed)?;
     if faults.is_empty() {
         return Ok(Measured::default());
+    }
+    if measuring.before.nothing_passed() {
+        let mut done = Measured::default();
+        done.limitations.push(Limitation::new(
+            SUITE_NOT_GREEN,
+            "no target passed with no fault in place, so nothing in the suite could have \
+             noticed one: the questions this recording licensed are not put, because a row \
+             saying nothing noticed them would be a reading of a suite that was already \
+             failing",
+        ));
+        return Ok(done);
     }
     let mut done = Measured {
         executed: true,
