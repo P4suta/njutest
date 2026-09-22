@@ -74,8 +74,9 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
         "git -C \"${repository}\" worktree add --quiet --detach",
         "git -C \"${checkout}\" status --porcelain=v1 --untracked-files=all",
         "mise run check",
-        "require_exact_tree\n(cd \"${checkout}\" && NJUTEST_COMMITTED_HEAD=\"${head}\" mise run check)",
-        "(cd \"${checkout}\" && mise run check:cold)",
+        "mise run check:cold",
+        "within_budget",
+        "NJUTEST_PUSH_BUDGET_SECONDS",
     ] {
         assert!(
             pre_push.contains(held),
@@ -83,6 +84,20 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
              check ({held:?} is absent): {pre_push}"
         );
     }
+    let proven_before = pre_push
+        .find("require_exact_tree\n")
+        .unwrap_or_else(|| panic!("the gate proves the tree before it reads it: {pre_push}"));
+    let checked = pre_push
+        .find("mise run check'")
+        .unwrap_or_else(|| panic!("the gate runs the full check: {pre_push}"));
+    let proven_after = pre_push
+        .rfind("require_exact_tree\n")
+        .unwrap_or_else(|| panic!("the gate proves the tree after it reads it: {pre_push}"));
+    assert!(
+        proven_before < checked && checked < proven_after,
+        "the full check no longer runs between two proofs that the tree is the pushed object, \
+         so an edit made while it ran could go unnoticed: {pre_push}"
+    );
 }
 
 #[test]
@@ -103,9 +118,16 @@ fn committed_checks_the_same_unique_to_head_range_locally_in_hooks_and_ci() {
         "the local lint gate does not run the commit-range check"
     );
     let hook = repository("scripts/pre-push-check.sh");
+    let binds = hook.lines().any(|line| {
+        line.contains("mise run check'")
+            && line.contains("NJUTEST_COMMITTED_HEAD=")
+            && line.contains("\"${head}\"")
+    });
     assert!(
-        hook.contains("NJUTEST_COMMITTED_HEAD=\"${head}\" mise run check"),
-        "pre-push does not bind the commit check to the exact object being pushed: {hook}"
+        binds,
+        "pre-push does not bind the commit check to the exact object being pushed: the line \
+         that runs the full check must carry NJUTEST_COMMITTED_HEAD and be given ${{head}}, \
+         however it is wrapped: {hook}"
     );
 
     let workflow = repository(".github/workflows/ci.yml");

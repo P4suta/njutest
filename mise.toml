@@ -147,8 +147,8 @@ run = "cargo build --locked --examples -p rust-mutants"
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
 depends = ["build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
-run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+run = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
 
 # Each test in these binaries drives its own Cargo. CI adds `--test-threads 2`
 # on top of this, because a hosted runner multiplies those build jobs into
@@ -161,8 +161,8 @@ run = "bash scripts/exec-tax.sh"
 [tasks."test:slow"]
 description = "Run the suites that drive a real cargo against the fixture projects"
 depends = ["exec-tax", "build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
-run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
+run = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
@@ -220,8 +220,8 @@ cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
 cargo build --locked --examples -p rust-mutants
-cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
-cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
+cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
   --ignore-filename-regex 'compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 87 \
@@ -312,21 +312,32 @@ description = "Type-check the whole workspace into a target directory nothing el
 run = "cargo check --locked --workspace --all-targets --all-features"
 env = { CARGO_TARGET_DIR = "target/cold" }
 
+# What a push waits for, and what it does not.
+#
+# `test:slow` drives a real cargo against a fixture 453 times.
+# It is 600 seconds that no concurrency shortens — three threads instead of two bought 16% — and CI runs the whole of it on four operating systems anyway.
+# Paying for it again before every push bought early warning at ten minutes a push, and the failures that actually reached CI this campaign were platform and runner-environment ones this machine cannot see at any price.
+# `mise run check:full` is the same list with it back in, for when a change is about the engine's own execution rather than about the code around it.
 [tasks.check]
-description = "Run every local gate, the ones that answer quickest first"
+description = "Run every local gate a push waits for, the ones that answer quickest first"
 run = [
   "mise run fmt:check",
   "mise run build",
   "mise run check:windows",
   "mise run lint",
   "mise run lint:linux",
-  "mise run test",
+  "mise run test:fast",
+  "mise run test:doc",
   "mise run kani:verified",
   "mise run deny",
   "mise run audit",
   "mise run book",
   "mise run package",
 ]
+
+[tasks."check:full"]
+description = "Everything a push waits for, and the fixture suites CI also runs"
+run = ["mise run check", "mise run test:slow"]
 
 [tasks.bench]
 description = "Observe what every stage costs. Numbers, never gates"
