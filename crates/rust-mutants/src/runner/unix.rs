@@ -90,8 +90,8 @@ impl Supervisor {
     )]
     pub(super) fn terminate_forcefully(&self, leader: LeaderObservation) -> io::Result<()> {
         #[cfg(target_os = "macos")]
-        if leader == LeaderObservation::ExitedWaitable {
-            if !self.has_member_besides_leader()? {
+        {
+            if leader == LeaderObservation::ExitedWaitable && !self.has_member_besides_leader()? {
                 return Ok(());
             }
             let signalled = self.signal(Signal::KILL);
@@ -103,8 +103,9 @@ impl Supervisor {
             {
                 return Ok(());
             }
-            return signalled;
+            signalled
         }
+        #[cfg(not(target_os = "macos"))]
         self.signal(Signal::KILL)
     }
 

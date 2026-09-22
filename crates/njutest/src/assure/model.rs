@@ -39,6 +39,11 @@ pub(crate) const KANI_CBMC_VERSION: &str = "6.11.0 (cbmc-6.11.0)";
 /// The goto compiler banner exported by the pinned Kani release.
 pub(crate) const KANI_GOTO_CC_VERSION: &str = "clang version 21.0.0 (goto-cc 6.11.0 (cbmc-6.11.0))";
 
+/// The backend inside whatever the host compiler wrapped it in.
+///
+/// macOS clang writes `clang version 21.0.0 (goto-cc …)` and Linux gcc writes `gcc (goto-cc …) 13.3.0`, so the compiler Kani was built with is not the backend this pins.
+pub(crate) const KANI_GOTO_CC_BACKEND: &str = "(goto-cc 6.11.0 (cbmc-6.11.0))";
+
 /// The goto instrumentation banner exported by the pinned Kani release.
 pub(crate) const KANI_GOTO_INSTRUMENT_VERSION: &str = "6.11.0 (cbmc-6.11.0)";
 

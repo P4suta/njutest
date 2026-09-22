@@ -8,7 +8,7 @@ use std::path::{Component, Path};
 use serde::Deserialize;
 
 use super::{
-    Harness, KANI_BUILD_MODE, KANI_CBMC_VERSION, KANI_EXPORT_VERSION, KANI_GOTO_CC_VERSION,
+    Harness, KANI_BUILD_MODE, KANI_CBMC_VERSION, KANI_EXPORT_VERSION, KANI_GOTO_CC_BACKEND,
     KANI_GOTO_INSTRUMENT_VERSION, KANI_RUSTC_VERSION, KANI_SOLVER, KANI_VERSION,
 };
 
@@ -729,7 +729,7 @@ fn validated_context<'document>(
         || document.metadata.target != expected.target
         || document.tools.rustc != KANI_RUSTC_VERSION
         || document.tools.cbmc != KANI_CBMC_VERSION
-        || document.tools.goto_cc != KANI_GOTO_CC_VERSION
+        || !document.tools.goto_cc.contains(KANI_GOTO_CC_BACKEND)
         || document.tools.goto_instrument != KANI_GOTO_INSTRUMENT_VERSION
         || !matches!(document.tools.solvers.as_slice(), [Solver { name, version: Nullable(None) }] if name == KANI_SOLVER)
     {
