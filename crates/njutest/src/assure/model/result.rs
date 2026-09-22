@@ -1078,6 +1078,17 @@ mod tests {
         KANI_RUSTC_VERSION, KANI_SOLVER, KANI_VERSION, MODEL_PACKAGE,
     };
 
+    /// The fixture's workspace root, absolute the way this platform means it.
+    ///
+    /// `clean_absolute` asks `Path::is_absolute`, and a leading slash is not absolute on Windows without a drive: every path check in the backend reading then reported the document as a different backend, which is what 132 Windows tests were saying.
+    fn fixture_root() -> &'static str {
+        if cfg!(windows) {
+            "C:/fixture"
+        } else {
+            "/fixture"
+        }
+    }
+
     fn document(harness: &Harness, status: &str) -> Value {
         let succeeded = u64::from(status == "Success");
         let failed = u64::from(status == "Failure");
@@ -1087,8 +1098,8 @@ mod tests {
                 "kani_version": KANI_VERSION, "target": "test-target", "build_mode": "release"
             },
             "project": {
-                "crate_name": ["njutest_verified_model"], "workspace_root": "/fixture",
-                "output_dir": "/fixture/target/kani/test-target/release/build/njutest_verified_model/out"
+                "crate_name": ["njutest_verified_model"], "workspace_root": fixture_root(),
+                "output_dir": format!("{}/target/kani/test-target/release/build/njutest_verified_model/out", fixture_root())
             },
             "tools": {
                 "kani": KANI_VERSION, "rustc": KANI_RUSTC_VERSION,
@@ -1100,7 +1111,7 @@ mod tests {
                 "pretty_name": harness.harness_name(),
                 "mangled_name": "mangled", "crate_name": "njutest_verified_model",
                 "source": {"file": "src/lib.rs", "start_line": 1, "end_line": 1},
-                "goto_file": "/fixture/target/kani/test-target/release/build/njutest_verified_model/out/harness.goto",
+                "goto_file": format!("{}/target/kani/test-target/release/build/njutest_verified_model/out/harness.goto", fixture_root()),
                 "attributes": {"kind": "Proof", "should_panic": false},
                 "contract": {"contracted_function_name": null, "recursion_tracker": null},
                 "has_loop_contracts": false, "is_automatically_generated": false,
@@ -1165,8 +1176,8 @@ mod tests {
             Expectation {
                 harness,
                 target: "test-target",
-                root: std::path::Path::new("/fixture"),
-                target_dir: std::path::Path::new("/fixture/target/kani"),
+                root: std::path::Path::new(fixture_root()),
+                target_dir: &std::path::PathBuf::from(format!("{}/target/kani", fixture_root())),
                 package: MODEL_PACKAGE,
             },
         )
@@ -1306,8 +1317,11 @@ mod tests {
                 Expectation {
                     harness: &harness,
                     target: "test-target",
-                    root: std::path::Path::new("/fixture"),
-                    target_dir: std::path::Path::new("/fixture/target/kani"),
+                    root: std::path::Path::new(fixture_root()),
+                    target_dir: &std::path::PathBuf::from(format!(
+                        "{}/target/kani",
+                        fixture_root()
+                    )),
                     package: MODEL_PACKAGE,
                 }
             )
@@ -1404,8 +1418,11 @@ mod tests {
                 Expectation {
                     harness: &harness,
                     target: "test-target",
-                    root: std::path::Path::new("/fixture"),
-                    target_dir: std::path::Path::new("/fixture/target/kani"),
+                    root: std::path::Path::new(fixture_root()),
+                    target_dir: &std::path::PathBuf::from(format!(
+                        "{}/target/kani",
+                        fixture_root()
+                    )),
                     package: MODEL_PACKAGE,
                 },
             )
