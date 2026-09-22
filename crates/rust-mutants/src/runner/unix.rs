@@ -22,6 +22,17 @@ pub(super) const SUPERVISOR_KIND: &str = "process-group";
 pub(super) const SUPERVISION_BOUNDARY: SupervisionBoundary =
     SupervisionBoundary::InheritedProcessGroup;
 
+/// Whether a read of no bytes was the end of the stream rather than a pipe with nothing in it yet.
+///
+/// An `O_NONBLOCK` pipe answers `EWOULDBLOCK` while it is merely empty, so no bytes is already every writer having closed and there is nothing further to ask.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the Windows reader, which asks the kernel and can fail"
+)]
+pub(super) const fn stream_ended(_reader: &io::PipeReader) -> io::Result<bool> {
+    Ok(true)
+}
+
 /// Makes a pipe read cancellable by letting its owned reader poll for data and its stop instruction instead of blocking forever in the kernel.
 pub(super) fn configure_reader(reader: &io::PipeReader) -> io::Result<()> {
     let flags = rustix::fs::fcntl_getfl(reader)?;
