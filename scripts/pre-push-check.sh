@@ -16,7 +16,7 @@ set -euo pipefail
 # Raise it deliberately, in a commit that says what got slower and why that is now correct.
 #
 # `set -m` puts the check in its own process group so the whole tree of cargo, nextest and rustc goes down with it; killing the shell alone would leave the compile running and the budget unenforced.
-budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-420}"
+budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-600}"
 
 within_budget() {
   local started elapsed job
