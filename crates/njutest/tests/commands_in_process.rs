@@ -17,12 +17,15 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 use njutest::app::reports::Index;
 use njutest::cli::Environment;
+#[cfg(unix)]
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::runner::Cancel;
 
 /// One workspace with one completed run in it, kept for the length of a test.
+#[cfg(unix)]
 struct Verified {
     root: PathBuf,
     run: String,
@@ -30,12 +33,14 @@ struct Verified {
 }
 
 /// Where the runs of one workspace live, spelled as the documented default.
+#[cfg(unix)]
 fn runs_root(root: &Path) -> PathBuf {
     root.join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
         .join("runs")
 }
 
 /// Where one index lives, spelled as the documented default.
+#[cfg(unix)]
 fn index_path(root: &Path, index: Index) -> PathBuf {
     root.join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
         .join(index.file())
@@ -80,6 +85,7 @@ fn ask(root: &Path, args: &[&str]) -> Said {
 }
 
 /// A copy of `fixture-baseline` that one verification has already run in.
+#[cfg(unix)]
 fn verified() -> Verified {
     let dir = tempfile::Builder::new()
         .prefix("njutest-commands-")
@@ -111,6 +117,7 @@ fn verified() -> Verified {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn every_command_that_reads_a_run_reads_the_one_that_ran() {
     let it = verified();
@@ -161,6 +168,7 @@ fn every_command_that_reads_a_run_reads_the_one_that_ran() {
 }
 
 /// What `report` says about a run directory whose document is not one.
+#[cfg(unix)]
 fn unreadable(it: &Verified) {
     let hollow = "20270101T000000Z-hollow";
     std::fs::create_dir_all(runs_root(&it.root).join(hollow))
@@ -205,6 +213,7 @@ fn unreadable(it: &Verified) {
 }
 
 /// What a run leaves in its own directory, and where the pointers point.
+#[cfg(unix)]
 fn kept(it: &Verified) {
     let directory = runs_root(&it.root).join(&it.run);
     for name in [
@@ -238,6 +247,7 @@ fn kept(it: &Verified) {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
     let it = verified();
@@ -338,6 +348,7 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
 }
 
 /// Where an explanation says the mutation is, and what it says was done there.
+#[cfg(unix)]
 fn placed_and_ruled(said: &std::collections::BTreeMap<&str, &str>, whole: &str) {
     let placed = said.get("WHERE").copied().unwrap_or_default();
     assert!(
@@ -354,6 +365,7 @@ fn placed_and_ruled(said: &std::collections::BTreeMap<&str, &str>, whole: &str) 
 }
 
 /// What an explanation says about a survivor, before a reviewer looks at it and after.
+#[cfg(unix)]
 fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
     let survivor = parsed["report"]["builds"][0]["parts"][0]["findings"]
         .as_array()
@@ -383,6 +395,7 @@ fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
 }
 
 /// What an explanation says about a mutation a reviewer has since accepted.
+#[cfg(unix)]
 fn accepted_next_time(it: &Verified, survivor: &str) {
     let recorded = ask(
         &it.root,
@@ -425,6 +438,7 @@ fn accepted_next_time(it: &Verified, survivor: &str) {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn an_acceptance_is_written_where_the_next_run_reads_it() {
     let it = verified();
@@ -509,6 +523,7 @@ fn an_acceptance_is_written_where_the_next_run_reads_it() {
 }
 
 /// What `accept` refuses, which is every name that is not one survivor of this run.
+#[cfg(unix)]
 fn refusals(it: &Verified, survivor: &str) {
     let document = ask(&it.root, &["report", "--format", "json"]);
     let parsed: serde_json::Value =
@@ -598,6 +613,7 @@ fn refusals(it: &Verified, survivor: &str) {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -627,6 +643,7 @@ fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn what_a_run_left_behind_is_listed_bundled_and_collected() {
     let it = verified();
@@ -636,6 +653,7 @@ fn what_a_run_left_behind_is_listed_bundled_and_collected() {
 }
 
 /// What a bundle of one run holds, and what it refuses to bundle.
+#[cfg(unix)]
 fn bundled(it: &Verified) {
     let bundled = ask(&it.root, &["diagnostics", &it.run]);
     assert_eq!(bundled.code, 0, "{}{}", bundled.out, bundled.err);
@@ -689,6 +707,7 @@ fn bundled(it: &Verified) {
 }
 
 /// What the store says it holds, and what it carries between machines.
+#[cfg(unix)]
 fn stored(it: &Verified) {
     std::fs::write(
         it.root.join(njutest::config::FILE_NAME),
@@ -772,6 +791,7 @@ fn stored(it: &Verified) {
 }
 
 /// What the store says about a directory a run preserved.
+#[cfg(unix)]
 fn preserved_and_named(it: &Verified) {
     let preserved = it.root.join("kept-snapshot");
     std::fs::create_dir_all(&preserved).expect("a directory a run preserved");
@@ -827,6 +847,7 @@ fn preserved_and_named(it: &Verified) {
 }
 
 /// What saying what a run would measure says.
+#[cfg(unix)]
 fn planned(root: &Path) {
     let plain = ask(root, &["plan", "--offline", "--locked"]);
     assert_eq!(
@@ -912,6 +933,7 @@ fn planned(root: &Path) {
 }
 
 /// What saying what a run would measure says about a workspace that will not build.
+#[cfg(unix)]
 fn refused_to_plan(root: &Path) {
     let broken = root.join("src/lib.rs");
     let source = std::fs::read_to_string(&broken).expect("the library");
@@ -988,6 +1010,7 @@ fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused() {
     let it = verified();
@@ -1060,6 +1083,7 @@ fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused()
 }
 
 /// Where one shard of this workspace's catalog wrote its document.
+#[cfg(unix)]
 fn sharded(it: &Verified, shard: &str) -> PathBuf {
     let before = run_names(&it.root);
     let said = ask(
@@ -1085,6 +1109,7 @@ fn sharded(it: &Verified, shard: &str) -> PathBuf {
 }
 
 /// The run directories this workspace currently holds.
+#[cfg(unix)]
 fn run_names(root: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(runs_root(root))
         .expect("the runs directory")
@@ -1106,6 +1131,7 @@ fn run_names(root: &Path) -> Vec<String> {
 }
 
 /// The two things `merge` refuses that a pipeline actually meets.
+#[cfg(unix)]
 fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path, two: &Path) {
     let elsewhere = it.root.join("elsewhere.json");
     let mut other: serde_json::Value =
@@ -1154,6 +1180,7 @@ fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path, two: &Path) {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_command_a_run_tells_a_reader_to_type_is_one_that_works() {
     let it = verified();

@@ -367,19 +367,24 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
         .iter()
         .filter(|one| one.outcome == Outcome::Survived)
         .collect();
+    let twice = njutest_devkit::reproducible::builds_the_same_twice();
+    let answered: Vec<rust_mutants::run::CodegenIdentity> =
+        survivors.iter().map(|one| one.identical).collect();
     assert!(
-        if njutest_devkit::reproducible::builds_the_same_twice() {
-            survivors
+        if twice {
+            answered
                 .iter()
-                .any(|one| one.identical == rust_mutants::run::CodegenIdentity::Identical)
+                .any(|identity| *identity == rust_mutants::run::CodegenIdentity::Identical)
         } else {
-            survivors
+            answered
                 .iter()
-                .all(|one| one.identical == rust_mutants::run::CodegenIdentity::NotMeasured)
+                .all(|identity| *identity == rust_mutants::run::CodegenIdentity::NotEstablished)
         },
         "the fixture holds a mutation the compiler renders identically, and what the layer \
          says is identical rather than equivalent — on a machine that renders one \
-         unchanged tree two ways it says nothing at all instead, because a difference it \
-         did not cause is not one to report"
+         unchanged tree two ways the layer still runs, because it cannot know beforehand, \
+         and establishes neither answer rather than reporting a difference it did not \
+         cause. This machine builds one tree the same twice: {twice}, and the survivors \
+         answered {answered:?}"
     );
 }

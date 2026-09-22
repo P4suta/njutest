@@ -1099,8 +1099,13 @@ impl<Output: Send + 'static> JoinedReader<Output> {
                         }
                         Err(TryRecvError::Empty) => {}
                     }
-                    match reader.read(&mut buffer) {
-                        Ok(0) => break Ok(()),
+                    let outcome = reader.read(&mut buffer);
+                    match outcome {
+                        Ok(0) => match sys::stream_ended(&reader) {
+                            Ok(true) => break Ok(()),
+                            Ok(false) => thread::sleep(READER_POLL_INTERVAL),
+                            Err(source) => break Err(RunnerError::OutputReadFailed { source }),
+                        },
                         Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
                             thread::sleep(READER_POLL_INTERVAL);
                         }

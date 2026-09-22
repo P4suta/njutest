@@ -1458,10 +1458,19 @@ mod platform {
     }
 
     /// Windows has no permission bits worth copying; the read-only attribute is deliberately not propagated, since the copy must be instrumentable.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the same signature as the unix finalizer, which sets a mode and can fail"
+    )]
     pub(super) const fn finalize_file_permissions(_: &File, _: &Metadata) -> io::Result<()> {
         Ok(())
     }
 
+    /// The same for a directory, and for the same reason.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the same signature as the unix finalizer, which sets a mode and can fail"
+    )]
     pub(super) const fn finalize_dir_permissions(_: &Path, _: &Metadata) -> io::Result<()> {
         Ok(())
     }
@@ -1515,7 +1524,7 @@ mod platform {
                         .as_encoded_bytes()
                         .eq_ignore_ascii_case(right.as_os_str().as_encoded_bytes()) => {}
                 (None, None) => return true,
-                (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) => return false,
+                (Some(_), Some(_) | None) | (None, Some(_)) => return false,
             }
         }
     }

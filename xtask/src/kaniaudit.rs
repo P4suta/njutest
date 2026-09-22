@@ -905,6 +905,14 @@ mod tests {
 
     use super::{AuditError, Harness, Status, audit_bytes};
 
+    /// The workspace these documents are about, absolute the way this platform means it.
+    ///
+    /// The audit asks `Path::is_absolute` of the output directory and compares the root it was given, and a leading slash is not absolute on Windows without a drive: every document below was then refused as belonging to another project.
+    #[cfg(windows)]
+    const WORKSPACE: &str = "C:/workspace";
+
+    /// The workspace these documents are about, absolute the way this platform means it.
+    #[cfg(not(windows))]
     const WORKSPACE: &str = "/workspace";
 
     fn metadata_entries() -> Vec<Value> {

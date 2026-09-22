@@ -238,6 +238,29 @@ fn one_allowance_spans_file_modules_and_repeated_guard_checks_do_not_spend_twice
     );
 }
 
+/// Waits until `state` reads exactly `wanted`, or fails saying what it read instead.
+///
+/// A read can fail rather than answer while the process that owns the file is writing it: a Windows lock is mandatory where a POSIX one is advisory, so unreadable here means the same as not yet.
+fn wait_until_state_reads(state: &std::path::Path, wanted: &str) {
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(5))
+        .expect("a deadline five seconds from now");
+    loop {
+        match std::fs::read_to_string(state) {
+            Ok(observed) if observed == wanted => return,
+            Ok(observed) => assert!(
+                Instant::now() < deadline,
+                "the recoverable publisher did not reach its stopping state: {observed:?}"
+            ),
+            Err(error) => assert!(
+                Instant::now() < deadline,
+                "the recoverable publisher's state stayed unreadable: {error}"
+            ),
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn publication_failure_never_persists_a_stopping_state_without_a_final_notice() {
     let (module, _, selected) = step_modules();
@@ -296,18 +319,7 @@ fn publication_failure_never_persists_a_stopping_state_without_a_final_notice() 
     configured(&mut second);
     let child = FixtureChild::launch(&mut second).expect("second process starts");
     let wanted = format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1\tstopping\t2\n");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let observed = std::fs::read_to_string(&state).expect("inspect state");
-        if observed == wanted {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the recoverable publisher did not reach its stopping state: {observed:?}"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    wait_until_state_reads(&state, &wanted);
     assert!(
         regular_file_present(&notice).expect("the notice publication preceded the stopping state"),
     );

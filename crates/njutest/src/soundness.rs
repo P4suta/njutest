@@ -201,8 +201,8 @@ pub fn of_source(path: &str, source: &str) -> Result<Vec<Item>, SoundnessError> 
 /// Returns [`SoundnessError::Unreadable`] when the tree itself cannot be walked.
 /// A file that does not parse is recorded in [`Inventory::unreadable`] rather than ending the walk, because one file this release cannot read must not hide what every other file says.
 pub fn inventory(root: &Path, packages: &[(String, PathBuf)]) -> Result<Inventory, SoundnessError> {
-    let root = match std::fs::canonicalize(root) {
-        Ok(canonical) => canonical,
+    let root = match rust_mutants::canonical::canonical(root) {
+        Ok(resolved) => resolved,
         Err(_absent) => root.to_path_buf(),
     };
     let mut inventory = Inventory::default();

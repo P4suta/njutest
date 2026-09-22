@@ -17,7 +17,7 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-use windows_sys::Win32::System::Pipes::{PIPE_NOWAIT, SetNamedPipeHandleState};
+use windows_sys::Win32::System::Pipes::{PIPE_NOWAIT, PeekNamedPipe, SetNamedPipeHandleState};
 use windows_sys::Win32::System::Threading::{CREATE_SUSPENDED, WaitForSingleObject};
 
 use super::{LeaderObservation, ProcessExit, RunnerError, SupervisionBoundary};
@@ -27,6 +27,35 @@ pub(super) const SUPERVISOR_KIND: &str = "job-object";
 
 /// A Job Object is an inescapable process-tree container.
 pub(super) const SUPERVISION_BOUNDARY: SupervisionBoundary = SupervisionBoundary::ContainedTree;
+
+/// Whether a read of no bytes was the end of the stream rather than a pipe with nothing in it yet.
+///
+/// A `PIPE_NOWAIT` handle reads an empty pipe as a success of no bytes, and the standard library turns the broken pipe that says the writers are gone into that same answer, so the two are one value here and only the kernel can tell them apart.
+pub(super) fn stream_ended(reader: &io::PipeReader) -> io::Result<bool> {
+    let mut available: u32 = 0;
+    #[expect(
+        unsafe_code,
+        reason = "PeekNamedPipe is the Windows boundary for asking whether a pipe still has writers"
+    )]
+    let peeked = unsafe {
+        PeekNamedPipe(
+            reader.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::addr_of_mut!(available),
+            std::ptr::null_mut(),
+        )
+    };
+    if peeked == 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(true);
+        }
+        return Err(error);
+    }
+    Ok(false)
+}
 
 /// Makes an anonymous pipe reader pollable so its owner can cancel and join it even when a descendant retained the write handle.
 pub(super) fn configure_reader(reader: &io::PipeReader) -> io::Result<()> {
@@ -112,6 +141,10 @@ impl Supervisor {
     }
 
     /// The child is created suspended, so that it can be assigned to the job before it has run an instruction: a process that has never executed cannot have forked.
+    #[expect(
+        clippy::unused_self,
+        reason = "the same signature as the unix supervisor, which configures from the group it holds"
+    )]
     pub(super) fn configure(&self, command: &mut Command) {
         command.creation_flags(CREATE_SUSPENDED);
     }
@@ -156,6 +189,10 @@ impl Supervisor {
 
     /// Closing the last handle kills whatever is still in the job.
     /// What the supervisor can say about the set it owns, for the note before an abort.
+    #[expect(
+        clippy::unused_self,
+        reason = "the same signature as the unix supervisor, which reports the group it holds"
+    )]
     pub(super) fn state(&self) -> String {
         "holding a job object".to_owned()
     }

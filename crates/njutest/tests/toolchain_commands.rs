@@ -16,8 +16,10 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use njutest::cli::Environment;
+#[cfg(unix)]
 use rust_mutants::id::StoredRunId;
 use rust_mutants::runner::Cancel;
+#[cfg(unix)]
 use serde::Deserialize;
 
 struct Fixture {
@@ -78,6 +80,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
 }
 
 /// A fixture with one completed, traced run behind it.
+#[cfg(unix)]
 fn verified(name: &str) -> Fixture {
     let fixture = fixture(name);
     let output = njutest(&fixture, &["verify", "--offline", "--locked", "--trace"]);
@@ -112,12 +115,14 @@ fn fixture_runs(root: &Path) -> PathBuf {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(unix)]
 struct FixturePointer {
     schema: String,
     run_id: StoredRunId,
     directory: String,
 }
 
+#[cfg(unix)]
 fn fixture_latest_document(root: &Path) -> PathBuf {
     let index = fixture_report_root(root).join(njutest::app::reports::Index::Any.file());
     let text = std::fs::read_to_string(index).expect("the fixture index");
@@ -139,6 +144,7 @@ fn fixture_latest_document(root: &Path) -> PathBuf {
         .join(njutest::app::reports::DOCUMENT_NAME)
 }
 
+#[cfg(unix)]
 #[test]
 fn report_prints_the_records_of_the_latest_run() {
     let fixture = verified("fixture-baseline");
@@ -149,6 +155,7 @@ fn report_prints_the_records_of_the_latest_run() {
     assert!(text.ends_with("VERDICT\tINSUFFICIENT\n"), "{text}");
 }
 
+#[cfg(unix)]
 #[test]
 fn report_json_prints_the_document_the_run_wrote_byte_for_byte() {
     let fixture = verified("fixture-baseline");
@@ -163,6 +170,7 @@ fn report_json_prints_the_document_the_run_wrote_byte_for_byte() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn report_names_a_run_that_is_not_there_rather_than_answering_about_another() {
     let fixture = verified("fixture-baseline");
@@ -176,6 +184,7 @@ fn report_names_a_run_that_is_not_there_rather_than_answering_about_another() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn report_without_a_run_at_all_says_so() {
     let fixture = fixture("fixture-baseline");
@@ -188,6 +197,7 @@ fn report_without_a_run_at_all_says_so() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn trace_summary_counts_the_events_and_finds_nothing_wrong_with_a_complete_recording() {
     let fixture = verified("fixture-baseline");
@@ -208,6 +218,7 @@ fn trace_summary_counts_the_events_and_finds_nothing_wrong_with_a_complete_recor
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn trace_summary_says_how_many_executions_each_proof_removed() {
     let fixture = fixture("fixture-probeable");
@@ -228,6 +239,7 @@ fn trace_summary_says_how_many_executions_each_proof_removed() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn trace_summary_says_what_took_the_longest_and_reads_the_engine_beside_it() {
     let fixture = verified("fixture-baseline");
@@ -246,6 +258,7 @@ fn trace_summary_says_what_took_the_longest_and_reads_the_engine_beside_it() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn trace_summary_reports_a_recording_that_lost_its_end() {
     let fixture = verified("fixture-baseline");
@@ -264,6 +277,7 @@ fn trace_summary_reports_a_recording_that_lost_its_end() {
     assert!(stdout(&output).contains("run-end"), "{}", stdout(&output));
 }
 
+#[cfg(unix)]
 #[test]
 fn trace_diff_says_which_phases_moved() {
     let fixture = verified("fixture-baseline");
@@ -289,6 +303,7 @@ fn trace_diff_says_which_phases_moved() {
     assert!(text.contains(&first), "{text}");
 }
 
+#[cfg(unix)]
 fn recordings(fixture: &Fixture) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(fixture.root.join(".njutest/trace"))
         .expect("the trace directory")
@@ -305,12 +320,14 @@ fn recordings(fixture: &Fixture) -> Vec<String> {
     names
 }
 
+#[cfg(unix)]
 fn only_recording(fixture: &Fixture) -> String {
     let names = recordings(fixture);
     assert_eq!(names.len(), 1, "{names:?}");
     names[0].clone()
 }
 
+#[cfg(unix)]
 fn trace_stream(fixture: &Fixture) -> PathBuf {
     fixture
         .root
@@ -319,6 +336,7 @@ fn trace_stream(fixture: &Fixture) -> PathBuf {
         .join(njutest::trace::FILE_NAME)
 }
 
+#[cfg(unix)]
 #[test]
 fn diagnostics_bundles_the_report_and_the_recording_of_one_run() {
     let fixture = verified("fixture-baseline");
@@ -346,6 +364,7 @@ fn diagnostics_bundles_the_report_and_the_recording_of_one_run() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn diagnostics_of_a_run_that_never_happened_is_an_error() {
     let fixture = verified("fixture-baseline");
@@ -426,6 +445,7 @@ fn cache_leaves_the_engine_build_cache_to_the_engine() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn answers_one_machine_established_are_the_answers_another_one_holds() {
     let fixture = verified("fixture-baseline");
@@ -478,6 +498,7 @@ fn answers_one_machine_established_are_the_answers_another_one_holds() {
 }
 
 /// Where the run a fixture just finished wrote its report: the newest run directory, because a shard is a merge input and deliberately points no latest-complete index at itself.
+#[cfg(unix)]
 fn latest_report(fixture: &Fixture) -> PathBuf {
     let runs = fixture_runs(&fixture.root);
     let newest = std::fs::read_dir(&runs)
@@ -497,6 +518,7 @@ fn latest_report(fixture: &Fixture) -> PathBuf {
 }
 
 /// Judges one part of a catalog and keeps the report it wrote.
+#[cfg(unix)]
 fn shard(fixture: &Fixture, part: &str) -> PathBuf {
     let output = njutest(
         fixture,
@@ -510,6 +532,7 @@ fn shard(fixture: &Fixture, part: &str) -> PathBuf {
     latest_report(fixture)
 }
 
+#[cfg(unix)]
 #[test]
 fn merge_combines_the_parts_of_one_catalog_and_refuses_the_parts_of_two() {
     let fixture = fixture("fixture-baseline");
@@ -580,6 +603,7 @@ fn merge_combines_the_parts_of_one_catalog_and_refuses_the_parts_of_two() {
 }
 
 /// Changes the tree under the fixture, so that a later run is a run of another one.
+#[cfg(unix)]
 fn fixture_changed(fixture: &Fixture) {
     let path = fixture.root.join("src/lib.rs");
     let source = std::fs::read_to_string(&path).expect("the library");

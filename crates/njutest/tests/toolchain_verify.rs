@@ -13,12 +13,14 @@
 )]
 
 use njutest_devkit::fixture::copy_tree;
+#[cfg(unix)]
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use njutest::cli::Environment;
+#[cfg(unix)]
 use njutest::report::Verdict;
 use rust_mutants::runner::Cancel;
 
@@ -83,6 +85,7 @@ fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
     environment(root, &cache, named)
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_says_where_it_wrote_as_a_path_from_the_project_it_is_about() {
     let fixture = fixture("fixture-assured");
@@ -113,6 +116,7 @@ fn a_run_says_where_it_wrote_as_a_path_from_the_project_it_is_about() {
 }
 
 /// Where the latest run wrote its report: the run directories themselves, because a shard is a merge input and deliberately points no latest-complete index at itself.
+#[cfg(unix)]
 fn latest(fixture: &Fixture) -> PathBuf {
     let runs = fixture
         .root
@@ -129,11 +133,13 @@ fn latest(fixture: &Fixture) -> PathBuf {
 }
 
 /// The durable document of the latest run, envelope and all, as text.
+#[cfg(unix)]
 fn envelope(fixture: &Fixture) -> String {
     let path = latest(fixture);
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
+#[cfg(unix)]
 fn document(fixture: &Fixture) -> serde_json::Value {
     let document: serde_json::Value =
         njutest_devkit::strictjson::decode_str(&envelope(fixture)).expect("the report is JSON");
@@ -145,10 +151,12 @@ fn document(fixture: &Fixture) -> serde_json::Value {
 }
 
 /// The latest run's document read back the way a consumer reads one, with the verdict that reader derives.
+#[cfg(unix)]
 fn parsed(fixture: &Fixture) -> njutest::report::ReportDocument {
     njutest::report::json::parse_any(&envelope(fixture)).expect("the document reads back")
 }
 
+#[cfg(unix)]
 fn engine_trace(recording: &Path, ordinal: u32) -> Vec<rust_mutants::trace::Event> {
     let stream = recording
         .join(njutest::app::trace::BUILDS_DIRECTORY)
@@ -162,6 +170,7 @@ fn engine_trace(recording: &Path, ordinal: u32) -> Vec<rust_mutants::trace::Even
     .unwrap_or_else(|error| panic!("{}: {error}", stream.display()))
 }
 
+#[cfg(unix)]
 #[test]
 fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
     let fixture = fixture("fixture-hollow");
@@ -200,6 +209,7 @@ fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other() {
     let fixture = fixture("fixture-features");
@@ -290,6 +300,7 @@ fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other(
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_suite_with_a_gap_it_cannot_see_is_insufficient() {
     let fixture = fixture("fixture-baseline");
@@ -312,6 +323,7 @@ fn a_suite_with_a_gap_it_cannot_see_is_insufficient() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_report_is_written_where_a_reader_will_look_and_validates_against_the_schema() {
     let fixture = fixture("fixture-baseline");
@@ -370,6 +382,7 @@ fn the_report_is_written_where_a_reader_will_look_and_validates_against_the_sche
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_targets_are_named_and_ordered_slowest_first() {
     let fixture = fixture("fixture-baseline");
@@ -410,6 +423,7 @@ fn the_targets_are_named_and_ordered_slowest_first() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_that_asked_for_a_trace_leaves_one_that_reads_back() {
     let fixture = fixture("fixture-baseline");
@@ -489,6 +503,7 @@ fn a_run_that_asked_for_a_trace_leaves_one_that_reads_back() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn every_configured_build_owns_one_ordinal_trace_bound_to_its_selection() {
     let fixture = fixture("fixture-features");
@@ -619,6 +634,7 @@ fn progress_goes_to_the_error_stream_so_a_redirected_report_is_a_report() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn the_jsonl_interface_writes_one_object_per_line() {
     let fixture = fixture("fixture-baseline");
@@ -632,6 +648,7 @@ fn the_jsonl_interface_writes_one_object_per_line() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_workspace_that_does_not_compile_is_a_defect_that_names_itself() {
     let fixture = fixture("fixture-baseline");
@@ -665,6 +682,7 @@ fn a_workspace_that_does_not_compile_is_a_defect_that_names_itself() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_report_of_a_known_workspace_is_the_recorded_one() {
     let fixture = fixture("fixture-baseline");
@@ -677,6 +695,7 @@ fn the_report_of_a_known_workspace_is_the_recorded_one() {
     njutest_devkit::golden::golden(&golden, text.as_bytes()).expect("the recorded report");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_workspace_with_no_tests_at_all_observed_nothing_and_says_so() {
     let repo = njutest_devkit::repo::Repo::new();
@@ -715,6 +734,7 @@ fn a_workspace_with_no_tests_at_all_observed_nothing_and_says_so() {
     drop(repo);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_second_run_of_the_same_work_reads_the_first_run_back_rather_than_doing_it_again() {
     let fixture = fixture("fixture-assured");
@@ -781,6 +801,7 @@ fn a_second_run_of_the_same_work_reads_the_first_run_back_rather_than_doing_it_a
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
     let fixture = fixture("fixture-assured");
@@ -806,6 +827,7 @@ fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_leaves_nothing_in_the_tree_it_verified_but_its_own_reports() {
     let fixture = fixture("fixture-assured");
@@ -832,6 +854,7 @@ fn a_run_leaves_nothing_in_the_tree_it_verified_but_its_own_reports() {
 }
 
 /// Every file under `root`, as slash-separated relative paths.
+#[cfg(unix)]
 fn listing(root: &Path) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     let mut pending = vec![(root.to_path_buf(), String::new())];
@@ -860,6 +883,7 @@ fn listing(root: &Path) -> BTreeSet<String> {
     found
 }
 
+#[cfg(unix)]
 #[test]
 fn a_workspace_that_steps_outside_what_the_compiler_guarantees_says_so() {
     let fixture = fixture("fixture-assured");
@@ -913,6 +937,7 @@ fn a_workspace_that_steps_outside_what_the_compiler_guarantees_says_so() {
 }
 
 /// The names of a report's limitations.
+#[cfg(unix)]
 fn names(document: &serde_json::Value) -> Vec<String> {
     document["builds"][0]["parts"][0]["limitations"]
         .as_array()
@@ -922,6 +947,7 @@ fn names(document: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_about_a_change_set_mutates_what_changed_and_claims_no_more_than_that() {
     let fixture = fixture("fixture-assured");
@@ -994,6 +1020,7 @@ fn a_run_about_a_change_set_it_cannot_see_refuses_rather_than_verifying_nothing(
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
     let fixture = fixture("fixture-assured");
@@ -1065,6 +1092,7 @@ fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
     assert_eq!(parsed(&fixture).verdict(), Verdict::Assured);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_target_that_may_behave_differently_establishes_nothing_it_established_before() {
     let fixture = fixture("fixture-assured");
@@ -1104,6 +1132,7 @@ fn a_target_that_may_behave_differently_establishes_nothing_it_established_befor
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
     let fixture = fixture("fixture-assured");
@@ -1145,6 +1174,7 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutation_only_a_documented_example_can_notice_is_noticed_by_it() {
     let fixture = fixture("fixture-doctest");
@@ -1181,6 +1211,7 @@ fn a_mutation_only_a_documented_example_can_notice_is_noticed_by_it() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_documented_example_that_does_not_hold_is_a_failing_test() {
     let fixture = fixture("fixture-doctest");
@@ -1217,6 +1248,7 @@ fn a_documented_example_that_does_not_hold_is_a_failing_test() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_library_that_documents_no_example_is_not_a_target_that_ran_nothing() {
     let fixture = fixture("fixture-baseline");
@@ -1248,6 +1280,7 @@ fn a_library_that_documents_no_example_is_not_a_target_that_ran_nothing() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_it() {
     let fixture = fixture("fixture-subprocess");
@@ -1291,6 +1324,7 @@ fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
     let fixture = fixture("fixture-equivalent");
@@ -1358,6 +1392,7 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
 }
 
 /// Every mutant the latest run judged, by identity.
+#[cfg(unix)]
 fn judged(fixture: &Fixture) -> BTreeSet<String> {
     let document = document(fixture);
     let build = &document["builds"][0];
@@ -1372,6 +1407,7 @@ fn judged(fixture: &Fixture) -> BTreeSet<String> {
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
 fn two_parts_of_one_catalog_judge_every_mutant_between_them_and_none_twice() {
     let fixture = fixture("fixture-assured");
@@ -1411,6 +1447,7 @@ fn two_parts_of_one_catalog_judge_every_mutant_between_them_and_none_twice() {
     assert!(!one.is_empty() && !two.is_empty(), "{one:?} {two:?}");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_part_of_a_catalog_does_not_claim_what_the_whole_would() {
     let fixture = fixture("fixture-assured");
@@ -1450,6 +1487,7 @@ fn a_part_that_is_not_a_part_of_anything_is_refused_before_anything_is_built() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
     let fixture = fixture("fixture-assured");
@@ -1507,6 +1545,7 @@ fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_that_was_given_a_package_says_it_looked_at_that_one() {
     let fixture = fixture("fixture-workspace");
@@ -1540,6 +1579,7 @@ fn a_run_that_was_given_a_package_says_it_looked_at_that_one() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_briefs_whatever_asked_for_it_rather_than_whatever_it_guessed() {
     let fixture = fixture("fixture-baseline");
@@ -1576,6 +1616,7 @@ fn a_run_briefs_whatever_asked_for_it_rather_than_whatever_it_guessed() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_that_reads_an_answer_back_says_it_the_way_a_run_that_established_one_does() {
     let fixture = fixture("fixture-baseline");

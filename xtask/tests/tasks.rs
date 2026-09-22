@@ -512,6 +512,19 @@ fn local_and_weekly_fuzz_runs_copy_the_committed_seeds_into_the_real_corpus() {
         "the local smoke run does not seed each target before invoking cargo-fuzz: {smoke}"
     );
 
+    seed_copier_takes_the_hidden_one_too();
+}
+
+/// Runs the seed copier against a fixture and checks it took the hidden seed as well as the visible one.
+///
+/// The copier is a POSIX shell script, and the workflow that runs it builds fuzz targets with a nightly toolchain and a sanitizer, which is unix-only.
+/// On Windows `bash` is whatever the search path happens to name, and what it names here is a WSL relay with no distribution behind it.
+#[cfg(not(unix))]
+const fn seed_copier_takes_the_hidden_one_too() {}
+
+/// Runs the seed copier against a fixture and checks it took the hidden seed as well as the visible one.
+#[cfg(unix)]
+fn seed_copier_takes_the_hidden_one_too() {
     let fixture = tempfile::tempdir()
         .unwrap_or_else(|error| panic!("could not make a fuzz-seed fixture: {error}"));
     let seed = fixture.path().join("seeds/example");
