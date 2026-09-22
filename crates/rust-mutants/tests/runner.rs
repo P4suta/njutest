@@ -547,7 +547,7 @@ fn a_windows_process_tree_is_killed_on_timeout() {
         [
             OsString::from("cmd"),
             OsString::from("/C"),
-            script.clone().into_os_string(),
+            script.into_os_string(),
         ],
         Bound::After(Duration::from_millis(500)),
     );
@@ -559,10 +559,11 @@ fn a_windows_process_tree_is_killed_on_timeout() {
         "the run ends at the bound rather than waiting for the tree it started"
     );
     std::thread::sleep(Duration::from_secs(2));
+    let marker = std::fs::metadata(&marker);
     assert!(
-        !marker.exists(),
+        matches!(marker, Err(ref error) if error.kind() == std::io::ErrorKind::NotFound),
         "the job object owns every descendant, so closing it stops the one that outlived its \
-         parent"
+         parent: {marker:?}"
     );
 }
 

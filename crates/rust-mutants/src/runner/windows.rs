@@ -141,6 +141,10 @@ impl Supervisor {
     }
 
     /// The child is created suspended, so that it can be assigned to the job before it has run an instruction: a process that has never executed cannot have forked.
+    #[expect(
+        clippy::unused_self,
+        reason = "the same signature as the unix supervisor, which configures from the group it holds"
+    )]
     pub(super) fn configure(&self, command: &mut Command) {
         command.creation_flags(CREATE_SUSPENDED);
     }
@@ -185,6 +189,10 @@ impl Supervisor {
 
     /// Closing the last handle kills whatever is still in the job.
     /// What the supervisor can say about the set it owns, for the note before an abort.
+    #[expect(
+        clippy::unused_self,
+        reason = "the same signature as the unix supervisor, which reports the group it holds"
+    )]
     pub(super) fn state(&self) -> String {
         "holding a job object".to_owned()
     }
