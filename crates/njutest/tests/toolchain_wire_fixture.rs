@@ -38,6 +38,16 @@ fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
 
     let output = verify(&fixture);
     let report = document(&fixture);
+    let lost = not_watched(&report);
+    assert!(
+        lost.is_empty(),
+        "a seam this fixture names is one the run did not watch, so comparing the block \
+         below would compare a shorter answer against a whole one, and the rows that \
+         remain carry the other seam's decisions. The report already says which of the \
+         five ways it could not, and this is that sentence:\n{}\n\n{}",
+        lost.join("\n"),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
     let found = rows(&report);
     assert!(
         !found.is_empty(),
@@ -146,6 +156,22 @@ fn document(fixture: &Fixture) -> serde_json::Value {
     )
     .expect("the report is a document");
     whole["report"]["builds"][0]["parts"][0].clone()
+}
+
+/// Every seam the configuration named that this run could not put an interposer in front of, and why.
+///
+/// `assure::run::state_unwatched` already writes one of five sentences per lost seam.
+/// Nothing read it here, so a run that lost a seam arrived as a block six rows short, and the shape of that -- one seam's capability against the other seam's decisions -- reads as a seam fate that moved rather than as a seam that was never watched.
+/// The first invites `UPDATE_FATES=1`, which would write the loss into the oracle.
+fn not_watched(report: &serde_json::Value) -> Vec<String> {
+    report["limitations"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|one| one["name"].as_str() == Some(njutest::limitation::SEAM_NOT_WATCHED))
+        .filter_map(|one| one["detail"].as_str().map(str::to_owned))
+        .collect()
 }
 
 /// Every seam the report names, in the order it names them.
