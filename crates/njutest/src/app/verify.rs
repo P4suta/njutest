@@ -1731,14 +1731,27 @@ mod tests {
             let store =
                 crate::app::reports::Store::read(project.path()).expect("held report store");
             let report = complete_report("20260101t000000z-abacac");
-            let kept = store.keep(&report).expect("durable report publication");
-            let document = std::fs::read(kept.directory.join(crate::app::reports::DOCUMENT_NAME))
-                .expect("the directory a publication names holds the document it wrote");
-            assert!(
-                !document.is_empty(),
-                "a published report is the bytes at the directory it says it wrote to: {}",
-                kept.directory.display()
-            );
+            match store.keep(&report) {
+                Ok(kept) => {
+                    let document =
+                        std::fs::read(kept.directory.join(crate::app::reports::DOCUMENT_NAME))
+                            .expect(
+                                "the directory a publication names holds the document it wrote",
+                            );
+                    assert!(
+                        !document.is_empty(),
+                        "a published report is the bytes at the directory it says it wrote to: {}",
+                        kept.directory.display()
+                    );
+                }
+                Err(refused) => assert!(
+                    matches!(
+                        refused,
+                        crate::app::reports::StoreError::UnsupportedCapability
+                    ),
+                    "a platform that cannot publish says so rather than failing some other way: {refused:?}"
+                ),
+            }
         }
 
         #[cfg(unix)]

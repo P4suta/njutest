@@ -158,6 +158,55 @@ pub(crate) enum ArtifactFailure {
     SourceChanged,
 }
 
+/// Whether the export names the pinned backend, saying which field disagreed when it does not.
+fn backend_agrees(document: &Document, expected: &Expectation<'_>) -> Result<(), Protocol> {
+    for (field, found, pinned) in [
+        (
+            "build_mode",
+            document.metadata.build_mode.as_str(),
+            KANI_BUILD_MODE,
+        ),
+        ("target", document.metadata.target.as_str(), expected.target),
+        ("rustc", document.tools.rustc.as_str(), KANI_RUSTC_VERSION),
+        ("cbmc", document.tools.cbmc.as_str(), KANI_CBMC_VERSION),
+        (
+            "goto-instrument",
+            document.tools.goto_instrument.as_str(),
+            KANI_GOTO_INSTRUMENT_VERSION,
+        ),
+    ] {
+        if found != pinned {
+            note_backend_mismatch(field, found, pinned);
+            return Err(Protocol::Backend);
+        }
+    }
+    if !document.tools.goto_cc.contains(KANI_GOTO_CC_BACKEND) {
+        note_backend_mismatch("goto-cc", &document.tools.goto_cc, KANI_GOTO_CC_BACKEND);
+        return Err(Protocol::Backend);
+    }
+    if !matches!(document.tools.solvers.as_slice(), [Solver { name, version: Nullable(None) }] if name == KANI_SOLVER)
+    {
+        note_backend_mismatch(
+            "solvers",
+            &format!("{:?}", document.tools.solvers),
+            KANI_SOLVER,
+        );
+        return Err(Protocol::Backend);
+    }
+    Ok(())
+}
+
+/// Says which pinned backend field the export disagreed with, because `Protocol::Backend` names none of them.
+fn note_backend_mismatch(field: &str, found: &str, pinned: &str) {
+    use std::io::Write as _;
+    match writeln!(
+        std::io::stderr(),
+        "njutest: the Kani export's {field} is {found:?}, and the pinned backend is {pinned:?}"
+    ) {
+        Ok(()) | Err(_) => {}
+    }
+}
+
 /// Which protocol invariant the exported result broke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Protocol {
@@ -725,16 +774,7 @@ fn validated_context<'document>(
     if document.metadata.version != KANI_EXPORT_VERSION {
         return Err(Protocol::ExportVersion);
     }
-    if document.metadata.build_mode != KANI_BUILD_MODE
-        || document.metadata.target != expected.target
-        || document.tools.rustc != KANI_RUSTC_VERSION
-        || document.tools.cbmc != KANI_CBMC_VERSION
-        || !document.tools.goto_cc.contains(KANI_GOTO_CC_BACKEND)
-        || document.tools.goto_instrument != KANI_GOTO_INSTRUMENT_VERSION
-        || !matches!(document.tools.solvers.as_slice(), [Solver { name, version: Nullable(None) }] if name == KANI_SOLVER)
-    {
-        return Err(Protocol::Backend);
-    }
+    backend_agrees(document, &expected)?;
     let [metadata] = document.harness_metadata.as_slice() else {
         return Err(Protocol::Harness);
     };
