@@ -3,9 +3,12 @@
 
 //! Talking to a real provider process: what a run holds, and what it refuses to hold.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::expect_used,
+        reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+    )
 )]
 #![cfg(unix)]
 use std::ffi::OsString;

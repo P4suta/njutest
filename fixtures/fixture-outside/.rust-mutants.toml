@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Both halves of this fixture want the count to answer, so there is no sleep pulling the bound the other way and the allowance is the only thing to size.
+#
+# It is small for the reason it is small in `fixture-hang`: a take is a locked durable round trip, about 7.3ms on Windows, so ten of them are reached in roughly a tenth of the bound and no machine puts the clock in front of them.
+# The floor is what an ordinary execution of this fixture spends, which is a count and therefore the same number everywhere.
+
+version = 1
+
+[mutation]
+timeout = "2s"
+steps = 10

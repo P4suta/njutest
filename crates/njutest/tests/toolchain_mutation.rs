@@ -5,10 +5,16 @@
 
 #![expect(
     clippy::expect_used,
-    clippy::format_push_string,
-    clippy::indexing_slicing,
-    clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::format_push_string,
+        clippy::indexing_slicing,
+        clippy::disallowed_methods,
+        reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table, and what these permit is what a test that reads a published report needs, which this platform cannot publish: those tests are behind cfg(unix) one by one, so what their shapes permit is behind it too"
+    )
 )]
 
 use njutest_devkit::fixture::copy_tree;

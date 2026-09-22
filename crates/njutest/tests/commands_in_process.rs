@@ -5,13 +5,19 @@
 
 #![expect(
     clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    clippy::too_many_lines,
-    clippy::disallowed_methods,
     reason = "the helpers that copy a fixture and run one verification are not themselves \
               tests, a setup that fails is reported by panicking, and a test reads a \
               document by the names the run it drove put there"
+)]
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::disallowed_methods,
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::too_many_lines,
+        reason = "the helpers that copy a fixture and run one verification are not themselves tests, a setup that fails is reported by panicking, and a test reads a document by the names the run it drove put there, and what these permit is what a test that reads a published report needs, which this platform cannot publish: those tests are behind cfg(unix) one by one, so what their shapes permit is behind it too"
+    )
 )]
 
 use std::ffi::OsString;

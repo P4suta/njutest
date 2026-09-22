@@ -3,10 +3,13 @@
 
 //! What a run keeps of itself, and what a later run may take away.
 
-#![expect(
-    clippy::expect_used,
-    clippy::too_many_lines,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::expect_used,
+        clippy::too_many_lines,
+        reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table, and what these permit is what a test that reads a published report needs, which this platform cannot publish: those tests are behind cfg(unix) one by one, so what their shapes permit is behind it too"
+    )
 )]
 
 #[derive(Debug, thiserror::Error)]

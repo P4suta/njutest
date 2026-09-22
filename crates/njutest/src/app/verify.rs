@@ -676,6 +676,13 @@ struct Modeling<'request, 'establishing, 'context, 'out> {
     stderr: &'out mut dyn Write,
 }
 
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::result_large_err,
+        reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
+    )
+)]
 fn complete_lattice(
     latticed: crate::report::LatticedDocument,
     completing: Completing<'_, '_, '_, '_>,
@@ -725,6 +732,13 @@ fn complete_lattice(
     ))
 }
 
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::result_large_err,
+        reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
+    )
+)]
 fn model_records(
     plan: crate::assure::model::Plan,
     modeling: Modeling<'_, '_, '_, '_>,
