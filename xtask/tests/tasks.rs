@@ -249,18 +249,23 @@ fn pre_push_type_checks_windows_cfg_with_the_pinned_target() {
          feature except the host-only benchmark feature: {windows}"
     );
 
-    let check = task("check");
-    let build = check.find("mise run build").unwrap_or(usize::MAX);
-    let cross = check.find("mise run check:windows").unwrap_or(usize::MAX);
-    let lint = check.find("mise run lint").unwrap_or(usize::MAX);
+    let cross = task("\"check:cross\"");
     assert!(
-        build < cross && cross < lint,
-        "pre-push must cross-typecheck after the native build and before the broader lint/test work: {check}"
+        cross.contains("mise run check:windows") && cross.contains("mise run lint:linux"),
+        "the cross-target reads are no longer one task a person can ask for: {cross}"
     );
+    let full = task("\"check:full\"");
     assert!(
-        repository(".github/workflows/ci.yml").contains("windows-2025"),
-        "the cross check complements rather than replaces the real Windows job"
+        full.contains("mise run check:cross"),
+        "nothing local runs the cross-target reads any more: {full}"
     );
+    let ci = repository(".github/workflows/ci.yml");
+    for runner in ["windows-2025", "ubuntu-24.04"] {
+        assert!(
+            ci.contains(runner),
+            "the cross check complements rather than replaces the real {runner} job"
+        );
+    }
 }
 
 #[test]

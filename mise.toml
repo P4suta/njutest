@@ -323,9 +323,7 @@ description = "Run every local gate a push waits for, the ones that answer quick
 run = [
   "mise run fmt:check",
   "mise run build",
-  "mise run check:windows",
   "mise run lint",
-  "mise run lint:linux",
   "mise run test:fast",
   "mise run test:doc",
   "mise run kani:verified",
@@ -335,9 +333,17 @@ run = [
   "mise run package",
 ]
 
+# Every target triple this machine can read without the machine.
+#
+# Each of these compiles the whole workspace under its own fingerprint, so one source change costs a full pass apiece — that is what put the push gate over its budget with nothing left cold to blame.
+# CI reads all three on their own runners, so a push learns from there rather than paying for it here.
+[tasks."check:cross"]
+description = "Type-check and lint the other platforms this machine can read"
+run = ["mise run check:windows", "mise run lint:linux"]
+
 [tasks."check:full"]
-description = "Everything a push waits for, and the fixture suites CI also runs"
-run = ["mise run check", "mise run test:slow"]
+description = "Everything a push waits for, and the passes CI also runs"
+run = ["mise run check", "mise run check:cross", "mise run test:slow"]
 
 [tasks.bench]
 description = "Observe what every stage costs. Numbers, never gates"
