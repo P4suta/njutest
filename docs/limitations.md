@@ -199,6 +199,19 @@ Pure computation that does not open or mutate a report store remains available.
   A caller who denies warnings for their own build — which is what a continuous integration job does — is therefore not asking for every proof of their tree to go unmade.
   The project's own `.cargo/config.toml` flags are still put back in front of the cap, because a tree that does not compile without them would not compile here either.
 
+## What a run cannot do on Windows
+
+A report is published through a capability rooted at the store's own directory, so that what a reader opens is the file this run wrote and not one a name was pointed at afterwards.
+That rooting is implemented with the POSIX directory-capability calls and has no Windows equivalent here, so `Store::keep` answers `NJ6004` on Windows rather than publishing:
+`this platform has no supported capability-rooted report publication backend`.
+
+A Windows run therefore measures, decides and prints, and cannot leave a durable report where the next run or a reader will find it.
+Everything downstream of publication — `njutest report`,
+`accept`, `bundle`, `why` against a stored run — has nothing to read.
+
+This is a deliberate refusal rather than a defect: the alternative is publishing through a path that can be replaced between the check and the write, which is the thing the capability exists to prevent.
+What it is not is documented anywhere a person would look before installing on Windows, which is why it is here.
+
 ## What a run says about itself
 
 Six of the names a report can carry are not about the code under test at all.
