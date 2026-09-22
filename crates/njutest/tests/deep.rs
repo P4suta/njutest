@@ -3,9 +3,12 @@
 
 //! The `deep-v1` soundness phase: what interpreting the suite establishes, and what it refuses to call a pass.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the helpers that build one recording and one request are not themselves tests, and a value out of range is a setup failure to report by panicking"
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::expect_used,
+        reason = "the helpers that build one recording and one request are not themselves tests, and a value out of range is a setup failure to report by panicking"
+    )
 )]
 #![cfg(unix)]
 use std::path::{Path, PathBuf};

@@ -3,9 +3,12 @@
 
 //! Running the suite under a sanitizer: what it finds, and what it says when it cannot run.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the helpers that build one request and read back what the process it started saw are not themselves tests, and a setup that did not happen is reported by panicking"
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::expect_used,
+        reason = "the helpers that build one request and read back what the process it started saw are not themselves tests, and a setup that did not happen is reported by panicking"
+    )
 )]
 #![cfg(unix)]
 use std::path::{Path, PathBuf};

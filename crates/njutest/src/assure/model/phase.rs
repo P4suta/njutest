@@ -687,6 +687,11 @@ fn create_model_crate(
 }
 
 #[cfg(not(unix))]
+#[expect(
+    clippy::create_dir,
+    reason = "the unix builder beside this one also creates exactly one directory and refuses an \
+              existing one, and create_dir_all would accept both"
+)]
 fn create_private_directory(path: &Path) -> std::io::Result<()> {
     std::fs::create_dir(path)
 }

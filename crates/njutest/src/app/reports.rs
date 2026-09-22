@@ -319,6 +319,14 @@ impl RunDirectory {
         }
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::missing_const_for_fn,
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn remove_owned(&self, published: bool) -> Result<(), StoreError> {
         #[cfg(unix)]
         {
@@ -335,6 +343,13 @@ impl RunDirectory {
         }
         #[cfg(not(unix))]
         {
+            #[cfg_attr(
+                not(unix),
+                expect(
+                    clippy::no_effect_underscore_binding,
+                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+                )
+            )]
             let _published = published;
             Err(StoreError::UnsupportedCapability)
         }
@@ -1573,18 +1588,46 @@ impl RunCapability {
         false
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn claim(_store: &Store, _name: &str) -> Result<Self, StoreError> {
         Err(StoreError::UnsupportedCapability)
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn write_new(&self, _staging: &Path, _name: &str, _bytes: &[u8]) -> io::Result<()> {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn sync_tree(&self, _staging: &Path) -> io::Result<()> {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn read_model_artifact(
         &self,
         _staging: &Path,
@@ -1594,6 +1637,13 @@ impl RunCapability {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn read_publication_file(
         &self,
         _staging: &Path,
@@ -1603,6 +1653,13 @@ impl RunCapability {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn validate_closed_tree(
         &self,
         _files: &[PublicationFile],
@@ -1611,6 +1668,13 @@ impl RunCapability {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn publish(
         &self,
         _name: &str,
@@ -1620,18 +1684,46 @@ impl RunCapability {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn published_entry_matches(&self, _name: &str) -> io::Result<bool> {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn validate_run_spelling(&self, _name: &str) -> io::Result<()> {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn staging_entry_matches(&self, _name: &str, _staging_parent: &Path) -> io::Result<bool> {
         Err(unsupported_capability())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn sync_parent(
         &self,
         _published: bool,
@@ -1655,6 +1747,13 @@ impl WorkspaceRoot {
     ///
     /// # Errors
     /// Refuses a missing, non-directory, symlinked, or unreadable workspace.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     pub(crate) fn open(path: &Path) -> Result<Self, StoreError> {
         #[cfg(unix)]
         let directory = open_directory(path).map_err(|source| StoreError::NotKept {
@@ -1722,6 +1821,13 @@ impl WorkspaceRoot {
     ///
     /// # Errors
     /// Refuses when the retained workspace descriptor cannot be duplicated.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     pub(crate) fn store(
         &self,
         configured: &crate::config::ReportDirectory,
@@ -1793,6 +1899,14 @@ impl StoredRun {
     ///
     /// # Errors
     /// Refuses symlinks, non-regular entries, oversized bytes, concurrent changes, non-UTF-8 text, and unsupported hosts.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::missing_const_for_fn,
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     pub(crate) fn read(&self, file: StoredFile) -> Result<Option<String>, StoreError> {
         #[cfg(unix)]
         {
@@ -1809,6 +1923,13 @@ impl StoredRun {
         }
         #[cfg(not(unix))]
         {
+            #[cfg_attr(
+                not(unix),
+                expect(
+                    clippy::no_effect_underscore_binding,
+                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+                )
+            )]
             let _file = file;
             Err(StoreError::UnsupportedCapability)
         }
@@ -1912,6 +2033,14 @@ impl Store {
     ///
     /// # Errors
     /// Refuses absent, aliased, symlinked, replaced, or unsupported entries.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::missing_const_for_fn,
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     pub(crate) fn open_run(&self, id: &StoredRunId) -> Result<StoredRun, StoreError> {
         #[cfg(unix)]
         {
@@ -1929,6 +2058,13 @@ impl Store {
         }
         #[cfg(not(unix))]
         {
+            #[cfg_attr(
+                not(unix),
+                expect(
+                    clippy::no_effect_underscore_binding,
+                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+                )
+            )]
             let _id = id;
             Err(StoreError::UnsupportedCapability)
         }
@@ -1938,6 +2074,14 @@ impl Store {
     ///
     /// # Errors
     /// Returns the closed index or run-directory capability failure.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::missing_const_for_fn,
+            clippy::unused_self,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     pub(crate) fn pointed_run(&self, index: Index) -> Result<Option<StoredRun>, StoreError> {
         #[cfg(unix)]
         {
@@ -1953,6 +2097,13 @@ impl Store {
         }
         #[cfg(not(unix))]
         {
+            #[cfg_attr(
+                not(unix),
+                expect(
+                    clippy::no_effect_underscore_binding,
+                    reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+                )
+            )]
             let _index = index;
             Err(StoreError::UnsupportedCapability)
         }
@@ -2069,6 +2220,13 @@ impl Store {
         format!("{}/{RUNS_NAME}/{run_id}", self.configured.as_str())
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+        )
+    )]
     fn try_clone(&self) -> io::Result<Self> {
         Ok(Self {
             runs: self.runs.clone(),
@@ -3017,6 +3175,13 @@ fn restore_from_quarantine(runs: &std::fs::File, quarantine: &str, name: &str) -
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+    )
+)]
 fn retain_with_capability(_store: &Store, _keep: u32) -> Result<Vec<PathBuf>, StoreError> {
     Err(StoreError::UnsupportedCapability)
 }
@@ -3339,6 +3504,13 @@ fn write_index(authority: &RunDirectory, index: Index, bytes: &[u8]) -> Result<(
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "this platform has no capability-rooted backend, so the body is a refusal and the signature is the one the unix backend needs"
+    )
+)]
 fn write_index(_authority: &RunDirectory, _index: Index, _bytes: &[u8]) -> Result<(), StoreError> {
     Err(StoreError::UnsupportedCapability)
 }
@@ -3373,9 +3545,12 @@ fn remember_unique_spelling(
 
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::disallowed_methods,
-        reason = "a test asserts what the filesystem says by asking it directly"
+    #![cfg_attr(
+        unix,
+        expect(
+            clippy::disallowed_methods,
+            reason = "a test asserts what the filesystem says by asking it directly"
+        )
     )]
     use super::Store;
     #[cfg(unix)]

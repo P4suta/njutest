@@ -246,6 +246,13 @@ enum CandidateError {
 }
 
 /// One candidate, checked afresh: what a run recorded is where to look, never a reason to write.
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::result_large_err,
+        reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
+    )
+)]
 fn one(
     candidate: &CandidateRecord,
     checking: &Checking<'_>,
@@ -296,6 +303,13 @@ fn one(
 }
 
 /// Writes one candidate into the tree a person is working in.
+#[cfg_attr(
+    not(unix),
+    expect(
+        clippy::result_large_err,
+        reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
+    )
+)]
 fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), CandidateError> {
     let path = root.join(&proposal.path);
     rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| CandidateError::Write {
