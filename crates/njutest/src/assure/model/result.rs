@@ -1343,7 +1343,14 @@ mod tests {
             super::resolved_path(&missing_leaf).expect("a missing leaf is typed absence"),
             Some(expected)
         );
+    }
 
+    /// Windows answers `NotFound` for a path under a file, so the distinction this is about is one only POSIX draws.
+    #[cfg(test)]
+    #[cfg(unix)]
+    #[test]
+    fn a_path_under_a_file_is_an_error_rather_than_absence() {
+        let temporary = tempfile::tempdir().expect("path protocol fixture");
         let not_directory = temporary.path().join("ordinary-file");
         std::fs::write(&not_directory, b"file").expect("ordinary file");
         assert!(

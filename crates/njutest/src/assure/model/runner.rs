@@ -1292,7 +1292,9 @@ fn attempt(invocation: &Invocation<'_>, parts: AttemptParts) -> Attempt {
     }
 }
 
+/// The runner's tests, which drive a cargo double that is a shell script and a mode bit.
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     #![expect(
         clippy::disallowed_methods,
@@ -1606,11 +1608,6 @@ exit "$FAKE_KANI_EXIT"
             .permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions).expect("fake is executable");
-    }
-
-    #[cfg(not(unix))]
-    fn fake_cargo(_path: &Path) {
-        panic!("the fake cargo fixture currently requires a POSIX shell");
     }
 
     #[cfg(unix)]
