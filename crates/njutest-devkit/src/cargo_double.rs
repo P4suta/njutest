@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 /// When `directory` is not valid UTF-8, which no fixture path is.
 #[must_use]
 pub fn package_id(directory: &Path, name: &str, version: &str) -> String {
-    let at = crate::paths::utf8(directory);
+    let at = url_path(directory);
     let named_after_it = directory
         .file_name()
         .is_some_and(|last| last == std::ffi::OsStr::new(name));
@@ -29,6 +29,19 @@ pub fn package_id(directory: &Path, name: &str, version: &str) -> String {
         format!("path+file://{at}#{version}")
     } else {
         format!("path+file://{at}#{name}@{version}")
+    }
+}
+
+/// `directory` as the path part of the `file://` URL cargo spells an identity with.
+///
+/// Cargo prints `path+file:///C:/dir` on Windows: a drive letter is a path under the URL's empty authority, and the separator is the URL's rather than the platform's.
+/// Joining the platform spelling straight on gives `path+file://C:\dir`, which names a host called `C:`, and a double that says that is not saying what cargo says.
+fn url_path(directory: &Path) -> String {
+    let at = crate::paths::utf8(directory);
+    if cfg!(windows) {
+        format!("/{}", at.replace('\\', "/"))
+    } else {
+        at.to_owned()
     }
 }
 
