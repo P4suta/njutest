@@ -1300,9 +1300,15 @@
               "additionalProperties": false,
               "required": [
                 "entered",
+                "entered_bodies",
                 "infected",
+                "infected_sites",
                 "loose",
+                "measured",
+                "passed",
+                "reached_sites",
                 "sites",
+                "summary",
                 "target",
                 "tests"
               ],
@@ -1310,6 +1316,69 @@
                 "target": {
                   "type": "string",
                   "minLength": 1
+                },
+                "measured": {
+                  "description": "Which whole run of the target with nothing active the record was measured on: the baseline routing rests on, or an original-code control run to confirm a kill.",
+                  "enum": [
+                    "baseline",
+                    "control"
+                  ]
+                },
+                "passed": {
+                  "description": "The tests that run passed, which is what the record is the reach of.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "summary": {
+                  "description": "What the run's own summary said, in the protocol it answered in: under libtest, a comparison stands only where `tests_run` equals the number of names in `passed`; a custom harness prints no summary; a remembered baseline's run is not here to say.",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["protocol", "tests_run"],
+                      "properties": {
+                        "protocol": { "const": "libtest" },
+                        "tests_run": { "type": ["integer", "null"], "minimum": 0 }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["protocol"],
+                      "properties": {
+                        "protocol": { "enum": ["custom", "unanswered", "remembered"] }
+                      }
+                    }
+                  ]
+                },
+                "reached_sites": {
+                  "description": "Every mutant site anything of the target reached.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "entered_bodies": {
+                  "description": "Every branch body anything of the target entered, by the marker at its first statement.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "infected_sites": {
+                  "description": "Every mutation anything of the target saw its guard's two branches differ over.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
                 },
                 "tests": {
                   "type": "integer",

@@ -150,6 +150,8 @@ whether the mutations nothing noticed and the `surviving-mutant` findings are th
 Given the run's recording as well, it holds the proof layers to what the run wrote down: no target a proof removed from what could notice a mutation may then be the target that killed it, a route that says no measured target reaches a mutation may not then run one against it, a route the measurement widened has to run something, and a route may not say both that it read an answer back and that it refused one.
 The reach layer is re-derived rather than confirmed, because a route names the targets it removed every execution from: each of those names is held to the targets the run reports, to the targets the same route kept, and to the proofs that route names — and a route that removed every execution while naming nobody is a violation, since nothing reaches a place only if somebody was in a position to notice and did not.
 It reads the recording as lines of JSON rather than through the code that wrote them, and a run recorded without `--trace` leaves the layers `unaudited` rather than passed.
+A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds or of shards with exit code 2 rather than reading one of them as the whole.
+Such a report states no verdict — the verdict is derived from its records — so the verdict is `unaudited` there, since one this audit derived would be a verdict it agreed with by construction.
 This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked whether it agrees with itself.
 
@@ -157,6 +159,11 @@ The `wire` layer is the same rule for the seams.
 It mints the fault catalogue again from the exchanges the recording holds — by the rules and the identity recipe written out in `xtask/src/wire.rs`, which never calls the runner's — and holds it to what the run says became of each question: a question the exchanges license and the recording has nobody putting, a question the run put that no exchange licenses, a question nothing noticed that the report does not name,
 and a finding the report carries that no run put.
 The identity recipe is pinned as a literal digest in `xtask/tests/wire.rs` and again in `crates/njutest/tests/derive.rs`, so the two implementations agreeing is evidence rather than two copies of one mistake.
+
+The `drift` layer is the same rule for the measurement routing rests on ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+It reads the engine recording under `builds/*/engine/` beside the runner's, and re-derives from its `touch` records alone which targets reached something on an original-code control that they did not reach on their baseline, over the same passing tests.
+Each measured target is held to the report's drift record about it (`held`, `moved`, or `not-measured`), a moved one to an `unstable-baseline` finding and every such finding to a moved target, and a target no comparable control recorded to the `drift-not-measured` limitation.
+Its planted defect is a control that reached a site its baseline never did, recorded as `held`.
 
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's own runs.
 It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, none of which calls the engine's code; among them:
@@ -183,7 +190,7 @@ Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-
 
 ```console
 $ mise run dogfood:audit
-proofaudit: 9 planted defects found first, each by the layer it was planted for, and the clean specimen drew none
+proofaudit: 10 planted defects found first, each by the layer it was planted for, and the clean specimen drew none
 proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 violations, 1 unaudited
 ```
 
@@ -191,7 +198,7 @@ Where the recording does not carry enough to decide something again — which su
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
 One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
-Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its nine layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
+Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its ten layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed
 

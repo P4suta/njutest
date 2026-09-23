@@ -394,6 +394,198 @@ fn what_a_route_would_take_is_the_tests_it_names_and_not_the_target_they_are_in(
     );
 }
 
+/// What one control of `target` that was asked to observe established, as target and steadiness.
+fn observed(session: &Session, target: &str) -> Vec<(String, rust_mutants::touch::Steadiness)> {
+    let request = rust_mutants::session::Request::new(String::new()).with_target(target);
+    let controlled = session
+        .control(
+            &request,
+            &Cancel::new(),
+            rust_mutants::session::Observing::Reach,
+        )
+        .expect("control");
+    assert_eq!(
+        controlled.result.outcome(),
+        rust_mutants::outcome::Outcome::Survived,
+        "the original code passes: {}",
+        njutest_devkit::process::strict_utf8(&controlled.result.output)
+    );
+    controlled
+        .observed
+        .into_iter()
+        .map(|one| (one.target, one.steadiness))
+        .collect()
+}
+
+#[test]
+fn a_control_of_a_suite_that_reaches_what_it_reached_says_its_baseline_held() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let session = prepared(&fixture);
+    assert_eq!(
+        observed(&session, LIBRARY),
+        [(LIBRARY.to_owned(), rust_mutants::touch::Steadiness::Held)],
+        "two passing runs of one target over one tree reached one set"
+    );
+    let quiet = session
+        .control(
+            &rust_mutants::session::Request::new(String::new()).with_target(LIBRARY),
+            &Cancel::new(),
+            rust_mutants::session::Observing::Nothing,
+        )
+        .expect("control");
+    assert!(
+        quiet.observed.is_empty(),
+        "a control asked to observe nothing records nothing: {:?}",
+        quiet.observed
+    );
+}
+
+#[test]
+fn a_control_of_a_suite_whose_reach_depends_on_an_earlier_process_says_its_baseline_moved() {
+    let fixture = Fixture::copy("fixture-drifts");
+    let session = prepared(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    let first = mutant(&session, "add-to-sub", 9);
+    let second = mutant(&session, "mul-to-div", 15);
+    let said = observed(&session, target);
+    let [(named, rust_mutants::touch::Steadiness::Moved(moved))] = said.as_slice() else {
+        panic!("the control reached what the baseline did not: {said:?}");
+    };
+    assert_eq!(named, target);
+    assert!(
+        moved.reached.lost.contains(&first) && moved.reached.gained.contains(&second),
+        "the baseline was the first process to look and the control was not: {moved:?}"
+    );
+}
+
+/// A library whose one test fails the first time any process of a run runs it, for a reason that is not the temporary directory, and reaches one function or the other by what an earlier attempt left in that directory.
+const FLAKES_ONCE: &str = r#"// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A test that flakes once per run and reaches by what its own temporary directory holds.
+
+/// Reached where the temporary directory was left empty.
+#[must_use]
+pub fn first_visit(n: u32) -> u32 {
+    n + 1
+}
+
+/// Reached where an earlier attempt left something in the temporary directory.
+#[must_use]
+pub fn return_visit(n: u32) -> u32 {
+    n * 2
+}
+
+/// What the test checks either way.
+#[must_use]
+pub fn sum(a: u32, b: u32) -> u32 {
+    a + b
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn adds() {
+        let own = std::env::temp_dir().join("left-by-an-earlier-attempt");
+        if own.exists() {
+            std::hint::black_box(super::return_visit(2));
+        } else {
+            std::hint::black_box(super::first_visit(1));
+        }
+        assert!(own.exists() || std::fs::write(&own, b"").is_ok());
+        let run = std::env::temp_dir().parent().map(|parent| parent.join("flaked-once"));
+        let flaked = run.is_some_and(|mark| mark.exists() || std::fs::write(&mark, b"").is_err());
+        assert!(flaked, "the first process of the run fails, for a reason of its own");
+        assert_eq!(super::sum(2, 3), 5);
+    }
+}
+"#;
+
+#[test]
+fn a_baseline_that_passed_only_on_retry_is_not_compared_with_a_fresh_control() {
+    let fixture = Fixture::copy("fixture-drifts");
+    fixture.write("src/lib.rs", FLAKES_ONCE.as_bytes());
+    let session = prepared(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    assert_eq!(
+        observed(&session, target),
+        [(
+            target.to_owned(),
+            rust_mutants::touch::Steadiness::NotMeasured(
+                rust_mutants::touch::Unmeasured::BaselineRetried
+            )
+        )],
+        "the baseline's retry saw what its failed first attempt left in the directory they \
+         share, and a control gets a fresh one, so what differs between them is how the run \
+         measured: the premise that the two ran under the same conditions does not hold"
+    );
+}
+
+const PRINTS_A_RESULT_LINE: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A suite one of whose tests writes a line that reads as another test's result.
+
+/// The sum.
+#[must_use]
+pub fn sum(a: u32, b: u32) -> u32 {
+    a + b
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+
+    #[test]
+    fn adds() {
+        let mut out = std::io::stdout();
+        assert!(out.write_all(b\"test ghost ... ok\\n\").is_ok());
+        assert_eq!(super::sum(2, 2), 4);
+    }
+}
+";
+
+#[test]
+fn a_run_whose_parsed_tests_do_not_come_to_its_own_summary_is_not_compared() {
+    let fixture = Fixture::copy("fixture-drifts");
+    fixture.write("src/lib.rs", PRINTS_A_RESULT_LINE.as_bytes());
+    let session = prepared(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    assert_eq!(
+        observed(&session, target),
+        [(
+            target.to_owned(),
+            rust_mutants::touch::Steadiness::NotMeasured(rust_mutants::touch::Unmeasured::Unparsed)
+        )],
+        "a line the suite wrote past libtest's capture reads as a result, so the passed tests a \
+         run names are the parser's and not the harness's: comparing two such sets would let \
+         the parser raise a finding about the suite"
+    );
+    assert!(
+        session.touched().limitations.contains(&format!(
+            "{}:{target}",
+            rust_mutants::limitation::BASELINE_PASSED_UNPARSED
+        )),
+        "and the baseline says so against the target's name: {:?}",
+        session.touched().limitations
+    );
+}
+
+#[test]
+fn a_harness_with_no_summary_is_not_said_to_have_fallen_short_of_one() {
+    let fixture = Fixture::copy("fixture-custom-harness");
+    let session = prepared(&fixture);
+    let limitations = &session.touched().limitations;
+    assert!(
+        !limitations
+            .iter()
+            .any(|one| one.starts_with(rust_mutants::limitation::BASELINE_PASSED_UNPARSED)),
+        "a custom harness prints no summary to be short of, and says `custom-harness` already; \
+         telling a reader its named tests did not come to a count it never gave is false: \
+         {limitations:?}"
+    );
+}
+
 const ITEM_REACH: &str = "fixture-item-reach/lib/fixture_item_reach";
 
 /// The item of `fixture-item-reach` a reader names `name`.

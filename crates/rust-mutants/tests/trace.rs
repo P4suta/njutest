@@ -922,6 +922,12 @@ fn one_of_each_measurement(recorder: &Recorder) {
     });
     recorder.touch(rust_mutants::trace::TouchRecord {
         target: "demo/lib/demo".to_owned(),
+        measured: rust_mutants::trace::Measurement::Baseline,
+        passed: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
+        summary: rust_mutants::trace::SummaryRecord::Libtest { tests_run: Some(3) },
+        reached_sites: vec![0, 1, 2, 3, 4, 5, 6],
+        entered_bodies: Vec::new(),
+        infected_sites: vec![1, 2],
         tests: 3,
         sites: 7,
         loose: 1,
