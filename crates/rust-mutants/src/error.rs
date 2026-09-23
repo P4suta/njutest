@@ -480,7 +480,7 @@ snapshot_code!(
     SENTINEL_OTHER_TOOLCHAIN,
     "RM5008",
     "the crate planted for the routing layers was built by another compiler than the run's",
-    "the planted crate names the run's toolchain in its own rust-toolchain.toml; check that rustup can use that toolchain directory, or run with the toolchain the tree names installed"
+    "the planted crate is built by the binaries in the run's own sysroot, so they answered with another version than the run's rustc: the toolchain directory is broken or mixed; reinstall it, or, where the run's rustc names no sysroot, make the cargo on PATH the one the tree resolves to"
 );
 
 /// Every failure the engine reports.

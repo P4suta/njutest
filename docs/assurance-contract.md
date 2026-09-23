@@ -243,7 +243,8 @@ A pair is planted for every form of evidence a proof reads, derived from the clo
 | `never-infected:inert-comparison` | `le-to-lt` where the two sides are never equal | the same rule where the test makes them equal |
 
 The planted crate is built by the compiler the tree under test resolves to, named by path: the run's located toolchain is handed to the sentinels, and its sysroot's own `cargo`, `rustc` (as `RUSTC`) and `rustdoc` (as `RUSTDOC`) build the planted crate, so no toolchain file, rustup override or version-manager shim in the scratch directory decides which compiler answers.
-A planted session that still reports another `rustc` stops the run with `RM5008` rather than vouching for a layer with another compiler's answer; by construction it never fires.
+That holds by construction where the run's `rustc` names its sysroot, which rustup's and a system toolchain's both do; where it names none, the planted crate is built by the `cargo` and `rustc` the run located on `PATH`, which a directory-sensitive shim could answer for differently.
+Either way a planted session that reports another `rustc` stops the run with `RM5008` rather than vouching for a layer with another compiler's answer.
 The caller's harness arguments are not carried over, because they name and select the caller's tests and would select the planted ones out of the measurement; what a layer reads is attributed by test thread, which no harness argument changes.
 
 Every answer is a `sentinel` event of the trace.
