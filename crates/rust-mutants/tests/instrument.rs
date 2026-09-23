@@ -1050,7 +1050,7 @@ fn a_probed_return_asks_what_the_value_already_held_on_the_branch_that_keeps_it(
     let source = "pub fn f(a: i32) -> i32 {\n    return a;\n}\n";
     let text = instrument_probing(source);
     assert!(
-        text.contains("else { __rm::undefaulted(0, (a)) }"),
+        text.contains("else { __rm::undefaulted(0, a) }"),
         "the call takes the original branch and answers with it: {text}"
     );
 }
