@@ -43,9 +43,12 @@ It ran with its guards silent.
 4. **The two runs are measured under equal conditions first.** A baseline ran with the run's shared scratch as its temporary directory, and a control with a fresh directory of its own.
    A suite that wrote into its temporary directory would then reach differently on the two for a reason that is about how the run measured, and a finding raised on it would be a finding about the apparatus — the class [ADR 0023](0023-a-run-may-not-conclude-from-how-it-measured.md) names.
    Every baseline process now gets a fresh execution-style scratch of its own, as every control and every mutant execution does, so a difference between them is a difference in the suite.
+   A target's baseline keeps that one directory across the processes it may take — the retry of a target that did not pass, and the rerun of one that could not record — because a retry that recovers from what its first attempt left is the behaviour `baseline-passed-on-retry` already names, and a suite that recovers only that way has a control, fresh, that does not pass and confirms no kill on it.
    Nothing about a verdict moved when that changed: the fates of every fixture and the differential of `rust-mutants-cli` are the same before and after.
 
-5. **A moved target is a finding, not a repair.** `unstable-baseline` names the target and counts the dispositions resting on the moved measurement that a proof decided outright: mutations a discharge on that target removed the execution of, and `unreached` claims, each of which says that target reached nothing.
+5. **A moved target is a finding, not a repair.** `unstable-baseline` names the target and counts the dispositions resting on the moved measurement that a proof decided outright: mutations a discharge on that target removed the execution of and that nothing killed, and `unreached` claims, each of which says that target reached nothing.
+   A mutation every reaching target of which was discharged is `survived` in this report, not `proved`, which is kept for the compiler's equivalence proof; so the count is of survivors whose route discharged the target, not of a `proved` column.
+   A kill is existential and rests on no discharge, so a killed mutation is not counted even where its route discharged the target.
    It is not a defect in the code under test, so the verdict is `INSUFFICIENT` rather than `DEFECT`.
    Re-executing those dispositions without the proofs that rested on the moved record is the repair, and it is not done here; it is the next change, and until it lands the finding is what a reader acts on.
 
@@ -55,6 +58,7 @@ It ran with its guards silent.
 7. **Where it is recorded.** Each catalog part records one drift record per measured target — `held`, `moved` with what moved, or `not-measured` with why — and a checkpoint keeps what an interrupted run observed, so a resumed run does not lose a control it will not run again.
    A part that measured the whole catalog raises the finding and the limitation from its own records.
    A shard does not: the count is over the whole catalog and a target unmeasured in one part may be measured in another, so `njutest merge` raises both over the combined records, the fourth way out of [ADR 0023](0023-a-run-may-not-conclude-from-how-it-measured.md).
+   A shard in which a target moved concludes `INSUFFICIENT` rather than `PARTIAL`, because the fact that it moved needs no other part.
 
 8. **The audit came first.** The `drift` layer of `xtask proofaudit` re-derives, from the engine recording's `touch` records alone, which targets held, moved, or were not measured, and holds the report's drift records, findings, and limitation to it in both directions.
    It was written, and a defect planted for it, before the runner raised anything ([ADR 0022](0022-composition-needs-two-layers-answering-one-question.md) §3).
@@ -67,8 +71,12 @@ It ran with its guards silent.
 - The control costs nothing it did not already cost: it ran before, and only its guards are now asked.
   Where a platform cannot record, the rerun without recording is one more process for that target, once.
 - A remembered baseline ([ADR 0014](0014-the-guards-are-the-measurement.md), `measurements`) is read back without running anything, so it could carry a record that moved on the run that wrote it into every run after.
-  njutest never recalls one; the engine may, and a recalled baseline would have to carry its own drift standing, and be refused where its standing was not `held`, before this comparison could be made against it.
-  Until then a comparison against a recalled record is one against a run nobody watched, and the engine does not make it.
+  njutest never recalls one, so every comparison it makes is against a baseline that ran in the same run.
+  The engine compares against whatever baseline its session holds; a caller that recalls one and asks a control to observe compares against a record nobody watched this run.
+  Before that comparison could mean what this one does, a remembered baseline would have to carry the standing the run that wrote it established, and be refused as an answer where that standing was not `held`.
+- Writing the audit first found that `xtask proofaudit` had not been reading real runs at all.
+  A complete report holds its facts per build and per part, the audit read a flat document, and every run of `njutest verify` was refused with exit code 2; flattened by hand, the one real run tried drew nine violations, every one of them a runner `mutant-exec` naming its target by digest where the route named it by name.
+  The audit now projects a report of one build measured whole onto the view it re-decides, and the execution names its target as the route does, so the layer this ADR adds is held to a real recording rather than only to its planted specimen.
 - The comparison sees only what the guards see.
   A suite whose behaviour depends on the environment in a way no guard records — a branch with no mutant inside it — moves without this noticing, the blind spot every layer of [ADR 0004](0004-proof-layers-not-budgets.md) shares.
 

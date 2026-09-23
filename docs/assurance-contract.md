@@ -97,6 +97,14 @@ Reach is decided by the guards the instrumented build compiled in, and the one r
 Each guard appends the site it evaluated under the name of the thread it evaluated it on, libtest names a test's thread after the test, and what comes back is therefore per test rather than per target.
 Nothing is measured twice because nothing is measured a second time at all: the measurement is the baseline.
 
+That makes one premise carry every route: what a target reaches is a function of the target, and not of the order, the clock, or what an earlier process of the run left behind.
+The run checks it where it already runs a target a second time.
+The original-code control that confirms a kill runs the whole target again under the conditions the baseline ran under — the same arguments, the same environment, a fresh temporary directory of its own — and its guards record too.
+Where it passed exactly the tests the baseline passed and the target's union of sites reached, bodies entered, or sites infected differs, the baseline record is one sample rather than a measurement, and the report raises `unstable-baseline` about the target, counting the `unreached` claims and the discharged executions that rest on it.
+One such observation is enough; a counterexample does not wait for a second.
+A measured target no comparable control recorded is named by `drift-not-measured`, because a proof read off it rests on one run.
+This release reports a moved target and does not yet run again what rested on it ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+
 The decision widens whenever the evidence cannot carry it, and every widening runs more rather than less.
 The route names which one it was:
 
