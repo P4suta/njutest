@@ -140,6 +140,8 @@ pub enum Command {
     Explain(Explain),
     /// Say what a run's recording holds behind one claim.
     Why(Why),
+    /// Say, item by item, what a run found pinned and what it found free.
+    Spec(Spec),
     /// Record that a reviewer looked at a surviving mutant.
     Accept(Accept),
     /// Go through one run's gaps, one at a time, deciding as you read.
@@ -335,6 +337,19 @@ pub struct Explain {
     /// The mutant, by identity or by any prefix that names exactly one.
     #[arg(value_name = "MUTANT")]
     pub mutant: String,
+    /// The run to read.
+    /// The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
+}
+
+/// `njutest spec`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Spec {
+    /// What to specify: a file, an item as the source names it, or `PATH:ITEM`.
+    /// Every item the run changed by default.
+    #[arg(value_name = "SUBJECT")]
+    pub subject: Option<String>,
     /// The run to read.
     /// The latest by default.
     #[arg(long, value_name = "RUN")]

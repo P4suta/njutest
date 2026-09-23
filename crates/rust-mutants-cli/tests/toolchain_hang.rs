@@ -32,21 +32,17 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
 }
 
 /// What to add to a failure when the row says the clock answered instead of the count, and nothing when it does not.
-///
-/// The count and the bound are both timers, so which one answers is the one that arrives first, and on a machine slow enough that is the bound.
-/// This test then fails saying only that an outcome was `waited` where `step_limit_reached` was wanted, which reads as a broken step protocol and is not one: the reader goes looking at machinery that is working.
-/// The allowance is sized so that it takes roughly a fifteenth of the bound, so a run that lost this is a run where a take cost fifteen times what it costs here, and the number to change is in the fixture rather than in the engine.
 fn outran_by_the_clock(row: &serde_json::Value) -> String {
     if row["outcome"].as_str() != Some("waited") || !row["step_notice"].is_null() {
         return String::new();
     }
     format!(
-        "\n\nThe bound answered before the count did, which is this machine being slow rather \
-         than the step protocol being broken: the execution took {duration}ms of a bound \
-         that the allowance is sized to reach in about a fifteenth of, and left no step \
-         notice because it never reached the allowance. Lower `[mutation] steps` in \
-         fixtures/fixture-hang/.rust-mutants.toml — it costs nothing and is bounded below \
-         only by what an ordinary execution of this fixture spends, which is five",
+        "\n\nThe clock answered before the count did after {duration}ms, and left no step \
+         notice. A counting execution is only stopped by the clock when it raises no \
+         boundary for a whole bound, which says the loop stopped taking its guard, or when \
+         it reaches the ceiling of ten bounds still counting, which says a take cost more \
+         than a tenth of a bound over ten; that one is this machine, and the number to \
+         lower is `[mutation] steps` in fixtures/fixture-hang/.rust-mutants.toml",
         duration = row["duration_ms"].as_u64().unwrap_or_default()
     )
 }
@@ -156,6 +152,31 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
         "the finite count and clock facts remain distinct without turning either into a \
          proof that the mutation cannot terminate: {still}"
     );
+}
+
+#[test]
+fn a_test_slower_than_the_bound_is_waited_for_while_it_keeps_moving() {
+    let fixture = Fixture::copy("fixture-hang");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[mutation]\ntimeout = \"1s\"\nsteps = 1000\n",
+    )
+    .expect("the one-second bound");
+    let output = run(&fixture, &[("FIXTURE_HANG_STRIDE_MS", "50".to_owned())]);
+    assert!(
+        output.status.code() == Some(2),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let moving = row(&fixture, "gt-to-ge", 25);
+    assert_eq!(
+        moving["outcome"].as_str(),
+        Some("survived"),
+        "a test that passes through the mutated site every fifty milliseconds for two \
+         seconds is slower than the one-second bound and never quiet for one, so the run \
+         waits for it and it answers: {moving}"
+    );
+    assert_eq!(moving["retried"].as_bool(), Some(false), "{moving}");
 }
 
 #[test]

@@ -1612,6 +1612,7 @@ pub fn record(
         .collect();
     report.findings.extend(mutation.findings(accepted));
     report.drift.clone_from(&mutation.drift);
+    report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
         report
             .findings

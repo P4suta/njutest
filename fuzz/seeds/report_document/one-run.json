@@ -181,6 +181,12 @@
                 "message": "libtest ignored it"
               }
             ],
+            "sources": [
+              {
+                "path": "crates/core/src/lib.rs",
+                "digest": "3df137e08da293bebdb5cbe1b81fcae6af75992a24c583f47e8040baecbf123a"
+              }
+            ],
             "mutants": [
               {
                 "catalog_index": 0,
