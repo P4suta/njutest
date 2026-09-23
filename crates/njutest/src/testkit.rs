@@ -836,3 +836,29 @@ pub fn every_model_uncertainty() -> Vec<crate::report::ModelUncertainty> {
     }
     every
 }
+
+/// Records, for every file the rows and findings of `report` name, a digest as a run that read the file would have, which a report assembled by hand needs before the audit accepts it.
+///
+/// The digest is the SHA-256 of the path, not of any file's bytes, so a test that reads a real file records that file's own digest instead.
+#[cfg(feature = "testkit")]
+pub fn read_every_named_file(report: &mut crate::report::BuildReport) {
+    let named: Vec<String> = report
+        .mutants
+        .iter()
+        .map(|row| row.path.clone())
+        .chain(
+            report
+                .findings
+                .iter()
+                .filter_map(|finding| finding.path.clone()),
+        )
+        .collect();
+    for path in named {
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, path.as_bytes());
+        report
+            .sources
+            .entry(path)
+            .or_insert_with(|| rust_mutants::id::HexDigest::finish(hasher));
+    }
+}

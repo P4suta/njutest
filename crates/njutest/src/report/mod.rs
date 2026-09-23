@@ -1599,6 +1599,7 @@ pub struct BuildPartEvidence {
     /// The baseline target facts, in canonical target order.
     targets: Vec<TargetRecord>,
     /// The SHA-256 of each file this source's mutants were read from, as it read them.
+    #[serde(serialize_with = "sources_wire::serialize")]
     sources: BTreeMap<String, rust_mutants::id::HexDigest>,
     /// Every mutation this source judged.
     mutants: Vec<MutantRecord>,
@@ -1651,6 +1652,7 @@ struct BuildPartEvidenceWire {
     candidates: Vec<CandidateRecord>,
     seams: Vec<SeamRecord>,
     targets: Vec<TargetRecord>,
+    #[serde(deserialize_with = "sources_wire::deserialize")]
     sources: BTreeMap<String, rust_mutants::id::HexDigest>,
     mutants: Vec<MutantRecord>,
     findings: Vec<Finding>,
@@ -1682,6 +1684,60 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
         };
         validate_part_evidence(&held).map_err(serde::de::Error::custom)?;
         Ok(held)
+    }
+}
+
+/// The wire spelling of a part's source digests: one closed object per file in path order, which a reader holds to one entry for each path.
+mod sources_wire {
+    use std::collections::BTreeMap;
+
+    use rust_mutants::id::HexDigest;
+    use serde::{Deserialize, Serialize};
+
+    /// One file, as the document writes it.
+    #[derive(Serialize)]
+    struct Written<'a> {
+        path: &'a str,
+        digest: &'a HexDigest,
+    }
+
+    /// One file, as the document is read.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Read {
+        path: String,
+        digest: HexDigest,
+    }
+
+    /// Writes each file's digest as one object, in path order.
+    pub(super) fn serialize<S: serde::Serializer>(
+        sources: &BTreeMap<String, HexDigest>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        sources
+            .iter()
+            .map(|(path, digest)| Written { path, digest })
+            .collect::<Vec<Written<'_>>>()
+            .serialize(serializer)
+    }
+
+    /// Reads each file's digest, refusing a path out of order or written twice, so the one spelling a document has is the map's.
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<String, HexDigest>, D::Error> {
+        let mut sources: BTreeMap<String, HexDigest> = BTreeMap::new();
+        for Read { path, digest } in Vec::<Read>::deserialize(deserializer)? {
+            if sources
+                .last_key_value()
+                .is_some_and(|(before, _digest)| *before >= path)
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "the source {path:?} is repeated or out of path order"
+                )));
+            }
+            sources.insert(path, digest);
+        }
+        Ok(sources)
     }
 }
 
@@ -5187,6 +5243,8 @@ pub struct Conclusion {
     pub findings: Vec<Finding>,
     /// Every build's limitations.
     pub limitations: Vec<Limitation>,
+    /// The SHA-256 of each file the run's mutants were read from, which every part and build agreed on.
+    pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
 }
 
 /// One partial report envelope consumed by a complete shard merge.
@@ -5897,6 +5955,16 @@ impl Report {
                         .iter()
                         .flat_map(|part| part.limitations.iter().cloned())
                         .chain(merged_drift_limitation(build))
+                })
+                .collect(),
+            sources: self
+                .builds
+                .iter()
+                .flat_map(|build| build.parts.iter())
+                .flat_map(|part| {
+                    part.sources
+                        .iter()
+                        .map(|(path, digest)| (path.clone(), digest.clone()))
                 })
                 .collect(),
         })

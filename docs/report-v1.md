@@ -157,6 +157,16 @@ A part that measured the whole catalog raises `unstable-baseline` about each mov
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
 
+## Sources
+
+Every part carries `sources`, one `{ path, digest }` per file its mutants were read from, in path order: the SHA-256 of the file's bytes as the run read them, taken from the catalog, which already refuses two digests for one file.
+It is what lets a reader of the report tell the file the run measured from the file there now.
+Every surface that quotes source code — the terminal page, the review loop, the briefing, the language server — draws a line only from a file whose SHA-256 now is the one recorded; a file edited since the run is said to have changed, never drawn as though it were the code the run measured, even when the edited line still holds the text the run replaced.
+The language server places nothing in such a file and says instead which run measured it.
+
+A row or finding naming a file with no entry is refused, and so are two parts or builds of one run that recorded different digests for one file, since then they did not read one tree.
+A document that writes a path twice, or out of path order, is not read: a file has one digest, and a document has one spelling of it.
+
 ## Shards and projections
 
 A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.

@@ -122,7 +122,7 @@ fn place(item: &str, from: u32, lines: &[&str], spots: Vec<Spot>) -> Place {
             .map(|(at, text)| {
                 (
                     from.saturating_add(u32::try_from(at).unwrap_or(0)),
-                    (*text).to_owned(),
+                    njutest::presentation::MeasuredLine::specimen(text),
                 )
             })
             .collect(),
@@ -255,10 +255,10 @@ fn cases() -> Vec<(&'static str, Told)> {
             ),
         ),
         (
-            "a file that moved under the run",
+            "a file edited since the run read it",
             told(
                 vec![Place {
-                    instead: Some(Missing::Moved),
+                    instead: Some(Missing::Edited),
                     excerpt: Vec::new(),
                     ..place(
                         "sign",
@@ -329,7 +329,9 @@ fn cases() -> Vec<(&'static str, Told)> {
                         .to_owned(),
                     at: Some(site(
                         (4, 5),
-                        Excerpt::Read("    undefined_function();".to_owned()),
+                        Excerpt::Read(njutest::presentation::MeasuredLine::specimen(
+                            "    undefined_function();",
+                        )),
                         "cannot find function `undefined_function` in this scope",
                         18,
                     )),

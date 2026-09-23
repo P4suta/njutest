@@ -3,7 +3,7 @@
 
 //! What a person is told, drawn for a terminal.
 
-use super::{Diagnostic, Excerpt, Headline, Missing, Place, Site, Style, Telling, Terminal, Told};
+use super::{Diagnostic, Excerpt, Headline, Place, Site, Style, Telling, Terminal, Told};
 
 /// What a run has to say, drawn for `terminal`.
 #[must_use]
@@ -77,11 +77,11 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
                 "{:>gutter$} {} {}",
                 telling.painted(Style::Frame, &line.to_string()),
                 telling.frame(strokes.rule),
-                telling.lit(text, &here)
+                telling.lit(text.text(), &here)
             ),
         );
         for spot in here {
-            for marked in telling.spot(spot, gutter, text) {
+            for marked in telling.spot(spot, gutter, text.text()) {
                 super::line(
                     out,
                     format_args!("{:gutter$} {} {marked}", "", telling.frame(strokes.beside)),
@@ -334,6 +334,7 @@ fn at(out: &mut String, site: &Site, gutter: usize, telling: Telling) {
     );
     match &site.excerpt {
         Excerpt::Read(line) => {
+            let line = line.text();
             let rule = telling.frame(strokes.rule);
             let beside = telling.frame(strokes.beside);
             super::line(out, format_args!("{:gutter$} {rule}", ""));
@@ -348,18 +349,7 @@ fn at(out: &mut String, site: &Site, gutter: usize, telling: Telling) {
                 super::line(out, format_args!("{:gutter$} {beside} {caret}", ""));
             }
         }
-        Excerpt::Instead(Missing::Moved) => aside(
-            out,
-            gutter,
-            "the file has changed since the run, so the line is not shown",
-            telling,
-        ),
-        Excerpt::Instead(Missing::Unreadable) => aside(
-            out,
-            gutter,
-            "the file could not be read, so the line is not shown",
-            telling,
-        ),
+        Excerpt::Instead(missing) => aside(out, gutter, missing.why(), telling),
     }
 }
 
