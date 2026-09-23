@@ -861,7 +861,7 @@ impl Session {
         if cancel.is_cancelled() {
             return Ok(None);
         }
-        let ran = result.tests_run;
+        let ran = result.tests_run();
         let answer = (result.outcome() == crate::outcome::Outcome::Survived && ran == Some(asked))
             .then_some(result.duration);
         if answer.is_none() {
@@ -1263,7 +1263,7 @@ impl Session {
             step_notice: result.step_notice().cloned(),
             exit_code: result.exit_code,
             duration_ms: duration_ms(result.duration)?,
-            tests_run: result.tests_run,
+            tests_run: result.tests_run(),
             signal: result.signal,
             failed_tests: result.failed_tests.clone(),
             timeout_ms: duration_ms(timeout)?,
@@ -1330,7 +1330,7 @@ impl Session {
                 step_notice: result.step_notice().cloned(),
                 exit_code: result.exit_code,
                 duration_ms: duration_ms(result.duration)?,
-                tests_run: result.tests_run,
+                tests_run: result.tests_run(),
                 signal: result.signal,
                 failed_tests: result.failed_tests.clone(),
                 timeout_ms: duration_ms(timeout)?,
@@ -1504,7 +1504,7 @@ impl Session {
                 step_notice: result.step_notice().cloned(),
                 exit_code: result.exit_code,
                 duration_ms: duration_ms(result.duration)?,
-                tests_run: result.tests_run,
+                tests_run: result.tests_run(),
                 signal: result.signal,
                 failed_tests: result.failed_tests.clone(),
                 timeout_ms: duration_ms(timeout)?,
@@ -2085,9 +2085,8 @@ mod kani_laws {
             exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
-            protocol: Protocol::Unanswered,
+            protocol: crate::execute::Protocol::Unanswered,
             summary: None,
-            tests_run: None,
             signal: None,
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
@@ -2473,7 +2472,6 @@ const fn unreached() -> MutantResult {
         output: Vec::new(),
         protocol: Protocol::Unanswered,
         summary: None,
-        tests_run: None,
         signal: None,
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
@@ -2505,7 +2503,6 @@ mod tests {
             output: Vec::new(),
             protocol: crate::execute::Protocol::Unanswered,
             summary: None,
-            tests_run: None,
             signal: None,
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),

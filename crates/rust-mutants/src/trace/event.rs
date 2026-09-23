@@ -718,10 +718,10 @@ pub enum SummaryRecord {
 impl SummaryRecord {
     /// What `result` said, in the protocol it answered in.
     #[must_use]
-    pub const fn of(result: &crate::execute::MutantResult) -> Self {
+    pub fn of(result: &crate::execute::MutantResult) -> Self {
         match result.protocol {
             crate::execute::Protocol::Libtest => Self::Libtest {
-                tests_run: result.tests_run,
+                tests_run: result.tests_run(),
             },
             crate::execute::Protocol::Custom => Self::Custom,
             crate::execute::Protocol::Unanswered => Self::Unanswered,

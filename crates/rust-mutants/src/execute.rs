@@ -1612,8 +1612,6 @@ pub struct MutantResult {
     pub protocol: Protocol,
     /// The harness's summary line, when it printed one.
     pub summary: Option<Summary>,
-    /// How many tests ran, when the summary said.
-    pub tests_run: Option<u32>,
     /// The signal the process died from, on the platforms that have them.
     pub signal: Option<i32>,
     /// Every test that failed, by name, which is what a report hands a person reading a kill.
@@ -1647,12 +1645,18 @@ pub enum Reading {
 }
 
 impl MutantResult {
+    /// How many tests ran, when the summary said: read from the summary itself, so there is no second copy to disagree with it.
+    #[must_use]
+    pub fn tests_run(&self) -> Option<u32> {
+        self.summary.and_then(|summary| summary.tests_run())
+    }
+
     /// Whether the tests this run was read as passing are the harness's answer, asked of the protocol it answered in, so a harness with no summary is never held to one.
     #[must_use]
     pub fn reading(&self) -> Reading {
         match self.protocol {
             Protocol::Libtest => {
-                let whole = self.tests_run.is_some_and(|ran| {
+                let whole = self.tests_run().is_some_and(|ran| {
                     usize::try_from(ran).is_ok_and(|ran| ran == self.passed_tests.len())
                 });
                 if whole {
@@ -1675,7 +1679,6 @@ impl MutantResult {
             output: message.into_bytes(),
             protocol: Protocol::Unanswered,
             summary: None,
-            tests_run: None,
             signal: None,
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
@@ -1775,7 +1778,6 @@ pub fn exec(
             Protocol::Custom
         },
         summary,
-        tests_run: summary.and_then(|summary| summary.tests_run()),
         signal,
         failed_tests: lines.failed,
         passed_tests: lines.passed,

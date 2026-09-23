@@ -172,13 +172,13 @@ fn verify_target(
     building.trace.verify(crate::trace::VerifyRecord {
         target: target.id.clone(),
         outcome: result.outcome().name().to_owned(),
-        tests_run: result.tests_run,
+        tests_run: result.tests_run(),
         duration_ms: duration_millis(result.duration)?,
         remembered: false,
         retried,
     });
     let baseline = baseline_of(&result)?;
-    if target.kind == TargetKind::Doc && result.tests_run == Some(0) {
+    if target.kind == TargetKind::Doc && result.tests_run() == Some(0) {
         target
             .limitations
             .push(crate::limitation::DOCTESTS_NONE.to_owned());
@@ -204,7 +204,7 @@ fn verify_target(
     } else {
         touched.limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
     }
-    Ok((baseline, result.tests_run))
+    Ok((baseline, result.tests_run()))
 }
 
 /// What one baseline process came to, keeping what it printed only where it did not pass.
@@ -212,7 +212,7 @@ fn baseline_of(result: &MutantResult) -> Result<Baseline, SessionError> {
     Ok(Baseline {
         outcome: result.outcome(),
         duration: result.duration,
-        tests: match result.tests_run {
+        tests: match result.tests_run() {
             Some(tests) => tests,
             None => trace_count("passed baseline tests", result.passed_tests.len())?,
         },

@@ -373,7 +373,7 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
         .expect("exec");
     assert_eq!(killed.outcome(), Outcome::Killed);
     assert_eq!(killed.target, "fixture-simple/lib/fixture_simple");
-    assert!(killed.tests_run.unwrap_or_default() > 0);
+    assert!(killed.tests_run().unwrap_or_default() > 0);
 
     let survivor = session
         .exec(&Request::new(by_rule("gt-to-ge")), &cancel)
