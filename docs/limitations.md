@@ -246,6 +246,17 @@ A target nothing was killed on is never confirmed, so it is never compared: `dri
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
 And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
 
+## What a run asks of a suite that depends on where it runs
+
+A suite can pass on one machine and fail on the next because of something the contract lets differ between them: the time zone, the locale, the temporary directory, the home directory, the umask, the terminal width, or how many tests the harness runs at once.
+Asked for with `[repeatable] knobs`, a run starts one more control of each measured target per knob, with that one thing set to a value chosen to differ, and compares its verdict and its reach with the baseline's as drift compares a control's.
+A target the knob broke is `environment-dependent`, a defect; one whose reach moved over the same passing tests is `environment-dependent-reach`, and every proof read off its baseline is unfounded where that differs.
+
+Three things follow and are not hidden.
+A knob asked for and not put — no such zone in the time zone database, no such locale installed, no shell to set the mask through, a target that runs through cargo, a target that does not run under libtest, a platform with no way to put it — is `knob-not-put`, naming the knob, the targets, and why, because a pass under a knob that was never put says nothing.
+A control under a knob that established nothing to compare is `knob-not-compared`.
+And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
+
 ## What a run asks of a suite that talks about time
 
 A run does something to a suite that `cargo test` never does: it runs every target's baseline before it measures anything, and then measures mutants against a machine that is already busy.

@@ -1258,7 +1258,9 @@
             "undefined-behaviour",
             "hollow-target",
             "wire-unnoticed",
-            "unstable-baseline"
+            "unstable-baseline",
+            "environment-dependent",
+            "environment-dependent-reach"
           ]
         },
         "subject": {

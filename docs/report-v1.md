@@ -48,7 +48,7 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are thirteen kinds, and every report carries the stable name:
+There are fifteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -65,6 +65,8 @@ There are thirteen kinds, and every report carries the stable name:
 | `hollow-target` | a target was put to mutations and noticed none | no |
 | `wire-unnoticed` | a seam fault was put and nothing noticed | no |
 | `unstable-baseline` | a target reached something on an original-code control that it did not reach on its baseline, over the same passing tests | no |
+| `environment-dependent` | a target that passed on its baseline failed on a control started with a knob put | yes |
+| `environment-dependent-reach` | a target reached something else on a control started with a knob put, over the same passing tests | no |
 
 The last column is derived from the same closed `FindingKind` that decides the verdict.
 A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.

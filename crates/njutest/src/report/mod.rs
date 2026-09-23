@@ -10,6 +10,7 @@ pub mod hollow;
 pub mod html;
 pub mod json;
 pub mod junit;
+pub mod knobs;
 pub mod lines;
 pub mod merge;
 pub mod sarif;
@@ -4155,6 +4156,10 @@ pub enum FindingKind {
     WireUnnoticed,
     /// A target reached something on an original-code control that it did not reach on its baseline, so every proof read off its baseline is unfounded.
     UnstableBaseline,
+    /// A target that passed on its baseline failed on a control started with something the contract lets differ between machines set differently.
+    EnvironmentDependent,
+    /// A target reached something else on a control started with something the contract lets differ between machines set differently, so every proof read off its baseline is unfounded where that differs.
+    EnvironmentDependentReach,
 }
 
 /// Which configured-build evidence raised a finding.
@@ -4192,6 +4197,8 @@ impl FindingKind {
             Self::HollowTarget => "hollow-target",
             Self::WireUnnoticed => "wire-unnoticed",
             Self::UnstableBaseline => "unstable-baseline",
+            Self::EnvironmentDependent => "environment-dependent",
+            Self::EnvironmentDependentReach => "environment-dependent-reach",
         }
     }
 
@@ -4199,7 +4206,10 @@ impl FindingKind {
     #[must_use]
     pub const fn is_defect(self) -> bool {
         match self {
-            Self::BuildFailure | Self::FailingTest | Self::UndefinedBehaviour => true,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::UndefinedBehaviour
+            | Self::EnvironmentDependent => true,
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout
@@ -4209,7 +4219,8 @@ impl FindingKind {
             | Self::UnmatchedAcceptance
             | Self::HollowTarget
             | Self::WireUnnoticed
-            | Self::UnstableBaseline => false,
+            | Self::UnstableBaseline
+            | Self::EnvironmentDependentReach => false,
         }
     }
 }
