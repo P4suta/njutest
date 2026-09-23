@@ -21,6 +21,7 @@ pub mod release;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
+pub mod sentinel;
 pub mod shapes;
 pub mod strictjson;
 pub mod surface;
@@ -187,16 +188,32 @@ where
     }
 }
 
-/// A run whose report could not be read at all is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
+/// A run whose report could not be read at all, like an audit with a layer blind to what was planted for it, is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
 fn audit_engine(
     asked: &gates::EngineRun<'_>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
+    let planted = match gates::engine_audit_sentinels() {
+        Ok(planted) => planted,
+        Err(blind) => {
+            return after_output(
+                writeln!(stderr, "{blind}"),
+                ExitCode::from(engineaudit::EXIT_UNREADABLE),
+            );
+        }
+    };
     match gates::engine_audit(asked) {
         Ok(audit) => {
             let intended = ExitCode::from(audit.exit_code());
-            after_output(writeln!(stdout, "{audit}"), intended)
+            after_output(
+                writeln!(
+                    stdout,
+                    "engine-audit: {planted} planted defects found first, each by the layer it \
+                     was planted for, and the clean specimen drew none\n{audit}"
+                ),
+                intended,
+            )
         }
         Err(failure) => after_output(
             writeln!(stderr, "{failure}"),
@@ -205,17 +222,33 @@ fn audit_engine(
     }
 }
 
-/// A recording that could not be read at all is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
+/// A recording that could not be read at all, like an audit with a layer blind to what was planted for it, is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
 fn audit_run(
     run: &std::path::Path,
     trace: Option<&std::path::Path>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
+    let planted = match gates::proofaudit_sentinels() {
+        Ok(planted) => planted,
+        Err(blind) => {
+            return after_output(
+                writeln!(stderr, "{blind}"),
+                ExitCode::from(proofaudit::EXIT_UNREADABLE),
+            );
+        }
+    };
     match gates::proofaudit(run, trace) {
         Ok(audit) => {
             let intended = ExitCode::from(audit.exit_code());
-            after_output(writeln!(stdout, "{audit}"), intended)
+            after_output(
+                writeln!(
+                    stdout,
+                    "proofaudit: {planted} planted defects found first, each by the layer it \
+                     was planted for, and the clean specimen drew none\n{audit}"
+                ),
+                intended,
+            )
         }
         Err(failure) => after_output(
             writeln!(stderr, "{failure}"),

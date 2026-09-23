@@ -864,6 +864,134 @@ pub fn waivers(root: &Path) -> Result<String, GateFailure> {
 /// # Errors
 /// Every finding, one per line, or a file that could not be read or parsed.
 pub fn lints(root: &Path) -> Result<String, GateFailure> {
+    let planted = lint_sentinels()?;
+    let (files, found) = lint_findings(root)?;
+    if found.is_empty() {
+        let kinds = lint_scan::Kind::ALL
+            .iter()
+            .map(|kind| kind.label())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Ok(format!(
+            "lints: {planted} planted shapes found first, each as the kind it was planted as; \
+             then {files} files carry none of {} prohibited Rust shapes ({kinds}). {} catch-all \
+             waiver(s) are \
+             still standing; `cargo xtask waivers` reads each of them a second time",
+            lint_scan::Kind::ALL.len(),
+            waived_lines(root)?
+        ));
+    }
+    let mut report = String::new();
+    for finding in &found {
+        line(&mut report, format_args!("{finding}"));
+    }
+    Err(GateFailure(report.trim_end().to_owned()))
+}
+
+/// How many planted shapes every lint kind was found in, before any real file is read.
+///
+/// # Errors
+/// The first kind a planted shape of it was not found as, which means the scan is blind to that shape and its silence about the tree says nothing.
+pub fn lint_sentinels() -> Result<usize, GateFailure> {
+    let mut found = 0_usize;
+    for kind in lint_scan::Kind::ALL {
+        let shapes = lint_sighted(*kind, kind.planted())?;
+        found = found.checked_add(shapes).ok_or_else(|| {
+            GateFailure("lints: more planted shapes than a count can hold".to_owned())
+        })?;
+    }
+    Ok(found)
+}
+
+/// How many shapes of `planted` the lint scan found as `kind`, which is all of them or an error.
+///
+/// # Errors
+/// The first shape the scan did not find as `kind`, or planted text that does not parse.
+pub fn lint_sighted(kind: lint_scan::Kind, planted: &str) -> Result<usize, GateFailure> {
+    let kinds = |found: Vec<lint_scan::Finding>| -> Vec<lint_scan::Kind> {
+        found.into_iter().map(|finding| finding.kind).collect()
+    };
+    sighted(
+        &Planted {
+            gate: "lints",
+            file: format!("xtask/sentinels/lints/{}.planted", kind.label()),
+            label: kind.label(),
+            text: planted,
+        },
+        &kind,
+        |path, text| {
+            lint_scan::scan_source(path, text)
+                .map(kinds)
+                .map_err(|error| GateFailure(error.to_string()))
+        },
+        |root| lint_findings(root).map(|(_files, found)| kinds(found)),
+    )
+}
+
+/// One planted file: which gate it is for, where it lives, and what it holds.
+struct Planted<'a> {
+    gate: &'a str,
+    file: String,
+    label: &'a str,
+    text: &'a str,
+}
+
+/// How many shapes of a planted file a scan found as `kind`, which is all of them or an error.
+///
+/// A one-file shape is read by `per_file` exactly as the gate reads a file of the tree; a tree shape is laid over a synthetic repository and read by `whole`, which is the gate's own scan.
+fn sighted<K: PartialEq>(
+    planted: &Planted<'_>,
+    kind: &K,
+    per_file: impl Fn(&str, &str) -> Result<Vec<K>, GateFailure>,
+    whole: impl Fn(&Path) -> Result<Vec<K>, GateFailure>,
+) -> Result<usize, GateFailure> {
+    let Planted {
+        gate,
+        ref file,
+        label,
+        text,
+    } = *planted;
+    let shapes = crate::sentinel::shapes(text)
+        .map_err(|error| GateFailure(format!("{gate}: {file}: {error}")))?;
+    for shape in &shapes {
+        let name = shape.name();
+        let found = match shape {
+            crate::sentinel::Shape::Source { path, text, .. } => {
+                per_file(path, text).map_err(|GateFailure(error)| {
+                    GateFailure(format!(
+                        "{gate}: planted shape `{name}` of {label}: {error}"
+                    ))
+                })?
+            }
+            crate::sentinel::Shape::Tree { files, .. } => {
+                let root = tempfile::tempdir().map_err(|error| {
+                    GateFailure(format!("{gate}: a directory to plant {label} in: {error}"))
+                })?;
+                crate::sentinel::plant(root.path(), files).map_err(|error| {
+                    GateFailure(format!(
+                        "{gate}: planting shape `{name}` of {label}: {error}"
+                    ))
+                })?;
+                whole(root.path())?
+            }
+        };
+        if !found.contains(kind) {
+            return Err(GateFailure(format!(
+                "{gate}: the {label} check is blind. Its planted shape `{name}` ({file}) was not \
+                 found as {label}, so a tree that carries none says nothing about whether this \
+                 repository does. Nothing this gate would have said is believed until the \
+                 planted shape is found again."
+            )));
+        }
+    }
+    Ok(shapes.len())
+}
+
+/// How many files the scan read under `root`, and every finding in them.
+///
+/// # Errors
+/// A file that could not be read or parsed.
+fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateFailure> {
     let files = all_sources(root)?;
     let mut found = Vec::new();
     let mut sources = Vec::new();
@@ -902,26 +1030,7 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
     found.extend(wildcards(root, &files)?);
     found.sort();
     found.dedup();
-    if found.is_empty() {
-        let kinds = lint_scan::Kind::ALL
-            .iter()
-            .map(|kind| kind.label())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Ok(format!(
-            "lints: {} files carry none of {} prohibited Rust shapes ({kinds}). {} catch-all \
-             waiver(s) are \
-             still standing; `cargo xtask waivers` reads each of them a second time",
-            files.len(),
-            lint_scan::Kind::ALL.len(),
-            waived_lines(root)?
-        ));
-    }
-    let mut report = String::new();
-    for finding in &found {
-        line(&mut report, format_args!("{finding}"));
-    }
-    Err(GateFailure(report.trim_end().to_owned()))
+    Ok((files.len(), found))
 }
 
 /// Every exported constant that more than one module joins onto a path for itself.
@@ -1292,18 +1401,8 @@ fn relative_slash(root: &Path, path: &Path) -> Result<String, GateFailure> {
 /// # Errors
 /// Returns a disagreement between the scan and the ledger, or an unreadable file.
 pub fn devgates(root: &Path) -> Result<String, GateFailure> {
-    let mut found = Vec::new();
-    let files = production_sources(root)?;
-    for path in &files {
-        let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
-        let label = relative_slash(root, path)?;
-        let seams = devgates::scan_source(&label, &source)
-            .map_err(|error| GateFailure(format!("{label}: {error}")))?;
-        found.extend(seams);
-    }
-    found.sort();
-    found.dedup();
+    let planted = seam_sentinels()?;
+    let (files, found) = seam_findings(root)?;
     let ledger_path = root.join("xtask/seam_allowlist.txt");
     let ledger_text = std::fs::read_to_string(&ledger_path)
         .map_err(|error| GateFailure(format!("{}: {error}", ledger_path.display())))?;
@@ -1323,11 +1422,71 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
         )));
     }
     Ok(format!(
-        "devgates: {} production files scanned, {} seam(s) recorded in the ledger, \
+        "devgates: {planted} planted seams found first, each as the kind it was planted as; \
+         then {files} production files scanned, {} seam(s) recorded in the ledger, \
          {most} allowed",
-        files.len(),
         ledger.len()
     ))
+}
+
+/// How many production files the seam scan read under `root`, and every seam in them.
+///
+/// # Errors
+/// A file that could not be read or parsed.
+fn seam_findings(root: &Path) -> Result<(usize, Vec<devgates::Seam>), GateFailure> {
+    let mut found = Vec::new();
+    let files = production_sources(root)?;
+    for path in &files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        let label = relative_slash(root, path)?;
+        let seams = devgates::scan_source(&label, &source)
+            .map_err(|error| GateFailure(format!("{label}: {error}")))?;
+        found.extend(seams);
+    }
+    found.sort();
+    found.dedup();
+    Ok((files.len(), found))
+}
+
+/// How many planted shapes every seam kind was found in, before any real file is read.
+///
+/// # Errors
+/// The first kind a planted shape of it was not found as.
+pub fn seam_sentinels() -> Result<usize, GateFailure> {
+    let mut found = 0_usize;
+    for kind in devgates::SeamKind::ALL {
+        let shapes = seam_sighted(kind, kind.planted())?;
+        found = found.checked_add(shapes).ok_or_else(|| {
+            GateFailure("devgates: more planted shapes than a count can hold".to_owned())
+        })?;
+    }
+    Ok(found)
+}
+
+/// How many shapes of `planted` the seam scan found as `kind`, which is all of them or an error.
+///
+/// # Errors
+/// The first shape the scan did not find as `kind`, or planted text that does not parse.
+pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, GateFailure> {
+    let kinds = |found: Vec<devgates::Seam>| -> Vec<devgates::SeamKind> {
+        found.into_iter().map(|seam| seam.kind).collect()
+    };
+    sighted(
+        &Planted {
+            gate: "devgates",
+            file: format!("xtask/sentinels/seams/{}.planted", kind.label()),
+            label: kind.label(),
+            text: planted,
+        },
+        &kind,
+        |path, text| {
+            devgates::scan_source(path, text)
+                .map(kinds)
+                .map_err(|error| GateFailure(error.to_string()))
+        },
+        |root| seam_findings(root).map(|(_files, found)| kinds(found)),
+    )
 }
 
 /// Dependency direction between the workspace crates.
@@ -1750,6 +1909,76 @@ pub fn proofaudit(
     )
 }
 
+/// How many planted defects every layer of the proof audit found, after the clean specimen drew nothing from any of them.
+///
+/// # Errors
+/// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
+pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
+    let clean = proofaudit::sentinel::clean();
+    let audit = proofaudit_specimen(&clean)?;
+    if audit.violations() > 0 {
+        return Err(GateFailure(format!(
+            "proofaudit: the clean specimen draws {} violation(s), so a layer that fires on it \
+             fires on anything and its violations about a real run say nothing. Nothing this \
+             gate would have said is believed until the clean specimen is silent again.\n{audit}",
+            audit.violations()
+        )));
+    }
+    let mut found = 0_usize;
+    for layer in proofaudit::Layer::ALL {
+        let planted = proofaudit_sighted(layer, &layer.planted())?;
+        found = found.checked_add(planted).ok_or_else(|| {
+            GateFailure("proofaudit: more planted defects than a count can hold".to_owned())
+        })?;
+    }
+    Ok(found)
+}
+
+/// How many of `planted` the proof audit found as a violation of `layer`, which is all of them or an error.
+///
+/// # Errors
+/// The first perturbation `layer` found nothing in, an empty `planted`, or a specimen that could not be laid out or read.
+pub fn proofaudit_sighted(
+    layer: proofaudit::Layer,
+    planted: &[proofaudit::sentinel::Perturbation],
+) -> Result<usize, GateFailure> {
+    if planted.is_empty() {
+        return Err(GateFailure(format!(
+            "proofaudit: the {} layer is blind. Nothing is planted for it, so its silence \
+             about a real run says nothing. Nothing this gate would have said is believed \
+             until a defect is planted for it and found.",
+            layer.label()
+        )));
+    }
+    for perturbation in planted {
+        let audit = proofaudit_specimen(perturbation)?;
+        if !audit.violated(layer) {
+            return Err(GateFailure(format!(
+                "proofaudit: the {label} layer is blind. Its planted defect `{name}` \
+                 (`Layer::planted` in xtask/src/proofaudit/sentinel.rs) drew no {label} \
+                 violation, so a run it is silent about says nothing about whether the run is \
+                 sound. Nothing this gate would have said is believed until the planted defect \
+                 is found again.\n{audit}",
+                label = layer.label(),
+                name = perturbation.name,
+            )));
+        }
+    }
+    Ok(planted.len())
+}
+
+/// The proof audit of one specimen, laid out on disk and read as the gate reads a run.
+fn proofaudit_specimen(
+    specimen: &proofaudit::sentinel::Perturbation,
+) -> Result<proofaudit::Audit, GateFailure> {
+    let name = specimen.name;
+    let laid = specimen
+        .lay()
+        .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))?;
+    proofaudit(laid.run(), laid.trace())
+        .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
+}
+
 /// What one engine run is audited against: its own directory, and everything a layer needs beyond it.
 #[derive(Debug, Clone, Copy)]
 pub struct EngineRun<'a> {
@@ -1840,6 +2069,82 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
             probe_logs,
         },
     )
+}
+
+/// How many planted defects every layer of the engine audit found, after the clean specimen drew nothing from any of them.
+///
+/// # Errors
+/// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
+pub fn engine_audit_sentinels() -> Result<usize, GateFailure> {
+    let clean = engineaudit::sentinel::clean();
+    let audit = engine_audit_specimen(&clean)?;
+    if audit.violations() > 0 {
+        return Err(GateFailure(format!(
+            "engine-audit: the clean specimen draws {} violation(s), so a layer that fires on it \
+             fires on anything and its violations about a real run say nothing. Nothing this \
+             gate would have said is believed until the clean specimen is silent again.\n{audit}",
+            audit.violations()
+        )));
+    }
+    let mut found = 0_usize;
+    for layer in engineaudit::Layer::ALL {
+        let planted = engine_audit_sighted(layer, &layer.planted())?;
+        found = found.checked_add(planted).ok_or_else(|| {
+            GateFailure("engine-audit: more planted defects than a count can hold".to_owned())
+        })?;
+    }
+    Ok(found)
+}
+
+/// How many of `planted` the audit found as a violation of `layer`, which is all of them or an error.
+///
+/// # Errors
+/// The first perturbation `layer` found nothing in, an empty `planted`, or a specimen that could not be laid out or read.
+pub fn engine_audit_sighted(
+    layer: engineaudit::Layer,
+    planted: &[engineaudit::sentinel::Perturbation],
+) -> Result<usize, GateFailure> {
+    if planted.is_empty() {
+        return Err(GateFailure(format!(
+            "engine-audit: the {} layer is blind. Nothing is planted for it, so its silence \
+             about a real run says nothing. Nothing this gate would have said is believed \
+             until a defect is planted for it and found.",
+            layer.label()
+        )));
+    }
+    for perturbation in planted {
+        let audit = engine_audit_specimen(perturbation)?;
+        if !audit.violated(layer) {
+            return Err(GateFailure(format!(
+                "engine-audit: the {label} layer is blind. Its planted defect `{name}` \
+                 (`Layer::planted` in xtask/src/engineaudit/sentinel.rs) drew no {label} \
+                 violation, so a run it is silent about says nothing about whether the run is \
+                 sound. Nothing this gate would have said is believed until the planted defect \
+                 is found again.\n{audit}",
+                label = layer.label(),
+                name = perturbation.name,
+            )));
+        }
+    }
+    Ok(planted.len())
+}
+
+/// The audit of one specimen, laid out on disk and read with every layer asked.
+fn engine_audit_specimen(
+    specimen: &engineaudit::sentinel::Perturbation,
+) -> Result<engineaudit::Audit, GateFailure> {
+    let name = specimen.name;
+    let laid = specimen
+        .lay()
+        .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))?;
+    engine_audit(&EngineRun {
+        run: laid.run(),
+        trace: Some(laid.trace()),
+        shards: laid.shards(),
+        ledger: laid.ledger(),
+        sites: true,
+    })
+    .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))
 }
 
 fn read_engine_document(path: &Path) -> Result<(String, String), engineaudit::AuditError> {

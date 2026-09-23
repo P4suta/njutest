@@ -1,0 +1,10 @@
+=== type-alias source crates/app/src/lib.rs
+//! A file.
+type Erased = dyn std::fmt::Debug;
+pub struct S { f: Box<Erased> }
+=== associated-type source crates/app/src/lib.rs
+//! A file.
+trait Erase { type Out: ?Sized; }
+impl Erase for () { type Out = dyn std::fmt::Debug; }
+type Hidden = <() as Erase>::Out;
+struct S(Box<Hidden>);

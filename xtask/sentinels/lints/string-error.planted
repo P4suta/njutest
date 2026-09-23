@@ -1,0 +1,23 @@
+=== owned-string source crates/app/src/lib.rs
+//! A file.
+fn read() -> Result<(), String> { Ok(()) }
+=== borrowed-str source crates/app/src/lib.rs
+//! A file.
+fn read() -> std::result::Result<(), &'static str> { Ok(()) }
+=== standard-owner-of-text source crates/app/src/lib.rs
+//! A file.
+fn read() -> Result<(), std::borrow::Cow<'static, str>> { unimplemented!() }
+=== pointer-alias-of-text source crates/app/src/lib.rs
+//! A file.
+type Heap<T> = Box<T>;
+fn read() -> Result<(), Heap<str>> { unimplemented!() }
+=== string-alias source crates/app/src/lib.rs
+//! A file.
+type Text = String;
+type Failure = Text;
+fn read() -> Result<(), Failure> { Ok(()) }
+=== renamed-result source crates/app/src/lib.rs
+//! A file.
+use std::result::Result as Fallible;
+type Failure = String;
+fn read() -> Fallible<(), Failure> { Ok(()) }

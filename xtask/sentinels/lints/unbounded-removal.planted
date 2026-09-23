@@ -1,0 +1,6 @@
+=== removal-in-a-loop source crates/app/src/lib.rs
+fn sweep(directories: &[std::path::PathBuf]) {
+    for one in directories {
+        drop(std::fs::remove_dir_all(one));
+    }
+}

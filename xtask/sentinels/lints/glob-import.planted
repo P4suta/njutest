@@ -1,0 +1,6 @@
+=== module-glob source crates/app/src/lib.rs
+//! A file.
+use crate::model::*;
+=== grouped-glob source crates/app/src/lib.rs
+//! A file.
+use crate::{model::*, prelude::*};

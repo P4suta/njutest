@@ -5,6 +5,8 @@
 //!
 //! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
+pub mod sentinel;
+
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -101,7 +103,7 @@ impl Standing {
 }
 
 /// The part of a recording one re-decision was about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
 pub enum Layer {
     /// The columns of the accounting, against the records they summarise and against the verdict they carry.
     Accounting,
@@ -191,6 +193,14 @@ impl Audit {
     #[must_use]
     pub fn unaudited(&self) -> usize {
         self.standing(Standing::Unaudited)
+    }
+
+    /// Whether one layer found something the run does not support.
+    #[must_use]
+    pub fn violated(&self, layer: Layer) -> bool {
+        self.remarks
+            .iter()
+            .any(|remark| remark.layer == layer && remark.standing == Standing::Violated)
     }
 
     /// The exit code this audit earns.

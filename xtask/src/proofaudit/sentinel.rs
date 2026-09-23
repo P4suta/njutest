@@ -1,0 +1,429 @@
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A clean synthetic run, and the defects planted in it that each layer of the audit must find.
+
+use std::path::Path;
+
+use serde_json::{Value, json};
+use tempfile::TempDir;
+
+use super::{Layer, REPORT_FILE};
+
+/// The run the specimen report names.
+pub const RUN: &str = "20260906T101500Z-9f1c2d";
+/// The display identity of the specimen's killed mutant.
+pub const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
+/// The display identity of the specimen's survivor, which the one finding names.
+pub const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
+/// The one target the specimen run tested with.
+pub const TARGET: &str = "pkg/test/lib";
+/// The question about the status of the one exchange [`went_past`] holds.
+pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
+
+/// A scoped run of two mutants, one killed and one survivor its finding names, over one target that passed.
+#[must_use]
+pub fn base() -> Value {
+    json!({
+        "schema": "njutest-assurance-report-v1",
+        "schema_version": 2,
+        "run_id": RUN,
+        "run_kind": "scoped",
+        "contract": "standard-v1",
+        "verdict": "INSUFFICIENT",
+        "accounting": {
+            "targets": { "selected": 1, "passed": 1, "failed": 0, "skipped": 0, "missing": 0 },
+            "mutants": {
+                "cataloged": 2,
+                "rejected": 0,
+                "executed": 2,
+                "killed": 1,
+                "survived": 1,
+                "step_limit_reached": 0,
+                "waited": 0,
+                "unreached": 0,
+                "equivalent": 0,
+                "accepted": 0,
+                "reused_killed": 0,
+                "reused_survived": 0,
+                "model_noticed": 0,
+                "model_proved": 0
+            },
+            "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false }
+        },
+        "targets": [
+            {
+                "id": "3f2a1b0c9d8e7f60",
+                "name": TARGET,
+                "package": "pkg",
+                "status": "passed",
+                "duration_ms": 5,
+                "message": null
+            }
+        ],
+        "mutants": [
+            {
+                "id": "a".repeat(64),
+                "display_id": KILLED,
+                "path": "src/lib.rs",
+                "position": { "line": 7, "column": 9, "character_column": 9 },
+                "rule": "negate-condition@1",
+                "decision": {
+                    "outcome": "killed", "killed_by": TARGET, "step_boundary": null
+                },
+                "accepted": false,
+                "reuse": { "reused": false, "source_run_id": null }
+            },
+            {
+                "id": "b".repeat(64),
+                "display_id": SURVIVED,
+                "path": "src/lib.rs",
+                "position": { "line": 11, "column": 5, "character_column": 5 },
+                "rule": "return-ok-default@1",
+                "decision": {
+                    "outcome": "survived", "killed_by": null, "step_boundary": null
+                },
+                "accepted": false,
+                "reuse": { "reused": false, "source_run_id": null }
+            }
+        ],
+        "models": [],
+        "findings": [
+            {
+                "kind": "surviving-mutant",
+                "subject": SURVIVED,
+                "detail": "no test noticed return-ok-default@1 at src/lib.rs:11",
+                "position": null
+            }
+        ],
+        "limitations": []
+    })
+}
+
+/// Lays `overrides` over `document`: objects key by key, a non-empty array position by position, anything else by replacement.
+pub fn merge(document: &mut Value, overrides: Value) {
+    match (document, overrides) {
+        (Value::Object(into), Value::Object(from)) => {
+            for (key, value) in from {
+                merge(into.entry(key).or_insert(Value::Null), value);
+            }
+        }
+        (Value::Array(into), Value::Array(from)) if !from.is_empty() => {
+            for (at, value) in from.into_iter().enumerate() {
+                match into.get_mut(at) {
+                    Some(existing) => merge(existing, value),
+                    None => into.push(value),
+                }
+            }
+        }
+        (into, from) => *into = from,
+    }
+}
+
+/// The clean report with `overrides` laid over it.
+#[must_use]
+pub fn with(overrides: Value) -> Value {
+    let mut document = base();
+    merge(&mut document, overrides);
+    document
+}
+
+/// A route and an execution for each mutant of [`base`], with no proof removing anything.
+#[must_use]
+pub fn routes() -> Vec<Value> {
+    let mut events = Vec::new();
+    for (mutant, outcome) in [(KILLED, "killed"), (SURVIVED, "survived")] {
+        events.push(json!({
+            "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+            "type": "route",
+            "route": {
+                "mutant": mutant, "granularity": "block", "fallback": null,
+                "reaching": ["t1"], "discharged": [], "considered": [], "reused": null
+            }
+        }));
+        events.push(json!({
+            "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": "t1", "args": [], "outcome": outcome,
+                "duration_ms": 5
+            }
+        }));
+    }
+    numbered(events)
+}
+
+/// `events` with every sequence number counted again from one.
+fn numbered(mut events: Vec<Value>) -> Vec<Value> {
+    for (seq, event) in (1_u64..).zip(events.iter_mut()) {
+        merge(event, json!({ "seq": seq }));
+    }
+    events
+}
+
+/// The recording of [`routes`], after which one target, `blunt`, was put to both mutations and noticed neither.
+#[must_use]
+pub fn never_noticed() -> Vec<Value> {
+    let mut events = routes();
+    for mutant in [KILLED, SURVIVED] {
+        events.push(json!({
+            "timestamp": "2026-09-06T00:00:02Z",
+            "elapsed_ms": 2,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": "blunt", "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+    }
+    numbered(events)
+}
+
+/// One exchange that went past the `api` seam, which licenses the question [`ASKED`] among others.
+#[must_use]
+pub fn went_past() -> Value {
+    json!({
+        "type": "wire-exchange",
+        "exchange": {
+            "capability": "api",
+            "seq": 0,
+            "wire": "http",
+            "method": "GET",
+            "path": "/orders",
+            "status": 200
+        }
+    })
+}
+
+/// One fault put to the suite, decided as `decision` says.
+#[must_use]
+pub fn was_put(fault: &str, decision: &str) -> Value {
+    json!({
+        "type": "wire-exec",
+        "wire": {
+            "fault": fault,
+            "capability": "api",
+            "seq": 0,
+            "rule": "status-server-error",
+            "decision": decision,
+            "noticed_by": null
+        }
+    })
+}
+
+/// A specimen could not be laid out on disk.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum SpecimenError {
+    /// No temporary directory to lay it in.
+    #[error("a temporary directory to lay the proofaudit specimen in: {source}")]
+    Directory {
+        /// What the filesystem said.
+        #[source]
+        source: std::io::Error,
+    },
+    /// One file of it could not be written.
+    #[error("{path}: the proofaudit specimen could not be written: {source}")]
+    Unwritable {
+        /// The file.
+        path: String,
+        /// What the filesystem said.
+        #[source]
+        source: std::io::Error,
+    },
+    /// One event of the recording is not a JSON object.
+    #[error("event {at} of the specimen recording is not an object")]
+    NotAnObject {
+        /// Its position in the recording.
+        at: usize,
+    },
+}
+
+fn directory() -> Result<TempDir, SpecimenError> {
+    tempfile::tempdir().map_err(|source| SpecimenError::Directory { source })
+}
+
+fn written(path: &Path, text: &str) -> Result<(), SpecimenError> {
+    std::fs::write(path, text).map_err(|source| SpecimenError::Unwritable {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+/// A run directory holding `document` as its report.
+///
+/// # Errors
+/// [`SpecimenError`] when the directory or the report cannot be written.
+pub fn run_directory(document: &Value) -> Result<TempDir, SpecimenError> {
+    let run = directory()?;
+    written(&run.path().join(REPORT_FILE), &document.to_string())?;
+    Ok(run)
+}
+
+/// A recording directory holding `events` as its `trace.jsonl`, each wrapped in the envelope the runner writes, numbered by position where an event carries no envelope of its own.
+///
+/// # Errors
+/// [`SpecimenError`] when an event is not an object, or the recording cannot be written.
+pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
+    let mut stream = String::new();
+    for ((at, event), position) in events.iter().enumerate().zip(1_u64..) {
+        let mut payload = event
+            .as_object()
+            .cloned()
+            .ok_or(SpecimenError::NotAnObject { at })?;
+        let seq = payload.remove("seq").unwrap_or_else(|| json!(position));
+        let timestamp = payload
+            .remove("timestamp")
+            .unwrap_or_else(|| json!("2026-09-06T00:00:00Z"));
+        let elapsed_ms = payload.remove("elapsed_ms").unwrap_or_else(|| json!(at));
+        let envelope = json!({
+            "seq": seq,
+            "timestamp": timestamp,
+            "elapsed_ms": elapsed_ms,
+            "payload": Value::Object(payload),
+        });
+        stream.push_str(&envelope.to_string());
+        stream.push('\n');
+    }
+    let trace = directory()?;
+    written(&trace.path().join("trace.jsonl"), &stream)?;
+    Ok(trace)
+}
+
+/// One run for the audit to re-decide: a report, and the recording beside it when the run kept one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Perturbation {
+    /// What a refusal calls it.
+    pub name: &'static str,
+    /// The report.
+    pub document: Value,
+    /// The recording, as events before their envelope, or nothing for a run recorded without `--trace`.
+    pub events: Option<Vec<Value>>,
+}
+
+/// The clean specimen every perturbation starts from, on which no layer may find anything.
+#[must_use]
+pub fn clean() -> Perturbation {
+    Perturbation {
+        name: "clean",
+        document: base(),
+        events: Some(routes()),
+    }
+}
+
+/// A perturbation laid out on disk, alive for as long as the audit reads it.
+#[derive(Debug)]
+pub struct Laid {
+    run: TempDir,
+    trace: Option<TempDir>,
+}
+
+impl Laid {
+    /// The run directory.
+    #[must_use]
+    pub fn run(&self) -> &Path {
+        self.run.path()
+    }
+
+    /// The recording directory, when the perturbation carries a recording.
+    #[must_use]
+    pub fn trace(&self) -> Option<&Path> {
+        self.trace.as_ref().map(TempDir::path)
+    }
+}
+
+impl Perturbation {
+    /// Writes the run directory and the recording to fresh temporary directories.
+    ///
+    /// # Errors
+    /// [`SpecimenError`] when either cannot be written.
+    pub fn lay(&self) -> Result<Laid, SpecimenError> {
+        let run = run_directory(&self.document)?;
+        let trace = self.events.as_deref().map(recorded).transpose()?;
+        Ok(Laid { run, trace })
+    }
+}
+
+impl Layer {
+    /// The defects planted for this layer, each of which it must report as a violation.
+    #[must_use]
+    pub fn planted(self) -> Vec<Perturbation> {
+        let clean = clean();
+        match self {
+            Self::Accounting => vec![Perturbation {
+                name: "a mutant column the records contradict",
+                document: with(json!({ "accounting": { "mutants": { "killed": 5 } } })),
+                ..clean
+            }],
+            Self::Killers => vec![Perturbation {
+                name: "a kill that names no target at all",
+                document: with(json!({ "mutants": [{ "decision": { "killed_by": null } }] })),
+                ..clean
+            }],
+            Self::Findings => vec![Perturbation {
+                name: "a survivor no finding names",
+                document: with(json!({ "findings": [] })),
+                ..clean
+            }],
+            Self::Acceptances => vec![Perturbation {
+                name: "an unmatched acceptance the whole catalog resolves",
+                document: with(json!({
+                    "findings": [{
+                        "kind": "unmatched-acceptance",
+                        "subject": "aaaa",
+                        "detail": "no single mutant",
+                        "position": null
+                    }]
+                })),
+                ..clean
+            }],
+            Self::Reuse => vec![Perturbation {
+                name: "a reused disposition that names no source run",
+                document: with(json!({
+                    "mutants": [{ "reuse": { "reused": true } }],
+                    "accounting": { "mutants": { "reused_killed": 1 } }
+                })),
+                ..clean
+            }],
+            Self::Proofs => vec![Perturbation {
+                name: "a kill by a target a proof discharged",
+                events: Some(vec![
+                    json!({
+                        "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+                        "type": "route",
+                        "route": {
+                            "mutant": KILLED, "granularity": "block", "fallback": null,
+                            "reaching": ["t1"],
+                            "discharged": [{ "target": "t2", "proof": "never-infected" }],
+                            "considered": [], "reused": null
+                        }
+                    }),
+                    json!({
+                        "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+                        "type": "mutant-exec",
+                        "mutant": {
+                            "mutant": KILLED, "target": "t2", "args": [], "outcome": "killed",
+                            "duration_ms": 5
+                        }
+                    }),
+                ]),
+                ..clean
+            }],
+            Self::Hollow => vec![Perturbation {
+                name: "a hollow target the report does not name",
+                events: Some(never_noticed()),
+                ..clean
+            }],
+            Self::Wire => vec![Perturbation {
+                name: "a question nothing noticed that the report does not name",
+                events: Some(vec![went_past(), was_put(ASKED, "unnoticed")]),
+                ..clean
+            }],
+            Self::Model => vec![Perturbation {
+                name: "a verified-v1 survivor with no model record",
+                document: with(json!({ "contract": "verified-v1" })),
+                ..clean
+            }],
+        }
+    }
+}

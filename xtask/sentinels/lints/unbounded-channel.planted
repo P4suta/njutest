@@ -1,0 +1,10 @@
+=== qualified-call source crates/app/src/lib.rs
+fn pair<T>() { std::sync::mpsc::channel::<T>(); }
+=== imported source crates/app/src/lib.rs
+use std::sync::mpsc::channel; fn pair<T>() { channel::<T>(); }
+=== renamed-import source crates/app/src/lib.rs
+use std::sync::mpsc::channel as unlimited; fn pair<T>() { unlimited::<T>(); }
+=== macro-rules-body source crates/app/src/lib.rs
+macro_rules! pair { () => { std::sync::mpsc::channel::<u8>() } }
+=== macro-path-argument source crates/app/src/lib.rs
+macro_rules! call { ($function:path) => { $function::<u8>() } } call!(std::sync::mpsc::channel);

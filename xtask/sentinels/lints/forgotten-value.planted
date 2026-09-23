@@ -1,0 +1,21 @@
+=== forget source crates/app/src/lib.rs
+//! A file.
+fn leak(value: String) { std::mem::forget(value); }
+=== renamed-forget source crates/app/src/lib.rs
+//! A file.
+use std::mem::forget as leak;
+=== macro-rules-forget source crates/app/src/lib.rs
+//! A file.
+macro_rules! leak { ($value:expr) => { core::mem::forget($value) } }
+=== manually-drop-value source crates/app/src/lib.rs
+//! A file.
+fn leak(value: String) { let held = std::mem::ManuallyDrop::new(value); drop(held); }
+=== manually-drop-field source crates/app/src/lib.rs
+//! A file.
+struct Held(std::mem::ManuallyDrop<String>);
+=== renamed-manually-drop source crates/app/src/lib.rs
+//! A file.
+use std::mem::ManuallyDrop as Held;
+=== macro-rules-manually-drop source crates/app/src/lib.rs
+//! A file.
+macro_rules! held { ($value:expr) => { core::mem::ManuallyDrop::new($value) } }

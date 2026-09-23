@@ -1,0 +1,18 @@
+=== line-comment source crates/app/src/lib.rs
+//! A file.
+
+pub fn f() {
+    // why
+}
+=== trailing-comment source crates/app/src/lib.rs
+//! A file.
+
+pub fn f() {
+    let x = 1; // here
+    drop(x);
+}
+=== block-comment source crates/app/src/lib.rs
+//! A file.
+
+/* why */
+pub fn f() {}
