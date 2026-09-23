@@ -187,7 +187,10 @@ export_file="$(mktemp "${TMPDIR:-/tmp}/njutest-kani-laws.XXXXXX")"
 cleanup() { rm -f "$export_file"; }
 trap cleanup EXIT HUP INT TERM
 env -u RUSTFLAGS cargo kani -p rust-mutants --lib --exact --no-assertion-reach-checks \
+  --harness instrument::runtime::kani_laws::a_counting_checkpoint_counts \
+  --harness instrument::runtime::kani_laws::a_counting_checkpoint_never_stops \
   --harness instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend \
+  --harness instrument::runtime::kani_laws::counting_is_not_reachable_from_dormant_or_active \
   --harness instrument::runtime::kani_laws::activation_is_idempotent \
   --harness instrument::runtime::kani_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary \
   --harness instrument::runtime::kani_laws::stopping_is_absorbing \

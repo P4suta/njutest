@@ -165,7 +165,7 @@ fn the_exit_status_is_read_in_one_fixed_order() {
     );
 
     assert_eq!(
-        outcome_of(&stopped(Stopped::TimedOut), None, true),
+        outcome_of(&stopped(Stopped::TimedOut { raised: None }), None, true),
         Outcome::Waited,
         "a bound expiring establishes that this machine stopped waiting, which is not a \
          thing the tests did"
@@ -926,4 +926,37 @@ proptest::proptest! {
             );
         }
     }
+}
+
+#[test]
+fn a_clock_that_ended_a_counting_computation_says_so_and_one_that_ended_a_silent_one_says_that() {
+    for (raised, what) in [
+        (
+            Some(0_u64),
+            "no boundary was raised, so no allowance could have ended it",
+        ),
+        (
+            Some(41),
+            "the allowance would have ended this and the clock got there first",
+        ),
+        (
+            None,
+            "the state could not be read, which is not a count of zero",
+        ),
+    ] {
+        assert_eq!(
+            outcome_of(&stopped(Stopped::TimedOut { raised }), None, true),
+            Outcome::Waited,
+            "the verdict does not move, because the count did not fire: {what}"
+        );
+    }
+    assert_ne!(
+        Stopped::TimedOut { raised: Some(0) },
+        Stopped::TimedOut { raised: Some(41) },
+        "and the two stop being one word. A clock that ended a computation raising the count \
+         ended one the allowance would have ended, which is a race this machine won and \
+         another would not, and the number to change is the allowance. A clock that ended \
+         one raising nothing is the only instrument there is (ADR 0023), and there is \
+         nothing to change"
+    );
 }

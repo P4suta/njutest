@@ -365,7 +365,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 9] {
         Stopped::Exited { exit: exits[0] },
         Stopped::Exited { exit: exits[1] },
         Stopped::Exited { exit: exits[2] },
-        Stopped::TimedOut,
+        Stopped::TimedOut { raised: Some(3) },
         Stopped::Cancelled { started: true },
         Stopped::WaitFailed,
         Stopped::StepLimitReached {
@@ -379,7 +379,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 9] {
         match one {
             Stopped::NotStarted
             | Stopped::Exited { .. }
-            | Stopped::TimedOut
+            | Stopped::TimedOut { .. }
             | Stopped::Cancelled { .. }
             | Stopped::WaitFailed
             | Stopped::StepLimitReached { .. }

@@ -1141,3 +1141,56 @@ fn a_recording_from_other_seams_is_refused_rather_than_paired_by_position() {
          would name a capability the answers were never about"
     );
 }
+
+#[test]
+fn a_caller_that_completed_nothing_with_no_fault_in_place_is_counted_as_the_transport() {
+    use std::io::Write as _;
+
+    let up = upstream("ok");
+    let at = up.address();
+    let one = lease("api", &[("BASE_URL", &format!("http://{at}/v1"))]);
+    let mut configured: std::collections::BTreeMap<String, njutest::config::Resource> =
+        std::collections::BTreeMap::new();
+    configured.insert(
+        "api".to_owned(),
+        njutest::config::Resource {
+            command: vec!["x".to_owned()],
+            timeout: std::time::Duration::from_secs(1),
+            shared: false,
+            exclusive: false,
+            environment: Vec::new(),
+            interpose: "BASE_URL".to_owned(),
+            wire: Wire::Http,
+            hold: BRIEFLY,
+        },
+    );
+    let seams = njutest::assure::wire::watched(&[&one], &configured);
+    let seam = seams
+        .watching
+        .first()
+        .expect("the configuration named one seam");
+    assert_eq!(
+        seam.interposer.did_not_complete(),
+        0,
+        "nothing has reached it yet"
+    );
+
+    let mut connected =
+        TcpStream::connect(seam.interposer.address()).expect("the seam is listening");
+    connected.flush().expect("nothing to flush");
+    drop(connected);
+
+    let waited = std::time::Instant::now();
+    while seam.interposer.did_not_complete() == 0
+        && waited.elapsed() < std::time::Duration::from_secs(5)
+    {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        seam.interposer.did_not_complete(),
+        1,
+        "a caller that connected and completed no exchange, with nothing put, is the transport \
+         failing rather than a question anybody asked. Counting it is what lets a run say a \
+         target was not measured instead of saying its tests failed"
+    );
+}
