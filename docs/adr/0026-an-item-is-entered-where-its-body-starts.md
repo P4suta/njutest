@@ -62,6 +62,15 @@ A thread-local's `Drop` can call into the program after the runtime's thread-loc
 - A should_panic test was named with libtest's ` - should panic` suffix, so its thread matched no test the baseline ran and everything it reached was attributed to every test.
   The engine now names it by its name; this came up because the first fixture exercising entry used one.
 
+- **Every first sighting is written when it happens.** The runtime used to hold a named thread's records back in batches of 64 and write the rest when the thread's thread-local dropped, and a named thread still alive when the process exits — a pool worker, a detached `Builder::new().name(..)` worker — never drops it, so what it entered and reached was never written.
+  For routing that read as "no test reached this", a reported hole; for a proof it would have read as "nothing ever differed" or "no body was entered", which discharges a mutation a test kills; and for `select` it would read as "no test needs this item".
+  A record is now written the first time a thread sees an index, the same lines a batch would have written once, so a run writes no more than before and loses nothing it saw (`fixture-item-reach`'s `thrice`).
+- **Entered is not depended on.** "Test T entered item I" means T ran code written inside I, exactly, and nothing more.
+  A test that reads a value another test's run of `init` cached in a static never enters `init`, and whether it depends on `init`'s body is a question of which test ran first, not of what either entered.
+  So nothing reads entry as dependence: `select` narrows by it only per target, whose run includes whichever test initialised the value, and narrows to single tests only where the run has established that a test on its own answers what its target answers.
+- **The `entry` audit layer is not independent of this measurement.** It holds sites against entries that the same runtime wrote, so a record lost before it was written drops both and the two agree.
+  What holds the measurement from outside is a run that routes nothing — every mutant against every test — whose kills must each lie in an item the killing test entered; that differential is `select`'s acceptance, not this layer's.
+
 ## Alternatives
 
 - **Infer entry from the sites.** That is the gap this closes, and ADR 0014 already refused the same inference for branch bodies.

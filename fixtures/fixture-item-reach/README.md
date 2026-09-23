@@ -17,6 +17,7 @@ The guards at the sites of `halve` never see that test, and the entry marker at 
 | `next` | a body that is a single expression | `the_next_of_one_is_two` |
 | `next_unchecked` | an `unsafe fn` | `the_next_of_one_is_two` |
 | `later` | an `async fn`, entered when it is first polled | `later_is_twice_once_polled` |
+| `thrice` | called only on a named worker thread still parked when the process exits, whose thread-local never drops | loose: no test thread entered it, and the record says a thread did |
 
 The crate root says `#![deny(warnings, unused)]`, so an entry marker that drew a warning in any of these shapes would stop the instrumented build rather than pass unnoticed.
 
@@ -43,4 +44,8 @@ src/lib.rs:37:5 return-default killed
 src/lib.rs:37:7 mul-to-div killed
 src/lib.rs:37:9 int-decrement killed
 src/lib.rs:37:9 int-increment killed
+src/lib.rs:42:5 return-default killed
+src/lib.rs:42:7 mul-to-div killed
+src/lib.rs:42:9 int-decrement killed
+src/lib.rs:42:9 int-increment killed
 ```

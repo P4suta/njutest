@@ -37,6 +37,11 @@ pub async fn later(n: u32) -> u32 {
     n * 2
 }
 
+/// Thrice `n`, which only a worker that outlives its test ever computes.
+pub fn thrice(n: u32) -> u32 {
+    n * 3
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::Future;
@@ -69,6 +74,21 @@ mod tests {
     fn the_next_of_one_is_two() {
         assert_eq!(super::next(1), 2);
         assert_eq!(unsafe { super::next_unchecked(1) }, 2);
+    }
+
+    #[test]
+    fn a_worker_that_never_ends_computes_thrice() {
+        let (sender, answer) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("worker".to_owned())
+            .spawn(move || {
+                assert!(sender.send(super::thrice(3)).is_ok());
+                loop {
+                    std::thread::park();
+                }
+            });
+        assert!(spawned.is_ok());
+        assert_eq!(answer.recv(), Ok(9));
     }
 
     #[test]

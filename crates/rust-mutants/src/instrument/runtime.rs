@@ -265,7 +265,6 @@ mod {{MODULE}} {
     const TOUCH_SPAN: u32 = {{SPAN}};
     const ITEM_BASE: u32 = {{ITEM_BASE}};
     const ITEM_SPAN: u32 = {{ITEM_SPAN}};
-    const TOUCH_BATCH: usize = 64;
     #[derive(Clone, Copy)]
     enum Selection {
         None,
@@ -846,7 +845,6 @@ mod {{MODULE}} {
 
     struct Seen {
         name: __rm_std::string::String,
-        eager: bool,
         bits: __rm_std::vec::Vec<bool>,
         touched: __rm_std::vec::Vec<u32>,
         entered_bits: __rm_std::vec::Vec<bool>,
@@ -860,9 +858,9 @@ mod {{MODULE}} {
     impl Seen {
         fn new() -> Seen {
             let named = __rm_std::thread::current().name().map(__rm_std::string::ToString::to_string);
-            let eager = match &named {
-                __rm_std::option::Option::Some(name) => name == "main",
-                __rm_std::option::Option::None => true,
+            let attributed = match &named {
+                __rm_std::option::Option::Some(name) => name != "main",
+                __rm_std::option::Option::None => false,
             };
             let span = window(TOUCH_SPAN);
             let mut bits = __rm_std::vec::Vec::new();
@@ -875,10 +873,9 @@ mod {{MODULE}} {
             item_bits.resize(window(ITEM_SPAN), false);
             Seen {
                 name: match named {
-                    __rm_std::option::Option::Some(name) if !eager => name,
+                    __rm_std::option::Option::Some(name) if attributed => name,
                     _ => __rm_std::string::String::from("{{UNATTRIBUTED}}"),
                 },
-                eager,
                 bits,
                 touched: __rm_std::vec::Vec::new(),
                 entered_bits,
@@ -894,36 +891,28 @@ mod {{MODULE}} {
             if !mark(&mut self.bits, &mut self.touched, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.touched.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn entered_body(&mut self, index: u32) {
             if !mark(&mut self.entered_bits, &mut self.entered, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.entered.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn saw_a_difference(&mut self, index: u32) {
             if !mark(&mut self.differed_bits, &mut self.differed, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.differed.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn entered_item(&mut self, index: u32) {
             if !mark(&mut self.item_bits, &mut self.items, offset(index, ITEM_BASE), index) {
                 return;
             }
-            if self.eager || self.items.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn flush(&mut self) {

@@ -666,3 +666,34 @@ fn every_shape_of_body_records_the_test_that_entered_it() {
         );
     }
 }
+
+#[test]
+fn a_worker_alive_when_the_process_ends_has_still_said_what_it_entered_and_reached() {
+    let fixture = Fixture::copy("fixture-item-reach");
+    let session = prepared(&fixture);
+    let touches = session
+        .touched()
+        .targets
+        .get(ITEM_REACH)
+        .unwrap_or_else(|| panic!("{ITEM_REACH} was measured"));
+    let thrice = item_named(&session, "thrice");
+    assert!(
+        touches.entered_by_any().contains(&thrice.index),
+        "a named worker still parked when the test binary exits never drops its thread-local, \
+         so a record held back for a batch is never written, and `thrice` reads as entered by \
+         nothing: a change to it would be selected for no test at all: {:?}",
+        touches.entered
+    );
+    let site = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|one| one.candidate.path == thrice.path && thrice.body.contains(one.candidate.span))
+        .unwrap_or_else(|| panic!("thrice holds a mutation site"));
+    assert!(
+        touches.reached.any(site.index),
+        "and the site it reached is lost the same way, which routes a mutation of it to no \
+         target: {:?}",
+        touches.reached
+    );
+}
