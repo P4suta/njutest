@@ -671,3 +671,51 @@ fn a_fixture_cannot_hold_a_rule_no_run_writes() {
          command resolves: {error}"
     );
 }
+
+#[test]
+fn a_free_change_that_rests_on_a_target_whose_reach_moved_says_so_and_a_kill_does_not() {
+    let moved = njutest::report::drift::Drift::Moved {
+        target: LIB.to_owned(),
+        reached: njutest::report::drift::Moved {
+            gained: std::collections::BTreeSet::from([0]),
+            lost: std::collections::BTreeSet::new(),
+        },
+        bodies: njutest::report::drift::Moved {
+            gained: std::collections::BTreeSet::new(),
+            lost: std::collections::BTreeSet::new(),
+        },
+        infected: njutest::report::drift::Moved {
+            gained: std::collections::BTreeSet::new(),
+            lost: std::collections::BTreeSet::new(),
+        },
+    };
+    let mut kept_off = at(0, Decided::Survived);
+    kept_off.routing = Some(routed(&[IT], &[], &[(IT, Outcome::Survived)]));
+    let mut asked = at(1, Decided::Survived);
+    asked.routing = Some(routed(&[LIB], &[], &[(LIB, Outcome::Survived)]));
+    let mut killed = at(2, Decided::Killed { by: IT.to_owned() });
+    killed.routing = Some(routed(&[IT], &[], &[(IT, Outcome::Killed)]));
+    let report = njutest::testkit::reports::completed_with_drift(
+        "the-run",
+        RunKind::Full,
+        vec![("default", vec![kept_off, asked, killed], vec![moved])],
+    )
+    .expect("rows a report can hold");
+    let spec = specified(&report, &Subject::Everything).expect("a run with changes");
+    let unfounded: Vec<Vec<String>> = spec.items()[0]
+        .changes()
+        .iter()
+        .flat_map(|change| change.answers().map(njutest::spec::Answer::unfounded))
+        .collect();
+    assert_eq!(
+        unfounded,
+        [vec![LIB.to_owned()], Vec::new(), Vec::new()],
+        "a survivor the route kept off the moved target rests on a reach that is not a \
+         measurement, one the moved target ran does not, and a kill rests on no reach at all"
+    );
+    let page = njutest::presentation::spec::page(&spec, Terminal::plain(400));
+    assert!(
+        page.contains("pkg/lib/pkg reached something on a control that its baseline did not"),
+        "{page}"
+    );
+}

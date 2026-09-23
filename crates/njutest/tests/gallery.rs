@@ -457,6 +457,39 @@ fn reported(kind: RunKind, builds: Vec<(&str, Vec<MutantRecord>)>) -> Specificat
         .unwrap_or_else(|error| panic!("a shape the gallery draws names a change: {error}"))
 }
 
+/// A survivor the route kept off a target whose reach moved between its baseline and a control.
+fn moved_reach() -> Specification {
+    let (lib, it) = ("pkg/lib/pkg", "pkg/test/it");
+    let mut kept_off = row(
+        0,
+        ("src/lib.rs", "settle", 4),
+        ("gt-to-ge", "n > 0", "n >= 0"),
+        Decided::Survived,
+    );
+    kept_off.routing = Some(routed(&[it], &[], &[(it, Outcome::Survived)]));
+    let nothing = || njutest::report::drift::Moved {
+        gained: std::collections::BTreeSet::new(),
+        lost: std::collections::BTreeSet::new(),
+    };
+    let moved = njutest::report::drift::Drift::Moved {
+        target: lib.to_owned(),
+        reached: njutest::report::drift::Moved {
+            gained: std::collections::BTreeSet::from([0]),
+            lost: std::collections::BTreeSet::new(),
+        },
+        bodies: nothing(),
+        infected: nothing(),
+    };
+    let report = njutest::testkit::reports::completed_with_drift(
+        "the-run",
+        RunKind::Full,
+        vec![("default", vec![kept_off], vec![moved])],
+    )
+    .unwrap_or_else(|error| panic!("a shape the gallery draws is one a report can hold: {error}"));
+    specified(&report, &Subject::Everything)
+        .unwrap_or_else(|error| panic!("a shape the gallery draws names a change: {error}"))
+}
+
 /// Every shape `njutest spec` draws, each read off a report a run could have written: each section, builds that disagree with one answer read back, code that does not fit, and one name in two files from a changed run that read a kill back.
 fn specifications() -> Vec<(&'static str, Specification)> {
     let (lib, it, more) = ("pkg/lib/pkg", "pkg/test/it", "pkg/test/more");
@@ -587,6 +620,7 @@ fn specifications() -> Vec<(&'static str, Specification)> {
                 vec![("default", vec![debug]), ("release", vec![release])],
             ),
         ),
+        ("a change that rests on a reach that moved", moved_reach()),
         (
             "a change whose code does not fit",
             reported(RunKind::Full, vec![("default", vec![long])]),

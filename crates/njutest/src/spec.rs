@@ -3,7 +3,7 @@
 
 //! What a run established each item of the source pins, and what it leaves free.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::report::{
     Answered, BuildMutationDecision, Decided, Decision, Discharged, Established, ProjectedMutant,
@@ -177,22 +177,25 @@ impl Item {
     }
 }
 
-/// One change the run made: the report's own projection of that mutation across every build.
+/// One change the run made: the report's own projection of that mutation across every build, beside the targets each build found its baseline reach moved for.
 #[derive(Debug, Clone)]
-pub struct Change(ProjectedMutant);
+pub struct Change {
+    mutant: ProjectedMutant,
+    moved: BTreeMap<String, BTreeSet<String>>,
+}
 
 impl Change {
     /// What was done to the code.
     #[must_use]
     pub fn edit(&self) -> Edit<'_> {
-        if self.0.replacement().trim().is_empty() {
+        if self.mutant.replacement().trim().is_empty() {
             Edit::Deleted {
-                was: self.0.original(),
+                was: self.mutant.original(),
             }
         } else {
             Edit::Replaced {
-                was: self.0.original(),
-                now: self.0.replacement(),
+                was: self.mutant.original(),
+                now: self.mutant.replacement(),
             }
         }
     }
@@ -200,23 +203,26 @@ impl Change {
     /// Where the change stands across every build, which is the section of the decision the report's own lattice took over them.
     #[must_use]
     pub const fn section(&self) -> Section {
-        Section::of(self.0.decision())
+        Section::of(self.mutant.decision())
     }
 
     /// What each build established, in the order the builds were measured.
     pub fn answers(&self) -> impl Iterator<Item = Answer<'_>> {
-        self.0.by_build().iter().map(Answer)
+        self.mutant.by_build().iter().map(|row| Answer {
+            row,
+            moved: self.moved.get(row.build().as_str()),
+        })
     }
 
     /// How a reader names the change again after they have edited the file.
     #[must_use]
     pub fn locator(&self) -> String {
-        crate::naming::locator(&self.0)
+        crate::naming::locator(&self.mutant)
     }
 
     /// The line it is on.
     const fn line(&self) -> u32 {
-        self.0.position().line
+        self.mutant.position().line
     }
 }
 
@@ -265,29 +271,48 @@ impl Section {
 
 /// What one build established about one change: that build's row of the report.
 #[derive(Debug, Clone, Copy)]
-pub struct Answer<'a>(&'a BuildMutationDecision);
+pub struct Answer<'a> {
+    row: &'a BuildMutationDecision,
+    moved: Option<&'a BTreeSet<String>>,
+}
 
 impl<'a> Answer<'a> {
     /// The build.
     #[must_use]
     pub fn build(self) -> &'a str {
-        self.0.build().as_str()
+        self.row.build().as_str()
     }
 
     /// What the build established, with the names its route recorded.
     #[must_use]
     pub fn held(self) -> Held {
         Held::of(
-            self.0.outcome(),
-            self.0.accepted(),
-            Recorded::of(self.0.routing(), self.established()),
+            self.row.outcome(),
+            self.row.accepted(),
+            Recorded::of(self.row.routing(), self.established()),
         )
     }
 
     /// Whether this run established it, or read it back from another.
     #[must_use]
     pub const fn established(self) -> &'a Established {
-        &self.0.reuse().0
+        &self.row.reuse().0
+    }
+
+    /// The targets whose baseline reach moved on a control and on which what this build established rests: none for anything but a change left free, because a kill rests on no reach.
+    #[must_use]
+    pub fn unfounded(self) -> Vec<String> {
+        let Some(moved) = self.moved else {
+            return Vec::new();
+        };
+        match self.held() {
+            Held::Free { .. } => moved
+                .iter()
+                .filter(|target| crate::report::drift::rests_on(self.row.routing(), target))
+                .cloned()
+                .collect(),
+            Held::Pinned(_) | Held::Same(_) | Held::Unsettled(_) => Vec::new(),
+        }
     }
 }
 
@@ -436,13 +461,31 @@ impl SpecError {
 /// [`SpecError::NamesNothing`] when the run made no change the subject names, and [`SpecError::Unsound`] when the report's projection does not fit its counters.
 pub fn specified(report: &Report, subject: &Subject) -> Result<Specification, SpecError> {
     let conclusion = report.conclusion()?;
+    let moved: BTreeMap<String, BTreeSet<String>> = report
+        .builds()
+        .map(|build| {
+            let targets = build
+                .drift()
+                .iter()
+                .filter_map(|one| match one {
+                    crate::report::drift::Drift::Moved { target, .. } => Some(target.clone()),
+                    crate::report::drift::Drift::Held { .. }
+                    | crate::report::drift::Drift::NotMeasured { .. } => None,
+                })
+                .collect();
+            (build.name().as_str().to_owned(), targets)
+        })
+        .collect();
     let mut named: BTreeMap<(String, String), Vec<Change>> = BTreeMap::new();
     for mutant in conclusion.mutants {
         if subject.names(mutant.path(), mutant.item()) {
             named
                 .entry((mutant.path().to_owned(), mutant.item().to_owned()))
                 .or_default()
-                .push(Change(mutant));
+                .push(Change {
+                    mutant,
+                    moved: moved.clone(),
+                });
         }
     }
     if named.is_empty() {

@@ -2350,6 +2350,12 @@ pub struct BuildEvidence {
 }
 
 impl BuildEvidence {
+    /// What this build's controls established about each target's baseline reach, over every part, one record each.
+    #[must_use]
+    pub fn drift(&self) -> Vec<drift::Drift> {
+        drift::combined(self.parts.iter().flat_map(|part| part.drift.iter()))
+    }
+
     /// Joins already proved typed components without exposing mutable fields.
     pub(crate) const fn from_parts(
         name: BuildName,

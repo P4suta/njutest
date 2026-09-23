@@ -176,12 +176,24 @@ fn glanced(code: &str, telling: Telling) -> String {
     format!("`{first}`{ellipsis} ({more} more {lines})")
 }
 
-/// What one build established, and where it was established when that was another run.
+/// What one build established, where it was established when that was another run, and the moved reach it rests on.
 fn established(answer: Answer<'_>) -> String {
     let said = worded(&answer.held());
-    match answer.established() {
+    let said = match answer.established() {
         Established::Here => said,
         Established::ReadBackFrom(run) => format!("{said}; established by run {run}"),
+    };
+    match answer.unfounded().as_slice() {
+        [] => said,
+        [one] => format!(
+            "{said}; {one} reached something on a control that its baseline did not, so what \
+             kept it from this change is not a measurement"
+        ),
+        several => format!(
+            "{said}; {} reached something on a control that their baselines did not, so what \
+             kept them from this change is not a measurement",
+            several.join(", ")
+        ),
     }
 }
 

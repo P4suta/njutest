@@ -1271,6 +1271,55 @@ src/lib.rs  settle
         release: nothing noticed it, and the record does not say what ran it;
           established by run 20260923T000000Z-000009
 
+=== spec: a change that rests on a reach that moved — eighty columns, no colour
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` => `n >= 0`  njutest explain src/lib.rs:settle:gt-to-ge@4
+        pkg/test/it ran it and did not notice; pkg/lib/pkg reached something
+          on a control that its baseline did not, so what kept it from this
+          change is not a measurement
+
+=== spec: a change that rests on a reach that moved — forty columns, no colour
+
+spec of 1 item from run the-run, a full
+run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` => `n >= 0`
+      njutest explain src/lib.rs:settle:gt-to-ge@4
+        pkg/test/it ran it and did not
+          notice; pkg/lib/pkg reached
+          something on a control that
+          its baseline did not, so what
+          kept it from this change is
+          not a measurement
+
+=== spec: a change that rests on a reach that moved — eighty columns, colour
+
+[38;5;244mspec of 1 item from run the-run, a full run, 1 build, default[0m
+
+[1;38;5;253msrc/lib.rs[0m  [1;38;5;253msettle[0m
+  [1;38;5;214mwhat is left free[0m
+    - `n > 0` => [1;4;38;5;204m`n >= 0`[0m  [38;5;252mnjutest explain src/lib.rs:settle:gt-to-ge@4[0m
+        pkg/test/it ran it and did not notice; pkg/lib/pkg reached something
+          on a control that its baseline did not, so what kept it from this
+          change is not a measurement
+
+=== spec: a change that rests on a reach that moved — eighty columns, unicode
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` ⇢ `n >= 0`  njutest explain src/lib.rs:settle:gt-to-ge@4
+        pkg/test/it ran it and did not notice; pkg/lib/pkg reached something
+          on a control that its baseline did not, so what kept it from this
+          change is not a measurement
+
 === spec: a change whose code does not fit — eighty columns, no colour
 
 spec of 1 item from run the-run, a full run, 1 build, default

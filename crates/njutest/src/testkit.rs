@@ -1006,23 +1006,48 @@ pub mod reports {
         kind: RunKind,
         builds: Vec<(&str, Vec<MutantRecord>)>,
     ) -> Result<Report, UnmadeReport> {
+        completed_with_drift(
+            run,
+            kind,
+            builds
+                .into_iter()
+                .map(|(name, rows)| (name, rows, Vec::new()))
+                .collect(),
+        )
+    }
+
+    /// The report [`completed`] makes, with each build also recording what its controls established about each target's baseline reach.
+    ///
+    /// # Errors
+    /// [`UnmadeReport`] as [`completed`] refuses.
+    pub fn completed_with_drift(
+        run: &str,
+        kind: RunKind,
+        builds: Vec<(&str, Vec<MutantRecord>, Vec<crate::report::drift::Drift>)>,
+    ) -> Result<Report, UnmadeReport> {
         let rules = rust_mutants::rule::Registry::canonical();
         if let Some(unknown) = builds
             .iter()
-            .flat_map(|(_, rows)| rows)
+            .flat_map(|(_, rows, _)| rows)
             .find(|row| rules.lookup(&row.rule).is_none())
         {
             return Err(UnmadeReport::Rule {
                 name: unknown.rule.clone(),
             });
         }
-        let order: Vec<String> = builds.iter().map(|(name, _)| (*name).to_owned()).collect();
+        let order: Vec<String> = builds
+            .iter()
+            .map(|(name, _, _)| (*name).to_owned())
+            .collect();
         let mut measured_builds = Vec::with_capacity(builds.len());
-        for (at, (name, rows)) in builds.into_iter().enumerate() {
+        for (at, (name, rows, drift)) in builds.into_iter().enumerate() {
+            let mut report = measured(&format!("{run}-{at}"), kind, rows, &order)?;
+            report.drift = drift;
+            report.verdict = report.concluded();
             measured_builds.push((
                 name.to_owned(),
                 rust_mutants::cargo::BuildConfig::default().selection(),
-                measured(&format!("{run}-{at}"), kind, rows, &order)?,
+                report,
             ));
         }
         let measurements = crate::report::across::BuildMeasurements::checked(measured_builds)?;

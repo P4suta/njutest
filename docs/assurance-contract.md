@@ -413,6 +413,8 @@ Each line says only what the run established.
 - An answer read back from an earlier run names that run and claims nothing about who else it asked, because the route beside it is this run's and the answer is the earlier one's.
   An answer inherited from a checkpoint without a route says the record does not say what ran it.
 - A change a reviewer accepted says so.
+- A change left free that rests on a target whose baseline reach moved on a control says that target's reach is not a measurement: the route kept the target off the change, and ADR 0025 found that what the target reaches is not a function of it.
+  The rule is `report::drift::rests_on`, the one the `unstable-baseline` finding counts with, so the page and the finding cannot disagree about which changes rest on a move.
 
 A subject is a file, written whole or by its last components (`src/lib.rs`, `lib.rs`); an item as the source names it (`retry`, `Baseline::retry`), which also names every item inside it; or `PATH:ITEM`.
 An item is matched segment by segment, so `retry` does not name `retry_all`, and every item that matches is listed under its own path rather than merged with the others.
