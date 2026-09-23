@@ -1285,6 +1285,30 @@ const TWO: &str = "core/lib/core two";
 #[test]
 fn a_kill_this_run_established_is_the_last_answer_its_own_route_recorded() {
     let killed = || njutest::report::Decided::Killed { by: ONE.to_owned() };
+    for (earlier, why) in [
+        (Outcome::Survived, "a target that ran it and did not notice"),
+        (
+            Outcome::Unconfirmed,
+            "a kill that did not reproduce, which the run goes on past",
+        ),
+        (Outcome::Waited, "a target this machine stopped waiting for"),
+        (
+            Outcome::StepLimitReached,
+            "a target that crossed its step allowance",
+        ),
+        (Outcome::Errored, "a target nothing could be measured on"),
+    ] {
+        completed(answering(
+            killed(),
+            Some(asked_by(
+                &[TWO, ONE],
+                &[(TWO, earlier), (ONE, Outcome::Killed)],
+            )),
+        ))
+        .unwrap_or_else(|refused| {
+            panic!("the run goes on past {why}, so a kill after it stands: {refused}")
+        });
+    }
     completed(answering(
         killed(),
         Some(asked_by(
@@ -1309,6 +1333,10 @@ fn a_kill_this_run_established_is_the_last_answer_its_own_route_recorded() {
             "an earlier target already noticed, so the run would have stopped there",
         ),
         (Vec::new(), "the route recorded no answer at all"),
+        (
+            vec![(TWO, Outcome::Unreached), (ONE, Outcome::Killed)],
+            "a target does not answer what only a whole mutation can be",
+        ),
     ] {
         let refused = completed(answering(killed(), Some(asked_by(&[ONE, TWO], &answered))))
             .expect_err(why)
@@ -1332,6 +1360,23 @@ fn a_kill_this_run_established_is_the_last_answer_its_own_route_recorded() {
 
 #[test]
 fn a_survivor_this_run_established_was_asked_of_every_target_its_route_kept_and_each_survived() {
+    let mut fallback = asked_by(
+        &[ONE, TWO],
+        &[(ONE, Outcome::Survived), (TWO, Outcome::Survived)],
+    );
+    fallback.granularity = rust_mutants::session::Granularity::All;
+    fallback.fallback = Some(rust_mutants::session::Fallback::NotMeasured);
+    completed(answering(
+        njutest::report::Decided::Survived,
+        Some(fallback.clone()),
+    ))
+    .expect("a route widened to every target asks every target, and each survived");
+    fallback.answered.pop();
+    completed(answering(
+        njutest::report::Decided::Survived,
+        Some(fallback),
+    ))
+    .expect_err("a widened route that left a target unasked is not a survivor's");
     completed(answering(
         njutest::report::Decided::Survived,
         Some(asked_by(
@@ -1339,7 +1384,7 @@ fn a_survivor_this_run_established_was_asked_of_every_target_its_route_kept_and_
             &[(TWO, Outcome::Survived), (ONE, Outcome::Survived)],
         )),
     ))
-    .expect("the runner asks cheapest first, so the answers need not come in the route's order");
+    .expect("the answers need not come in the route's order, only one from each target it kept");
     for (answered, why) in [
         (
             vec![(ONE, Outcome::Survived)],

@@ -550,6 +550,23 @@ fn validate_flat(report: &BuildReport) -> Vec<Violation> {
     violations
 }
 
+/// Whether the mutation phase goes on to the next target after a target answers `outcome`: it stops only at a kill it confirmed, and a target never answers what only a whole mutation can be.
+const fn carried_on_past(outcome: Outcome) -> bool {
+    match outcome {
+        Outcome::Survived
+        | Outcome::Unconfirmed
+        | Outcome::Waited
+        | Outcome::StepLimitReached
+        | Outcome::Errored => true,
+        Outcome::Killed
+        | Outcome::CompileRejected
+        | Outcome::Equivalent
+        | Outcome::ModelNoticed
+        | Outcome::ModelProved
+        | Outcome::Unreached => false,
+    }
+}
+
 /// Whether each row this run decided by a route it asked agrees with that route's answers: a kill is the last of them and the only kill, and a survivor was asked once of every target the route kept and each survived.
 ///
 /// A row read back from another run or inherited without a route was not asked here, so this run's record holds no answers to hold it to.
@@ -566,7 +583,7 @@ fn check_answers(report: &BuildReport, violations: &mut Vec<Violation>) {
                     .is_some_and(|(last, earlier)| {
                         last.target == *by
                             && last.outcome == Outcome::Killed
-                            && earlier.iter().all(|one| one.outcome != Outcome::Killed)
+                            && earlier.iter().all(|one| carried_on_past(one.outcome))
                     });
                 if !stopped {
                     violations.push(Violation::KillNotItsLastAnswer {
