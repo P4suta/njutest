@@ -439,6 +439,8 @@ The command exits 0 whatever the marks say.
 A mark is an inlay hint at the end of its line, labelled with its section, and hovering it gives each change that starts there, what each build established about it, and the `njutest explain` command that asks about it.
 Each item carries a lens above its first change saying how many of its changes stand where, and naming it as `njutest spec` reads it.
 The server asks for the whole buffer on every change and marks a document only while the client holds exactly the bytes the run read: an unsaved edit takes the marks away, and undoing it brings them back.
+A client that sends an edit as a range anyway gets no marks in that document until it opens it again, and its log says why.
+An editor that strips a byte-order mark from what it holds never holds the bytes a file with one was read as, so such a file is not marked.
 It reads the latest run's report once, and again only when the store points at another run.
 
 ## DEFECT, INSUFFICIENT, and ERROR

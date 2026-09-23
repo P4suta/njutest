@@ -453,7 +453,8 @@ impl Held {
         let changes = params
             .and_then(|one| one.get("contentChanges"))
             .and_then(Value::as_array);
-        if changes.is_some_and(|changes| changes.iter().any(|one| one.get("range").is_some())) {
+        let ranged = |one: &Value| one.get("range").is_some() || one.get("rangeLength").is_some();
+        if changes.is_some_and(|changes| changes.iter().any(ranged)) {
             self.documents.remove(uri);
             return notify(
                 output,
@@ -682,23 +683,31 @@ impl Guarded {
 }
 
 /// The file `uri` names, as a report names it from `root`, or nothing when it names no file under `root`.
+///
+/// `file://localhost/` is the local host RFC 8089 says it is, and a root the platform spells as a verbatim path is compared without its `//?/`.
 fn path_of(uri: &str, root: &Path) -> Option<String> {
-    let local = decoded(uri.strip_prefix("file://")?)?;
+    let rest = uri.strip_prefix("file://")?;
+    let rest = match rest.strip_prefix("localhost") {
+        Some(after) if after.starts_with('/') => after,
+        Some(_) | None => rest,
+    };
+    let local = decoded(rest)?;
     let local = match local.as_bytes() {
         [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => local.get(1..)?.to_owned(),
         _ => local,
     };
-    let root = match rust_mutants::id::slashed(root) {
-        Ok(root) => root,
+    let slashed = match rust_mutants::id::slashed(root) {
+        Ok(slashed) => slashed,
         Err(_not_text) => return None,
     };
+    let root = slashed.strip_prefix("//?/").unwrap_or(&slashed);
     let within = local.get(..root.len())?;
     let drive = |one: &str| {
         let bytes = one.as_bytes();
         matches!(bytes, [letter, b':', ..] if letter.is_ascii_alphabetic())
     };
-    let same = if drive(within) && drive(&root) {
-        within.eq_ignore_ascii_case(&root)
+    let same = if drive(within) && drive(root) {
+        within.eq_ignore_ascii_case(root)
     } else {
         within == root
     };

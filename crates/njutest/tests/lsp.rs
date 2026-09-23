@@ -1092,3 +1092,61 @@ fn an_edit_with_a_range_is_not_taken_for_the_whole_document() {
         "the client is told why its marks went away: {said:?}"
     );
 }
+
+#[test]
+fn a_uri_is_the_file_it_names_however_the_client_spells_it_and_names_no_file_outside_the_root() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let plain = library(root.path());
+    let localhost = plain.replacen("file://", "file://localhost", 1);
+    let escaping = plain.replacen("/src/lib.rs", "/src/../../src/lib.rs", 1);
+    for (uri, marked) in [(&localhost, true), (&escaping, false)] {
+        let said = answers(
+            served(
+                &[
+                    json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+                    json!({
+                        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                        "params": { "textDocument": {
+                            "uri": uri, "languageId": "rust", "version": 1, "text": CLEF,
+                        } },
+                    }),
+                    asking(2, "textDocument/inlayHint", uri),
+                ],
+                root.path(),
+            )
+            .said,
+        );
+        assert_eq!(
+            answered(&said, 2).as_array().map(Vec::len),
+            Some(usize::from(marked)),
+            "{uri}: `file://localhost/` is the local file RFC 8089 says it is, and a path that \
+             climbs out of the root names no file the run read, whatever bytes it holds"
+        );
+    }
+}
+
+#[test]
+fn an_edit_that_says_only_how_long_a_range_it_replaced_is_not_taken_for_the_whole_document() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let sized = json!({
+        "jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [ { "rangeLength": 0, "text": CLEF } ],
+        },
+    });
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[sized, asking(2, "textDocument/inlayHint", &uri)],
+    );
+    assert_eq!(
+        answered(&said, 2),
+        &json!([]),
+        "`rangeLength` is the deprecated half of a ranged edit, and an edit that has it is a \
+         piece of the document rather than all of it"
+    );
+}
