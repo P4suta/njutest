@@ -45,7 +45,7 @@ fn killed() -> Value {
         "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-        "identical": null, "expected": false, "unreached": false,
+        "identical": "not-measured", "expected": false, "unreached": false,
         "source_run_id": null
     })
 }
@@ -65,7 +65,7 @@ fn survived() -> Value {
         "step_notice": null, "retried": false, "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-        "identical": null, "expected": true, "unreached": false,
+        "identical": "not-measured", "expected": true, "unreached": false,
         "source_run_id": null
     })
 }

@@ -916,7 +916,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
             "step_notice": null, "retried": false, "not_run_reason": "interrupted",
-            "route": null, "identical": null,
+            "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]
     }));
