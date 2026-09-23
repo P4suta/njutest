@@ -272,8 +272,7 @@ struct Mutant {
     #[serde(rename = "family")]
     _family: String,
     rule: String,
-    #[serde(rename = "item")]
-    _item: String,
+    item: String,
     rule_version: u64,
     #[serde(rename = "line")]
     _line: u64,
@@ -294,8 +293,7 @@ struct Mutant {
     _duration_ms: u64,
     #[serde(deserialize_with = "required_option")]
     tests_run: Option<u64>,
-    #[serde(rename = "killed_by")]
-    _killed_by: Vec<String>,
+    killed_by: Vec<String>,
     #[serde(rename = "signal")]
     #[serde(deserialize_with = "required_option")]
     _signal: Option<i64>,
@@ -332,7 +330,7 @@ impl Mutant {
             _package: _,
             _family: _,
             rule,
-            _item: _,
+            item,
             rule_version,
             _line: _,
             _column: _,
@@ -347,7 +345,7 @@ impl Mutant {
             _exit_code: _,
             _duration_ms: _,
             tests_run,
-            _killed_by: _,
+            killed_by,
             _signal: _,
             retried,
             not_run_reason,
@@ -376,6 +374,8 @@ impl Mutant {
             step_notice,
             target,
             tests_run,
+            killed_by,
+            item,
             retried,
             expected,
             unreached,
