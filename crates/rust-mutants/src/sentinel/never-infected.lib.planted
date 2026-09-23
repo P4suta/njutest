@@ -1,3 +1,0 @@
-pub fn at_most(a: i32, b: i32) -> bool {
-    a <= b
-}

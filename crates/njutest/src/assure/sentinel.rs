@@ -20,7 +20,7 @@ use crate::watch::Watch;
 /// # Errors
 /// Returns [`RunnerError::Blind`] for the first planted mutant a layer did not route as it must, and the engine's failure to write, open, or prepare the planted crate.
 pub fn stood(
-    request: &Request,
+    (request, toolchain): (&Request, &rust_mutants::cargo::Toolchain),
     environment: &Environment,
     scratch: &Scratch,
     (notes, watch): (&mut Notes<'_>, Watch<'_>),
@@ -28,12 +28,15 @@ pub fn stood(
     notes.phase("sentinel")?;
     watch.trace.stage("sentinel");
     let sighted = rust_mutants::sentinel::sighted(
-        &scratch.sentinel_dir(),
-        rust_mutants::workspace::OpenOptions {
-            trace: rust_mutants::trace::Recorder::disabled(),
-            ..crate::assure::run::opening(request, environment)
+        rust_mutants::sentinel::Run {
+            toolchain,
+            open: rust_mutants::workspace::OpenOptions {
+                trace: rust_mutants::trace::Recorder::disabled(),
+                ..crate::assure::run::opening(request, environment)
+            },
+            options: &crate::assure::run::preparing(request)?,
         },
-        &crate::assure::run::preparing(request)?,
+        &scratch.sentinel_dir(),
         watch.cancel,
     )?;
     for path in &sighted.kept {

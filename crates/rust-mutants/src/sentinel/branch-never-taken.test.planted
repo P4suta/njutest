@@ -2,3 +2,8 @@
 fn above() {
     assert_eq!(sentinel::clamp(3, 2), 2);
 }
+
+#[test]
+fn at_the_limit() {
+    assert_eq!(sentinel::clamp_entered(2, 2), 2);
+}

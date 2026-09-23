@@ -1,0 +1,9 @@
+#[test]
+fn zero_is_zero() {
+    assert_eq!(sentinel::zero(0), 0);
+}
+
+#[test]
+fn seven_is_seven() {
+    assert_eq!(sentinel::seven(7), 7);
+}

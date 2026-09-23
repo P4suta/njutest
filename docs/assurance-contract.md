@@ -220,13 +220,23 @@ Every test that reaches the mutation has already run by the time the layer does,
 
 A layer that removes executions is believed only after it has been seen to remove what it must.
 Before the baseline, every run writes a small crate the engine ships into its own scratch directory, never into the tree under test, prepares it with the switches that decide this run's routes, and asks the engine how it routes the mutants planted there, running none of them.
-Each layer has two: one it must remove and one beside it that it must leave to the tests, so a layer that went blind and a layer that removes everything are both caught.
+Each layer is planted as a pair made by one rule: a mutant it must remove, and a mutant of the same rule it must leave to a named target, whose test produces exactly the evidence the layer reads.
+A layer that went blind to that evidence removes the second as well, which is the unsound direction — a survivor reported where a test would have killed, or a change reported as unnoticed that was noticed — and a layer that stopped removing keeps the first; both end the run.
+A pair is planted for every form of evidence a proof reads, derived from the closed sets rather than listed: one for the reach measurement, one for the branch proof, one for each question a probe asks of a return replacement, and one for the guard on an inert comparison, so a proof or a question added without a pair does not compile.
 
-| Layer | Must remove | Must leave |
+| Layer | Must remove | Must leave, and to whom |
 | --- | --- | --- |
-| `reach` | a function no test calls, as `unreached` | a function a test asserts on |
-| `branch-never-taken` | a comparison guarding a branch the test never enters | the same condition made always true, which the test observes |
-| `never-infected` | a body replaced by the value it already returns | a comparison whose change the test's input exposes |
+| `reach` | a function no test calls, as `unreached` | a function the library's own unit test calls, to `lib` |
+| `branch-never-taken` | a comparison guarding a body the test never enters | the same comparison where the test enters the body, to the tests |
+| `never-infected:is-default` | `return-default` where the value is already the default | the same rule where it is not |
+| `never-infected:is-ok-default` | `return-ok-default` over `Ok` of the default | the same rule over `Ok` of anything else |
+| `never-infected:is-some-default` | `return-some-default` over `Some` of the default | the same rule over `Some` of anything else |
+| `never-infected:is-true` | `return-true` where the value is already `true` | the same rule where it is `false` |
+| `never-infected:inert-comparison` | `le-to-lt` where the two sides are never equal | the same rule where the test makes them equal |
+
+The planted crate is built by the compiler the tree under test resolves to, named by path: the run's located toolchain is handed to the sentinels, and its sysroot's own `cargo`, `rustc` (as `RUSTC`) and `rustdoc` (as `RUSTDOC`) build the planted crate, so no toolchain file, rustup override or version-manager shim in the scratch directory decides which compiler answers.
+A planted session that still reports another `rustc` stops the run with `RM5008` rather than vouching for a layer with another compiler's answer; by construction it never fires.
+The caller's harness arguments are not carried over, because they name and select the caller's tests and would select the planted ones out of the measurement; what a layer reads is attributed by test thread, which no harness argument changes.
 
 Every answer is a `sentinel` event of the trace.
 The first planted mutant a layer did not route as it must ends the run in `ERROR` with `NJ5009`, naming the layer, the mutant, what was due, and what the engine did: nothing that layer would remove from the run is believed, and a run that believed it would report a survivor as never reached or never run a test that would have killed it.

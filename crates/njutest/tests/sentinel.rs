@@ -4,7 +4,8 @@
 //! A run stands on its sentinels: a routing layer that did not route what was planted for it ends the run in an error that says which layer and what is no longer believed.
 
 use njutest::error::RunnerError;
-use rust_mutants::sentinel::{Expected, Planted, Sighted, Sighting};
+use rust_mutants::probe::Question;
+use rust_mutants::sentinel::{Expected, Infection, Planted, Sighted, Sighting};
 use rust_mutants::session::{Asked, Discharge, Proof, Reaches, Route};
 
 /// The route a layer that works gives the mutant planted for it.
@@ -17,9 +18,9 @@ fn routed_as(expected: Expected) -> Route {
         Expected::Discharged(proof) => Route::Discharged {
             discharged: vec![Discharge { target, proof }],
         },
-        Expected::Kept => Route::Block {
+        Expected::Kept(reacher) => Route::Block {
             reaching: vec![Reaches {
-                target,
+                target: reacher.target().to_owned(),
                 tests: Asked::Every,
             }],
             discharged: Vec::new(),
@@ -59,9 +60,14 @@ fn a_layer_that_did_not_route_its_planted_mutant_ends_the_run_and_says_what_is_n
     let uninfected = sighted
         .sightings
         .iter_mut()
-        .find(|one| one.expectation.expected == Expected::Discharged(Proof::NeverInfected))
+        .find(|one| {
+            one.expectation.planted == Planted::Infection(Infection::Probe(Question::True))
+                && one.expectation.expected == Expected::Discharged(Proof::NeverInfected)
+        })
         .expect("never-infected has a planted mutant");
-    uninfected.route = Ok(routed_as(Expected::Kept));
+    uninfected.route = Ok(routed_as(Expected::Kept(
+        rust_mutants::sentinel::Reacher::Tests,
+    )));
 
     let error = njutest::assure::sentinel::believed(&sighted)
         .expect_err("a blind layer is not one a run may believe");
@@ -69,7 +75,7 @@ fn a_layer_that_did_not_route_its_planted_mutant_ends_the_run_and_says_what_is_n
         matches!(
             &error,
             RunnerError::Blind {
-                layer: Planted::Proof(Proof::NeverInfected),
+                layer: Planted::Infection(Infection::Probe(Question::True)),
                 ..
             }
         ),
@@ -78,10 +84,10 @@ fn a_layer_that_did_not_route_its_planted_mutant_ends_the_run_and_says_what_is_n
     assert_eq!(error.code().code, "NJ5009");
     assert_eq!(
         error.to_string(),
-        "NJ5009: the never-infected layer did not route the mutant planted for it: \
-         src/lib.rs:at_most:return-true was to be discharged by never-infected, and the engine \
-         routed it `block`. Nothing the never-infected layer would remove from this run is \
-         believed, so the run stops before its baseline",
+        "NJ5009: the never-infected:is-true layer did not route the mutant planted for it: \
+         src/lib.rs:small:return-true was to be discharged by never-infected, and the engine \
+         routed it `block`. Nothing the never-infected:is-true layer would remove from this run \
+         is believed, so the run stops before its baseline",
         "the sentence names the layer, the mutant, what was due and what happened, and \
          that the run believes nothing the layer removes, because a reader told only that \
          something failed would look for the fault in their own tests"
@@ -100,7 +106,8 @@ fn a_layer_that_removes_the_mutant_it_must_leave_is_as_blind_as_one_that_removes
         .sightings
         .iter_mut()
         .find(|one| {
-            one.expectation.planted == Planted::Reach && one.expectation.expected == Expected::Kept
+            one.expectation.planted == Planted::Reach
+                && matches!(one.expectation.expected, Expected::Kept(_))
         })
         .expect("reach has a mutant it must leave");
     reached.route = Ok(routed_as(Expected::Unreached));
@@ -109,8 +116,8 @@ fn a_layer_that_removes_the_mutant_it_must_leave_is_as_blind_as_one_that_removes
         .expect_err("a layer that removes what the tests reach removes findings");
     assert!(
         error.to_string().contains(
-            "src/lib.rs:two:return-default was to be kept for the tests that reach it, and \
-             the engine routed it `unreached`"
+            "src/lib.rs:two:return-default was to be kept for sentinel/lib/sentinel, and the \
+             engine routed it `unreached`"
         ),
         "{error}"
     );

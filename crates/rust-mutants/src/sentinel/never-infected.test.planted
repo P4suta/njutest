@@ -1,4 +1,0 @@
-#[test]
-fn equal() {
-    assert!(sentinel::at_most(2, 2));
-}

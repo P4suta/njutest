@@ -5,3 +5,11 @@ pub fn one() -> u32 {
 pub fn two() -> u32 {
     2
 }
+
+#[cfg(test)]
+mod reach_tests {
+    #[test]
+    fn two_is_two() {
+        assert_eq!(super::two(), 2);
+    }
+}

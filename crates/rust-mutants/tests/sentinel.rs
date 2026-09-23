@@ -3,7 +3,8 @@
 
 //! What a planted crate holds, which switches a session over it keeps, and when a route bears an expectation out.
 
-use rust_mutants::sentinel::{Expected, Planted};
+use rust_mutants::probe::Question;
+use rust_mutants::sentinel::{Expected, Infection, Planted, Reacher};
 use rust_mutants::session::{Discharge, Fallback, PrepareOptions, Proof, Reaches, Route};
 
 #[test]
@@ -15,7 +16,14 @@ fn every_layer_plants_its_items_and_names_two_different_mutants_in_them() {
             removed.mutant, kept.mutant,
             "{planted} is asked about two mutants"
         );
-        assert_eq!(kept.expected, Expected::Kept, "{planted}");
+        assert!(
+            matches!(kept.expected, Expected::Kept(_)),
+            "{planted} leaves one of its pair to the tests"
+        );
+        assert_eq!(
+            removed.mutant.rule, kept.mutant.rule,
+            "{planted} asks both halves of its pair about one rule"
+        );
         for one in [removed, kept] {
             assert!(
                 library.contains(&format!("pub fn {}(", one.mutant.item)),
@@ -24,11 +32,27 @@ fn every_layer_plants_its_items_and_names_two_different_mutants_in_them() {
             );
         }
     }
-    assert_eq!(
-        Planted::every().len(),
-        Proof::ALL.len() + 1,
-        "one layer per proof, and the reach measurement"
-    );
+    for proof in Proof::ALL {
+        assert!(
+            Planted::every()
+                .iter()
+                .any(|planted| planted.proof() == Some(proof)),
+            "{proof} has a pair planted for it"
+        );
+    }
+    for question in Question::ALL {
+        let planted = Planted::Infection(Infection::Probe(question));
+        assert!(
+            Planted::every().contains(&planted),
+            "every question a probe asks has a pair, because each has its own recorder"
+        );
+        let [removed, _] = planted.expectations();
+        assert_eq!(
+            Question::of(removed.mutant.rule),
+            Some(question),
+            "and the pair is asked about the rule that question is asked of"
+        );
+    }
 }
 
 #[test]
@@ -107,13 +131,17 @@ fn a_route_bears_out_only_the_expectation_it_is() {
     );
     assert!(Expected::Unreached.holds(&unreached));
     assert!(!Expected::Unreached.holds(&everything));
-    assert!(Expected::Kept.holds(&kept(None)));
+    assert!(Expected::Kept(Reacher::Tests).holds(&kept(None)));
     assert!(
-        !Expected::Kept.holds(&kept(Some(Fallback::TouchIncomplete))),
+        !Expected::Kept(Reacher::Library).holds(&kept(None)),
+        "a mutant put only to the integration tests is not one the library's own tests were asked about"
+    );
+    assert!(
+        !Expected::Kept(Reacher::Tests).holds(&kept(Some(Fallback::TouchIncomplete))),
         "a target kept because its measurement was lost is not one the measurement placed"
     );
     assert!(
-        !Expected::Kept.holds(&everything),
+        !Expected::Kept(Reacher::Tests).holds(&everything),
         "every target, because nothing was measured, is not the measurement keeping one"
     );
 }
@@ -129,4 +157,25 @@ fn a_planted_crate_that_cannot_be_written_says_where_and_carries_its_code() {
         error.to_string().contains("occupied"),
         "the message names the path: {error}"
     );
+}
+
+#[test]
+fn every_rule_a_pair_or_a_question_names_is_one_the_engine_catalogs() {
+    let registry = rust_mutants::rule::Registry::canonical();
+    let known = |name: &str| registry.rules().iter().any(|rule| rule.name == name);
+    for planted in Planted::every() {
+        let rule = planted.pair().rule;
+        assert!(
+            known(rule),
+            "{planted} plants `{rule}`, which no rule of the canonical registry is, so every run \
+             would fail to find its planted mutant and stop"
+        );
+    }
+    for question in Question::ALL {
+        assert!(
+            known(question.rule()),
+            "a probe is asked about `{}`, which the engine never catalogs",
+            question.rule()
+        );
+    }
 }

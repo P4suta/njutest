@@ -3,8 +3,15 @@
 
 //! Every routing layer routes the mutant planted for it, and a planted expectation that does not hold is reported blind.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a helper that cannot locate the toolchain or write a script leaves no sentinel to test"
+)]
+
+use rust_mutants::cargo::{LocateOptions, Toolchain};
+use rust_mutants::probe::Question;
 use rust_mutants::runner::Cancel;
-use rust_mutants::sentinel::{Expectation, Expected, Planted, Planting};
+use rust_mutants::sentinel::{Expectation, Expected, Infection, Planted, Planting, Reacher};
 use rust_mutants::session::{PrepareOptions, Proof};
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::Workspace;
@@ -17,14 +24,33 @@ fn touching() -> PrepareOptions {
     }
 }
 
+/// The toolchain a run of this workspace resolves to, located the way a run locates it.
+fn located(cargo: &std::path::Path, env: &[(std::ffi::OsString, std::ffi::OsString)]) -> Toolchain {
+    Toolchain::locate(
+        &LocateOptions {
+            cargo: Some(cargo.to_path_buf()),
+            search_path: std::env::var_os("PATH"),
+            env: Some(env.to_vec()),
+        },
+        &njutest_devkit::paths::workspace_root(),
+        &Cancel::new(),
+    )
+    .expect("the toolchain this suite runs under is located")
+}
+
 #[test]
 fn every_layer_routes_the_mutant_planted_for_it_and_leaves_the_one_beside_it() {
     let temp = tempfile::tempdir().expect("a temporary directory");
     let root = temp.path().join("planted");
+    let open = opening(&njutest_devkit::paths::cargo_binary(), temp.path());
+    let run = located(&njutest_devkit::paths::cargo_binary(), &open.env);
     let sighted = rust_mutants::sentinel::sighted(
+        rust_mutants::sentinel::Run {
+            toolchain: &run,
+            open,
+            options: &touching(),
+        },
         &root,
-        opening(&njutest_devkit::paths::cargo_binary(), temp.path()),
-        &touching(),
         &Cancel::new(),
     )
     .expect("the planted crate prepares");
@@ -83,7 +109,7 @@ fn an_expectation_the_session_does_not_bear_out_is_blind_and_says_what_it_saw() 
     let unreached_as_uninfected = rust_mutants::sentinel::sight(
         &session,
         Expectation {
-            planted: Planted::Proof(Proof::NeverInfected),
+            planted: Planted::Infection(Infection::Probe(Question::Default)),
             mutant: Planting::new("one", "return-default"),
             expected: Expected::Discharged(Proof::NeverInfected),
         },
@@ -98,9 +124,9 @@ fn an_expectation_the_session_does_not_bear_out_is_blind_and_says_what_it_saw() 
     let removed_as_kept = rust_mutants::sentinel::sight(
         &session,
         Expectation {
-            planted: Planted::Proof(Proof::BranchNeverTaken),
+            planted: Planted::Branch,
             mutant: Planting::new("clamp", "le-to-lt"),
-            expected: Expected::Kept,
+            expected: Expected::Kept(Reacher::Tests),
         },
     );
     assert!(
@@ -130,4 +156,65 @@ fn an_expectation_the_session_does_not_bear_out_is_blind_and_says_what_it_saw() 
         absent.routed()
     );
     session.close().expect("the session closes");
+}
+
+/// Writes an executable shell script at `path`.
+#[cfg(unix)]
+fn script(path: &std::path::Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).expect("a script");
+    let mut permissions = std::fs::metadata(path).expect("the script").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions).expect("an executable script");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_planted_crate_another_compiler_would_build_stops_the_run_rather_than_vouching_for_it() {
+    let temp = tempfile::tempdir().expect("a temporary directory");
+    let open = opening(&njutest_devkit::paths::cargo_binary(), temp.path());
+    let real = located(&njutest_devkit::paths::cargo_binary(), &open.env);
+    let sysroot = real
+        .sysroot()
+        .expect("the real toolchain names its sysroot");
+    let (cargo, rustc) = (
+        sysroot.join("bin/cargo").display().to_string(),
+        sysroot.join("bin/rustc").display().to_string(),
+    );
+    let named = temp.path().join("named/bin");
+    let other = temp.path().join("other");
+    std::fs::create_dir_all(&named).expect("the named toolchain");
+    std::fs::create_dir_all(other.join("bin")).expect("the other sysroot");
+    script(&named.join("cargo"), &format!("exec {cargo} \"$@\""));
+    script(
+        &named.join("rustc"),
+        &format!(
+            "if [ \"$1\" = --print ] && [ \"$2\" = sysroot ]; then echo {}; exit 0; fi\nexec {rustc} \"$@\"",
+            other.display()
+        ),
+    );
+    script(&other.join("bin/cargo"), &format!("exec {cargo} \"$@\""));
+    script(
+        &other.join("bin/rustc"),
+        &format!(
+            "if [ \"$1\" = -vV ]; then {rustc} -vV | sed 's/^release: .*/release: 0.0.0-other/'; exit 0; fi\nexec {rustc} \"$@\""
+        ),
+    );
+    script(
+        &other.join("bin/rustdoc"),
+        &format!("exec {}/bin/rustdoc \"$@\"", sysroot.display()),
+    );
+    let run = located(&named.join("cargo"), &open.env);
+
+    let refused = rust_mutants::sentinel::sighted(
+        rust_mutants::sentinel::Run {
+            toolchain: &run,
+            open,
+            options: &touching(),
+        },
+        &temp.path().join("planted"),
+        &Cancel::new(),
+    )
+    .expect_err("a planted session built by another compiler vouches for nothing about this run");
+    assert_eq!(refused.code().code, "RM5008", "{refused}");
 }

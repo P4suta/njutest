@@ -86,6 +86,7 @@ The first digit names an area:
 | `RM5005` | The workspace builds no test target, so no mutant can be measured. | the workspace has nothing that tests, so there is nothing a mutation could be put to; write a test, or point --root at the workspace that has them |
 | `RM5006` | The instrumented tree could not be written. | check there is room under TMPDIR and that nothing is removing the run's directory while it writes |
 | `RM5007` | The crate planted for the routing layers could not be written, so no layer could be checked before the run believed what it removes. | check the run's scratch directory is one this user may write in and that there is room under it |
+| `RM5008` | The crate planted for the routing layers was built by another compiler than the run's, so what it showed about the layers is not about this run. | the planted crate names the run's toolchain in its own rust-toolchain.toml; check that rustup can use that toolchain directory, or run with the toolchain the tree names installed |
 | `RM6001` | A coverage export could not be read. | run again without --coverage to measure without it, or check llvm-tools-preview is installed |
 | `RM6002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). | rustup component add llvm-tools, or run with --no-coverage |
 | `RM6003` | `llvm-profdata` or `llvm-cov` failed. | `rustup component add llvm-tools-preview`, and check the versions match the toolchain in use |

@@ -476,6 +476,12 @@ snapshot_code!(
     "the crate planted for the routing layers could not be written",
     "check the run's scratch directory is one this user may write in and that there is room under it"
 );
+snapshot_code!(
+    SENTINEL_OTHER_TOOLCHAIN,
+    "RM5008",
+    "the crate planted for the routing layers was built by another compiler than the run's",
+    "the planted crate names the run's toolchain in its own rust-toolchain.toml; check that rustup can use that toolchain directory, or run with the toolchain the tree names installed"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -619,6 +625,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SESSION_NO_TARGETS,
         SESSION_WRITE_FAILED,
         SENTINEL_UNWRITABLE,
+        SENTINEL_OTHER_TOOLCHAIN,
         COVERAGE_UNREADABLE,
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,

@@ -415,9 +415,9 @@
               "additionalProperties": false,
               "required": ["layer", "mutant", "expected", "routed", "sighted"],
               "properties": {
-                "layer": { "enum": ["reach", "branch-never-taken", "never-infected"] },
+                "layer": { "enum": ["reach", "branch-never-taken", "never-infected:is-default", "never-infected:is-ok-default", "never-infected:is-some-default", "never-infected:is-true", "never-infected:inert-comparison"] },
                 "mutant": { "type": "string", "minLength": 1 },
-                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept"] },
+                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept-for-library", "kept-for-tests"] },
                 "routed": { "type": "string", "minLength": 1 },
                 "sighted": { "type": "boolean" }
               }

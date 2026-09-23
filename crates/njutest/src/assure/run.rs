@@ -168,7 +168,7 @@ pub fn run(
     }
     let environment = &held;
 
-    sentinel::stood(request, environment, &scratch, (notes, watch))?;
+    sentinel::stood((request, &toolchain), environment, &scratch, (notes, watch))?;
 
     notes.phase("baseline")?;
     watch.trace.stage("baseline");
