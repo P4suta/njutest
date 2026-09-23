@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented** as a measurement; `njutest select`, which will route a change by it, is not.
 The run that verifies the baseline records which items each test entered, beside which mutation sites it reached, and keeps both in `touched-v1.json`.
-Why the markers are placed where they are is [ADR 0025](../adr/0025-an-item-is-entered-where-its-body-starts.md).
+Why the markers are placed where they are is [ADR 0026](../adr/0026-an-item-is-entered-where-its-body-starts.md).
 
 ## Why sites are not enough
 
@@ -98,4 +98,4 @@ Its planted defects are a kill by a test that never entered the item and a site 
 No process, no build, and no pass: one call per body and per closure, on the line that already holds the step checkpoint.
 Off touch mode the call is one load and a branch; on the baseline run it is one bit per thread per item and one line per thread on its way out.
 On `fixture-families` the instrumented build, the baseline, and the whole run moved by less than their own run-to-run spread;
-[ADR 0025](../adr/0025-an-item-is-entered-where-its-body-starts.md#consequences) has the numbers and the load they were taken under.
+[ADR 0026](../adr/0026-an-item-is-entered-where-its-body-starts.md#consequences) has the numbers and the load they were taken under.
