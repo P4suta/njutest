@@ -1,0 +1,38 @@
+=== macro-derive-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! input { ($derive:path) => { #[derive($derive)] struct Input { value: String } } }
+=== macro-serde-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! input { ($policy:meta) => { #[serde($policy)] struct Input { value: String } } }
+=== macro-cfg-attr-condition source crates/app/src/lib.rs
+//! A file.
+macro_rules! input { ($condition:meta) => { #[cfg_attr($condition, derive(serde::Deserialize))] struct Input { value: String } } }
+=== metavariable-outside-a-macro source crates/app/src/lib.rs
+//! A file.
+#[cfg_attr(test, derive($derive))]
+struct Input { value: String }
+=== unscanned-include tree
+--- crates/app/src/lib.rs
+include!("hidden.inc");
+=== computed-include tree
+--- crates/app/src/lib.rs
+include!(concat!(env!("OUT_DIR"), "/hidden.rs"));
+=== escaping-path-attribute tree
+--- crates/app/src/lib.rs
+#[path = "../../../../escape.rs"] mod hidden;
+=== macro-generated-include tree
+--- crates/app/src/lib.rs
+macro_rules! hidden { () => { include!("support/hidden.rs"); } }
+hidden!();
+=== proc-macro-token-construction tree
+--- crates/njutest-macros/src/lib.rs
+use proc_macro::TokenStream;
+#[proc_macro_derive(AllVariants)]
+pub fn all_variants(input: TokenStream) -> TokenStream { input }
+fn emit() { let _ = proc_macro2::Ident::new("Box", proc_macro2::Span::call_site()); }
+=== proc-macro-quote-splice tree
+--- crates/njutest-macros/src/lib.rs
+use proc_macro::TokenStream;
+#[proc_macro_derive(AllVariants)]
+pub fn all_variants(input: TokenStream) -> TokenStream { input }
+fn emit() { let owner = quote::quote!(Box); let held = quote::quote!(dyn Debug); let _ = quote::quote!(#owner<#held>); }

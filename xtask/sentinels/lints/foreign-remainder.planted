@@ -1,0 +1,9 @@
+=== default-remainder source crates/app/src/lib.rs
+use other_crate::session::Options;
+fn go() -> Options { Options { verify: true, ..Options::default() } }
+=== renamed-import source crates/app/src/lib.rs
+use other_crate::session::Options as Knobs;
+fn go() -> Knobs { Knobs { verify: true, ..Default::default() } }
+=== grouped-import source crates/app/src/lib.rs
+use other_crate::session::{Failing, Options};
+fn go() -> Options { Options { verify: true, ..Options::default() } }

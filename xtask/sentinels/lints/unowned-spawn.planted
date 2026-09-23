@@ -1,0 +1,44 @@
+=== thread-spawn source crates/app/src/lib.rs
+fn run(work: impl FnOnce() + Send + 'static) { std::thread::spawn(work); }
+=== builder-spawn source crates/app/src/lib.rs
+fn run(builder: std::thread::Builder, work: impl FnOnce() + Send + 'static) { builder.spawn(work); }
+=== command-spawn source crates/app/src/lib.rs
+fn run(command: &mut std::process::Command) { command.spawn(); }
+=== scoped-spawn source crates/app/src/lib.rs
+fn run(scope: &std::thread::Scope<'_, '_>) { scope.spawn(|| {}); }
+=== renamed-import source crates/app/src/lib.rs
+use std::thread::spawn as detach; fn run() { detach(|| {}); }
+=== macro-rules-body source crates/app/src/lib.rs
+macro_rules! run { ($command:expr) => { $command.spawn() } }
+=== macro-path-argument source crates/app/src/lib.rs
+macro_rules! call { ($function:path) => { $function(|| {}) } } call!(std::thread::spawn);
+=== owner-without-drop source crates/app/src/lib.rs
+struct Owner { child: std::process::Child }
+impl Owner {
+    fn launch(command: &mut std::process::Command) -> std::io::Result<Self> {
+        command.spawn().map(|child| Self { child })
+    }
+    fn wait(&mut self) -> std::io::Result<()> { self.child.wait().map(|status| drop(status)) }
+}
+=== owner-with-a-public-launch source crates/app/src/lib.rs
+struct Owner { child: std::process::Child }
+impl Owner {
+    pub(crate) fn launch(command: &mut std::process::Command) -> std::io::Result<Self> {
+        command.spawn().map(|child| Self { child })
+    }
+    fn wait(&mut self) -> std::io::Result<()> { self.child.wait().map(|status| drop(status)) }
+}
+impl Drop for Owner { fn drop(&mut self) { assert!(self.wait().is_ok()); } }
+=== owner-with-a-second-spawn source crates/app/src/lib.rs
+struct Owner { handle: Option<std::thread::JoinHandle<()>> }
+impl Owner {
+    fn launch() -> std::io::Result<Self> {
+        let first = std::thread::Builder::new().spawn(|| {})?;
+        std::thread::spawn(|| {});
+        Ok(Self { handle: Some(first) })
+    }
+    fn join(mut self) { if let Some(handle) = self.handle.take() { assert!(handle.join().is_ok()); } }
+}
+impl Drop for Owner {
+    fn drop(&mut self) { if let Some(handle) = self.handle.take() { assert!(handle.join().is_ok()); } }
+}

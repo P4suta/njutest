@@ -176,6 +176,22 @@ fn a_guard_on_the_only_arm_naming_our_set_does_not_hide_the_match() {
         vec![7],
         "syn 3 keeps a guard inside the pattern rather than beside it, so an arm written          `Message::Compiler {{ .. }} if error` is a Pat::Guard and a walk reading only the          outer shape learns nothing from it. Every guarded match in the workspace was          invisible to this gate, which is a gate that was off and said it was on"
     );
+    let untyped = r"
+        enum Message { Compiler { error: bool }, Finished { ok: bool } }
+        fn first(next: impl Fn() -> Message, other: syn::Expr) -> Option<u8> {
+            match next() {
+                Message::Compiler { error } if error => Some(1),
+                syn::Expr::Lit(_) => None,
+                _ => None,
+            }
+        }
+    ";
+    assert_eq!(
+        wildcard_lines(untyped),
+        vec![7],
+        "with no typed binding to fall back on, the guarded arm is the only thing naming the \
+         set, so this is the match a reader that skips a guard never sees"
+    );
 }
 
 #[test]

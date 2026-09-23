@@ -1,0 +1,6 @@
+=== own-testkit tree
+--- crates/app/src/lib.rs
+use crate::testkit::Repo;
+=== development-kit tree
+--- crates/app/src/lib.rs
+use njutest_devkit::golden;

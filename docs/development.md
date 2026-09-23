@@ -174,12 +174,15 @@ It reads that run's `run-report-v1.json` and re-decides it in nine layers, none 
 | `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated and a step-limit stop carried the notice that established it, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
 
-Its output and exit codes are `proofaudit`'s: one line per remark, a summary line, and 0, 1, or 2. Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails here rather than in a weekly job.
+Its output and exit codes are `proofaudit`'s: one line per remark, a summary line, and 0, 1, or 2.
+Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
+Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails here rather than in a weekly job.
 
 `mise run dogfood:audit` and `mise run dogfood:engine:audit` are those rules as one command each: they run this workspace through the release build, keep the recording, and re-decide it.
 
 ```console
 $ mise run dogfood:audit
+proofaudit: 9 planted defects found first, each by the layer it was planted for, and the clean specimen drew none
 proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 violations, 1 unaudited
 ```
 
@@ -187,6 +190,38 @@ Where the recording does not carry enough to decide something again — which su
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
 One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
+Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its nine layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
+
+### A gate finds what was planted for it before it is believed
+
+A gate that cannot see a shape reports that the shape is absent, and that report is green.
+`wildcard-over-our-own` passed for as long as syn 3 put a match arm's guard inside its pattern, because the reader returned nothing for a guarded arm and a gate that finds nothing passes; the pre-push gate refused every push while its own eight tests, each feeding a newline-terminated input, stayed green.
+Neither was a missing gate.
+Each was a gate that was evidence only about what it could see.
+
+So `lints`, `devgates`, `engine-audit` and `proofaudit` each start with a positive control.
+Every kind a gate says it detects has a planted example, reached through a total match over the kind (`Kind::planted`, `SeamKind::planted`, and each audit's `Layer::planted`), so a kind added without one does not compile.
+For the two scans the examples are files under `xtask/sentinels/`; for the two audits each is a defect laid over a clean synthetic run, which no layer may find anything in.
+The gate reads each planted example with the code that reads the real tree or the real run, and a kind not found in one of its examples stops the gate with `the <kind> check is blind`, or `the <layer> layer is blind` and exit code 2 for an audit: nothing it would have said is believed until the example is found again.
+The planted files are text, not `.rs`, so they are never a file of this tree, a finding of it, or a region of its coverage.
+
+A planted file holds one or more shapes, each one form of the kind:
+
+```text
+=== guarded-arm tree
+--- crates/app/src/lib.rs
+<the file>
+=== by-full-path source crates/app/src/lib.rs
+<the file>
+```
+
+A `source` shape is one file read by the per-file scan under the path it names, because some rules switch on the path.
+A `tree` shape is laid over the smallest repository the gates accept (`xtask::sentinel::skeleton`) and read by the whole gate, which is how the rules that look across files see it.
+Each shape is read on its own, so one cannot make another's finding appear.
+When a rule learns a new form, the form gets a shape of its own beside the test that taught it.
+A shape proves that its form is found, not which reader found it.
+With the guard reader removed, a guarded arm over a typed parameter was still found, because the parameter's type named the set; only a scrutinee with no typed binding leaves the guarded arm as the one thing naming the set, and that is the shape that went red.
+So a shape is written against the reader it exists for, and checked by removing that reader and watching the gate refuse.
 
 ## Test harness
 

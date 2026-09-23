@@ -1,0 +1,3 @@
+=== static-mut tree
+--- crates/app/src/lib.rs
+static mut COUNTER: u32 = 0;

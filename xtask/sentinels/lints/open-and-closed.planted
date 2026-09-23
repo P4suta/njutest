@@ -1,0 +1,41 @@
+=== all-beside-non-exhaustive source crates/app/src/lib.rs
+/// Every way a thing can go.
+#[non_exhaustive]
+pub enum Outcome {
+    /// One.
+    Killed,
+    /// Another.
+    Survived,
+}
+
+impl Outcome {
+    /// Every outcome, in declaration order.
+    pub const ALL: [Self; 2] = [Self::Killed, Self::Survived];
+}
+=== nested-module source crates/app/src/lib.rs
+mod nested {
+    #[non_exhaustive]
+    pub enum State { Waiting, Done }
+    impl State { pub const ALL: &[Self] = &[Self::Waiting, Self::Done]; }
+}
+=== cfg-attr-non-exhaustive source crates/app/src/lib.rs
+#[cfg_attr(test, non_exhaustive)]
+pub enum State { Waiting, Done }
+impl State { pub const ALL: &[Self] = &[Self::Waiting, Self::Done]; }
+=== renamed-list-function source crates/app/src/lib.rs
+#[non_exhaustive]
+pub enum State { Waiting, Done }
+impl State { pub fn variants() -> &'static [Self] { &[Self::Waiting, Self::Done] } }
+=== total-inherent-match source crates/app/src/lib.rs
+#[non_exhaustive]
+pub enum State { Waiting, Done }
+impl State { pub const fn code(&self) -> u8 { match *self { Self::Waiting => 0, Self::Done => 1 } } }
+=== split-across-files tree
+--- crates/app/src/lib.rs
+mod state;
+--- crates/app/src/state.rs
+#[non_exhaustive]
+pub enum State { Waiting, Done }
+mod list;
+--- crates/app/src/state/list.rs
+impl crate::state::State { pub const ALL: &[Self] = &[Self::Waiting, Self::Done]; }

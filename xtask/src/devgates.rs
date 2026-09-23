@@ -28,7 +28,9 @@ pub enum SeamKind {
 }
 
 impl SeamKind {
-    const fn label(self) -> &'static str {
+    /// What the ledger and a refusal call it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
             Self::StaticMut => "static-mut",
             Self::StaticInteriorMutability => "static-interior-mutability",
@@ -37,6 +39,26 @@ impl SeamKind {
             Self::ProcessEnvironmentRead => "process-environment-read",
             Self::ProcessExit => "process-exit",
             Self::TestkitImport => "testkit-import",
+        }
+    }
+
+    /// The examples a scan must find as this kind before its silence about a tree is believed.
+    #[must_use]
+    pub const fn planted(self) -> &'static str {
+        match self {
+            Self::StaticMut => include_str!("../sentinels/seams/static-mut.planted"),
+            Self::StaticInteriorMutability => {
+                include_str!("../sentinels/seams/static-interior-mutability.planted")
+            }
+            Self::ThreadLocal => include_str!("../sentinels/seams/thread-local.planted"),
+            Self::CfgTestOutsideTestsModule => {
+                include_str!("../sentinels/seams/cfg-test-outside-tests-module.planted")
+            }
+            Self::ProcessEnvironmentRead => {
+                include_str!("../sentinels/seams/process-environment-read.planted")
+            }
+            Self::ProcessExit => include_str!("../sentinels/seams/process-exit.planted"),
+            Self::TestkitImport => include_str!("../sentinels/seams/testkit-import.planted"),
         }
     }
 

@@ -1,0 +1,7 @@
+=== attribute-on-a-function tree
+--- crates/app/src/lib.rs
+#[cfg(test)]
+fn test_only_helper() {}
+=== macro-in-a-body tree
+--- crates/app/src/lib.rs
+pub fn production() { if cfg!(test) {} }

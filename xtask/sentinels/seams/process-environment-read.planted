@@ -1,0 +1,10 @@
+=== by-full-path tree
+--- crates/app/src/lib.rs
+pub fn home() -> Option<String> { std::env::var("HOME").ok() }
+=== by-imported-module tree
+--- crates/app/src/lib.rs
+use std::env;
+pub fn arguments() -> env::Args { env::args() }
+=== at-compile-time-optional tree
+--- crates/app/src/lib.rs
+pub fn built() -> Option<&'static str> { option_env!("X") }

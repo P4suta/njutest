@@ -1,0 +1,31 @@
+=== deref source crates/app/src/lib.rs
+//! A file.
+struct MutantId(String);
+impl std::ops::Deref for MutantId { type Target = str; fn deref(&self) -> &str { &self.0 } }
+=== renamed-deref source crates/app/src/lib.rs
+//! A file.
+use std::ops::Deref as Coerce;
+struct MutantId(String);
+impl Coerce for MutantId { type Target = str; fn deref(&self) -> &str { &self.0 } }
+=== as-ref source crates/app/src/lib.rs
+//! A file.
+struct Bytes(Vec<u8>);
+impl AsRef<[u8]> for Bytes { fn as_ref(&self) -> &[u8] { &self.0 } }
+=== borrow source crates/app/src/lib.rs
+//! A file.
+struct MutantId(String);
+impl std::borrow::Borrow<str> for MutantId { fn borrow(&self) -> &str { &self.0 } }
+=== into-representation source crates/app/src/lib.rs
+//! A file.
+struct MutantId(String);
+impl Into<String> for MutantId { fn into(self) -> String { self.0 } }
+=== from-for-representation source crates/app/src/lib.rs
+//! A file.
+struct Payload(Vec<u8>);
+impl From<Payload> for Vec<u8> { fn from(value: Payload) -> Self { value.0 } }
+=== macro-rules-impl source crates/app/src/lib.rs
+//! A file.
+macro_rules! scalar { () => { impl Deref for Id { type Target = str; } } }
+=== macro-rules-import source crates/app/src/lib.rs
+//! A file.
+macro_rules! scalar { () => { use std::ops::Deref as Coerce; } }

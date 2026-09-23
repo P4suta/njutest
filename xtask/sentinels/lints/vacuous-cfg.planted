@@ -1,0 +1,15 @@
+=== constant-false-attribute source crates/app/src/lib.rs
+#[cfg(any())] fn dormant() {}
+=== constant-true-attribute source crates/app/src/lib.rs
+#[cfg(all())] fn unconditional() {}
+=== nested-in-cfg-attr source crates/app/src/lib.rs
+#[cfg_attr(test, cfg(any()))] fn nested() {}
+=== cfg-macro source crates/app/src/lib.rs
+fn active() -> bool { core::cfg!(all()) }
+=== renamed-cfg-macro source crates/app/src/lib.rs
+use core::cfg as condition;
+const ACTIVE: bool = condition!(all());
+=== macro-rules-body source crates/app/src/lib.rs
+macro_rules! hidden { () => { #[cfg(any())] fn dormant() {} } }
+=== macro-path-argument source crates/app/src/lib.rs
+macro_rules! condition { ($macro:path) => { $macro!(all()) } } condition!(cfg);

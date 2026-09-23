@@ -189,6 +189,14 @@ macro_rules! declare_kinds {
                     $(Self::$variant => $label),+
                 }
             }
+
+            /// The examples a scan must find as this kind before its silence about a tree is believed.
+            #[must_use]
+            pub const fn planted(self) -> &'static str {
+                match self {
+                    $(Self::$variant => include_str!(concat!("../sentinels/lints/", $label, ".planted"))),+
+                }
+            }
         }
     };
 }

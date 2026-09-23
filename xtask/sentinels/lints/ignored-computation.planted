@@ -1,0 +1,15 @@
+=== underscore-binding source crates/app/src/lib.rs
+//! A file.
+fn f() { let _written = std::fs::write("out", b"bytes"); }
+=== wildcard-binding source crates/app/src/lib.rs
+//! A file.
+fn f() { let _ = sink.send(message); }
+=== tuple-part source crates/app/src/lib.rs
+//! A file.
+fn f() { let (_sent, value) = send_and_answer(); use_value(value); }
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! ignored { () => { let _written = std::fs::write("out", b"bytes"); } }
+=== macro-binding-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! ignored { ($name:ident, $call:expr) => { let $name = $call; } }
