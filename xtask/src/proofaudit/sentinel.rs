@@ -224,6 +224,7 @@ pub fn touch(measured: &str, reached: &[u32]) -> Value {
             "loose": 0,
             "infected": 0,
             "passed": ["lib::works"],
+            "summarised": 1,
             "reached_sites": reached,
             "entered_bodies": [],
             "infected_sites": []

@@ -52,6 +52,7 @@ Pure computation that does not open or mutate a report store remains available.
   Every mutation put to such a target comes back killed and not one of those kills is about a mutation.
   The run still reports the table, because the moment a reader most needs it is the moment the answer is "all of them".
 - A target that does not pass the first time is run once more before the session refuses, and one that passes the second time is measured against that second answer with `baseline-passed-on-retry` against its name.
+- A target whose baseline was read as passing tests that do not come to the count its own summary gives carries `baseline-passed-unparsed`: a line the suite wrote past libtest's capture can read as a result, or split one, so which tests passed is the parser's answer and its reach is not compared with a control's.
   Three things a reader has to tell apart used to arrive as one refusal: a target that is broken, a target that lost a race with something outside the code, and a target that passed.
   The middle one is a finding about the run's footing, not a reason to throw away the work already done, and the run says which target it was so that a later reader knows a single result against it rests on a measurement that once came out differently.
 - A target whose guards recorded nothing this run can route by keeps every test of it in every route (`touch-not-recorded`), and one whose record did not read back is believed about nothing (`touch-log-unreadable`).

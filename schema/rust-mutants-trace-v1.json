@@ -1307,6 +1307,7 @@
                 "passed",
                 "reached_sites",
                 "sites",
+                "summarised",
                 "target",
                 "tests"
               ],
@@ -1328,6 +1329,14 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "summarised": {
+                  "description": "How many tests the run's own summary said ran, where the run was made in the session that recorded it; a comparison stands only where this equals the number of names in `passed`.",
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
                 },
                 "reached_sites": {
                   "description": "Every mutant site anything of the target reached.",

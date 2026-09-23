@@ -680,6 +680,8 @@ pub struct TouchRecord {
     pub measured: Measurement,
     /// The tests that run passed, which is what everything below is the reach of.
     pub passed: Vec<String>,
+    /// How many tests the run's own summary said ran, where the process was run in this session; a comparison stands only where this equals the length of `passed`.
+    pub summarised: Option<u32>,
     /// Every mutant site anything of it reached, in index order.
     pub reached_sites: Vec<u32>,
     /// Every branch body anything of it entered, by the marker at the body's first statement, in index order.

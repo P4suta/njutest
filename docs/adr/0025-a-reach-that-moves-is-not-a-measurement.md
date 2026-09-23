@@ -47,10 +47,15 @@ It ran with its guards silent.
    That retry is then not measured under the conditions a control is: a flake that has nothing to do with the directory, followed by a retry that reaches by what the first attempt left there, would read as a move the apparatus made.
    So a target whose baseline passed only on retry is `not-measured` with `baseline-retried`, and the audit reads the same fact from the `verify` record's `retried`.
    A rerun after exit 96 records nothing, so its target has no baseline record to compare and is `no-baseline`.
+   Which tests passed is read from libtest's output, and a line the suite writes past the capture — `io::stdout()` directly, or a `tracing` subscriber without its test writer — can read as a result or split one, depending on timing.
+   Two such sets differing would let the parser raise a finding about a suite whose test set is deterministic, so each run's named tests are held to its own summary's count first, and a run that falls short on either side is `not-measured` with `unparsed`; the baseline says `baseline-passed-unparsed`, and the audit reads both counts from the `touch` records.
+   Two runs whose parses are whole and whose passed sets still differ are `other-tests`: a real contradiction of the test set's determinism — a harness that builds its list at run time from what an earlier process wrote — and not yet raised as a finding, because the drift record has no kind for it; that is the next change to this layer.
    Nothing about a verdict moved when that changed: the fates of every fixture and the differential of `rust-mutants-cli` are the same before and after.
 
-5. **A moved target is a finding, not a repair.** `unstable-baseline` names the target and counts the dispositions resting on the moved measurement that a proof decided outright: mutations a discharge on that target removed the execution of and that nothing killed, and `unreached` claims, each of which says that target reached nothing.
-   A mutation every reaching target of which was discharged is `survived` in this report, not `proved`, which is kept for the compiler's equivalence proof; so the count is of survivors whose route discharged the target, not of a `proved` column.
+5. **A moved target is a finding, not a repair.** `unstable-baseline` names the target and counts the dispositions resting on the moved measurement that a proof decided outright: survivors whose route did not put them to that target, and `unreached` claims, each of which says that target reached nothing.
+   A route leaves a target out in two ways, and both read the moved record: a discharge removes a target that reached the site, and the reach itself keeps off a target the baseline says never reached it, which is exactly what a control that gained the site contradicts.
+   So the count is of survivors whose `reaching` does not name the target, one predicate (`report::drift::rests_on`) that the finding and `njutest spec` both read, so the two cannot disagree about which lines rest on a moved reach.
+   A mutation every reaching target of which was discharged is `survived` in this report, not `proved`, which is kept for the compiler's equivalence proof, so there is no `proved` column to count instead.
    A kill is existential and rests on no discharge, so a killed mutation is not counted even where its route discharged the target.
    It is not a defect in the code under test, so the verdict is `INSUFFICIENT` rather than `DEFECT`.
    Re-executing those dispositions without the proofs that rested on the moved record is the repair, and it is not done here; it is the next change, and until it lands the finding is what a reader acts on.
@@ -82,6 +87,9 @@ It ran with its guards silent.
 - Writing the audit first found that `xtask proofaudit` had not been reading real runs at all.
   A complete report holds its facts per build and per part, the audit read a flat document, and every run of `njutest verify` was refused with exit code 2; flattened by hand, the one real run tried drew nine violations, every one of them a runner `mutant-exec` naming its target by digest where the route named it by name.
   The audit now projects a report of one build measured whole onto the view it re-decides, and the execution names its target as the route does, so the layer this ADR adds is held to a real recording rather than only to its planted specimen.
+- Controls and mutant executions run concurrently, and with `scratch_working_directory` off they share the snapshot as their working directory, while the baselines ran one at a time.
+  A suite that writes a fixed relative path can therefore reach differently on a control because another copy of itself ran beside it, a condition only the run creates and `cargo test` never reproduces.
+  `INSUFFICIENT` is still right — the mutant executions ran under the same concurrency the control did — but the finding's advice to make the suite independent of earlier processes does not name this cause, and a reader who cannot reproduce the move should look for it here.
 - A control runs beside other work, as the baseline may not have: it takes neither the shared nor the exclusive slot of the scheduler that isolates a timed-out mutation.
   A suite whose reach depends on the clock can therefore move between the two under load, and the finding is then true of the suite and was provoked by the machine — the class `0f855c84` closed for verdicts, open here for this comparison.
 - The comparison sees only what the guards see.

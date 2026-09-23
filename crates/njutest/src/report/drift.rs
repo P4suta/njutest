@@ -48,6 +48,8 @@ pub enum Unmeasured {
     NoBaseline,
     /// The baseline passed only when run again in the directory its first attempt left, so it did not run under the conditions a control does.
     BaselineRetried,
+    /// The tests one of the two runs was read as passing do not come to its own summary's count, so which tests passed is the parser's answer and not the harness's.
+    Unparsed,
 }
 
 impl Unmeasured {
@@ -59,6 +61,7 @@ impl Unmeasured {
             rust_mutants::touch::Unmeasured::OtherTests => Self::OtherTests,
             rust_mutants::touch::Unmeasured::NoBaseline => Self::NoBaseline,
             rust_mutants::touch::Unmeasured::BaselineRetried => Self::BaselineRetried,
+            rust_mutants::touch::Unmeasured::Unparsed => Self::Unparsed,
         }
     }
 }
@@ -136,7 +139,8 @@ impl Drift {
                     | Unmeasured::ControlFailed
                     | Unmeasured::OtherTests
                     | Unmeasured::NoBaseline
-                    | Unmeasured::BaselineRetried,
+                    | Unmeasured::BaselineRetried
+                    | Unmeasured::Unparsed,
                 ..
             } => 1,
             Self::Held { .. } => 2,
@@ -195,11 +199,7 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
             let discharged = records
                 .iter()
                 .filter(|record| record.outcome.outcome() == Outcome::Survived)
-                .filter(|record| {
-                    record.routing.as_ref().is_some_and(|routing| {
-                        routing.discharged.iter().any(|one| one.target == target)
-                    })
-                })
+                .filter(|record| rests_on(record.routing.as_ref(), target))
                 .count();
             let unreached = records
                 .iter()
@@ -212,6 +212,12 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
             )
         })
         .collect()
+}
+
+/// Whether a mutation's standing rests on `target`'s baseline reach: its route did not put it to `target`, so a discharge or the reach itself removed `target`, and a moved reach leaves that removal unfounded.
+#[must_use]
+pub fn rests_on(routing: Option<&super::Routing>, target: &str) -> bool {
+    routing.is_some_and(|routing| !routing.reaching.iter().any(|one| one == target))
 }
 
 /// The sentence of an `unstable-baseline` finding.

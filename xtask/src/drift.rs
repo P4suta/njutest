@@ -40,6 +40,10 @@ pub struct Touch {
     pub measured: Measured,
     /// The tests that run passed, which is what its reach is the reach of.
     pub passed: BTreeSet<String>,
+    /// How many names the record listed as passing, repeats included, which is what the engine held to the summary.
+    pub listed: u64,
+    /// How many tests the run's own summary said ran, where the run was made in the session that recorded it.
+    pub summarised: Option<u64>,
     /// Every mutant site anything of it reached.
     pub reached: BTreeSet<u64>,
     /// Every branch body anything of it entered.
@@ -49,6 +53,10 @@ pub struct Touch {
 }
 
 impl Touch {
+    fn parsed_whole(&self) -> bool {
+        self.summarised == Some(self.listed)
+    }
+
     fn unions_equal(&self, other: &Self) -> bool {
         self.reached == other.reached
             && self.bodies == other.bodies
@@ -131,6 +139,14 @@ fn touch(record: &Value) -> Option<Touch> {
             .iter()
             .map(|test| test.as_str().map(ToOwned::to_owned))
             .collect::<Option<BTreeSet<String>>>()?,
+        listed: match u64::try_from(record.get("passed")?.as_array()?.len()) {
+            Ok(listed) => listed,
+            Err(_) => return None,
+        },
+        summarised: match record.get("summarised")? {
+            Value::Null => None,
+            count => Some(count.as_u64()?),
+        },
         reached: indices(record.get("reached_sites")?)?,
         bodies: indices(record.get("entered_bodies")?)?,
         infected: indices(record.get("infected_sites")?)?,
@@ -161,7 +177,11 @@ pub fn standings(touched: &Touched) -> BTreeMap<String, Standing> {
                 .filter(|touch| touch.measured == Measured::Control)
                 .filter(|touch| touch.target == target && touch.passed == baseline.passed)
                 .collect();
-            let standing = if comparable.is_empty() || touched.retried.contains(target) {
+            let standing = if comparable.is_empty()
+                || touched.retried.contains(target)
+                || !baseline.parsed_whole()
+                || comparable.iter().any(|control| !control.parsed_whole())
+            {
                 Standing::NotMeasured
             } else if comparable
                 .iter()

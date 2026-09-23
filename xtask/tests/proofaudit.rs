@@ -2114,7 +2114,7 @@ fn a_control_over_other_tests_is_no_comparison_and_the_report_must_say_drift_was
     let mut other = sentinel::touch("control", &[0, 1]);
     merge(
         &mut other,
-        serde_json::json!({ "touch": { "passed": ["lib::works", "lib::also"] } }),
+        serde_json::json!({ "touch": { "passed": ["lib::works", "lib::also"], "summarised": 2 } }),
     );
     let engine = vec![sentinel::touch("baseline", &[0]), other];
     let silent = drift_violations(&drift_audit(
@@ -2224,6 +2224,36 @@ fn a_baseline_that_passed_only_on_retry_is_owed_not_measured_rather_than_a_compa
         said.iter().any(|line| line.contains("not-measured")),
         "a retry saw what its first attempt left and a control does not, so the difference is \
          the apparatus and the report must not call it a move: {said:?}"
+    );
+    let mut stated = with(sentinel::drifted("not-measured"));
+    merge(
+        &mut stated,
+        serde_json::json!({ "limitations": [{
+            "name": "drift-not-measured",
+            "detail": format!("1 target was not measured ({TARGET})")
+        }] }),
+    );
+    let audit = drift_audit(stated, engine);
+    assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
+}
+
+#[test]
+fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
+    let mut short = sentinel::touch("control", &[0, 1]);
+    merge(
+        &mut short,
+        serde_json::json!({ "touch": { "summarised": 2 } }),
+    );
+    let engine = vec![sentinel::touch("baseline", &[0]), short];
+    let silent = drift_violations(&drift_audit(
+        with(sentinel::drifted("not-measured")),
+        engine.clone(),
+    ));
+    assert!(
+        silent.iter().any(|line| line.contains("does not say so")),
+        "a control read as passing one test where its own summary counted two was read by the \
+         parser rather than the harness, so it compared nothing, and the target is owed the \
+         limitation rather than a move: {silent:?}"
     );
     let mut stated = with(sentinel::drifted("not-measured"));
     merge(

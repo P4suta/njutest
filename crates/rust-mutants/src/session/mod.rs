@@ -1429,6 +1429,7 @@ impl Session {
             &target.id,
             crate::trace::Measurement::Control,
             &control,
+            result.tests_run,
         )?);
         let retried = format!(
             "{}:{}",
@@ -1437,6 +1438,14 @@ impl Session {
         );
         if self.verified.touched.limitations.contains(&retried) {
             return Ok(Steadiness::NotMeasured(Unmeasured::BaselineRetried));
+        }
+        let unparsed = format!(
+            "{}:{}",
+            crate::limitation::BASELINE_PASSED_UNPARSED,
+            target.id
+        );
+        if !result.parsed_whole() || self.verified.touched.limitations.contains(&unparsed) {
+            return Ok(Steadiness::NotMeasured(Unmeasured::Unparsed));
         }
         let Some(baseline) = self.verified.touched.targets.get(&target.id) else {
             return Ok(Steadiness::NotMeasured(Unmeasured::NoBaseline));

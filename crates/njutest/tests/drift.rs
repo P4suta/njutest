@@ -55,8 +55,16 @@ fn row(index: u32, outcome: Decided, discharged: bool) -> MutantRecord {
         accepted: false,
         blind_in: Vec::new(),
         routing: Some(Routing {
-            granularity: rust_mutants::session::Granularity::Discharged,
-            reaching: Vec::new(),
+            granularity: if discharged {
+                rust_mutants::session::Granularity::Discharged
+            } else {
+                rust_mutants::session::Granularity::Block
+            },
+            reaching: if discharged {
+                Vec::new()
+            } else {
+                vec![TARGET.to_owned()]
+            },
             discharged: if discharged {
                 vec![Discharged {
                     target: TARGET.to_owned(),
@@ -203,6 +211,30 @@ fn a_row_the_run_established_nothing_about_is_not_counted_as_resting_on_a_discha
         "only a survivor is a disposition a discharge decided; a row that errored, waited, \
          did not confirm, or crossed its step allowance is a hole whatever its route \
          discharged: {}",
+        finding.detail
+    );
+}
+
+#[test]
+fn a_survivor_the_moved_target_was_routed_away_from_by_reach_rests_on_it() {
+    let mut record = row(0, Decided::Survived, false);
+    record.routing = Some(Routing {
+        granularity: rust_mutants::session::Granularity::Block,
+        reaching: vec!["pkg/test/other".to_owned()],
+        discharged: Vec::new(),
+        fallback: None,
+        answered: Vec::new(),
+    });
+    let found = drift::found(&[moved()], &[record]);
+    let [finding] = found.as_slice() else {
+        panic!("{found:?}");
+    };
+    assert!(
+        finding
+            .detail
+            .contains("1 mutation a proof removed its run of"),
+        "a target the baseline's reach kept off a mutation's route was removed by the same \
+         measurement that moved, so the survival rests on it as a discharge does: {}",
         finding.detail
     );
 }

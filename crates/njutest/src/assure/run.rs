@@ -1839,6 +1839,11 @@ pub fn limitation_detail(name: &str) -> String {
              active and passed the second time, so something outside the code decided an \
              answer once and every result against this target is worth that much less"
         }
+        rust_mutants::limitation::BASELINE_PASSED_UNPARSED => {
+            "the tests the target's baseline was read as passing do not come to the count its \
+             own summary gave, so a line the suite wrote past the harness read as a result; \
+             which tests passed is not known, and its reach is not compared with a control's"
+        }
         rust_mutants::limitation::TOUCH_NOT_RECORDED => {
             "the target's guards recorded nothing this run can route by, so every test of \
              it reaches every mutation in it and none of them is narrowed"

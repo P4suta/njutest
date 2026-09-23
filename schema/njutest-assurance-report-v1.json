@@ -1483,7 +1483,8 @@
                 "control-failed",
                 "other-tests",
                 "no-baseline",
-                "baseline-retried"
+                "baseline-retried",
+                "unparsed"
               ]
             }
           }

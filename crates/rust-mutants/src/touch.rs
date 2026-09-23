@@ -387,6 +387,8 @@ pub enum Unmeasured {
     NoBaseline,
     /// The baseline passed only when run again in the directory its first attempt left, so it did not run under the conditions a control does.
     BaselineRetried,
+    /// The tests one of the two runs was read as passing do not come to its own summary's count, so which tests passed is the parser's answer and not the harness's.
+    Unparsed,
 }
 
 impl Unmeasured {
@@ -400,6 +402,7 @@ impl Unmeasured {
             Self::OtherTests => "other-tests",
             Self::NoBaseline => "no-baseline",
             Self::BaselineRetried => "baseline-retried",
+            Self::Unparsed => "unparsed",
         }
     }
 }

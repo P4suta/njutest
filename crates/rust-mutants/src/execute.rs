@@ -1623,6 +1623,13 @@ pub struct MutantResult {
 }
 
 impl MutantResult {
+    /// Whether the tests this run was read as passing come to the count its own summary gives, which is what makes the named set the harness's rather than the parser's.
+    #[must_use]
+    pub fn parsed_whole(&self) -> bool {
+        self.tests_run
+            .is_some_and(|ran| usize::try_from(ran).is_ok_and(|ran| ran == self.passed_tests.len()))
+    }
+
     /// An execution-shaped apparatus failure produced before a child can answer.
     pub(crate) fn apparatus_error(target: &str, message: String) -> Self {
         Self {

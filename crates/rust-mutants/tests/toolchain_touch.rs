@@ -520,3 +520,53 @@ fn a_baseline_that_passed_only_on_retry_is_not_compared_with_a_fresh_control() {
          measured: the premise that the two ran under the same conditions does not hold"
     );
 }
+
+const PRINTS_A_RESULT_LINE: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A suite one of whose tests writes a line that reads as another test's result.
+
+/// The sum.
+#[must_use]
+pub fn sum(a: u32, b: u32) -> u32 {
+    a + b
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+
+    #[test]
+    fn adds() {
+        let mut out = std::io::stdout();
+        assert!(out.write_all(b\"test ghost ... ok\\n\").is_ok());
+        assert_eq!(super::sum(2, 2), 4);
+    }
+}
+";
+
+#[test]
+fn a_run_whose_parsed_tests_do_not_come_to_its_own_summary_is_not_compared() {
+    let fixture = Fixture::copy("fixture-drifts");
+    fixture.write("src/lib.rs", PRINTS_A_RESULT_LINE.as_bytes());
+    let session = prepared(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    assert_eq!(
+        observed(&session, target),
+        [(
+            target.to_owned(),
+            rust_mutants::touch::Steadiness::NotMeasured(rust_mutants::touch::Unmeasured::Unparsed)
+        )],
+        "a line the suite wrote past libtest's capture reads as a result, so the passed tests a \
+         run names are the parser's and not the harness's: comparing two such sets would let \
+         the parser raise a finding about the suite"
+    );
+    assert!(
+        session.touched().limitations.contains(&format!(
+            "{}:{target}",
+            rust_mutants::limitation::BASELINE_PASSED_UNPARSED
+        )),
+        "and the baseline says so against the target's name: {:?}",
+        session.touched().limitations
+    );
+}

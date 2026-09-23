@@ -376,7 +376,7 @@
                       "properties": {
                         "state": { "const": "not-measured" },
                         "target": { "type": "string", "minLength": 1 },
-                        "why": { "enum": ["no-control", "unrecorded", "unreadable", "control-failed", "other-tests", "no-baseline", "baseline-retried"] }
+                        "why": { "enum": ["no-control", "unrecorded", "unreadable", "control-failed", "other-tests", "no-baseline", "baseline-retried", "unparsed"] }
                       }
                     }
                   ]
