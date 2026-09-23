@@ -64,6 +64,8 @@ enum Gate {
     },
     /// Every milestone named in the documentation resolves to one roadmap row.
     Milestones,
+    /// Every public function of an incidental surface is reached by something that ships.
+    Reached,
     /// Every crate declares what its visibility means; incidental APIs are compiled privately.
     Surfaces,
     /// Whether a completed run's verdicts are the ones its own recording supports (ADR 0004).
@@ -150,6 +152,7 @@ where
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
             .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::Milestones => gates::milestones(&root),
+        Gate::Reached => gates::reached(&root),
         Gate::Surfaces => gates::surfaces(&root),
         Gate::Proofaudit { run, trace } => {
             return audit_run(&run, trace.as_deref(), stdout, stderr);

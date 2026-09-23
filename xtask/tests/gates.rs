@@ -480,3 +480,28 @@ fn kebab(variant: &str) -> String {
     }
     said
 }
+
+#[test]
+fn a_public_function_only_a_test_names_is_what_the_reach_gate_reports() {
+    let declaring = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\n";
+    let ships = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\nfn use_it() { let _ = called(); }\n";
+    let tested = "believed_shipped();\ncalled();\npub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\n";
+    assert_eq!(
+        gates::only_a_test_reaches(declaring, ships, tested),
+        vec!["believed_shipped".to_owned()],
+        "a capability with a test is a capability somebody believed shipped (ADR 0023), so the \
+         one nothing but a test names is the one to report and the one production calls is not"
+    );
+}
+
+#[test]
+fn a_function_behind_a_test_feature_is_test_support_rather_than_an_unreached_capability() {
+    let root = gates::workspace_root();
+    let report = gates::reached(&root).expect("the tree is clean under this gate");
+    assert!(
+        report.contains("0 public function"),
+        "every public function of an incidental surface is reached by something that ships. \
+         Sixteen were reported before this gate read `cfg(feature = \"testkit\")` as the \
+         declaration of test support that it is: {report}"
+    );
+}

@@ -1705,6 +1705,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         release_check,
         milestones,
         surfaces,
+        reached,
         waivers,
     ] {
         line(&mut report, format_args!("{}", gate(root)?));
@@ -1989,4 +1990,284 @@ pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateFailure> {
         line(&mut report, format_args!("{change}"));
     }
     Ok(report.trim_end().to_owned())
+}
+
+/// What a crate's public surface means, as `[package.metadata.njutest] surface` declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Surface {
+    /// An API somebody outside depends on, where a function with no caller here is ordinary.
+    Public,
+    /// Public only because Rust needed it to be, so a function nothing here reaches is one nothing reaches.
+    Incidental,
+    /// Written to be reached from tests, which is what it is for.
+    TestSupport,
+}
+
+impl Surface {
+    /// The surface `declared` names, and nothing for a name this gate does not know.
+    fn named(declared: &str) -> Option<Self> {
+        match declared {
+            "public" | "unreleased" => Some(Self::Public),
+            "incidental" => Some(Self::Incidental),
+            "test-support" => Some(Self::TestSupport),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a `cfg` predicate puts what it guards behind a test.
+///
+/// `cfg(test)` and `cfg(feature = "testkit")` and `cfg(any(test, feature = "testkit"))` all do.
+/// `cfg(not(test))` is the opposite and is what ships, so naming `test` is not enough on its own.
+fn only_for_a_test(predicate: &str) -> bool {
+    (predicate.contains("test") || predicate.contains("testkit")) && !predicate.contains("not(test")
+}
+
+/// `text` with every item a `cfg` puts behind a test removed, so what remains is what ships.
+///
+/// A `pub fn` behind `cfg(feature = "testkit")` is test support, and the feature is where somebody said so.
+/// Reading only `cfg(test)` reported sixteen of those as public functions nothing reaches, which is the gate believing its own omission.
+fn without_test_items(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = next_test_cfg(rest) {
+        let (Some(before), Some(after)) = (rest.get(..at), rest.get(at..)) else {
+            break;
+        };
+        kept.push_str(before);
+        let Some(open) = after.find('{') else {
+            break;
+        };
+        let mut depth = 0_usize;
+        let mut end = None;
+        for (offset, character) in after.char_indices().skip(open) {
+            match character {
+                '{' => depth = depth.saturating_add(1),
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(offset.saturating_add(1));
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match end.and_then(|end| after.get(end..)) {
+            Some(remaining) => rest = remaining,
+            None => break,
+        }
+    }
+    kept.push_str(rest);
+    kept
+}
+
+/// Where the next attribute that puts an item behind a test begins.
+fn next_test_cfg(text: &str) -> Option<usize> {
+    let mut from = 0_usize;
+    while let Some(at) = text.get(from..).and_then(|rest| rest.find("#[cfg")) {
+        let start = from.saturating_add(at);
+        let line_end = text
+            .get(start..)
+            .and_then(|rest| rest.find('\n'))
+            .map_or(text.len(), |offset| start.saturating_add(offset));
+        let attribute = text.get(start..line_end).unwrap_or_default();
+        if only_for_a_test(attribute) {
+            return Some(start);
+        }
+        from = line_end.max(start.saturating_add(1));
+    }
+    None
+}
+/// Every name a `pub fn` in `text` declares.
+fn public_functions(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let Some(after) = line
+            .strip_prefix("pub fn ")
+            .or_else(|| line.strip_prefix("pub const fn "))
+            .or_else(|| line.strip_prefix("pub async fn "))
+        else {
+            continue;
+        };
+        let name: String = after
+            .chars()
+            .take_while(|character| character.is_alphanumeric() || *character == '_')
+            .collect();
+        if !name.is_empty() {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// How many times `name` is used as a word in `text`.
+fn mentions(text: &str, name: &str) -> usize {
+    let mut count = 0_usize;
+    let bytes = text.as_bytes();
+    let mut from = 0_usize;
+    while let Some(at) = text.get(from..).and_then(|rest| rest.find(name)) {
+        let start = from.saturating_add(at);
+        let end = start.saturating_add(name.len());
+        let before_is_word = start
+            .checked_sub(1)
+            .and_then(|at| bytes.get(at))
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+        let after_is_word = bytes
+            .get(end)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+        if !before_is_word && !after_is_word {
+            count = count.saturating_add(1);
+        }
+        from = end;
+    }
+    count
+}
+
+/// What every workspace crate declares its public surface to mean, and where it lives.
+///
+/// # Errors
+/// Refuses a crate that declares nothing, and a declaration this gate does not know.
+fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, GateFailure> {
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?;
+    let mut declared = Vec::new();
+    for package in metadata.workspace_packages() {
+        let named = package
+            .metadata
+            .get("njutest")
+            .and_then(|value| value.get("surface"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                GateFailure(format!(
+                    "{}: no [package.metadata.njutest] surface, so this gate cannot say whether a \
+                     function only a test reaches is a finding",
+                    package.name
+                ))
+            })?;
+        let surface = Surface::named(named).ok_or_else(|| {
+            GateFailure(format!(
+                "{}: surface {named:?} is not one this gate knows",
+                package.name
+            ))
+        })?;
+        let directory = package
+            .manifest_path
+            .parent()
+            .ok_or_else(|| GateFailure(format!("{}: manifest has no directory", package.name)))?;
+        declared.push((
+            package.name.to_string(),
+            surface,
+            directory.as_std_path().to_path_buf(),
+        ));
+    }
+    Ok(declared)
+}
+
+/// Every public function `declaring` declares that `tested` names and `ships` does not.
+///
+/// `ships` holds the definition itself, so one mention there is the declaration and no caller; two is a caller.
+/// `tested` holds the definition too, for the same reason.
+#[must_use]
+pub fn only_a_test_reaches(declaring: &str, ships: &str, tested: &str) -> Vec<String> {
+    public_functions(declaring)
+        .into_iter()
+        .filter(|function| mentions(ships, function) <= 1 && mentions(tested, function) > 1)
+        .collect()
+}
+
+/// Every public function of an incidental surface is one something other than a test reaches.
+///
+/// A capability with a test is a capability somebody believed shipped (ADR 0023).
+/// `Interposer::during()` had a test, passed it, and production never called it, so the test was evidence about a function nothing used.
+/// Where a crate's public surface is an API, a function with no caller here is ordinary and this says nothing.
+/// Where it is public only because Rust needed it to be, a function only a test reaches is one nothing reaches.
+///
+/// # Errors
+/// Returns every such function, and refuses a surface nobody declared.
+pub fn reached(root: &Path) -> Result<String, GateFailure> {
+    let declared = declared_surfaces(root)?;
+
+    let mut ships = String::new();
+    let mut tested = String::new();
+    for (_name, surface, directory) in &declared {
+        for file in rust_files_under(directory)? {
+            let text = std::fs::read_to_string(&file)
+                .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+            let under_src = file.starts_with(directory.join("src"));
+            tested.push_str(&text);
+            tested.push('\n');
+            if *surface != Surface::TestSupport && under_src {
+                ships.push_str(&without_test_items(&text));
+                ships.push('\n');
+            }
+        }
+    }
+
+    let mut only_tests = Vec::new();
+    for (name, surface, directory) in &declared {
+        if *surface != Surface::Incidental {
+            continue;
+        }
+        for file in rust_files_under(&directory.join("src"))? {
+            let text = std::fs::read_to_string(&file)
+                .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+            let shipped = without_test_items(&text);
+            for function in only_a_test_reaches(&shipped, &ships, &tested) {
+                only_tests.push(format!("{name}::{function}"));
+            }
+        }
+    }
+    only_tests.sort_unstable();
+    only_tests.dedup();
+
+    let held = counted(root, "xtask/reached_ceiling.txt")?;
+    let Some(written) = held.first() else {
+        return Err(GateFailure(
+            "xtask/reached_ceiling.txt holds one number and holds nothing".to_owned(),
+        ));
+    };
+    let ceiling = match written.parse::<usize>() {
+        Ok(ceiling) => ceiling,
+        Err(why) => {
+            return Err(GateFailure(format!(
+                "xtask/reached_ceiling.txt holds one number and holds {written:?}: {why}"
+            )));
+        }
+    };
+    if only_tests.len() > ceiling {
+        return Err(GateFailure(format!(
+            "{} public function(s) of an incidental surface are reached by a test and by nothing \
+             that ships, against a ceiling of {ceiling}. A test of one of these is evidence about \
+             a function nothing uses. Delete it, or call it, or raise the ceiling in a commit that \
+             says which and why:\n  {}",
+            only_tests.len(),
+            only_tests.join("\n  ")
+        )));
+    }
+    Ok(format!(
+        "reached: {} public function(s) of an incidental surface are reached only by a test, at or \
+         under the ceiling of {ceiling}",
+        only_tests.len()
+    ))
+}
+
+/// Every `.rs` file under `directory`, skipping anything built.
+fn rust_files_under(directory: &Path) -> Result<Vec<PathBuf>, GateFailure> {
+    let mut files = Vec::new();
+    for entry in WalkDir::new(directory).sort_by_file_name() {
+        let entry = walked(entry)?;
+        let path = entry.path();
+        if entry.file_type().is_file()
+            && path.extension().is_some_and(|extension| extension == "rs")
+            && !path.components().any(|part| part.as_os_str() == "target")
+        {
+            files.push(path.to_path_buf());
+        }
+    }
+    Ok(files)
 }
