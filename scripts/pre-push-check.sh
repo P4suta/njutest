@@ -51,6 +51,21 @@ within_budget() {
   fi
 }
 
+# Runs a command with none of the `GIT_*` variables Git exports into a hook.
+#
+# Git runs this script with `GIT_DIR` naming the repository being pushed, and everything the check starts inherits it.
+# A test that runs `git init` or `git config` in a temporary directory then writes to that repository instead: a push made the shared repository bare and committed a fixture onto the branch being pushed.
+# The check reads the detached tree it runs in, so it needs none of them.
+unhooked() {
+  local removed=() name
+  while IFS= read -r name; do
+    if [[ "${name}" == GIT_* ]]; then
+      removed+=(-u "${name}")
+    fi
+  done < <(compgen -e)
+  env ${removed[@]+"${removed[@]}"} "$@"
+}
+
 zero=0000000000000000000000000000000000000000
 head=$(git rev-parse --verify HEAD)
 seen=0
@@ -154,10 +169,10 @@ require_exact_tree
 # `build` and `clippy` are not all of them: `lint` also runs `doc` and `fuzz:clippy`, each with fingerprints of its own, and those two left 600s of compiling inside a budget that was supposed to see none.
 # One pass that compiles and one that measures needs no list and cannot fall behind one.
 warming=$(date +%s)
-( cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check >/dev/null 2>&1 ) || true
+( cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" unhooked mise run check >/dev/null 2>&1 ) || true
 echo "pre-push: compiled in $(( $(date +%s) - warming ))s, which the budget does not count" >&2
 
-within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
+within_budget unhooked bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
 # The tree is isolated and so is the cache, which is now warm because the path above no longer changes: the developer's own `target/debug` stays out of the answer, and the gate still does not recompile what the previous push compiled.
 # What a warm cache cannot answer is whether a green came from an artifact older than the field it is meant to prove, so that question is asked separately and coldly below.
 require_exact_tree
