@@ -1001,9 +1001,6 @@ impl Journal {
         &mut self,
         judged: &mutation::Judged,
     ) -> Result<(), crate::checkpoint::CheckpointError> {
-        for observed in &judged.observed {
-            self.state.record_drift(observed.clone());
-        }
         let disposition = match &judged.disposition {
             mutation::Disposition::Killed { by } => {
                 crate::checkpoint::SavedDisposition::Killed { by: by.clone() }
@@ -1015,13 +1012,7 @@ impl Journal {
             | mutation::Disposition::Unreached
             | mutation::Disposition::Equivalent { .. }
             | mutation::Disposition::Unconfirmed { .. }
-            | mutation::Disposition::Errored { .. } => {
-                return if judged.observed.is_empty() {
-                    Ok(())
-                } else {
-                    self.write()
-                };
-            }
+            | mutation::Disposition::Errored { .. } => return Ok(()),
         };
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),

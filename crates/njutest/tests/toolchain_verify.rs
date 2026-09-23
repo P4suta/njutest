@@ -1194,6 +1194,93 @@ fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
 
 #[cfg(unix)]
 #[test]
+fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let established = document(&fixture);
+    let identity = established["provenance"]["identity"]
+        .as_str()
+        .expect("an identity")
+        .to_owned();
+    let part = &established["builds"][0]["parts"][0];
+    let mut kills: Vec<serde_json::Value> = part["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|row| row["decision"]["outcome"] == "killed")
+        .map(|row| {
+            serde_json::json!({
+                "id": row["id"],
+                "disposition": { "kind": "killed", "by": row["decision"]["killed_by"] },
+                "duration_ms": 1,
+            })
+        })
+        .collect();
+    kills.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    assert!(
+        !kills.is_empty(),
+        "the fixture kills something: {established}"
+    );
+    assert!(
+        part["drift"]
+            .as_array()
+            .expect("drift")
+            .iter()
+            .all(|one| one["state"] == "held"),
+        "the interrupted run compared every target and found each held: {part}"
+    );
+
+    let store = njutest_devkit::paths::cache_beside(&fixture.root)
+        .expect("a cache directory")
+        .join("njutest/outcomes-v1");
+    std::fs::remove_file(store.join(format!("{identity}.json")))
+        .expect("the answer the first run stored");
+    let identity = njutest::evidence::key::continuation_identity(
+        &identity,
+        &rust_mutants::cargo::BuildConfig::default().selection(),
+    );
+    let directory = store.join("checkpoints").join(&identity);
+    std::fs::create_dir_all(&directory).expect("mkdir");
+    let state = serde_json::json!({
+        "schema": "njutest-assurance-checkpoint-v1",
+        "identity": identity,
+        "attempts": 1,
+        "targets": [],
+        "mutants": kills,
+    });
+    std::fs::write(
+        directory.join("checkpoint-v1.json"),
+        serde_json::to_string(&state).expect("the state renders"),
+    )
+    .expect("write");
+
+    let resumed = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&resumed.stderr);
+    let report = document(&fixture);
+    assert!(
+        names(&report).contains(&"resumed-from-checkpoint".to_owned()),
+        "the run continued the interrupted one: {report}\n{stderr}"
+    );
+    let part = &report["builds"][0]["parts"][0];
+    let states: Vec<&serde_json::Value> = part["drift"]
+        .as_array()
+        .expect("drift")
+        .iter()
+        .map(|one| &one["state"])
+        .collect();
+    assert!(
+        states.iter().all(|state| *state == "not-measured"),
+        "every kill was inherited, so no control ran this run, and a comparison the \
+         interrupted run made was against a baseline this run measured again: {part}"
+    );
+    assert!(
+        names(&report).contains(&njutest::limitation::DRIFT_NOT_MEASURED.to_owned()),
+        "and the run says so rather than claiming a hold it did not observe: {report}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_target_that_may_behave_differently_establishes_nothing_it_established_before() {
     let fixture = fixture("fixture-assured");
     assert_eq!(verify(&fixture, &[]).status.code(), Some(0));

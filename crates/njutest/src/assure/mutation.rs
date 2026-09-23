@@ -579,18 +579,12 @@ pub fn run_resuming(
         (resume.record)(&judged)?;
         mutation.judged.push(judged);
     }
-    let restored = resume
-        .state
-        .map(|state| state.drift.clone())
-        .unwrap_or_default();
     mutation.drift = crate::report::drift::folded(
         session.touched().targets.keys().map(String::as_str),
-        restored.into_iter().chain(
-            mutation
-                .judged
-                .iter()
-                .flat_map(|judged| judged.observed.iter().cloned()),
-        ),
+        mutation
+            .judged
+            .iter()
+            .flat_map(|judged| judged.observed.iter().cloned()),
     );
     phase.end();
     Ok(mutation)

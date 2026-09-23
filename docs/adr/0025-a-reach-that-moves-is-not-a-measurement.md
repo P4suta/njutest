@@ -55,7 +55,9 @@ It ran with its guards silent.
 6. **Absence is a case.** A target whose baseline was measured and that no comparable control recorded is `not-measured`, and the `drift-not-measured` limitation counts and names them.
    It is not `held`: a target nothing killed is never confirmed, so a run in which nothing was killed has compared nothing, and says so.
 
-7. **Where it is recorded.** Each catalog part records one drift record per measured target — `held`, `moved` with what moved, or `not-measured` with why — and a checkpoint keeps what an interrupted run observed, so a resumed run does not lose a control it will not run again.
+7. **Where it is recorded.** Each catalog part records one drift record per measured target — `held`, `moved` with what moved, or `not-measured` with why.
+   A checkpoint does not keep them: a comparison an interrupted run made was against the baseline that run measured, a resumed run measures its baseline again, and an inherited kill runs no control, so a restored `held` would be a claim nothing established in the run that reports it.
+   A target whose every kill was inherited is `not-measured`.
    A part that measured the whole catalog raises the finding and the limitation from its own records.
    A shard does not: the count is over the whole catalog and a target unmeasured in one part may be measured in another, so `njutest merge` raises both over the combined records, the fourth way out of [ADR 0023](0023-a-run-may-not-conclude-from-how-it-measured.md).
    A shard in which a target moved concludes `INSUFFICIENT` rather than `PARTIAL`, because the fact that it moved needs no other part.
