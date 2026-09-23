@@ -21,6 +21,7 @@ use njutest_devkit::result::{ResultState, result_state};
 struct Repository {
     directory: tempfile::TempDir,
     _commands: tempfile::TempDir,
+    scratch: tempfile::TempDir,
     head: String,
     path: OsString,
 }
@@ -86,6 +87,7 @@ impl Repository {
         Self {
             directory,
             _commands: commands,
+            scratch: tempfile::tempdir().expect("a temporary directory the gate keeps its tree in"),
             head,
             path,
         }
@@ -121,6 +123,7 @@ impl Repository {
             .arg(script)
             .current_dir(self.directory.path())
             .env("PATH", &self.path)
+            .env("TMPDIR", self.scratch.path())
             .envs(handed.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -382,4 +385,49 @@ fn a_tree_changed_by_the_check_is_refused_afterwards() {
     let output = repository.push(&repository.head);
     assert!(!output.status.success());
     assert!(stderr(&output).contains("isolated check changed the tree"));
+}
+
+#[test]
+fn a_test_push_leaves_no_tree_in_the_shared_temporary_directory() {
+    let repository =
+        Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
+    let output = repository.push(&repository.head);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let toplevel = String::from_utf8(
+        isolated("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(repository.directory.path())
+            .output()
+            .expect("git rev-parse")
+            .stdout,
+    )
+    .expect("an ASCII path")
+    .trim()
+    .to_owned();
+    let key = String::from_utf8(
+        isolated("sh")
+            .args([
+                "-c",
+                "printf '%s' \"$1\" | shasum | cut -c1-12",
+                "_",
+                &toplevel,
+            ])
+            .output()
+            .expect("shasum")
+            .stdout,
+    )
+    .expect("an ASCII key")
+    .trim()
+    .to_owned();
+    let shared = std::env::temp_dir().join(format!("njutest-pre-push-{key}"));
+    let left = shared
+        .try_exists()
+        .expect("the shared temporary directory can be read");
+    assert!(
+        !left,
+        "the gate keeps one tree per repository on purpose, as the cache the next push reuses, \
+         and a test's repository is new every run, so a tree left in the shared directory is \
+         one more per run that nothing ever removes: {}",
+        shared.display()
+    );
 }
