@@ -158,6 +158,7 @@ Pure computation that does not open or mutate a report store remains available.
   `str`, or a slice of those — and the guard's own form can hold the call.
   The trait names the types whose comparison the standard library defines and a container of one of those, and asks about the two operands separately, so a comparison between two different ones is vouched for where both are named.
   A type of your own is refused whichever side it is on, and so is a container holding one.
+  A comparison that is a value rather than a condition — `a <= b` returned or bound — has no two branches for a guard to hold, so a mutation of it is executed rather than discharged, even where every test agreed on both sides.
 - A swap between `==` and `!=` is never offered the comparison.
   The two are each other's negation, so a guard between them parts on every evaluation and the record could only ever say that it did.
   Everywhere else `never-infected` says nothing about the mutation however many tests ran it, and the record names which mutants it can speak about so that its silence about the rest is never read as evidence.
