@@ -99,7 +99,7 @@ mod __rm {
     }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepAction
 { Activate, Checkpoint, } #[derive(Debug, Clone, Copy, PartialEq, Eq)] enum
-StepPhase { Dormant, Active(usize), Stopping(usize), }
+StepPhase { Dormant, Counting(usize), Active(usize), Stopping(usize), }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepAdvance
 { Continue, Park, Reached { allowed : usize, observed : usize }, }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepMachineError
@@ -114,6 +114,16 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         { Ok((StepPhase :: Active(1), StepAdvance :: Continue)) }
         (StepPhase :: Dormant, StepAction :: Checkpoint) =>
         { Ok((StepPhase :: Dormant, StepAdvance :: Continue)) }
+        (StepPhase :: Counting(seen), StepAction :: Checkpoint) =>
+        {
+            match seen.checked_add(1)
+            {
+                Some(next) =>
+                Ok((StepPhase :: Counting(next), StepAdvance :: Continue)),
+                None => Err(StepMachineError :: Count),
+            }
+        } (StepPhase :: Counting(seen), StepAction :: Activate) =>
+        { Ok((StepPhase :: Counting(seen), StepAdvance :: Continue)) }
         (StepPhase :: Active(spent), StepAction :: Activate) if spent > 0 &&
         spent <= allowed =>
         { Ok((StepPhase :: Active(spent), StepAdvance :: Continue)) }
@@ -556,6 +566,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         }
         let phase = match phase_field {
             __rm_std::option::Option::Some("dormant") if spent == 0 => StepPhase::Dormant,
+            __rm_std::option::Option::Some("counting") => StepPhase::Counting(spent),
             __rm_std::option::Option::Some("active")
                 if spent > 0 && spent <= expected_limit.value() => StepPhase::Active(spent),
             __rm_std::option::Option::Some("stopping")
@@ -591,6 +602,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         // 7.3ms on Windows, which is a clock the count then had to race.
         let (name, spent, durable) = match phase {
             StepPhase::Dormant => ("dormant", 0, false),
+            StepPhase::Counting(seen) => ("counting", seen, false),
             StepPhase::Active(spent) => ("active", spent, false),
             StepPhase::Stopping(spent) => ("stopping", spent, true),
         };

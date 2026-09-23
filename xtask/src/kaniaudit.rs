@@ -25,8 +25,16 @@ const TARGETS: [&str; 2] = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"];
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, njutest_macros::AllVariants,
 )]
 pub(crate) enum Harness {
+    #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_counts")]
+    CountingCounts,
+    #[serde(rename = "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops")]
+    CountingNeverStops,
     #[serde(rename = "instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend")]
     DormantCheckpoint,
+    #[serde(
+        rename = "instrument::runtime::kani_laws::counting_is_not_reachable_from_dormant_or_active"
+    )]
+    CountingUnreachable,
     #[serde(rename = "instrument::runtime::kani_laws::activation_is_idempotent")]
     Activation,
     #[serde(
@@ -64,8 +72,15 @@ pub(crate) enum Harness {
 impl Harness {
     const fn name(self) -> &'static str {
         match self {
+            Self::CountingCounts => "instrument::runtime::kani_laws::a_counting_checkpoint_counts",
+            Self::CountingNeverStops => {
+                "instrument::runtime::kani_laws::a_counting_checkpoint_never_stops"
+            }
             Self::DormantCheckpoint => {
                 "instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend"
+            }
+            Self::CountingUnreachable => {
+                "instrument::runtime::kani_laws::counting_is_not_reachable_from_dormant_or_active"
             }
             Self::Activation => "instrument::runtime::kani_laws::activation_is_idempotent",
             Self::ActiveCheckpoint => {
@@ -96,7 +111,10 @@ impl Harness {
 
     const fn source(self) -> &'static str {
         match self {
-            Self::DormantCheckpoint
+            Self::CountingCounts
+            | Self::CountingNeverStops
+            | Self::CountingUnreachable
+            | Self::DormantCheckpoint
             | Self::Activation
             | Self::ActiveCheckpoint
             | Self::Stopping => "crates/rust-mutants/src/instrument/runtime.rs",
@@ -152,7 +170,10 @@ impl Harness {
                 "njutest-law-branch:killed",
                 REACHED_COVER,
             ],
-            Self::DormantCheckpoint
+            Self::CountingCounts
+            | Self::CountingNeverStops
+            | Self::CountingUnreachable
+            | Self::DormantCheckpoint
             | Self::Activation
             | Self::CancellationBeforeRetry
             | Self::CancelledRetry
@@ -213,6 +234,11 @@ impl Harness {
             Self::Associative => &["njutest-law-assertion:join-associative"],
             Self::Commutative => &["njutest-law-assertion:join-commutative"],
             Self::Idempotent => &["njutest-law-assertion:join-idempotent"],
+            Self::CountingCounts => &["njutest-law-assertion:counting-counts"],
+            Self::CountingNeverStops => &["njutest-law-assertion:counting-never-stops"],
+            Self::CountingUnreachable => {
+                &["njutest-law-assertion:counting-only-from-the-state-file"]
+            }
         }
     }
 }
@@ -1062,10 +1088,10 @@ mod tests {
             "cbmc": backend_entries(),
             "verification_results": {
                 "summary": {
-                    "total_harnesses": 15,
-                    "executed": 15,
+                    "total_harnesses": Harness::ALL.len(),
+                    "executed": Harness::ALL.len(),
                     "status": "completed",
-                    "successful": 15,
+                    "successful": Harness::ALL.len(),
                     "failed": 0,
                     "duration_ms": 15
                 },
@@ -1253,20 +1279,32 @@ mod tests {
         assert_refused(&duplicate_reached);
     }
 
+    /// Where in the export a harness sits, found by name rather than counted to.
+    ///
+    /// An index says where a harness happened to be when somebody wrote the test, and adding a law ahead of it moves the test onto a different harness with a different shape.
+    fn at(harness: Harness) -> usize {
+        Harness::ALL
+            .iter()
+            .position(|one| *one == harness)
+            .unwrap_or_else(|| panic!("{harness:?} is one of the closed set"))
+    }
+
     #[test]
     fn equal_counts_cannot_hide_a_substituted_assertion_or_branch_cover() {
+        let many = at(Harness::ActiveCheckpoint);
         let mut assertion = fixture();
         replace(
             &mut assertion,
-            "/verification_results/results/2/checks/0/description",
+            &format!("/verification_results/results/{many}/checks/0/description"),
             json!("njutest-law-assertion:substituted"),
         );
         assert_refused(&assertion);
 
         let mut cover = fixture();
+        let covers = Harness::ActiveCheckpoint.expected_assertions().len();
         replace(
             &mut cover,
-            "/verification_results/results/2/checks/2/description",
+            &format!("/verification_results/results/{many}/checks/{covers}/description"),
             json!("njutest-law-branch:substituted"),
         );
         assert_refused(&cover);
