@@ -1,0 +1,6 @@
+=== reexport source crates/app/src/lib.rs
+//! A file.
+pub use serde::Deserialize as Decode;
+=== macro-rules-reexport source crates/app/src/lib.rs
+//! A file.
+macro_rules! exports { () => { pub use serde::Deserialize as Decode; } }

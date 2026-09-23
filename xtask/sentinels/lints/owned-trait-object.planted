@@ -1,0 +1,27 @@
+=== boxed-field source crates/app/src/lib.rs
+//! A file.
+pub struct S {
+    f: Box<dyn std::fmt::Debug>,
+}
+=== shared-pointer source crates/app/src/lib.rs
+//! A file.
+pub fn f(v: std::sync::Arc<dyn Send>) {
+    drop(v);
+}
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! erased { () => { type Hidden = Box<dyn std::fmt::Debug>; } }
+=== macro-invocation-argument source crates/app/src/lib.rs
+//! A file.
+erased!(std::sync::Arc<dyn Send>);
+=== pointer-and-object-split-across-arguments source crates/app/src/lib.rs
+//! A file.
+macro_rules! own { ($pointer:ident, $held:ty) => { struct S($pointer<$held>); } }
+own!(Box, dyn std::fmt::Debug);
+=== generic-nominal-wrapper source crates/app/src/lib.rs
+//! A file.
+struct Heap<T: ?Sized>(Box<T>);
+struct S(Heap<dyn std::fmt::Debug>);
+=== unknown-constructor source crates/app/src/lib.rs
+//! A file.
+struct S(ForeignOwner<dyn std::fmt::Debug>);

@@ -13,222 +13,18 @@
 use std::path::Path;
 
 use njutest_devkit::result::{ResultState, result_state};
+use xtask::engineaudit::sentinel::{
+    self, KILLED, SOURCE, SURVIVED, TARGET, base, recording, routed_by_test, short, touched, with,
+};
 use xtask::engineaudit::{Audit, AuditError, EXIT_UNREADABLE, Evidence, Layer, Source, Standing};
 use xtask::gates;
 
-const RUN: &str = "20260906T101500000Z";
-const SOURCE: &str = "2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea";
-const KILLED: &str = "676ca631e0dc6d6a4fa8600edae6fd22b0ee35079ce9ce7be7374f1941cbbeeb";
-const SURVIVED: &str = "982217d08c9594367534ff67757c56928cf48418d50f0ca60902eb035ffb7676";
-const REFUSED: &str = "7ba2a9ab76a444e683ca3d96c2afa11c0e0b5189737fca5603c36533701b5b5e";
-const TARGET: &str = "demo/lib/demo";
-
-fn short(id: &str) -> String {
-    id.chars().take(20).collect()
-}
-
-/// A run of three candidates: one killed, one accepted survivor, one the compiler refused.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the strict run-report specimen stays inline so every authenticated field is visible to the independent audit test"
-)]
-fn base() -> serde_json::Value {
-    serde_json::json!({
-        "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
-        "tool_version": "0.1.0",
-        "run": {
-            "id": RUN,
-            "started_at": "2026-09-06T10:15:00Z",
-            "finished_at": "2026-09-06T10:15:02Z",
-            "duration_ms": 2000,
-            "interrupted": false,
-            "exit_code": 0,
-            "shard": null
-        },
-        "workspace": {
-            "root_name": "demo",
-            "toolchain": "rustc 1.98.0",
-            "workspace_digest": "w".repeat(64),
-            "catalog_digest": "c".repeat(64),
-            "platform": { "os": "linux", "arch": "x86_64", "target": "x86_64-unknown-linux-gnu" }
-        },
-        "selection": {
-            "tier": "balanced", "operators": [], "include": [], "exclude": [], "packages": [],
-            "build": [], "mutant_steps": 50_000_000
-        },
-        "targets": [{
-            "id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []
-        }],
-        "established_tests": 0,
-        "accounting": {
-            "cataloged": 2, "refused": 1, "skipped": 0, "executed": 2,
-            "killed": 1, "survived": 1, "step_limit_reached": 0, "waited": 0,
-            "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0,
-            "discharged": 0, "expected": 1
-        },
-        "score": { "detected": 1, "decided": 2, "value": 0.5 },
-        "mutants": [
-            {
-                "index": 0, "id": KILLED, "display_id": short(KILLED),
-                "path": "src/lib.rs", "package": "demo",
-                "family": "comparison", "rule": "gt-to-ge", "item": "larger",
-                "rule_version": 1,
-                "line": 11, "column": 8,
-                "start_byte": 100, "end_byte": 101, "source_digest": SOURCE,
-                "original": ">", "replacement": ">=",
-                "outcome": "killed", "target": TARGET, "exit_code": 101,
-                "duration_ms": 7, "tests_run": 2, "killed_by": ["larger_works"],
-                "signal": null, "step_notice": null, "retried": false,
-                "not_run_reason": null,
-                "route": {"granularity": "block", "fallback": null,
-                    "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-                "identical": null, "expected": false, "unreached": false,
-                "source_run_id": null
-            },
-            {
-                "index": 1, "id": SURVIVED, "display_id": short(SURVIVED),
-                "path": "src/lib.rs", "package": "demo",
-                "family": "return-replacement", "rule": "return-default", "item": "larger",
-                "rule_version": 1,
-                "line": 20, "column": 5,
-                "start_byte": 200, "end_byte": 225, "source_digest": SOURCE,
-                "original": "if a > b { a } else { b }", "replacement": "Default::default()",
-                "outcome": "survived", "target": TARGET, "exit_code": 0,
-                "duration_ms": 5, "tests_run": 2, "killed_by": [], "signal": null,
-                "step_notice": null, "retried": false, "not_run_reason": null,
-                "route": {"granularity": "block", "fallback": null,
-                    "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-                "identical": null, "expected": true, "unreached": false,
-                "source_run_id": null
-            }
-        ],
-        "rejections": [
-            {
-                "index": 2, "id": REFUSED, "display_id": short(REFUSED),
-                "path": "src/lib.rs", "rule": "add-to-sub",
-                "code": "E0369", "diagnostic": "error[E0369]: cannot subtract",
-                "isolated": true
-            }
-        ],
-        "skips": [],
-        "expectations": [
-            {
-                "id": SURVIVED, "reason": "the bound is equivalent under the invariant",
-                "outcome": "survived", "mutant": SURVIVED,
-                "locator": null, "covered": null,
-                "standing": "met", "actual": "survived", "why": null
-            }
-        ],
-        "findings": []
-    })
-}
-
-/// The recording of that run: one route and one execution each, a build and a verify, one round that condemned the refusal.
-fn recording() -> Vec<serde_json::Value> {
-    let mut events = vec![
-        serde_json::json!({"seq":1,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
-            "type":"run-start","schema":"rust-mutants-trace-v1","engine":"0.1.0"}),
-        serde_json::json!({"seq":2,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
-            "type":"phase-start","phase":{"name":"prepare"}}),
-        serde_json::json!({"seq":3,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":10,
-            "type":"instrument","instrument":{"path":"src/lib.rs","guards":2,
-            "runtime":"__rm_deadbeef","lines_before":40,"lines_after":40}}),
-        serde_json::json!({"seq":4,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":20,
-            "type":"validate-round","round":{"round":1,"condemned":0,"success":false,
-            "attributed":[{"index":2,"code":"E0369","said":"cannot subtract"}],
-            "unattributed":0}}),
-        serde_json::json!({"seq":5,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":30,
-            "type":"build","build":{"targets":[TARGET]}}),
-        serde_json::json!({"seq":6,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":40,
-            "type":"verify","verify":{"target":TARGET,"outcome":"passed","tests_run":2,
-            "duration_ms":5}}),
-        serde_json::json!({"seq":7,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":50,
-            "type":"phase-end","phase":{"name":"prepare","duration_ms":50}}),
-    ];
-    let mut seq = 8u64;
-    for (index, (id, outcome)) in [(KILLED, "killed"), (SURVIVED, "survived")]
-        .into_iter()
-        .enumerate()
-    {
-        let exit = if outcome == "killed" { 101 } else { 0 };
-        events.push(
-            serde_json::json!({"seq":seq,"timestamp":"2026-09-06T10:15:02Z",
-            "elapsed_ms":60,"type":"route","route":{"mutant":short(id),
-            "index":index,"granularity":"block",
-            "reaching":[TARGET],"executed":[TARGET]}}),
-        );
-        seq = seq.saturating_add(1);
-        events.push(
-            serde_json::json!({"seq":seq,"timestamp":"2026-09-06T10:15:02Z",
-            "elapsed_ms":61,"type":"mutant-exec","mutant":{"id":short(id),
-            "index":index,"target":TARGET,"outcome":outcome,
-            "exit_code":exit,"duration_ms":5,"tests_run":2}}),
-        );
-        seq = seq.saturating_add(1);
-    }
-    events.push(
-        serde_json::json!({"seq":seq,"timestamp":"2026-09-06T10:15:02Z",
-        "elapsed_ms":70,"type":"run-end","run":{"outcome":"detected",
-        "events_emitted":seq,"events_dropped":0}}),
-    );
-    events
-}
-
-fn merge(document: &mut serde_json::Value, overrides: serde_json::Value) {
-    match (document, overrides) {
-        (serde_json::Value::Object(into), serde_json::Value::Object(from)) => {
-            for (key, value) in from {
-                merge(into.entry(key).or_insert(serde_json::Value::Null), value);
-            }
-        }
-        (serde_json::Value::Array(into), serde_json::Value::Array(from)) if !from.is_empty() => {
-            for (at, value) in from.into_iter().enumerate() {
-                match into.get_mut(at) {
-                    Some(existing) => merge(existing, value),
-                    None => into.push(value),
-                }
-            }
-        }
-        (into, from) => *into = from,
-    }
-}
-
-fn with(overrides: serde_json::Value) -> serde_json::Value {
-    let mut document = base();
-    merge(&mut document, overrides);
-    document
-}
-
 fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("a temporary directory");
-    std::fs::write(
-        directory.path().join("run-report-v1.json"),
-        document.to_string(),
-    )
-    .expect("the report");
-    directory
+    sentinel::run_directory(document).expect("a run directory")
 }
 
 fn recorded(events: &[serde_json::Value]) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("a temporary directory");
-    let mut stream = String::new();
-    for event in events {
-        let mut envelope = event.as_object().expect("a synthetic event object").clone();
-        let seq = envelope.remove("seq").expect("event sequence");
-        let timestamp = envelope.remove("timestamp").expect("event timestamp");
-        let elapsed_ms = envelope.remove("elapsed_ms").expect("event elapsed time");
-        let current = serde_json::json!({
-            "seq": seq,
-            "timestamp": timestamp,
-            "elapsed_ms": elapsed_ms,
-            "payload": serde_json::Value::Object(envelope),
-        });
-        stream.push_str(&current.to_string());
-        stream.push('\n');
-    }
-    std::fs::write(directory.path().join("trace.jsonl"), stream).expect("the recording");
-    directory
+    sentinel::recorded(events).expect("a recording")
 }
 
 const fn asked<'a>(
@@ -987,107 +783,53 @@ fn owned_evidence_is_exact_after_the_duplicate_key_boundary() {
     }
 }
 
-/// One perturbation of the clean run, and every layer it is the business of.
-struct Perturbation {
-    name: &'static str,
-    layers: &'static [Layer],
-    document: serde_json::Value,
-    events: Vec<serde_json::Value>,
-}
-
-fn perturbations() -> Vec<Perturbation> {
-    let moved_line = {
-        let mut events = recording();
-        events[2]["instrument"]["lines_after"] = serde_json::json!(41);
-        events
-    };
-    let disagreeing = {
-        let mut events = recording();
-        events[8]["mutant"]["outcome"] = serde_json::json!("survived");
-        events
-    };
-    vec![
-        Perturbation {
-            name: "an identity that does not re-mint",
-            layers: &[Layer::Identity],
-            document: with(serde_json::json!({ "mutants": [{ "start_byte": 104 }] })),
-            events: recording(),
-        },
-        Perturbation {
-            name: "a column the rows do not come to",
-            layers: &[Layer::Accounting, Layer::Score],
-            document: with(serde_json::json!({ "accounting": { "killed": 2 } })),
-            events: recording(),
-        },
-        Perturbation {
-            name: "a score that is not its own ratio",
-            layers: &[Layer::Score],
-            document: with(
-                serde_json::json!({ "score": { "detected": 1, "decided": 2, "value": 0.9 } }),
-            ),
-            events: recording(),
-        },
-        Perturbation {
-            name: "a survivor no finding names",
-            layers: &[Layer::Findings],
-            document: with(serde_json::json!({
-                "accounting": { "expected": 0 },
-                "mutants": [{}, { "expected": false }],
-                "expectations": []
-            })),
-            events: recording(),
-        },
-        Perturbation {
-            name: "a met claim on a row nobody marked",
-            layers: &[Layer::Expectations],
-            document: with(serde_json::json!({
-                "accounting": { "expected": 0 },
-                "mutants": [{}, { "expected": false }],
-                "findings": [{ "kind": "surviving-mutant", "mutant": short(SURVIVED),
-                               "detail": "no test noticed it" }],
-                "run": { "exit_code": 1 }
-            })),
-            events: recording(),
-        },
-        Perturbation {
-            name: "an exit code that does not follow",
-            layers: &[Layer::Exit],
-            document: with(serde_json::json!({ "run": { "exit_code": 1 } })),
-            events: recording(),
-        },
-        Perturbation {
-            name: "an instrumentation that moved a line",
-            layers: &[Layer::Trace],
-            document: base(),
-            events: moved_line,
-        },
-        Perturbation {
-            name: "an execution that disagrees with its row",
-            layers: &[Layer::Trace],
-            document: base(),
-            events: disagreeing,
-        },
-    ]
+/// Every layer a planted perturbation is the business of, beyond the one it was planted for.
+fn layers_of(name: &str) -> &'static [Layer] {
+    match name {
+        "a column the rows do not come to" => &[Layer::Score],
+        "a survivor no finding names" | "a met claim on a row nobody marked" => &[Layer::Ledger],
+        "a row that ran a target its route never reached"
+        | "a route narrowed by guards that kept no record"
+        | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
+        _ => &[],
+    }
 }
 
 #[test]
 fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are_its_own() {
     let clean = audited_with(&base(), &recording());
     assert_eq!(clean.violations(), 0, "{clean}");
-    for perturbation in perturbations() {
-        let audit = audited_with(&perturbation.document, &perturbation.events);
-        for layer in Layer::ALL {
-            let expected = perturbation.layers.contains(&layer);
-            assert_eq!(
-                audit.violated(layer),
-                expected,
-                "{}: {} {} about it: {audit}",
-                perturbation.name,
-                layer.label(),
-                if expected { "said nothing" } else { "spoke" }
-            );
+    let mut wrong = Vec::new();
+    for planted_for in Layer::ALL {
+        for perturbation in planted_for.planted() {
+            let laid = perturbation.lay().expect("the perturbation on disk");
+            let audit = gates::engine_audit(&gates::EngineRun {
+                run: laid.run(),
+                trace: Some(laid.trace()),
+                shards: laid.shards(),
+                ledger: laid.ledger(),
+                sites: true,
+            })
+            .expect("a report this audit can read");
+            let spoke: Vec<Layer> = Layer::ALL
+                .into_iter()
+                .filter(|layer| audit.violated(*layer))
+                .collect();
+            let expected: Vec<Layer> = Layer::ALL
+                .into_iter()
+                .filter(|layer| {
+                    *layer == planted_for || layers_of(perturbation.name).contains(layer)
+                })
+                .collect();
+            if spoke != expected {
+                wrong.push(format!(
+                    "{}: expected {expected:?}, spoke {spoke:?}\n{audit}",
+                    perturbation.name
+                ));
+            }
         }
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
 }
 
 /// The runs of three fixtures, recorded by the engine and committed beside this test.
@@ -1539,40 +1281,9 @@ fn with_record(document: &serde_json::Value, record: &serde_json::Value) -> Audi
     gates::engine_audit(&asked(directory.path(), None, None)).expect("a report this audit can read")
 }
 
-/// A report whose two mutants are each put to one of the target's two tests.
-fn routed_by_test() -> serde_json::Value {
-    with(serde_json::json!({
-        "mutants": [
-            {"route": {"granularity": "test", "reaching": [TARGET], "executed": [TARGET],
-                       "tests": {TARGET: ["tests::max_picks_the_larger"]}}},
-            {"route": {"granularity": "test", "reaching": [TARGET], "executed": [TARGET],
-                       "tests": {TARGET: ["tests::min_picks_the_smaller"]}}}
-        ]
-    }))
-}
-
-/// The record those routes follow from: each test reached one of the two mutations.
-fn record() -> serde_json::Value {
-    serde_json::json!({
-        "targets": {
-            TARGET: {
-                "reached": {
-                    "tests": {
-                        "tests::max_picks_the_larger": [0],
-                        "tests::min_picks_the_smaller": [1]
-                    },
-                    "loose": []
-                },
-                "ran": ["tests::max_picks_the_larger", "tests::min_picks_the_smaller"]
-            }
-        },
-        "limitations": []
-    })
-}
-
 #[test]
 fn a_route_the_guards_decided_is_re_decided_from_what_they_recorded() {
-    let audit = with_record(&routed_by_test(), &record());
+    let audit = with_record(&routed_by_test(), &touched());
     assert!(
         violations(&audit, Layer::Touch).is_empty(),
         "{:?}",
@@ -1592,7 +1303,7 @@ fn a_route_the_guards_decided_is_re_decided_from_what_they_recorded() {
 fn a_test_the_record_says_reached_a_mutation_and_the_route_dropped_is_a_violation() {
     let mut document = routed_by_test();
     document["mutants"][0]["route"]["tests"][TARGET] = serde_json::json!([]);
-    let audit = with_record(&document, &record());
+    let audit = with_record(&document, &touched());
     let said = violations(&audit, Layer::Touch);
     assert_eq!(said.len(), 1, "{said:?}");
     assert!(
@@ -1606,7 +1317,7 @@ fn a_target_the_record_says_reached_a_mutation_and_the_route_left_out_is_a_viola
     let mut document = routed_by_test();
     document["mutants"][0]["route"]["reaching"] = serde_json::json!([]);
     document["mutants"][0]["route"]["tests"] = serde_json::json!({});
-    let audit = with_record(&document, &record());
+    let audit = with_record(&document, &touched());
     let said = violations(&audit, Layer::Touch);
     assert_eq!(said.len(), 1, "{said:?}");
     assert!(
@@ -1624,7 +1335,7 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
         {"id": other, "kind": "test", "harness": true, "tests": 1, "limitations": []}
     ]);
     document["mutants"][0]["route"]["reaching"] = serde_json::json!([TARGET, other]);
-    let mut recorded = record();
+    let mut recorded = touched();
     recorded["targets"][other] = serde_json::json!({
         "reached": {"tests": {"a_parity_test": []}, "loose": []},
         "ran": ["a_parity_test"]
@@ -1643,7 +1354,7 @@ fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violati
         {"id": "demo/test/parity", "kind": "test", "harness": true, "tests": 1,
          "limitations": []}
     ]);
-    let audit = with_record(&document, &record());
+    let audit = with_record(&document, &touched());
     let said = violations(&audit, Layer::Touch);
     assert!(
         said.iter()
@@ -1660,7 +1371,7 @@ fn a_target_the_record_excuses_is_accounted_for_rather_than_unnamed() {
         {"id": "demo/doc/demo", "kind": "doc", "harness": true, "tests": 1,
          "limitations": []}
     ]);
-    let mut recorded = record();
+    let mut recorded = touched();
     recorded["limitations"] = serde_json::json!(["touch-not-recorded:demo/doc/demo"]);
     let audit = with_record(&document, &recorded);
     assert!(
@@ -1824,7 +1535,7 @@ fn a_branch_discharge_the_guards_contradict_is_a_violation() {
 
 /// The same record with a third test, so a mutation two of them reached is a route through a filter rather than the whole target.
 fn record_of_three() -> serde_json::Value {
-    let mut recorded = record();
+    let mut recorded = touched();
     recorded["targets"][TARGET]["reached"]["tests"] = serde_json::json!({
         "tests::max_picks_the_larger": [0, 1],
         "tests::min_picks_the_smaller": [1]
@@ -1872,7 +1583,7 @@ fn a_route_the_guards_narrowed_by_a_comparison_is_re_decided_from_it() {
 fn a_target_every_test_of_which_reached_a_mutation_is_asked_whole_rather_than_narrowed() {
     let mut document = routed_by_test();
     document["mutants"][1]["route"]["tests"] = serde_json::json!({});
-    let mut recorded = record();
+    let mut recorded = touched();
     recorded["targets"][TARGET]["reached"]["tests"] = serde_json::json!({
         "tests::max_picks_the_larger": [0, 1],
         "tests::min_picks_the_smaller": [1]

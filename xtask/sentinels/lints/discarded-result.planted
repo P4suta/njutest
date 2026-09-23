@@ -1,0 +1,39 @@
+=== filter-map-ok source crates/app/src/lib.rs
+//! A file.
+fn files(entries: impl Iterator<Item = Result<u8, E>>) { let _files = entries.filter_map(Result::ok); }
+=== ok-in-a-closure source crates/app/src/lib.rs
+//! A file.
+fn files(entries: impl Iterator<Item = Result<u8, E>>) { let _files = entries.filter_map(|entry| entry.ok()); }
+=== ok-pattern-in-a-loop source crates/app/src/lib.rs
+//! A file.
+fn files(entries: impl Iterator<Item = Result<u8, E>>) { for Ok(entry) in entries { drop(entry); } }
+=== iterator-flatten source crates/app/src/lib.rs
+//! A file.
+fn values(entries: impl Iterator<Item = Option<u8>>) { let _values = entries.flatten(); }
+=== ok-or-err-method source crates/app/src/lib.rs
+//! A file.
+fn f(result: Result<u8, Error>) { let _ = std::result::Result::err(result); }
+=== fallback-ignoring-the-error source crates/app/src/lib.rs
+//! A file.
+fn value(result: Result<u8, Error>) -> u8 { result.unwrap_or_else(|_| 0) }
+=== result-into-iter source crates/app/src/lib.rs
+//! A file.
+fn values(result: Result<u8, Error>) { for value in Result::into_iter(result) { use_value(value); } }
+=== read-dir-flatten source crates/app/src/lib.rs
+//! A file.
+fn files(path: &std::path::Path) { let entries = std::fs::read_dir(path).unwrap(); for entry in entries.flatten() { drop(entry); } }
+=== renamed-read-dir source crates/app/src/lib.rs
+//! A file.
+pub use std::fs::read_dir as entries;
+=== while-let-ok source crates/app/src/lib.rs
+//! A file.
+fn files(path: &std::path::Path) -> std::io::Result<()> { let mut entries = std::fs::read_dir(path)?; while let Some(Ok(entry)) = entries.next() { drop(entry); } Ok(()) }
+=== if-let-ok source crates/app/src/lib.rs
+//! A file.
+fn inspect(ready: bool) { if ready && let Ok(value) = fallible() { use_value(value); } }
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! f { ($result:expr) => { $result.ok() } }
+=== macro-pattern-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! inspect { ($pattern:pat, $value:expr) => { if let $pattern = $value { use_value(); } } }

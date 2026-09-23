@@ -1,0 +1,7 @@
+=== by-full-path tree
+--- crates/app/src/lib.rs
+pub fn stop() { std::process::exit(3) }
+=== by-imported-module tree
+--- crates/app/src/lib.rs
+use std::process;
+pub fn stop() { process::exit(1) }

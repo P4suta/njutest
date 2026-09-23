@@ -1,0 +1,21 @@
+=== direct-derive source crates/app/src/lib.rs
+//! A file.
+#[derive(Default)]
+pub enum State { #[default] Waiting, Done }
+=== qualified-derive source crates/app/src/lib.rs
+//! A file.
+#[derive(core::default::Default)]
+pub enum State { #[default] Waiting, Done }
+=== renamed-derive source crates/app/src/lib.rs
+//! A file.
+use std::default::Default as Initial;
+#[derive(Initial)]
+pub enum State { #[default] Waiting, Done }
+=== cfg-attr-derive source crates/app/src/lib.rs
+//! A file.
+#[cfg_attr(test, derive(Default))]
+pub enum State { #[cfg_attr(test, default)] Waiting, Done }
+=== macro-rules-derive source crates/app/src/lib.rs
+//! A file.
+macro_rules! state { () => { #[derive(Default)] enum State { #[default] Waiting, Done } } }
+state!();

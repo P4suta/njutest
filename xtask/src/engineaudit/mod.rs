@@ -10,6 +10,7 @@ mod arithmetic;
 mod evidence;
 mod ledger;
 mod recording;
+pub mod sentinel;
 mod wire;
 
 use arithmetic::{accounting, exit, expectations, findings, identity, score};
@@ -279,7 +280,6 @@ impl Audit {
 
     /// Whether one layer found something the run does not support.
     #[must_use]
-    #[cfg(feature = "testkit")]
     pub fn violated(&self, layer: Layer) -> bool {
         self.remarks
             .iter()

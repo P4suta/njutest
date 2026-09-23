@@ -11,90 +11,20 @@
 use std::path::Path;
 
 use xtask::gates;
-use xtask::proofaudit::{Audit, AuditError, EXIT_UNREADABLE, Layer, Standing};
+use xtask::proofaudit::sentinel::{
+    self, ASKED, KILLED, RUN, SURVIVED, TARGET, base, merge, never_noticed, routes, was_put,
+    went_past, with,
+};
+use xtask::proofaudit::{Audit, AuditError, EXIT_UNREADABLE, Layer, REPORT_FILE, Standing};
 
-const RUN: &str = "20260906T101500Z-9f1c2d";
 const EARLIER: &str = "20260905T090000Z-1a2b3c";
-const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
-const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
-const TARGET: &str = "pkg/test/lib";
-const REPORT: &str = "njutest-assurance-report-v1.json";
 
-fn base() -> serde_json::Value {
-    serde_json::json!({
-        "schema": "njutest-assurance-report-v1",
-        "schema_version": 2,
-        "run_id": RUN,
-        "run_kind": "scoped",
-        "contract": "standard-v1",
-        "verdict": "INSUFFICIENT",
-        "accounting": {
-            "targets": { "selected": 1, "passed": 1, "failed": 0, "skipped": 0, "missing": 0 },
-            "mutants": {
-                "cataloged": 2,
-                "rejected": 0,
-                "executed": 2,
-                "killed": 1,
-                "survived": 1,
-                "step_limit_reached": 0,
-                "waited": 0,
-                "unreached": 0,
-                "equivalent": 0,
-                "accepted": 0,
-                "reused_killed": 0,
-                "reused_survived": 0,
-                "model_noticed": 0,
-                "model_proved": 0
-            },
-            "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false }
-        },
-        "targets": [
-            {
-                "id": "3f2a1b0c9d8e7f60",
-                "name": TARGET,
-                "package": "pkg",
-                "status": "passed",
-                "duration_ms": 5,
-                "message": null
-            }
-        ],
-        "mutants": [
-            {
-                "id": "a".repeat(64),
-                "display_id": KILLED,
-                "path": "src/lib.rs",
-                "position": { "line": 7, "column": 9, "character_column": 9 },
-                "rule": "negate-condition@1",
-                "decision": {
-                    "outcome": "killed", "killed_by": TARGET, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            },
-            {
-                "id": "b".repeat(64),
-                "display_id": SURVIVED,
-                "path": "src/lib.rs",
-                "position": { "line": 11, "column": 5, "character_column": 5 },
-                "rule": "return-ok-default@1",
-                "decision": {
-                    "outcome": "survived", "killed_by": null, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            }
-        ],
-        "models": [],
-        "findings": [
-            {
-                "kind": "surviving-mutant",
-                "subject": SURVIVED,
-                "detail": "no test noticed return-ok-default@1 at src/lib.rs:11",
-                "position": null
-            }
-        ],
-        "limitations": []
-    })
+fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
+    sentinel::run_directory(document).expect("a run directory")
+}
+
+fn recorded(lines: &[serde_json::Value]) -> tempfile::TempDir {
+    sentinel::recorded(lines).expect("a recording")
 }
 
 fn assured() -> serde_json::Value {
@@ -118,31 +48,6 @@ fn assured() -> serde_json::Value {
     document
 }
 
-fn merge(document: &mut serde_json::Value, overrides: serde_json::Value) {
-    match (document, overrides) {
-        (serde_json::Value::Object(into), serde_json::Value::Object(from)) => {
-            for (key, value) in from {
-                merge(into.entry(key).or_insert(serde_json::Value::Null), value);
-            }
-        }
-        (serde_json::Value::Array(into), serde_json::Value::Array(from)) if !from.is_empty() => {
-            for (at, value) in from.into_iter().enumerate() {
-                match into.get_mut(at) {
-                    Some(existing) => merge(existing, value),
-                    None => into.push(value),
-                }
-            }
-        }
-        (into, from) => *into = from,
-    }
-}
-
-fn with(overrides: serde_json::Value) -> serde_json::Value {
-    let mut document = base();
-    merge(&mut document, overrides);
-    document
-}
-
 fn without(document: &mut serde_json::Value, group: &str, column: &str) {
     let columns = document
         .get_mut("accounting")
@@ -155,70 +60,9 @@ fn without(document: &mut serde_json::Value, group: &str, column: &str) {
     );
 }
 
-fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("a temporary directory");
-    std::fs::write(directory.path().join(REPORT), document.to_string()).expect("the recording");
-    directory
-}
-
-/// A route and an execution for each mutant of [`base`], with no proof removing anything.
-fn routes() -> Vec<serde_json::Value> {
-    let mut lines = Vec::new();
-    for (seq, (mutant, outcome)) in [(KILLED, "killed"), (SURVIVED, "survived")]
-        .into_iter()
-        .enumerate()
-    {
-        lines.push(serde_json::json!({
-            "seq": seq.saturating_mul(2).saturating_add(1), "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
-            "type": "route",
-            "route": {
-                "mutant": mutant, "granularity": "block", "fallback": null,
-                "reaching": ["t1"], "discharged": [], "considered": [], "reused": null
-            }
-        }));
-        lines.push(serde_json::json!({
-            "seq": seq.saturating_mul(2).saturating_add(2), "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
-            "type": "mutant-exec",
-            "mutant": {
-                "mutant": mutant, "target": "t1", "args": [], "outcome": outcome,
-                "duration_ms": 5
-            }
-        }));
-    }
-    lines
-}
-
 fn audited(document: &serde_json::Value) -> Audit {
     let directory = run_directory(document);
     gates::proofaudit(directory.path(), None).expect("a recording this audit can read")
-}
-
-/// One recording of what a run routed and what it ran, as the trace holds it.
-fn recorded(lines: &[serde_json::Value]) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("a temporary directory");
-    let mut stream = String::new();
-    for (index, line) in lines.iter().enumerate() {
-        let mut payload = line.as_object().expect("a synthetic event object").clone();
-        let seq = payload
-            .remove("seq")
-            .unwrap_or_else(|| serde_json::json!(index.saturating_add(1)));
-        let timestamp = payload
-            .remove("timestamp")
-            .unwrap_or_else(|| serde_json::json!("2026-09-06T00:00:00Z"));
-        let elapsed_ms = payload
-            .remove("elapsed_ms")
-            .unwrap_or_else(|| serde_json::json!(index));
-        let current = serde_json::json!({
-            "seq": seq,
-            "timestamp": timestamp,
-            "elapsed_ms": elapsed_ms,
-            "payload": serde_json::Value::Object(payload),
-        });
-        stream.push_str(&current.to_string());
-        stream.push('\n');
-    }
-    std::fs::write(directory.path().join("trace.jsonl"), stream).expect("the recording");
-    directory
 }
 
 fn audited_with_routes(document: &serde_json::Value) -> Audit {
@@ -685,7 +529,7 @@ fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
-    assert!(error.to_string().contains(REPORT), "{error}");
+    assert!(error.to_string().contains(REPORT_FILE), "{error}");
 }
 
 #[test]
@@ -715,7 +559,7 @@ fn a_corrupt_line_rejects_the_entire_explicit_recording() {
 #[test]
 fn a_report_that_is_not_json_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    std::fs::write(directory.path().join(REPORT), "not json").expect("the recording");
+    std::fs::write(directory.path().join(REPORT_FILE), "not json").expect("the recording");
     let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
 }
@@ -1940,24 +1784,6 @@ fn a_route_that_says_an_answer_was_both_read_back_and_refused_is_a_violation() {
     );
 }
 
-/// A recording where one target was asked twice and never noticed anything.
-fn never_noticed() -> Vec<serde_json::Value> {
-    let mut lines = routes();
-    for (seq, mutant) in [KILLED, SURVIVED].into_iter().enumerate() {
-        lines.push(serde_json::json!({
-            "seq": 100_usize.saturating_add(seq),
-            "timestamp": "2026-09-06T00:00:02Z",
-            "elapsed_ms": 2,
-            "type": "mutant-exec",
-            "mutant": {
-                "mutant": mutant, "target": "blunt", "args": [], "outcome": "survived",
-                "duration_ms": 5
-            }
-        }));
-    }
-    lines
-}
-
 #[test]
 fn a_hollow_target_the_report_does_not_name_is_a_violation() {
     let audit = audited_with(&base(), &never_noticed());
@@ -2002,39 +1828,6 @@ fn a_run_that_kept_no_recording_says_the_hollow_layer_was_not_audited() {
          the same as agreeing: {:?}",
         audit.remarks
     );
-}
-
-/// The question about the status of the one exchange the recording below holds.
-const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
-
-/// One exchange that went past the `api` seam, which licenses five questions.
-fn went_past() -> serde_json::Value {
-    serde_json::json!({
-        "type": "wire-exchange",
-        "exchange": {
-            "capability": "api",
-            "seq": 0,
-            "wire": "http",
-            "method": "GET",
-            "path": "/orders",
-            "status": 200
-        }
-    })
-}
-
-/// One fault put to the suite, decided as `decision` says.
-fn was_put(fault: &str, decision: &str) -> serde_json::Value {
-    serde_json::json!({
-        "type": "wire-exec",
-        "wire": {
-            "fault": fault,
-            "capability": "api",
-            "seq": 0,
-            "rule": "status-server-error",
-            "decision": decision,
-            "noticed_by": null
-        }
-    })
 }
 
 /// The report with one `wire-unnoticed` finding about `subject`.
