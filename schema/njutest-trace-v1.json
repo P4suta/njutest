@@ -52,8 +52,15 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind"],
-          "properties": { "kind": { "const": "timed-out" } }
+          "required": ["kind", "raised"],
+          "properties": {
+            "kind": { "const": "timed-out" },
+            "raised": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "How many step boundaries the process had raised. Above zero says the allowance would have ended this and the clock got there first, which is a race one machine wins and another does not. Zero says no boundary was raised, so no allowance could have ended it. Null says the state could not be read, which is not a count of zero."
+            }
+          }
         },
         {
           "type": "object",

@@ -22,6 +22,9 @@ pub const ALREADY_FAILING: &str = "wire-fault-not-attributable";
 /// What a limitation is named when no target passed without a fault, so the suite can answer nothing about one.
 pub const SUITE_NOT_GREEN: &str = "wire-baseline-not-green";
 
+/// What a limitation is named when a caller reached a seam and the exchange did not complete with no fault in place.
+pub const TRANSPORT_FAILED: &str = "wire-transport-incomplete";
+
 /// What the phase is asked about.
 #[derive(Debug, Clone, Copy)]
 pub struct Measuring<'a> {
@@ -286,6 +289,21 @@ where
             seams: seams.watching.len(),
             recordings: baseline.per_seam.len(),
         });
+    }
+    for one in &seams.watching {
+        let dropped = one.interposer.did_not_complete();
+        if dropped > 0 {
+            done.limitations.push(Limitation::new(
+                TRANSPORT_FAILED,
+                &format!(
+                    "{}: {dropped} caller(s) reached this seam and did not complete an exchange \
+                     with no fault in place, so what a target did with those is about this \
+                     machine rather than about the code. A target that failed for this reason \
+                     was not measured, and is not a test that failed",
+                    one.capability
+                ),
+            ));
+        }
     }
     for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
         for exchange in observed {
