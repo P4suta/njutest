@@ -161,6 +161,8 @@ impl Unsettled {
 pub enum Standing {
     /// It passed the tests its baseline passed and reached what its baseline did.
     Stable,
+    /// It passed where its baseline passed, and is a target that records no reach to compare, as a doctest run through cargo is.
+    Passed,
     /// It failed where its baseline passed.
     Broke {
         /// The tests that failed, as the harness named them.
@@ -242,6 +244,7 @@ pub fn found(knobs: &[KnobRecord], records: &[MutantRecord]) -> Vec<Finding> {
                 ))
             }
             Standing::Stable
+            | Standing::Passed
             | Standing::Uncompared { .. }
             | Standing::Unsettled { .. }
             | Standing::NotPut { .. } => None,
@@ -284,7 +287,10 @@ pub fn limited(knobs: &[KnobRecord]) -> Vec<Limitation> {
                 .entry(one.target.as_str())
                 .or_default()
                 .push(format!("{} ({})", one.knob.name(), why.said())),
-            Standing::Stable | Standing::Broke { .. } | Standing::Moved { .. } => {}
+            Standing::Stable
+            | Standing::Passed
+            | Standing::Broke { .. }
+            | Standing::Moved { .. } => {}
         }
     }
     let mut limitations: Vec<Limitation> = unput

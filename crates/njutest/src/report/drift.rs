@@ -20,7 +20,9 @@ pub struct Moved {
 }
 
 impl Moved {
-    fn of(moved: &rust_mutants::touch::Moved) -> Self {
+    /// The engine's record of what moved, as the report keeps it.
+    #[must_use]
+    pub fn of(moved: &rust_mutants::touch::Moved) -> Self {
         Self {
             gained: moved.gained.clone(),
             lost: moved.lost.clone(),
@@ -68,7 +70,9 @@ impl Unmeasured {
         }
     }
 
-    const fn of(why: rust_mutants::touch::Unmeasured) -> Self {
+    /// The engine's reason, as the report keeps it.
+    #[must_use]
+    pub const fn of(why: rust_mutants::touch::Unmeasured) -> Self {
         match why {
             rust_mutants::touch::Unmeasured::Unrecorded => Self::Unrecorded,
             rust_mutants::touch::Unmeasured::Unreadable => Self::Unreadable,
