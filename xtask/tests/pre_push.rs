@@ -144,6 +144,20 @@ impl Repository {
     }
 }
 
+fn symbolic_head(directory: &Path) -> String {
+    String::from_utf8(
+        isolated("git")
+            .args(["symbolic-ref", "--quiet", "HEAD"])
+            .current_dir(directory)
+            .output()
+            .expect("git symbolic-ref")
+            .stdout,
+    )
+    .expect("an ASCII ref name")
+    .trim()
+    .to_owned()
+}
+
 fn object_id(directory: &Path, revision: &str) -> String {
     String::from_utf8(
         isolated("git")
@@ -222,6 +236,26 @@ fn the_check_is_handed_none_of_the_hooks_git_environment() {
         "a check that inherits GIT_DIR answers about the repository being pushed, and a test \
          inside it that runs `git init` or `git config` rewrites that repository: {}",
         stderr(&output)
+    );
+}
+
+#[test]
+fn a_push_leaves_the_pushers_head_on_its_branch() {
+    let repository =
+        Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
+    let before = symbolic_head(repository.directory.path());
+    for push in [
+        "the one that makes the gate's tree",
+        "the one that reuses it",
+    ] {
+        let output = repository.push_as_a_hook(&repository.head);
+        assert!(output.status.success(), "{push}: {}", stderr(&output));
+    }
+    assert_eq!(
+        symbolic_head(repository.directory.path()),
+        before,
+        "the gate's own checkout ran with the hook's GIT_DIR and moved the pusher's HEAD instead \
+         of the isolated tree's"
     );
 }
 
