@@ -286,11 +286,14 @@ fn parse_lines_text(text: &str) -> Lines {
     lines
 }
 
+/// What libtest writes after the name of a test that expects a panic, which is not part of the name.
+const SHOULD_PANIC: &str = " - should panic";
+
 /// The name and verdict of one `test <name> ... <verdict>` line.
 fn verdict_of(line: &str) -> Option<(&str, &str)> {
     let rest = line.trim_end().strip_prefix("test ")?;
     let (name, verdict) = rest.rsplit_once(" ... ")?;
-    let name = name.trim();
+    let name = name.strip_suffix(SHOULD_PANIC).unwrap_or(name).trim();
     (!name.is_empty()).then_some((name, verdict.trim()))
 }
 
