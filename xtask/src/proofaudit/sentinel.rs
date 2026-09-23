@@ -211,6 +211,32 @@ pub fn was_put(fault: &str, decision: &str) -> Value {
     })
 }
 
+/// One touch record the engine writes about `target`, measured on `measured` over the one test `lib::works`, having reached `reached`.
+#[must_use]
+pub fn touch(measured: &str, reached: &[u32]) -> Value {
+    json!({
+        "type": "touch",
+        "touch": {
+            "target": TARGET,
+            "measured": measured,
+            "tests": 1,
+            "sites": reached.len(),
+            "loose": 0,
+            "infected": 0,
+            "passed": ["lib::works"],
+            "reached_sites": reached,
+            "entered_bodies": [],
+            "infected_sites": []
+        }
+    })
+}
+
+/// The report's drift record about [`TARGET`], in the standing `state` names.
+#[must_use]
+pub fn drifted(state: &str) -> Value {
+    json!({ "drift": [{ "target": TARGET, "state": state }] })
+}
+
 /// A specimen could not be laid out on disk.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -299,6 +325,8 @@ pub struct Perturbation {
     pub document: Value,
     /// The recording, as events before their envelope, or nothing for a run recorded without `--trace`.
     pub events: Option<Vec<Value>>,
+    /// The one configured build's engine recording, as events before their envelope, or nothing where the run kept none.
+    pub engine: Option<Vec<Value>>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -306,8 +334,9 @@ pub struct Perturbation {
 pub fn clean() -> Perturbation {
     Perturbation {
         name: "clean",
-        document: base(),
+        document: with(drifted("held")),
         events: Some(routes()),
+        engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
     }
 }
 
@@ -340,8 +369,45 @@ impl Perturbation {
     pub fn lay(&self) -> Result<Laid, SpecimenError> {
         let run = run_directory(&self.document)?;
         let trace = self.events.as_deref().map(recorded).transpose()?;
+        if let (Some(trace), Some(engine)) = (trace.as_ref(), self.engine.as_deref()) {
+            let laid = recorded(engine)?;
+            let namespace = trace.path().join("builds").join("0000000000");
+            std::fs::create_dir_all(&namespace).map_err(|source| SpecimenError::Unwritable {
+                path: namespace.display().to_string(),
+                source,
+            })?;
+            let into = namespace.join("engine");
+            std::fs::rename(laid.path(), &into).map_err(|source| SpecimenError::Unwritable {
+                path: into.display().to_string(),
+                source,
+            })?;
+        }
         Ok(Laid { run, trace })
     }
+}
+
+/// The recording of a kill by a target the route's proof had discharged.
+fn discharged_then_killed() -> Vec<Value> {
+    vec![
+        json!({
+            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+            "type": "route",
+            "route": {
+                "mutant": KILLED, "granularity": "block", "fallback": null,
+                "reaching": ["t1"],
+                "discharged": [{ "target": "t2", "proof": "never-infected" }],
+                "considered": [], "reused": null
+            }
+        }),
+        json!({
+            "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": KILLED, "target": "t2", "args": [], "outcome": "killed",
+                "duration_ms": 5
+            }
+        }),
+    ]
 }
 
 impl Layer {
@@ -387,26 +453,7 @@ impl Layer {
             }],
             Self::Proofs => vec![Perturbation {
                 name: "a kill by a target a proof discharged",
-                events: Some(vec![
-                    json!({
-                        "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
-                        "type": "route",
-                        "route": {
-                            "mutant": KILLED, "granularity": "block", "fallback": null,
-                            "reaching": ["t1"],
-                            "discharged": [{ "target": "t2", "proof": "never-infected" }],
-                            "considered": [], "reused": null
-                        }
-                    }),
-                    json!({
-                        "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
-                        "type": "mutant-exec",
-                        "mutant": {
-                            "mutant": KILLED, "target": "t2", "args": [], "outcome": "killed",
-                            "duration_ms": 5
-                        }
-                    }),
-                ]),
+                events: Some(discharged_then_killed()),
                 ..clean
             }],
             Self::Hollow => vec![Perturbation {
@@ -422,6 +469,11 @@ impl Layer {
             Self::Model => vec![Perturbation {
                 name: "a verified-v1 survivor with no model record",
                 document: with(json!({ "contract": "verified-v1" })),
+                ..clean
+            }],
+            Self::Drift => vec![Perturbation {
+                name: "a control that reached a site its baseline never did, recorded as held",
+                engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
                 ..clean
             }],
         }
