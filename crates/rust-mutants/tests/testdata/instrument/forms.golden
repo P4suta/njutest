@@ -190,10 +190,20 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         Applied,
         AlreadyBorrowed,
     }
+    // The three names the durable step protocol is addressed by. A process
+    // cannot change its own environment under itself, so reading them once is
+    // reading them as often as they can differ; doing it per take charged three
+    // environment lookups for an answer that was already known.
+    struct StepIdentity {
+        path: __rm_std::option::Option<__rm_std::string::String>,
+        nonce: __rm_std::option::Option<__rm_std::string::String>,
+        mutant: __rm_std::option::Option<__rm_std::string::String>,
+    }
     static ACTIVE: __rm_std::sync::OnceLock<Selection> = __rm_std::sync::OnceLock::new();
     static BUDGET: __rm_std::sync::OnceLock<Budget> = __rm_std::sync::OnceLock::new();
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
+    static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
 
     // The invocation is an expression boundary before expansion, while the
     // expansion is exactly the user's expression. That groups generated
@@ -277,20 +287,33 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         action: StepAction,
         limit: StepLimit,
     ) -> __rm_std::result::Result<StepAdvance, StepStateError> {
-        let path = __rm_std::env::var("RUST_MUTANTS_STEP_STATE")
-            .map_err(|_| StepStateError::MissingPath)?;
-        let nonce = __rm_std::env::var("RUST_MUTANTS_STEP_NONCE")
-            .map_err(|_| StepStateError::MissingNonce)?;
-        let mutant = __rm_std::env::var("RUST_MUTANTS_ACTIVE")
-            .map_err(|_| StepStateError::MissingMutant)?;
-        let mut file = open_step_state(&path)?;
+        let identity = STEP_IDENTITY.get_or_init(read_step_identity);
+        let path = match identity.path.as_deref() {
+            __rm_std::option::Option::Some(path) => path,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::MissingPath);
+            }
+        };
+        let nonce = match identity.nonce.as_deref() {
+            __rm_std::option::Option::Some(nonce) => nonce,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::MissingNonce);
+            }
+        };
+        let mutant = match identity.mutant.as_deref() {
+            __rm_std::option::Option::Some(mutant) => mutant,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::MissingMutant);
+            }
+        };
+        let mut file = open_step_state(path)?;
         file.lock().map_err(|_| StepStateError::Lock)?;
         let transitioned = (|| {
             let metadata = file.metadata().map_err(|_| StepStateError::Metadata)?;
             if !metadata.file_type().is_file() {
                 return __rm_std::result::Result::Err(StepStateError::NotRegular);
             }
-            let phase = read_step_state(&mut file, &nonce, &mutant, limit)?;
+            let phase = read_step_state(&mut file, nonce, mutant, limit)?;
             let (next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
             if let StepAdvance::Reached { allowed, observed } = advanced {
@@ -303,7 +326,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
                 publish_step_notice(allowed, observed).map_err(|_| StepStateError::Publish)?;
             }
             if next != phase {
-                write_step_state(&mut file, &nonce, &mutant, limit, next)?;
+                write_step_state(&mut file, nonce, mutant, limit, next)?;
             }
             __rm_std::result::Result::Ok(advanced)
         })();
@@ -550,6 +573,14 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         __rm_std::result::Result::Ok(phase)
     }
 
+    fn read_step_identity() -> StepIdentity {
+        StepIdentity {
+            path: __rm_std::result::Result::ok(__rm_std::env::var("RUST_MUTANTS_STEP_STATE")),
+            nonce: __rm_std::result::Result::ok(__rm_std::env::var("RUST_MUTANTS_STEP_NONCE")),
+            mutant: __rm_std::result::Result::ok(__rm_std::env::var("RUST_MUTANTS_ACTIVE")),
+        }
+    }
+
     fn write_step_state(
         file: &mut __rm_std::fs::File,
         nonce: &str,
@@ -557,10 +588,17 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         limit: StepLimit,
         phase: StepPhase,
     ) -> __rm_std::result::Result<(), StepStateError> {
-        let (name, spent) = match phase {
-            StepPhase::Dormant => ("dormant", 0),
-            StepPhase::Active(spent) => ("active", spent),
-            StepPhase::Stopping(spent) => ("stopping", spent),
+        // A persisted Stopping state is the proof that the notice was published,
+        // so that write is the one that has to survive losing the machine. A
+        // count on its way up is progress: losing it costs a process its place
+        // and costs no verdict its exactness, because the count still passes
+        // through this locked file every time and the boundary is still read
+        // from it. Paying for durability per take is what made a take cost
+        // 7.3ms on Windows, which is a clock the count then had to race.
+        let (name, spent, durable) = match phase {
+            StepPhase::Dormant => ("dormant", 0, false),
+            StepPhase::Active(spent) => ("active", spent, false),
+            StepPhase::Stopping(spent) => ("stopping", spent, true),
         };
         let state = __rm_std::format!(
             "rust-mutants-step-state-v1\t{}\t{}\t{}\t{}\t{}\t{}\n",
@@ -576,7 +614,9 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         file.set_len(0).map_err(|_| StepStateError::Truncate)?;
         __rm_std::io::Write::write_all(file, state.as_bytes())
             .map_err(|_| StepStateError::Write)?;
-        file.sync_data().map_err(|_| StepStateError::Sync)?;
+        if durable {
+            file.sync_data().map_err(|_| StepStateError::Sync)?;
+        }
         __rm_std::result::Result::Ok(())
     }
 
