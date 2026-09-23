@@ -194,7 +194,7 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
         .map(|target| {
             let discharged = records
                 .iter()
-                .filter(|record| record.outcome.outcome() != Outcome::Killed)
+                .filter(|record| record.outcome.outcome() == Outcome::Survived)
                 .filter(|record| {
                     record.routing.as_ref().is_some_and(|routing| {
                         routing.discharged.iter().any(|one| one.target == target)

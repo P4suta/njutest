@@ -156,3 +156,53 @@ fn the_finding_counts_what_a_proof_decided_on_the_moved_record_and_nothing_a_kil
         finding.detail
     );
 }
+
+#[test]
+fn a_row_the_run_established_nothing_about_is_not_counted_as_resting_on_a_discharge() {
+    let boundary = njutest::report::StepBoundary::new(10, 11).expect("a boundary");
+    let rows = [
+        row(0, Decided::Survived, true),
+        row(
+            1,
+            Decided::Errored {
+                on: TARGET.to_owned(),
+            },
+            true,
+        ),
+        row(
+            2,
+            Decided::Unconfirmed {
+                on: TARGET.to_owned(),
+            },
+            true,
+        ),
+        row(
+            3,
+            Decided::Waited {
+                on: TARGET.to_owned(),
+            },
+            true,
+        ),
+        row(
+            4,
+            Decided::StepLimitReached {
+                on: TARGET.to_owned(),
+                boundary,
+            },
+            true,
+        ),
+    ];
+    let found = drift::found(&[moved()], &rows);
+    let [finding] = found.as_slice() else {
+        panic!("one moved target, one finding: {found:?}");
+    };
+    assert!(
+        finding
+            .detail
+            .contains("1 mutation a proof removed its run of, and 0 mutations no test reached"),
+        "only a survivor is a disposition a discharge decided; a row that errored, waited, \
+         did not confirm, or crossed its step allowance is a hole whatever its route \
+         discharged: {}",
+        finding.detail
+    );
+}
