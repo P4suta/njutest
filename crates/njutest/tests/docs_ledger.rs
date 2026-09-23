@@ -718,3 +718,53 @@ fn process_kinds() -> Vec<String> {
 
 /// Why a proof answered nothing.
 const UNCERTAIN_KINDS: [&str; 3] = ["bound-exhausted", "cutoff", "cancelled"];
+
+#[test]
+fn the_sections_the_contract_says_a_specification_lists_are_the_ones_it_draws() {
+    let text = page("docs/assurance-contract.md");
+    let (_, after) = text
+        .split_once("## What a specification says")
+        .expect("the contract says what a specification says");
+    let section = after.split("\n## ").next().unwrap_or_default();
+    let documented: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        section
+            .lines()
+            .filter(|line| {
+                line.starts_with("| ")
+                    && !line.starts_with("| Section")
+                    && !line.starts_with("| ---")
+            })
+            .map(|line| {
+                let cells: Vec<&str> = line.trim_matches('|').split(" | ").map(str::trim).collect();
+                let heading = cells.first().copied().unwrap_or_default().to_owned();
+                let decisions = cells
+                    .last()
+                    .copied()
+                    .unwrap_or_default()
+                    .split(", ")
+                    .map(|name| name.trim_matches('`').to_owned())
+                    .collect();
+                (heading, decisions)
+            })
+            .collect();
+    let drawn: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        njutest::spec::Section::ALL
+            .into_iter()
+            .map(|section| {
+                (
+                    njutest::presentation::spec::heading(section).to_owned(),
+                    njutest::report::Outcome::ALL
+                        .into_iter()
+                        .filter(|outcome| njutest::spec::Section::of(outcome.decision()) == section)
+                        .map(|outcome| outcome.name().to_owned())
+                        .collect(),
+                )
+            })
+            .collect();
+    assert_eq!(
+        documented, drawn,
+        "the contract's table of what a specification lists is the page's headings, each with \
+         the decisions that land under it, in both directions: a decision the table puts in the \
+         wrong row tells a reader a change stands where the page will not show it"
+    );
+}

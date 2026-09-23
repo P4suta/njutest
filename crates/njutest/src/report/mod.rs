@@ -5045,6 +5045,18 @@ impl BuildMutationDecision {
     pub const fn reuse(&self) -> &Reuse {
         &self.reuse
     }
+
+    /// Whether a reviewer accepted the source row.
+    #[must_use]
+    pub const fn accepted(&self) -> bool {
+        self.accepted
+    }
+
+    /// Which targets could have noticed the source row's mutation, and what removed the rest, where the run asked.
+    #[must_use]
+    pub const fn routing(&self) -> Option<&Routing> {
+        self.routing.as_ref()
+    }
 }
 
 /// A presentation-only cross-build mutation projection.
