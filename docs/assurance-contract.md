@@ -389,6 +389,41 @@ No score crosses a merge at all: two ratios over different denominators average 
 
 Every run's identity carries its shard, so a part never reads back the whole's stored answer and a whole never reads back a part's.
 
+## What a specification says
+
+`njutest spec [SUBJECT]` reads one stored run and lists, for every item the subject names, each change the run made inside it and where that change stands.
+It runs nothing and establishes nothing: every line is a projection of the report.
+
+| Section | What it means | The decisions it holds |
+| --- | --- | --- |
+| what is pinned | every build noticed the change or found it to be the same program, and at least one noticed it: a target's tests failed on it, the compiler refused it, or the model checker found an input that tells the two apart | `killed`, `compile-rejected`, `model-noticed` |
+| what is left free | some build noticed nothing of a change that makes a different program there, and every build established something | `survived`, `unreached` |
+| what is the same program | every build found the change to be the same program | `equivalent`, `model-proved` |
+| what the run could not tell | some build established nothing about it | `step-limit-reached`, `waited`, `unconfirmed`, `errored` |
+
+A change is listed under the section its builds decided together, which is the same lattice minimum the verdict reads, so a change one build noticed and another did not is free, and a change that waited in any build is in the last section.
+What each build established is on the lines beneath it.
+An attempt that established nothing is in neither of the first two sections: it is not a chance the tests were given and did not take.
+
+Each line says only what the run established.
+
+- A kill names the target that noticed, the targets asked before it with what each answered, and how many targets reach the change and were never asked.
+  It never says *only*: the mutation phase stops at the first target that notices, so that target is the first in route order and not a distinguished one ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
+- A free change a proof removed every target of names the proof and says to check the proof rather than to write a test ([ADR 0004](adr/0004-proof-layers-not-budgets.md)).
+- A change nothing executes says so, which is a different gap from one the tests ran and did not notice.
+- An answer read back from an earlier run names that run and claims nothing about who else it asked, because the route beside it is this run's and the answer is the earlier one's.
+  An answer inherited from a checkpoint without a route says the record does not say what ran it.
+- A change a reviewer accepted says so.
+- A change left free that rests on a target whose baseline reach moved on a control says that target's reach is not a measurement: the route kept the target off the change, and ADR 0025 found that what the target reaches is not a function of it.
+  The rule is `report::drift::rests_on`, the one the `unstable-baseline` finding counts with, so the page and the finding cannot disagree about which changes rest on a move.
+
+A subject is a file, written whole or by its last components (`src/lib.rs`, `lib.rs`); an item as the source names it (`retry`, `Baseline::retry`), which also names every item inside it; or `PATH:ITEM`.
+An item is matched segment by segment, so `retry` does not name `retry_all`, and every item that matches is listed under its own path rather than merged with the others.
+A subject the run made no change in is refused with `NJ6006`, naming the run and how much of the workspace it asked about, rather than drawn as an item with nothing pinned and nothing free.
+A part's report is refused as every command that needs a complete report refuses it: it holds a slice of the catalog, so what it says an item pins and leaves free would not be the item's.
+Merge the parts first.
+The command exits 0 whatever the specification says, because it describes and does not judge.
+
 ## DEFECT, INSUFFICIENT, and ERROR
 
 `DEFECT` means user code violated a baseline, soundness, build, or test contract.

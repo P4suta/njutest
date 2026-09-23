@@ -1,0 +1,11 @@
+Say, item by item, what a run found pinned and what it found free
+
+Usage: njutest spec [OPTIONS] [SUBJECT]
+
+Arguments:
+  [SUBJECT]  What to specify: a file, an item as the source names it, or `PATH:ITEM`. Every item the
+             run changed by default
+
+Options:
+      --run <RUN>  The run to read. The latest by default
+  -h, --help       Print help

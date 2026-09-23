@@ -7,6 +7,7 @@ pub mod agent;
 pub mod human;
 pub mod moved;
 pub mod review;
+pub mod spec;
 mod telling;
 pub mod tint;
 pub mod why;

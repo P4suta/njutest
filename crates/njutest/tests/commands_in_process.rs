@@ -1221,3 +1221,74 @@ fn the_command_a_run_tells_a_reader_to_type_is_one_that_works() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_run_is_specified_item_by_item_and_a_subject_it_never_changed_is_refused() {
+    let it = verified();
+    let whole = ask(&it.root, &["spec"]);
+    assert_eq!(
+        whole.code, 0,
+        "a specification describes and does not judge, so a run with gaps in it still has \
+         one: {}",
+        whole.err
+    );
+    njutest_devkit::golden::golden(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/spec-baseline.golden"),
+        whole.out.replace(&it.run, "<run>").as_bytes(),
+    )
+    .unwrap_or_else(|error| panic!("the specification of fixture-baseline: {error}"));
+
+    let sign = ask(&it.root, &["spec", "sign"]);
+    assert_eq!(sign.code, 0, "{}", sign.err);
+    assert!(
+        sign.out.contains("src/lib.rs  sign") && !sign.out.contains("double"),
+        "an item names itself and nothing beside it: {}",
+        sign.out
+    );
+    let printed: Vec<&str> = sign
+        .out
+        .lines()
+        .filter_map(|line| {
+            line.split_once("njutest explain ")
+                .map(|(_, named)| named.trim())
+        })
+        .collect();
+    assert!(
+        !printed.is_empty(),
+        "every change carries the command that asks about it: {}",
+        sign.out
+    );
+    for named in printed {
+        let explained = ask(&it.root, &["explain", named]);
+        assert_eq!(
+            explained.code, 0,
+            "the command a page tells a reader to type is one that works: {named}: {}",
+            explained.err
+        );
+    }
+
+    let nowhere = ask(&it.root, &["spec", "nowhere"]);
+    assert_eq!(nowhere.code, 3, "{}", nowhere.out);
+    assert!(
+        nowhere.err.contains("NJ6006") && nowhere.err.contains(&it.run),
+        "a subject the run changed nothing in is refused by its code and names the run, \
+         rather than drawn as an item with nothing pinned and nothing free: {}",
+        nowhere.err
+    );
+
+    let part = sharded(&it, "1/2");
+    let name = part
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("a part's document is inside its run's directory");
+    let refused = ask(&it.root, &["spec", "--run", name]);
+    assert_eq!(refused.code, 3, "{}", refused.out);
+    assert!(
+        refused.err.contains("one shard"),
+        "a part holds a slice of the catalog, so what it says an item pins and leaves free \
+         is not the item's: {}",
+        refused.err
+    );
+}
