@@ -100,26 +100,18 @@ impl Repository {
     }
 
     fn push_terminated(&self, local: &str, remote: &str, end: &str) -> Output {
-        self.push_with(local, remote, end, &[])
+        self.push_with(&update(local, remote, end), &[])
     }
 
     fn push_as_a_hook(&self, local: &str) -> Output {
         let git = self.directory.path().join(".git");
         self.push_with(
-            local,
-            &"0".repeat(40),
-            "\n",
+            &update(local, &"0".repeat(40), "\n"),
             &[("GIT_DIR", git.as_os_str()), ("GIT_PREFIX", "".as_ref())],
         )
     }
 
-    fn push_with(
-        &self,
-        local: &str,
-        remote: &str,
-        end: &str,
-        handed: &[(&str, &std::ffi::OsStr)],
-    ) -> Output {
+    fn push_with(&self, line: &str, handed: &[(&str, &std::ffi::OsStr)]) -> Output {
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("the workspace root")
@@ -134,7 +126,6 @@ impl Repository {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = SupervisedChild::launch(&mut command).expect("the pre-push gate");
-        let line = format!("refs/heads/local {local} refs/heads/remote {remote}{end}");
         child
             .take_stdin()
             .expect("the gate's stdin")
@@ -142,6 +133,10 @@ impl Repository {
             .expect("a ref update");
         child.wait_with_output().expect("the gate's answer")
     }
+}
+
+fn update(local: &str, remote: &str, end: &str) -> String {
+    format!("refs/heads/local {local} refs/heads/remote {remote}{end}")
 }
 
 fn symbolic_head(directory: &Path) -> String {
