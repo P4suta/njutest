@@ -325,3 +325,41 @@ pub fn limited(knobs: &[KnobRecord]) -> Vec<Limitation> {
     }));
     limitations
 }
+
+/// How much a standing establishes, so that of two records of one knob and target the one that says more stands: a break over a move, a move over a hold, a hold over a control that compared nothing, and that over a knob not put.
+const fn weight(standing: &Standing) -> u8 {
+    match standing {
+        Standing::NotPut { .. } => 0,
+        Standing::Uncompared { .. } | Standing::Unsettled { .. } => 1,
+        Standing::Stable | Standing::Passed => 2,
+        Standing::Moved { .. } => 3,
+        Standing::Broke { .. } => 4,
+    }
+}
+
+/// The records of every part of one build as one record per knob and target: what one part's control saw is not undone by another's.
+#[must_use]
+pub fn combined<'a>(records: impl IntoIterator<Item = &'a KnobRecord>) -> Vec<KnobRecord> {
+    let mut held: BTreeMap<(Knob, &str), &KnobRecord> = BTreeMap::new();
+    for one in records {
+        let key = (one.knob, one.target.as_str());
+        match held.get(&key) {
+            Some(standing) if weight(&standing.standing) >= weight(&one.standing) => {}
+            Some(_) | None => {
+                held.insert(key, one);
+            }
+        }
+    }
+    held.into_values().cloned().collect()
+}
+
+/// Whether a knob broke a target or moved its reach, which is what keeps a part whose findings are raised at the merge from concluding as though nothing had.
+#[must_use]
+pub fn shaken(records: &[KnobRecord]) -> bool {
+    records.iter().any(|one| {
+        matches!(
+            one.standing,
+            Standing::Broke { .. } | Standing::Moved { .. }
+        )
+    })
+}

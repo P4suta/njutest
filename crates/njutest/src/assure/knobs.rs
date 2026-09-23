@@ -16,6 +16,7 @@ use rust_mutants::touch::Steadiness;
 use crate::error::RunnerError;
 use crate::report::drift::{Moved, Unmeasured};
 use crate::report::knobs::{Knob, KnobRecord, NotPut, Reach, Standing, Unsettled};
+use crate::scratch::ScratchError;
 use crate::watch::Watch;
 
 /// The zone a control is put in: a half-hour offset whose daylight saving moves by half an hour.
@@ -46,16 +47,20 @@ impl Place {
     /// Probes this machine through `vars` and makes the empty directories a control is given as its temporary and home directories, under `scratch`.
     ///
     /// # Errors
-    /// A directory that could not be made.
+    /// [`ScratchError::Unusable`] naming a directory that could not be made.
     pub fn probed(
         scratch: &Path,
         vars: &[(OsString, OsString)],
         cancel: &Cancel,
-    ) -> std::io::Result<Self> {
+    ) -> Result<Self, ScratchError> {
         let temp_directory = scratch.join("knobs").join("temp directory \u{e9}");
         let home = scratch.join("knobs").join("home");
-        std::fs::create_dir_all(&temp_directory)?;
-        std::fs::create_dir_all(&home)?;
+        for directory in [&temp_directory, &home] {
+            std::fs::create_dir_all(directory).map_err(|source| ScratchError::Unusable {
+                path: directory.clone(),
+                source,
+            })?;
+        }
         let named = |name: &str| {
             vars.iter()
                 .find(|(held, _)| rust_mutants::vars::same_name(held, std::ffi::OsStr::new(name)))
