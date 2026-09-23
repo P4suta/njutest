@@ -115,6 +115,17 @@ pub enum Everything {
     },
 }
 
+/// What a selection reads of one measurement.
+#[derive(Debug, Clone, Copy)]
+pub struct Measured<'a> {
+    /// What each target entered, and the items of the measured tree.
+    pub touched: &'a Touched,
+    /// Whether each target's reach held on a second run.
+    pub standing: &'a BTreeMap<String, Steadiness>,
+    /// What each package declares over the standard names; a package missing here hides every one.
+    pub shadows: &'a BTreeMap<String, Shadows>,
+}
+
 /// What a selection decided for one target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decided {
@@ -157,6 +168,128 @@ impl Selection {
             .filter(|(_, decided)| **decided == Decided::Skip)
             .map(|(target, _)| target.as_str())
     }
+}
+
+/// The standard names one package declares something else under, so that where they appear in it they may not be the standard ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Shadows {
+    /// Every standard macro, attribute, or derive name the package declares or imports from outside the standard library.
+    names: BTreeSet<String>,
+    /// Whether the package imports what it cannot name: a glob from outside itself, or every macro of a `#[macro_use] extern crate`.
+    all: bool,
+}
+
+/// The standard names a package can declare something else under and change what a body, an attribute, or a derive expands to.
+const SHADOWABLE: [&str; 13] = [
+    "test",
+    "bench",
+    "derive",
+    "global_allocator",
+    "Debug",
+    "Clone",
+    "Copy",
+    "PartialEq",
+    "Eq",
+    "PartialOrd",
+    "Ord",
+    "Hash",
+    "Default",
+];
+
+/// The crates a path is the standard library's by starting with.
+const STANDARD_CRATES: [&str; 3] = ["std", "core", "alloc"];
+
+impl Shadows {
+    /// What the sources of one package, every file of it, declare over the standard names; a source that does not lex hides every name.
+    #[must_use]
+    pub fn of<'a>(sources: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut shadows = Self::default();
+        for source in sources {
+            let Some(leaves) = lexed(source) else {
+                shadows.all = true;
+                continue;
+            };
+            shadows.read(&leaves);
+        }
+        shadows
+    }
+
+    /// Whether `name`, where it appears in this package, may be something other than the standard one.
+    #[must_use]
+    pub fn hides(&self, name: &str) -> bool {
+        self.all || self.names.contains(name)
+    }
+
+    fn watched(name: &str) -> bool {
+        CONTAINED_MACROS.contains(&name) || SHADOWABLE.contains(&name)
+    }
+
+    fn read(&mut self, leaves: &[Leaf]) {
+        let text = |at: usize| leaves.get(at).map(|leaf| leaf.text.as_str());
+        for (at, leaf) in leaves.iter().enumerate() {
+            match leaf.text.as_str() {
+                "macro_rules" if text(at.saturating_add(1)) == Some("!") => {
+                    if let Some(name) = text(at.saturating_add(2)) {
+                        self.names.insert(name.to_owned());
+                    }
+                }
+                "macro_use" if text(at.saturating_sub(1)) == Some("[") => {
+                    let rest = leaves.get(at.saturating_add(1)..).unwrap_or_default();
+                    if rest.iter().take(3).any(|one| one.text == "extern") {
+                        self.all = true;
+                    }
+                }
+                "use" => self.imported(leaves.get(at.saturating_add(1)..).unwrap_or_default()),
+                _ => {}
+            }
+        }
+    }
+
+    fn imported(&mut self, statement: &[Leaf]) {
+        let statement: Vec<&str> = statement
+            .iter()
+            .map(|leaf| unjoined(&leaf.text))
+            .take_while(|text| *text != ";")
+            .collect();
+        let first = statement
+            .iter()
+            .find(|text| text.chars().next().is_some_and(char::is_alphabetic));
+        if first.is_some_and(|first| STANDARD_CRATES.contains(first)) {
+            return;
+        }
+        if statement.contains(&"*")
+            && !first.is_some_and(|first| matches!(*first, "crate" | "self" | "super"))
+        {
+            self.all = true;
+        }
+        for name in statement {
+            if Self::watched(name) {
+                self.names.insert(name.to_owned());
+            }
+        }
+    }
+}
+
+/// A token as written, without the mark that says a punctuation character is joined to the next.
+fn unjoined(text: &str) -> &str {
+    match text.strip_suffix('+') {
+        Some(punct) if !punct.is_empty() => punct,
+        Some(_) | None => text,
+    }
+}
+
+/// Every token of `text`, or nothing when it does not lex.
+fn lexed(text: &str) -> Option<Vec<Leaf>> {
+    let Ok((base, parsed)) = crate::syntax::strip_prefix(text) else {
+        return None;
+    };
+    let Ok(stream) = <TokenStream as std::str::FromStr>::from_str(parsed) else {
+        return None;
+    };
+    let mut leaves = Vec::new();
+    flattened(stream, base, &mut leaves)?;
+    Some(leaves)
 }
 
 /// Whether `path` is a file whose change can change what every target compiles to or how it is run, whatever items it holds.
@@ -313,11 +446,7 @@ fn read(
     let unparsed = || Everything::Unparsed {
         path: path.to_owned(),
     };
-    let (base, parsed) = crate::syntax::strip_prefix(text).map_err(|_prefix| unparsed())?;
-    let stream =
-        <TokenStream as std::str::FromStr>::from_str(parsed).map_err(|_lexed| unparsed())?;
-    let mut leaves = Vec::new();
-    flattened(stream, base, &mut leaves).ok_or_else(unparsed)?;
+    let leaves = lexed(text).ok_or_else(unparsed)?;
     let ranges: Vec<(u32, u32)> = bodies
         .iter()
         .map(|body| interior(*body))
@@ -377,7 +506,7 @@ fn outermost(bodies: impl IntoIterator<Item = (Span, bool)>) -> Vec<usize> {
 }
 
 /// What in a changed interior can reach past the body it is written in, if anything.
-fn escaping(leaves: &[Leaf]) -> Option<String> {
+fn escaping(leaves: &[Leaf], shadows: &Shadows) -> Option<String> {
     leaves.iter().enumerate().find_map(|(at, leaf)| {
         let next = leaves
             .get(at.saturating_add(1))
@@ -389,7 +518,16 @@ fn escaping(leaves: &[Leaf]) -> Option<String> {
         if leaf.text == "impl" {
             return Some(leaf.text.clone());
         }
-        if next == Some("!") && !CONTAINED_MACROS.contains(&leaf.text.as_str()) {
+        if leaf.text == "use" {
+            let mut local = Shadows::default();
+            local.imported(leaves.get(at.saturating_add(1)..).unwrap_or_default());
+            if local != Shadows::default() {
+                return Some("use".to_owned());
+            }
+        }
+        let contained =
+            CONTAINED_MACROS.contains(&leaf.text.as_str()) && !shadows.hides(&leaf.text);
+        if next == Some("!") && !contained {
             let first = leaf.text.chars().next();
             if first.is_some_and(|first| first.is_alphabetic() || first == '_') {
                 return Some(format!("{}!", leaf.text));
@@ -483,7 +621,7 @@ enum Reader {
 }
 
 /// The attribute starting at `at`, if one does: whether it is inner, where its bracket closes, and who reads what it is attached to.
-fn attribute(leaves: &[Leaf], at: usize) -> Option<(bool, usize, Reader)> {
+fn attribute(leaves: &[Leaf], at: usize, shadows: &Shadows) -> Option<(bool, usize, Reader)> {
     let text = |index: usize| leaves.get(index).map(|leaf| leaf.text.as_str());
     if !matches!(text(at), Some("#" | "#+")) {
         return None;
@@ -505,8 +643,10 @@ fn attribute(leaves: &[Leaf], at: usize) -> Option<(bool, usize, Reader)> {
                     .next()
                     .is_some_and(|first| first.is_alphabetic() || first == '_')
             })
-            .all(|leaf| STANDARD_DERIVES.contains(&leaf.text.as_str())),
-        Some(name) => INERT_ATTRIBUTES.contains(&name),
+            .all(|leaf| {
+                STANDARD_DERIVES.contains(&leaf.text.as_str()) && !shadows.hides(&leaf.text)
+            }),
+        Some(name) => INERT_ATTRIBUTES.contains(&name) && !shadows.hides(name),
         None => false,
     };
     let reader = match (name, inert) {
@@ -518,11 +658,11 @@ fn attribute(leaves: &[Leaf], at: usize) -> Option<(bool, usize, Reader)> {
 }
 
 /// The index of the last token of the item or field an outer attribute ending before `from` applies to.
-fn item_end(leaves: &[Leaf], from: usize) -> usize {
+fn item_end(leaves: &[Leaf], from: usize, shadows: &Shadows) -> usize {
     let mut depth = 0_usize;
     let mut at = from;
     while let Some(leaf) = leaves.get(at) {
-        if let Some((_, close, _)) = attribute(leaves, at) {
+        if let Some((_, close, _)) = attribute(leaves, at, shadows) {
             at = close.saturating_add(1);
             continue;
         }
@@ -545,12 +685,12 @@ fn item_end(leaves: &[Leaf], from: usize) -> usize {
 }
 
 /// The skeleton without the doc attributes nothing but rustdoc reads, each token paired with whether a macro reading the item it is part of could embed where it is.
-fn visible(skeleton: &[Leaf]) -> Vec<(&Leaf, bool)> {
+fn visible<'a>(skeleton: &'a [Leaf], shadows: &Shadows) -> Vec<(&'a Leaf, bool)> {
     let mut located = vec![false; skeleton.len()];
     let mut doc = vec![false; skeleton.len()];
     let mut at = 0;
     while at < skeleton.len() {
-        let Some((inner, close, reader)) = attribute(skeleton, at) else {
+        let Some((inner, close, reader)) = attribute(skeleton, at, shadows) else {
             at = at.saturating_add(1);
             continue;
         };
@@ -558,7 +698,7 @@ fn visible(skeleton: &[Leaf]) -> Vec<(&Leaf, bool)> {
             (Reader::Nobody, _) => {}
             (Reader::Foreign, true) => located.iter_mut().for_each(|one| *one = true),
             (Reader::Foreign, false) => {
-                let end = item_end(skeleton, close.saturating_add(1));
+                let end = item_end(skeleton, close.saturating_add(1), shadows);
                 for one in located.iter_mut().take(end.saturating_add(1)).skip(at) {
                     *one = true;
                 }
@@ -602,9 +742,13 @@ fn side(path: &str, text: &str, items: &[(String, Span, bool)]) -> Result<Read, 
 }
 
 /// Whether the two skeletons are one skeleton, with what a foreign macro reads where it was.
-fn same_skeleton(path: &str, old: &Read, new: &Read) -> Result<(), Everything> {
-    let was = visible(&old.skeleton);
-    let is = visible(&new.skeleton);
+fn same_skeleton(
+    path: &str,
+    (old, new): (&Read, &Read),
+    shadows: &Shadows,
+) -> Result<(), Everything> {
+    let was = visible(&old.skeleton, shadows);
+    let is = visible(&new.skeleton, shadows);
     if let Some(line) = was
         .iter()
         .zip(&is)
@@ -631,13 +775,22 @@ fn same_skeleton(path: &str, old: &Read, new: &Read) -> Result<(), Everything> {
 }
 
 /// The measured items `revision` changed, or why no measured item can hold what changed.
-fn revised(touched: &Touched, revision: &Revision<'_>) -> Result<BTreeSet<u32>, Everything> {
+fn revised(measured: &Measured<'_>, revision: &Revision<'_>) -> Result<BTreeSet<u32>, Everything> {
     let path = revision.path;
-    let cataloged: Vec<&Item> = touched
+    let cataloged: Vec<&Item> = measured
+        .touched
         .items
         .iter()
         .filter(|item| item.path == path)
         .collect();
+    let hidden = Shadows {
+        names: BTreeSet::new(),
+        all: true,
+    };
+    let shadows = cataloged
+        .first()
+        .and_then(|item| measured.shadows.get(&item.package))
+        .unwrap_or(&hidden);
     let before: Vec<(String, Span, bool)> = cataloged
         .iter()
         .map(|item| (item.name.clone(), item.body, item.measurable))
@@ -652,7 +805,7 @@ fn revised(touched: &Touched, revision: &Revision<'_>) -> Result<BTreeSet<u32>, 
             .collect();
     let old = side(path, revision.old, &before)?;
     let new = side(path, revision.new, &after)?;
-    same_skeleton(path, &old, &new)?;
+    same_skeleton(path, (&old, &new), shadows)?;
     let unmeasurable = cataloged.iter().filter(|item| !item.measurable);
     for (item, (was, is)) in unmeasurable.zip(old.unmeasured.iter().zip(&new.unmeasured)) {
         if !same_place(was, is) {
@@ -677,7 +830,7 @@ fn revised(touched: &Touched, revision: &Revision<'_>) -> Result<BTreeSet<u32>, 
         let Some(item) = cataloged.get(at) else {
             continue;
         };
-        if let Some(by) = escaping(was).or_else(|| escaping(is)) {
+        if let Some(by) = escaping(was, shadows).or_else(|| escaping(is, shadows)) {
             return Err(Everything::Escapes {
                 item: item.name.clone(),
                 by,
@@ -693,7 +846,7 @@ fn revised(touched: &Touched, revision: &Revision<'_>) -> Result<BTreeSet<u32>, 
 /// # Errors
 /// [`Everything`] naming the first change that cannot be placed in the body of a measured item.
 pub fn changed_items(
-    touched: &Touched,
+    measured: &Measured<'_>,
     changes: &[Changed<'_>],
 ) -> Result<BTreeSet<u32>, Everything> {
     let mut items = BTreeSet::new();
@@ -717,12 +870,12 @@ pub fn changed_items(
             }
             Changed::Revised(revision) => revision,
         };
-        if !touched.items.iter().any(|item| item.path == path) {
+        if !measured.touched.items.iter().any(|item| item.path == path) {
             return Err(Everything::Unitemized {
                 path: path.to_owned(),
             });
         }
-        items.extend(revised(touched, revision)?);
+        items.extend(revised(measured, revision)?);
     }
     Ok(items)
 }
@@ -730,12 +883,14 @@ pub fn changed_items(
 /// What a change decides for every target in `now`, the targets the changed tree holds: a target whose tests entered a changed item runs, as does every target whose reach was not shown to hold or that the measurement does not name; the rest are skipped.
 #[must_use]
 pub fn decide(
-    touched: &Touched,
-    standing: &BTreeMap<String, Steadiness>,
+    measured: &Measured<'_>,
     now: &BTreeSet<String>,
     changes: &[Changed<'_>],
 ) -> Selection {
-    let placed = changed_items(touched, changes);
+    let Measured {
+        touched, standing, ..
+    } = *measured;
+    let placed = changed_items(measured, changes);
     let decided = now
         .iter()
         .map(|target| {
@@ -770,7 +925,7 @@ pub fn decide(
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{Changed, Decided, Everything, Selection, Why, decide};
+    use super::{Changed, Decided, Everything, Measured, Selection, Shadows, Why, decide};
     use crate::touch::{Item, Seen, Steadiness, TargetTouches, Touched, Unmeasured};
 
     const PATH: &str = "src/lib.rs";
@@ -833,12 +988,32 @@ pub fn beta(x: u8) -> u8 {
         BTreeSet::from(["enters-alpha".to_owned(), "enters-beta".to_owned()])
     }
 
-    fn selected(old: &str, new: &str) -> Selection {
-        let (touched, standing) = measured(old);
-        let digest = crate::id::digest(old.as_bytes());
+    fn shadows_of(source: &str) -> BTreeMap<String, Shadows> {
+        BTreeMap::from([("demo".to_owned(), Shadows::of([source]))])
+    }
+
+    fn deciding(
+        (touched, standing): &(Touched, BTreeMap<String, Steadiness>),
+        shadows: &BTreeMap<String, Shadows>,
+        now: &BTreeSet<String>,
+        changes: &[Changed<'_>],
+    ) -> Selection {
         decide(
-            &touched,
-            &standing,
+            &Measured {
+                touched,
+                standing,
+                shadows,
+            },
+            now,
+            changes,
+        )
+    }
+
+    fn selected(old: &str, new: &str) -> Selection {
+        let digest = crate::id::digest(old.as_bytes());
+        deciding(
+            &measured(old),
+            &shadows_of(old),
             &now(),
             &[Changed::read(PATH, &digest, Some(old), Some(new))],
         )
@@ -995,10 +1170,9 @@ pub fn beta(x: u8) -> u8 {
 
     #[test]
     fn measured_bytes_that_are_not_the_measured_ones_prove_nothing() {
-        let (touched, standing) = measured(MEASURED);
-        let selection = decide(
-            &touched,
-            &standing,
+        let selection = deciding(
+            &measured(MEASURED),
+            &shadows_of(MEASURED),
             &now(),
             &[Changed::read(PATH, "0000", Some(MEASURED), Some(MEASURED))],
         );
@@ -1010,7 +1184,7 @@ pub fn beta(x: u8) -> u8 {
 
     #[test]
     fn a_build_file_a_whole_file_and_an_unitemized_file_each_run_everything() {
-        let (touched, standing) = measured(MEASURED);
+        let measurement = measured(MEASURED);
         for (change, expected) in [
             (
                 Changed::read("Cargo.toml", "", None, Some("")),
@@ -1036,7 +1210,7 @@ pub fn beta(x: u8) -> u8 {
                 },
             ),
         ] {
-            let selection = decide(&touched, &standing, &now(), &[change]);
+            let selection = deciding(&measurement, &shadows_of(MEASURED), &now(), &[change]);
             assert_eq!(everything(&selection), Some(&expected), "{selection:?}");
         }
     }
@@ -1050,9 +1224,9 @@ pub fn beta(x: u8) -> u8 {
         );
         let now = BTreeSet::from(["enters-beta".to_owned(), "added-since".to_owned()]);
         let digest = crate::id::digest(MEASURED.as_bytes());
-        let selection = decide(
-            &touched,
-            &standing,
+        let selection = deciding(
+            &(touched, standing),
+            &shadows_of(MEASURED),
             &now,
             &[Changed::read(PATH, &digest, Some(MEASURED), Some(MEASURED))],
         );
@@ -1071,6 +1245,85 @@ pub fn beta(x: u8) -> u8 {
             Some(&Decided::Run(Why::Unestablished(Steadiness::NotMeasured(
                 Unmeasured::OtherTests
             ))))
+        );
+    }
+
+    #[test]
+    fn a_standard_name_the_package_declares_otherwise_is_not_the_standard_one() {
+        let moved = |old: &str| {
+            let new = old.replace("    x + 1\n", "    let y = x;\n    y + 1\n");
+            selected(old, &new)
+        };
+        let derived = format!(
+            "use derive_more::Debug;\n#[derive(Debug)]\npub struct Gamma {{ a: u8 }}\n{MEASURED}"
+        );
+        let tested = format!("{MEASURED}use tokio::test;\n#[test]\nfn delta() {{}}\n");
+        let standard = format!("{MEASURED}#[derive(Debug)]\npub struct Gamma {{ a: u8 }}\n");
+        assert!(
+            everything(&moved(&derived)).is_none(),
+            "above the move a located item has not moved: {:?}",
+            moved(&derived)
+        );
+        assert!(
+            matches!(
+                everything(&moved(&tested)),
+                Some(Everything::Located { .. })
+            ),
+            "`#[test]` is tokio's where `tokio::test` is imported, and it reads what it is on: {:?}",
+            moved(&tested)
+        );
+        let below = format!(
+            "{MEASURED}use derive_more::Debug;\n#[derive(Debug)]\npub struct Gamma {{ a: u8 }}\n"
+        );
+        assert!(
+            matches!(everything(&moved(&below)), Some(Everything::Located { .. })),
+            "`Debug` is derive_more's where it is imported: {:?}",
+            moved(&below)
+        );
+        assert!(
+            everything(&moved(&standard)).is_none(),
+            "std's `Debug` carries no location: {:?}",
+            moved(&standard)
+        );
+    }
+
+    #[test]
+    fn a_macro_the_package_defines_under_a_standard_name_is_not_contained() {
+        let old = format!("macro_rules! vec {{ ($($t:tt)*) => {{ () }} }}\n{MEASURED}");
+        let new = old.replace("    x + 1\n", "    vec![];\n    x + 1\n");
+        assert!(
+            matches!(everything(&selected(&old, &new)), Some(Everything::Escapes { by, .. }) if by == "vec!"),
+            "{:?}",
+            selected(&old, &new)
+        );
+        let used = format!("#[macro_use]\nextern crate helpers;\n{MEASURED}");
+        let new = used.replace("    x + 1\n", "    assert!(x > 0);\n    x + 1\n");
+        assert!(
+            matches!(everything(&selected(&used, &new)), Some(Everything::Escapes { by, .. }) if by == "assert!"),
+            "every macro a `#[macro_use] extern crate` imports may be named `assert`: {:?}",
+            selected(&used, &new)
+        );
+        let globbed = format!("use helpers::prelude::*;\n{MEASURED}");
+        let new = globbed.replace("    x + 1\n", "    assert!(x > 0);\n    x + 1\n");
+        assert!(
+            matches!(
+                everything(&selected(&globbed, &new)),
+                Some(Everything::Escapes { .. })
+            ),
+            "a glob from outside the package outranks the prelude: {:?}",
+            selected(&globbed, &new)
+        );
+        let local = MEASURED.replace(
+            "    x + 1\n",
+            "    use helpers::vec;\n    vec![];\n    x + 1\n",
+        );
+        assert!(
+            matches!(
+                everything(&selected(MEASURED, &local)),
+                Some(Everything::Escapes { .. })
+            ),
+            "a `use` inside a changed body can shadow what the body calls: {:?}",
+            selected(MEASURED, &local)
         );
     }
 }

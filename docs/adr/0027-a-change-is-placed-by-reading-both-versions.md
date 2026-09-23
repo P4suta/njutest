@@ -40,7 +40,9 @@ A review ran two counterexamples against it and named eight more classes, and ev
    A body the guards cannot record — a `const fn`, a `static`'s initializer — is compared in place as well, and one that moved is `Everything::Unmeasurable`, because nobody's entry says who ran it.
 
 4. **A changed interior must not reach past itself.** A changed interior holding `impl`, an exporting attribute, or a macro invocation outside a closed set of standard expression macros is `Everything::Escapes`.
-   The standard names are taken to be the standard macros; a crate that shadows `vec!` with a macro that emits an `impl` is outside this premise.
+   A name is the standard one only where nothing in its package can supply another: `Shadows` reads every file of the package for a `macro_rules!` of that name, a `use` from outside the standard library that imports or renames to it, a glob from outside the package, and a `#[macro_use] extern crate`, which hides every name.
+   The same holds for the `test` attribute and the standard derive names, which an import can shadow as well — `use tokio::test;`, `use derive_more::Debug;` — and a changed interior holding such a `use` is `Everything::Escapes` itself.
+   The built-in attributes cannot be shadowed, which rustc refuses as ambiguous, so they are not read for.
 
 5. **What a foreign macro reads is compared in place.** An item carrying an attribute outside the inert set, or a `derive` of anything but the standard traits, is fed to a macro whose expansion may carry the span of what it read.
    Its tokens are compared at their lines and columns, and one that moved is `Everything::Located`.
