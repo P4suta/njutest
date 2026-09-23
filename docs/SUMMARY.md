@@ -68,3 +68,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0025 A reach that moves is not a measurement](adr/0025-a-reach-that-moves-is-not-a-measurement.md)
 - [0026 An item is entered where its body starts](adr/0026-an-item-is-entered-where-its-body-starts.md)
 - [0027 A change is placed by reading both versions](adr/0027-a-change-is-placed-by-reading-both-versions.md)
+- [0028 A process that loses the environment says so](adr/0028-a-process-that-loses-the-environment-says-so.md)

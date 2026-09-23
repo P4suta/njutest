@@ -23,6 +23,7 @@ pub mod id;
 pub mod instrument;
 pub mod interval;
 pub mod limitation;
+pub mod orphan;
 pub mod outcome;
 pub mod outcomes;
 pub mod probe;

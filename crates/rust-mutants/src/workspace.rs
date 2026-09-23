@@ -164,12 +164,17 @@ fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempown
     }
 }
 
+/// The name of the directory beside the copy a process that lost the run's environment says so in.
+const WATCHED_NAME: &str = "watched";
+
 /// A read-only source tree and the disposable copy of it this run works in.
 #[derive(Debug)]
 pub struct Workspace {
     pub(crate) snapshot: Snapshot,
     /// The rules the snapshot was copied under, which a survey of the source must follow to say what a copy would hold.
     pub(crate) rules: SnapshotOptions,
+    /// The directory a process of the instrumented tree that lost the run's environment says so in: beside the copy, which no other run shares.
+    pub(crate) watched: String,
     pub(crate) toolchain: Toolchain,
     pub(crate) metadata: Metadata,
     pub(crate) target_dir: PathBuf,
@@ -786,6 +791,7 @@ impl Workspace {
 
         let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
         let snapshot = Self::copy(&root, &rules, &options, now)?;
+        let (watched, base_env) = Self::watching(&snapshot, &options.env)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
@@ -799,7 +805,6 @@ impl Workspace {
                 failures: trace_count("temporary cleanup failures", swept.failures.len())?,
             }),
         });
-        let base_env = options.env.clone();
         let metadata = Metadata::load(
             &Driver {
                 toolchain: &toolchain,
@@ -820,6 +825,7 @@ impl Workspace {
         Ok(Self {
             snapshot,
             rules,
+            watched,
             toolchain,
             metadata,
             target_dir,
@@ -833,6 +839,28 @@ impl Workspace {
             locked: options.locked,
             trace: options.trace,
         })
+    }
+
+    /// The directory a process of the instrumented tree that lost the run's environment says so in, and the environment every process the run starts carries it in, whatever an outer run set.
+    fn watching(
+        snapshot: &Snapshot,
+        env: &[(OsString, OsString)],
+    ) -> Result<(String, Vec<(OsString, OsString)>), SessionError> {
+        let path = snapshot.dir().join(WATCHED_NAME);
+        let watched = path
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?
+            .to_owned();
+        let mut base_env: Vec<(OsString, OsString)> = env
+            .iter()
+            .filter(|(name, _)| name != crate::instrument::WATCHED_ENV)
+            .cloned()
+            .collect();
+        base_env.push((
+            OsString::from(crate::instrument::WATCHED_ENV),
+            OsString::from(&watched),
+        ));
+        Ok((watched, base_env))
     }
 
     /// Copies the tree and records what that produced.
@@ -893,6 +921,12 @@ impl Workspace {
     #[must_use]
     pub fn workspace_digest(&self) -> &str {
         self.snapshot.workspace_digest()
+    }
+
+    /// The directory a process of the instrumented tree that lost the run's environment says so in.
+    #[must_use]
+    pub fn watched(&self) -> &str {
+        &self.watched
     }
 
     /// Every regular file the copy holds, as it was copied, sorted by path.

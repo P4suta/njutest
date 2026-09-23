@@ -1908,6 +1908,7 @@ fn instrumented(
         probed: &BTreeMap::default(),
         catalog_digest: discovery.catalog.digest(),
         first_item: 0,
+        watched: "<watched>",
     })
     .map_err(EngineError::from)?;
     let Some(prefix) = mutant else {

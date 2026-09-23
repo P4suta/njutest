@@ -1044,6 +1044,7 @@ impl TreeCompiler<'_> {
             comparable: self.comparable,
             probed: self.probed,
             catalog_digest: self.catalog.digest(),
+            watched: self.workspace.watched(),
             first_item: self.first_items.get(path).copied().ok_or_else(|| {
                 ValidateError::AttemptFailed {
                     message: format!("{path} was never given item indices"),

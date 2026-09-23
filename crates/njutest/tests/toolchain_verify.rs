@@ -1871,3 +1871,50 @@ fn a_run_that_reads_an_answer_back_says_it_the_way_a_run_that_established_one_do
         "and it names the same places:\n{established}\n---\n{read_back}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_mutant_only_a_child_that_lost_the_runs_environment_runs_is_not_a_survivor() {
+    let fixture = fixture("fixture-cleared-child");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let part = &document["builds"][0]["parts"][0];
+    let answered: Vec<(String, String)> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists mutations: {document}\n{stderr}"))
+        .iter()
+        .filter(|row| row["item"] == "answer")
+        .map(|row| {
+            (
+                row["rule"].as_str().unwrap_or_default().to_owned(),
+                row["decision"]["outcome"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert!(!answered.is_empty(), "{document}");
+    assert!(
+        answered
+            .iter()
+            .all(|(_, outcome)| outcome != "survived" && outcome != "unreached"),
+        "only the child runs `answer`, and the test starts it with a cleared environment, so no \
+         mutant of it was ever active and nothing recorded the child entering it: `survived` \
+         would claim every test that could notice ran and none did, and `unreached` that no \
+         test reached it: {answered:?}"
+    );
+    let limitations = part["limitations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists limitations: {document}"));
+    assert!(
+        limitations
+            .iter()
+            .any(|one| one["name"] == "uncontrolled-child"
+                && one["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("fixture-cleared-child/test/cleared"))),
+        "and the run says which target started a process it could not reach: {limitations:?}"
+    );
+}

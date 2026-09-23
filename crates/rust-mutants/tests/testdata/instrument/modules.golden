@@ -50,6 +50,7 @@ mod __rm {
     const TOUCH_SPAN: u32 = 16;
     const ITEM_BASE: u32 = 0;
     const ITEM_SPAN: u32 = 4;
+    const WATCHED: &str = "/watched";
     #[derive(Clone, Copy)]
     enum Selection {
         None,
@@ -199,6 +200,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
     static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
+    static WATCH: __rm_std::sync::OnceLock<()> = __rm_std::sync::OnceLock::new();
 
     // The invocation is an expression boundary before expansion, while the
     // expansion is exactly the user's expression. That groups generated
@@ -212,6 +214,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
 
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
+        watched();
         touch(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
@@ -893,6 +896,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
 
     #[inline(always)]
     pub(crate) fn item(index: u32) {
+        watched();
         if touching() {
             entered_item(index);
         }
@@ -923,6 +927,35 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             return;
         }
         with_seen(|seen| seen.entered_body(index));
+    }
+
+    // A process of this tree that does not carry the variable naming where
+    // it reports was started by a test that cleared what the run gave it: no
+    // mutant can be active in it and nothing it enters is recorded. It says
+    // so where the run looks, once, and a process that cannot say so stops.
+    #[inline(always)]
+    fn watched() {
+        WATCH.get_or_init(noticed);
+    }
+
+    #[cold]
+    fn noticed() {
+        let carried = match __rm_std::env::var_os("RUST_MUTANTS_WATCHED") {
+            __rm_std::option::Option::Some(value) => value.as_os_str() == __rm_std::ffi::OsStr::new(WATCHED),
+            __rm_std::option::Option::None => false,
+        };
+        if carried {
+            return;
+        }
+        #[cfg(unix)]
+        let parent = __rm_std::os::unix::process::parent_id();
+        #[cfg(not(unix))]
+        let parent = 0_u32;
+        let name = __rm_std::format!("orphan-{}-{}", __rm_std::process::id(), parent);
+        let path = __rm_std::path::Path::new(WATCHED).join(name);
+        if __rm_std::fs::create_dir_all(WATCHED).is_err() || __rm_std::fs::File::create(path).is_err() {
+            __rm_std::process::exit(96);
+        }
     }
 
     fn touching() -> bool {

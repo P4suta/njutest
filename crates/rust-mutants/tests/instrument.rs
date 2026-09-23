@@ -53,6 +53,7 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     (file.text, catalog)
@@ -168,6 +169,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert_eq!(
@@ -185,6 +187,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -219,6 +222,7 @@ fn a_site_whose_form_cannot_compare_reports_no_comparison_however_it_is_offered(
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     let value_sites: Vec<u32> = file
@@ -262,6 +266,7 @@ fn instrumented_with_markers(
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument")
 }
@@ -441,6 +446,7 @@ fn a_file_without_a_mutant_still_carries_the_process_wide_checkpoint_runtime() {
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(file.text.starts_with(source), "{}", file.text);
@@ -637,6 +643,7 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect_err("the source must be the one the candidates came from");
     assert_eq!(error.kind(), InstrumentErrorKind::SourceMismatch);
@@ -713,6 +720,7 @@ fn every_alternative_reports_where_its_own_text_landed() {
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
 
@@ -993,6 +1001,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     }) {
         Ok(file) => file,
         Err(_) => return None,
@@ -1042,6 +1051,7 @@ fn instrument_probing(source: &str) -> String {
         probed: &probeable(&discovery, &catalog),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -1115,6 +1125,7 @@ fn a_tree_holds_the_call_for_a_probe_only_where_the_compiler_vouched_for_one() {
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -1163,6 +1174,7 @@ fn a_form_that_cannot_hold_the_call_writes_no_probe_however_many_it_was_offered(
         probed: &statements,
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -1226,6 +1238,7 @@ fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() 
         probed: &probes,
         catalog_digest: catalog.digest(),
         first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     let kept = file

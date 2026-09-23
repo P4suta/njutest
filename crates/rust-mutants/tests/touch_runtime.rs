@@ -16,7 +16,9 @@ use rust_mutants::instrument::{
     ACTIVE_ENV, Instrumenting, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
     STEP_STATE_SCHEMA, STEPS_ENV, instrument_file,
 };
-use rust_mutants::instrument::{CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, render};
+use rust_mutants::instrument::{
+    CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, WATCHED_ENV, render,
+};
 use rust_mutants::rule::Tier;
 use rust_mutants::testkit::compile::ScriptedCompile;
 use rust_mutants::touch::{self, TouchError};
@@ -29,6 +31,9 @@ const CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef012345678
 
 /// The item index the file's first item takes, which is not zero so that an offset is exercised.
 const FIRST_ITEM: u32 = 5;
+
+/// The watched directory every runtime here is built with, which every process here is started carrying, so none of them has anything to say there.
+const WATCHED: &str = "/nowhere-a-process-of-this-test-writes";
 
 /// How many items the file holds.
 const ITEMS: u32 = 3;
@@ -115,6 +120,7 @@ fn module() -> (String, u32) {
         first_item: FIRST_ITEM,
         item_count: ITEMS,
         newline: "\n",
+        watched: WATCHED,
     })
     .expect("a nonempty small catalog has a representable runtime window");
     (rendered, count)
@@ -137,6 +143,7 @@ fn step_modules() -> (String, String, String) {
         first_item: 0,
         item_count: 0,
         newline: "\n",
+        watched: WATCHED,
     })
     .expect("the first runtime renders");
     let two = render(&Rendering {
@@ -147,6 +154,7 @@ fn step_modules() -> (String, String, String) {
         first_item: 0,
         item_count: 0,
         newline: "\n",
+        watched: WATCHED,
     })
     .expect("the second runtime renders");
     (one, two, selected)
@@ -172,6 +180,7 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
     let mut command = Command::new(dir.join(name));
     command.env_remove("RUST_MUTANTS_ACTIVE");
     command.env(CATALOG_ENV, CATALOG);
+    command.env(WATCHED_ENV, WATCHED);
     if touching {
         command.env(TOUCH_ENV, &log);
     } else {
@@ -232,6 +241,7 @@ fn one_allowance_spans_file_modules_and_repeated_guard_checks_do_not_spend_twice
     let run = Command::new(dir.join("global_steps"))
         .env(ACTIVE_ENV, &selected)
         .env(CATALOG_ENV, CATALOG)
+        .env(WATCHED_ENV, WATCHED)
         .env(STEPS_ENV, "2")
         .env(STEP_NONCE_ENV, nonce)
         .env(STEP_NOTICE_ENV, &notice)
@@ -322,6 +332,7 @@ fn publication_failure_never_persists_a_stopping_state_without_a_final_notice() 
         command
             .env(ACTIVE_ENV, &selected)
             .env(CATALOG_ENV, CATALOG)
+            .env(WATCHED_ENV, WATCHED)
             .env(STEPS_ENV, "1")
             .env(STEP_NONCE_ENV, nonce)
             .env(STEP_NOTICE_ENV, &notice)
@@ -387,6 +398,7 @@ fn the_generated_runtime_refuses_a_step_state_symlink_without_touching_its_targe
     let run = Command::new(dir.join("state_symlink"))
         .env(ACTIVE_ENV, &selected)
         .env(CATALOG_ENV, CATALOG)
+        .env(WATCHED_ENV, WATCHED)
         .env(STEPS_ENV, "2")
         .env(STEP_NONCE_ENV, nonce)
         .env(STEP_NOTICE_ENV, &notice)
@@ -421,6 +433,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
         probed: &probed,
         catalog_digest: scripted.catalog().digest(),
         first_item: 0,
+        watched: WATCHED,
     })
     .expect("instrument expression closure");
     assert!(
@@ -459,6 +472,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
     command
         .env(ACTIVE_ENV, &selected.id)
         .env(CATALOG_ENV, scripted.catalog().digest())
+        .env(WATCHED_ENV, WATCHED)
         .env(STEPS_ENV, "2")
         .env(STEP_NONCE_ENV, nonce)
         .env(STEP_NOTICE_ENV, &notice)
@@ -670,6 +684,7 @@ fn a_process_built_from_another_catalog_writes_nothing_into_this_run_s_record() 
         .env_remove("RUST_MUTANTS_ACTIVE")
         .env(TOUCH_ENV, &log)
         .env(CATALOG_ENV, "b".repeat(64))
+        .env(WATCHED_ENV, WATCHED)
         .output()
         .expect("the program runs");
     assert!(
@@ -905,5 +920,77 @@ fn an_item_entered_while_its_thread_is_being_torn_down_is_recorded_rather_than_f
         touches.entered.by("alpha", 6),
         "whichever of the two thread-locals goes first, the entry is kept, on alpha or on \
          every test: {touches:?}"
+    );
+}
+
+#[test]
+fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let watched = dir.join("watched");
+    let watched_text = watched.to_str().expect("a UTF-8 temporary path");
+    let scripted = ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All);
+    let rendered = render(&Rendering {
+        module: MODULE_STEM,
+        catalog_digest: CATALOG,
+        placements: scripted.placements(),
+        markers: &[],
+        first_item: FIRST_ITEM,
+        item_count: ITEMS,
+        newline: "\n",
+        watched: watched_text,
+    })
+    .expect("the runtime renders");
+    let source = dir.join("orphaned.rs");
+    std::fs::write(
+        &source,
+        format!("{rendered}\nfn main() {{\n    {MODULE_STEM}::item({FIRST_ITEM});\n}}\n"),
+    )
+    .expect("write");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let left = || rust_mutants::orphan::left(&watched).expect("the watched directory reads");
+    let carried = Command::new(dir.join("orphaned"))
+        .env(WATCHED_ENV, watched_text)
+        .output()
+        .expect("the program runs");
+    assert!(
+        carried.status.success(),
+        "{}",
+        exact_output(&carried.stderr)
+    );
+    assert!(
+        left().is_empty(),
+        "a process carrying what the run gave it has nothing to say: {:?}",
+        left()
+    );
+    let cleared = Command::new(dir.join("orphaned"))
+        .env_clear()
+        .output()
+        .expect("the program runs");
+    assert!(
+        cleared.status.success(),
+        "{}",
+        exact_output(&cleared.stderr)
+    );
+    let said = left();
+    assert_eq!(
+        said.len(),
+        1,
+        "a process started with a cleared environment is one no mutant can be active in and \
+         whose entries nothing records, and it says so once: {said:?}"
+    );
+    #[cfg(unix)]
+    assert!(
+        said.iter()
+            .all(|orphan| orphan.parent == std::process::id()),
+        "the parent is the process that started it, which is what the run maps it back by: \
+         {said:?}"
     );
 }

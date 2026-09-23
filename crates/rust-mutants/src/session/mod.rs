@@ -446,6 +446,16 @@ impl Session {
         &self.targets
     }
 
+    /// Whether a process of `target`'s tree ran without the environment the run gave it, so a survival it reports is not one.
+    #[must_use]
+    pub fn uncontrolled(&self, target: &str) -> bool {
+        self.verified
+            .touched
+            .limitations
+            .iter()
+            .any(|one| one.split_once(':') == Some((crate::limitation::UNCONTROLLED_CHILD, target)))
+    }
+
     /// The digest of the pristine sources every unit of this build compiled.
     #[must_use]
     pub fn closure(&self) -> &str {
@@ -1229,7 +1239,10 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            if result.conclusion == MutantConclusion::Survived && self.uncontrolled(&target.id) {
+                result.conclusion = MutantConclusion::Inconclusive;
+            }
             self.record_mutant_exec(Executed {
                 mutant,
                 target,

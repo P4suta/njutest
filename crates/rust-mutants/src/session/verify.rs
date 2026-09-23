@@ -149,6 +149,11 @@ fn verify_target(
             .join(format!("{}.log", slug(&target.id)))
     });
     let own = baseline_scratch(scratch, index);
+    let watched = Path::new(building.workspace.watched());
+    crate::orphan::clear(watched).map_err(|source| SessionError::WriteFailed {
+        path: watched.display().to_string(),
+        source,
+    })?;
     let mut result = ran(target, &own, recording.as_deref(), building);
     let mut retried = false;
     let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
@@ -189,7 +194,9 @@ fn verify_target(
     if baseline.passed() && result.reading() == Reading::Short {
         touched.limited(crate::limitation::BASELINE_PASSED_UNPARSED, &target.id);
     }
-    if baseline.passed() {
+    if baseline.passed() && uncontrolled(watched, &target.id, building.trace) {
+        touched.limited(crate::limitation::UNCONTROLLED_CHILD, &target.id);
+    } else if baseline.passed() {
         gather(
             touched,
             &Recording {
@@ -206,6 +213,42 @@ fn verify_target(
         touched.limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
     }
     Ok((baseline, result.tests_run()))
+}
+
+/// Whether a process of `target`'s tree ran without the environment the run gave it, saying so in the recording where one did.
+fn uncontrolled(watched: &Path, target: &str, trace: &crate::trace::Recorder) -> bool {
+    let orphaned = match crate::orphan::left(watched) {
+        Ok(orphaned) => orphaned,
+        Err(error) => {
+            trace.note(
+                crate::limitation::UNCONTROLLED_CHILD,
+                &format!(
+                    "{target}: {} could not be read, so nothing says every process of the target \
+                     carried the run's environment: {error}",
+                    watched.display()
+                ),
+            );
+            return true;
+        }
+    };
+    if orphaned.is_empty() {
+        return false;
+    }
+    trace.note(
+        crate::limitation::UNCONTROLLED_CHILD,
+        &format!(
+            "{target}: {} process(es) of the tree ran without the environment the run gave the \
+             target, so no mutant could be active in them and nothing recorded what they \
+             entered: {}",
+            orphaned.len(),
+            orphaned
+                .iter()
+                .map(|one| format!("{} (parent {})", one.pid, one.parent))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    );
+    true
 }
 
 /// What one baseline process came to, keeping what it printed only where it did not pass.

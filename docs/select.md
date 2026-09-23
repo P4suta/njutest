@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Selecting the tests a change can reach
 
-**Status: implemented.** `njutest measure` and `njutest select`; what is not yet measured is listed at the end, and each such gap runs everything.
+**Status: implemented, with one gap that is not yet closed.** `njutest measure` and `njutest select`; a test that reads a source file as data is not yet found, and can be skipped for an edit to that file (see the end).
 
 `njutest select` says which test targets can notice what changed since the tree was measured, and proves the rest cannot.
 It skips a target only where the proof holds; anything it cannot place runs everything.
@@ -64,4 +64,8 @@ The doc target is never measured, so it always runs.
 
 A selection says which targets need not run, never which need not compile: build everything, then run what it selected.
 `measure` is one instrumented build and two runs of every target; it is worth paying once and reusing for as long as nothing above moves.
-Whether a target reads the tree as data at run time, and whether a child process started with a cleared environment records what it entered, are not yet measured; until they are, a file no item holds runs everything, which covers the first.
+**A target that reads a source file as data can be skipped wrongly.**
+A test that reads `src/quiet.rs` as text and never enters an item of it is not recorded as depending on it, so an edit inside one of its bodies skips that test.
+A file that holds no item runs everything, but a file that holds items does not, and the measurement does not yet run each target a second time without the tree's source files to find the tests that read them.
+Until it does, a suite with such tests should not skip by `select`.
+A child process started with a cleared environment is noticed and its target runs ([ADR 0028](adr/0028-a-process-that-loses-the-environment-says-so.md)).

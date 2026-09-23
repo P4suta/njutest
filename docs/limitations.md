@@ -56,6 +56,8 @@ Pure computation that does not open or mutate a report store remains available.
   Three things a reader has to tell apart used to arrive as one refusal: a target that is broken, a target that lost a race with something outside the code, and a target that passed.
   The middle one is a finding about the run's footing, not a reason to throw away the work already done, and the run says which target it was so that a later reader knows a single result against it rests on a measurement that once came out differently.
 - A target whose guards recorded nothing this run can route by keeps every test of it in every route (`touch-not-recorded`), and one whose record did not read back is believed about nothing (`touch-log-unreadable`).
+- A target whose tree started a process without the environment the run gave it — a test that calls `env_clear()` on a child — is `uncontrolled-child`: no mutant can be active in that process and nothing records what it entered, so the target stays in every route and a survival it reports is inconclusive ([ADR 0028](adr/0028-a-process-that-loses-the-environment-says-so.md)).
+  Only the baseline is watched this way; a process that lost the environment under one mutant only and not on the baseline is not yet noticed.
 - **Which items a test entered is measured where a body starts, and not everywhere code runs.** A `const fn`, a `const`, and a `static` are cataloged as items nothing records entering.
   A closure written inside a macro invocation takes no entry marker, and an `async` body resumed on another test's thread is recorded on the thread that first polled it.
   A change to any of these has to be routed to every test; [item reach](engine/item-reach.md) says which is which.
