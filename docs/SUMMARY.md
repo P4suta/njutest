@@ -63,3 +63,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0022 Composition needs two layers answering one question](adr/0022-composition-needs-two-layers-answering-one-question.md)
 - [0023 A run may not conclude from how it measured](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)
 - [0024 A copy is one prefix substitution](adr/0024-a-copy-is-one-prefix-substitution.md)
+- [0025 A reach that moves is not a measurement](adr/0025-a-reach-that-moves-is-not-a-measurement.md)

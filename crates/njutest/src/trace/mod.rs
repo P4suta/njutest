@@ -20,9 +20,9 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, DischargeRecord, Event, ExecRecord, MutantExecRecord, NoteRecord,
-    Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord, RunAccounting,
-    RunRecord, StartRecord, WireExchangeRecord, WireExecRecord,
+    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, MutantExecRecord,
+    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord,
+    RunAccounting, RunRecord, StartRecord, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -394,6 +394,11 @@ impl Recorder {
     /// Records one fault put to the suite, and what came of it.
     pub fn wire_exec(&self, record: WireExecRecord) {
         self.emit(Payload::WireExec { wire: record });
+    }
+
+    /// Records what one control established about one target's baseline reach.
+    pub fn drift(&self, record: DriftRecord) {
+        self.emit(Payload::Drift { drift: record });
     }
 
     /// Records one closed model-checking question and its typed answer.

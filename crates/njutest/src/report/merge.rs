@@ -122,6 +122,7 @@ pub fn merge(
         mutants: first_source.mutants.clone(),
         findings: first_source.findings.clone(),
         limitations: first_source.limitations.clone(),
+        drift: first_source.drift.clone(),
     };
     let ledger = BuildLedger::try_from_vec(builds).map_err(|error| MergeError::Unsound {
         because: error.to_string(),

@@ -37,6 +37,7 @@ fn judged(disposition: Disposition) -> Judged {
         position: None,
         disposition,
         source_run_id: None,
+        observed: Vec::new(),
         routing: None,
     }
 }
@@ -45,6 +46,7 @@ fn phase(disposition: Disposition) -> Mutation {
     Mutation {
         judged: vec![judged(disposition)],
         skips: BTreeMap::new(),
+        drift: Vec::new(),
     }
 }
 
@@ -265,6 +267,7 @@ fn a_finding_is_raised_where_the_mutation_it_names_is() {
     let phase = Mutation {
         judged: vec![one],
         skips: BTreeMap::new(),
+        drift: Vec::new(),
     };
 
     let findings = phase.findings(&BTreeSet::new());
@@ -336,6 +339,7 @@ fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         position: None,
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
+        observed: Vec::new(),
         routing: None,
     }
 }
@@ -408,6 +412,7 @@ fn all_of_them() -> Mutation {
             ),
         ],
         skips: BTreeMap::new(),
+        drift: Vec::new(),
     }
 }
 
@@ -640,6 +645,7 @@ fn three(of_a_kind: [(&str, Disposition, bool); 3]) -> Mutation {
             .map(|(name, disposition, reused)| of(name, disposition, reused))
             .collect(),
         skips: BTreeMap::new(),
+        drift: Vec::new(),
     }
 }
 

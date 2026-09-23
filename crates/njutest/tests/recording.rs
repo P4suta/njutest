@@ -25,6 +25,7 @@ fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         position: None,
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
+        observed: Vec::new(),
         routing: None,
     }
 }
@@ -136,6 +137,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
             ),
         ],
         skips: BTreeMap::from([("macro-invocation".to_owned(), 7u64)]),
+        drift: Vec::new(),
     };
 
     record(&mut report, &mutation, &BTreeSet::new())
@@ -209,6 +211,7 @@ fn a_ledger_entry_cannot_mark_an_outcome_that_is_not_answerable_as_accepted() {
     let mutation = Mutation {
         judged: vec![killed, survivor],
         skips: BTreeMap::new(),
+        drift: Vec::new(),
     };
     let mut report = blank();
 
