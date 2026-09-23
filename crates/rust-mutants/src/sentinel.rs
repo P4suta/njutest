@@ -140,8 +140,8 @@ impl Planted {
     #[must_use]
     pub const fn pair(self) -> Pair {
         match self {
-            Self::Reach => Pair::new("return-default", "one", "two", Reacher::Library),
-            Self::Branch => Pair::new("le-to-lt", "clamp", "clamp_entered", Reacher::Tests),
+            Self::Reach => Pair::new("return-default", "one", "two", KeptFor::Library),
+            Self::Branch => Pair::new("le-to-lt", "clamp", "clamp_entered", KeptFor::Tests),
             Self::Infection(Infection::Probe(question)) => {
                 let (removed, kept) = match question {
                     Question::Default => ("zero", "seven"),
@@ -149,10 +149,10 @@ impl Planted {
                     Question::SomeDefault => ("some_zero", "some_seven"),
                     Question::True => ("small", "tiny"),
                 };
-                Pair::new(question.rule(), removed, kept, Reacher::Tests)
+                Pair::new(question.rule(), removed, kept, KeptFor::Tests)
             }
             Self::Infection(Infection::Comparison) => {
-                Pair::new("le-to-lt", "pick", "pick_tied", Reacher::Tests)
+                Pair::new("le-to-lt", "pick", "pick_tied", KeptFor::Tests)
             }
         }
     }
@@ -176,7 +176,7 @@ impl Planted {
             Expectation {
                 planted: self,
                 mutant: Planting::new(pair.kept, pair.rule),
-                expected: Expected::Kept(pair.reacher),
+                expected: Expected::Kept(pair.kept_for),
             },
         ]
     }
@@ -192,23 +192,23 @@ pub struct Pair {
     /// The item whose mutant the layer must leave, whose test produces the evidence the layer reads.
     pub kept: &'static str,
     /// The target the kept mutant must be put to.
-    pub reacher: Reacher,
+    pub kept_for: KeptFor,
 }
 
 impl Pair {
-    /// The pair `rule` makes in `removed` and `kept`, the second put to `reacher`.
+    /// The pair `rule` makes in `removed` and `kept`, the second put to `kept_for`.
     #[must_use]
     pub const fn new(
         rule: &'static str,
         removed: &'static str,
         kept: &'static str,
-        reacher: Reacher,
+        kept_for: KeptFor,
     ) -> Self {
         Self {
             rule,
             removed,
             kept,
-            reacher,
+            kept_for,
         }
     }
 }
@@ -274,14 +274,14 @@ impl std::fmt::Display for Planting {
 
 /// Which target of the planted crate a kept mutant must be put to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Reacher {
+pub enum KeptFor {
     /// The unit tests compiled into the library.
     Library,
     /// The integration tests beside it.
     Tests,
 }
 
-impl Reacher {
+impl KeptFor {
     /// The target the engine names it by.
     #[must_use]
     pub const fn target(self) -> &'static str {
@@ -300,7 +300,7 @@ pub enum Expected {
     /// Every target that could have noticed it was removed by this proof.
     Discharged(Proof),
     /// The measurement put it to this target and nothing removed that target.
-    Kept(Reacher),
+    Kept(KeptFor),
 }
 
 impl Expected {
@@ -309,7 +309,7 @@ impl Expected {
     pub fn every() -> Vec<Self> {
         let every: Vec<Self> = std::iter::once(Self::Unreached)
             .chain(Proof::ALL.into_iter().map(Self::Discharged))
-            .chain(Reacher::ALL.into_iter().map(Self::Kept))
+            .chain(KeptFor::ALL.into_iter().map(Self::Kept))
             .collect();
         for expected in &every {
             match expected {
@@ -325,8 +325,8 @@ impl Expected {
         match self {
             Self::Unreached => "unreached",
             Self::Discharged(proof) => proof.name(),
-            Self::Kept(Reacher::Library) => "kept-for-library",
-            Self::Kept(Reacher::Tests) => "kept-for-tests",
+            Self::Kept(KeptFor::Library) => "kept-for-library",
+            Self::Kept(KeptFor::Tests) => "kept-for-tests",
         }
     }
 
@@ -339,15 +339,15 @@ impl Expected {
                 !discharged.is_empty() && discharged.iter().all(|one| one.proof == proof)
             }
             (
-                Self::Kept(reacher),
+                Self::Kept(kept_for),
                 Route::Block {
                     reaching,
                     discharged,
                     fallback: None,
                 },
             ) => {
-                reaching.iter().any(|one| one.target == reacher.target())
-                    && !discharged.iter().any(|one| one.target == reacher.target())
+                reaching.iter().any(|one| one.target == kept_for.target())
+                    && !discharged.iter().any(|one| one.target == kept_for.target())
             }
             (
                 Self::Unreached | Self::Discharged(_) | Self::Kept(_),
@@ -365,7 +365,7 @@ impl std::fmt::Display for Expected {
         match self {
             Self::Unreached => f.write_str("unreached"),
             Self::Discharged(proof) => write!(f, "discharged by {proof}"),
-            Self::Kept(reacher) => write!(f, "kept for {}", reacher.target()),
+            Self::Kept(kept_for) => write!(f, "kept for {}", kept_for.target()),
         }
     }
 }

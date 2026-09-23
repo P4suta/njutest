@@ -11,7 +11,7 @@
 use rust_mutants::cargo::{LocateOptions, Toolchain};
 use rust_mutants::probe::Question;
 use rust_mutants::runner::Cancel;
-use rust_mutants::sentinel::{Expectation, Expected, Infection, Planted, Planting, Reacher};
+use rust_mutants::sentinel::{Expectation, Expected, Infection, KeptFor, Planted, Planting};
 use rust_mutants::session::{PrepareOptions, Proof};
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::Workspace;
@@ -126,7 +126,7 @@ fn an_expectation_the_session_does_not_bear_out_is_blind_and_says_what_it_saw() 
         Expectation {
             planted: Planted::Branch,
             mutant: Planting::new("clamp", "le-to-lt"),
-            expected: Expected::Kept(Reacher::Tests),
+            expected: Expected::Kept(KeptFor::Tests),
         },
     );
     assert!(

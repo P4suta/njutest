@@ -18,9 +18,9 @@ fn routed_as(expected: Expected) -> Route {
         Expected::Discharged(proof) => Route::Discharged {
             discharged: vec![Discharge { target, proof }],
         },
-        Expected::Kept(reacher) => Route::Block {
+        Expected::Kept(kept_for) => Route::Block {
             reaching: vec![Reaches {
-                target: reacher.target().to_owned(),
+                target: kept_for.target().to_owned(),
                 tests: Asked::Every,
             }],
             discharged: Vec::new(),
@@ -66,7 +66,7 @@ fn a_layer_that_did_not_route_its_planted_mutant_ends_the_run_and_says_what_is_n
         })
         .expect("never-infected has a planted mutant");
     uninfected.route = Ok(routed_as(Expected::Kept(
-        rust_mutants::sentinel::Reacher::Tests,
+        rust_mutants::sentinel::KeptFor::Tests,
     )));
 
     let error = njutest::assure::sentinel::believed(&sighted)

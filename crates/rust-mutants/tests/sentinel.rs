@@ -4,7 +4,7 @@
 //! What a planted crate holds, which switches a session over it keeps, and when a route bears an expectation out.
 
 use rust_mutants::probe::Question;
-use rust_mutants::sentinel::{Expected, Infection, Planted, Reacher};
+use rust_mutants::sentinel::{Expected, Infection, KeptFor, Planted};
 use rust_mutants::session::{Discharge, Fallback, PrepareOptions, Proof, Reaches, Route};
 
 #[test]
@@ -131,17 +131,17 @@ fn a_route_bears_out_only_the_expectation_it_is() {
     );
     assert!(Expected::Unreached.holds(&unreached));
     assert!(!Expected::Unreached.holds(&everything));
-    assert!(Expected::Kept(Reacher::Tests).holds(&kept(None)));
+    assert!(Expected::Kept(KeptFor::Tests).holds(&kept(None)));
     assert!(
-        !Expected::Kept(Reacher::Library).holds(&kept(None)),
+        !Expected::Kept(KeptFor::Library).holds(&kept(None)),
         "a mutant put only to the integration tests is not one the library's own tests were asked about"
     );
     assert!(
-        !Expected::Kept(Reacher::Tests).holds(&kept(Some(Fallback::TouchIncomplete))),
+        !Expected::Kept(KeptFor::Tests).holds(&kept(Some(Fallback::TouchIncomplete))),
         "a target kept because its measurement was lost is not one the measurement placed"
     );
     assert!(
-        !Expected::Kept(Reacher::Tests).holds(&everything),
+        !Expected::Kept(KeptFor::Tests).holds(&everything),
         "every target, because nothing was measured, is not the measurement keeping one"
     );
 }
