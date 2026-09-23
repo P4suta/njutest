@@ -1422,11 +1422,12 @@ impl Session {
                 count: mutants,
             })?;
         let cataloged = self.verified.touched.items.len();
-        let items =
-            u32::try_from(cataloged).map_err(|_outside_range| SessionError::TraceCountTooLarge {
+        let items = u32::try_from(cataloged).map_err(|_outside_range| {
+            SessionError::TraceCountTooLarge {
                 subject: "cataloged items in a touch record",
                 count: cataloged,
-            })?;
+            }
+        })?;
         let bounds = crate::touch::Bounds {
             mutants: count,
             items,
