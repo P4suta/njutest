@@ -1,0 +1,4 @@
+#[test]
+fn above() {
+    assert_eq!(sentinel::clamp(3, 2), 2);
+}

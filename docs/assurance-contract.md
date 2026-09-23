@@ -216,6 +216,28 @@ On a project that leaves it at the default the layer proves almost nothing, and 
 This removes findings and never executions.
 Every test that reaches the mutation has already run by the time the layer does, and turning the layer off leaves the finding in place.
 
+### A run stands on its sentinels
+
+A layer that removes executions is believed only after it has been seen to remove what it must.
+Before the baseline, every run writes a small crate the engine ships into its own scratch directory, never into the tree under test, prepares it with the switches that decide this run's routes, and asks the engine how it routes the mutants planted there, running none of them.
+Each layer has two: one it must remove and one beside it that it must leave to the tests, so a layer that went blind and a layer that removes everything are both caught.
+
+| Layer | Must remove | Must leave |
+| --- | --- | --- |
+| `reach` | a function no test calls, as `unreached` | a function a test asserts on |
+| `branch-never-taken` | a comparison guarding a branch the test never enters | the same condition made always true, which the test observes |
+| `never-infected` | a body replaced by the value it already returns | a comparison whose change the test's input exposes |
+
+Every answer is a `sentinel` event of the trace.
+The first planted mutant a layer did not route as it must ends the run in `ERROR` with `NJ5009`, naming the layer, the mutant, what was due, and what the engine did: nothing that layer would remove from the run is believed, and a run that believed it would report a survivor as never reached or never run a test that would have killed it.
+No setting skips the sentinels.
+A run answered whole from the store runs nothing and removes nothing, so it plants nothing either.
+They cost one more prepared session per configured build — a copy, a build, the instrumented build, and one run of a three-test suite — and no mutant execution.
+
+They do not yet cover everything that removes work.
+`[mutation] equivalence` is not sentineled: its premise is two builds per mutation, and planting for it would add those builds to every run rather than to the runs that asked for the layer.
+Neither is routing by coverage alone, which a run uses only when the guards recorded nothing; the sentinels prepare with the run's own switches, and a run whose guards measure routes by them.
+
 ## Mutation confirmation
 
 A mutant is `killed` only after:

@@ -407,6 +407,26 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "sentinel"],
+          "properties": {
+            "type": { "const": "sentinel" },
+            "sentinel": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["layer", "mutant", "expected", "routed", "sighted"],
+              "properties": {
+                "layer": { "enum": ["reach", "branch-never-taken", "never-infected"] },
+                "mutant": { "type": "string", "minLength": 1 },
+                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept"] },
+                "routed": { "type": "string", "minLength": 1 },
+                "sighted": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "model"],
           "properties": {
             "type": { "const": "model" },

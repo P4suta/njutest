@@ -470,6 +470,12 @@ snapshot_code!(
     "the instrumented tree could not be written",
     "check there is room under TMPDIR and that nothing is removing the run's directory while it writes"
 );
+snapshot_code!(
+    SENTINEL_UNWRITABLE,
+    "RM5007",
+    "the crate planted for the routing layers could not be written",
+    "check the run's scratch directory is one this user may write in and that there is room under it"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -520,6 +526,9 @@ pub enum EngineError {
     /// A remembered passing baseline could not be read or checked exactly.
     #[error(transparent)]
     BaselineCache(#[from] crate::session::BaselineCacheError),
+    /// The crate planted for the routing layers could not be put where a session can open it.
+    #[error(transparent)]
+    Sentinel(#[from] crate::sentinel::SentinelError),
 }
 
 impl EngineError {
@@ -542,6 +551,7 @@ impl EngineError {
             Self::OutcomeIdentity(_) | Self::Outcomes(_) | Self::BaselineCache(_) => {
                 CACHE_UNREADABLE
             }
+            Self::Sentinel(error) => error.code(),
         }
     }
 }
@@ -608,6 +618,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SESSION_UNKNOWN_TARGET,
         SESSION_NO_TARGETS,
         SESSION_WRITE_FAILED,
+        SENTINEL_UNWRITABLE,
         COVERAGE_UNREADABLE,
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,

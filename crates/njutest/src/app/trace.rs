@@ -126,6 +126,7 @@ pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
             | Payload::ProbeExec { .. }
             | Payload::WireExchange { .. }
             | Payload::WireExec { .. }
+            | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => None,

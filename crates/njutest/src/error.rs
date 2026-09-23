@@ -244,6 +244,12 @@ code!(
     "the file changed after the provider read it; run again on a tree nothing else is writing"
 );
 code!(
+    SENTINEL_BLIND,
+    "NJ5009",
+    "a routing layer did not route the mutant planted for it",
+    "this is a defect in the engine, not in the code under test; no setting skips a sentinel, because a layer that fails one would be deciding which of your mutants never run"
+);
+code!(
     REPORT_UNSOUND,
     "NJ6003",
     "the report contradicts itself and was not written",
@@ -366,6 +372,23 @@ pub enum RunnerError {
     /// The workspace could not be built.
     #[error(transparent)]
     Build(#[from] crate::build::BuildError),
+    /// A routing layer did not route the mutant planted for it, so nothing it removes from this run is believed.
+    #[error(
+        "{}: the {layer} layer did not route the mutant planted for it: {mutant} was to be \
+         {expected}, and the engine routed it `{routed}`. Nothing the {layer} layer would \
+         remove from this run is believed, so the run stops before its baseline",
+        SENTINEL_BLIND.code
+    )]
+    Blind {
+        /// The layer the mutant was planted for.
+        layer: rust_mutants::sentinel::Planted,
+        /// The planted mutant, by its locator.
+        mutant: String,
+        /// How the layer must have routed it, as a reader is told.
+        expected: String,
+        /// How the engine routed it.
+        routed: String,
+    },
     /// The engine refused.
     /// Its codes are `RM`-prefixed and live in the engine's half of `docs/errors.md`; a runner that renamed them would make a user's report unsearchable.
     #[error(transparent)]
@@ -397,6 +420,7 @@ impl RunnerError {
             Self::PhaseOutput { .. } => PHASE_OUTPUT_UNREADABLE,
             Self::Model { .. } => MODEL_PHASE_FAILED,
             Self::Schedule(_) => SCHEDULER_UNUSABLE,
+            Self::Blind { .. } => SENTINEL_BLIND,
             Self::Resource(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
@@ -447,6 +471,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         GENERATION_PROTOCOL,
         GENERATION_PATH_REFUSED,
         GENERATION_PREIMAGE_MOVED,
+        SENTINEL_BLIND,
         REPORT_UNSERIALIZABLE,
         REPORT_UNREADABLE,
         REPORT_UNSOUND,
