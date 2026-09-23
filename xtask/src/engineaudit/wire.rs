@@ -672,6 +672,7 @@ fn reject_touched_nulls(value: &Value) -> Result<(), serde_json::Error> {
         ));
     };
     reject_null(root.get("narrowing"), "touched narrowing")?;
+    reject_null(root.get("items"), "the touched item catalog")?;
     let Some(targets) = root.get("targets").and_then(Value::as_object) else {
         return Ok(());
     };
@@ -679,7 +680,7 @@ fn reject_touched_nulls(value: &Value) -> Result<(), serde_json::Error> {
         let Some(target) = target.as_object() else {
             continue;
         };
-        for kind in ["reached", "bodies", "infected"] {
+        for kind in ["reached", "bodies", "infected", "entered"] {
             let seen = target.get(kind);
             reject_null(seen, "a touched target record")?;
             let Some(seen) = seen.and_then(Value::as_object) else {
@@ -741,6 +742,36 @@ struct TouchedEvidence {
     _limitations: Vec<String>,
     #[serde(rename = "narrowing")]
     _narrowing: Option<TouchedNarrowing>,
+    #[serde(rename = "items")]
+    _items: Option<Vec<TouchedItem>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TouchedItem {
+    #[serde(rename = "index")]
+    _index: u64,
+    #[serde(rename = "package")]
+    _package: String,
+    #[serde(rename = "path")]
+    _path: String,
+    #[serde(rename = "name")]
+    _name: String,
+    #[serde(rename = "span")]
+    _span: TouchedSpan,
+    #[serde(rename = "body")]
+    _body: TouchedSpan,
+    #[serde(rename = "measurable")]
+    _measurable: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TouchedSpan {
+    #[serde(rename = "start")]
+    _start: u64,
+    #[serde(rename = "end")]
+    _end: u64,
 }
 
 #[derive(Deserialize)]
@@ -761,6 +792,8 @@ struct TouchedTarget {
     _bodies: Option<TouchedSeen>,
     #[serde(rename = "infected")]
     _infected: Option<TouchedSeen>,
+    #[serde(rename = "entered")]
+    _entered: Option<TouchedSeen>,
     #[serde(rename = "ran")]
     _ran: Vec<String>,
 }

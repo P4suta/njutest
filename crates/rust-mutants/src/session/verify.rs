@@ -59,7 +59,7 @@ pub(super) fn verify(
     };
     if !building.cancel.is_cancelled()
         && let Some(remembering) = remembering.as_ref()
-        && let Some(recalled) = remembering.read(targets, catalog)?
+        && let Some(recalled) = remembering.read(targets, catalog, building.items)?
     {
         workspace.trace.note(
             BASELINE_REMEMBERED,
@@ -210,6 +210,7 @@ fn verify_target(
                 target: &target.id,
                 log: recording.as_deref(),
                 catalog: building.catalog,
+                items: building.items,
                 ran: &result.passed_tests,
             },
             building.trace,
@@ -253,7 +254,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 1;
+const BASELINE_ABI: u32 = 2;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -296,6 +297,7 @@ struct Recalled {
 struct RecallPremise<'a> {
     targets: &'a [TestTarget],
     catalog: &'a Catalog,
+    items: u32,
     path: &'a Path,
 }
 
@@ -549,6 +551,7 @@ impl Remembering {
         &self,
         targets: &[TestTarget],
         catalog: &Catalog,
+        items: u32,
     ) -> Result<Option<Recalled>, BaselineCacheError> {
         let path = self.path();
         let bytes = match std::fs::read(&path) {
@@ -569,6 +572,7 @@ impl Remembering {
             RecallPremise {
                 targets,
                 catalog,
+                items,
                 path: &path,
             },
         )? {
@@ -585,6 +589,7 @@ impl Remembering {
         let RecallPremise {
             targets,
             catalog,
+            items,
             path,
         } = premise;
         if remembered.abi != BASELINE_ABI || remembered.key != self.key {
@@ -616,7 +621,7 @@ impl Remembering {
                 .map(String::as_str)
                 .eq(ids.iter().copied())
             || self.artifacts != remembered.artifacts
-            || !valid_touches(&remembered.touched, &ids, catalog)
+            || !valid_touches(&remembered.touched, &ids, catalog, items)
         {
             return Ok(false);
         }
@@ -822,6 +827,7 @@ fn trace_touch(
                 .collect::<BTreeSet<&u32>>()
                 .len(),
         )?,
+        entered: trace_count("entered baseline items", gathered.entered_by_any().len())?,
     });
     Ok(())
 }
@@ -892,6 +898,7 @@ fn valid_touches(
     touched: &crate::touch::Touched,
     targets: &BTreeSet<&str>,
     catalog: &Catalog,
+    items: u32,
 ) -> bool {
     if touched.narrowing != crate::touch::Narrowing::default() {
         return false;
@@ -936,11 +943,25 @@ fn valid_touches(
             .keys()
             .chain(target.bodies.tests.keys())
             .chain(target.infected.tests.keys())
+            .chain(target.entered.tests.keys())
             .all(|test| ran.contains(test.as_str()))
             && seen(&target.reached)
             && seen(&target.bodies)
             && seen(&target.infected)
-    }) && touched.narrowing.compared.iter().all(valid)
+            && target
+                .entered
+                .loose
+                .iter()
+                .chain(
+                    target
+                        .entered
+                        .tests
+                        .values()
+                        .flat_map(|indices| indices.iter()),
+                )
+                .all(|index| *index < items)
+    }) && touched.items.is_empty()
+        && touched.narrowing.compared.iter().all(valid)
         && touched
             .narrowing
             .bodies
@@ -1278,6 +1299,8 @@ struct Recording<'a> {
     log: Option<&'a Path>,
     /// The catalog the record must be about.
     catalog: &'a Catalog,
+    /// How many items the tree's entry markers can name.
+    items: u32,
     /// Every test the run of it passed, which is what names a thread a touch can be attributed to.
     ran: &'a [String],
 }
@@ -1315,7 +1338,11 @@ fn gather(
         "catalog mutants in a touch record",
         recording.catalog.mutants().len(),
     )?;
-    let recorded = match crate::touch::read(&text, recording.catalog.digest(), count) {
+    let bounds = crate::touch::Bounds {
+        mutants: count,
+        items: recording.items,
+    };
+    let recorded = match crate::touch::read(&text, recording.catalog.digest(), bounds) {
         Ok(recorded) => recorded,
         Err(error) => {
             unreadable(touched, &error);
@@ -1326,38 +1353,10 @@ fn gather(
         reached: attributed(recorded.reached, recording.ran),
         bodies: attributed(recorded.bodies, recording.ran),
         infected: attributed(recorded.infected, recording.ran),
+        entered: attributed(recorded.entered, recording.ran),
         ran: recording.ran.to_vec(),
     };
-    trace.touch(crate::trace::TouchRecord {
-        target: recording.target.to_owned(),
-        tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,
-        sites: trace_count(
-            "recorded baseline sites",
-            gathered
-                .reached
-                .tests
-                .values()
-                .flat_map(|indices| indices.iter())
-                .chain(gathered.reached.loose.iter())
-                .collect::<BTreeSet<&u32>>()
-                .len(),
-        )?,
-        loose: trace_count(
-            "loosely attributed baseline sites",
-            gathered.reached.loose.len(),
-        )?,
-        infected: trace_count(
-            "infected baseline sites",
-            gathered
-                .infected
-                .tests
-                .values()
-                .flat_map(|indices| indices.iter())
-                .chain(gathered.infected.loose.iter())
-                .collect::<BTreeSet<&u32>>()
-                .len(),
-        )?,
-    });
+    trace_touch(recording.target, &gathered, trace)?;
     if touched
         .targets
         .insert(recording.target.to_owned(), gathered)

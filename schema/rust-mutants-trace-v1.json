@@ -1299,6 +1299,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "entered",
                 "infected",
                 "loose",
                 "sites",
@@ -1324,6 +1325,11 @@
                 },
                 "infected": {
                   "description": "How many distinct mutations anything of it saw its guard's two branches differ over.",
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "entered": {
+                  "description": "How many distinct items anything of it entered the body of.",
                   "type": "integer",
                   "minimum": 0
                 }

@@ -27,6 +27,12 @@ const SOURCE: &str = "pub fn one(a: i32) -> i32 { a + 1 }\n\
 
 const CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+/// The item index the file's first item takes, which is not zero so that an offset is exercised.
+const FIRST_ITEM: u32 = 5;
+
+/// How many items the file holds.
+const ITEMS: u32 = 3;
+
 fn exact_output(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes).expect("the generated fixture writes exact UTF-8")
 }
@@ -106,6 +112,8 @@ fn module() -> (String, u32) {
         catalog_digest: CATALOG,
         placements,
         markers: &[],
+        first_item: FIRST_ITEM,
+        item_count: ITEMS,
         newline: "\n",
     })
     .expect("a nonempty small catalog has a representable runtime window");
@@ -126,6 +134,8 @@ fn step_modules() -> (String, String, String) {
         catalog_digest: CATALOG,
         placements,
         markers: &[],
+        first_item: 0,
+        item_count: 0,
         newline: "\n",
     })
     .expect("the first runtime renders");
@@ -134,6 +144,8 @@ fn step_modules() -> (String, String, String) {
         catalog_digest: CATALOG,
         placements,
         markers: &[],
+        first_item: 0,
+        item_count: 0,
         newline: "\n",
     })
     .expect("the second runtime renders");
@@ -408,6 +420,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
         comparable: &comparable,
         probed: &probed,
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
     })
     .expect("instrument expression closure");
     assert!(
@@ -482,7 +495,15 @@ fn a_guard_records_the_thread_that_reached_it_and_libtest_names_that_thread_afte
          \x20   beta.join().expect(\"join\");",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(touches.reached.tests.get("alpha"), Some(&set(&[0, 1])));
     assert_eq!(touches.reached.tests.get("beta"), Some(&set(&[1])));
     assert!(
@@ -500,7 +521,15 @@ fn a_touch_nothing_can_be_attributed_to_is_recorded_as_one_rather_than_dropped()
          \x20   __rm::active(0);",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert!(
         touches.reached.tests.is_empty(),
         "neither the main thread nor an unnamed one is a test: {touches:?}"
@@ -527,7 +556,15 @@ fn a_marker_records_that_control_entered_the_body_a_condition_gates() {
          \x20   beta.join().expect(\"join\");",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(
         touches.reached.tests.get("alpha"),
         Some(&set(&[0])),
@@ -565,7 +602,15 @@ fn a_guard_records_the_test_that_saw_its_two_branches_differ() {
          \x20   beta.join().expect(\"join\");",
         true,
     );
-    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(
         touches.infected.tests.get("alpha"),
         Some(&set(&[0])),
@@ -678,7 +723,14 @@ fn the_header_the_runtime_writes_is_the_one_the_reader_expects() {
 fn a_log_about_another_catalog_says_nothing_rather_than_something_wrong() {
     let text = format!("{} {}\nt\talpha\t0\n", touch::SCHEMA, "b".repeat(64));
     assert!(matches!(
-        touch::read(&text, CATALOG, 4),
+        touch::read(
+            &text,
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::OtherCatalog { .. })
     ));
 }
@@ -690,7 +742,14 @@ fn a_line_naming_a_site_the_catalog_does_not_hold_says_nothing_at_all() {
         touch_schema = touch::SCHEMA
     );
     assert!(matches!(
-        touch::read(&text, CATALOG, 4),
+        touch::read(
+            &text,
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::BeyondCatalog { index: 9, .. })
     ));
 }
@@ -698,7 +757,14 @@ fn a_line_naming_a_site_the_catalog_does_not_hold_says_nothing_at_all() {
 #[test]
 fn a_record_before_any_header_says_nothing_because_nothing_says_which_catalog_it_is_about() {
     assert!(matches!(
-        touch::read("t\talpha\t0\n", CATALOG, 4),
+        touch::read(
+            "t\talpha\t0\n",
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::Headless { .. })
     ));
 }
@@ -707,7 +773,14 @@ fn a_record_before_any_header_says_nothing_because_nothing_says_which_catalog_it
 fn a_line_of_a_kind_this_reader_does_not_know_says_nothing_at_all() {
     let text = format!("{schema} {CATALOG}\nz\talpha\t0\n", schema = touch::SCHEMA);
     assert!(matches!(
-        touch::read(&text, CATALOG, 4),
+        touch::read(
+            &text,
+            CATALOG,
+            touch::Bounds {
+                mutants: 4,
+                items: 0
+            }
+        ),
         Err(TouchError::Malformed { .. })
     ));
 }
@@ -718,7 +791,15 @@ fn the_same_thread_named_twice_is_one_test_that_reached_both_lines_worth_of_site
         "{schema} {CATALOG}\nt\talpha\t0,1\nt\talpha\t2\n",
         schema = touch::SCHEMA
     );
-    let touches = touch::read(&text, CATALOG, 4).expect("the log reads");
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: 4,
+            items: 0,
+        },
+    )
+    .expect("the log reads");
     assert_eq!(
         touches.reached.tests.get("alpha"),
         Some(&set(&[0, 1, 2])),
@@ -756,4 +837,73 @@ fn recording_costs_a_crate_neither_its_prelude_nor_its_ban_on_unsafe_code() {
             exact_output(&output.stderr)
         );
     }
+}
+
+#[test]
+fn an_entry_marker_records_the_thread_that_entered_the_item_by_its_index_in_the_whole_tree() {
+    let (_, count) = module();
+    let text = ran(
+        "entered",
+        "    let alpha = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
+         \x20       .spawn(|| { __rm::item(5); __rm::item(5); __rm::item(7); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   alpha.join().expect(\"join\");\n\
+         \x20   __rm::item(6);",
+        true,
+    );
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: FIRST_ITEM + ITEMS,
+        },
+    )
+    .expect("the log reads");
+    assert_eq!(touches.entered.tests.get("alpha"), Some(&set(&[5, 7])));
+    assert_eq!(
+        touches.entered.loose,
+        set(&[6]),
+        "the main thread is no test's, so what it entered every test entered"
+    );
+    assert!(
+        touches.reached.tests.is_empty() && touches.reached.loose.is_empty(),
+        "an entry is not a site: {touches:?}"
+    );
+}
+
+#[test]
+fn an_entry_marker_says_nothing_when_nobody_asked() {
+    let text = ran("entered_quietly", "    __rm::item(5);", false);
+    assert!(text.is_empty(), "{text}");
+}
+
+#[test]
+fn an_item_entered_while_its_thread_is_being_torn_down_is_recorded_rather_than_fatal() {
+    let (_, count) = module();
+    let text = ran(
+        "torn_down",
+        "    struct Late;\n\
+         \x20   impl Drop for Late { fn drop(&mut self) { __rm::item(6); } }\n\
+         \x20   thread_local! { static LATE: Late = const { Late }; }\n\
+         \x20   let alpha = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
+         \x20       .spawn(|| { __rm::item(5); LATE.with(|_| {}); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   alpha.join().expect(\"join\");",
+        true,
+    );
+    let touches = touch::read(
+        &text,
+        CATALOG,
+        touch::Bounds {
+            mutants: count,
+            items: FIRST_ITEM + ITEMS,
+        },
+    )
+    .expect("the log reads");
+    assert!(
+        touches.entered.by("alpha", 6),
+        "whichever of the two thread-locals goes first, the entry is kept, on alpha or on \
+         every test: {touches:?}"
+    );
 }
