@@ -849,6 +849,13 @@ fn a_plan_is_about_the_run_the_configuration_describes() {
 
     let output = asked(&of(&fixture.root, &[]), &["plan", "--offline", "--locked"]);
     let text = njutest_devkit::process::strict_utf8(&output.stdout);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a plan that could not be made says why, and the test says it too, since an empty \
+         plan and a plan that failed read the same from its stdout alone: {said}"
+    );
     let targets: Vec<&str> = text
         .lines()
         .filter(|line| line.starts_with("TARGET\t"))
@@ -858,11 +865,11 @@ fn a_plan_is_about_the_run_the_configuration_describes() {
         !targets.iter().any(|line| line.contains("fixture-app/")),
         "a plan says what a run would measure, and a run of this tree measures one \
          package because the configuration says so. A plan that reads none of the \
-         configuration is a plan for a run nobody asked for: {text}"
+         configuration is a plan for a run nobody asked for: {text}{said}"
     );
     assert!(
         targets.iter().any(|line| line.contains("fixture-core/")),
-        "and it still names the package that is in scope: {text}"
+        "and it still names the package that is in scope: {text}{said}"
     );
 }
 
