@@ -275,6 +275,7 @@ pub fn settle(
             one.disposition = crate::assure::mutation::Disposition::Equivalent {
                 route: route.clone(),
             };
+            one.source_run_id = None;
         }
     }
     Ok(())

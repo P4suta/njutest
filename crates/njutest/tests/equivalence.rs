@@ -140,6 +140,7 @@ fn survivor(display_id: &str) -> Judged {
             route: block(&["core/lib/core"]),
         },
         source_run_id: None,
+        observed: Vec::new(),
         routing: None,
     }
 }
@@ -250,5 +251,43 @@ fn one_mutation_this_layer_says_nothing_about_does_not_end_what_it_says_about_th
         matches!(judged[0].disposition, Disposition::Survived { .. })
             && matches!(judged[1].disposition, Disposition::Survived { .. }),
         "and what it says nothing about it leaves alone"
+    );
+}
+
+#[test]
+fn an_equivalence_this_run_proved_is_this_runs_even_over_a_survivor_it_reused() {
+    let cancel = rust_mutants::runner::Cancel::new();
+    let trace = njutest::trace::Recorder::disabled();
+    let earlier = Some("20260923t125206118z-00428e-b0000000000".to_owned());
+    let mut judged = vec![
+        Judged {
+            source_run_id: earlier.clone(),
+            ..survivor("aaaa")
+        },
+        Judged {
+            source_run_id: earlier.clone(),
+            ..survivor("bbbb")
+        },
+    ];
+
+    settle(
+        &mut judged,
+        &[decided("aaaa", true), decided("bbbb", false)],
+        njutest::watch::Watch::new(&cancel, &trace),
+    )
+    .expect("one answer per mutation");
+
+    assert!(
+        matches!(judged[0].disposition, Disposition::Equivalent { .. })
+            && judged[0].source_run_id.is_none(),
+        "the compiler answered in this run, so the row names no earlier one: the report \
+         refuses an equivalent row that names a source run, because only a kill or a \
+         survival is a verdict another run can have established, and a warm cache turned \
+         a correct proof into a run that could not be written: {:?}",
+        judged[0].source_run_id
+    );
+    assert_eq!(
+        judged[1].source_run_id, earlier,
+        "and a survival this layer did not change is still the earlier run's"
     );
 }

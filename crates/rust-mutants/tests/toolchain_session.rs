@@ -18,7 +18,7 @@ use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::Filter;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{PrepareOptions, Request, Session};
+use rust_mutants::session::{Observing, PrepareOptions, Request, Session};
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::trace::{MutantExecRecord, Payload, PhaseRecord, ValidateRoundRecord};
 use rust_mutants::workspace::{OpenOptions, Workspace};
@@ -373,7 +373,7 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
         .expect("exec");
     assert_eq!(killed.outcome(), Outcome::Killed);
     assert_eq!(killed.target, "fixture-simple/lib/fixture_simple");
-    assert!(killed.tests_run.unwrap_or_default() > 0);
+    assert!(killed.tests_run().unwrap_or_default() > 0);
 
     let survivor = session
         .exec(&Request::new(by_rule("gt-to-ge")), &cancel)
@@ -675,7 +675,10 @@ fn a_target_with_no_tests_in_it_answers_neither_question() {
     );
     assert_eq!(killed.target, "fixture-subprocess/test/through_the_binary");
 
-    let control = session.control(&request, &cancel).expect("control");
+    let control = session
+        .control(&request, &cancel, Observing::Nothing)
+        .expect("control")
+        .result;
     assert_eq!(
         control.outcome(),
         Outcome::Inconclusive,

@@ -215,6 +215,101 @@ fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
     );
 }
 
+/// Every finding of `kind` the one whole part of a report raised.
+#[cfg(unix)]
+fn findings_of<'a>(document: &'a serde_json::Value, kind: &str) -> Vec<&'a serde_json::Value> {
+    document["builds"][0]["parts"][0]["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists findings: {document}"))
+        .iter()
+        .filter(|one| one["kind"] == kind)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_target_whose_reach_moved_between_its_baseline_and_a_control_is_an_unstable_baseline() {
+    let fixture = fixture("fixture-drifts");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    let unstable = findings_of(&document, "unstable-baseline");
+    assert_eq!(
+        unstable.len(),
+        1,
+        "the baseline was the first process of the run to look and every control after it          was not, so the one target reached one function on its baseline and another on the          control that confirmed a kill, over the same passing test: {document}\n{stderr}"
+    );
+    assert_eq!(unstable[0]["subject"], target, "{}", unstable[0]);
+    let detail = unstable[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("2 mutations no test reached"),
+        "the weight of the finding is what rests on the moved record: both mutations of \
+         `return_visit` are unreached on its word, and nothing was discharged: {detail}"
+    );
+    let drift = &document["builds"][0]["parts"][0]["drift"];
+    assert_eq!(drift[0]["state"], "moved", "{drift}");
+    assert_eq!(drift[0]["target"], target, "{drift}");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a moved measurement is a gap in what the run established, not a fault in the code: \
+         {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_target_no_kill_was_confirmed_on_is_one_whose_drift_was_not_measured() {
+    let fixture = fixture("fixture-hollow");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let part = &document["builds"][0]["parts"][0];
+    let states: Vec<(String, String)> = part["drift"]
+        .as_array()
+        .unwrap_or_else(|| panic!("every part records drift: {document}\n{stderr}"))
+        .iter()
+        .map(|one| {
+            (
+                one["target"].as_str().unwrap_or_default().to_owned(),
+                one["state"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            (
+                "fixture-hollow/lib/fixture_hollow".to_owned(),
+                "held".to_owned()
+            ),
+            (
+                "fixture-hollow/test/smoke".to_owned(),
+                "not-measured".to_owned()
+            ),
+        ],
+        "the library's kills were confirmed by a control that reached what its baseline did, \
+         and nothing was ever confirmed on `smoke`, so nothing compared it"
+    );
+    let limitation: Vec<&serde_json::Value> = part["limitations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists limitations: {document}"))
+        .iter()
+        .filter(|one| one["name"] == njutest::limitation::DRIFT_NOT_MEASURED)
+        .collect();
+    assert_eq!(limitation.len(), 1, "{document}");
+    let detail = limitation[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.ends_with("(fixture-hollow/test/smoke)") && detail.contains("1 target"),
+        "the limitation names the one target it is about and says how many: {detail}"
+    );
+    assert!(
+        findings_of(&document, "unstable-baseline").is_empty(),
+        "a target whose drift was not measured is not one that moved: {document}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other() {
@@ -1100,6 +1195,93 @@ fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
 
 #[cfg(unix)]
 #[test]
+fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let established = document(&fixture);
+    let identity = established["provenance"]["identity"]
+        .as_str()
+        .expect("an identity")
+        .to_owned();
+    let part = &established["builds"][0]["parts"][0];
+    let mut kills: Vec<serde_json::Value> = part["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|row| row["decision"]["outcome"] == "killed")
+        .map(|row| {
+            serde_json::json!({
+                "id": row["id"],
+                "disposition": { "kind": "killed", "by": row["decision"]["killed_by"] },
+                "duration_ms": 1,
+            })
+        })
+        .collect();
+    kills.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    assert!(
+        !kills.is_empty(),
+        "the fixture kills something: {established}"
+    );
+    assert!(
+        part["drift"]
+            .as_array()
+            .expect("drift")
+            .iter()
+            .all(|one| one["state"] == "held"),
+        "the interrupted run compared every target and found each held: {part}"
+    );
+
+    let store = njutest_devkit::paths::cache_beside(&fixture.root)
+        .expect("a cache directory")
+        .join("njutest/outcomes-v1");
+    std::fs::remove_file(store.join(format!("{identity}.json")))
+        .expect("the answer the first run stored");
+    let identity = njutest::evidence::key::continuation_identity(
+        &identity,
+        &rust_mutants::cargo::BuildConfig::default().selection(),
+    );
+    let directory = store.join("checkpoints").join(&identity);
+    std::fs::create_dir_all(&directory).expect("mkdir");
+    let state = serde_json::json!({
+        "schema": "njutest-assurance-checkpoint-v1",
+        "identity": identity,
+        "attempts": 1,
+        "targets": [],
+        "mutants": kills,
+    });
+    std::fs::write(
+        directory.join("checkpoint-v1.json"),
+        serde_json::to_string(&state).expect("the state renders"),
+    )
+    .expect("write");
+
+    let resumed = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&resumed.stderr);
+    let report = document(&fixture);
+    assert!(
+        names(&report).contains(&"resumed-from-checkpoint".to_owned()),
+        "the run continued the interrupted one: {report}\n{stderr}"
+    );
+    let part = &report["builds"][0]["parts"][0];
+    let states: Vec<&serde_json::Value> = part["drift"]
+        .as_array()
+        .expect("drift")
+        .iter()
+        .map(|one| &one["state"])
+        .collect();
+    assert!(
+        states.iter().all(|state| *state == "not-measured"),
+        "every kill was inherited, so no control ran this run, and a comparison the \
+         interrupted run made was against a baseline this run measured again: {part}"
+    );
+    assert!(
+        names(&report).contains(&njutest::limitation::DRIFT_NOT_MEASURED.to_owned()),
+        "and the run says so rather than claiming a hold it did not observe: {report}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_target_that_may_behave_differently_establishes_nothing_it_established_before() {
     let fixture = fixture("fixture-assured");
     assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
@@ -1395,6 +1577,50 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
         "the mutation of `halved` keeps its finding: nothing calls it, the linker drops it, \
          and identical artifacts then say the code is untested: {findings:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn turning_the_equivalence_layer_on_over_a_remembered_survivor_is_a_run_that_can_be_written() {
+    let fixture = fixture("fixture-equivalent");
+    let configured = |equivalence: bool| {
+        std::fs::write(
+            fixture.root.join(".njutest.toml"),
+            format!(
+                "# SPDX-FileCopyrightText: 2026 njutest contributors\n\
+                 # SPDX-License-Identifier: MIT OR Apache-2.0\n\n\
+                 [mutation]\n\
+                 equivalence = {equivalence}\n"
+            ),
+        )
+        .expect("the configuration");
+    };
+    configured(false);
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(2));
+
+    configured(true);
+    let output = verify(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "the second run reuses the first run's survivor and this run's compiler proves it \
+         equivalent; a row that then still named the first run was refused as incoherent \
+         and the run ended in an error: {}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let report = document(&fixture);
+    let equivalent: Vec<&serde_json::Value> = report["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|mutant| mutant["decision"]["outcome"] == "equivalent")
+        .collect();
+    for mutant in &equivalent {
+        assert_eq!(
+            mutant["reuse"]["reused"], false,
+            "an equivalence is this run's answer, never a remembered one: {mutant}"
+        );
+    }
 }
 
 /// Every mutant the latest run judged, by identity.

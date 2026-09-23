@@ -89,6 +89,7 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
                 },
             },
             source_run_id: None,
+            observed: Vec::new(),
             routing: None,
         })
         .collect();
