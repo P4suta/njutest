@@ -247,3 +247,50 @@ fn a_question_no_passing_target_answered_is_a_hole_and_says_which_hole() {
         "and no row claims the already-failing target noticed anything"
     );
 }
+
+#[test]
+fn a_target_that_failed_once_and_not_again_is_not_a_detection() {
+    let held = watching!();
+    let mut asked = 0_u32;
+    let done = measure(
+        &Measuring {
+            observed: &observed(),
+            before: &before(&["pkg/test/it"]),
+        },
+        |_fault| {
+            asked = asked.saturating_add(1);
+            njutest::wire::settle::Asked::Answered(vec![answered(
+                "pkg/test/it",
+                asked.is_multiple_of(2),
+            )])
+        },
+        njutest::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("the fault catalogue derives");
+    assert!(
+        done.seams.iter().all(|row| row.decision
+            != njutest::report::SeamDecision::Tests {
+                noticed_by: "pkg/test/it".to_owned()
+            }),
+        "the target failed with the question in place and passed with the same one in place \
+         again, so what failed was the target. Passing without a fault and failing with one \
+         is necessary for attribution and is not sufficient: an intermittent target will \
+         sometimes fail inside that window, and crediting it reports a finding about the \
+         code that is a fact about the machine: {:?}",
+        done.seams
+            .iter()
+            .map(|row| &row.decision)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        done.findings
+            .iter()
+            .any(|one| one.subject == njutest::assure::wire::NOT_REPRODUCED),
+        "and the run says that is what happened, rather than reporting a gap the tests \
+         could close: {:?}",
+        done.findings
+            .iter()
+            .map(|one| &one.subject)
+            .collect::<Vec<_>>()
+    );
+}
