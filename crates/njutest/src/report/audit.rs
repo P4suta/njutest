@@ -622,6 +622,7 @@ fn validate_build_parts<'a>(
             mutants: part.mutants.clone(),
             findings: part.findings.clone(),
             limitations: part.limitations.clone(),
+            drift: part.drift.clone(),
         };
         flat.verdict = flat.concluded();
         for failure in validate_flat(&flat) {

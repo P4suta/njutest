@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# 0025 — A bound measures quiet, not duration
+# 0026 — A bound measures quiet, not duration
 
 ## Status
 

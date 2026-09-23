@@ -8,6 +8,7 @@
 
 pub mod deps;
 pub mod devgates;
+pub mod drift;
 pub mod engineaudit;
 pub mod fixtures;
 pub mod fuzzclippy;

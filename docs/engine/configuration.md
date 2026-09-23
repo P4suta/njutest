@@ -92,7 +92,7 @@ So whether the count is reached before the clock is a fact about the machine, wh
 Tuning the number does not fix that, because the number is machine-independent and its cost is not.
 What fixes it is taking the clock out of the decision where the count can answer, and that is what an execution counting its steps does.
 **For such an execution, `timeout` is how long it may go without raising the count, not how long it may take.**
-The runner watches the step state the process rewrites at every boundary, and each change starts the window again ([ADR 0025](../adr/0025-a-bound-measures-quiet-not-duration.md)).
+The runner watches the step state the process rewrites at every boundary, and each change starts the window again ([ADR 0026](../adr/0026-a-bound-measures-quiet-not-duration.md)).
 
 - A mutation that spins through instrumented source keeps raising the count, is never quiet for a window, and is ended by the allowance at the same count on every machine.
 - A mutation that blocks raises nothing, and the window ends it as `stalled`, which is `waited`: nothing was moving, so the clock is the only instrument there is.

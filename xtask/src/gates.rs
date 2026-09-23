@@ -1910,14 +1910,49 @@ pub fn proofaudit(
                 })
         })
         .transpose()?;
-    proofaudit::audit_at(
+    let engines = trace
+        .map(engine_recordings)
+        .transpose()?
+        .unwrap_or_default();
+    proofaudit::audit_with(
         &label,
         &text,
-        recorded
-            .as_ref()
-            .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
+        proofaudit::Recorded {
+            runner: recorded
+                .as_ref()
+                .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
+            engines: &engines,
+        },
         Some(run),
     )
+}
+
+/// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.
+fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::AuditError> {
+    let builds = trace.join("builds");
+    let unreadable = |path: &Path, source: std::io::Error| proofaudit::AuditError::Unreadable {
+        path: path.display().to_string(),
+        source,
+    };
+    let entries = match std::fs::read_dir(&builds) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(unreadable(&builds, source)),
+    };
+    let mut namespaces = Vec::new();
+    for entry in entries {
+        namespaces.push(entry.map_err(|source| unreadable(&builds, source))?.path());
+    }
+    namespaces.sort();
+    namespaces
+        .into_iter()
+        .map(|namespace| {
+            let path = namespace.join("engine").join("trace.jsonl");
+            std::fs::read_to_string(&path)
+                .map(|text| (path.display().to_string(), text))
+                .map_err(|source| unreadable(&path, source))
+        })
+        .collect()
 }
 
 /// How many planted defects every layer of the proof audit found, after the clean specimen drew nothing from any of them.

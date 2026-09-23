@@ -353,6 +353,54 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "drift"],
+          "properties": {
+            "type": { "const": "drift" },
+            "drift": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "observed"],
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "observed": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["state", "target"],
+                      "properties": { "state": { "const": "held" }, "target": { "type": "string", "minLength": 1 } }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["state", "target", "reached", "bodies", "infected"],
+                      "properties": {
+                        "state": { "const": "moved" },
+                        "target": { "type": "string", "minLength": 1 },
+                        "reached": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } },
+                        "bodies": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } },
+                        "infected": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["state", "target", "why"],
+                      "properties": {
+                        "state": { "const": "not-measured" },
+                        "target": { "type": "string", "minLength": 1 },
+                        "why": { "enum": ["no-control", "unrecorded", "unreadable", "control-failed", "other-tests", "no-baseline", "baseline-retried", "unparsed"] }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "exchange"],
           "properties": {
             "type": { "const": "wire-exchange" },

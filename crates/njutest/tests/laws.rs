@@ -101,10 +101,12 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
                 position: None,
                 disposition,
                 source_run_id: None,
+                observed: Vec::new(),
                 routing: None,
             })
             .collect(),
         skips: BTreeMap::new(),
+        drift: Vec::new(),
     }
 }
 

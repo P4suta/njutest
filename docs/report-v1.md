@@ -11,7 +11,7 @@ Rust deserialization additionally enforces relationships that JSON Schema cannot
 
 Every closed set the schema declares is held to the names this release produces, in both directions.
 The store boundary already refused a report carrying a name the schema does not admit, so that direction failed in every run that produced one; the other failed in no run at all, and a name the schema admitted that nothing emits is a branch a consumer writes and never reaches.
-`docs_ledger::every_closed_set_the_schema_declares_is_one_this_release_produces` reads the schema's thirty-five `enum` and `const` sets and compares each against the Rust set that produces it — `Outcome`, `FindingKind`, `Blind`, `Fallback`, `Granularity`, `Proof`, `Contract`, the nine `Model*` sets, and the rest — so a set the schema gains and nothing on this side answers is a refusal rather than a row nobody reads.
+`docs_ledger::every_closed_set_the_schema_declares_is_one_this_release_produces` reads the schema's thirty-six `enum` and `const` sets and compares each against the Rust set that produces it — `Outcome`, `FindingKind`, `Blind`, `Fallback`, `Granularity`, `Proof`, `Contract`, the nine `Model*` sets, and the rest — so a set the schema gains and nothing on this side answers is a refusal rather than a row nobody reads.
 
 Each completed run owns an immutable directory under `[reports].directory`.
 The canonical document is `njutest-assurance-report-v1.json`; HTML, SARIF,
@@ -48,7 +48,7 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are twelve kinds, and every report carries the stable name:
+There are thirteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -64,6 +64,7 @@ There are twelve kinds, and every report carries the stable name:
 | `unmatched-acceptance` | an active acceptance names other than exactly one catalog entry | no |
 | `hollow-target` | a target was put to mutations and noticed none | no |
 | `wire-unnoticed` | a seam fault was put and nothing noticed | no |
+| `unstable-baseline` | a target reached something on an original-code control that it did not reach on its baseline, over the same passing tests | no |
 
 The last column is derived from the same closed `FindingKind` that decides the verdict.
 A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.
@@ -144,6 +145,17 @@ duplicates and missing counterparts are rejected.
 
 Evidence consultation records either the source run it reused or one closed refusal: `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`,
 `key-changed`, `not-passing`, `target-entered`, or `nothing-routed`.
+
+## Drift
+
+Every part carries `drift`, one record per target whose baseline recorded what it reached, because every proof of the part is read off that record ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+A record's `state` is `held` where an original-code control of the whole target that passed exactly the tests the baseline passed reached the same three unions — sites, bodies entered, sites infected —
+`moved` where it did not, with what only the control reported (`gained`) and what only the baseline reported (`lost`) for each union by catalog index,
+and `not-measured` with one closed `why`: `no-control` (nothing confirmed a kill on it), `unrecorded`, `unreadable`, `control-failed`, `other-tests`, `no-baseline`, `baseline-retried`, which a target whose baseline passed only when run again in the directory its failed first attempt left gets, because that run did not happen under the conditions a control's does, or `unparsed`, where the tests either run was read as passing do not come to the count its own summary gives, because then which tests passed is the parser's answer and not the harness's.
+
+A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
+A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
+Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
 
 ## Shards and projections
 

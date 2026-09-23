@@ -169,3 +169,59 @@ fn the_header_a_runtime_writes_is_the_one_the_reader_wants() {
         "a log of nothing but the header is a process whose guards never ran"
     );
 }
+
+/// One whole-target run's record that passed `ran`, having reached `reached` by test and loosely.
+fn whole(reached: Seen, ran: &[&str]) -> touch::TargetTouches {
+    let ran: Vec<String> = ran.iter().map(|test| (*test).to_owned()).collect();
+    let mut recorded = touch::Touches::default();
+    recorded.reached = reached;
+    touch::TargetTouches::of(recorded, &ran)
+}
+
+#[test]
+fn which_test_a_site_is_attributed_to_is_not_a_move() {
+    let baseline = whole(
+        seen(&[("alpha", &[1]), ("beta", &[2])], &[]),
+        &["alpha", "beta"],
+    );
+    let control = whole(seen(&[("beta", &[1, 2])], &[]), &["alpha", "beta"]);
+    assert_eq!(
+        touch::unions_differ(&baseline, &control),
+        None,
+        "which libtest thread first reached a site a lazy static guards is not a fact about the \
+         target, and routing a test alone is established on its own before it is used"
+    );
+    let loose = whole(seen(&[("alpha", &[1])], &[2]), &["alpha", "beta"]);
+    assert_eq!(
+        touch::unions_differ(&baseline, &loose),
+        None,
+        "a site reached on a thread no test names is still a site the target reached"
+    );
+}
+
+#[test]
+fn a_site_only_one_whole_run_reached_is_a_move_in_both_directions() {
+    let baseline = whole(seen(&[("alpha", &[1, 2])], &[]), &["alpha"]);
+    let control = whole(seen(&[("alpha", &[2, 3])], &[]), &["alpha"]);
+    let moved = touch::unions_differ(&baseline, &control).expect("the unions differ");
+    assert_eq!(
+        moved.reached.gained,
+        set(&[3]),
+        "only the control reached 3"
+    );
+    assert_eq!(moved.reached.lost, set(&[1]), "only the baseline reached 1");
+    assert!(
+        moved.bodies.is_empty() && moved.infected.is_empty(),
+        "what did not move is not reported as moved: {moved:?}"
+    );
+}
+
+#[test]
+fn a_thread_that_passed_no_test_is_folded_into_what_every_test_reached() {
+    let attributed = touch::attributed(
+        seen(&[("alpha", &[1]), ("helper", &[2])], &[]),
+        &["alpha".to_owned()],
+    );
+    assert_eq!(attributed.tests.len(), 1, "{attributed:?}");
+    assert_eq!(attributed.loose, set(&[2]), "{attributed:?}");
+}
