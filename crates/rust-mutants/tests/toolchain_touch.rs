@@ -570,3 +570,18 @@ fn a_run_whose_parsed_tests_do_not_come_to_its_own_summary_is_not_compared() {
         session.touched().limitations
     );
 }
+
+#[test]
+fn a_harness_with_no_summary_is_not_said_to_have_fallen_short_of_one() {
+    let fixture = Fixture::copy("fixture-custom-harness");
+    let session = prepared(&fixture);
+    let limitations = &session.touched().limitations;
+    assert!(
+        !limitations
+            .iter()
+            .any(|one| one.starts_with(rust_mutants::limitation::BASELINE_PASSED_UNPARSED)),
+        "a custom harness prints no summary to be short of, and says `custom-harness` already; \
+         telling a reader its named tests did not come to a count it never gave is false: \
+         {limitations:?}"
+    );
+}

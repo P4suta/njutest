@@ -2114,7 +2114,7 @@ fn a_control_over_other_tests_is_no_comparison_and_the_report_must_say_drift_was
     let mut other = sentinel::touch("control", &[0, 1]);
     merge(
         &mut other,
-        serde_json::json!({ "touch": { "passed": ["lib::works", "lib::also"], "summarised": 2 } }),
+        serde_json::json!({ "touch": { "passed": ["lib::works", "lib::also"], "summary": { "protocol": "libtest", "tests_run": 2 } } }),
     );
     let engine = vec![sentinel::touch("baseline", &[0]), other];
     let silent = drift_violations(&drift_audit(
@@ -2242,7 +2242,7 @@ fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
     let mut short = sentinel::touch("control", &[0, 1]);
     merge(
         &mut short,
-        serde_json::json!({ "touch": { "summarised": 2 } }),
+        serde_json::json!({ "touch": { "summary": { "protocol": "libtest", "tests_run": 2 } } }),
     );
     let engine = vec![sentinel::touch("baseline", &[0]), short];
     let silent = drift_violations(&drift_audit(
@@ -2265,4 +2265,24 @@ fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
     );
     let audit = drift_audit(stated, engine);
     assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
+}
+
+#[test]
+fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_short_of() {
+    let custom =
+        serde_json::json!({ "touch": { "summary": { "protocol": "custom" }, "passed": [] } });
+    let mut baseline = sentinel::touch("baseline", &[0]);
+    merge(&mut baseline, custom.clone());
+    let mut control = sentinel::touch("control", &[0, 1]);
+    merge(&mut control, custom);
+    let said = drift_violations(&drift_audit(
+        with(sentinel::drifted("not-measured")),
+        vec![baseline, control],
+    ));
+    assert!(
+        said.iter().any(|line| line.contains("moved")),
+        "the test-set premise is empty for a harness that names no tests, so a union that moved \
+         is still a counterexample, and a report that called it not measured is refused: \
+         {said:?}"
+    );
 }

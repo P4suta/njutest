@@ -1307,7 +1307,7 @@
                 "passed",
                 "reached_sites",
                 "sites",
-                "summarised",
+                "summary",
                 "target",
                 "tests"
               ],
@@ -1330,13 +1330,27 @@
                     "type": "string"
                   }
                 },
-                "summarised": {
-                  "description": "How many tests the run's own summary said ran, where the run was made in the session that recorded it; a comparison stands only where this equals the number of names in `passed`.",
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "minimum": 0
+                "summary": {
+                  "description": "What the run's own summary said, in the protocol it answered in: under libtest, a comparison stands only where `tests_run` equals the number of names in `passed`; a custom harness prints no summary; a remembered baseline's run is not here to say.",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["protocol", "tests_run"],
+                      "properties": {
+                        "protocol": { "const": "libtest" },
+                        "tests_run": { "type": ["integer", "null"], "minimum": 0 }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["protocol"],
+                      "properties": {
+                        "protocol": { "enum": ["custom", "unanswered", "remembered"] }
+                      }
+                    }
+                  ]
                 },
                 "reached_sites": {
                   "description": "Every mutant site anything of the target reached.",

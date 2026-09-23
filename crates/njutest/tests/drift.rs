@@ -238,3 +238,21 @@ fn a_survivor_the_moved_target_was_routed_away_from_by_reach_rests_on_it() {
         finding.detail
     );
 }
+
+#[test]
+fn a_survivor_this_run_decided_no_route_for_rests_on_the_moved_target() {
+    let mut record = row(0, Decided::Survived, false);
+    record.routing = None;
+    let found = drift::found(&[moved()], &[record]);
+    let [finding] = found.as_slice() else {
+        panic!("{found:?}");
+    };
+    assert!(
+        finding
+            .detail
+            .contains("1 mutation a proof removed its run of"),
+        "a survival carried in from an interrupted run was routed on that run's baseline, which \
+         this run cannot vouch for, so it is counted rather than presumed independent: {}",
+        finding.detail
+    );
+}

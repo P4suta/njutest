@@ -25,7 +25,8 @@ use crate::EngineError;
 use crate::catalog::{Catalog, Mutant};
 use crate::discover::{self, DiscoverOptions, FileReport, SkipClaim};
 use crate::execute::{
-    self, Context, ExecRequest, MutantConclusion, MutantResult, TargetKind, TestTarget, target_id,
+    self, Context, ExecRequest, MutantConclusion, MutantResult, Protocol, Reading, TargetKind,
+    TestTarget, target_id,
 };
 use crate::glob::Pattern;
 use crate::rule::Tier;
@@ -1429,7 +1430,7 @@ impl Session {
             &target.id,
             crate::trace::Measurement::Control,
             &control,
-            result.tests_run,
+            crate::trace::SummaryRecord::of(result),
         )?);
         let retried = format!(
             "{}:{}",
@@ -1444,7 +1445,9 @@ impl Session {
             crate::limitation::BASELINE_PASSED_UNPARSED,
             target.id
         );
-        if !result.parsed_whole() || self.verified.touched.limitations.contains(&unparsed) {
+        if result.reading() == Reading::Short
+            || self.verified.touched.limitations.contains(&unparsed)
+        {
             return Ok(Steadiness::NotMeasured(Unmeasured::Unparsed));
         }
         let Some(baseline) = self.verified.touched.targets.get(&target.id) else {
@@ -2082,6 +2085,7 @@ mod kani_laws {
             exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
+            protocol: Protocol::Unanswered,
             summary: None,
             tests_run: None,
             signal: None,
@@ -2467,6 +2471,7 @@ const fn unreached() -> MutantResult {
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
         duration: Duration::ZERO,
         output: Vec::new(),
+        protocol: Protocol::Unanswered,
         summary: None,
         tests_run: None,
         signal: None,
@@ -2498,6 +2503,7 @@ mod tests {
             exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
+            protocol: crate::execute::Protocol::Unanswered,
             summary: None,
             tests_run: None,
             signal: None,

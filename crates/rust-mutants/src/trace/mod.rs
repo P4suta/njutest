@@ -19,8 +19,8 @@ pub use event::{
     EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
     Measurement, MutantExecRecord, NjutestBuild, NjutestBuildError, NoteRecord, OpenRecord,
     Payload, PhaseRecord, RouteRecord, RunRecord, SCHEMA, SelectRecord, SiteRecord,
-    SkipClaimRecord, SkipCount, SnapshotRecord, SweepRecord, TargetRecord, TouchRecord,
-    TraceContext, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord, SweepRecord, TargetRecord,
+    TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{

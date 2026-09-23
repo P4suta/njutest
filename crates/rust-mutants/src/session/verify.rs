@@ -15,7 +15,7 @@ use super::Failing;
 use super::prepare::Building;
 use crate::EngineError;
 use crate::catalog::Catalog;
-use crate::execute::{self, Context, ExecRequest, MutantResult, TargetKind, TestTarget};
+use crate::execute::{self, Context, ExecRequest, MutantResult, Reading, TargetKind, TestTarget};
 use crate::workspace::{SessionError, Workspace};
 
 fn duration_millis(duration: Duration) -> Result<u64, SessionError> {
@@ -186,7 +186,7 @@ fn verify_target(
     if baseline.passed() && retried {
         touched.limited(crate::limitation::BASELINE_PASSED_ON_RETRY, &target.id);
     }
-    if baseline.passed() && !result.parsed_whole() {
+    if baseline.passed() && result.reading() == Reading::Short {
         touched.limited(crate::limitation::BASELINE_PASSED_UNPARSED, &target.id);
     }
     if baseline.passed() {
@@ -197,7 +197,7 @@ fn verify_target(
                 log: recording.as_deref(),
                 catalog: building.catalog,
                 ran: &result.passed_tests,
-                summarised: result.tests_run,
+                summarised: crate::trace::SummaryRecord::of(&result),
             },
             building.trace,
         )?;
@@ -818,7 +818,7 @@ fn trace_touch(
         target,
         crate::trace::Measurement::Baseline,
         gathered,
-        None,
+        crate::trace::SummaryRecord::Remembered,
     )?);
     Ok(())
 }
@@ -828,7 +828,7 @@ pub(super) fn touch_record(
     target: &str,
     measured: crate::trace::Measurement,
     gathered: &crate::touch::TargetTouches,
-    summarised: Option<u32>,
+    summary: crate::trace::SummaryRecord,
 ) -> Result<crate::trace::TouchRecord, SessionError> {
     let reached = gathered.reached.union();
     let infected = gathered.infected.union();
@@ -836,7 +836,7 @@ pub(super) fn touch_record(
         target: target.to_owned(),
         measured,
         passed: gathered.ran.clone(),
-        summarised,
+        summary,
         tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,
         sites: trace_count("recorded baseline sites", reached.len())?,
         loose: trace_count(
@@ -1313,8 +1313,8 @@ struct Recording<'a> {
     catalog: &'a Catalog,
     /// Every test the run of it passed, which is what names a thread a touch can be attributed to.
     ran: &'a [String],
-    /// How many tests the run's own summary said ran.
-    summarised: Option<u32>,
+    /// What the run's own summary said, in the protocol it answered in.
+    summarised: crate::trace::SummaryRecord,
 }
 
 /// Whether a target's guards can be asked what they reached.

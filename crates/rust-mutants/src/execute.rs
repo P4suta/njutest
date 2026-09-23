@@ -1608,6 +1608,8 @@ pub struct MutantResult {
     pub duration: Duration,
     /// The tail of the combined output.
     pub output: Vec<u8>,
+    /// Which protocol the target answered in, which decides whether a summary could be held to anything.
+    pub protocol: Protocol,
     /// The harness's summary line, when it printed one.
     pub summary: Option<Summary>,
     /// How many tests ran, when the summary said.
@@ -1622,12 +1624,45 @@ pub struct MutantResult {
     pub ignored_tests: Vec<String>,
 }
 
+/// The protocol a test process answered in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    /// libtest, which names every test's result and closes with a summary counting them.
+    Libtest,
+    /// A harness that answers by its exit code and names no test.
+    Custom,
+    /// No process answered, so no protocol was spoken.
+    Unanswered,
+}
+
+/// Whether the tests a run was read as passing are the harness's answer rather than the parser's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    /// libtest's named passing tests come to its own summary's count.
+    Whole,
+    /// libtest's named passing tests do not come to its summary's count, or it printed no summary: a line the suite wrote past the capture read as a result, or split one.
+    Short,
+    /// The protocol names no tests and prints no summary, so there is nothing to fall short of.
+    Unspoken,
+}
+
 impl MutantResult {
-    /// Whether the tests this run was read as passing come to the count its own summary gives, which is what makes the named set the harness's rather than the parser's.
+    /// Whether the tests this run was read as passing are the harness's answer, asked of the protocol it answered in, so a harness with no summary is never held to one.
     #[must_use]
-    pub fn parsed_whole(&self) -> bool {
-        self.tests_run
-            .is_some_and(|ran| usize::try_from(ran).is_ok_and(|ran| ran == self.passed_tests.len()))
+    pub fn reading(&self) -> Reading {
+        match self.protocol {
+            Protocol::Libtest => {
+                let whole = self.tests_run.is_some_and(|ran| {
+                    usize::try_from(ran).is_ok_and(|ran| ran == self.passed_tests.len())
+                });
+                if whole {
+                    Reading::Whole
+                } else {
+                    Reading::Short
+                }
+            }
+            Protocol::Custom | Protocol::Unanswered => Reading::Unspoken,
+        }
     }
 
     /// An execution-shaped apparatus failure produced before a child can answer.
@@ -1638,6 +1673,7 @@ impl MutantResult {
             exit_code: EXIT_CODE_UNAVAILABLE,
             duration: Duration::ZERO,
             output: message.into_bytes(),
+            protocol: Protocol::Unanswered,
             summary: None,
             tests_run: None,
             signal: None,
@@ -1733,6 +1769,11 @@ pub fn exec(
         exit_code: result.conventional_exit_code(),
         duration: result.duration,
         output: result.output,
+        protocol: if target.harness {
+            Protocol::Libtest
+        } else {
+            Protocol::Custom
+        },
         summary,
         tests_run: summary.and_then(|summary| summary.tests_run()),
         signal,

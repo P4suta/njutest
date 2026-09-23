@@ -40,10 +40,8 @@ pub struct Touch {
     pub measured: Measured,
     /// The tests that run passed, which is what its reach is the reach of.
     pub passed: BTreeSet<String>,
-    /// How many names the record listed as passing, repeats included, which is what the engine held to the summary.
-    pub listed: u64,
-    /// How many tests the run's own summary said ran, where the run was made in the session that recorded it.
-    pub summarised: Option<u64>,
+    /// Whether the tests the record names are the harness's answer: under libtest, whether they come to its summary's count; in any other protocol, which names none, nothing to fall short of.
+    pub whole: bool,
     /// Every mutant site anything of it reached.
     pub reached: BTreeSet<u64>,
     /// Every branch body anything of it entered.
@@ -53,8 +51,8 @@ pub struct Touch {
 }
 
 impl Touch {
-    fn parsed_whole(&self) -> bool {
-        self.summarised == Some(self.listed)
+    const fn parsed_whole(&self) -> bool {
+        self.whole
     }
 
     fn unions_equal(&self, other: &Self) -> bool {
@@ -130,7 +128,19 @@ pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
 }
 
 fn touch(record: &Value) -> Option<Touch> {
+    let named = record.get("passed")?.as_array()?.len();
+    let summary = record.get("summary")?;
+    let whole = match summary.get("protocol")?.as_str()? {
+        "libtest" => match summary.get("tests_run")? {
+            Value::Null => false,
+            count => usize::try_from(count.as_u64()?).is_ok_and(|count| count == named),
+        },
+        "custom" | "remembered" => true,
+        "unanswered" => false,
+        _ => return None,
+    };
     Some(Touch {
+        whole,
         target: record.get("target")?.as_str()?.to_owned(),
         measured: Measured::parse(record.get("measured")?.as_str()?)?,
         passed: record
@@ -139,14 +149,6 @@ fn touch(record: &Value) -> Option<Touch> {
             .iter()
             .map(|test| test.as_str().map(ToOwned::to_owned))
             .collect::<Option<BTreeSet<String>>>()?,
-        listed: match u64::try_from(record.get("passed")?.as_array()?.len()) {
-            Ok(listed) => listed,
-            Err(_) => return None,
-        },
-        summarised: match record.get("summarised")? {
-            Value::Null => None,
-            count => Some(count.as_u64()?),
-        },
         reached: indices(record.get("reached_sites")?)?,
         bodies: indices(record.get("entered_bodies")?)?,
         infected: indices(record.get("infected_sites")?)?,

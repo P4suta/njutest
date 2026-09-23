@@ -680,8 +680,8 @@ pub struct TouchRecord {
     pub measured: Measurement,
     /// The tests that run passed, which is what everything below is the reach of.
     pub passed: Vec<String>,
-    /// How many tests the run's own summary said ran, where the process was run in this session; a comparison stands only where this equals the length of `passed`.
-    pub summarised: Option<u32>,
+    /// What the run's own summary said, in the protocol it answered in; under libtest a comparison stands only where its count equals the length of `passed`.
+    pub summary: SummaryRecord,
     /// Every mutant site anything of it reached, in index order.
     pub reached_sites: Vec<u32>,
     /// Every branch body anything of it entered, by the marker at the body's first statement, in index order.
@@ -696,6 +696,37 @@ pub struct TouchRecord {
     pub loose: u32,
     /// How many distinct mutations anything of it saw its guard's two branches differ over, which is what could have noticed them.
     pub infected: u32,
+}
+
+/// What a run's own summary said, in the protocol it answered in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "protocol", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum SummaryRecord {
+    /// libtest, with how many tests its summary said ran, or nothing where it printed none.
+    Libtest {
+        /// The summary's count.
+        tests_run: Option<u32>,
+    },
+    /// A harness that answers by exit code, names no test, and prints no summary.
+    Custom,
+    /// No process answered.
+    Unanswered,
+    /// A baseline remembered from an earlier session, whose run is not here to say.
+    Remembered,
+}
+
+impl SummaryRecord {
+    /// What `result` said, in the protocol it answered in.
+    #[must_use]
+    pub const fn of(result: &crate::execute::MutantResult) -> Self {
+        match result.protocol {
+            crate::execute::Protocol::Libtest => Self::Libtest {
+                tests_run: result.tests_run,
+            },
+            crate::execute::Protocol::Custom => Self::Custom,
+            crate::execute::Protocol::Unanswered => Self::Unanswered,
+        }
+    }
 }
 
 /// One branch claim put to the compiler.

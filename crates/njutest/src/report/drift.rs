@@ -214,10 +214,10 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
         .collect()
 }
 
-/// Whether a mutation's standing rests on `target`'s baseline reach: its route did not put it to `target`, so a discharge or the reach itself removed `target`, and a moved reach leaves that removal unfounded.
+/// Whether a mutation's standing rests on `target`'s baseline reach: its route did not put it to `target`, so a discharge or the reach itself removed `target`, or it carries no route this run decided and so nothing this run can vouch for.
 #[must_use]
 pub fn rests_on(routing: Option<&super::Routing>, target: &str) -> bool {
-    routing.is_some_and(|routing| !routing.reaching.iter().any(|one| one == target))
+    routing.is_none_or(|routing| !routing.reaching.iter().any(|one| one == target))
 }
 
 /// The sentence of an `unstable-baseline` finding.
