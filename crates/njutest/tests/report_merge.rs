@@ -768,3 +768,79 @@ fn a_target_that_noticed_nothing_in_the_whole_catalog_is_accused_by_the_merge() 
         accused[0].detail
     );
 }
+
+/// A drift record saying `target` reached site 1 only on a control.
+fn moved_at(target: &str) -> njutest::report::drift::Drift {
+    let nothing = || njutest::report::drift::Moved {
+        gained: std::collections::BTreeSet::new(),
+        lost: std::collections::BTreeSet::new(),
+    };
+    njutest::report::drift::Drift::Moved {
+        target: target.to_owned(),
+        reached: njutest::report::drift::Moved {
+            gained: std::collections::BTreeSet::from([1]),
+            lost: std::collections::BTreeSet::new(),
+        },
+        bodies: nothing(),
+        infected: nothing(),
+    }
+}
+
+#[test]
+fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
+    let target = "pkg/lib/pkg";
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "unreached", false)],
+        &|source| source.drift = vec![moved_at(target)],
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "unreached", false)],
+        &|source| {
+            source.drift = vec![njutest::report::drift::Drift::NotMeasured {
+                target: target.to_owned(),
+                why: njutest::report::drift::Unmeasured::NoControl,
+            }];
+        },
+    );
+    assert_eq!(
+        one.verdict(),
+        Verdict::Insufficient,
+        "a part that saw its target move is not a part that may be merged into an assurance"
+    );
+    let whole = whole("the-whole", &[one, two]);
+    let conclusion = whole
+        .conclusion()
+        .expect("the checked whole has a representable conclusion");
+    let unstable: Vec<&Finding> = conclusion
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::UnstableBaseline)
+        .collect();
+    assert_eq!(
+        unstable.len(),
+        1,
+        "neither part raised it, because neither holds the catalog the count is over, and \
+         the merge does: {:?}",
+        conclusion.findings
+    );
+    assert_eq!(unstable[0].subject, target);
+    assert!(
+        unstable[0].detail.contains("2 mutations no test reached"),
+        "the count is over the rows of both parts, not the part that saw the move: {}",
+        unstable[0].detail
+    );
+    assert!(
+        conclusion
+            .limitations
+            .iter()
+            .all(|limitation| limitation.name != njutest::limitation::DRIFT_NOT_MEASURED),
+        "a target one part compared is not unmeasured because another part ran no control \
+         of it: {:?}",
+        conclusion.limitations
+    );
+    assert_eq!(whole.verdict(), Verdict::Insufficient);
+}

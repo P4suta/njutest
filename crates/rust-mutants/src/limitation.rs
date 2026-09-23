@@ -36,6 +36,9 @@ pub const BASELINE_NOT_PASSING: &str = "baseline-not-passing";
 /// The target's own tests did not pass the first time they were run with nothing active, and passed when they were run again.
 pub const BASELINE_PASSED_ON_RETRY: &str = "baseline-passed-on-retry";
 
+/// The tests the target's baseline was read as passing do not come to the count its own summary gives, so which of them passed is not known.
+pub const BASELINE_PASSED_UNPARSED: &str = "baseline-passed-unparsed";
+
 /// The target's guards were not asked what they reached, or were asked and said nothing, so every test of it reaches every mutation in it.
 pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 
@@ -43,13 +46,14 @@ pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 pub const TOUCH_LOG_UNREADABLE: &str = "touch-log-unreadable";
 
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 13] = [
+pub const ALL: [&str; 14] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
     DOCTESTS_NONE,
     BASELINE_NOT_PASSING,
     BASELINE_PASSED_ON_RETRY,
+    BASELINE_PASSED_UNPARSED,
     TOUCH_NOT_RECORDED,
     TOUCH_LOG_UNREADABLE,
     COVERAGE_BUILD_FAILED,

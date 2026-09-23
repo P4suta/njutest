@@ -382,3 +382,61 @@ fn every_place_the_sarif_log_names_is_one_a_reader_of_the_repository_can_open() 
         );
     }
 }
+
+#[test]
+fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
+    use njutest::report::drift::{Drift, Moved};
+    let nothing = || Moved {
+        gained: std::collections::BTreeSet::new(),
+        lost: std::collections::BTreeSet::new(),
+    };
+    let moved = Drift::Moved {
+        target: "workspace/lib/workspace".to_owned(),
+        reached: Moved {
+            gained: std::collections::BTreeSet::from([3]),
+            lost: std::collections::BTreeSet::from([2]),
+        },
+        bodies: nothing(),
+        infected: nothing(),
+    };
+    let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
+    findings.extend(njutest::report::drift::found(&[moved], &[]));
+    let report = report_with(findings);
+    let root = tempfile::tempdir().expect("a directory with no source in it");
+    let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
+    let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");
+    let said: Vec<&njutest::presentation::Diagnostic> = told
+        .diagnostics
+        .iter()
+        .filter(|one| one.code == "NJ-UNSTABLE-BASELINE")
+        .collect();
+    let [diagnostic] = said.as_slice() else {
+        panic!(
+            "one moved target is one thing to be told: {:?}",
+            told.diagnostics
+        );
+    };
+    assert_eq!(
+        diagnostic.title,
+        "this test target reached different code on two runs of the same passing tests, so \
+         every proof that removed a run because of what it reached is unfounded",
+        "a reader told only that something was found would look for a missing assertion; the \
+         thing to fix is a suite whose reach depends on something other than itself"
+    );
+    assert!(
+        diagnostic.at.is_none(),
+        "the finding is about a target, and no line of the source is where it is"
+    );
+    assert_eq!(
+        diagnostic.notes,
+        [
+            "workspace/lib/workspace reached something on an original-code control that it \
+             did not reach on its baseline, over the same passing tests, so what it reaches \
+             is not a function of the target and every proof read off its baseline is \
+             unfounded: 0 mutations a proof removed its run of, and 0 mutations no test \
+             reached, rest on it. Make what the suite reaches independent of order, time and \
+             earlier processes, and run again"
+        ],
+        "the sentence names what moved, what rests on it, and what to do"
+    );
+}

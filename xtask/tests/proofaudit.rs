@@ -600,7 +600,11 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
         );
 
     for document in [root, nested, model] {
-        let error = xtask::proofaudit::audit_at("duplicate.json", &document, None, None)
+        let nothing = xtask::proofaudit::Recorded {
+            runner: None,
+            engines: &[],
+        };
+        let error = xtask::proofaudit::audit_with("duplicate.json", &document, nothing, None)
             .expect_err("duplicate keys never reach proof redecision");
         assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
         assert!(
@@ -2022,5 +2026,263 @@ fn a_part_of_a_catalog_is_not_held_to_whether_a_target_noticed_anything() {
          and a part has seen a slice: demanding a finding here would demand one the \
          whole would contradict: {:?}",
         audit.remarks
+    );
+}
+
+fn drift_audit(document: serde_json::Value, engine: Vec<serde_json::Value>) -> Audit {
+    let laid = sentinel::Perturbation {
+        name: "drift",
+        document,
+        events: Some(routes()),
+        engine: Some(engine),
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read")
+}
+
+fn drift_violations(audit: &Audit) -> Vec<String> {
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Drift && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+#[test]
+fn a_control_that_reached_a_site_its_baseline_never_did_is_owed_an_unstable_baseline_finding() {
+    let moved = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let quiet = drift_audit(with(sentinel::drifted("held")), moved.clone());
+    let said = drift_violations(&quiet);
+    assert!(
+        said.iter().any(|line| line.contains("records it as held")),
+        "a report that calls a moved target held is refused: {said:?}"
+    );
+    assert!(
+        said.iter()
+            .any(|line| line.contains("raises no unstable-baseline finding")),
+        "a moved target the report raises nothing about is refused: {said:?}"
+    );
+    let mut named = with(sentinel::drifted("moved"));
+    merge(
+        &mut named,
+        serde_json::json!({ "findings": [{}, {
+            "kind": "unstable-baseline",
+            "subject": TARGET,
+            "detail": "moved",
+            "position": null
+        }] }),
+    );
+    let answered = drift_audit(named, moved);
+    assert_eq!(
+        drift_violations(&answered),
+        Vec::<String>::new(),
+        "{answered}"
+    );
+}
+
+#[test]
+fn a_finding_about_a_target_whose_reach_held_is_refused() {
+    let mut named = with(sentinel::drifted("held"));
+    merge(
+        &mut named,
+        serde_json::json!({ "findings": [{}, {
+            "kind": "unstable-baseline",
+            "subject": TARGET,
+            "detail": "moved",
+            "position": null
+        }] }),
+    );
+    let held = vec![
+        sentinel::touch("baseline", &[0, 1]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let said = drift_violations(&drift_audit(named, held));
+    assert!(
+        said.iter()
+            .any(|line| line.contains("do not show its reach moving")),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_control_over_other_tests_is_no_comparison_and_the_report_must_say_drift_was_not_measured() {
+    let mut other = sentinel::touch("control", &[0, 1]);
+    merge(
+        &mut other,
+        serde_json::json!({ "touch": { "passed": ["lib::works", "lib::also"], "summary": { "protocol": "libtest", "tests_run": 2 } } }),
+    );
+    let engine = vec![sentinel::touch("baseline", &[0]), other];
+    let silent = drift_violations(&drift_audit(
+        with(sentinel::drifted("not-measured")),
+        engine.clone(),
+    ));
+    assert!(
+        silent.iter().any(|line| line.contains("does not say so")),
+        "a target no comparable control measured is owed the limitation: {silent:?}"
+    );
+    let mut stated = with(sentinel::drifted("not-measured"));
+    merge(
+        &mut stated,
+        serde_json::json!({ "limitations": [{
+            "name": "drift-not-measured",
+            "detail": format!("1 target was not measured ({TARGET})")
+        }] }),
+    );
+    let audit = drift_audit(stated, engine);
+    assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
+}
+
+#[test]
+fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
+    let flat = sentinel::clean().document;
+    let mut part = serde_json::Map::new();
+    for key in [
+        "run_id",
+        "toolchain",
+        "accounting",
+        "targets",
+        "mutants",
+        "findings",
+        "limitations",
+        "drift",
+    ] {
+        if let Some(value) = flat.get(key) {
+            part.insert(key.to_owned(), value.clone());
+        }
+    }
+    let document = serde_json::json!({
+        "document_type": "complete",
+        "report": {
+            "schema": "njutest-assurance-report-v1",
+            "run_id": RUN,
+            "run_kind": "scoped",
+            "contract": "standard-v1",
+            "global_findings": [],
+            "model_completion": { "kind": "not-required" },
+            "builds": [{ "name": "default", "parts": [part] }]
+        }
+    });
+    let laid = sentinel::Perturbation {
+        name: "complete",
+        document,
+        events: Some(routes()),
+        engine: sentinel::clean().engine,
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit = gates::proofaudit(laid.run(), laid.trace()).expect("a complete report is read");
+    assert_eq!(audit.violations(), 0, "{audit}");
+    assert_eq!(audit.mutants, 2, "{audit}");
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.subject == "verdict" && remark.standing == Standing::Unaudited),
+        "a complete report states no verdict, and one this audit computed would agree with itself: {audit}"
+    );
+}
+
+#[test]
+fn a_complete_report_of_two_builds_is_refused_rather_than_read_as_one() {
+    let document = serde_json::json!({
+        "document_type": "complete",
+        "report": {
+            "schema": "njutest-assurance-report-v1",
+            "builds": [{ "parts": [{}] }, { "parts": [{}] }]
+        }
+    });
+    let directory = run_directory(&document);
+    let error = gates::proofaudit(directory.path(), None).expect_err("two builds are not one");
+    assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
+    assert!(error.to_string().contains("2 configured builds"), "{error}");
+}
+
+#[test]
+fn a_baseline_that_passed_only_on_retry_is_owed_not_measured_rather_than_a_comparison() {
+    let retried = serde_json::json!({
+        "type": "verify",
+        "verify": {
+            "target": TARGET, "outcome": "survived", "tests_run": 1, "duration_ms": 1,
+            "remembered": false, "retried": true
+        }
+    });
+    let engine = vec![
+        retried,
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let said = drift_violations(&drift_audit(
+        with(sentinel::drifted("moved")),
+        engine.clone(),
+    ));
+    assert!(
+        said.iter().any(|line| line.contains("not-measured")),
+        "a retry saw what its first attempt left and a control does not, so the difference is \
+         the apparatus and the report must not call it a move: {said:?}"
+    );
+    let mut stated = with(sentinel::drifted("not-measured"));
+    merge(
+        &mut stated,
+        serde_json::json!({ "limitations": [{
+            "name": "drift-not-measured",
+            "detail": format!("1 target was not measured ({TARGET})")
+        }] }),
+    );
+    let audit = drift_audit(stated, engine);
+    assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
+}
+
+#[test]
+fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
+    let mut short = sentinel::touch("control", &[0, 1]);
+    merge(
+        &mut short,
+        serde_json::json!({ "touch": { "summary": { "protocol": "libtest", "tests_run": 2 } } }),
+    );
+    let engine = vec![sentinel::touch("baseline", &[0]), short];
+    let silent = drift_violations(&drift_audit(
+        with(sentinel::drifted("not-measured")),
+        engine.clone(),
+    ));
+    assert!(
+        silent.iter().any(|line| line.contains("does not say so")),
+        "a control read as passing one test where its own summary counted two was read by the \
+         parser rather than the harness, so it compared nothing, and the target is owed the \
+         limitation rather than a move: {silent:?}"
+    );
+    let mut stated = with(sentinel::drifted("not-measured"));
+    merge(
+        &mut stated,
+        serde_json::json!({ "limitations": [{
+            "name": "drift-not-measured",
+            "detail": format!("1 target was not measured ({TARGET})")
+        }] }),
+    );
+    let audit = drift_audit(stated, engine);
+    assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
+}
+
+#[test]
+fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_short_of() {
+    let custom =
+        serde_json::json!({ "touch": { "summary": { "protocol": "custom" }, "passed": [] } });
+    let mut baseline = sentinel::touch("baseline", &[0]);
+    merge(&mut baseline, custom.clone());
+    let mut control = sentinel::touch("control", &[0, 1]);
+    merge(&mut control, custom);
+    let said = drift_violations(&drift_audit(
+        with(sentinel::drifted("not-measured")),
+        vec![baseline, control],
+    ));
+    assert!(
+        said.iter().any(|line| line.contains("moved")),
+        "the test-set premise is empty for a harness that names no tests, so a union that moved \
+         is still a counterexample, and a report that called it not measured is refused: \
+         {said:?}"
     );
 }
