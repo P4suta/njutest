@@ -20,7 +20,7 @@ use jiff::Timestamp;
 use rust_mutants::glob::Pattern;
 use rust_mutants::snapshot::{
     CLEANUP_ATTEMPTS, CLEANUP_BACKOFF, DIR_PREFIX, Drift, Entry, Options, STABLE_NAME_HEX_LENGTH,
-    SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create, stable_name,
+    SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create, stable_name, survey,
     workspace_digest,
 };
 use rust_mutants::tempowner::{self, read_marker};
@@ -991,4 +991,79 @@ fn a_copied_file_keeps_the_time_the_original_was_written() {
          already built."
     );
     snapshot.cleanup().expect("the copy goes away");
+}
+
+#[test]
+fn a_survey_reads_the_files_a_copy_would_hold_with_the_digests_it_would_record() {
+    let fx = fixture();
+    write(&fx.source, "tests/data/input.txt", b"one\n");
+    let mut options = options(&fx);
+    options.report_dir = Some("written-by-the-caller".to_owned());
+    write(&fx.source, "written-by-the-caller/old.json", b"{}");
+    let surveyed = survey(&options).expect("the tree surveys");
+    let snapshot = create(&options, now()).expect("the tree copies");
+    let copied: Vec<(&str, &str)> = snapshot
+        .manifest()
+        .iter()
+        .map(|entry| (entry.rel_path.as_str(), entry.sha256.as_str()))
+        .collect();
+    let read: Vec<(&str, &str)> = surveyed
+        .files
+        .iter()
+        .map(|(path, file)| (path.as_str(), file.sha256.as_str()))
+        .collect();
+    assert_eq!(
+        read, copied,
+        "a survey is the manifest a copy would record, taken without copying"
+    );
+    assert!(
+        !surveyed
+            .files
+            .contains_key("written-by-the-caller/old.json"),
+        "{surveyed:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_survey_sees_a_file_become_runnable_where_its_bytes_did_not_change() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let fx = fixture();
+    let script = write(&fx.source, "tests/run.sh", b"#!/bin/sh\nexit 0\n");
+    let before = survey(&options(&fx)).expect("the tree surveys");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let after = survey(&options(&fx)).expect("the tree surveys");
+    let bit = |one: &rust_mutants::snapshot::Survey| {
+        one.files
+            .get("tests/run.sh")
+            .map(|file| (file.sha256.clone(), file.executable))
+    };
+    let (was, is) = (bit(&before), bit(&after));
+    assert_eq!(
+        was.as_ref().map(|file| &file.0),
+        is.as_ref().map(|file| &file.0),
+        "the bytes did not change"
+    );
+    assert_ne!(
+        was.map(|file| file.1),
+        is.map(|file| file.1),
+        "a test that runs the script answers to the mode no digest of its bytes sees"
+    );
+}
+
+#[test]
+fn two_surveys_taken_under_different_rules_say_so() {
+    let fx = fixture();
+    let plain = survey(&options(&fx)).expect("the tree surveys");
+    let mut narrowed = options(&fx);
+    narrowed.exclude = vec![Pattern::compile("tests").expect("a pattern")];
+    let excluding = survey(&narrowed).expect("the tree surveys");
+    assert_eq!(
+        plain.files, excluding.files,
+        "nothing under tests/ exists here"
+    );
+    assert_ne!(
+        plain.rules, excluding.rules,
+        "a file a rule leaves out would vanish from one survey with nobody having edited it"
+    );
 }

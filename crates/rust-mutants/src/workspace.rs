@@ -168,6 +168,8 @@ fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempown
 #[derive(Debug)]
 pub struct Workspace {
     pub(crate) snapshot: Snapshot,
+    /// The rules the snapshot was copied under, which a survey of the source must follow to say what a copy would hold.
+    pub(crate) rules: SnapshotOptions,
     pub(crate) toolchain: Toolchain,
     pub(crate) metadata: Metadata,
     pub(crate) target_dir: PathBuf,
@@ -782,7 +784,8 @@ impl Workspace {
         )?;
         let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
-        let snapshot = Self::copy(&root, (parent.path(), build_dir), &options, now)?;
+        let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
+        let snapshot = Self::copy(&root, &rules, &options, now)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
@@ -816,6 +819,7 @@ impl Workspace {
         phase.end();
         Ok(Self {
             snapshot,
+            rules,
             toolchain,
             metadata,
             target_dir,
@@ -834,21 +838,12 @@ impl Workspace {
     /// Copies the tree and records what that produced.
     fn copy(
         root: &Path,
-        (parent, build_dir): (&Path, Option<String>),
+        rules: &SnapshotOptions,
         options: &OpenOptions,
         now: jiff::Timestamp,
     ) -> Result<Snapshot, crate::EngineError> {
         let started = std::time::Instant::now();
-        let snapshot = snapshot::create(
-            &SnapshotOptions {
-                exclude: options.exclude.clone(),
-                layout: snapshot::Layout::plan(root, &options.allow_outside)?,
-                report_dir: options.report_directory.clone(),
-                build_dir,
-                dest_parent: parent.to_path_buf(),
-            },
-            now,
-        )?;
+        let snapshot = snapshot::create(rules, now)?;
         let files = trace_count("snapshot files", snapshot.manifest().len())?;
         let bytes = snapshot
             .manifest()
@@ -898,6 +893,57 @@ impl Workspace {
     #[must_use]
     pub fn workspace_digest(&self) -> &str {
         self.snapshot.workspace_digest()
+    }
+
+    /// What the source tree holds now, read under the rules it was copied by.
+    ///
+    /// # Errors
+    /// A walk or read failure rather than a tree read partly.
+    pub fn survey(&self) -> Result<snapshot::Survey, snapshot::SnapshotError> {
+        snapshot::survey(&self.rules)
+    }
+
+    /// What the tree at `root` holds now, read under the rules a workspace opened with `options` would copy it by, without copying it.
+    ///
+    /// # Errors
+    /// What locating the toolchain and reading the workspace's metadata refuse, and a walk or read failure.
+    pub fn survey_at(
+        root: &Path,
+        options: &OpenOptions,
+        cancel: &Cancel,
+    ) -> Result<snapshot::Survey, crate::EngineError> {
+        let root = match crate::canonical::canonical(root) {
+            Ok(root) => root,
+            Err(_root_has_no_physical_spelling) => root.to_path_buf(),
+        };
+        let toolchain = Toolchain::locate(
+            &LocateOptions {
+                cargo: options.cargo.clone(),
+                search_path: options.search_path.clone(),
+                env: Some(options.env.clone()),
+            },
+            &root,
+            cancel,
+        )?;
+        let build_dir = Self::reachable(&root, &toolchain, options, cancel)?;
+        let rules = Self::rules_for(&root, build_dir, &options.temp_directory, options)?;
+        Ok(snapshot::survey(&rules)?)
+    }
+
+    /// The rules a workspace opened with `options` copies the tree at `root` by.
+    fn rules_for(
+        root: &Path,
+        build_dir: Option<String>,
+        parent: &Path,
+        options: &OpenOptions,
+    ) -> Result<SnapshotOptions, crate::EngineError> {
+        Ok(SnapshotOptions {
+            exclude: options.exclude.clone(),
+            layout: snapshot::Layout::plan(root, &options.allow_outside)?,
+            report_dir: options.report_directory.clone(),
+            build_dir,
+            dest_parent: parent.to_path_buf(),
+        })
     }
 
     /// Re-hashes the private source tree against the manifest captured while it was copied.

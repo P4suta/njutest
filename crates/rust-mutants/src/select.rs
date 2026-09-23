@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 
 use crate::span::Span;
-use crate::touch::{Item, Steadiness, Touched};
+use crate::touch::{Item, Steadiness, Touched, Unmeasured};
 
 /// One file as it was measured and as it is now, holding measured bytes proven to be the ones the measurement read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +67,35 @@ pub enum Everything {
         /// The file.
         path: String,
     },
+    /// The toolchain is not the one that built the measured tree.
+    Toolchain {
+        /// The one that did.
+        measured: String,
+        /// The one there is now.
+        now: String,
+    },
+    /// The tree is read by other rules than the measured one was, so a file can appear or vanish with nobody having edited it.
+    Rules,
+    /// A variable of the environment the run selects has another value, or is set on one side only.
+    Environment {
+        /// The variable.
+        name: String,
+    },
+    /// A variable the compiler read through `env!` or `option_env!` has another value now.
+    Compiled {
+        /// The variable.
+        name: String,
+    },
+    /// A file the build read outside the tree changed or is gone.
+    Outside {
+        /// Its absolute path.
+        path: String,
+    },
+    /// An entry that is not a regular file appeared, vanished, or points elsewhere.
+    Irregular {
+        /// The entry.
+        path: String,
+    },
     /// A file changed that holds no measured item, so nothing says who ran it.
     Unitemized {
         /// The file.
@@ -115,15 +144,130 @@ pub enum Everything {
     },
 }
 
-/// What a selection reads of one measurement.
+/// What a build read that no survey of the tree sees.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Inputs {
+    /// Every file outside the tree and outside the build's own output the compiler read, by absolute path, with its SHA-256: a path dependency, a `[patch]` source, a registry crate.
+    pub outside: BTreeMap<String, String>,
+    /// Every variable the compiler read through `env!` or `option_env!`, with the value it read or nothing where it was unset.
+    pub env: BTreeMap<String, Option<String>>,
+}
+
+/// Whether one target's reach was shown to be a function of the target, as a measurement records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Standing {
+    /// A second whole run passed the same tests and reached, entered, and infected the same.
+    Held,
+    /// A second whole run reached something else.
+    Moved,
+    /// A second whole run established nothing to compare, and why.
+    NotMeasured {
+        /// Why.
+        why: Unmeasured,
+    },
+    /// No second whole run of it was made.
+    Uncompared,
+}
+
+impl Standing {
+    /// What a control's comparison comes to, as a measurement records it.
+    #[must_use]
+    pub const fn of(steadiness: &Steadiness) -> Self {
+        match steadiness {
+            Steadiness::Held => Self::Held,
+            Steadiness::Moved(_) => Self::Moved,
+            Steadiness::NotMeasured(why) => Self::NotMeasured { why: *why },
+        }
+    }
+}
+
+/// One target as a measurement found it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Target {
+    /// Every item anything of the target entered.
+    pub entered: BTreeSet<u32>,
+    /// Whether that was shown to be a function of the target.
+    pub standing: Standing,
+}
+
+/// What one measured tree establishes for a selection: every file it held, what its build read beyond them, its items, and what each target entered.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Measurement {
+    /// The toolchain, as it names itself.
+    pub toolchain: String,
+    /// Every file of the tree, and the rules it was read by.
+    pub survey: crate::snapshot::Survey,
+    /// What the build read that the survey does not see.
+    pub inputs: Inputs,
+    /// The environment the run selected, which every test process ran with.
+    pub environment: BTreeMap<String, String>,
+    /// Every item, by item index.
+    pub items: Vec<Item>,
+    /// Every target the baseline recorded.
+    pub targets: BTreeMap<String, Target>,
+    /// What each package declares over the standard names.
+    pub shadows: BTreeMap<String, Shadows>,
+}
+
+/// What [`Measurement::of`] is made from: what one tree was, and what running it established.
 #[derive(Debug, Clone, Copy)]
-pub struct Measured<'a> {
-    /// What each target entered, and the items of the measured tree.
+pub struct Parts<'a> {
+    /// The toolchain, as it names itself.
+    pub toolchain: &'a str,
+    /// Every file of the tree.
+    pub survey: &'a crate::snapshot::Survey,
+    /// What the build read beyond the tree.
+    pub inputs: &'a Inputs,
+    /// The environment the run selected.
+    pub environment: &'a BTreeMap<String, String>,
+    /// What the baseline recorded.
     pub touched: &'a Touched,
-    /// Whether each target's reach held on a second run.
+    /// What a second run of each target established.
     pub standing: &'a BTreeMap<String, Steadiness>,
-    /// What each package declares over the standard names; a package missing here hides every one.
-    pub shadows: &'a BTreeMap<String, Shadows>,
+}
+
+impl Measurement {
+    /// The measurement `parts` make, with the shadows read from `sources`: every source file of the tree, as the package that compiled it and its text.
+    #[must_use]
+    pub fn of<'a>(parts: Parts<'_>, sources: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let mut texts: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (package, text) in sources {
+            texts.entry(package).or_default().push(text);
+        }
+        Self {
+            toolchain: parts.toolchain.to_owned(),
+            survey: parts.survey.clone(),
+            inputs: parts.inputs.clone(),
+            environment: parts.environment.clone(),
+            items: parts.touched.items.clone(),
+            targets: parts
+                .touched
+                .targets
+                .iter()
+                .map(|(target, record)| {
+                    let standing = parts
+                        .standing
+                        .get(target)
+                        .map_or(Standing::Uncompared, Standing::of);
+                    (
+                        target.clone(),
+                        Target {
+                            entered: record.entered_by_any(),
+                            standing,
+                        },
+                    )
+                })
+                .collect(),
+            shadows: texts
+                .into_iter()
+                .map(|(package, texts)| (package.to_owned(), Shadows::of(texts)))
+                .collect(),
+        }
+    }
 }
 
 /// What a selection decided for one target.
@@ -143,7 +287,7 @@ pub enum Why {
     /// The change is one no measurement can place.
     Everything(Everything),
     /// Its reach was not shown to be a function of the target: a second run moved it, or nothing compared a second run with the first.
-    Unestablished(Steadiness),
+    Unestablished(Standing),
     /// The measurement holds nothing about the target.
     Unmeasured,
 }
@@ -775,10 +919,9 @@ fn same_skeleton(
 }
 
 /// The measured items `revision` changed, or why no measured item can hold what changed.
-fn revised(measured: &Measured<'_>, revision: &Revision<'_>) -> Result<BTreeSet<u32>, Everything> {
+fn revised(measured: &Measurement, revision: &Revision<'_>) -> Result<BTreeSet<u32>, Everything> {
     let path = revision.path;
     let cataloged: Vec<&Item> = measured
-        .touched
         .items
         .iter()
         .filter(|item| item.path == path)
@@ -846,7 +989,7 @@ fn revised(measured: &Measured<'_>, revision: &Revision<'_>) -> Result<BTreeSet<
 /// # Errors
 /// [`Everything`] naming the first change that cannot be placed in the body of a measured item.
 pub fn changed_items(
-    measured: &Measured<'_>,
+    measured: &Measurement,
     changes: &[Changed<'_>],
 ) -> Result<BTreeSet<u32>, Everything> {
     let mut items = BTreeSet::new();
@@ -870,7 +1013,7 @@ pub fn changed_items(
             }
             Changed::Revised(revision) => revision,
         };
-        if !measured.touched.items.iter().any(|item| item.path == path) {
+        if !measured.items.iter().any(|item| item.path == path) {
             return Err(Everything::Unitemized {
                 path: path.to_owned(),
             });
@@ -880,40 +1023,140 @@ pub fn changed_items(
     Ok(items)
 }
 
+/// What the tree and its build are now, as a selection holds them against a measurement.
+#[derive(Debug, Clone, Copy)]
+pub struct Now<'a> {
+    /// The toolchain, as it names itself.
+    pub toolchain: &'a str,
+    /// Every file of the tree, read by the rules a run would copy it by.
+    pub survey: &'a crate::snapshot::Survey,
+    /// The environment a run would select.
+    pub environment: &'a BTreeMap<String, String>,
+    /// Every variable a build would see, which is where a variable the compiler read is looked up.
+    pub vars: &'a BTreeMap<String, String>,
+}
+
+/// One file whose bytes, mode, or presence differ from the measured tree's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Difference {
+    /// The file is in both, with other bytes or another mode.
+    Edited {
+        /// The file.
+        path: String,
+    },
+    /// The file is new, or gone.
+    Whole {
+        /// The file.
+        path: String,
+    },
+}
+
+/// Whether a variable is one cargo sets for a compilation, which is a function of the manifests and the paths it builds in rather than of anything a person sets.
+fn set_by_cargo(name: &str) -> bool {
+    name.starts_with("CARGO_") || name == "OUT_DIR"
+}
+
+/// The files that differ between the measured tree and the tree `now`, or the first difference in what the build read that no file of the tree names.
+///
+/// # Errors
+/// [`Everything`] naming a moved toolchain, walk rule, selected variable, compiled variable, outside file, or irregular entry.
+pub fn differences(measured: &Measurement, now: &Now<'_>) -> Result<Vec<Difference>, Everything> {
+    if measured.toolchain != now.toolchain {
+        return Err(Everything::Toolchain {
+            measured: measured.toolchain.clone(),
+            now: now.toolchain.to_owned(),
+        });
+    }
+    if measured.survey.rules != now.survey.rules {
+        return Err(Everything::Rules);
+    }
+    let names: BTreeSet<&String> = measured
+        .environment
+        .keys()
+        .chain(now.environment.keys())
+        .collect();
+    if let Some(name) = names
+        .into_iter()
+        .find(|name| measured.environment.get(*name) != now.environment.get(*name))
+    {
+        return Err(Everything::Environment { name: name.clone() });
+    }
+    if let Some((name, _)) = measured
+        .inputs
+        .env
+        .iter()
+        .filter(|(name, _)| !set_by_cargo(name))
+        .find(|(name, value)| now.vars.get(*name) != value.as_ref())
+    {
+        return Err(Everything::Compiled { name: name.clone() });
+    }
+    for (path, digest) in &measured.inputs.outside {
+        let unchanged = match std::fs::read(path) {
+            Ok(bytes) => crate::id::digest(&bytes) == *digest,
+            Err(_gone_or_unreadable) => false,
+        };
+        if !unchanged {
+            return Err(Everything::Outside { path: path.clone() });
+        }
+    }
+    let irregular: BTreeSet<&String> = measured
+        .survey
+        .passed_over
+        .keys()
+        .chain(now.survey.passed_over.keys())
+        .collect();
+    if let Some(path) = irregular
+        .into_iter()
+        .find(|path| measured.survey.passed_over.get(*path) != now.survey.passed_over.get(*path))
+    {
+        return Err(Everything::Irregular { path: path.clone() });
+    }
+    let paths: BTreeSet<&String> = measured
+        .survey
+        .files
+        .keys()
+        .chain(now.survey.files.keys())
+        .collect();
+    Ok(paths
+        .into_iter()
+        .filter_map(
+            |path| match (measured.survey.files.get(path), now.survey.files.get(path)) {
+                (Some(was), Some(is)) if was == is => None,
+                (Some(_), Some(_)) => Some(Difference::Edited { path: path.clone() }),
+                (None, _) | (_, None) => Some(Difference::Whole { path: path.clone() }),
+            },
+        )
+        .collect())
+}
+
 /// What a change decides for every target in `now`, the targets the changed tree holds: a target whose tests entered a changed item runs, as does every target whose reach was not shown to hold or that the measurement does not name; the rest are skipped.
 #[must_use]
 pub fn decide(
-    measured: &Measured<'_>,
+    measured: &Measurement,
     now: &BTreeSet<String>,
     changes: &[Changed<'_>],
 ) -> Selection {
-    let Measured {
-        touched, standing, ..
-    } = *measured;
     let placed = changed_items(measured, changes);
     let decided = now
         .iter()
         .map(|target| {
-            let decided = match (&placed, touched.targets.get(target), standing.get(target)) {
-                (Err(everything), _, _) => Decided::Run(Why::Everything(everything.clone())),
-                (Ok(_), None, _) | (Ok(_), Some(_), None) => Decided::Run(Why::Unmeasured),
-                (
-                    Ok(_),
-                    Some(_),
-                    Some(steadiness @ (Steadiness::Moved(_) | Steadiness::NotMeasured(_))),
-                ) => Decided::Run(Why::Unestablished(steadiness.clone())),
-                (Ok(items), Some(record), Some(Steadiness::Held)) => {
-                    let entered: BTreeSet<u32> = record
-                        .entered_by_any()
-                        .intersection(items)
-                        .copied()
-                        .collect();
-                    if entered.is_empty() {
-                        Decided::Skip
-                    } else {
-                        Decided::Run(Why::Entered(entered))
+            let decided = match (&placed, measured.targets.get(target)) {
+                (Err(everything), _) => Decided::Run(Why::Everything(everything.clone())),
+                (Ok(_), None) => Decided::Run(Why::Unmeasured),
+                (Ok(items), Some(record)) => match record.standing {
+                    Standing::Held => {
+                        let entered: BTreeSet<u32> =
+                            record.entered.intersection(items).copied().collect();
+                        if entered.is_empty() {
+                            Decided::Skip
+                        } else {
+                            Decided::Run(Why::Entered(entered))
+                        }
                     }
-                }
+                    standing @ (Standing::Moved
+                    | Standing::NotMeasured { .. }
+                    | Standing::Uncompared) => Decided::Run(Why::Unestablished(standing)),
+                },
             };
             (target.clone(), decided)
         })
@@ -925,7 +1168,11 @@ pub fn decide(
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{Changed, Decided, Everything, Measured, Selection, Shadows, Why, decide};
+    use super::{
+        Changed, Decided, Difference, Everything, Inputs, Measurement, Now, Parts, Selection,
+        Standing, Why, decide, differences,
+    };
+    use crate::snapshot::{Survey, Surveyed};
     use crate::touch::{Item, Seen, Steadiness, TargetTouches, Touched, Unmeasured};
 
     const PATH: &str = "src/lib.rs";
@@ -942,7 +1189,7 @@ pub fn beta(x: u8) -> u8 {
 ";
 
     /// The measurement of `source`: `enters-alpha` entered only `alpha`, and `enters-beta` only `beta`, and both held.
-    fn measured(source: &str) -> (Touched, BTreeMap<String, Steadiness>) {
+    fn measured(source: &str) -> Measurement {
         let items: Vec<Item> = crate::instrument::items(PATH, source.as_bytes(), 0)
             .expect("the measured file parses")
             .into_iter()
@@ -981,39 +1228,46 @@ pub fn beta(x: u8) -> u8 {
             ("enters-alpha".to_owned(), Steadiness::Held),
             ("enters-beta".to_owned(), Steadiness::Held),
         ]);
-        (touched, standing)
+        Measurement::of(
+            Parts {
+                toolchain: "rustc",
+                survey: &surveyed(&[(PATH, source)]),
+                inputs: &Inputs::default(),
+                environment: &BTreeMap::new(),
+                touched: &touched,
+                standing: &standing,
+            },
+            [("demo", source)],
+        )
+    }
+
+    fn surveyed(files: &[(&str, &str)]) -> Survey {
+        Survey {
+            rules: "rules".to_owned(),
+            files: files
+                .iter()
+                .map(|(path, text)| {
+                    (
+                        (*path).to_owned(),
+                        Surveyed {
+                            sha256: crate::id::digest(text.as_bytes()),
+                            executable: false,
+                        },
+                    )
+                })
+                .collect(),
+            passed_over: BTreeMap::new(),
+        }
     }
 
     fn now() -> BTreeSet<String> {
         BTreeSet::from(["enters-alpha".to_owned(), "enters-beta".to_owned()])
     }
 
-    fn shadows_of(source: &str) -> BTreeMap<String, Shadows> {
-        BTreeMap::from([("demo".to_owned(), Shadows::of([source]))])
-    }
-
-    fn deciding(
-        (touched, standing): &(Touched, BTreeMap<String, Steadiness>),
-        shadows: &BTreeMap<String, Shadows>,
-        now: &BTreeSet<String>,
-        changes: &[Changed<'_>],
-    ) -> Selection {
-        decide(
-            &Measured {
-                touched,
-                standing,
-                shadows,
-            },
-            now,
-            changes,
-        )
-    }
-
     fn selected(old: &str, new: &str) -> Selection {
         let digest = crate::id::digest(old.as_bytes());
-        deciding(
+        decide(
             &measured(old),
-            &shadows_of(old),
             &now(),
             &[Changed::read(PATH, &digest, Some(old), Some(new))],
         )
@@ -1170,9 +1424,8 @@ pub fn beta(x: u8) -> u8 {
 
     #[test]
     fn measured_bytes_that_are_not_the_measured_ones_prove_nothing() {
-        let selection = deciding(
+        let selection = decide(
             &measured(MEASURED),
-            &shadows_of(MEASURED),
             &now(),
             &[Changed::read(PATH, "0000", Some(MEASURED), Some(MEASURED))],
         );
@@ -1210,23 +1463,23 @@ pub fn beta(x: u8) -> u8 {
                 },
             ),
         ] {
-            let selection = deciding(&measurement, &shadows_of(MEASURED), &now(), &[change]);
+            let selection = decide(&measurement, &now(), &[change]);
             assert_eq!(everything(&selection), Some(&expected), "{selection:?}");
         }
     }
 
     #[test]
     fn every_target_that_exists_now_is_decided_and_only_those() {
-        let (touched, mut standing) = measured(MEASURED);
-        standing.insert(
-            "enters-beta".to_owned(),
-            Steadiness::NotMeasured(Unmeasured::OtherTests),
-        );
+        let mut measurement = measured(MEASURED);
+        if let Some(beta) = measurement.targets.get_mut("enters-beta") {
+            beta.standing = Standing::NotMeasured {
+                why: Unmeasured::OtherTests,
+            };
+        }
         let now = BTreeSet::from(["enters-beta".to_owned(), "added-since".to_owned()]);
         let digest = crate::id::digest(MEASURED.as_bytes());
-        let selection = deciding(
-            &(touched, standing),
-            &shadows_of(MEASURED),
+        let selection = decide(
+            &measurement,
             &now,
             &[Changed::read(PATH, &digest, Some(MEASURED), Some(MEASURED))],
         );
@@ -1242,9 +1495,9 @@ pub fn beta(x: u8) -> u8 {
         );
         assert_eq!(
             selection.decided().get("enters-beta"),
-            Some(&Decided::Run(Why::Unestablished(Steadiness::NotMeasured(
-                Unmeasured::OtherTests
-            ))))
+            Some(&Decided::Run(Why::Unestablished(Standing::NotMeasured {
+                why: Unmeasured::OtherTests
+            })))
         );
     }
 
@@ -1325,5 +1578,126 @@ pub fn beta(x: u8) -> u8 {
             "a `use` inside a changed body can shadow what the body calls: {:?}",
             selected(MEASURED, &local)
         );
+    }
+
+    fn found(
+        measured: &Measurement,
+        survey: &Survey,
+        vars: &[(&str, &str)],
+    ) -> Result<Vec<Difference>, Everything> {
+        let vars: BTreeMap<String, String> = vars
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        differences(
+            measured,
+            &Now {
+                toolchain: "rustc",
+                survey,
+                environment: &BTreeMap::new(),
+                vars: &vars,
+            },
+        )
+    }
+
+    #[test]
+    fn the_files_that_differ_are_every_edit_every_mode_change_and_every_file_added_or_gone() {
+        let mut measured = measured(MEASURED);
+        measured.survey = surveyed(&[(PATH, MEASURED), ("run.sh", "x"), ("gone.txt", "y")]);
+        let mut survey = surveyed(&[(PATH, "edited"), ("run.sh", "x"), ("new.txt", "z")]);
+        if let Some(script) = survey.files.get_mut("run.sh") {
+            script.executable = true;
+        }
+        assert_eq!(
+            found(&measured, &survey, &[]),
+            Ok(vec![
+                Difference::Whole {
+                    path: "gone.txt".to_owned()
+                },
+                Difference::Whole {
+                    path: "new.txt".to_owned()
+                },
+                Difference::Edited {
+                    path: "run.sh".to_owned()
+                },
+                Difference::Edited {
+                    path: PATH.to_owned()
+                },
+            ]),
+            "a file made runnable with the same bytes changed for a test that runs it"
+        );
+        assert_eq!(
+            found(&measured, &measured.survey.clone(), &[]),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn what_the_build_read_beyond_the_tree_is_held_to_the_measurement() {
+        let measured = measured(MEASURED);
+        let same = measured.survey.clone();
+        let mut toolchain = measured.clone();
+        toolchain.toolchain = "rustc 1.0".to_owned();
+        assert!(matches!(
+            found(&toolchain, &same, &[]),
+            Err(Everything::Toolchain { .. })
+        ));
+        let mut rules = same.clone();
+        rules.rules = "other".to_owned();
+        assert_eq!(found(&measured, &rules, &[]), Err(Everything::Rules));
+        let mut selected = measured.clone();
+        selected
+            .environment
+            .insert("LANG".to_owned(), "C".to_owned());
+        assert_eq!(
+            found(&selected, &same, &[]),
+            Err(Everything::Environment {
+                name: "LANG".to_owned()
+            }),
+            "a variable the run selects set on one side only"
+        );
+        let mut compiled = measured.clone();
+        compiled
+            .inputs
+            .env
+            .insert("GREETING".to_owned(), Some("hello".to_owned()));
+        compiled
+            .inputs
+            .env
+            .insert("CARGO_MANIFEST_DIR".to_owned(), Some("/copy".to_owned()));
+        assert_eq!(
+            found(&compiled, &same, &[("GREETING", "hello")]),
+            Ok(Vec::new()),
+            "cargo's own variables follow the manifests and the copy's path"
+        );
+        assert_eq!(
+            found(&compiled, &same, &[("GREETING", "bye")]),
+            Err(Everything::Compiled {
+                name: "GREETING".to_owned()
+            })
+        );
+        let directory = tempfile::tempdir().expect("tempdir");
+        let dependency = directory.path().join("dep.rs");
+        std::fs::write(&dependency, "pub fn f() {}").expect("write");
+        let mut outside = measured.clone();
+        let name = dependency.display().to_string();
+        outside
+            .inputs
+            .outside
+            .insert(name.clone(), crate::id::digest(b"pub fn f() {}"));
+        assert_eq!(found(&outside, &same, &[]), Ok(Vec::new()));
+        std::fs::write(&dependency, "pub fn f() { g() }").expect("write");
+        assert_eq!(
+            found(&outside, &same, &[]),
+            Err(Everything::Outside { path: name })
+        );
+        let mut linked = same;
+        linked
+            .passed_over
+            .insert("fixtures/current".to_owned(), Some("v2".to_owned()));
+        assert!(matches!(
+            found(&measured, &linked, &[]),
+            Err(Everything::Irregular { .. })
+        ));
     }
 }

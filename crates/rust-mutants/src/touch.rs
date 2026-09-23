@@ -454,7 +454,17 @@ pub enum Steadiness {
 }
 
 /// Why a control established nothing about whether a target's baseline reach holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum Unmeasured {
     /// The control's process could not record what its guards reached.
     Unrecorded,

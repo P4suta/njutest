@@ -383,6 +383,8 @@ pub struct Session {
     written_by_a_test: Vec<Drift>,
     /// The digest of the pristine sources every unit of this build compiled.
     closure: String,
+    /// What the build read that no survey of the tree sees.
+    inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
 }
@@ -448,6 +450,12 @@ impl Session {
     #[must_use]
     pub fn closure(&self) -> &str {
         &self.closure
+    }
+
+    /// What the build read that no survey of the tree sees: files outside the copy, and the variables the compiler read.
+    #[must_use]
+    pub const fn inputs(&self) -> &crate::select::Inputs {
+        &self.inputs
     }
 
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.

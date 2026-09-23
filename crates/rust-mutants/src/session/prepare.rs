@@ -72,6 +72,41 @@ pub(super) fn pristine(
 }
 
 /// The digest of the pristine sources every unit of the build compiled.
+/// What the build read that no survey of the tree sees: every file outside the copy and outside the build's own output, and every variable the compiler read.
+fn inputs_of(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+) -> Result<crate::select::Inputs, SessionError> {
+    let mut inputs = crate::select::Inputs::default();
+    for unit in &checked.units {
+        for path in &unit.inputs {
+            if path.starts_with(workspace.snapshot.dir())
+                || path.starts_with(workspace.target_dir())
+            {
+                continue;
+            }
+            let name = path
+                .to_str()
+                .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?
+                .to_owned();
+            if let std::collections::btree_map::Entry::Vacant(entry) = inputs.outside.entry(name) {
+                let bytes =
+                    std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
+                        path: path.clone(),
+                        source,
+                    })?;
+                entry.insert(crate::id::digest(&bytes));
+            }
+        }
+        inputs.env.extend(
+            unit.env
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone())),
+        );
+    }
+    Ok(inputs)
+}
+
 fn closure_of(
     workspace: &Workspace,
     checked: &crate::cargo::Compiled,
@@ -457,7 +492,11 @@ fn gated(
 ) -> Result<Gated, EngineError> {
     let pristine_phase = trace.phase("pristine");
     let checked = gate(workspace, options, cancel)?;
-    let closure = closure_of(workspace, &checked)?;
+    let read = Digested {
+        closure: closure_of(workspace, &checked)?,
+        inputs: inputs_of(workspace, &checked)?,
+        manifests: manifests_of(workspace)?,
+    };
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -476,13 +515,20 @@ fn gated(
         trace,
     )?;
     discover_phase.end();
-    Ok(Gated { discovery, closure })
+    Ok(Gated { discovery, read })
 }
 
 /// What the gate established: what there is to mutate, and the digest of everything the build read.
 struct Gated {
     discovery: discover::Discovery,
+    read: Digested,
+}
+
+/// What the build read, as digests a later run or a selection compares against.
+struct Digested {
     closure: String,
+    inputs: crate::select::Inputs,
+    manifests: String,
 }
 
 /// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
@@ -533,8 +579,7 @@ pub fn prepare(
 ) -> Result<Session, EngineError> {
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
-    let Gated { discovery, closure } = gated(&workspace, options, cancel, &trace)?;
-    let manifests = manifests_of(&workspace)?;
+    let Gated { discovery, read } = gated(&workspace, options, cancel, &trace)?;
     let (sources, placements, eligible) = selection_plan(&workspace, &discovery, options, &trace)?;
     let asking = crate::prove::Asking {
         workspace: &workspace,
@@ -542,7 +587,7 @@ pub fn prepare(
         sources: &sources,
         options,
     };
-    let remembered = remembering(options, &closure, &manifests, &workspace);
+    let remembered = remembering(options, &read.closure, &read.manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
     let Instrumented {
@@ -574,8 +619,8 @@ pub fn prepare(
         accepted: &validated.accepted,
         narrowing: &narrowing,
         items: item_count(&item_catalog)?,
-        closure: &closure,
-        manifests: &manifests,
+        closure: &read.closure,
+        manifests: &read.manifests,
         asked: options.touch,
         last_build: &last_build,
         options,
@@ -604,8 +649,9 @@ pub fn prepare(
             tests_started: 0,
         }),
         written_by_a_test,
-        closure,
-        manifests,
+        closure: read.closure,
+        inputs: read.inputs,
+        manifests: read.manifests,
         executions: std::sync::Mutex::new(0),
         mutant_timeout: options.mutant_timeout,
         mutant_steps: options.mutant_steps,
