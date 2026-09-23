@@ -90,6 +90,16 @@ impl Seen {
                 .is_some_and(|held| held.contains(&index))
     }
 
+    /// Every index anything of this target reported, whichever thread reported it.
+    #[must_use]
+    pub fn union(&self) -> BTreeSet<u32> {
+        self.tests
+            .values()
+            .flat_map(|held| held.iter().copied())
+            .chain(self.loose.iter().copied())
+            .collect()
+    }
+
     /// The named tests that reported `index`, in name order.
     #[must_use]
     pub fn who(&self, index: u32) -> Vec<String> {
@@ -111,6 +121,23 @@ pub struct Touches {
     pub bodies: Seen,
     /// The mutations each thread saw its guard's two branches differ over.
     pub infected: Seen,
+}
+
+/// What each test that passed reported, with everything a thread no passing test names reported folded into `loose`.
+#[must_use]
+pub fn attributed(recorded: Seen, ran: &[String]) -> Seen {
+    let mut held = Seen {
+        loose: recorded.loose,
+        ..Seen::default()
+    };
+    for (thread, reported) in recorded.tests {
+        if ran.iter().any(|test| test == &thread) {
+            held.tests.extend([(thread, reported)]);
+        } else {
+            held.loose.extend(reported);
+        }
+    }
+    held
 }
 
 /// Every touch the log records, gathered by the thread that made it.
@@ -261,6 +288,123 @@ pub struct TargetTouches {
     pub infected: Seen,
     /// Every test the baseline ran, which is what a report nothing could attribute is about and what "all of them" counts against.
     pub ran: Vec<String>,
+}
+
+impl TargetTouches {
+    /// What one whole-target process's guards recorded, attributed to the tests it passed.
+    #[must_use]
+    pub fn of(recorded: Touches, ran: &[String]) -> Self {
+        Self {
+            reached: attributed(recorded.reached, ran),
+            bodies: attributed(recorded.bodies, ran),
+            infected: attributed(recorded.infected, ran),
+            ran: ran.to_vec(),
+        }
+    }
+}
+
+/// What one kind of report a control made that its baseline did not, and what the baseline made that the control did not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Moved {
+    /// What only the control reported.
+    pub gained: BTreeSet<u32>,
+    /// What only the baseline reported.
+    pub lost: BTreeSet<u32>,
+}
+
+impl Moved {
+    /// What moved between the two unions.
+    fn between(baseline: &Seen, control: &Seen) -> Self {
+        let (before, after) = (baseline.union(), control.union());
+        Self {
+            gained: after.difference(&before).copied().collect(),
+            lost: before.difference(&after).copied().collect(),
+        }
+    }
+
+    /// Whether the two unions were the same.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.gained.is_empty() && self.lost.is_empty()
+    }
+}
+
+/// How a whole target's reach on a control differed from its reach on the baseline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ReachMoved {
+    /// The mutant sites.
+    pub reached: Moved,
+    /// The branch bodies entered.
+    pub bodies: Moved,
+    /// The mutations a guard saw its two branches differ over.
+    pub infected: Moved,
+}
+
+/// How a control's per-target unions differ from the baseline's, or nothing where all three agree; that both passed the same tests is the caller's premise (ADR 0025).
+#[must_use]
+pub fn unions_differ(baseline: &TargetTouches, control: &TargetTouches) -> Option<ReachMoved> {
+    let moved = ReachMoved {
+        reached: Moved::between(&baseline.reached, &control.reached),
+        bodies: Moved::between(&baseline.bodies, &control.bodies),
+        infected: Moved::between(&baseline.infected, &control.infected),
+    };
+    if moved.reached.is_empty() && moved.bodies.is_empty() && moved.infected.is_empty() {
+        return None;
+    }
+    Some(moved)
+}
+
+/// What an original-code control of one whole target established about whether its baseline reach holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    variant_size_differences,
+    reason = "a moved reach carries what moved and the other two carry nothing or one closed \
+              reason; boxing it moves the difference behind a pointer rather than removing it"
+)]
+pub enum Steadiness {
+    /// A control that passed the tests the baseline passed reached exactly what the baseline did.
+    Held,
+    /// A control that passed the tests the baseline passed reached something else.
+    Moved(ReachMoved),
+    /// Nothing about it could be compared, and why.
+    NotMeasured(Unmeasured),
+}
+
+/// Why a control established nothing about whether a target's baseline reach holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Unmeasured {
+    /// The control's process could not record what its guards reached.
+    Unrecorded,
+    /// The control's record did not read back.
+    Unreadable,
+    /// The control did not pass, so its reach is the reach of a failing run.
+    ControlFailed,
+    /// The control passed other tests than the baseline did, so its reach is the reach of other tests.
+    OtherTests,
+    /// The baseline recorded nothing for the target to be compared against.
+    NoBaseline,
+    /// The baseline passed only when run again in the directory its first attempt left, so it did not run under the conditions a control does.
+    BaselineRetried,
+    /// The tests one of the two runs was read as passing do not come to its own summary's count, so which tests passed is the parser's answer and not the harness's.
+    Unparsed,
+}
+
+impl Unmeasured {
+    /// The name a report spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Unrecorded => "unrecorded",
+            Self::Unreadable => "unreadable",
+            Self::ControlFailed => "control-failed",
+            Self::OtherTests => "other-tests",
+            Self::NoBaseline => "no-baseline",
+            Self::BaselineRetried => "baseline-retried",
+            Self::Unparsed => "unparsed",
+        }
+    }
 }
 
 /// Which of a target's tests could have noticed one mutation.

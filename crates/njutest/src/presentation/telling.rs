@@ -261,6 +261,12 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             "NJ-HOLLOW-TARGET",
             "this test target noticed none of the changes it was put to",
         ),
+        FindingKind::UnstableBaseline => (
+            Severity::Limitation,
+            "NJ-UNSTABLE-BASELINE",
+            "this test target reached different code on two runs of the same passing tests, \
+             so every proof that removed a run because of what it reached is unfounded",
+        ),
         FindingKind::SurvivingMutant if unreached => (
             Severity::Gap,
             "NJ-UNREACHED",

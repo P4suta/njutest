@@ -61,9 +61,12 @@ pub const RESOURCE_NOT_STOPPED: &str = "resource-not-stopped";
 /// The configuration named a seam to watch and this run could not put an interposer in front of it, so nothing is claimed about what goes past it.
 pub const SEAM_NOT_WATCHED: &str = "seam-not-watched";
 
+/// A target's baseline was measured and no original-code control over the same passing tests recorded what it reached, so whether its reach is a function of the target is not known.
+pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 19] = [
+pub const ALL: [&str; 20] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -83,4 +86,5 @@ pub const ALL: [&str; 19] = [
     GENERATION_CANDIDATE_NOT_KEPT,
     RESOURCE_NOT_STOPPED,
     SEAM_NOT_WATCHED,
+    DRIFT_NOT_MEASURED,
 ];
