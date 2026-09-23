@@ -144,6 +144,8 @@ pub struct Spec {
     /// A private side-channel file whose appearance asks the supervisor to stop the declared process set.
     /// The execution layer validates its contents before drawing any conclusion.
     pub(crate) stop_file: Option<PathBuf>,
+    /// A private side-channel file the child rewrites as it makes progress, which turns [`Spec::timeout`] into a ceiling and ends the run early only when the file stays unchanged for a whole quiet window.
+    pub(crate) progress: Option<Progress>,
     /// Test-only terminal ownership fault selected explicitly by the composition root.
     reaping: Reaping,
 }
@@ -164,6 +166,7 @@ impl Spec {
             output_limit: None,
             structured_stdout: None,
             stop_file: None,
+            progress: None,
             reaping: Reaping::Normal,
         }
     }
@@ -173,6 +176,15 @@ impl Spec {
     pub const fn simulate_unreapable_child(&mut self) {
         self.reaping = Reaping::SimulatedUnreapable;
     }
+}
+
+/// A file whose content changes whenever the child makes progress, and how long it may go unchanged.
+#[derive(Debug, Clone)]
+pub(crate) struct Progress {
+    /// The file the child rewrites.
+    pub(crate) path: PathBuf,
+    /// How long the file may stay unchanged before the run is [`Termination::Stalled`].
+    pub(crate) quiet: Duration,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -425,6 +437,8 @@ pub enum Termination {
     Exited(ProcessExit),
     /// The configured wall-clock bound expired and the supervised process set was ended.
     TimedOut,
+    /// The progress file stayed unchanged for the whole quiet window and the supervised process set was ended.
+    Stalled,
     /// An execution-specific monitor observed its stop request and the supervised process set was ended.
     StoppedByMonitor,
     /// The execution-specific monitor could not establish whether a valid stop request existed.
@@ -470,6 +484,7 @@ impl Termination {
             Self::Exited(exit) => exit.conventional_code(),
             Self::NotStarted { .. }
             | Self::TimedOut
+            | Self::Stalled
             | Self::StoppedByMonitor
             | Self::Cancelled { .. }
             | Self::WaitFailed { .. }
@@ -485,9 +500,11 @@ impl Termination {
                 Some(RunFailure::Runner(error))
             }
             Self::MonitorFailed { failure } => Some(RunFailure::Monitor(failure)),
-            Self::Exited(_) | Self::TimedOut | Self::StoppedByMonitor | Self::Cancelled { .. } => {
-                None
-            }
+            Self::Exited(_)
+            | Self::TimedOut
+            | Self::Stalled
+            | Self::StoppedByMonitor
+            | Self::Cancelled { .. } => None,
         }
     }
 }
@@ -544,6 +561,7 @@ impl RunResult {
             Termination::Exited(exit) => exit.signal(),
             Termination::NotStarted { .. }
             | Termination::TimedOut
+            | Termination::Stalled
             | Termination::StoppedByMonitor
             | Termination::MonitorFailed { .. }
             | Termination::Cancelled { .. }
@@ -612,6 +630,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             deadline,
             cancel,
             monitor: spec.stop_file.as_deref(),
+            progress: spec.progress.as_ref(),
         },
     );
     complete(started, running, outcome)
@@ -646,6 +665,7 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
     let duration = started.elapsed();
     let process_termination = match outcome {
         Exit::TimedOut => Termination::TimedOut,
+        Exit::Stalled => Termination::Stalled,
         Exit::StoppedByMonitor => Termination::StoppedByMonitor,
         Exit::MonitorFailed(failure) => Termination::MonitorFailed { failure },
         Exit::Cancelled => Termination::Cancelled { started: true },
@@ -1249,6 +1269,8 @@ enum Exit {
     WaitFailed(io::Error),
     /// The wall-clock deadline expired and the declared process set was ended.
     TimedOut,
+    /// The progress file went unchanged for its quiet window and the declared process set was ended.
+    Stalled,
     /// The caller asked the declared process set to stop.
     Cancelled,
     /// An execution-specific monitor asked the declared process set to stop.
@@ -1267,10 +1289,131 @@ struct Stops<'a> {
     deadline: Option<Instant>,
     cancel: &'a Cancel,
     monitor: Option<&'a Path>,
+    progress: Option<&'a Progress>,
+}
+
+/// What the wait loop last saw of the progress file, and when it last saw it change.
+struct Watching<'a> {
+    progress: &'a Progress,
+    seen: Option<Vec<u8>>,
+    moved: Instant,
+}
+
+impl<'a> Watching<'a> {
+    const fn of(progress: &'a Progress, started: Instant) -> Self {
+        Self {
+            progress,
+            seen: None,
+            moved: started,
+        }
+    }
+
+    /// Looks at the file and returns the moment it counts as stalled; a failed read is not a change, since a child that is not writing never causes one.
+    fn look(&mut self, now: Instant) -> Option<Instant> {
+        match read_between_writes(&self.progress.path) {
+            Ok(content) if self.seen.as_ref() != Some(&content) => {
+                self.seen = Some(content);
+                self.moved = now;
+            }
+            Ok(_unchanged) => {}
+            Err(_a_failed_read_is_not_a_change) => {}
+        }
+        self.moved.checked_add(self.progress.quiet)
+    }
+}
+
+/// The most a side-channel file the supervised process writes may hold before reading it is refused.
+pub(crate) const SIDE_CHANNEL_LIMIT: u64 = 16 * 1024;
+
+/// How many times a read the writer's lock refused is tried again before it counts as failed.
+const LOCKED_READ_ATTEMPTS: u32 = 16;
+
+/// Reads a side-channel file, trying again while the writer's lock refuses it, since the lock is only held for one write.
+fn read_between_writes(path: &Path) -> io::Result<Vec<u8>> {
+    for _refused in 1..LOCKED_READ_ATTEMPTS {
+        match read_side_channel(path) {
+            Err(error) if held_by_writer(&error) => thread::sleep(Duration::from_millis(1)),
+            read => return read,
+        }
+    }
+    read_side_channel(path)
+}
+
+/// Reads a file the supervised process can replace, refusing a link, anything but a regular file, and more than [`SIDE_CHANNEL_LIMIT`] bytes, and never blocking to open it.
+///
+/// # Errors
+/// Returns the operating system's failure, or `InvalidData` for a file that is not regular or is too large.
+pub(crate) fn read_side_channel(path: &Path) -> io::Result<Vec<u8>> {
+    let file = open_side_channel(path)?;
+    if !file.metadata()?.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the side channel is not a regular file",
+        ));
+    }
+    let mut content = Vec::new();
+    let read = file
+        .take(SIDE_CHANNEL_LIMIT.saturating_add(1))
+        .read_to_end(&mut content)?;
+    let within = match u64::try_from(read) {
+        Ok(length) => length <= SIDE_CHANNEL_LIMIT,
+        Err(_wider_than_any_file) => false,
+    };
+    if !within {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the side channel is larger than it may be",
+        ));
+    }
+    Ok(content)
+}
+
+#[cfg(unix)]
+fn open_side_channel(path: &Path) -> io::Result<std::fs::File> {
+    let descriptor = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::CLOEXEC
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::NONBLOCK,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    Ok(std::fs::File::from(descriptor))
+}
+
+#[cfg(windows)]
+fn open_side_channel(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(unix)]
+const fn held_by_writer(_error: &io::Error) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn held_by_writer(error: &io::Error) -> bool {
+    match (
+        error.raw_os_error(),
+        i32::try_from(windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION),
+    ) {
+        (Some(code), Ok(violation)) => code == violation,
+        (None, _) => false,
+        (Some(_), Err(_no_such_code_fits)) => false,
+    }
 }
 
 /// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the declared process set.
 fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stops<'_>) -> Exit {
+    let mut watching = stops
+        .progress
+        .map(|progress| Watching::of(progress, Instant::now()));
     loop {
         match child.exit_observed() {
             Ok(true) => return Exit::Exited,
@@ -1283,14 +1426,17 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
             }
         }
         let now = Instant::now();
-        let remaining = stops.deadline.map(|deadline| {
-            if deadline <= now {
-                Duration::ZERO
-            } else {
-                deadline.duration_since(now)
-            }
-        });
-        let poll = remaining.map_or(POLL_INTERVAL, |remaining| remaining.min(POLL_INTERVAL));
+        let remaining = stops.deadline.map(|deadline| until(deadline, now));
+        let quiet = watching
+            .as_mut()
+            .and_then(|watching| watching.look(now))
+            .map(|stalled| until(stalled, now));
+        let poll = match (remaining, quiet) {
+            (Some(remaining), Some(quiet)) => remaining.min(quiet),
+            (Some(sooner), None) | (None, Some(sooner)) => sooner,
+            (None, None) => POLL_INTERVAL,
+        }
+        .min(POLL_INTERVAL);
         if stops.cancel.is_cancelled() {
             return match terminate(supervisor, child) {
                 Ok(()) => Exit::Cancelled,
@@ -1331,8 +1477,19 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 Err(error) => Exit::SupervisionFailed(error),
             };
         }
+        if quiet.is_some_and(|quiet| quiet.is_zero()) {
+            return match terminate(supervisor, child) {
+                Ok(()) => Exit::Stalled,
+                Err(error) => Exit::SupervisionFailed(error),
+            };
+        }
         thread::sleep(poll);
     }
+}
+
+/// How long from `now` until `moment`, and nothing once it has passed.
+fn until(moment: Instant, now: Instant) -> Duration {
+    moment.saturating_duration_since(now)
 }
 
 enum MonitorState {
@@ -1462,8 +1619,18 @@ pub const SUPERVISION_BOUNDARY: SupervisionBoundary = sys::SUPERVISION_BOUNDARY;
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use njutest_devkit::result::ResultState::Refused;
     use njutest_devkit::result::{ResultState::Returned, result_state};
 
+    #[cfg(unix)]
+    use std::time::Duration;
+
+    #[cfg(unix)]
+    use super::{
+        Bound, Cancel, ProcessExit, Progress, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
+        read_side_channel, run,
+    };
     use super::{MonitorState, classify_monitor, inspect_monitor};
 
     #[test]
@@ -1520,5 +1687,155 @@ mod tests {
             "refused",
         )));
         assert!(matches!(failure, MonitorState::InspectFailed(_)));
+    }
+
+    #[cfg(unix)]
+    fn watched(script: &str, quiet: Duration, ceiling: Duration) -> Option<RunResult> {
+        let directory = tempfile::tempdir();
+        assert_eq!(result_state(&directory), Returned, "{directory:?}");
+        let Ok(directory) = directory else {
+            return None;
+        };
+        let file = directory.path().join("progress");
+        let mut spec = Spec::new(
+            [
+                "sh".to_owned(),
+                "-c".to_owned(),
+                script.replace("PROGRESS", &file.display().to_string()),
+            ],
+            Bound::After(ceiling),
+        );
+        spec.progress = Some(Progress { path: file, quiet });
+        Some(run(&spec, &Cancel::new()))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_keeps_moving_outlives_its_quiet_window() {
+        let Some(result) = watched(
+            "i=0; while [ $i -lt 30 ]; do echo $i > PROGRESS; i=$((i+1)); sleep 0.05; done",
+            Duration::from_millis(500),
+            Duration::from_secs(20),
+        ) else {
+            return;
+        };
+        assert!(
+            matches!(
+                result.termination,
+                Termination::Exited(ProcessExit::Code(0))
+            ),
+            "a child rewriting its progress every fifty milliseconds for a second and a half \
+             is never quiet for half of one: {:?} after {:?}",
+            result.termination,
+            result.duration
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_goes_quiet_is_stalled_long_before_its_ceiling() {
+        let Some(result) = watched(
+            "echo 1 > PROGRESS; sleep 30",
+            Duration::from_millis(300),
+            Duration::from_secs(20),
+        ) else {
+            return;
+        };
+        assert!(
+            matches!(result.termination, Termination::Stalled),
+            "{:?}",
+            result.termination
+        );
+        assert!(
+            result.duration < Duration::from_secs(10),
+            "{:?}",
+            result.duration
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rewriting_the_same_progress_is_not_moving() {
+        let Some(result) = watched(
+            "while true; do echo 1 > PROGRESS.next; mv PROGRESS.next PROGRESS; sleep 0.05; done",
+            Duration::from_millis(300),
+            Duration::from_secs(20),
+        ) else {
+            return;
+        };
+        assert!(
+            matches!(result.termination, Termination::Stalled),
+            "{:?}",
+            result.termination
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_never_stops_moving_is_ended_by_its_ceiling() {
+        let Some(result) = watched(
+            "i=0; while true; do echo $i > PROGRESS; i=$((i+1)); sleep 0.05; done",
+            Duration::from_secs(5),
+            Duration::from_millis(800),
+        ) else {
+            return;
+        };
+        assert!(
+            matches!(result.termination, Termination::TimedOut),
+            "{:?}",
+            result.termination
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_swaps_its_progress_for_a_fifo_is_stalled_rather_than_waited_on() {
+        let Some(result) = watched(
+            "rm -f PROGRESS; mkfifo PROGRESS; sleep 30",
+            Duration::from_millis(300),
+            Duration::from_secs(20),
+        ) else {
+            return;
+        };
+        assert!(
+            matches!(result.termination, Termination::Stalled),
+            "opening a FIFO to read it would block the supervisor: {:?}",
+            result.termination
+        );
+        assert!(
+            result.duration < Duration::from_secs(10),
+            "{:?}",
+            result.duration
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_side_channel_is_read_only_as_a_small_regular_file() {
+        let directory = tempfile::tempdir();
+        assert_eq!(result_state(&directory), Returned, "{directory:?}");
+        let Ok(directory) = directory else {
+            return;
+        };
+        let regular = directory.path().join("regular");
+        let large = directory.path().join("large");
+        assert_eq!(
+            SIDE_CHANNEL_LIMIT,
+            16 * 1024,
+            "the large file is one byte over it"
+        );
+        let link = directory.path().join("link");
+        let written = std::fs::write(&regular, b"state")
+            .and_then(|()| std::fs::write(&large, vec![b'x'; 16 * 1024 + 1]))
+            .and_then(|()| std::os::unix::fs::symlink(&regular, &link));
+        assert_eq!(result_state(&written), Returned, "{written:?}");
+
+        assert_eq!(
+            read_side_channel(&regular).map_err(|error| error.kind()),
+            Ok(b"state".to_vec())
+        );
+        assert_eq!(result_state(&read_side_channel(&large)), Refused);
+        assert_eq!(result_state(&read_side_channel(&link)), Refused);
+        assert_eq!(result_state(&read_side_channel(directory.path())), Refused);
     }
 }

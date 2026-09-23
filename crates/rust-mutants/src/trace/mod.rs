@@ -97,6 +97,11 @@ impl ExecRecord {
                 .timeout
                 .map(|timeout| trace_milliseconds(timeout, "timeout"))
                 .transpose()?,
+            quiet_ms: spec
+                .progress
+                .as_ref()
+                .map(|progress| trace_milliseconds(progress.quiet, "quiet window"))
+                .transpose()?,
             stopped: crate::execute::Stopped::of(result),
             duration_ms: trace_milliseconds(result.duration, "measured process")?,
             output_bytes: 0,
