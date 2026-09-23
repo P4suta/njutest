@@ -294,3 +294,71 @@ fn rewrite(drawn: &str) {
         .to_owned();
     std::fs::write(&path, format!("{before}{fence}\n{drawn}\n```{after}")).expect("the README");
 }
+
+/// The run the report belongs to, which `why` is asked about by name.
+fn newest_run(fixture: &Fixture) -> String {
+    njutest::app::reports::pointed_at(fixture.root(), njutest::app::reports::Index::Any)
+        .expect("the index is readable")
+        .expect("the index names a run")
+        .as_str()
+        .to_owned()
+}
+
+#[test]
+fn a_seam_question_a_real_run_recorded_is_one_why_renders_from_its_own_recording() {
+    let fixture = Fixture::copy(FIXTURE);
+    pointed_at_the_provider(&fixture);
+    let output = verify(&fixture);
+    let report = document(&fixture);
+    let row = report["seams"]
+        .as_array()
+        .and_then(|rows| rows.first())
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "the run recorded no seam question, so there is nothing to ask why about: {}",
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            )
+        });
+    let asked = row["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a seam row names its question: {row}"))
+        .to_owned();
+    let capability = row["capability"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a seam row names its capability: {row}"))
+        .to_owned();
+    let seq = row["seq"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("a seam row names which exchange: {row}"));
+
+    let run = newest_run(&fixture);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = njutest::run_from(
+        ["njutest", "why", "--run", &run, "seam", &asked]
+            .into_iter()
+            .map(OsString::from),
+        &environment(&fixture),
+        &mut out,
+        &mut err,
+    );
+    let rendered = njutest_devkit::process::strict_utf8(&out);
+    let complaint = njutest_devkit::process::strict_utf8(&err);
+    assert_eq!(
+        code, 0,
+        "a question the report names is one the recording holds, and `why` reads the \
+         recording: a run that wrote one and cannot explain it has two accounts of \
+         itself.\n{complaint}"
+    );
+    assert!(
+        rendered.contains(&asked),
+        "the answer is about the question that was asked: {rendered}"
+    );
+    assert!(
+        rendered.contains(&format!("observed {capability} #{seq}")),
+        "and the recording it read is about the same exchange the report names, which is the \
+         pairing nothing checked: a hand-built trace proves the reader can read a shape \
+         somebody wrote for it, and says nothing about the shape a run writes. Report says \
+         {capability} #{seq}; rendered:\n{rendered}"
+    );
+}

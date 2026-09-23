@@ -22,6 +22,12 @@ pub const ALREADY_FAILING: &str = "wire-fault-not-attributable";
 /// What a limitation is named when no target passed without a fault, so the suite can answer nothing about one.
 pub const SUITE_NOT_GREEN: &str = "wire-baseline-not-green";
 
+/// What a limitation is named when a caller reached a seam and the exchange did not complete with no fault in place.
+pub const TRANSPORT_FAILED: &str = "wire-transport-incomplete";
+
+/// What a finding is about when a target failed once with a question in place and did not fail again with the same one.
+pub const NOT_REPRODUCED: &str = "wire-fault-not-reproduced";
+
 /// What the phase is asked about.
 #[derive(Debug, Clone, Copy)]
 pub struct Measuring<'a> {
@@ -55,11 +61,13 @@ struct Holes {
     unattributable: usize,
     /// Questions put whose outcome the run could not read.
     unmeasured: Vec<rust_mutants::outcome::Outcome>,
+    /// Questions a target failed with once and did not fail with again.
+    unreproduced: usize,
 }
 
 impl Holes {
     /// Adds one finding per reason that has something to say.
-    fn stated(&self, done: &mut Measured) {
+    fn stated(&self, done: &mut Measured, before: &crate::wire::settle::Before) {
         if self.unput > 0 {
             done.findings.push(Finding::new(
                 FindingKind::NotMeasured,
@@ -79,9 +87,29 @@ impl Holes {
                 &format!(
                     "{} question(s) were put and not one target that answered them was \
                      passing without the fault, so no failure is attributable to it and the \
-                     run says nothing about whether anything would have noticed: fix the \
-                     failing tests and ask again",
-                    self.unattributable
+                     run says nothing about whether anything would have noticed. These were \
+                     failing without one: {}. Fix them and ask again",
+                    self.unattributable,
+                    if before.already_failing().is_empty() {
+                        "nothing the run recorded an outcome for".to_owned()
+                    } else {
+                        before.already_failing().join(", ")
+                    }
+                ),
+            ));
+        }
+        if self.unreproduced > 0 {
+            done.findings.push(Finding::new(
+                FindingKind::NotMeasured,
+                NOT_REPRODUCED,
+                &format!(
+                    "{} question(s) were failed by a target once and not by the same target \
+                     with the same question in place again, so the failure was the target \
+                     rather than the question and the run establishes neither answer: a \
+                     target that fails intermittently will sometimes fail while a question \
+                     is in place, and reading that as a detection reports a finding about \
+                     the code that is a fact about the machine",
+                    self.unreproduced
                 ),
             ));
         }
@@ -151,6 +179,14 @@ where
             || {
                 let put = run(fault);
                 let decision = settle(fault, &put, measuring.before).decision;
+                let decision = match &decision {
+                    SeamDecision::Tests { noticed_by } => {
+                        confirmed(noticed_by, fault, &mut run, measuring.before)
+                    }
+                    SeamDecision::Proved { .. }
+                    | SeamDecision::Unnoticed
+                    | SeamDecision::Unreached => decision,
+                };
                 asked = Some(put);
                 decision
             },
@@ -176,6 +212,11 @@ where
                 {
                     holes.unattributable = holes.unattributable.saturating_add(1);
                 }
+                Some(crate::wire::settle::Asked::Answered(answered))
+                    if answered.iter().any(|one| !one.passed) =>
+                {
+                    holes.unreproduced = holes.unreproduced.saturating_add(1);
+                }
                 Some(crate::wire::settle::Asked::Answered(_none_of_them)) => {
                     holes.unput = holes.unput.saturating_add(1);
                 }
@@ -187,8 +228,38 @@ where
         }
         asked_about(&mut done, measuring, (fault, decision));
     }
-    holes.stated(&mut done);
+    holes.stated(&mut done, measuring.before);
     Ok(done)
+}
+
+/// Whether `noticed_by` fails again with the same question in place, and what that makes of the decision.
+///
+/// Passing without a fault and failing with one is necessary for attribution and is not sufficient.
+/// A target that fails for its own reasons, intermittently, will sometimes fail inside the window where a question was in place, and a run that reads that as a detection reports a finding about the code that is a fact about the machine.
+/// A CI round showed exactly that: a `drop-connection` on one seam came back noticed by the *other* seam's test, which nothing about that seam can reach.
+///
+/// So a detection has to reproduce.
+/// Where it does not, the run establishes nothing rather than claiming either answer: the target was unstable, which is neither a question answered nor a gap the tests could close.
+/// The cost is one more suite run per detection, paid only where a detection is claimed.
+fn confirmed<R>(
+    noticed_by: &str,
+    fault: &Fault,
+    run: &mut R,
+    before: &crate::wire::settle::Before,
+) -> SeamDecision
+where
+    R: FnMut(&Fault) -> crate::wire::settle::Asked,
+{
+    let again = run(fault);
+    match settle(fault, &again, before).decision {
+        SeamDecision::Tests { noticed_by: twice } if twice == noticed_by => {
+            SeamDecision::Tests { noticed_by: twice }
+        }
+        SeamDecision::Tests { .. }
+        | SeamDecision::Proved { .. }
+        | SeamDecision::Unnoticed
+        | SeamDecision::Unreached => SeamDecision::Unreached,
+    }
 }
 
 /// Writes down one question and what became of it, so a finding that names it can be looked up.
@@ -281,6 +352,21 @@ where
             seams: seams.watching.len(),
             recordings: baseline.per_seam.len(),
         });
+    }
+    for one in &seams.watching {
+        let dropped = one.interposer.did_not_complete();
+        if dropped > 0 {
+            done.limitations.push(Limitation::new(
+                TRANSPORT_FAILED,
+                &format!(
+                    "{}: {dropped} caller(s) reached this seam and did not complete an exchange \
+                     with no fault in place, so what a target did with those is about this \
+                     machine rather than about the code. A target that failed for this reason \
+                     was not measured, and is not a test that failed",
+                    one.capability
+                ),
+            ));
+        }
     }
     for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
         for exchange in observed {

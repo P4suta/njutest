@@ -373,7 +373,14 @@ pub enum Stopped {
         exit: ProcessExit,
     },
     /// This machine's wall-clock bound expired.
-    TimedOut,
+    TimedOut {
+        /// How many step boundaries the process had raised, where the run could read its state.
+        ///
+        /// Above zero says the clock ended a computation the allowance would have ended, which is a race this machine won and another would not: the number to change is the allowance, not the bound.
+        /// Zero says the computation was raising no boundary at all, so no allowance could have ended it and the clock is the only instrument there is (ADR 0023).
+        /// `None` says the state could not be read, which is not a count of zero.
+        raised: Option<u64>,
+    },
     /// The caller asked it to stop.
     Cancelled {
         /// Whether a child had started before cancellation was observed.
@@ -479,7 +486,7 @@ pub enum StepProtocolFailure {
 enum StoppedWire {
     NotStarted {},
     Exited { exit: ProcessExit },
-    TimedOut {},
+    TimedOut { raised: Option<u64> },
     Cancelled { started: bool },
     WaitFailed {},
     StepLimitReached { notice: StepLimitNotice },
@@ -495,7 +502,7 @@ impl<'de> serde::Deserialize<'de> for Stopped {
             match <StoppedWire as serde::Deserialize>::deserialize(deserializer)? {
                 StoppedWire::NotStarted {} => Self::NotStarted,
                 StoppedWire::Exited { exit } => Self::Exited { exit },
-                StoppedWire::TimedOut {} => Self::TimedOut,
+                StoppedWire::TimedOut { raised } => Self::TimedOut { raised },
                 StoppedWire::Cancelled { started } => Self::Cancelled { started },
                 StoppedWire::WaitFailed {} => Self::WaitFailed,
                 StoppedWire::StepLimitReached { notice } => Self::StepLimitReached { notice },
@@ -662,7 +669,7 @@ impl Stopped {
         match &result.termination {
             Termination::NotStarted { .. } => Self::NotStarted,
             Termination::Exited(exit) => Self::Exited { exit: *exit },
-            Termination::TimedOut => Self::TimedOut,
+            Termination::TimedOut => Self::TimedOut { raised: None },
             Termination::StoppedByMonitor => Self::StepProtocolFailed {
                 reason: StepProtocolFailure::NoticeMissing {},
             },
@@ -933,6 +940,24 @@ impl ExpectedStep {
         ));
     }
 
+    /// How many boundaries the process had raised when it stopped, from the state it shares.
+    ///
+    /// A clock that ends a computation raising this count ended one the allowance would have ended, which is a race rather than a measurement.
+    /// A clock that ends one raising nothing ended a computation that was not passing through instrumented source at all, and there the clock is the only instrument there is (ADR 0023).
+    /// `None` says the state could not be read, which is not the same as a count of zero.
+    fn raised(&self) -> Option<u64> {
+        let text = match std::fs::read_to_string(&self.state_path) {
+            Ok(text) => text,
+            Err(_the_state_is_not_readable) => return None,
+        };
+        let mut fields = text.trim_end().split('\t');
+        let spent = fields.next_back()?;
+        match spent.parse::<u64>() {
+            Ok(spent) => Some(spent),
+            Err(_the_state_does_not_end_in_a_count) => None,
+        }
+    }
+
     fn read(&self) -> Result<Option<StepLimitNotice>, NoticeError> {
         const MAX_NOTICE_BYTES: usize = 16 * 1024;
         const MAX_NOTICE_BYTES_U64: u64 = 16 * 1024;
@@ -1116,6 +1141,9 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
                 reason: StepProtocolFailure::NoticeMissing {},
             }
         }
+        Ok(None) if matches!(result.termination, Termination::TimedOut) => Stopped::TimedOut {
+            raised: expected.raised(),
+        },
         Ok(None) => Stopped::of(result),
         Err(reason) => Stopped::StepProtocolFailed {
             reason: reason.failure(),
@@ -1135,7 +1163,7 @@ pub const fn outcome_of(
         Stopped::NotStarted | Stopped::WaitFailed | Stopped::StepProtocolFailed { .. } => {
             return Outcome::Errored;
         }
-        Stopped::TimedOut => return Outcome::Waited,
+        Stopped::TimedOut { .. } => return Outcome::Waited,
         Stopped::Cancelled { .. } => return Outcome::NotRun,
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
@@ -2513,7 +2541,7 @@ mod tests {
 
         assert_eq!(
             observed_stop(&result(Termination::TimedOut), Some(&step)),
-            Stopped::TimedOut
+            Stopped::TimedOut { raised: None }
         );
     }
 

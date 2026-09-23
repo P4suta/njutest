@@ -138,7 +138,11 @@ pub enum Reachability {
 
 /// How many times the active mutant's guard may be taken before its process is stopped, when nobody says.
 ///
-/// Fifty million takes of one site is a number a test written by a person does not approach and a loop that cannot terminate passes in about a second, so the ceiling stops an unbounded execution long before the clock would and stops it by a number every machine agrees on.
+/// Fifty million takes of one site is a number a test written by a person does not approach, and every machine agrees on the number itself.
+/// What they do not agree on is what it costs: this was sized for the in-memory counter the durable step protocol replaced, where it passed in about a second.
+/// Measured since, a take is about half a microsecond on one developer machine with the per-take `fsync` lifted out, so fifty million spend about twenty-five seconds against a thirty-second derived floor -- and were 7.3ms each on Windows before that, where they would have spent days.
+/// So the ceiling does not reliably stop an unbounded execution before the clock does, and which of the two answers is a fact about the machine (ADR 0023).
+/// Lowering it is what a project does today; taking the clock out of the decision where the count can answer is what would fix it.
 /// A person who has a test that really does drive one site that hard raises it, and a run that would rather have only the clock sets it to zero.
 pub const DEFAULT_MUTANT_STEPS: u64 = 50_000_000;
 

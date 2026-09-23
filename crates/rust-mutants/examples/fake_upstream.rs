@@ -62,6 +62,24 @@ impl Answer {
     }
 }
 
+/// Answers one caller, and lets that caller's own failure end with that caller.
+///
+/// The wire phase drops connections and cuts answers short on purpose, so a peer gone mid-exchange is the ordinary case for this program.
+/// Propagating either failure ended the accept loop for the rest of the run: the provider stopped answering, and the next target to ask it failed with nothing in the report about why except that its baseline did not pass.
+fn answered(mut stream: std::net::TcpStream, answer: Answer) {
+    let mut heard = [0_u8; 4096];
+    match stream.read(&mut heard) {
+        Ok(0) | Err(_) => return,
+        Ok(_heard_something) => {}
+    }
+    match stream
+        .write_all(&answer.bytes())
+        .and_then(|()| stream.flush())
+    {
+        Ok(()) | Err(_) => {}
+    }
+}
+
 /// Starts the service, tells the run where it is under `names`, and answers until the run says to stop.
 fn serve(answer: Answer, names: &str) -> ExitCode {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
@@ -77,15 +95,7 @@ fn serve(answer: Answer, names: &str) -> ExitCode {
                 return Ok(());
             }
             match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let mut heard = [0_u8; 4096];
-                    let bytes_read = stream.read(&mut heard)?;
-                    if bytes_read == 0 {
-                        continue;
-                    }
-                    stream.write_all(&answer.bytes())?;
-                    stream.flush()?;
-                }
+                Ok((stream, _)) => answered(stream, answer),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(10));
                 }

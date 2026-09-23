@@ -775,7 +775,7 @@ fn a_build_timeout_is_a_not_run_error_and_is_recorded() {
         trace.events().iter().any(|event| matches!(
             &event.payload,
             Payload::Exec { exec }
-                if exec.stopped == rust_mutants::execute::Stopped::TimedOut
+                if matches!(exec.stopped, rust_mutants::execute::Stopped::TimedOut { .. })
         )),
         "that this machine stopped waiting is durable trace evidence, and the record says \
          which of the ways a process can end it was rather than a status beside a flag"
