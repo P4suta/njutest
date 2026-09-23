@@ -304,6 +304,10 @@ pub struct Execution {
     pub jobs: u32,
     /// Test targets never to start, by the stable id a report names them with.
     pub skip_targets: Vec<String>,
+    /// Whether to make the coverage build, which is an independent second opinion rather than the measurement (ADR 0014).
+    /// `false` is the default, because the guards are the measurement and a coverage build is a whole extra compile and run of every target.
+    #[serde(default)]
+    pub coverage: bool,
 }
 
 impl Execution {
@@ -335,6 +339,7 @@ impl Default for Execution {
             build_timeout: None,
             jobs: 0,
             skip_targets: Vec::new(),
+            coverage: false,
         }
     }
 }
@@ -1006,6 +1011,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\" | \"verified-v
 # build_timeout = \"\"            # upper bound for one build; empty = no bound
 # jobs = 0                       # mutation workers; 0 = logical CPUs, capped
 # skip_targets = []              # target ids never to start; reported as a limitation
+# coverage = false                # make the coverage build as a second opinion (ADR 0014)
 
 #[[configuration]]              # a further build to measure; none by default
 # name = \"all-features\"         # what the report calls it; not \"default\", and unique

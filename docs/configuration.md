@@ -34,6 +34,7 @@ timeout = "10m"                 # upper bound for one measurement; Go duration s
 build_timeout = ""              # upper bound for one build; empty = no bound
 jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
 skip_targets = []               # stable target ids never to start; every one is reported
+coverage = false                # also make the coverage build, as a second opinion (ADR 0014)
 
 [[configuration]]               # a further build to measure; none by default
 name = "all-features"           # what the report calls it; not "default", and unique
@@ -119,6 +120,15 @@ A package no member answers to is refused, the way `njutest plan` has always ref
 `[execution] test_binary_args` is how this project's suite runs, and every test process of a run is started with those arguments, the baseline included:
 a baseline taken one way and mutations measured another compares two suites.
 Arguments given after `--` take the place of the ones the file holds rather than adding to them.
+
+`[execution] coverage` asks for the coverage build, which is off.
+
+ADR 0014 is why.
+The guards the instrumenter places are the measurement, so a run needs no coverage build and no `llvm-profdata`, and asking for one adds a whole compile of the workspace and one run of every target to decide something the guards already decided.
+It stays available because an independent second opinion is worth having when the two disagree, and a disagreement between them is a defect in one of them.
+
+`njutest` had this on and unconfigurable, which was neither what the decision says nor something a caller could turn off: two reachability measurements ran and the page describing the run named only one.
+`rust-mutants` has always had it off with `--coverage` and `--no-coverage` beside it.
 
 `[execution] skip_targets` is the narrow escape hatch for a process whose tests inspect the instrumented tree itself, or otherwise fail for the same known reason under every mutation.
 Each entry is the stable target id a report and `njutest plan` name, such as `pkg/test/ui`.

@@ -1474,6 +1474,7 @@ fn prepare(
             mutant_steps: (request.config.execution.steps > 0)
                 .then_some(request.config.execution.steps),
             skip_targets: request.config.execution.skip_targets.clone(),
+            coverage: request.config.execution.coverage,
             ..crate::assure::engine::switches()
         },
         watch.cancel,

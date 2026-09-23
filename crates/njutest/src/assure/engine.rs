@@ -21,7 +21,7 @@ pub const fn switches() -> PrepareOptions {
         verify: true,
         touch: true,
         failing: Failing::Refuse,
-        coverage: true,
+        coverage: false,
         branch_proofs: true,
         max_rounds: rust_mutants::validate::DEFAULT_MAX_ROUNDS,
         build_timeout: None,

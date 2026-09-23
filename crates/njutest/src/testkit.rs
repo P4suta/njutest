@@ -690,6 +690,7 @@ pub fn documented_specimen() -> crate::config::Config {
             build_timeout: Some(Duration::from_mins(15)),
             jobs: 1,
             skip_targets: vec!["demo/lib/demo".to_owned()],
+            coverage: true,
         },
         cache: Cache {
             max_bytes: 5_368_709_120,
