@@ -5,6 +5,7 @@
 
 pub mod across;
 pub mod audit;
+pub mod drift;
 pub mod hollow;
 pub mod html;
 pub mod json;
@@ -1603,6 +1604,8 @@ pub struct BuildPartEvidence {
     findings: Vec<Finding>,
     /// Everything this source does not claim.
     limitations: Vec<Limitation>,
+    /// Whether each target this source's baseline measured held its reach on a control.
+    drift: Vec<drift::Drift>,
 }
 
 impl BuildPartEvidence {
@@ -1626,6 +1629,7 @@ impl BuildPartEvidence {
             mutants: report.mutants.clone(),
             findings,
             limitations: report.limitations.clone(),
+            drift: report.drift.clone(),
         };
         validate_part_evidence(&evidence)?;
         Ok(evidence)
@@ -1647,6 +1651,7 @@ struct BuildPartEvidenceWire {
     mutants: Vec<MutantRecord>,
     findings: Vec<Finding>,
     limitations: Vec<Limitation>,
+    drift: Vec<drift::Drift>,
 }
 
 impl<'de> Deserialize<'de> for BuildPartEvidence {
@@ -1668,6 +1673,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             mutants: wire.mutants,
             findings: wire.findings,
             limitations: wire.limitations,
+            drift: wire.drift,
         };
         validate_part_evidence(&held).map_err(serde::de::Error::custom)?;
         Ok(held)
@@ -4044,6 +4050,13 @@ pub struct MutantRecord {
     pub reuse: Reuse,
 }
 
+/// Whether any target's reach moved between its baseline and a control.
+fn moved(drift: &[drift::Drift]) -> bool {
+    drift
+        .iter()
+        .any(|one| matches!(one, drift::Drift::Moved { .. }))
+}
+
 /// Rebuilds every mutation counter whose source is the durable mutation rows.
 ///
 /// Producers, shard merging, configured-build reconciliation, and the persistence audit all call this function.
@@ -4134,6 +4147,8 @@ pub enum FindingKind {
     HollowTarget,
     /// The suite carried on through a question a seam licensed: a fault nothing noticed.
     WireUnnoticed,
+    /// A target reached something on an original-code control that it did not reach on its baseline, so every proof read off its baseline is unfounded.
+    UnstableBaseline,
 }
 
 /// Which configured-build evidence raised a finding.
@@ -4170,6 +4185,7 @@ impl FindingKind {
             Self::UndefinedBehaviour => "undefined-behaviour",
             Self::HollowTarget => "hollow-target",
             Self::WireUnnoticed => "wire-unnoticed",
+            Self::UnstableBaseline => "unstable-baseline",
         }
     }
 
@@ -4186,7 +4202,8 @@ impl FindingKind {
             | Self::NotMeasured
             | Self::UnmatchedAcceptance
             | Self::HollowTarget
-            | Self::WireUnnoticed => false,
+            | Self::WireUnnoticed
+            | Self::UnstableBaseline => false,
         }
     }
 }
@@ -4437,6 +4454,8 @@ pub struct BuildReport {
     pub findings: Vec<Finding>,
     /// Everything it is not claiming.
     pub limitations: Vec<Limitation>,
+    /// Whether each target its baseline measured reached, on an original-code control, what it reached on that baseline.
+    pub drift: Vec<drift::Drift>,
 }
 
 impl BuildReport {
@@ -4473,6 +4492,7 @@ impl BuildReport {
             mutants: Vec::new(),
             findings: Vec::new(),
             limitations: Vec::new(),
+            drift: Vec::new(),
         }
     }
 
@@ -4505,7 +4525,7 @@ impl BuildReport {
         }
         let observed = self.accounting.targets.passed > 0;
         let asked = self.accounting.mutants.executed > 0;
-        if !observed || !asked {
+        if !observed || !asked || moved(&self.drift) {
             return Verdict::Insufficient;
         }
         if self.scope.shard.is_some() {
@@ -5868,6 +5888,7 @@ impl Report {
                         .parts
                         .iter()
                         .flat_map(|part| part.limitations.iter().cloned())
+                        .chain(merged_drift_limitation(build))
                 })
                 .collect(),
         })
@@ -6182,7 +6203,8 @@ fn shard_verdict(builds: &ShardBuildLedger, global_findings: &[Finding]) -> Verd
     });
     let no_findings =
         global_findings.is_empty() && builds.iter().all(|build| build.source.findings.is_empty());
-    if answered && observed && no_findings {
+    let steady = builds.iter().all(|build| !moved(&build.source.drift));
+    if answered && observed && no_findings && steady {
         Verdict::Partial
     } else {
         Verdict::Insufficient
@@ -6386,6 +6408,7 @@ fn projected_findings(
         .collect();
     let mut projected = global_findings.to_vec();
     for build in builds.iter() {
+        projected.extend(merged_drift_findings(build));
         for part in build.parts.iter() {
             for finding in &part.findings {
                 let answered_by_model = finding.kind == FindingKind::SurvivingMutant
@@ -6400,6 +6423,55 @@ fn projected_findings(
         }
     }
     projected
+}
+
+/// Whether a build was measured in parts, which is when its drift finding and limitation are raised over the combined records rather than by a part.
+fn sharded(build: &BuildEvidence) -> bool {
+    build
+        .parts
+        .iter()
+        .any(|part| matches!(part.part, CatalogPart::Shard(_)))
+}
+
+/// The `unstable-baseline` findings of a build measured in parts, over every part's records and rows, each attributed to the part that saw its target move.
+fn merged_drift_findings(build: &BuildEvidence) -> Vec<Finding> {
+    if !sharded(build) {
+        return Vec::new();
+    }
+    let records = drift::combined(build.parts.iter().flat_map(|part| part.drift.iter()));
+    let rows: Vec<MutantRecord> = build
+        .parts
+        .iter()
+        .flat_map(|part| part.mutants.iter().cloned())
+        .collect();
+    drift::found(&records, &rows)
+        .into_iter()
+        .map(|mut finding| {
+            let saw = build.parts.iter().find(|part| {
+                part.drift.iter().any(|one| {
+                    matches!(one, drift::Drift::Moved { .. }) && one.target() == finding.subject
+                })
+            });
+            if let Some(part) = saw {
+                finding.origin = FindingOrigin::Source {
+                    build: build.name.clone(),
+                    run_id: part.run_id.clone(),
+                    part: part.part,
+                };
+            }
+            finding
+        })
+        .collect()
+}
+
+/// The `drift-not-measured` limitation of a build measured in parts, over every part's records.
+fn merged_drift_limitation(build: &BuildEvidence) -> Option<Limitation> {
+    if !sharded(build) {
+        return None;
+    }
+    drift::unmeasured(&drift::combined(
+        build.parts.iter().flat_map(|part| part.drift.iter()),
+    ))
 }
 
 fn spanning_timing(builds: &BuildLedger) -> ConclusionTiming {

@@ -538,8 +538,10 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
         ),
         FindingKind::WaitedMutant => format!(
             "this machine stopped waiting for {} twice, so the run established nothing about \
-             it. A bound that expired is a fact about the machine; raise it, or give the run \
-             a step allowance so a mutant that cannot terminate is stopped by a count instead",
+             it. A bound that expired is a fact about the machine, not the mutant. With a \
+             step allowance, the bound ends only a process that raised no step for a whole \
+             window, which is a wait rather than a loop; without one, give it one so a mutant \
+             that spins is stopped by a count instead",
             one.display_id
         ),
         FindingKind::StepLimitReachedMutant => format!(
@@ -1428,6 +1430,7 @@ fn execute(
     } = judgement;
     let result = attempts.into_result();
     let outcome = result.outcome();
+    let tests_run = result.tests_run();
     Ok(Judged {
         index: mutant.index,
         id: mutant.id.to_string(),
@@ -1437,7 +1440,7 @@ fn execute(
         target: result.target,
         exit_code: result.exit_code,
         duration,
-        tests_run: result.tests_run,
+        tests_run,
         failed_tests: result.failed_tests,
         signal: result.signal,
         retried,

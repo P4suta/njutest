@@ -106,6 +106,8 @@ Crossing the allowance is `step-limit-reached`: a nonce-correlated fact that thi
 It is **not** a detection.
 A finite computation on the original code can cross the same count, so without a matched control the run has established neither that the mutation diverges nor that it survives.
 It is therefore non-verdict, non-score, non-cacheable and cannot be accepted.
+Where the count is on, `timeout` stops bounding the whole execution and bounds how long it may go without raising the count: a mutation that keeps moving is left to the allowance, and one that goes quiet for a whole window is `waited`.
+Ten windows is a ceiling over the whole of it, for a process that keeps moving more slowly than the allowance can end.
 `0` counts nothing and leaves the clock as the only bound.
 Lowering the count can surface a deterministic place to investigate sooner;
 it cannot turn the bound itself into evidence about the mutation.

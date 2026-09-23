@@ -17,10 +17,10 @@ use sha2::{Digest as _, Sha256};
 pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
     EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
-    MutantExecRecord, NjutestBuild, NjutestBuildError, NoteRecord, OpenRecord, Payload,
-    PhaseRecord, RouteRecord, RunRecord, SCHEMA, SelectRecord, SiteRecord, SkipClaimRecord,
-    SkipCount, SnapshotRecord, SweepRecord, TargetRecord, TouchRecord, TraceContext,
-    ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    Measurement, MutantExecRecord, NjutestBuild, NjutestBuildError, NoteRecord, OpenRecord,
+    Payload, PhaseRecord, RouteRecord, RunRecord, SCHEMA, SelectRecord, SiteRecord,
+    SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord, SweepRecord, TargetRecord,
+    TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -96,6 +96,11 @@ impl ExecRecord {
             timeout_ms: spec
                 .timeout
                 .map(|timeout| trace_milliseconds(timeout, "timeout"))
+                .transpose()?,
+            quiet_ms: spec
+                .progress
+                .as_ref()
+                .map(|progress| trace_milliseconds(progress.quiet, "quiet window"))
                 .transpose()?,
             stopped: crate::execute::Stopped::of(result),
             duration_ms: trace_milliseconds(result.duration, "measured process")?,

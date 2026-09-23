@@ -722,6 +722,7 @@
                 "output_path",
                 "output_sha256",
                 "output_truncated",
+                "quiet_ms",
                 "stopped",
                 "timeout_ms"
               ],
@@ -750,7 +751,16 @@
                     "integer",
                     "null"
                   ],
-                  "minimum": 0
+                  "minimum": 0,
+                  "description": "The bound on the whole execution; for one watched for progress, the ceiling over it."
+                },
+                "quiet_ms": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "description": "How long the process could go without raising its step count, where it was watched for that; null where it was not."
                 },
                 "stopped": {
                   "description": "How the process came to a stop. The closed tagged union cannot express contradictory flags or attach a process exit to a supervisor stop.",
@@ -801,6 +811,27 @@
                           ],
                           "minimum": 0,
                           "description": "How many step boundaries the process had raised. Above zero says the allowance would have ended this and the clock got there first, which is a race one machine wins and another does not. Zero says no boundary was raised, so no allowance could have ended it. Null says the state could not be read, which is not a count of zero."
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "raised"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "stalled"
+                        },
+                        "raised": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "description": "How many step boundaries the process had raised before it went quiet for a whole window. Null says the state could not be read, which is not a count of zero."
                         }
                       }
                     },
@@ -1299,9 +1330,15 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "entered_bodies",
                 "infected",
+                "infected_sites",
                 "loose",
+                "measured",
+                "passed",
+                "reached_sites",
                 "sites",
+                "summary",
                 "target",
                 "tests"
               ],
@@ -1309,6 +1346,69 @@
                 "target": {
                   "type": "string",
                   "minLength": 1
+                },
+                "measured": {
+                  "description": "Which whole run of the target with nothing active the record was measured on: the baseline routing rests on, or an original-code control run to confirm a kill.",
+                  "enum": [
+                    "baseline",
+                    "control"
+                  ]
+                },
+                "passed": {
+                  "description": "The tests that run passed, which is what the record is the reach of.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "summary": {
+                  "description": "What the run's own summary said, in the protocol it answered in: under libtest, a comparison stands only where `tests_run` equals the number of names in `passed`; a custom harness prints no summary; a remembered baseline's run is not here to say.",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["protocol", "tests_run"],
+                      "properties": {
+                        "protocol": { "const": "libtest" },
+                        "tests_run": { "type": ["integer", "null"], "minimum": 0 }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["protocol"],
+                      "properties": {
+                        "protocol": { "enum": ["custom", "unanswered", "remembered"] }
+                      }
+                    }
+                  ]
+                },
+                "reached_sites": {
+                  "description": "Every mutant site anything of the target reached.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "entered_bodies": {
+                  "description": "Every branch body anything of the target entered, by the marker at its first statement.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "infected_sites": {
+                  "description": "Every mutation anything of the target saw its guard's two branches differ over.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
                 },
                 "tests": {
                   "type": "integer",

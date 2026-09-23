@@ -229,6 +229,7 @@ fn ask<W: Watch>(
         crate::runner::Termination::NotStarted { .. }
         | crate::runner::Termination::Exited(_)
         | crate::runner::Termination::TimedOut
+        | crate::runner::Termination::Stalled
         | crate::runner::Termination::StoppedByMonitor
         | crate::runner::Termination::MonitorFailed { .. }
         | crate::runner::Termination::Cancelled { .. }

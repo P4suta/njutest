@@ -20,6 +20,9 @@ error, or un-attributed kill state.
 A successor may therefore inherit only an existential fact a target established about the identical tree.
 Every other mutation is judged again.
 
+A checkpoint keeps no drift record ([report v1](report-v1.md#drift)).
+A comparison an interrupted run made was against the baseline that run measured, and a resumed run measures its own; an inherited kill runs no control, so a target whose every kill was inherited is `not-measured` in the resumed run rather than holding on a comparison nothing made this run.
+
 Historical `checkpoint-v1.json` files are outside this layout.
 In particular,
 their `runaway` and `timed_out` strings carried no matched control and are never reinterpreted as detections.

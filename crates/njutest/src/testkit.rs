@@ -306,6 +306,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
         Payload::Model { .. } => "model",
+        Payload::Drift { .. } => "drift",
         Payload::Note { .. } => "note",
         Payload::RunEnd { .. } => "run",
     }
@@ -347,6 +348,8 @@ pub mod payload {
         WireExec,
         /// A model decision.
         Model,
+        /// A control's drift observation.
+        Drift(&'a crate::trace::DriftRecord),
         /// A note.
         Note(&'a crate::trace::NoteRecord),
         /// A run-end record.
@@ -370,6 +373,7 @@ pub mod payload {
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
             Payload::Model { .. } => Ref::Model,
+            Payload::Drift { drift } => Ref::Drift(drift),
             Payload::Note { note } => Ref::Note(note),
             Payload::RunEnd { .. } => Ref::RunEnd,
         }
@@ -385,6 +389,15 @@ pub mod payload {
                 return None;
             };
             Some(exec)
+        }
+
+        /// The drift record, where this is one.
+        #[must_use]
+        pub const fn drift(self) -> Option<&'a crate::trace::DriftRecord> {
+            let Self::Drift(drift) = self else {
+                return None;
+            };
+            Some(drift)
         }
 
         /// The note record, where this is one.
@@ -539,6 +552,26 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             model: Box::new(crate::report::ModelRecord::specimen_ineligible(
                 crate::report::ModelIneligibility::Effect,
             )),
+        },
+        Payload::Drift {
+            drift: crate::trace::DriftRecord {
+                mutant: "abcdef".to_owned(),
+                observed: crate::report::drift::Drift::Moved {
+                    target: "demo/lib/demo".to_owned(),
+                    reached: crate::report::drift::Moved {
+                        gained: std::collections::BTreeSet::from([2]),
+                        lost: std::collections::BTreeSet::from([1]),
+                    },
+                    bodies: crate::report::drift::Moved {
+                        gained: std::collections::BTreeSet::new(),
+                        lost: std::collections::BTreeSet::new(),
+                    },
+                    infected: crate::report::drift::Moved {
+                        gained: std::collections::BTreeSet::new(),
+                        lost: std::collections::BTreeSet::new(),
+                    },
+                },
+            },
         },
         Payload::Note {
             note: NoteRecord {

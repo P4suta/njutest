@@ -225,6 +225,12 @@ pub fn every_payload() -> Vec<Payload> {
         Payload::Touch {
             touch: TouchRecord {
                 target: "demo/lib/demo".to_owned(),
+                measured: crate::trace::Measurement::Control,
+                passed: vec!["tests::adds".to_owned(), "tests::subtracts".to_owned()],
+                summary: crate::trace::SummaryRecord::Libtest { tests_run: Some(2) },
+                reached_sites: vec![0, 1, 2],
+                entered_bodies: vec![3],
+                infected_sites: vec![1],
                 tests: 2,
                 sites: 3,
                 loose: 1,
@@ -334,7 +340,8 @@ pub fn every_payload() -> Vec<Payload> {
             argv: vec!["cargo".to_owned(), "test".to_owned()],
             dir: Some("/workspace".to_owned()),
             env_names: vec!["RUSTFLAGS".to_owned()],
-            timeout_ms: Some(30_000),
+            timeout_ms: Some(300_000),
+            quiet_ms: Some(30_000),
             stopped,
             duration_ms: 5,
             output_bytes: 6,
@@ -355,7 +362,7 @@ pub fn every_payload() -> Vec<Payload> {
 
 /// Every way a process can stop, named so extending the enum extends the specimen ledger at compile time.
 #[must_use]
-pub fn every_stopped() -> [crate::execute::Stopped; 9] {
+pub fn every_stopped() -> [crate::execute::Stopped; 10] {
     use crate::execute::Stopped;
 
     let exits = every_process_exit();
@@ -366,6 +373,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 9] {
         Stopped::Exited { exit: exits[1] },
         Stopped::Exited { exit: exits[2] },
         Stopped::TimedOut { raised: Some(3) },
+        Stopped::Stalled { raised: Some(2) },
         Stopped::Cancelled { started: true },
         Stopped::WaitFailed,
         Stopped::StepLimitReached {
@@ -380,6 +388,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 9] {
             Stopped::NotStarted
             | Stopped::Exited { .. }
             | Stopped::TimedOut { .. }
+            | Stopped::Stalled { .. }
             | Stopped::Cancelled { .. }
             | Stopped::WaitFailed
             | Stopped::StepLimitReached { .. }
