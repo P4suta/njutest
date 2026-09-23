@@ -701,7 +701,7 @@ pub fn documented_specimen() -> crate::config::Config {
 
     use crate::config::{
         Acceptance, Cache, Config, Configuration, Contract, Execution, Fuzz, Generation, Mutation,
-        Project, Reports, Resource, Soundness, Verification,
+        Project, Repeatable, Reports, Resource, Soundness, Verification,
     };
 
     Config {
@@ -749,6 +749,12 @@ pub fn documented_specimen() -> crate::config::Config {
             run: true,
             max_total_time: Duration::from_secs(60),
             targets: vec!["libtest_summary".to_owned()],
+        },
+        repeatable: Repeatable {
+            knobs: vec![
+                crate::report::knobs::Knob::Timezone,
+                crate::report::knobs::Knob::Threads,
+            ],
         },
         resources: BTreeMap::from([(
             "api".to_owned(),
