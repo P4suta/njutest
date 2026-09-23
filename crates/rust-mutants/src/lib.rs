@@ -34,6 +34,7 @@ pub mod report;
 pub mod rule;
 pub mod run;
 pub mod runner;
+pub mod select;
 pub mod session;
 pub mod snapshot;
 pub mod span;
