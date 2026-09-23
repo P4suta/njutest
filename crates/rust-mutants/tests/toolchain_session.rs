@@ -18,7 +18,7 @@ use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::Filter;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{PrepareOptions, Request, Session};
+use rust_mutants::session::{Observing, PrepareOptions, Request, Session};
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::trace::{MutantExecRecord, Payload, PhaseRecord, ValidateRoundRecord};
 use rust_mutants::workspace::{OpenOptions, Workspace};
@@ -675,7 +675,10 @@ fn a_target_with_no_tests_in_it_answers_neither_question() {
     );
     assert_eq!(killed.target, "fixture-subprocess/test/through_the_binary");
 
-    let control = session.control(&request, &cancel).expect("control");
+    let control = session
+        .control(&request, &cancel, Observing::Nothing)
+        .expect("control")
+        .result;
     assert_eq!(
         control.outcome(),
         Outcome::Inconclusive,

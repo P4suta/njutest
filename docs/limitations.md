@@ -233,6 +233,17 @@ They are what the run says about its own footing, and each is stated fail-closed
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 
+## What a run asks of a suite whose reach moves
+
+Every proof layer reads one baseline run of each target: what its tests reached, which bodies they entered, which sites they saw infected.
+That is sound only where what a target reaches is a function of the target, and a suite that reads a clock, a hash seed, the order its threads were scheduled in, or state an earlier process left behind can reach something different on the next run of the same tests.
+A run checks it the one time it already runs a target again: the original-code control that confirms a kill records what it reached too, and a union that moved over the same passing tests is a counterexample, raised as `unstable-baseline` about the target ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+
+Three things follow and are not hidden.
+A target nothing was killed on is never confirmed, so it is never compared: `drift-not-measured` names it, and every proof read off its baseline rests on one run.
+The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
+And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
+
 ## What a run asks of a suite that talks about time
 
 A run does something to a suite that `cargo test` never does: it runs every target's baseline before it measures anything, and then measures mutants against a machine that is already busy.

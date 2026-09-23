@@ -33,6 +33,9 @@ pub struct State {
     pub targets: Vec<SavedTarget>,
     /// The mutants already judged.
     pub mutants: Vec<SavedMutant>,
+    /// What the controls already run established about each target's baseline reach, which a resumed run will not run again; one written before this was kept carries none, which reads as nothing compared.
+    #[serde(default)]
+    pub drift: Vec<crate::report::drift::Drift>,
 }
 
 impl State {
@@ -45,13 +48,14 @@ impl State {
             attempts: 0,
             targets: Vec::new(),
             mutants: Vec::new(),
+            drift: Vec::new(),
         }
     }
 
     /// Whether there is anything to continue from.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.targets.is_empty() && self.mutants.is_empty()
+        self.targets.is_empty() && self.mutants.is_empty() && self.drift.is_empty()
     }
 
     /// The saved target with this identity, if any.
@@ -73,6 +77,11 @@ impl State {
         self.targets.retain(|saved| saved.id != target.id);
         self.targets.push(target);
         self.targets.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+
+    /// Records what a control established about one target's baseline reach, beside everything established before it.
+    pub fn record_drift(&mut self, observed: crate::report::drift::Drift) {
+        self.drift.push(observed);
     }
 
     /// Records one judged mutant, replacing what was there.

@@ -119,8 +119,9 @@ fn verify_targets(
 ) -> Result<(Verified, BTreeMap<String, Option<u32>>), EngineError> {
     let mut verified = Verified::default();
     let mut tests_run = BTreeMap::new();
-    for target in targets {
-        let (baseline, observed) = verify_target(target, scratch, building, &mut verified.touched)?;
+    for (index, target) in targets.iter_mut().enumerate() {
+        let (baseline, observed) =
+            verify_target((target, index), scratch, building, &mut verified.touched)?;
         if tests_run.insert(target.id.clone(), observed).is_some()
             || verified
                 .targets
@@ -137,7 +138,7 @@ fn verify_targets(
 }
 
 fn verify_target(
-    target: &mut TestTarget,
+    (target, index): (&mut TestTarget, usize),
     scratch: &Path,
     building: &Building<'_>,
     touched: &mut crate::touch::Touched,
@@ -147,7 +148,8 @@ fn verify_target(
             .join("touch")
             .join(format!("{}.log", slug(&target.id)))
     });
-    let mut result = ran(target, scratch, recording.as_deref(), building);
+    let own = baseline_scratch(scratch, index);
+    let mut result = ran(target, &own, recording.as_deref(), building);
     let mut retried = false;
     let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
         building.trace.note(
@@ -158,12 +160,12 @@ fn verify_target(
                 target.id
             ),
         );
-        result = ran(target, scratch, None, building);
+        result = ran(target, &own, None, building);
         None
     } else {
         recording
     };
-    if let Some(again) = again(&result, target, (scratch, recording.as_deref()), building) {
+    if let Some(again) = again(&result, target, (&own, recording.as_deref()), building) {
         result = again;
         retried = true;
     }
@@ -175,26 +177,7 @@ fn verify_target(
         remembered: false,
         retried,
     });
-    let baseline = Baseline {
-        outcome: result.outcome(),
-        duration: result.duration,
-        tests: match result.tests_run {
-            Some(tests) => tests,
-            None => trace_count("passed baseline tests", result.passed_tests.len())?,
-        },
-        ignored: trace_count("ignored baseline tests", result.ignored_tests.len())?,
-        output: if matches!(
-            result.outcome(),
-            crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
-        ) {
-            String::new()
-        } else {
-            match std::str::from_utf8(&result.output) {
-                Ok(output) => output.to_owned(),
-                Err(_not_utf8) => crate::telling::LosslessBytes::new(&result.output).to_string(),
-            }
-        },
-    };
+    let baseline = baseline_of(&result)?;
     if target.kind == TargetKind::Doc && result.tests_run == Some(0) {
         target
             .limitations
@@ -220,11 +203,40 @@ fn verify_target(
     Ok((baseline, result.tests_run))
 }
 
+/// What one baseline process came to, keeping what it printed only where it did not pass.
+fn baseline_of(result: &MutantResult) -> Result<Baseline, SessionError> {
+    Ok(Baseline {
+        outcome: result.outcome(),
+        duration: result.duration,
+        tests: match result.tests_run {
+            Some(tests) => tests,
+            None => trace_count("passed baseline tests", result.passed_tests.len())?,
+        },
+        ignored: trace_count("ignored baseline tests", result.ignored_tests.len())?,
+        output: if matches!(
+            result.outcome(),
+            crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
+        ) {
+            String::new()
+        } else {
+            match std::str::from_utf8(&result.output) {
+                Ok(output) => output.to_owned(),
+                Err(_not_utf8) => crate::telling::LosslessBytes::new(&result.output).to_string(),
+            }
+        },
+    })
+}
+
 /// The trace note proving why no baseline process follows it.
 const BASELINE_REMEMBERED: &str = "baseline-remembered";
 
 /// The trace note saying a target was run a second time, and why.
 const BASELINE_RETRIED: &str = "baseline-retried";
+
+/// The temporary directory of the baseline of the target at `index`, its own as every execution's is, so a baseline and a control are measured under the same conditions (ADR 0025).
+fn baseline_scratch(scratch: &Path, index: usize) -> PathBuf {
+    scratch.join(format!("baseline-{index}"))
+}
 
 /// One more run of a target that did not pass, or nothing when the first answer stands.
 fn again(
@@ -529,8 +541,13 @@ impl Remembering {
             "target-count",
             baseline_count(BaselineQuantity::Targets, targets.len())?,
         )?;
-        for target in targets {
-            target_key(&mut key, target, scratch, building)?;
+        for (index, target) in targets.iter().enumerate() {
+            target_key(
+                &mut key,
+                target,
+                (scratch, &baseline_scratch(scratch, index)),
+                building,
+            )?;
         }
         Ok(Some(Self {
             directory,
@@ -793,37 +810,37 @@ fn trace_touch(
     gathered: &crate::touch::TargetTouches,
     trace: &crate::trace::Recorder,
 ) -> Result<(), SessionError> {
-    trace.touch(crate::trace::TouchRecord {
+    trace.touch(touch_record(
+        target,
+        crate::trace::Measurement::Baseline,
+        gathered,
+    )?);
+    Ok(())
+}
+
+/// What one whole run of a target recorded, as the recording carries it: the counts a reader skims and the unions an audit compares.
+pub(super) fn touch_record(
+    target: &str,
+    measured: crate::trace::Measurement,
+    gathered: &crate::touch::TargetTouches,
+) -> Result<crate::trace::TouchRecord, SessionError> {
+    let reached = gathered.reached.union();
+    let infected = gathered.infected.union();
+    Ok(crate::trace::TouchRecord {
         target: target.to_owned(),
+        measured,
+        passed: gathered.ran.clone(),
         tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,
-        sites: trace_count(
-            "recorded baseline sites",
-            gathered
-                .reached
-                .tests
-                .values()
-                .flat_map(|indices| indices.iter())
-                .chain(gathered.reached.loose.iter())
-                .collect::<BTreeSet<&u32>>()
-                .len(),
-        )?,
+        sites: trace_count("recorded baseline sites", reached.len())?,
         loose: trace_count(
             "loosely attributed baseline sites",
             gathered.reached.loose.len(),
         )?,
-        infected: trace_count(
-            "infected baseline sites",
-            gathered
-                .infected
-                .tests
-                .values()
-                .flat_map(|indices| indices.iter())
-                .chain(gathered.infected.loose.iter())
-                .collect::<BTreeSet<&u32>>()
-                .len(),
-        )?,
-    });
-    Ok(())
+        infected: trace_count("infected baseline sites", infected.len())?,
+        reached_sites: reached.into_iter().collect(),
+        entered_bodies: gathered.bodies.union().into_iter().collect(),
+        infected_sites: infected.into_iter().collect(),
+    })
 }
 
 /// The actual programs built now, keyed by target.
@@ -997,7 +1014,7 @@ impl Key {
 fn target_key(
     key: &mut Key,
     target: &TestTarget,
-    scratch: &Path,
+    (scratch, own): (&Path, &Path),
     building: &Building<'_>,
 ) -> Result<(), BaselineCacheError> {
     key.text("target-id", &target.id)?;
@@ -1026,7 +1043,7 @@ fn target_key(
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
-        .with_scratch(scratch)
+        .with_scratch(own)
         .in_scratch(building.options.scratch_working_directory);
     let argv = request.argv();
     key.u64(
@@ -1036,7 +1053,7 @@ fn target_key(
     for argument in argv {
         key.os("argv", &argument)?;
     }
-    let environment = execute::environment(&context, target, Some(scratch)).map_err(|source| {
+    let environment = execute::environment(&context, target, Some(own)).map_err(|source| {
         BaselineCacheError::EnvironmentUnavailable {
             target: target.id.clone(),
             source,
@@ -1107,7 +1124,7 @@ fn said(verified: &Verified, failed: &[&str]) -> String {
     text
 }
 
-/// One target run with nothing active, recording into `log` when it was asked to.
+/// One target run with nothing active in the temporary directory of its baseline, recording into `log` when it was asked to.
 fn ran(
     target: &TestTarget,
     scratch: &Path,
@@ -1120,6 +1137,15 @@ fn ran(
         catalog,
         ..
     } = *building;
+    if let Err(error) = std::fs::DirBuilder::new().recursive(true).create(scratch) {
+        return MutantResult::apparatus_error(
+            &target.id,
+            format!(
+                "could not make the baseline's own temporary directory {}: {error}",
+                scratch.display()
+            ),
+        );
+    }
     if let Some(path) = log {
         match std::fs::remove_file(path) {
             Ok(()) => {}
@@ -1283,7 +1309,7 @@ struct Recording<'a> {
 }
 
 /// Whether a target's guards can be asked what they reached.
-fn recordable(target: &TestTarget) -> bool {
+pub(super) fn recordable(target: &TestTarget) -> bool {
     target.kind != TargetKind::Doc && target.through.is_empty()
 }
 
@@ -1322,42 +1348,12 @@ fn gather(
             return Ok(());
         }
     };
-    let gathered = crate::touch::TargetTouches {
-        reached: attributed(recorded.reached, recording.ran),
-        bodies: attributed(recorded.bodies, recording.ran),
-        infected: attributed(recorded.infected, recording.ran),
-        ran: recording.ran.to_vec(),
-    };
-    trace.touch(crate::trace::TouchRecord {
-        target: recording.target.to_owned(),
-        tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,
-        sites: trace_count(
-            "recorded baseline sites",
-            gathered
-                .reached
-                .tests
-                .values()
-                .flat_map(|indices| indices.iter())
-                .chain(gathered.reached.loose.iter())
-                .collect::<BTreeSet<&u32>>()
-                .len(),
-        )?,
-        loose: trace_count(
-            "loosely attributed baseline sites",
-            gathered.reached.loose.len(),
-        )?,
-        infected: trace_count(
-            "infected baseline sites",
-            gathered
-                .infected
-                .tests
-                .values()
-                .flat_map(|indices| indices.iter())
-                .chain(gathered.infected.loose.iter())
-                .collect::<BTreeSet<&u32>>()
-                .len(),
-        )?,
-    });
+    let gathered = crate::touch::TargetTouches::of(recorded, recording.ran);
+    trace.touch(touch_record(
+        recording.target,
+        crate::trace::Measurement::Baseline,
+        &gathered,
+    )?);
     if touched
         .targets
         .insert(recording.target.to_owned(), gathered)
@@ -1368,22 +1364,6 @@ fn gather(
         });
     }
     Ok(())
-}
-
-/// What each test of the target reached, with everything else folded into `loose`.
-fn attributed(recorded: crate::touch::Seen, ran: &[String]) -> crate::touch::Seen {
-    let mut held = crate::touch::Seen {
-        loose: recorded.loose,
-        ..crate::touch::Seen::default()
-    };
-    for (thread, reported) in recorded.tests {
-        if ran.iter().any(|test| test == &thread) {
-            held.tests.extend([(thread, reported)]);
-        } else {
-            held.loose.extend(reported);
-        }
-    }
-    held
 }
 
 /// A target identity as one path segment, so two targets cannot name one file.

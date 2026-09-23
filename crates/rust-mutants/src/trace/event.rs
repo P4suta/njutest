@@ -660,12 +660,32 @@ pub struct VerifyRecord {
     pub retried: bool,
 }
 
-/// What one target's guards recorded on the run that verified its baseline.
+/// Which whole-target run with nothing active one touch record was measured on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Measurement {
+    /// The one run of every target that verifies the baseline, which routing rests on.
+    Baseline,
+    /// An original-code control of the whole target, run to confirm a kill.
+    Control,
+}
+
+/// What one target's guards recorded on one whole run of it with nothing active.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TouchRecord {
     /// The target.
     pub target: String,
+    /// Which run it was measured on.
+    pub measured: Measurement,
+    /// The tests that run passed, which is what everything below is the reach of.
+    pub passed: Vec<String>,
+    /// Every mutant site anything of it reached, in index order.
+    pub reached_sites: Vec<u32>,
+    /// Every branch body anything of it entered, by the marker at the body's first statement, in index order.
+    pub entered_bodies: Vec<u32>,
+    /// Every mutation anything of it saw its guard's two branches differ over, in index order.
+    pub infected_sites: Vec<u32>,
     /// How many of its tests reached at least one mutation.
     pub tests: u32,
     /// How many distinct mutations anything of it reached, which is the most mutants it can be asked about.

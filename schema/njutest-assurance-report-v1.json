@@ -1257,7 +1257,8 @@
             "unmatched-acceptance",
             "undefined-behaviour",
             "hollow-target",
-            "wire-unnoticed"
+            "wire-unnoticed",
+            "unstable-baseline"
           ]
         },
         "subject": {
@@ -1380,6 +1381,113 @@
           "minLength": 1
         }
       }
+    },
+    "driftMoved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gained",
+        "lost"
+      ],
+      "properties": {
+        "gained": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Catalog indices only the control reported."
+        },
+        "lost": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Catalog indices only the baseline reported."
+        }
+      }
+    },
+    "drift": {
+      "description": "What a run established about whether one measured target's baseline reach holds.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "target"
+          ],
+          "properties": {
+            "state": {
+              "const": "held"
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "target",
+            "reached",
+            "bodies",
+            "infected"
+          ],
+          "properties": {
+            "state": {
+              "const": "moved"
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reached": {
+              "$ref": "#/$defs/driftMoved"
+            },
+            "bodies": {
+              "$ref": "#/$defs/driftMoved"
+            },
+            "infected": {
+              "$ref": "#/$defs/driftMoved"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "target",
+            "why"
+          ],
+          "properties": {
+            "state": {
+              "const": "not-measured"
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "why": {
+              "enum": [
+                "no-control",
+                "unrecorded",
+                "unreadable",
+                "control-failed",
+                "other-tests",
+                "no-baseline"
+              ]
+            }
+          }
+        }
+      ]
     },
     "catalogPart": {
       "description": "The part of a catalog one evidence source measured: the whole catalog, or one valid `index/of` shard.",
@@ -1580,7 +1688,8 @@
         "targets",
         "mutants",
         "findings",
-        "limitations"
+        "limitations",
+        "drift"
       ],
       "properties": {
         "run_id": {
@@ -1632,6 +1741,13 @@
           "items": {
             "$ref": "#/$defs/limitation"
           }
+        },
+        "drift": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/drift"
+          },
+          "description": "Whether each target this source's baseline measured reached, on an original-code control over the same passing tests, what it reached on that baseline (ADR 0025)."
         }
       }
     },
@@ -2446,7 +2562,7 @@
           "const": "njutest-assurance-report-v1"
         },
         "schema_version": {
-          "const": 2
+          "const": 3
         },
         "run_id": {
           "$ref": "#/$defs/runId",
@@ -2530,7 +2646,7 @@
           "const": "njutest-assurance-shard-report-v1"
         },
         "schema_version": {
-          "const": 2
+          "const": 3
         },
         "run_id": {
           "$ref": "#/$defs/runId",

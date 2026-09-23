@@ -215,6 +215,100 @@ fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
     );
 }
 
+/// Every finding of `kind` the one whole part of a report raised.
+fn findings_of<'a>(document: &'a serde_json::Value, kind: &str) -> Vec<&'a serde_json::Value> {
+    document["builds"][0]["parts"][0]["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists findings: {document}"))
+        .iter()
+        .filter(|one| one["kind"] == kind)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_target_whose_reach_moved_between_its_baseline_and_a_control_is_an_unstable_baseline() {
+    let fixture = fixture("fixture-drifts");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    let unstable = findings_of(&document, "unstable-baseline");
+    assert_eq!(
+        unstable.len(),
+        1,
+        "the baseline was the first process of the run to look and every control after it          was not, so the one target reached one function on its baseline and another on the          control that confirmed a kill, over the same passing test: {document}\n{stderr}"
+    );
+    assert_eq!(unstable[0]["subject"], target, "{}", unstable[0]);
+    let detail = unstable[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("2 mutations no test reached"),
+        "the weight of the finding is what rests on the moved record: both mutations of \
+         `return_visit` are unreached on its word, and nothing was discharged: {detail}"
+    );
+    let drift = &document["builds"][0]["parts"][0]["drift"];
+    assert_eq!(drift[0]["state"], "moved", "{drift}");
+    assert_eq!(drift[0]["target"], target, "{drift}");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a moved measurement is a gap in what the run established, not a fault in the code: \
+         {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_target_no_kill_was_confirmed_on_is_one_whose_drift_was_not_measured() {
+    let fixture = fixture("fixture-hollow");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let part = &document["builds"][0]["parts"][0];
+    let states: Vec<(String, String)> = part["drift"]
+        .as_array()
+        .unwrap_or_else(|| panic!("every part records drift: {document}\n{stderr}"))
+        .iter()
+        .map(|one| {
+            (
+                one["target"].as_str().unwrap_or_default().to_owned(),
+                one["state"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            (
+                "fixture-hollow/lib/fixture_hollow".to_owned(),
+                "held".to_owned()
+            ),
+            (
+                "fixture-hollow/test/smoke".to_owned(),
+                "not-measured".to_owned()
+            ),
+        ],
+        "the library's kills were confirmed by a control that reached what its baseline did, \
+         and nothing was ever confirmed on `smoke`, so nothing compared it"
+    );
+    let limitation: Vec<&serde_json::Value> = part["limitations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists limitations: {document}"))
+        .iter()
+        .filter(|one| one["name"] == njutest::limitation::DRIFT_NOT_MEASURED)
+        .collect();
+    assert_eq!(limitation.len(), 1, "{document}");
+    let detail = limitation[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.ends_with("(fixture-hollow/test/smoke)") && detail.contains("1 target"),
+        "the limitation names the one target it is about and says how many: {detail}"
+    );
+    assert!(
+        findings_of(&document, "unstable-baseline").is_empty(),
+        "a target whose drift was not measured is not one that moved: {document}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other() {

@@ -257,7 +257,13 @@ fn attributed(
         let asked = rust_mutants::session::Request::new(String::new())
             .with_target(target.id.as_str())
             .with_timeout(Some(timeout));
-        let ran = session.control(&asked, watch.cancel)?;
+        let ran = session
+            .control(
+                &asked,
+                watch.cancel,
+                rust_mutants::session::Observing::Nothing,
+            )?
+            .result;
         if ran.target != target.id {
             return Err(RunInvariantError::ControlTargetMismatch {
                 requested: target.id.clone(),
@@ -995,6 +1001,9 @@ impl Journal {
         &mut self,
         judged: &mutation::Judged,
     ) -> Result<(), crate::checkpoint::CheckpointError> {
+        for observed in &judged.observed {
+            self.state.record_drift(observed.clone());
+        }
         let disposition = match &judged.disposition {
             mutation::Disposition::Killed { by } => {
                 crate::checkpoint::SavedDisposition::Killed { by: by.clone() }
@@ -1006,7 +1015,13 @@ impl Journal {
             | mutation::Disposition::Unreached
             | mutation::Disposition::Equivalent { .. }
             | mutation::Disposition::Unconfirmed { .. }
-            | mutation::Disposition::Errored { .. } => return Ok(()),
+            | mutation::Disposition::Errored { .. } => {
+                return if judged.observed.is_empty() {
+                    Ok(())
+                } else {
+                    self.write()
+                };
+            }
         };
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),
@@ -1589,10 +1604,17 @@ pub fn record(
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));
+    report.drift.clone_from(&mutation.drift);
     if report.scope.shard.is_none() {
         report
             .findings
             .extend(crate::report::hollow::found(&report.mutants));
+        report
+            .findings
+            .extend(crate::report::drift::found(&report.drift, &report.mutants));
+        report
+            .limitations
+            .extend(crate::report::drift::unmeasured(&report.drift));
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(

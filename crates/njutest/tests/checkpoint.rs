@@ -123,7 +123,7 @@ fn state_that_is_not_the_state_it_claims_to_be_is_refused() {
         &path,
         format!(
             "{{\"schema\":\"something-else\",\"identity\":\"{identity}\",\"attempts\":1,\
-             \"targets\":[],\"mutants\":[]}}"
+             \"targets\":[],\"mutants\":[],\"drift\":[]}}"
         ),
     )
     .expect("write");
@@ -134,7 +134,7 @@ fn state_that_is_not_the_state_it_claims_to_be_is_refused() {
         &path,
         format!(
             "{{\"schema\":\"{SCHEMA}\",\"identity\":\"{identity}\",\"attempts\":1,\
-             \"targets\":[],\"mutants\":[],\"extra\":true}}"
+             \"targets\":[],\"mutants\":[],\"drift\":[],\"extra\":true}}"
         ),
     )
     .expect("write");
@@ -247,7 +247,7 @@ fn state_that_carries_a_disposition_a_run_cannot_inherit_is_refused() {
         format!(
             "{{\"schema\":\"{SCHEMA}\",\"identity\":\"{identity}\",\"attempts\":1,\
              \"targets\":[],\"mutants\":[{{\"id\":\"m1\",\
-             \"disposition\":{{\"kind\":\"survived\"}},\"duration_ms\":1}}]}}"
+             \"disposition\":{{\"kind\":\"survived\"}},\"duration_ms\":1}}],\"drift\":[]}}"
         ),
     )
     .expect("write");
@@ -286,7 +286,7 @@ fn a_current_kill_without_a_target_is_not_a_checkpoint() {
         format!(
             "{{\"schema\":\"{SCHEMA}\",\"identity\":\"{identity}\",\"attempts\":1,\
              \"targets\":[],\"mutants\":[{{\"id\":\"m1\",\
-             \"disposition\":{{\"kind\":\"killed\",\"by\":null}},\"duration_ms\":1}}]}}"
+             \"disposition\":{{\"kind\":\"killed\",\"by\":null}},\"duration_ms\":1}}],\"drift\":[]}}"
         ),
     )
     .expect("forged checkpoint");
@@ -428,7 +428,7 @@ fn a_stored_checkpoint_requires_an_attempt_and_unique_canonical_ids() {
             &path,
             format!(
                 "{{\"schema\":\"{SCHEMA}\",\"identity\":\"{identity}\",\"attempts\":1,\
-                 \"targets\":{targets},\"mutants\":{mutants}}}"
+                 \"targets\":{targets},\"mutants\":{mutants},\"drift\":[]}}"
             ),
         )
         .expect("forged checkpoint");

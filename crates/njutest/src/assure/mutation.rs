@@ -3,21 +3,21 @@
 
 //! Asking, of every mutation the compiler accepted, whether any test would notice it.
 
-use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rust_mutants::catalog::Mutant;
 use rust_mutants::execute::{MutantConclusion, MutantResult};
 use rust_mutants::outcome::Outcome;
-use rust_mutants::session::{Request, Session};
+use rust_mutants::session::{Observing, Request, Session};
 
 use crate::assure::baseline::Measured;
 use crate::assure::route::Route;
 use crate::assure::schedule;
 use crate::evidence::store;
 use crate::report::Outcome as Recorded;
+use crate::report::drift::Drift;
 use crate::report::{Decision, Finding, FindingKind, MutantAccounting};
 use crate::watch::Watch;
 
@@ -221,6 +221,8 @@ pub struct Judged {
     pub routing: Option<crate::report::Routing>,
     /// The run that established it, when it was not this one.
     pub source_run_id: Option<String>,
+    /// What the controls run to confirm it established about each target's baseline reach.
+    pub observed: Vec<Drift>,
 }
 
 /// What the mutation phase established, whole.
@@ -230,6 +232,8 @@ pub struct Mutation {
     pub judged: Vec<Judged>,
     /// What every phase of the engine skipped, by reason, for the report's limitations.
     pub skips: BTreeMap<String, u64>,
+    /// Whether each target the baseline measured held its reach on a control, one record each.
+    pub drift: Vec<Drift>,
 }
 
 impl Mutation {
@@ -575,6 +579,19 @@ pub fn run_resuming(
         (resume.record)(&judged)?;
         mutation.judged.push(judged);
     }
+    let restored = resume
+        .state
+        .map(|state| state.drift.clone())
+        .unwrap_or_default();
+    mutation.drift = crate::report::drift::folded(
+        session.touched().targets.keys().map(String::as_str),
+        restored.into_iter().chain(
+            mutation
+                .judged
+                .iter()
+                .flat_map(|judged| judged.observed.iter().cloned()),
+        ),
+    );
     phase.end();
     Ok(mutation)
 }
@@ -649,6 +666,7 @@ fn establish(
         disposition,
         routing,
         source_run_id: source,
+        observed: judging.controls.taken(mutant.id.as_str())?,
     })
 }
 
@@ -1354,12 +1372,22 @@ impl ExpectedReproduction {
     }
 }
 
-/// What the original code says about each test, asked once per test.
+/// What the original code says about each test, asked once per test however many mutations want to know at once.
 #[derive(Debug, Default)]
 struct Controls {
-    /// The failure each test showed on the original, or nothing when it passed.
-    /// Absent means it has not been asked yet.
-    asked: Mutex<BTreeMap<ControlKey, Option<String>>>,
+    /// One slot per question, which the first asker fills while every other asker of it waits.
+    asked: Mutex<BTreeMap<ControlKey, Arc<Mutex<Option<Original>>>>>,
+    /// What each control established about its target's baseline reach, by the mutation whose kill it confirmed.
+    observed: Mutex<BTreeMap<String, Vec<Drift>>>,
+}
+
+/// What a control of the original code came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Original {
+    /// Every selected test passed.
+    Passed,
+    /// Something else, and what it said.
+    Failed(String),
 }
 
 /// The two independent optional selectors that identify one pristine control.
@@ -1380,36 +1408,82 @@ impl ControlKey {
 }
 
 impl Controls {
-    /// Why this test fails on the original, or nothing when it passes.
+    /// Why this test fails on the original, or nothing when it passes, running the control once for every asker of the same question.
     fn ask(
         &self,
         session: &Session,
         request: &Request,
         watch: Watch<'_>,
     ) -> Result<Option<String>, crate::error::RunnerError> {
-        let key = ControlKey::of(request);
-        {
-            let asked = self
-                .asked
+        let slot = Arc::clone(
+            self.asked
                 .lock()
-                .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?;
-            if let Some(known) = asked.get(&key) {
-                return Ok(known.clone());
-            }
-        }
-        let control = session.control(request, watch.cancel)?;
-        let failure = (control.outcome() != Outcome::Survived)
-            .then(|| format!("{}: {}", control.outcome().name(), tail(&control.output)));
-        let mut asked = self
-            .asked
+                .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?
+                .entry(ControlKey::of(request))
+                .or_default(),
+        );
+        let mut answer = slot
             .lock()
             .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?;
-        let established = match asked.entry(key) {
-            Entry::Vacant(entry) => entry.insert(failure).clone(),
-            Entry::Occupied(entry) => entry.get().clone(),
+        let original = match answer.as_ref() {
+            Some(known) => known.clone(),
+            None => {
+                let control = session.control(request, watch.cancel, Observing::Reach)?;
+                self.observe(request, &control.observed, watch)?;
+                let original = if control.result.outcome() == Outcome::Survived {
+                    Original::Passed
+                } else {
+                    Original::Failed(format!(
+                        "{}: {}",
+                        control.result.outcome().name(),
+                        tail(&control.result.output)
+                    ))
+                };
+                *answer = Some(original.clone());
+                original
+            }
         };
-        drop(asked);
-        Ok(established)
+        drop(answer);
+        Ok(match original {
+            Original::Passed => None,
+            Original::Failed(failure) => Some(failure),
+        })
+    }
+
+    /// Keeps what one control established about each target's baseline reach under the mutation it was confirming, and says so in the recording.
+    fn observe(
+        &self,
+        request: &Request,
+        observed: &[rust_mutants::session::Observed],
+        watch: Watch<'_>,
+    ) -> Result<(), crate::error::RunnerError> {
+        let drift: Vec<Drift> = observed
+            .iter()
+            .map(|one| Drift::of(&one.target, &one.steadiness))
+            .collect();
+        for one in &drift {
+            watch.trace.drift(crate::trace::DriftRecord {
+                mutant: request.mutant.clone(),
+                observed: one.clone(),
+            });
+        }
+        self.observed
+            .lock()
+            .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?
+            .entry(request.mutant.clone())
+            .or_default()
+            .extend(drift);
+        Ok(())
+    }
+
+    /// What the controls run while judging `mutant` established, taken so that it is recorded once.
+    fn taken(&self, mutant: &str) -> Result<Vec<Drift>, crate::error::RunnerError> {
+        Ok(self
+            .observed
+            .lock()
+            .map_err(|_poisoned| schedule::ScheduleError::ControlStatePoisoned)?
+            .remove(mutant)
+            .unwrap_or_default())
     }
 }
 

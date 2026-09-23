@@ -20,6 +20,10 @@ error, or un-attributed kill state.
 A successor may therefore inherit only an existential fact a target established about the identical tree.
 Every other mutation is judged again.
 
+`drift` keeps every drift record a control established before the interruption, as the report spells one ([report v1](report-v1.md#drift)).
+An inherited kill is not confirmed again, so the control that confirmed it does not run again either, and what it established about its target's baseline reach would otherwise be lost: a resumed run folds the saved records with its own, and a move either run saw stands.
+A checkpoint written before this field existed is read as holding no record, so every target it measured reads as `not-measured` unless this run compares it again: less is claimed, never more.
+
 Historical `checkpoint-v1.json` files are outside this layout.
 In particular,
 their `runaway` and `timed_out` strings carried no matched control and are never reinterpreted as detections.

@@ -637,6 +637,10 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
     for (pointer, tag) in BRANCHES.into_iter().zip(shared) {
         rows.push((pointer, vec![tag]));
     }
+    rows.push((
+        "/$defs/drift/oneOf/2/properties/why",
+        names(&njutest::report::drift::Unmeasured::ALL),
+    ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
         .map(|(pointer, names)| {

@@ -393,3 +393,67 @@ fn what_a_route_would_take_is_the_tests_it_names_and_not_the_target_they_are_in(
         "the fixture was timed at all: {every:?}"
     );
 }
+
+/// What one control of `target` that was asked to observe established, as target and steadiness.
+fn observed(session: &Session, target: &str) -> Vec<(String, rust_mutants::touch::Steadiness)> {
+    let request = rust_mutants::session::Request::new(String::new()).with_target(target);
+    let controlled = session
+        .control(
+            &request,
+            &Cancel::new(),
+            rust_mutants::session::Observing::Reach,
+        )
+        .expect("control");
+    assert_eq!(
+        controlled.result.outcome(),
+        rust_mutants::outcome::Outcome::Survived,
+        "the original code passes: {}",
+        njutest_devkit::process::strict_utf8(&controlled.result.output)
+    );
+    controlled
+        .observed
+        .into_iter()
+        .map(|one| (one.target, one.steadiness))
+        .collect()
+}
+
+#[test]
+fn a_control_of_a_suite_that_reaches_what_it_reached_says_its_baseline_held() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let session = prepared(&fixture);
+    assert_eq!(
+        observed(&session, LIBRARY),
+        [(LIBRARY.to_owned(), rust_mutants::touch::Steadiness::Held)],
+        "two passing runs of one target over one tree reached one set"
+    );
+    let quiet = session
+        .control(
+            &rust_mutants::session::Request::new(String::new()).with_target(LIBRARY),
+            &Cancel::new(),
+            rust_mutants::session::Observing::Nothing,
+        )
+        .expect("control");
+    assert!(
+        quiet.observed.is_empty(),
+        "a control asked to observe nothing records nothing: {:?}",
+        quiet.observed
+    );
+}
+
+#[test]
+fn a_control_of_a_suite_whose_reach_depends_on_an_earlier_process_says_its_baseline_moved() {
+    let fixture = Fixture::copy("fixture-drifts");
+    let session = prepared(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    let first = mutant(&session, "add-to-sub", 9);
+    let second = mutant(&session, "mul-to-div", 15);
+    let said = observed(&session, target);
+    let [(named, rust_mutants::touch::Steadiness::Moved(moved))] = said.as_slice() else {
+        panic!("the control reached what the baseline did not: {said:?}");
+    };
+    assert_eq!(named, target);
+    assert!(
+        moved.reached.lost.contains(&first) && moved.reached.gained.contains(&second),
+        "the baseline was the first process to look and the control was not: {moved:?}"
+    );
+}
