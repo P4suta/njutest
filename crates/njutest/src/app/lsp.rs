@@ -4,6 +4,7 @@
 //! `njutest lsp`: what a completed run found, in the editor the code is being written in.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::{BufRead, Read as _, Write};
 use std::path::Path;
 
@@ -685,7 +686,8 @@ impl Guarded {
 /// The file `uri` names, as a report names it from `root`, or nothing when it names no file under `root`.
 ///
 /// `file://localhost/` is the local host RFC 8089 says it is, and a root the platform spells as a verbatim path is compared without its `//?/`.
-fn path_of(uri: &str, root: &Path) -> Option<String> {
+#[must_use]
+pub fn path_of(uri: &str, root: &Path) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
     let rest = match rest.strip_prefix("localhost") {
         Some(after) if after.starts_with('/') => after,
@@ -748,15 +750,26 @@ fn decoded(text: &str) -> Option<String> {
     }
 }
 
-/// `path` as the URI an editor holds the document under.
+/// `path` as the URI an editor holds the document under, every byte a URI path cannot carry as it is escaped.
+///
+/// A space, a `#`, a `?` or a `%` left as they are would make a client read the rest of the path as a fragment, a query or an escape, and put what was published under it on another document; [`path_of`] reads it back.
 /// # Errors
 /// Returns an error when `path` is not valid UTF-8 and therefore cannot be represented by the protocol without changing its identity.
 pub fn uri_of(path: &Path) -> Result<String, rust_mutants::id::SlashedPathError> {
     let text = rust_mutants::id::slashed(path)?;
-    if text.starts_with('/') {
-        Ok(format!("file://{text}"))
+    let mut escaped = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {
+            escaped.push(char::from(byte));
+        } else {
+            let written = write!(escaped, "%{byte:02X}");
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+    }
+    if escaped.starts_with('/') {
+        Ok(format!("file://{escaped}"))
     } else {
-        Ok(format!("file:///{text}"))
+        Ok(format!("file:///{escaped}"))
     }
 }
 

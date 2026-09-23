@@ -1150,3 +1150,68 @@ fn an_edit_that_says_only_how_long_a_range_it_replaced_is_not_taken_for_the_whol
          piece of the document rather than all of it"
     );
 }
+
+#[test]
+fn a_path_a_uri_cannot_spell_as_it_is_is_escaped_and_read_back_as_the_same_file() {
+    let parent = tempfile::Builder::new()
+        .prefix("njutest lsp #1 ")
+        .tempdir()
+        .expect("a directory whose name a URI has to escape");
+    let root = parent.path().join("a%20b?c");
+    std::fs::create_dir_all(&root).expect("a root whose name looks like an escape");
+    ran(&root);
+    let said = answers(
+        served(
+            &[
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+                json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }),
+            ],
+            &root,
+        )
+        .said,
+    );
+    let published = said
+        .iter()
+        .find(|one| one["method"] == "textDocument/publishDiagnostics")
+        .and_then(|one| one["params"]["uri"].as_str())
+        .unwrap_or_else(|| panic!("the findings are published: {said:?}"));
+    assert!(
+        !published.contains(' ') && !published.contains('#') && !published.contains('?'),
+        "a space, a `#` and a `?` in a path are escaped, or a client reads the rest of the \
+         path as a fragment or a query and puts the findings on another document: {published}"
+    );
+    assert_eq!(
+        njutest::app::lsp::path_of(published, &root).as_deref(),
+        Some("src/lib.rs"),
+        "what the server publishes under is what it reads a client's request for as: \
+         {published}"
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn a_uri_the_server_writes_names_the_file_it_was_written_for(
+        segments in proptest::collection::vec("[a-z %#?&=+@:é\u{1D11E}.-]{1,8}", 1..4),
+    ) {
+        let segments: Vec<String> = segments
+            .into_iter()
+            .map(|segment| segment.trim_matches('.').to_owned())
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        proptest::prop_assume!(!segments.is_empty());
+        let root = std::path::Path::new("/workspace root#1");
+        let relative = segments.join("/");
+        proptest::prop_assume!(
+            rust_mutants::id::normalize_path(&relative).as_deref() == Ok(relative.as_str()),
+            "only a path a report can name is one a finding is published under"
+        );
+        let uri = njutest::app::lsp::uri_of(&root.join(&relative)).expect("a UTF-8 path");
+        proptest::prop_assert_eq!(
+            njutest::app::lsp::path_of(&uri, root),
+            Some(relative.clone()),
+            "{} came back from {}",
+            relative,
+            uri
+        );
+    }
+}
