@@ -424,6 +424,23 @@ A part's report is refused as every command that needs a complete report refuses
 Merge the parts first.
 The command exits 0 whatever the specification says, because it describes and does not judge.
 
+## What a guard marks
+
+`njutest guard PATH` draws one file as a stored run measured it, and marks each line a change starts on with the section of the weakest change that starts there, by `Decision::standing`: `●` pinned, `○` left free, `◎` the same program, `◇` could not tell (`*`, `o`, `=`, `?` where the terminal has only ASCII).
+A line one change of which is left free is free, whatever else on it is pinned, and a change that spans two lines is marked on the line it starts on and nowhere else.
+The sections are the specification's, read off the same rows, so a line and the change `njutest spec` lists cannot stand in different places.
+
+The file is drawn only from lines the run vouches for: its SHA-256 now has to be the one the report recorded ([Sources](report-v1.md#sources)).
+A file with other bytes is one note, `◌` not yet asked, which says why and which run, and none of its code, because a mark beside a line the run did not measure is a claim about a program nobody asked about.
+`PATH` names one file by its whole path from the project's root, however it is spelled (`./src/lib.rs` is `src/lib.rs`); a file the run changed nothing in is refused with `NJ6006`.
+The command exits 0 whatever the marks say.
+
+`njutest lsp` puts the same marks in an editor.
+A mark is an inlay hint at the end of its line, labelled with its section, and hovering it gives each change that starts there, what each build established about it, and the `njutest explain` command that asks about it.
+Each item carries a lens above its first change saying how many of its changes stand where, and naming it as `njutest spec` reads it.
+The server asks for the whole buffer on every change and marks a document only while the client holds exactly the bytes the run read: an unsaved edit takes the marks away, and undoing it brings them back.
+It reads the latest run's report once, and again only when the store points at another run.
+
 ## DEFECT, INSUFFICIENT, and ERROR
 
 `DEFECT` means user code violated a baseline, soundness, build, or test contract.

@@ -3,6 +3,7 @@
 
 //! `njutest lsp`: what a completed run found, in the editor the code is being written in.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, Read as _, Write};
 use std::path::Path;
 
@@ -10,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::cli::{EXIT_ASSURED, EXIT_ERROR};
 use crate::report::Report;
+use crate::spec::Specification;
 
 /// How a client counts the characters of a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,19 @@ impl Encoding {
         match self {
             Self::Utf16 => "utf-16",
             Self::Utf8 => "utf-8",
+        }
+    }
+
+    /// How many units the client counts in `text`.
+    #[must_use]
+    pub fn width(self, text: &str) -> u32 {
+        let units = match self {
+            Self::Utf16 => text.encode_utf16().count(),
+            Self::Utf8 => text.len(),
+        };
+        match u32::try_from(units) {
+            Ok(units) => units,
+            Err(_too_long) => u32::MAX,
         }
     }
 
@@ -78,10 +93,8 @@ pub fn diagnostics(
     encoding: Encoding,
 ) -> Result<Vec<Reported>, crate::report::CountError> {
     let sources = crate::presentation::Sources::read(root, report)?;
-    let mut by_file: std::collections::BTreeMap<String, Vec<Value>> =
-        std::collections::BTreeMap::new();
-    let mut unshown: std::collections::BTreeMap<String, crate::presentation::Missing> =
-        std::collections::BTreeMap::new();
+    let mut by_file: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut unshown: BTreeMap<String, crate::presentation::Missing> = BTreeMap::new();
     let conclusion = report.conclusion()?;
     for finding in &conclusion.findings {
         let Some(mutant) = conclusion
@@ -230,6 +243,7 @@ pub fn message(input: &mut dyn BufRead) -> Option<Value> {
 pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8 {
     let mut encoding = Encoding::default();
     let mut stopping = false;
+    let mut held = Held::default();
     while let Some(request) = message(input) {
         let method = request
             .get("method")
@@ -242,13 +256,45 @@ pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8
                 encoding = Encoding::asked(&request);
                 reply(output, id.as_ref(), &capabilities(encoding))
             }
-            "initialized" | "textDocument/didOpen" | "textDocument/didSave" => {
+            "textDocument/didOpen" => {
+                held.opened(&request);
                 if stopping {
                     Ok(())
                 } else {
                     publish(output, root, encoding)
                 }
             }
+            "initialized" | "textDocument/didSave" => {
+                if stopping {
+                    Ok(())
+                } else {
+                    publish(output, root, encoding)
+                }
+            }
+            "textDocument/didChange" => {
+                held.changed(&request);
+                Ok(())
+            }
+            "textDocument/didClose" => {
+                held.closed(&request);
+                Ok(())
+            }
+            "textDocument/inlayHint" => match held.guarded(output, root, &request) {
+                Ok(guarded) => reply(
+                    output,
+                    id.as_ref(),
+                    &guarded.map_or_else(|| json!([]), |one| one.hints(&request, encoding)),
+                ),
+                Err(write_error) => Err(write_error),
+            },
+            "textDocument/codeLens" => match held.guarded(output, root, &request) {
+                Ok(guarded) => reply(
+                    output,
+                    id.as_ref(),
+                    &guarded.map_or_else(|| json!([]), |one| one.lenses()),
+                ),
+                Err(write_error) => Err(write_error),
+            },
             "textDocument/codeAction" => reply(output, id.as_ref(), &actions(&request)),
             "shutdown" => {
                 stopping = true;
@@ -265,13 +311,17 @@ pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8
     EXIT_ASSURED
 }
 
-/// What this server does, which is read a report and offer the command that records an acceptance.
+/// What this server does, which is read a report, offer the command that records an acceptance, and mark the lines of a file whose bytes are the ones the run read.
+///
+/// A mark is only true of those bytes, so the server asks for the whole buffer on every change and holds what the client holds rather than what is on disk.
 fn capabilities(encoding: Encoding) -> Value {
     json!({
         "capabilities": {
             "positionEncoding": encoding.name(),
-            "textDocumentSync": { "openClose": true, "save": true },
+            "textDocumentSync": { "openClose": true, "save": true, "change": 1 },
             "codeActionProvider": true,
+            "inlayHintProvider": true,
+            "codeLensProvider": { "resolveProvider": false },
         },
         "serverInfo": { "name": "njutest", "version": crate::VERSION },
     })
@@ -346,6 +396,330 @@ fn publish(output: &mut dyn Write, root: &Path, encoding: Encoding) -> std::io::
         )?;
     }
     Ok(())
+}
+
+/// What the server holds between messages: every document a client has open, as the client holds it, and the latest run it read.
+#[derive(Debug, Default)]
+struct Held {
+    documents: BTreeMap<String, String>,
+    latest: Option<Latest>,
+}
+
+/// The latest run, read once and kept for as long as it stays the latest.
+#[derive(Debug)]
+struct Latest {
+    run: String,
+    report: Report,
+    recorded: BTreeMap<String, rust_mutants::id::HexDigest>,
+}
+
+/// A document whose bytes are the ones the latest run read, with what that run established about it.
+#[derive(Debug)]
+struct Guarded {
+    specification: Specification,
+    path: String,
+    text: String,
+}
+
+impl Held {
+    /// Keeps the text of a document the client opened.
+    fn opened(&mut self, request: &Value) {
+        let document = request
+            .get("params")
+            .and_then(|one| one.get("textDocument"));
+        let uri = document
+            .and_then(|one| one.get("uri"))
+            .and_then(Value::as_str);
+        let text = document
+            .and_then(|one| one.get("text"))
+            .and_then(Value::as_str);
+        if let (Some(uri), Some(text)) = (uri, text) {
+            self.documents.insert(uri.to_owned(), text.to_owned());
+        }
+    }
+
+    /// Keeps the text a client's edit left, which the whole-document sync this server asks for sends entire.
+    ///
+    /// An edit it cannot read leaves a buffer it no longer knows, so it forgets the document rather than keep bytes the client no longer has.
+    fn changed(&mut self, request: &Value) {
+        let params = request.get("params");
+        let Some(uri) = params
+            .and_then(|one| one.get("textDocument"))
+            .and_then(|one| one.get("uri"))
+            .and_then(Value::as_str)
+        else {
+            return;
+        };
+        match params
+            .and_then(|one| one.get("contentChanges"))
+            .and_then(Value::as_array)
+            .and_then(|changes| changes.last())
+            .and_then(|last| last.get("text"))
+            .and_then(Value::as_str)
+        {
+            Some(text) => {
+                self.documents.insert(uri.to_owned(), text.to_owned());
+            }
+            None => {
+                self.documents.remove(uri);
+            }
+        }
+    }
+
+    /// Forgets a document the client closed.
+    fn closed(&mut self, request: &Value) {
+        if let Some(uri) = request
+            .get("params")
+            .and_then(|one| one.get("textDocument"))
+            .and_then(|one| one.get("uri"))
+            .and_then(Value::as_str)
+        {
+            self.documents.remove(uri);
+        }
+    }
+
+    /// The document a request is about, when the client holds exactly the bytes the latest run read of it.
+    ///
+    /// # Errors
+    /// Returns the output stream's write failure.
+    fn guarded(
+        &mut self,
+        output: &mut dyn Write,
+        root: &Path,
+        request: &Value,
+    ) -> std::io::Result<Option<Guarded>> {
+        let Some(uri) = request
+            .get("params")
+            .and_then(|one| one.get("textDocument"))
+            .and_then(|one| one.get("uri"))
+            .and_then(Value::as_str)
+        else {
+            return Ok(None);
+        };
+        let (Some(text), Some(path)) = (self.documents.get(uri), path_of(uri, root)) else {
+            return Ok(None);
+        };
+        let text = text.clone();
+        self.refresh(output, root)?;
+        let Some(latest) = &self.latest else {
+            return Ok(None);
+        };
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, text.as_bytes());
+        if latest.recorded.get(&path) != Some(&rust_mutants::id::HexDigest::finish(hasher)) {
+            return Ok(None);
+        }
+        match crate::spec::guarded(&latest.report, &path) {
+            Ok((specification, path)) => Ok(Some(Guarded {
+                specification,
+                path,
+                text,
+            })),
+            Err(crate::spec::SpecError::NamesNothing { .. }) => Ok(None),
+            Err(error) => {
+                notify(
+                    output,
+                    "window/logMessage",
+                    &json!({ "type": 1, "message": error.to_string() }),
+                )?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Makes the run it holds the one the store points at now, reading its report only when that is another run.
+    ///
+    /// # Errors
+    /// Returns the output stream's write failure.
+    fn refresh(&mut self, output: &mut dyn Write, root: &Path) -> std::io::Result<()> {
+        let pointed = match super::reports::Store::read(root)
+            .and_then(|store| store.pointed_run(super::reports::Index::Any))
+        {
+            Ok(Some(pointed)) => pointed,
+            Ok(None) => {
+                self.latest = None;
+                return Ok(());
+            }
+            Err(error) => {
+                self.latest = None;
+                return notify(
+                    output,
+                    "window/logMessage",
+                    &json!({ "type": 1, "message": error.to_string() }),
+                );
+            }
+        };
+        let run = pointed.id().as_str().to_owned();
+        if self.latest.as_ref().is_some_and(|latest| latest.run == run) {
+            return Ok(());
+        }
+        notify(
+            output,
+            "window/logMessage",
+            &json!({
+                "type": 4,
+                "message": format!("reading run {run} for the marks beside the code"),
+            }),
+        )?;
+        let read = match pointed.document() {
+            Ok(text) => match crate::strictjson::decode_str::<Report>(&text) {
+                Ok(report) => match report.conclusion() {
+                    Ok(conclusion) => Ok(Latest {
+                        run,
+                        recorded: conclusion.sources,
+                        report,
+                    }),
+                    Err(error) => Err(error.to_string()),
+                },
+                Err(source) => Err(LatestError::Parse {
+                    path: pointed.document_display(),
+                    source,
+                }
+                .to_string()),
+            },
+            Err(error) => Err(LatestError::from(error).to_string()),
+        };
+        match read {
+            Ok(latest) => {
+                self.latest = Some(latest);
+                Ok(())
+            }
+            Err(said) => {
+                self.latest = None;
+                notify(
+                    output,
+                    "window/logMessage",
+                    &json!({ "type": 1, "message": said }),
+                )
+            }
+        }
+    }
+}
+
+impl Guarded {
+    /// A mark at the end of every line a change starts on inside the lines `request` asks about, each with what stands behind it.
+    fn hints(&self, request: &Value, encoding: Encoding) -> Value {
+        let asked = |end: &str| {
+            request
+                .get("params")
+                .and_then(|one| one.get("range"))
+                .and_then(|one| one.get(end))
+                .and_then(|one| one.get("line"))
+                .and_then(Value::as_u64)
+        };
+        let from = asked("start").unwrap_or(0);
+        let to = asked("end").unwrap_or(u64::MAX);
+        let lines: Vec<&str> = self.text.split('\n').collect();
+        let hints: Vec<Value> = self
+            .specification
+            .lines(&self.path)
+            .iter()
+            .filter_map(|line| {
+                let at = line.number().saturating_sub(1);
+                if u64::from(at) < from || u64::from(at) > to {
+                    return None;
+                }
+                let text = match usize::try_from(at) {
+                    Ok(index) => lines.get(index).copied().unwrap_or_default(),
+                    Err(_beyond_this_platform) => "",
+                };
+                Some(json!({
+                    "position": {
+                        "line": at,
+                        "character": encoding.width(text.trim_end_matches('\r')),
+                    },
+                    "label": crate::presentation::guard::labelled(line.section()),
+                    "paddingLeft": true,
+                    "tooltip": crate::presentation::guard::told(line),
+                }))
+            })
+            .collect();
+        Value::Array(hints)
+    }
+
+    /// A lens above the first change of every item of the file, saying how its changes stand and naming it as `njutest spec` reads it.
+    fn lenses(&self) -> Value {
+        let lenses: Vec<Value> = self
+            .specification
+            .items()
+            .iter()
+            .filter(|item| item.path() == self.path)
+            .filter_map(|item| {
+                let first = item.changes().iter().map(crate::spec::Change::line).min()?;
+                let at = first.saturating_sub(1);
+                Some(json!({
+                    "range": {
+                        "start": { "line": at, "character": 0 },
+                        "end": { "line": at, "character": 0 },
+                    },
+                    "command": {
+                        "title": crate::presentation::guard::summed(item),
+                        "command": "njutest.spec",
+                        "arguments": [format!("{}:{}", self.path, item.name())],
+                    },
+                }))
+            })
+            .collect();
+        Value::Array(lenses)
+    }
+}
+
+/// The file `uri` names, as a report names it from `root`, or nothing when it names no file under `root`.
+fn path_of(uri: &str, root: &Path) -> Option<String> {
+    let local = decoded(uri.strip_prefix("file://")?)?;
+    let local = match local.as_bytes() {
+        [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => local.get(1..)?.to_owned(),
+        _ => local,
+    };
+    let root = match rust_mutants::id::slashed(root) {
+        Ok(root) => root,
+        Err(_not_text) => return None,
+    };
+    let within = local.get(..root.len())?;
+    let drive = |one: &str| {
+        let bytes = one.as_bytes();
+        matches!(bytes, [letter, b':', ..] if letter.is_ascii_alphabetic())
+    };
+    let same = if drive(within) && drive(&root) {
+        within.eq_ignore_ascii_case(&root)
+    } else {
+        within == root
+    };
+    if !same {
+        return None;
+    }
+    let relative = local.get(root.len()..)?.strip_prefix('/')?;
+    match rust_mutants::id::normalize_path(relative) {
+        Ok(path) => Some(path),
+        Err(_not_a_workspace_path) => None,
+    }
+}
+
+/// `text` with every `%XX` escape a URI writes turned back into its byte, or nothing when an escape is malformed or the bytes are not UTF-8.
+fn decoded(text: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut rest = text.as_bytes();
+    while let Some((&byte, after)) = rest.split_first() {
+        if byte == b'%' {
+            let (hex, after) = after.split_at_checked(2)?;
+            let hex = match std::str::from_utf8(hex) {
+                Ok(hex) => hex,
+                Err(_not_text) => return None,
+            };
+            match u8::from_str_radix(hex, 16) {
+                Ok(value) => bytes.push(value),
+                Err(_not_hex) => return None,
+            }
+            rest = after;
+        } else {
+            bytes.push(byte);
+            rest = after;
+        }
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => Some(text),
+        Err(_not_text) => None,
+    }
 }
 
 /// `path` as the URI an editor holds the document under.

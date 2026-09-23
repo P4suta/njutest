@@ -6,7 +6,6 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
-    clippy::panic,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -139,7 +138,7 @@ fn a_file_is_named_exactly_and_not_by_the_end_of_its_path() {
     assert_eq!(
         spec.lines("src/other.rs")
             .iter()
-            .map(|line| line.number())
+            .map(njutest::spec::Line::number)
             .collect::<Vec<_>>(),
         [2],
         "each file's lines are its own"

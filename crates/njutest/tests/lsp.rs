@@ -867,3 +867,191 @@ fn a_pointer_that_names_no_run_is_not_a_run() {
          would put whatever is at the guess in front of a person as what their run found"
     );
 }
+
+/// Where `src/lib.rs` in `root` is, as the client names it.
+fn library(root: &std::path::Path) -> String {
+    njutest::app::lsp::uri_of(&root.join("src/lib.rs")).expect("a UTF-8 path")
+}
+
+/// A request for what the server says about the document at `uri`, over every line of it.
+fn asking(id: u32, method: &str, uri: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": method,
+        "params": {
+            "textDocument": { "uri": uri },
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 100, "character": 0 } },
+        },
+    })
+}
+
+/// What a client holding `text` as `src/lib.rs` is told, having opened it and then sent `asked`.
+fn guarding(root: &std::path::Path, text: &str, asked: &[Value]) -> Vec<Value> {
+    let mut messages = vec![
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+        json!({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": { "textDocument": {
+                "uri": library(root), "languageId": "rust", "version": 1, "text": text,
+            } },
+        }),
+    ];
+    messages.extend(asked.iter().cloned());
+    answers(served(&messages, root).said)
+}
+
+/// The answer to the request sent under `id`.
+fn answered(said: &[Value], id: u32) -> &Value {
+    let Some(answer) = said.iter().find(|one| one["id"] == id) else {
+        panic!("an answer under id {id}: {said:?}");
+    };
+    &answer["result"]
+}
+
+/// A client's edit that leaves `text` in the buffer at `uri`.
+fn changed(uri: &str, version: u32, text: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": uri, "version": version },
+            "contentChanges": [ { "text": text } ],
+        },
+    })
+}
+
+#[test]
+fn the_server_says_it_marks_lines_and_asks_for_the_whole_buffer_as_it_changes() {
+    let root = tempfile::tempdir().expect("a directory");
+    let said = answers(
+        served(
+            &[json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} })],
+            root.path(),
+        )
+        .said,
+    );
+    let capabilities = &answered(&said, 1)["capabilities"];
+    assert_eq!(capabilities["inlayHintProvider"], Value::Bool(true));
+    assert_eq!(
+        capabilities["codeLensProvider"],
+        json!({ "resolveProvider": false })
+    );
+    assert_eq!(
+        capabilities["textDocumentSync"]["change"],
+        json!(1),
+        "a mark is only true of the bytes the run read, so the server has to hold the buffer \
+         the client holds rather than the file on disk"
+    );
+}
+
+#[test]
+fn an_open_file_the_run_measured_is_marked_where_its_changes_start_with_what_stands_behind_each_mark()
+ {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[
+            asking(2, "textDocument/inlayHint", &uri),
+            asking(3, "textDocument/codeLens", &uri),
+        ],
+    );
+    let hints = answered(&said, 2).as_array().expect("inlay hints");
+    let [hint] = hints.as_slice() else {
+        panic!("one mark for the one line a change starts on: {said:?}");
+    };
+    assert_eq!(
+        hint["position"],
+        json!({ "line": 6, "character": 8 }),
+        "the mark sits at the end of line 7, counted as the client counts: the clef is two \
+         UTF-16 units"
+    );
+    assert_eq!(hint["label"], "\u{25cb} left free");
+    let told = hint["tooltip"].as_str().expect("a tooltip in plain text");
+    assert!(
+        told.contains("deleting `>`")
+            && told.contains("nothing noticed it")
+            && told.contains("njutest explain src/lib.rs:demo:gt-to-ge@7"),
+        "hovering the mark says what was changed, what stands behind the mark, and the \
+         command that asks about it: {told}"
+    );
+    let lenses = answered(&said, 3).as_array().expect("code lenses");
+    let [lens] = lenses.as_slice() else {
+        panic!("one lens for the one item: {said:?}");
+    };
+    assert_eq!(lens["range"]["start"], json!({ "line": 6, "character": 0 }));
+    assert_eq!(lens["command"]["title"], "demo: 1 left free");
+    assert_eq!(
+        lens["command"]["arguments"],
+        json!(["src/lib.rs:demo"]),
+        "the lens names the item as `njutest spec` reads it"
+    );
+}
+
+#[test]
+fn a_buffer_holding_other_bytes_than_the_run_read_is_marked_nowhere_until_it_holds_them_again() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let unopened =
+        njutest::app::lsp::uri_of(&root.path().join("src/other.rs")).expect("a UTF-8 path");
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[
+            changed(&uri, 2, &format!("{CLEF}\n")),
+            asking(2, "textDocument/inlayHint", &uri),
+            asking(3, "textDocument/codeLens", &uri),
+            changed(&uri, 3, CLEF),
+            asking(4, "textDocument/inlayHint", &uri),
+            asking(5, "textDocument/inlayHint", &unopened),
+        ],
+    );
+    assert_eq!(
+        answered(&said, 2),
+        &json!([]),
+        "an edit the file on disk does not have yet still makes the buffer another program, \
+         and a mark on it would be about code nobody asked about"
+    );
+    assert_eq!(answered(&said, 3), &json!([]));
+    assert_eq!(
+        answered(&said, 4).as_array().map(Vec::len),
+        Some(1),
+        "undoing the edit gives back the bytes the run read, and the mark with them"
+    );
+    assert_eq!(
+        answered(&said, 5),
+        &json!([]),
+        "a document the client never opened is one the server holds no bytes of"
+    );
+}
+
+#[test]
+fn the_latest_run_is_read_once_however_often_marks_are_asked_for() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[
+            asking(2, "textDocument/inlayHint", &uri),
+            asking(3, "textDocument/inlayHint", &uri),
+            asking(4, "textDocument/codeLens", &uri),
+        ],
+    );
+    let reads = said
+        .iter()
+        .filter(|one| {
+            one["method"] == "window/logMessage"
+                && one["params"]["message"]
+                    .as_str()
+                    .is_some_and(|said| said.starts_with("reading run one"))
+        })
+        .count();
+    assert_eq!(
+        reads, 1,
+        "an editor asks for marks on every scroll, and the report is read once for as long as \
+         its run is the latest: {said:?}"
+    );
+}

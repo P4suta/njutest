@@ -132,6 +132,15 @@ fn listed(change: &Change, telling: Telling) -> String {
         apart.push('\n');
         apart
     };
+    for account in accounts(change) {
+        listed.push_str(&set_in(&account, HELD, telling));
+    }
+    listed
+}
+
+/// What the builds established about `change`: one account when they all say the same, and one per build, named, when they do not.
+#[must_use]
+pub fn accounts(change: &Change) -> Vec<String> {
     let said: Vec<(&str, String)> = change
         .answers()
         .map(|answer| (answer.build(), established(answer)))
@@ -140,14 +149,18 @@ fn listed(change: &Change, telling: Telling) -> String {
         .iter()
         .all(|(_, one)| said.first().is_some_and(|(_, first)| first == one));
     match (agreed, said.first()) {
-        (true, Some((_, one))) => listed.push_str(&set_in(one, HELD, telling)),
-        (true, None) | (false, _) => {
-            for (build, one) in &said {
-                listed.push_str(&set_in(&format!("{build}: {one}"), HELD, telling));
-            }
-        }
+        (true, Some((_, one))) => vec![one.clone()],
+        (true, None) | (false, _) => said
+            .iter()
+            .map(|(build, one)| format!("{build}: {one}"))
+            .collect(),
     }
-    listed
+}
+
+/// What `change` did to the code, as a reader reads it at a glance, for `terminal`.
+#[must_use]
+pub fn glance(change: &Change, terminal: Terminal) -> String {
+    edited(change.edit(), Telling::of(terminal))
 }
 
 /// `text` set in by `indent`, folded to what is left of the terminal, with every line after the first set in a little further.
