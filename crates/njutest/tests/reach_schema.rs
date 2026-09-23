@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use njutest::reach::{Document, Schema};
+use rust_mutants::id::HexDigest;
 use rust_mutants::select::{Inputs, Measurement, Shadows, Standing, Target};
 use rust_mutants::snapshot::{Survey, Surveyed};
 use rust_mutants::touch::Unmeasured;
@@ -36,14 +37,14 @@ fn document(standing: Standing) -> Document {
                 files: BTreeMap::from([(
                     "src/lib.rs".to_owned(),
                     Surveyed {
-                        sha256: "a".repeat(64),
+                        sha256: HexDigest::of(b"a"),
                         executable: false,
                     },
                 )]),
                 passed_over: BTreeMap::from([("link".to_owned(), Some("target".to_owned()))]),
             },
             inputs: Inputs {
-                outside: BTreeMap::from([("/registry/dep.rs".to_owned(), "b".repeat(64))]),
+                outside: BTreeMap::from([("/registry/dep.rs".to_owned(), HexDigest::of(b"b"))]),
                 env: BTreeMap::from([("UNSET".to_owned(), None)]),
             },
             environment: BTreeMap::from([("LANG".to_owned(), "C".to_owned())]),

@@ -148,11 +148,25 @@ fn a_change_to_one_body_runs_the_target_that_entered_it_and_proves_the_other_una
         human.lines().any(|line| line == format!("SKIP\t{LIBRARY}")),
         "{human}"
     );
-    let (_, nextest) = selected(&fixture, "nextest");
+    assert!(
+        human
+            .lines()
+            .any(|line| line == format!("RUN\t{SMOKE}\tits tests entered src/lib.rs:double")),
+        "a reader is told which items it entered, which is what they look at next: {human}"
+    );
+    let (told, nextest) = selected(&fixture, "nextest");
     assert_eq!(
         nextest.trim_end(),
         "not (binary_id(=fixture-hollow))",
         "the library's binary is the one nextest may leave out"
+    );
+    assert!(
+        njutest_devkit::process::strict_utf8(&told.stderr)
+            .lines()
+            .any(|line| line.starts_with("DOCTESTS\tfixture-hollow/doc/fixture_hollow\t")),
+        "nextest runs no documentation, so a doc target a selection runs is said where a CI \
+         that only runs nextest still sees it: {}",
+        said(&told)
     );
 }
 
@@ -226,5 +240,36 @@ fn a_second_measurement_keeps_only_the_measured_bytes_it_names() {
     assert_ne!(
         first, second,
         "and the edited file's measured bytes are the new ones"
+    );
+}
+
+#[test]
+fn a_measured_file_kept_wrong_is_written_again_rather_than_kept() {
+    let fixture = fixture("fixture-hollow");
+    measured(&fixture);
+    let blobs = njutest::reach::directory(
+        &fixture
+            .root
+            .join(njutest::config::DEFAULT_REPORTS_DIRECTORY),
+    )
+    .join("blobs");
+    let one = std::fs::read_dir(&blobs)
+        .expect("the measured bytes are kept")
+        .next()
+        .expect("one of them")
+        .expect("an entry")
+        .path();
+    std::fs::write(&one, "not the bytes this is named for").expect("corrupt it");
+    measured(&fixture);
+    let bytes = std::fs::read(&one).expect("the file is there again");
+    let name = one
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a digest name");
+    assert_eq!(
+        rust_mutants::id::HexDigest::of(&bytes).as_str(),
+        name,
+        "a kept file that is not the bytes it is named for would make every later selection of \
+         it unproven for as long as it stayed"
     );
 }

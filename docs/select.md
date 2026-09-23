@@ -25,6 +25,8 @@ SKIP	demo/lib/demo
 $ cargo nextest run -E "$(njutest select --format nextest)"
 ```
 
+nextest does not run documentation, so `--format nextest` prints the filterset on stdout and, on stderr, one `DOCTESTS` line for every doc target the selection runs: a CI that only runs nextest still has to run those with `cargo test --doc`.
+
 ## The argument
 
 Two programs identical except at *p* run identically until *p* is first reached ([ADR 0014](adr/0014-the-guards-are-the-measurement.md)).

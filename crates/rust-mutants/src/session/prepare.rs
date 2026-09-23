@@ -95,7 +95,7 @@ fn inputs_of(
                         path: path.clone(),
                         source,
                     })?;
-                entry.insert(crate::id::digest(&bytes));
+                entry.insert(crate::id::HexDigest::of(&bytes));
             }
         }
         inputs.env.extend(

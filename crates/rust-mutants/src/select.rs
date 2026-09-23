@@ -36,15 +36,22 @@ pub enum Changed<'a> {
 }
 
 impl<'a> Changed<'a> {
-    /// The change to `path`, given the digest the measurement recorded for it and its bytes then and now, where there are any.
+    /// The change to `path`, given the digests the measurement and the survey now recorded for it and its bytes then and now: bytes that are not the ones digested prove nothing about either.
     #[must_use]
-    pub fn read(path: &'a str, measured: &str, old: Option<&'a str>, new: Option<&'a str>) -> Self {
+    pub fn read(
+        path: &'a str,
+        (measured, now): (&crate::id::HexDigest, &crate::id::HexDigest),
+        old: Option<&'a str>,
+        new: Option<&'a str>,
+    ) -> Self {
         match (old, new) {
-            (Some(old), _) if crate::id::digest(old.as_bytes()) != measured => {
-                Self::Unproven { path }
+            (Some(old), Some(new))
+                if crate::id::HexDigest::of(old.as_bytes()) == *measured
+                    && crate::id::HexDigest::of(new.as_bytes()) == *now =>
+            {
+                Self::Revised(Revision { path, old, new })
             }
-            (Some(old), Some(new)) => Self::Revised(Revision { path, old, new }),
-            (None, _) | (Some(_), None) => Self::Whole { path },
+            (Some(_) | None, Some(_) | None) => Self::Unproven { path },
         }
     }
 
@@ -154,7 +161,7 @@ pub enum Everything {
 #[serde(deny_unknown_fields)]
 pub struct Inputs {
     /// Every file outside the tree and outside the build's own output the compiler read, by absolute path, with its SHA-256: a path dependency, a `[patch]` source, a registry crate.
-    pub outside: BTreeMap<String, String>,
+    pub outside: BTreeMap<String, crate::id::HexDigest>,
     /// Every variable the compiler read through `env!` or `option_env!`, with the value it read or nothing where it was unset.
     pub env: BTreeMap<String, Option<String>>,
 }
@@ -165,6 +172,20 @@ pub struct Inputs {
 pub enum Standing {
     /// A second whole run passed the same tests and reached, entered, and infected the same.
     Held,
+    /// A second whole run reached something else.
+    Moved,
+    /// A second whole run established nothing to compare, and why.
+    NotMeasured {
+        /// Why.
+        why: Unmeasured,
+    },
+    /// No second whole run of it was made.
+    Uncompared,
+}
+
+/// Every standing but the one a selection may skip by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unheld {
     /// A second whole run reached something else.
     Moved,
     /// A second whole run established nothing to compare, and why.
@@ -297,7 +318,7 @@ pub enum Why {
     /// The change is one no measurement can place.
     Everything(Everything),
     /// Its reach was not shown to be a function of the target: a second run moved it, or nothing compared a second run with the first.
-    Unestablished(Standing),
+    Unestablished(Unheld),
     /// The measurement holds nothing about the target.
     Unmeasured,
 }
@@ -1066,6 +1087,10 @@ pub enum Difference {
     Edited {
         /// The file.
         path: String,
+        /// What the measurement recorded of it.
+        measured: crate::snapshot::Surveyed,
+        /// What the survey now recorded of it.
+        now: crate::snapshot::Surveyed,
     },
     /// The file is new, or gone.
     Whole {
@@ -1118,7 +1143,7 @@ pub fn differences(measured: &Measurement, now: &Now<'_>) -> Result<Vec<Differen
     }
     for (path, digest) in &measured.inputs.outside {
         let unchanged = match std::fs::read(path) {
-            Ok(bytes) => crate::id::digest(&bytes) == *digest,
+            Ok(bytes) => crate::id::HexDigest::of(&bytes) == *digest,
             Err(_gone_or_unreadable) => false,
         };
         if !unchanged {
@@ -1148,7 +1173,11 @@ pub fn differences(measured: &Measurement, now: &Now<'_>) -> Result<Vec<Differen
         .filter_map(
             |path| match (measured.survey.files.get(path), now.survey.files.get(path)) {
                 (Some(was), Some(is)) if was == is => None,
-                (Some(_), Some(_)) => Some(Difference::Edited { path: path.clone() }),
+                (Some(was), Some(is)) => Some(Difference::Edited {
+                    path: path.clone(),
+                    measured: was.clone(),
+                    now: is.clone(),
+                }),
                 (None, _) | (_, None) => Some(Difference::Whole { path: path.clone() }),
             },
         )
@@ -1170,6 +1199,11 @@ pub fn decide(
                 (Err(everything), _) => Decided::Run(Why::Everything(everything.clone())),
                 (Ok(_), None) => Decided::Run(Why::Unmeasured),
                 (Ok(items), Some(record)) => match record.standing {
+                    Standing::Moved => Decided::Run(Why::Unestablished(Unheld::Moved)),
+                    Standing::NotMeasured { why } => {
+                        Decided::Run(Why::Unestablished(Unheld::NotMeasured { why }))
+                    }
+                    Standing::Uncompared => Decided::Run(Why::Unestablished(Unheld::Uncompared)),
                     Standing::Held => {
                         let entered: BTreeSet<u32> =
                             record.entered.intersection(items).copied().collect();
@@ -1179,9 +1213,6 @@ pub fn decide(
                             Decided::Run(Why::Entered(entered))
                         }
                     }
-                    standing @ (Standing::Moved
-                    | Standing::NotMeasured { .. }
-                    | Standing::Uncompared) => Decided::Run(Why::Unestablished(standing)),
                 },
             };
             (target.clone(), decided)
@@ -1196,8 +1227,9 @@ mod tests {
 
     use super::{
         Changed, Decided, Difference, Everything, Inputs, Measurement, Now, Parts, Selection,
-        Standing, Why, decide, differences,
+        Standing, Unheld, Why, decide, differences,
     };
+    use crate::id::HexDigest;
     use crate::snapshot::{Survey, Surveyed};
     use crate::touch::{Item, Seen, Steadiness, TargetTouches, Touched, Unmeasured};
 
@@ -1277,7 +1309,7 @@ pub fn beta(x: u8) -> u8 {
                     (
                         (*path).to_owned(),
                         Surveyed {
-                            sha256: crate::id::digest(text.as_bytes()),
+                            sha256: HexDigest::of(text.as_bytes()),
                             executable: false,
                         },
                     )
@@ -1292,11 +1324,11 @@ pub fn beta(x: u8) -> u8 {
     }
 
     fn selected(old: &str, new: &str) -> Selection {
-        let digest = crate::id::digest(old.as_bytes());
+        let (was, is) = (HexDigest::of(old.as_bytes()), HexDigest::of(new.as_bytes()));
         decide(
             &measured(old),
             &now(),
-            &[Changed::read(PATH, &digest, Some(old), Some(new))],
+            &[Changed::read(PATH, (&was, &is), Some(old), Some(new))],
         )
     }
 
@@ -1454,7 +1486,15 @@ pub fn beta(x: u8) -> u8 {
         let selection = decide(
             &measured(MEASURED),
             &now(),
-            &[Changed::read(PATH, "0000", Some(MEASURED), Some(MEASURED))],
+            &[Changed::read(
+                PATH,
+                (
+                    &HexDigest::of(b"other"),
+                    &HexDigest::of(MEASURED.as_bytes()),
+                ),
+                Some(MEASURED),
+                Some(MEASURED),
+            )],
         );
         assert!(
             matches!(everything(&selection), Some(Everything::Unproven { .. })),
@@ -1467,13 +1507,13 @@ pub fn beta(x: u8) -> u8 {
         let measurement = measured(MEASURED);
         for (change, expected) in [
             (
-                Changed::read("Cargo.toml", "", None, Some("")),
+                Changed::Whole { path: "Cargo.toml" },
                 Everything::Build {
                     path: "Cargo.toml".to_owned(),
                 },
             ),
             (
-                Changed::read(PATH, "", None, Some(MEASURED)),
+                Changed::Whole { path: PATH },
                 Everything::Whole {
                     path: PATH.to_owned(),
                 },
@@ -1481,7 +1521,7 @@ pub fn beta(x: u8) -> u8 {
             (
                 Changed::read(
                     "tests/data.txt",
-                    &crate::id::digest(b"a"),
+                    (&HexDigest::of(b"a"), &HexDigest::of(b"b")),
                     Some("a"),
                     Some("b"),
                 ),
@@ -1504,11 +1544,16 @@ pub fn beta(x: u8) -> u8 {
             };
         }
         let now = BTreeSet::from(["enters-beta".to_owned(), "added-since".to_owned()]);
-        let digest = crate::id::digest(MEASURED.as_bytes());
+        let digest = HexDigest::of(MEASURED.as_bytes());
         let selection = decide(
             &measurement,
             &now,
-            &[Changed::read(PATH, &digest, Some(MEASURED), Some(MEASURED))],
+            &[Changed::read(
+                PATH,
+                (&digest, &digest),
+                Some(MEASURED),
+                Some(MEASURED),
+            )],
         );
         assert_eq!(
             selection.decided().keys().collect::<Vec<_>>(),
@@ -1522,7 +1567,7 @@ pub fn beta(x: u8) -> u8 {
         );
         assert_eq!(
             selection.decided().get("enters-beta"),
-            Some(&Decided::Run(Why::Unestablished(Standing::NotMeasured {
+            Some(&Decided::Run(Why::Unestablished(Unheld::NotMeasured {
                 why: Unmeasured::OtherTests
             })))
         );
@@ -1636,22 +1681,22 @@ pub fn beta(x: u8) -> u8 {
         if let Some(script) = survey.files.get_mut("run.sh") {
             script.executable = true;
         }
+        let named: Vec<(bool, String)> = found(&measured, &survey, &[])
+            .expect("nothing but files moved")
+            .into_iter()
+            .map(|difference| match difference {
+                Difference::Whole { path } => (true, path),
+                Difference::Edited { path, .. } => (false, path),
+            })
+            .collect();
         assert_eq!(
-            found(&measured, &survey, &[]),
-            Ok(vec![
-                Difference::Whole {
-                    path: "gone.txt".to_owned()
-                },
-                Difference::Whole {
-                    path: "new.txt".to_owned()
-                },
-                Difference::Edited {
-                    path: "run.sh".to_owned()
-                },
-                Difference::Edited {
-                    path: PATH.to_owned()
-                },
-            ]),
+            named,
+            [
+                (true, "gone.txt".to_owned()),
+                (true, "new.txt".to_owned()),
+                (false, "run.sh".to_owned()),
+                (false, PATH.to_owned()),
+            ],
             "a file made runnable with the same bytes changed for a test that runs it"
         );
         assert_eq!(
@@ -1723,7 +1768,7 @@ pub fn beta(x: u8) -> u8 {
         outside
             .inputs
             .outside
-            .insert(name.clone(), crate::id::digest(b"pub fn f() {}"));
+            .insert(name.clone(), HexDigest::of(b"pub fn f() {}"));
         assert_eq!(found(&outside, &same, &[]), Ok(Vec::new()));
         std::fs::write(&dependency, "pub fn f() { g() }").expect("write");
         assert_eq!(
@@ -1738,5 +1783,28 @@ pub fn beta(x: u8) -> u8 {
             found(&measured, &linked, &[]),
             Err(Everything::Irregular { .. })
         ));
+    }
+
+    #[test]
+    fn bytes_that_are_not_the_ones_surveyed_now_prove_nothing_either() {
+        let edited = MEASURED.replace("x * 2", "x * 3");
+        let selection = decide(
+            &measured(MEASURED),
+            &now(),
+            &[Changed::read(
+                PATH,
+                (
+                    &HexDigest::of(MEASURED.as_bytes()),
+                    &HexDigest::of(edited.as_bytes()),
+                ),
+                Some(MEASURED),
+                Some(&MEASURED.replace("x * 2", "x * 4")),
+            )],
+        );
+        assert!(
+            matches!(everything(&selection), Some(Everything::Unproven { .. })),
+            "a file edited again after the survey read it is not the file the survey saw: \
+             {selection:?}"
+        );
     }
 }

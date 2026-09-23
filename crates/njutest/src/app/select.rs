@@ -8,8 +8,9 @@ use std::io::Write;
 use std::path::Path;
 
 use rust_mutants::execute::TargetKind;
+use rust_mutants::id::HexDigest;
 use rust_mutants::select::{
-    Changed, Decided, Difference, Everything, Measurement, Now, Selection, Standing, Why, decide,
+    Changed, Decided, Difference, Everything, Measurement, Now, Selection, Unheld, Why, decide,
     differences,
 };
 
@@ -47,9 +48,14 @@ pub fn run(
         config: &config,
     };
     match selected(&measuring) {
-        Ok(selection) => {
-            for line in told(&selection, arguments.format) {
+        Ok((selection, measured)) => {
+            for line in told(&selection, &measured, arguments.format) {
                 super::say(stdout, &line)?;
+            }
+            if arguments.format == SelectFormat::Nextest {
+                for line in doctests(&selection, &measured) {
+                    super::say(stderr, &line)?;
+                }
             }
             Ok(EXIT_ASSURED)
         }
@@ -64,7 +70,7 @@ pub fn run(
 ///
 /// # Errors
 /// No measurement to read, a toolchain or workspace that cannot be asked, and a selected variable that is not UTF-8.
-pub fn selected(measuring: &Measuring<'_>) -> Result<Selection, RunnerError> {
+pub fn selected(measuring: &Measuring<'_>) -> Result<(Selection, Measurement), RunnerError> {
     let (root, environment, config) = (measuring.root, measuring.environment, measuring.config);
     let directory = crate::reach::directory(&root.join(config.reports.directory.as_str()));
     let document = crate::reach::read(&directory)?;
@@ -91,82 +97,96 @@ pub fn selected(measuring: &Measuring<'_>) -> Result<Selection, RunnerError> {
             vars: &vars,
         },
     );
-    Ok(match found {
+    let selection = match found {
         Err(everything) => Selection::everything(&now, &everything),
         Ok(found) => {
-            let read = revisions(measured, &found, (root, &directory));
-            let changes: Vec<Changed<'_>> = read
-                .iter()
-                .map(|one| {
-                    Changed::read(
-                        &one.path,
-                        &one.digest,
-                        one.old.as_deref(),
-                        one.new.as_deref(),
-                    )
-                })
-                .collect();
+            let read = revisions(&found, (root, &directory));
+            let changes: Vec<Changed<'_>> = read.iter().map(Revised::changed).collect();
             decide(measured, &now, &changes)
         }
-    })
+    };
+    Ok((selection, document.measurement))
 }
 
-/// One file that differs, with its measured and current bytes where there are any.
-struct Revised {
-    path: String,
-    digest: String,
-    old: Option<String>,
-    new: Option<String>,
+/// One file that differs, with its digests and its measured and current bytes where there are any.
+enum Revised {
+    /// In both trees.
+    Edited {
+        path: String,
+        digests: (HexDigest, HexDigest),
+        old: Option<String>,
+        new: Option<String>,
+    },
+    /// In one of them.
+    Whole { path: String },
+}
+
+impl Revised {
+    fn changed(&self) -> Changed<'_> {
+        match self {
+            Self::Edited {
+                path,
+                digests,
+                old,
+                new,
+            } => Changed::read(
+                path,
+                (&digests.0, &digests.1),
+                old.as_deref(),
+                new.as_deref(),
+            ),
+            Self::Whole { path } => Changed::Whole { path },
+        }
+    }
 }
 
 /// The measured and current bytes of every file that differs.
-fn revisions(
-    measured: &Measurement,
-    found: &[Difference],
-    (root, directory): (&Path, &Path),
-) -> Vec<Revised> {
+fn revisions(found: &[Difference], (root, directory): (&Path, &Path)) -> Vec<Revised> {
     found
         .iter()
         .map(|difference| match difference {
-            Difference::Edited { path } => {
-                let digest = measured
-                    .survey
-                    .files
-                    .get(path)
-                    .map(|file| file.sha256.clone())
-                    .unwrap_or_default();
-                let new = match std::fs::read_to_string(root.join(path)) {
+            Difference::Edited {
+                path,
+                measured,
+                now,
+            } => Revised::Edited {
+                old: crate::reach::measured(directory, &measured.sha256),
+                new: match std::fs::read_to_string(root.join(path)) {
                     Ok(text) => Some(text),
                     Err(_gone_or_not_text) => None,
-                };
-                Revised {
-                    old: crate::reach::measured(directory, &digest),
-                    path: path.clone(),
-                    digest,
-                    new,
-                }
-            }
-            Difference::Whole { path } => Revised {
+                },
                 path: path.clone(),
-                digest: String::new(),
-                old: None,
-                new: None,
+                digests: (measured.sha256.clone(), now.sha256.clone()),
             },
+            Difference::Whole { path } => Revised::Whole { path: path.clone() },
+        })
+        .collect()
+}
+
+/// Every doc target that runs, and why, which a nextest filterset cannot say because nextest does not run documentation.
+fn doctests(selection: &Selection, measured: &Measurement) -> Vec<String> {
+    selection
+        .decided()
+        .iter()
+        .filter(|(target, _)| binary_id(target).is_none())
+        .filter_map(|(target, decided)| match decided {
+            Decided::Run(why) => Some(format!("DOCTESTS\t{target}\t{}", because(why, measured))),
+            Decided::Skip => None,
         })
         .collect()
 }
 
 /// The lines `selection` is said in.
 #[must_use]
-pub fn told(selection: &Selection, format: SelectFormat) -> Vec<String> {
+pub fn told(selection: &Selection, measured: &Measurement, format: SelectFormat) -> Vec<String> {
     match format {
-        SelectFormat::Human => human(selection),
+        SelectFormat::Human => human(selection, measured),
         SelectFormat::Nextest => vec![nextest(selection)],
         SelectFormat::Skippable => selection.skippable().map(str::to_owned).collect(),
     }
 }
 
-fn human(selection: &Selection) -> Vec<String> {
+fn human(selection: &Selection, measured: &Measurement) -> Vec<String> {
     let total = selection.decided().len();
     let skipped = selection.skippable().count();
     let mut lines = vec![format!(
@@ -176,24 +196,38 @@ fn human(selection: &Selection) -> Vec<String> {
     for (target, decided) in selection.decided() {
         lines.push(match decided {
             Decided::Skip => format!("SKIP\t{target}"),
-            Decided::Run(why) => format!("RUN\t{target}\t{}", because(why)),
+            Decided::Run(why) => format!("RUN\t{target}\t{}", because(why, measured)),
         });
     }
     lines
 }
 
 /// Why a target runs, in the words a reader acts on.
-fn because(why: &Why) -> String {
+fn because(why: &Why, measured: &Measurement) -> String {
     match why {
-        Why::Entered(items) => format!("its tests entered {} changed items", items.len()),
+        Why::Entered(items) => {
+            let named: Vec<String> = items
+                .iter()
+                .map(|index| {
+                    measured
+                        .items
+                        .iter()
+                        .find(|item| item.index == *index)
+                        .map_or_else(
+                            || format!("item {index}"),
+                            |item| format!("{}:{}", item.path, item.name),
+                        )
+                })
+                .collect();
+            format!("its tests entered {}", named.join(", "))
+        }
         Why::Everything(everything) => everything_because(everything),
-        Why::Unestablished(standing) => match standing {
-            Standing::Held => "its reach held".to_owned(),
-            Standing::Moved => "a second run of it reached something else".to_owned(),
-            Standing::NotMeasured { why } => {
+        Why::Unestablished(unheld) => match unheld {
+            Unheld::Moved => "a second run of it reached something else".to_owned(),
+            Unheld::NotMeasured { why } => {
                 format!("a second run of it established nothing to compare ({why:?})")
             }
-            Standing::Uncompared => "no second run of it was made".to_owned(),
+            Unheld::Uncompared => "no second run of it was made".to_owned(),
         },
         Why::Unmeasured => "the measurement holds nothing about it".to_owned(),
     }

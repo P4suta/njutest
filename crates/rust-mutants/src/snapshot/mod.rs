@@ -605,8 +605,8 @@ fn write_length_prefixed(hasher: &mut Sha256, s: &str) -> Result<(), SnapshotErr
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Surveyed {
-    /// The lowercase hex SHA-256 of the file's bytes.
-    pub sha256: String,
+    /// The SHA-256 of the file's bytes.
+    pub sha256: crate::id::HexDigest,
     /// Whether any execute bit is set, which a test that runs the file answers to and no digest of its bytes sees.
     pub executable: bool,
 }
@@ -668,14 +668,18 @@ fn surveyed(
     (files, passed_over): Surveying<'_>,
 ) -> Result<(), SnapshotError> {
     for file in &walker.files {
-        let (_, sha256) = hash_file(&file.abs).map_err(|source| {
-            SnapshotError::new(
-                SnapshotErrorKind::Walk,
-                file.rel.clone(),
-                "cannot read the file",
-            )
-            .with_source(source)
-        })?;
+        let sha256 = hash_file(&file.abs)
+            .and_then(|(_, sha256)| {
+                crate::id::HexDigest::try_from(sha256).map_err(io::Error::other)
+            })
+            .map_err(|source| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Walk,
+                    file.rel.clone(),
+                    "cannot read the file",
+                )
+                .with_source(source)
+            })?;
         files.insert(
             named(&file.rel),
             Surveyed {

@@ -35,7 +35,7 @@ pub struct Measured {
     /// What the tree establishes.
     pub measurement: Measurement,
     /// The bytes a selection compares a changed file with, by their digest.
-    pub sources: BTreeMap<String, Vec<u8>>,
+    pub sources: BTreeMap<rust_mutants::id::HexDigest, Vec<u8>>,
 }
 
 /// Why a tree could not be measured, beyond what the engine refused.
@@ -186,7 +186,7 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
                 path: file.path.clone(),
             }
         })?;
-        if rust_mutants::id::digest(&bytes) != surveyed.sha256 {
+        if rust_mutants::id::HexDigest::of(&bytes) != surveyed.sha256 {
             return Err(MeasureError::Written {
                 path: file.path.clone(),
             }

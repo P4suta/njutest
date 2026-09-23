@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use rust_mutants::id::HexDigest;
 use rust_mutants::select::Measurement;
 
 use crate::error::ErrorCode;
@@ -84,7 +85,7 @@ pub fn directory(reports: &Path) -> PathBuf {
 pub fn keep(
     directory: &Path,
     document: &Document,
-    sources: &BTreeMap<String, Vec<u8>>,
+    sources: &BTreeMap<HexDigest, Vec<u8>>,
 ) -> Result<(), ReachError> {
     let unwritable = |path: &Path| {
         let path = path.to_path_buf();
@@ -93,8 +94,8 @@ pub fn keep(
     let blobs = directory.join(BLOBS);
     std::fs::create_dir_all(&blobs).map_err(unwritable(&blobs))?;
     for (digest, bytes) in sources {
-        let path = blobs.join(digest);
-        if matches!(std::fs::symlink_metadata(&path), Ok(found) if found.is_file()) {
+        let path = blobs.join(digest.as_str());
+        if measured(directory, digest).is_some() {
             continue;
         }
         replaced(&path, bytes).map_err(unwritable(&path))?;
@@ -109,10 +110,11 @@ pub fn keep(
     for entry in listing {
         let entry = entry.map_err(unwritable(&blobs))?;
         let named = entry.file_name();
-        if !named
-            .to_str()
-            .is_some_and(|name| sources.contains_key(name))
-        {
+        let kept = match named.to_str().map(HexDigest::try_from) {
+            Some(Ok(digest)) => sources.contains_key(&digest),
+            Some(Err(_)) | None => false,
+        };
+        if !kept {
             let path = entry.path();
             std::fs::remove_file(&path).map_err(unwritable(&path))?;
         }
@@ -147,12 +149,12 @@ pub fn read(directory: &Path) -> Result<Document, ReachError> {
 
 /// The measured bytes of the file whose SHA-256 is `digest`, or nothing when they were not kept or are not those bytes.
 #[must_use]
-pub fn measured(directory: &Path, digest: &str) -> Option<String> {
-    let path = directory.join(BLOBS).join(digest);
+pub fn measured(directory: &Path, digest: &HexDigest) -> Option<String> {
+    let path = directory.join(BLOBS).join(digest.as_str());
     let Ok(bytes) = std::fs::read(path) else {
         return None;
     };
-    if rust_mutants::id::digest(&bytes) != digest {
+    if HexDigest::of(&bytes) != *digest {
         return None;
     }
     let Ok(text) = String::from_utf8(bytes) else {
