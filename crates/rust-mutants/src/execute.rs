@@ -2123,11 +2123,14 @@ mod tests {
         }};
     }
 
-    fn expected(directory: &Path, nonce: &str) -> ExpectedStep {
+    fn expected(directory: &Path) -> ExpectedStep {
+        let mut bytes = [0u8; 16];
+        let filled = getrandom::fill(&mut bytes);
+        assert_eq!(result_state(&filled), Returned, "a fresh nonce: {filled:?}");
         ExpectedStep {
             path: directory.join("step.notice"),
             state_path: directory.join("step.state"),
-            nonce: nonce.to_owned(),
+            nonce: hex::encode(bytes),
             catalog: CATALOG_A.to_owned(),
             mutant: MUTANT_A.to_owned(),
             limit: 10,
@@ -2293,14 +2296,11 @@ mod tests {
     #[test]
     fn a_notice_is_accepted_only_for_the_exact_execution_and_boundary() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000001");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000001",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2317,8 +2317,8 @@ mod tests {
     #[test]
     fn stale_malformed_or_mismatched_notices_fail_closed() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000002");
-        for record in invalid_notice_records() {
+        let step = expected(directory.path());
+        for record in invalid_notice_records(&step.nonce) {
             publish(&step, &record);
             let read = step.read();
             assert_eq!(
@@ -2329,12 +2329,9 @@ mod tests {
         }
     }
 
-    fn invalid_notice_records() -> Vec<String> {
+    fn invalid_notice_records(nonce: &str) -> Vec<String> {
         let canonical = notice_record(
-            (
-                "rust-mutants-step-notice-v1",
-                "00000000000000000000000000000002",
-            ),
+            ("rust-mutants-step-notice-v1", nonce),
             (CATALOG_A, MUTANT_A),
             (10, 11),
         );
@@ -2346,10 +2343,7 @@ mod tests {
             canonical.replace("\t10\t11\n", "\t10\t+11\n"),
             canonical.replace("\t10\t11\n", "\t10\t 11\n"),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v0",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v0", nonce),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2362,34 +2356,22 @@ mod tests {
                 (10, 11),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_B, MUTANT_A),
                 (10, 11),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_A, MUTANT_B),
                 (10, 11),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_A, MUTANT_A),
                 (9, 10),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_A, MUTANT_A),
                 (10, 12),
             ),
@@ -2400,7 +2382,7 @@ mod tests {
     #[test]
     fn a_notice_must_be_a_small_regular_file() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000005");
+        let step = expected(directory.path());
         let created = std::fs::create_dir_all(&step.path);
         assert_eq!(
             result_state(&created),
@@ -2433,15 +2415,12 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000006");
+        let step = expected(directory.path());
         let elsewhere = directory.path().join("elsewhere");
         let written = std::fs::write(
             &elsewhere,
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000006",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2467,14 +2446,11 @@ mod tests {
     #[test]
     fn cleanup_failure_is_a_protocol_failure_not_a_silent_success() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000007");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000007",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2508,7 +2484,7 @@ mod tests {
     #[test]
     fn only_a_verified_notice_can_turn_a_monitor_stop_into_a_step_fact() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000003");
+        let step = expected(directory.path());
         let stopped = result(Termination::StoppedByMonitor);
 
         assert!(matches!(
@@ -2527,10 +2503,7 @@ mod tests {
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000003",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2546,14 +2519,11 @@ mod tests {
     #[test]
     fn a_complete_notice_wins_over_a_simultaneous_wall_clock_deadline() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000008");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000008",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2570,7 +2540,7 @@ mod tests {
     #[test]
     fn an_unaccompanied_wall_clock_deadline_remains_waited() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000009");
+        let step = expected(directory.path());
 
         assert_eq!(
             observed_stop(&result(Termination::TimedOut), Some(&step)),
@@ -2581,7 +2551,7 @@ mod tests {
     #[test]
     fn a_wall_clock_deadline_says_how_far_the_count_had_got() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "0000000000000000000000000000000a");
+        let step = expected(directory.path());
         let written = std::fs::write(
             &step.state_path,
             format!(
@@ -2601,7 +2571,7 @@ mod tests {
     #[test]
     fn a_quiet_window_says_how_far_the_count_had_got_before_it_went_quiet() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "0000000000000000000000000000000b");
+        let step = expected(directory.path());
         let written = std::fs::write(
             &step.state_path,
             format!(
@@ -2620,7 +2590,7 @@ mod tests {
     #[test]
     fn only_an_execution_counting_its_steps_is_watched_for_progress() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "0000000000000000000000000000000c");
+        let step = expected(directory.path());
         let second = Duration::from_secs(1);
 
         let (bound, progress) = watched(Some(second), None);
@@ -2651,14 +2621,11 @@ mod tests {
     #[test]
     fn cancellation_dominates_and_clears_even_a_valid_notice() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000004");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000004",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2675,14 +2642,11 @@ mod tests {
     #[test]
     fn a_notice_cannot_claim_that_a_process_which_never_started_reached_a_step() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000006");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000006",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2700,7 +2664,7 @@ mod tests {
     #[test]
     fn an_unaccompanied_reserved_status_is_an_ordinary_nonzero_exit() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000005");
+        let step = expected(directory.path());
         let exited = result(Termination::Exited(ProcessExit::Code(95)));
         let observed = Observation {
             stopped: observed_stop(&exited, Some(&step)),
@@ -2719,7 +2683,7 @@ mod tests {
     #[test]
     fn the_runtime_protocol_status_is_special_only_for_a_step_bounded_execution() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "0000000000000000000000000000000a");
+        let step = expected(directory.path());
         let exited = result(Termination::Exited(ProcessExit::Code(
             crate::instrument::STEP_PROTOCOL_EXIT,
         )));
