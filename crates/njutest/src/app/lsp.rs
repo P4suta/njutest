@@ -271,10 +271,7 @@ pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8
                     publish(output, root, encoding)
                 }
             }
-            "textDocument/didChange" => {
-                held.changed(&request);
-                Ok(())
-            }
+            "textDocument/didChange" => held.changed(output, &request),
             "textDocument/didClose" => {
                 held.closed(&request);
                 Ok(())
@@ -440,19 +437,38 @@ impl Held {
 
     /// Keeps the text a client's edit left, which the whole-document sync this server asks for sends entire.
     ///
-    /// An edit it cannot read leaves a buffer it no longer knows, so it forgets the document rather than keep bytes the client no longer has.
-    fn changed(&mut self, request: &Value) {
+    /// An edit it cannot read, or one that is a range of the document rather than all of it, leaves a buffer it no longer knows, so it forgets the document rather than keep bytes the client no longer has, and tells the client why.
+    ///
+    /// # Errors
+    /// Returns the output stream's write failure.
+    fn changed(&mut self, output: &mut dyn Write, request: &Value) -> std::io::Result<()> {
         let params = request.get("params");
         let Some(uri) = params
             .and_then(|one| one.get("textDocument"))
             .and_then(|one| one.get("uri"))
             .and_then(Value::as_str)
         else {
-            return;
+            return Ok(());
         };
-        match params
+        let changes = params
             .and_then(|one| one.get("contentChanges"))
-            .and_then(Value::as_array)
+            .and_then(Value::as_array);
+        if changes.is_some_and(|changes| changes.iter().any(|one| one.get("range").is_some())) {
+            self.documents.remove(uri);
+            return notify(
+                output,
+                "window/logMessage",
+                &json!({
+                    "type": 2,
+                    "message": format!(
+                        "the client sent an edit as a range though this server asked for whole \
+                         documents, so it holds no bytes of {uri} and marks nothing there until \
+                         the document is opened again"
+                    ),
+                }),
+            );
+        }
+        match changes
             .and_then(|changes| changes.last())
             .and_then(|last| last.get("text"))
             .and_then(Value::as_str)
@@ -464,6 +480,7 @@ impl Held {
                 self.documents.remove(uri);
             }
         }
+        Ok(())
     }
 
     /// Forgets a document the client closed.

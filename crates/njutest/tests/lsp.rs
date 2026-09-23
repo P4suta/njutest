@@ -1055,3 +1055,40 @@ fn the_latest_run_is_read_once_however_often_marks_are_asked_for() {
          its run is the latest: {said:?}"
     );
 }
+
+#[test]
+fn an_edit_with_a_range_is_not_taken_for_the_whole_document() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let incremental = json!({
+        "jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [ {
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } },
+                "text": CLEF,
+            } ],
+        },
+    });
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[incremental, asking(2, "textDocument/inlayHint", &uri)],
+    );
+    assert_eq!(
+        answered(&said, 2),
+        &json!([]),
+        "an edit with a range is a piece of the document put somewhere in it: the buffer now \
+         holds the run's bytes twice, and taking the piece for the whole would mark it"
+    );
+    assert!(
+        said.iter().any(|one| {
+            one["method"] == "window/logMessage"
+                && one["params"]["message"]
+                    .as_str()
+                    .is_some_and(|said| said.contains("sent an edit as a range"))
+        }),
+        "the client is told why its marks went away: {said:?}"
+    );
+}
