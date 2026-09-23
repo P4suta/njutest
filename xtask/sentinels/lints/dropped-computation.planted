@@ -1,0 +1,16 @@
+=== drop-of-a-call source crates/app/src/lib.rs
+//! A file.
+fn f() { drop(std::fs::write("out", b"bytes")); }
+=== renamed-drop source crates/app/src/lib.rs
+//! A file.
+use std::mem::drop as discard;
+fn f() { discard(std::fs::write("out", b"bytes")); }
+=== reexported-drop source crates/app/src/lib.rs
+//! A file.
+pub use std::mem::drop as discard;
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! ignored { () => { drop(std::fs::write("out", b"bytes")); } }
+=== macro-path-arguments source crates/app/src/lib.rs
+//! A file.
+macro_rules! ignored { ($discard:path, $call:path) => { $discard($call()); } }

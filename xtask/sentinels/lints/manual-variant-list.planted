@@ -1,0 +1,27 @@
+=== associated-const source crates/app/src/lib.rs
+enum State { Waiting, Done }
+impl State { const BOTH: [Self; 2] = [Self::Waiting, Self::Done]; }
+=== free-function source crates/app/src/lib.rs
+enum Step { One, Two, Three }
+fn every() -> [Step; 3] { [Step::One, Step::Two, Step::Three] }
+=== generator-wrapped source crates/app/src/lib.rs
+enum Step { One, Two }
+fn every() { prop_oneof![Just(Step::One), Just(Step::Two)]; }
+=== each-asked-for-its-name source crates/app/src/lib.rs
+enum Step { One, Two }
+fn every() { let _ = [Step::One.name(), Step::Two.name()]; }
+=== beside-a-catch-all-match source crates/app/src/lib.rs
+enum Step { One, Two { at: u8 } }
+fn every() -> [Step; 2] {
+    let steps = [Step::One, Step::Two { at: 1 }];
+    for step in &steps { match step { Step::One => {}, _ => {} } }
+    steps
+}
+=== split-from-its-enum tree
+--- crates/app/src/lib.rs
+mod state;
+mod list;
+--- crates/app/src/state.rs
+pub enum State { Waiting, Done }
+--- crates/app/src/list.rs
+impl crate::state::State { const STATES: [Self; 2] = [Self::Waiting, Self::Done]; }

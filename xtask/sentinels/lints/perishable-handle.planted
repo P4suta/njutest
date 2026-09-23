@@ -1,0 +1,4 @@
+=== command-built-from-an-identity source crates/app/src/lib.rs
+fn said(mutant: &Mutant) -> String {
+    format!("rust-mutants explain {}", mutant.display_id)
+}

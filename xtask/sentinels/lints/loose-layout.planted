@@ -1,0 +1,14 @@
+=== configured-directory-spelled tree
+--- crates/app/src/config.rs
+pub(crate) const DEFAULT_REPORTS_DIRECTORY: &str = "artifacts";
+--- crates/app/src/lib.rs
+mod config;
+pub fn runs(root: &std::path::Path) -> std::path::PathBuf { root.join("artifacts/runs") }
+=== test-joins-a-layout-constant tree
+--- crates/app/src/lib.rs
+pub mod reports;
+--- crates/app/src/reports.rs
+pub const LAYOUT: &str = "reports/runs";
+--- crates/app/tests/layout.rs
+use app::reports::LAYOUT;
+fn runs(root: &std::path::Path) -> std::path::PathBuf { root.join(LAYOUT) }

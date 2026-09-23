@@ -1,0 +1,13 @@
+=== type-alias source crates/app/src/lib.rs
+//! A file.
+type Failure = String;
+fn read() -> Result<(), Failure> { Ok(()) }
+=== renamed-import source crates/app/src/lib.rs
+//! A file.
+use std::string::String as Failure;
+fn read() -> Result<(), Failure> { Ok(()) }
+=== associated-projection source crates/app/src/lib.rs
+//! A file.
+trait Text { type Out; }
+impl Text for () { type Out = Box<str>; }
+fn read() -> Result<(), <() as Text>::Out> { unimplemented!() }

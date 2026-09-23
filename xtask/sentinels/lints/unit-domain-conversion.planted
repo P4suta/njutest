@@ -1,0 +1,31 @@
+=== from-unit source crates/app/src/lib.rs
+//! A file.
+struct Domain;
+impl From<()> for Domain { fn from(_: ()) -> Self { Self } }
+=== renamed-from source crates/app/src/lib.rs
+//! A file.
+use std::convert::From as Convert;
+struct Domain;
+impl Convert<()> for Domain { fn from(_: ()) -> Self { Self } }
+=== unit-alias source crates/app/src/lib.rs
+//! A file.
+type Empty = ();
+type Nothing = Empty;
+struct Domain;
+impl From<Nothing> for Domain { fn from(_: Nothing) -> Self { Self } }
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! conversion { () => { impl From<()> for Domain { fn from(_: ()) -> Self { Domain } } } }
+=== macro-type-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! conversion { ($t:ty) => { impl From<$t> for Domain { fn from(_: $t) -> Self { Domain } } } }
+conversion!(());
+=== macro-trait-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! conversion { ($trait_:path) => { impl $trait_<()> for Domain { fn from(_: ()) -> Self { Domain } } } }
+conversion!(From);
+=== associated-unit-type source crates/app/src/lib.rs
+//! A file.
+trait ErrorType { type Error; }
+impl ErrorType for Domain { type Error = (); }
+struct Domain;

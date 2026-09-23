@@ -1,0 +1,4 @@
+=== escape-literal source crates/demo/src/ui.rs
+pub const fn paint(killed: bool) -> &'static str {
+    if killed { "\u{1b}[32m" } else { "\u{1b}[31m" }
+}

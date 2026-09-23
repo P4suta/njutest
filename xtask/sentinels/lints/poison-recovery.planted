@@ -1,0 +1,10 @@
+=== into-inner-method source crates/app/src/lib.rs
+fn recover<T>(poisoned: std::sync::PoisonError<T>) -> T { poisoned.into_inner() }
+=== into-inner-path source crates/app/src/lib.rs
+fn recover<T>(value: Result<T, std::sync::PoisonError<T>>) -> T { value.unwrap_or_else(std::sync::PoisonError::into_inner) }
+=== clear-poison source crates/app/src/lib.rs
+fn recover<T>(lock: &std::sync::Mutex<T>) { lock.clear_poison(); }
+=== renamed-import source crates/app/src/lib.rs
+use std::sync::PoisonError::into_inner as recover;
+=== macro-rules-body source crates/app/src/lib.rs
+macro_rules! recover { ($lock:expr) => { $lock.clear_poison() } }
