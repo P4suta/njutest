@@ -216,6 +216,7 @@ fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
 }
 
 /// Every finding of `kind` the one whole part of a report raised.
+#[cfg(unix)]
 fn findings_of<'a>(document: &'a serde_json::Value, kind: &str) -> Vec<&'a serde_json::Value> {
     document["builds"][0]["parts"][0]["findings"]
         .as_array()
