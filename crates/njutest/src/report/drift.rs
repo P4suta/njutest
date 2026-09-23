@@ -34,7 +34,7 @@ impl Moved {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Unmeasured {
-    /// No control of the whole target ran, which is what a target nothing was confirmed on has.
+    /// No control of the whole target ran, which only a run cancelled before its targets were compared leaves.
     NoControl,
     /// The control's process could not record what its guards reached.
     Unrecorded,

@@ -36,7 +36,7 @@ A test serializes closed specimens and compares this table in both directions.
 | `wire-exchange` | `capability`, `seq`, `during`, `duration_ms`, `read`, `request_bytes`, `response_bytes` | one raw or HTTP exchange; `read` is the closed `wire`/`method`/`path`/`status` object |
 | `wire-exec` | `fault`, `capability`, `seq`, `rule`, `answer` | one licensed seam fault and its nested closed decision |
 | `model` | `mutant`, `answer` | one retained closed model question; `answer` is a nested closed decision and affirmative arms carry their full typed evidence |
-| `drift` | `mutant`, `observed` | what the original-code control confirming `mutant`'s kill established about one target's baseline reach; `observed` is the report's closed drift record ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)) |
+| `drift` | `mutant`, `observed` | what an original-code control established about one target's baseline reach: the one confirming `mutant`'s kill, or, where `mutant` is null, the one a target that confirmed no kill is run alone for; `observed` is the report's closed drift record ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)) |
 | `note` | `kind`, `detail` | a named diagnostic with no richer event type |
 | `run-end` | `verdict`, `accounting`, `error`, `events_emitted`, `events_dropped` | the sole terminal event, emitted only after report persistence and cleanup succeed |
 

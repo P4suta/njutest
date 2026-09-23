@@ -348,7 +348,7 @@
               "additionalProperties": false,
               "required": ["mutant", "observed"],
               "properties": {
-                "mutant": { "type": "string", "minLength": 1 },
+                "mutant": { "type": ["string", "null"], "minLength": 1 },
                 "observed": {
                   "oneOf": [
                     {

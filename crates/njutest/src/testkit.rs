@@ -555,7 +555,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::Drift {
             drift: crate::trace::DriftRecord {
-                mutant: "abcdef".to_owned(),
+                mutant: Some("abcdef".to_owned()),
                 observed: crate::report::drift::Drift::Moved {
                     target: "demo/lib/demo".to_owned(),
                     reached: crate::report::drift::Moved {
