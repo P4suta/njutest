@@ -782,7 +782,7 @@
   "run_id": "<volatile>",
   "run_kind": "full",
   "schema": "njutest-assurance-report-v1",
-  "schema_version": 3,
+  "schema_version": 2,
   "scope": {
     "configuration": "",
     "configured_builds": [

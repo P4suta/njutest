@@ -2562,7 +2562,7 @@
           "const": "njutest-assurance-report-v1"
         },
         "schema_version": {
-          "const": 3
+          "const": 2
         },
         "run_id": {
           "$ref": "#/$defs/runId",
@@ -2646,7 +2646,7 @@
           "const": "njutest-assurance-shard-report-v1"
         },
         "schema_version": {
-          "const": 3
+          "const": 2
         },
         "run_id": {
           "$ref": "#/$defs/runId",

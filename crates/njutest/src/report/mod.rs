@@ -29,7 +29,7 @@ pub const SCHEMA: &str = "njutest-assurance-report-v1";
 pub const SHARD_SCHEMA: &str = "njutest-assurance-shard-report-v1";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The sentinel a report uses where a fact was not available.
 /// An empty string would read as "nothing to say"; this reads as "we asked".
