@@ -29,6 +29,9 @@ fn run_id(value: &str) -> RunId {
     RunId::try_from(value).expect("a canonical run id")
 }
 
+/// The file the fixture run read, whose digest its report records.
+const MEASURED: &str = "fn f() {}\n";
+
 /// A workspace whose last run found one surviving mutation in `src/lib.rs`.
 fn verified(root: &std::path::Path) -> String {
     let mut source = BuildReport::new(
@@ -84,6 +87,12 @@ fn verified(root: &std::path::Path) -> String {
         path: None,
         position: None,
     });
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    sha2::Digest::update(&mut hasher, MEASURED.as_bytes());
+    source.sources.insert(
+        "src/lib.rs".to_owned(),
+        rust_mutants::id::HexDigest::finish(hasher),
+    );
     let one = run_id("one");
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),
@@ -105,7 +114,7 @@ fn verified(root: &std::path::Path) -> String {
         .join(one.as_str());
     std::fs::create_dir_all(&run).expect("mkdir");
     std::fs::create_dir_all(root.join("src")).expect("mkdir");
-    std::fs::write(root.join("src/lib.rs"), "fn f() {}\n").expect("the file it is in");
+    std::fs::write(root.join("src/lib.rs"), MEASURED).expect("the file it is in");
     std::fs::write(
         run.join(njutest::app::reports::DOCUMENT_NAME),
         serde_json::to_string(&report).expect("a report"),

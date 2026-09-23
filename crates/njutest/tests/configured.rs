@@ -153,6 +153,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> BuildReport {
                 .map(|kind| Finding::new(kind, &mutant.display_id, "synthetic mutation finding"))
         })
         .collect();
+    njutest::testkit::read_every_named_file(&mut report);
     report.verdict = report.concluded();
     report
 }
@@ -161,6 +162,7 @@ fn accept_first(mut report: BuildReport) -> BuildReport {
     report.mutants[0].accepted = true;
     report.accounting.mutants = counted(&report.mutants);
     report.findings.clear();
+    njutest::testkit::read_every_named_file(&mut report);
     report.verdict = report.concluded();
     report
 }

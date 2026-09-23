@@ -117,8 +117,8 @@ pub struct Place {
     pub item: String,
     /// The path from the project's root.
     pub path: String,
-    /// The lines to draw, in order, each with its own number.
-    pub excerpt: Vec<(u32, String)>,
+    /// The lines to draw, in order, each with its own number, as the run measured them.
+    pub excerpt: Vec<(u32, MeasuredLine)>,
     /// Why the lines are not being drawn, when they are not.
     pub instead: Option<Missing>,
     /// Every place in it the tests did not see, in the order the source has them.
@@ -443,9 +443,30 @@ pub struct Site {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Excerpt {
     /// The line as it was when the run measured it.
-    Read(String),
+    Read(MeasuredLine),
     /// The line is not being shown, and this is why.
     Instead(Missing),
+}
+
+/// A line as the run measured it, which only a file still holding the bytes the run read can give.
+///
+/// Its text is private, so a line read from a file edited since the run cannot be drawn as one the run measured: the one constructor outside a test is [`Sources`], and it builds one only from a file whose SHA-256 is the one the run recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeasuredLine(String);
+
+impl MeasuredLine {
+    /// The text of the line.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.0
+    }
+
+    /// A line a rendering test draws, which no file vouches for.
+    #[cfg(feature = "testkit")]
+    #[must_use]
+    pub fn specimen(text: &str) -> Self {
+        Self(text.to_owned())
+    }
 }
 
 /// Why a run is not showing the source it is talking about.
@@ -453,28 +474,55 @@ pub enum Excerpt {
 /// Held apart from [`Excerpt`] so that a place which is *not* showing its lines cannot be given a line: `Excerpt::Read` in that field was a state nothing answered for, and what answered for it was a `_` arm in two renderers saying "the file could not be read" about a file that could (ADR 0023).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Missing {
-    /// The file has changed since the run, so the line there now is not the line that was.
-    Moved,
-    /// The file could not be read at all.
-    Unreadable,
+    /// The file holds other bytes than the run read, so a line there now is not a line the run measured.
+    Edited,
+    /// The file could not be read, for the reason reading it gave.
+    Unreadable {
+        /// What reading it failed with, which decides what a reader does about it.
+        kind: std::io::ErrorKind,
+    },
+    /// The file holds the bytes the run read, and they are not text.
+    NotText,
+    /// The report recorded no digest for the file, so nothing can say it is the file the run read.
+    Unrecorded,
+    /// The report names a line the file the run read does not have.
+    NoSuchLine,
 }
 
 impl Missing {
     /// Why the lines are not there, as a reader is told it.
     #[must_use]
-    pub const fn why(self) -> &'static str {
-        match self {
-            Self::Moved => "the file has changed since the run, so the lines are not shown",
-            Self::Unreadable => "the file could not be read, so the lines are not shown",
-        }
+    pub fn why(self) -> String {
+        format!("{}, so its source is not shown", self.found())
     }
 
     /// The same, for something that will go and read the file itself.
     #[must_use]
-    pub const fn told(self) -> &'static str {
+    pub fn told(self) -> String {
         match self {
-            Self::Moved => "the file has changed since the run, so read it yourself before acting",
-            Self::Unreadable => "the file could not be read",
+            Self::Edited | Self::Unrecorded => {
+                format!("{}, so read it yourself before acting", self.found())
+            }
+            Self::Unreadable { .. } | Self::NotText | Self::NoSuchLine => self.found(),
+        }
+    }
+
+    /// What was found where the lines would have come from.
+    fn found(self) -> String {
+        match self {
+            Self::Edited => "the file has changed since the run read it".to_owned(),
+            Self::Unreadable {
+                kind: std::io::ErrorKind::NotFound,
+            } => "the file is not there any more".to_owned(),
+            Self::Unreadable { kind } => format!("the file could not be read ({kind})"),
+            Self::NotText => "the file holds the bytes the run read, which are not text".to_owned(),
+            Self::Unrecorded => {
+                "the run recorded nothing that tells the file it read from the file there now"
+                    .to_owned()
+            }
+            Self::NoSuchLine => {
+                "the report names a line the file the run read does not have".to_owned()
+            }
         }
     }
 }
@@ -967,36 +1015,69 @@ pub fn folded(text: &str, room: usize) -> Vec<String> {
 /// Read up front and passed in rather than opened where a line is wanted: a renderer that touched the filesystem could not be asserted without one, and the same value serves a test that supplies its own files.
 #[derive(Debug, Clone)]
 enum Source {
-    Lines(Vec<String>),
-    Unreadable,
+    /// The file holds the bytes the run read, as lines.
+    Measured(Vec<String>),
+    /// The file holds other bytes than the run read.
+    Edited,
+    /// The file could not be read, for the reason reading it gave.
+    Unreadable(std::io::ErrorKind),
+    /// The file holds the bytes the run read, and they are not text.
+    NotText,
 }
 
-/// The source files a presentation may quote, including files whose read failed.
+/// The source files a presentation may quote, each held to the digest the run recorded for it.
 #[derive(Debug, Clone, Default)]
 pub struct Sources(std::collections::BTreeMap<String, Source>);
 
 impl Sources {
-    /// Every line of the files `report` names, so a place can be drawn whole.
-    #[must_use]
-    pub fn span(&self, path: &str, from: u32, to: u32) -> Vec<(u32, String)> {
-        let Some(Source::Lines(lines)) = self.0.get(path) else {
-            return Vec::new();
-        };
+    /// Lines `from` to `to` of `path` as the run measured them, or why none can be shown.
+    ///
+    /// # Errors
+    /// The [`Missing`] that says why: the file was edited since the run, could not be read, or has no digest in the report.
+    pub fn span(
+        &self,
+        path: &str,
+        from: u32,
+        to: u32,
+    ) -> Result<Vec<(u32, MeasuredLine)>, Missing> {
+        let lines = self.measured(path)?;
         let first = usize_from_u32(from).saturating_sub(1);
         let last = usize_from_u32(to).min(lines.len());
-        (first..last)
+        Ok((first..last)
             .filter_map(|at| {
-                lines
-                    .get(at)
-                    .map(|line| (u32_from_usize(at.saturating_add(1)), line.clone()))
+                lines.get(at).map(|line| {
+                    (
+                        u32_from_usize(at.saturating_add(1)),
+                        MeasuredLine(line.clone()),
+                    )
+                })
             })
-            .collect()
+            .collect())
     }
 
-    /// The files `report` names, read from `root`.
+    /// Whether `path` still holds the bytes the run read, which is the premise of drawing any line of it.
     ///
+    /// # Errors
+    /// The [`Missing`] that says why it does not, or why nothing can tell.
+    pub fn standing(&self, path: &str) -> Result<(), Missing> {
+        self.measured(path).map(|_lines| ())
+    }
+
+    /// The lines of `path` as the run measured them.
+    fn measured(&self, path: &str) -> Result<&[String], Missing> {
+        match self.0.get(path) {
+            Some(Source::Measured(lines)) => Ok(lines),
+            Some(Source::Edited) => Err(Missing::Edited),
+            Some(Source::Unreadable(kind)) => Err(Missing::Unreadable { kind: *kind }),
+            Some(Source::NotText) => Err(Missing::NotText),
+            None => Err(Missing::Unrecorded),
+        }
+    }
+
+    /// The files `report` recorded a digest for, each read from `root` and held to that digest.
+    ///
+    /// A file is only ever quoted when its SHA-256 now is the one the run recorded, so a file edited after the run, even one whose edited line still holds the text the run replaced, is [`Missing::Edited`] rather than a line drawn as the one the run measured.
     /// An unreadable file is retained as an explicit state rather than disappearing from the inventory.
-    /// A later excerpt then reports [`Missing::Unreadable`] instead of treating an I/O failure as absence.
     /// # Errors
     /// Returns the checked projection error instead of reading a partial source inventory.
     pub fn read(
@@ -1004,48 +1085,45 @@ impl Sources {
         report: &crate::report::Report,
     ) -> Result<Self, crate::report::CountError> {
         let conclusion = report.conclusion()?;
-        let wanted: std::collections::BTreeSet<&str> = conclusion
-            .findings
-            .iter()
-            .filter_map(|finding| finding.path.as_deref())
-            .chain(
-                conclusion
-                    .mutants
-                    .iter()
-                    .map(crate::report::ProjectedMutant::path),
-            )
-            .filter(|path| !path.is_empty())
-            .collect();
         Ok(Self(
-            wanted
-                .into_iter()
-                .map(|path| {
-                    let source = match std::fs::read_to_string(root.join(path)) {
-                        Ok(text) => Source::Lines(lines_of(&text)),
-                        Err(_unreadable) => Source::Unreadable,
-                    };
-                    (path.to_owned(), source)
-                })
+            conclusion
+                .sources
+                .iter()
+                .map(|(path, recorded)| (path.clone(), Source::of(&root.join(path), recorded)))
                 .collect(),
         ))
     }
 
-    /// The line a diagnostic is about, or why it is not being shown.
-    ///
-    /// A line that no longer holds the bytes the run replaced is a line the file has moved out from under, and drawing it would show a reader code the run never measured.
+    /// The line a diagnostic is about as the run measured it, or why it is not being shown.
     #[must_use]
-    pub fn at(&self, path: &str, line: u32, original: &str) -> Excerpt {
-        let Some(Source::Lines(lines)) = self.0.get(path) else {
-            return Excerpt::Instead(Missing::Unreadable);
+    pub fn at(&self, path: &str, line: u32) -> Excerpt {
+        let lines = match self.measured(path) {
+            Ok(lines) => lines,
+            Err(missing) => return Excerpt::Instead(missing),
         };
-        let at = usize_from_u32(line).saturating_sub(1);
-        let Some(text) = lines.get(at) else {
-            return Excerpt::Instead(Missing::Moved);
-        };
-        if !original.is_empty() && !text.contains(original) {
-            return Excerpt::Instead(Missing::Moved);
+        match lines.get(usize_from_u32(line).saturating_sub(1)) {
+            Some(text) => Excerpt::Read(MeasuredLine(text.clone())),
+            None => Excerpt::Instead(Missing::NoSuchLine),
         }
-        Excerpt::Read(text.clone())
+    }
+}
+
+impl Source {
+    /// What the file at `path` holds against the digest the run recorded for it.
+    fn of(path: &std::path::Path, recorded: &rust_mutants::id::HexDigest) -> Self {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(failed) => return Self::Unreadable(failed.kind()),
+        };
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, &bytes);
+        if rust_mutants::id::HexDigest::finish(hasher) != *recorded {
+            return Self::Edited;
+        }
+        match String::from_utf8(bytes) {
+            Ok(text) => Self::Measured(lines_of(&text)),
+            Err(_not_text) => Self::NotText,
+        }
     }
 }
 

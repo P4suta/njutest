@@ -138,6 +138,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
         ],
         skips: BTreeMap::from([("macro-invocation".to_owned(), 7u64)]),
         drift: Vec::new(),
+        sources: read_as_measured(),
     };
 
     record(&mut report, &mutation, &BTreeSet::new())
@@ -212,6 +213,7 @@ fn a_ledger_entry_cannot_mark_an_outcome_that_is_not_answerable_as_accepted() {
         judged: vec![killed, survivor],
         skips: BTreeMap::new(),
         drift: Vec::new(),
+        sources: read_as_measured(),
     };
     let mut report = blank();
 
@@ -262,4 +264,12 @@ fn a_ledger_entry_cannot_mark_an_outcome_that_is_not_answerable_as_accepted() {
             )),
         "the producer and its independent audit derive acceptance from the same closed domain"
     );
+}
+
+/// The digest the catalog recorded for the one file these rows are in.
+fn read_as_measured() -> BTreeMap<String, rust_mutants::id::HexDigest> {
+    BTreeMap::from([(
+        "src/lib.rs".to_owned(),
+        rust_mutants::id::HexDigest::finish(<sha2::Sha256 as sha2::Digest>::new()),
+    )])
 }
