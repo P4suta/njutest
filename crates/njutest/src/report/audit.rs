@@ -84,6 +84,16 @@ pub enum Violation {
         /// The impossible relation.
         because: String,
     },
+    /// A mutation or a finding names a file its part recorded no digest for, so nothing can tell whether that file is still the one the run read.
+    SourceUnrecorded {
+        /// The file.
+        path: String,
+    },
+    /// Two parts or builds of one run recorded different digests for one file, so they did not read one tree.
+    SourcesDisagree {
+        /// The file.
+        path: String,
+    },
     /// A mutation row and the actionable finding that should expose it disagree.
     MutantFindingIncoherent {
         /// The mutation identity.
@@ -197,6 +207,8 @@ impl fmt::Display for Violation {
             Self::MutantRowIncoherent { id, because } => {
                 write!(f, "the mutation row {id} is incoherent: {because}")
             }
+            Self::SourceUnrecorded { path } => fmt_source_unrecorded(f, path),
+            Self::SourcesDisagree { path } => fmt_sources_disagree(f, path),
             Self::MutantFindingIncoherent { id, because } => {
                 write!(
                     f,
@@ -238,6 +250,21 @@ impl fmt::Display for Violation {
             }
         }
     }
+}
+
+fn fmt_source_unrecorded(f: &mut fmt::Formatter<'_>, path: &str) -> fmt::Result {
+    write!(
+        f,
+        "{path} is named by a mutation or a finding and its part recorded no digest for it, so \
+         nothing can tell whether the file is still the one the run read"
+    )
+}
+
+fn fmt_sources_disagree(f: &mut fmt::Formatter<'_>, path: &str) -> fmt::Result {
+    write!(
+        f,
+        "two parts of this run recorded different digests for {path}, so they did not read one tree"
+    )
 }
 
 fn fmt_target_sum(f: &mut fmt::Formatter<'_>, selected: u32, accounted: u32) -> fmt::Result {
@@ -513,7 +540,59 @@ fn validate_flat(report: &BuildReport) -> Vec<Violation> {
     check_findings(report, &mut violations);
     check_acceptances(report, &mut violations);
     check_provenance(report, &mut violations);
+    check_sources(report, &mut violations);
     violations
+}
+
+/// Whether every file a row or a finding names is one the part recorded a digest for, which is what lets a reader of the report tell the file the run read from the file there now.
+fn check_sources(report: &BuildReport, violations: &mut Vec<Violation>) {
+    let named: BTreeSet<&str> = report
+        .mutants
+        .iter()
+        .map(|row| row.path.as_str())
+        .chain(
+            report
+                .findings
+                .iter()
+                .filter_map(|finding| finding.path.as_deref()),
+        )
+        .collect();
+    for path in named {
+        if !report.sources.contains_key(path) {
+            violations.push(Violation::SourceUnrecorded {
+                path: path.to_owned(),
+            });
+        }
+    }
+}
+
+/// Whether every part of every build recorded one digest for each file, which is the premise that they read one tree.
+fn check_one_tree(report: &impl LatticeEvidence, violations: &mut Vec<Violation>) {
+    let mut read: std::collections::BTreeMap<&str, &rust_mutants::id::HexDigest> =
+        std::collections::BTreeMap::new();
+    let mut disagreed: BTreeSet<&str> = BTreeSet::new();
+    for build in report.builds().iter() {
+        for part in build.parts.iter() {
+            for (path, digest) in &part.sources {
+                match read.get(path.as_str()) {
+                    None => {
+                        read.insert(path.as_str(), digest);
+                    }
+                    Some(first) if *first == digest => {}
+                    Some(_) => {
+                        disagreed.insert(path.as_str());
+                    }
+                }
+            }
+        }
+    }
+    violations.extend(
+        disagreed
+            .into_iter()
+            .map(|path| Violation::SourcesDisagree {
+                path: path.to_owned(),
+            }),
+    );
 }
 
 /// Validates the non-empty, ordered build ledger and audits every build as an ordinary report.
@@ -535,6 +614,7 @@ fn validate_build_ledger(report: &impl LatticeEvidence) -> Vec<Violation> {
         }
         validate_build_parts(report, build, &mut unique_runs, &mut violations);
     }
+    check_one_tree(report, &mut violations);
     violations
 }
 
@@ -619,6 +699,7 @@ fn validate_build_parts<'a>(
             candidates: part.candidates.clone(),
             seams: part.seams.clone(),
             targets: part.targets.clone(),
+            sources: part.sources.clone(),
             mutants: part.mutants.clone(),
             findings: part.findings.clone(),
             limitations: part.limitations.clone(),

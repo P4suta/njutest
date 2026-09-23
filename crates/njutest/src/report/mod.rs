@@ -1597,6 +1597,8 @@ pub struct BuildPartEvidence {
     seams: Vec<SeamRecord>,
     /// The baseline target facts, in canonical target order.
     targets: Vec<TargetRecord>,
+    /// The SHA-256 of each file this source's mutants were read from, as it read them.
+    sources: BTreeMap<String, rust_mutants::id::HexDigest>,
     /// Every mutation this source judged.
     mutants: Vec<MutantRecord>,
     /// Every actionable fact this source raised.
@@ -1623,6 +1625,7 @@ impl BuildPartEvidence {
             candidates: report.candidates.clone(),
             seams: report.seams.clone(),
             targets: report.targets.clone(),
+            sources: report.sources.clone(),
             mutants: report.mutants.clone(),
             findings,
             limitations: report.limitations.clone(),
@@ -1644,6 +1647,7 @@ struct BuildPartEvidenceWire {
     candidates: Vec<CandidateRecord>,
     seams: Vec<SeamRecord>,
     targets: Vec<TargetRecord>,
+    sources: BTreeMap<String, rust_mutants::id::HexDigest>,
     mutants: Vec<MutantRecord>,
     findings: Vec<Finding>,
     limitations: Vec<Limitation>,
@@ -1665,6 +1669,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             candidates: wire.candidates,
             seams: wire.seams,
             targets: wire.targets,
+            sources: wire.sources,
             mutants: wire.mutants,
             findings: wire.findings,
             limitations: wire.limitations,
@@ -4431,6 +4436,8 @@ pub struct BuildReport {
     pub seams: Vec<SeamRecord>,
     /// Every target it selected, slowest first.
     pub targets: Vec<TargetRecord>,
+    /// The SHA-256 of each file its mutants were read from, as it read them, by workspace-relative path.
+    pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
     /// Every mutant it has something to say about.
     pub mutants: Vec<MutantRecord>,
     /// Every actionable problem it found in the project or its verification configuration.
@@ -4470,6 +4477,7 @@ impl BuildReport {
             candidates: Vec::new(),
             seams: Vec::new(),
             targets: Vec::new(),
+            sources: BTreeMap::new(),
             mutants: Vec::new(),
             findings: Vec::new(),
             limitations: Vec::new(),
