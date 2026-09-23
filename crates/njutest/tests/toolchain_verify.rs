@@ -1579,6 +1579,50 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn turning_the_equivalence_layer_on_over_a_remembered_survivor_is_a_run_that_can_be_written() {
+    let fixture = fixture("fixture-equivalent");
+    let configured = |equivalence: bool| {
+        std::fs::write(
+            fixture.root.join(".njutest.toml"),
+            format!(
+                "# SPDX-FileCopyrightText: 2026 njutest contributors\n\
+                 # SPDX-License-Identifier: MIT OR Apache-2.0\n\n\
+                 [mutation]\n\
+                 equivalence = {equivalence}\n"
+            ),
+        )
+        .expect("the configuration");
+    };
+    configured(false);
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(2));
+
+    configured(true);
+    let output = verify(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "the second run reuses the first run's survivor and this run's compiler proves it \
+         equivalent; a row that then still named the first run was refused as incoherent \
+         and the run ended in an error: {}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let report = document(&fixture);
+    let equivalent: Vec<&serde_json::Value> = report["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|mutant| mutant["decision"]["outcome"] == "equivalent")
+        .collect();
+    for mutant in &equivalent {
+        assert_eq!(
+            mutant["reuse"]["reused"], false,
+            "an equivalence is this run's answer, never a remembered one: {mutant}"
+        );
+    }
+}
+
 /// Every mutant the latest run judged, by identity.
 #[cfg(unix)]
 fn judged(fixture: &Fixture) -> BTreeSet<String> {
