@@ -8,13 +8,17 @@
 # Nothing here publishes to crates.io.
 
 [workspace]
+# A tag is cut once and cannot be taken back, so cutting one has to be a thing somebody did rather than a side effect of landing a change.
+# At the default, `release-plz release` tries to release on every push to `main`, so the first merge after this workflow exists would spend `v0.1.0` on whatever happened to land -- a version named after nobody's decision, and unavailable afterwards for the release somebody meant.
+# `false` releases only from a commit release-plz authored, which is the release pull request being merged, and is what the documentation recommends for exactly this.
+release_always = false
 changelog_update = false
 git_release_enable = false
 git_tag_enable = false
 publish = false
 dependencies_update = false
-# `release_always` stays at its default.
-# Setting it to false tags only from a commit release-plz itself authored, so a version bumped by hand leaves the workspace permanently unreleasable: no release pull request is proposed because the version is already ahead, and no tag is cut because there was no release pull request.
+# The cost of `release_always = false` is that a version bumped by hand is never tagged, because no release pull request proposed it.
+# That is a version somebody has to tag by hand, once, which is a smaller thing than every merge being a release.
 
 # Every crate shares `[workspace.package].version`, so they share one group and one tag.
 # `njutest` owns both because the tag names the product a person installs.
