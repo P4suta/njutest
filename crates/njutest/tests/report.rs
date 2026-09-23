@@ -1239,3 +1239,181 @@ fn a_seam_finding_that_names_a_question_the_report_does_not_hold_is_refused() {
     );
     assert_eq!(validate_for_persistence(&allowed), Vec::<Violation>::new());
 }
+
+/// The draft's one row decided as `outcome` by this run and routed by `routing`, with the counts and finding the row requires.
+fn answering(
+    outcome: njutest::report::Decided,
+    routing: Option<njutest::report::Routing>,
+) -> impl FnOnce(&mut BuildReport) {
+    move |source| {
+        source.mutants[0].outcome = outcome;
+        source.mutants[0].routing = routing;
+        source.accounting.mutants = counted(&source.mutants);
+        source.findings = source
+            .mutants
+            .iter()
+            .filter_map(|row| {
+                row.outcome
+                    .outcome()
+                    .required_finding(row.accepted)
+                    .map(|kind| Finding::new(kind, &row.display_id, "the finding the row requires"))
+            })
+            .collect();
+        source.verdict = source.concluded();
+    }
+}
+
+/// A route this run asked by, keeping `reaching` and recording `answered` in the order it asked.
+fn asked_by(reaching: &[&str], answered: &[(&str, Outcome)]) -> njutest::report::Routing {
+    njutest::report::Routing {
+        granularity: rust_mutants::session::Granularity::Block,
+        reaching: reaching.iter().map(|one| (*one).to_owned()).collect(),
+        discharged: Vec::new(),
+        fallback: None,
+        answered: answered
+            .iter()
+            .map(|(target, outcome)| njutest::report::Answered {
+                target: (*target).to_owned(),
+                outcome: *outcome,
+            })
+            .collect(),
+    }
+}
+
+const ONE: &str = "core/lib/core one";
+const TWO: &str = "core/lib/core two";
+
+#[test]
+fn a_kill_this_run_established_is_the_last_answer_its_own_route_recorded() {
+    let killed = || njutest::report::Decided::Killed { by: ONE.to_owned() };
+    for (earlier, why) in [
+        (Outcome::Survived, "a target that ran it and did not notice"),
+        (
+            Outcome::Unconfirmed,
+            "a kill that did not reproduce, which the run goes on past",
+        ),
+        (Outcome::Waited, "a target this machine stopped waiting for"),
+        (
+            Outcome::StepLimitReached,
+            "a target that crossed its step allowance",
+        ),
+        (Outcome::Errored, "a target nothing could be measured on"),
+    ] {
+        completed(answering(
+            killed(),
+            Some(asked_by(
+                &[TWO, ONE],
+                &[(TWO, earlier), (ONE, Outcome::Killed)],
+            )),
+        ))
+        .unwrap_or_else(|refused| {
+            panic!("the run goes on past {why}, so a kill after it stands: {refused}")
+        });
+    }
+    completed(answering(
+        killed(),
+        Some(asked_by(
+            &[TWO, ONE],
+            &[(TWO, Outcome::Survived), (ONE, Outcome::Killed)],
+        )),
+    ))
+    .expect(
+        "a kill after a target that ran it and did not notice is the run stopping where it must",
+    );
+    for (answered, why) in [
+        (
+            vec![(ONE, Outcome::Survived)],
+            "the target named as the killer answered that it survived",
+        ),
+        (
+            vec![(ONE, Outcome::Killed), (TWO, Outcome::Survived)],
+            "the run asked another target after the one that noticed",
+        ),
+        (
+            vec![(TWO, Outcome::Killed), (ONE, Outcome::Killed)],
+            "an earlier target already noticed, so the run would have stopped there",
+        ),
+        (Vec::new(), "the route recorded no answer at all"),
+        (
+            vec![(TWO, Outcome::Unreached), (ONE, Outcome::Killed)],
+            "a target does not answer what only a whole mutation can be",
+        ),
+    ] {
+        let refused = completed(answering(killed(), Some(asked_by(&[ONE, TWO], &answered))))
+            .expect_err(why)
+            .to_string();
+        assert!(
+            refused.contains("was killed by core/lib/core one in this run")
+                && refused.contains("stops at the first target that notices"),
+            "{why}, and the report is refused for saying two things about one mutation: {refused}"
+        );
+    }
+    let mut read_back = sound_draft();
+    answering(killed(), Some(asked_by(&[ONE], &[])))(&mut read_back);
+    read_back.mutants[0].reuse = njutest::report::Reuse(
+        njutest::report::Established::ReadBackFrom("20260904t000000z-000000".to_owned()),
+    );
+    read_back.accounting.mutants = counted(&read_back.mutants);
+    completed(|source| *source = read_back).expect(
+        "a kill read back from an earlier run was asked there, so this run's route records no answer for it",
+    );
+}
+
+#[test]
+fn a_survivor_this_run_established_was_asked_of_every_target_its_route_kept_and_each_survived() {
+    let mut fallback = asked_by(
+        &[ONE, TWO],
+        &[(ONE, Outcome::Survived), (TWO, Outcome::Survived)],
+    );
+    fallback.granularity = rust_mutants::session::Granularity::All;
+    fallback.fallback = Some(rust_mutants::session::Fallback::NotMeasured);
+    completed(answering(
+        njutest::report::Decided::Survived,
+        Some(fallback.clone()),
+    ))
+    .expect("a route widened to every target asks every target, and each survived");
+    fallback.answered.pop();
+    completed(answering(
+        njutest::report::Decided::Survived,
+        Some(fallback),
+    ))
+    .expect_err("a widened route that left a target unasked is not a survivor's");
+    completed(answering(
+        njutest::report::Decided::Survived,
+        Some(asked_by(
+            &[ONE, TWO],
+            &[(TWO, Outcome::Survived), (ONE, Outcome::Survived)],
+        )),
+    ))
+    .expect("the answers need not come in the route's order, only one from each target it kept");
+    for (answered, why) in [
+        (
+            vec![(ONE, Outcome::Survived)],
+            "a target the route kept was never asked",
+        ),
+        (
+            vec![(ONE, Outcome::Survived), (TWO, Outcome::Killed)],
+            "a target that noticed is not one that survived",
+        ),
+        (
+            vec![
+                (ONE, Outcome::Survived),
+                (TWO, Outcome::Survived),
+                (TWO, Outcome::Survived),
+            ],
+            "a target asked twice is not a route asked once",
+        ),
+    ] {
+        let refused = completed(answering(
+            njutest::report::Decided::Survived,
+            Some(asked_by(&[ONE, TWO], &answered)),
+        ))
+        .expect_err(why)
+        .to_string();
+        assert!(
+            refused.contains("survived in this run")
+                && refused.contains("every target that could notice ran it and did not"),
+            "{why}, and the report is refused for saying two things about one mutation: {refused}"
+        );
+    }
+}
