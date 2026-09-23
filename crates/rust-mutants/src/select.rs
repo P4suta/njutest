@@ -76,6 +76,11 @@ pub enum Everything {
     },
     /// The tree is read by other rules than the measured one was, so a file can appear or vanish with nobody having edited it.
     Rules,
+    /// Something the caller says a run is compiled or started with differs: the build selection, the harness arguments.
+    Setting {
+        /// What differs.
+        name: String,
+    },
     /// A variable of the environment the run selects has another value, or is set on one side only.
     Environment {
         /// The variable.
@@ -205,6 +210,8 @@ pub struct Measurement {
     pub inputs: Inputs,
     /// The environment the run selected, which every test process ran with.
     pub environment: BTreeMap<String, String>,
+    /// What the caller compiled and started the tree with, by name: the build selection, the harness arguments.
+    pub settings: BTreeMap<String, String>,
     /// Every item, by item index.
     pub items: Vec<Item>,
     /// Every target the baseline recorded.
@@ -224,6 +231,8 @@ pub struct Parts<'a> {
     pub inputs: &'a Inputs,
     /// The environment the run selected.
     pub environment: &'a BTreeMap<String, String>,
+    /// What the tree was compiled and started with.
+    pub settings: &'a BTreeMap<String, String>,
     /// What the baseline recorded.
     pub touched: &'a Touched,
     /// What a second run of each target established.
@@ -243,6 +252,7 @@ impl Measurement {
             survey: parts.survey.clone(),
             inputs: parts.inputs.clone(),
             environment: parts.environment.clone(),
+            settings: parts.settings.clone(),
             items: parts.touched.items.clone(),
             targets: parts
                 .touched
@@ -303,6 +313,17 @@ impl Selection {
     #[must_use]
     pub const fn decided(&self) -> &BTreeMap<String, Decided> {
         &self.decided
+    }
+
+    /// Every target of `now` running for the one reason `why`.
+    #[must_use]
+    pub fn everything(now: &BTreeSet<String>, why: &Everything) -> Self {
+        Self {
+            decided: now
+                .iter()
+                .map(|target| (target.clone(), Decided::Run(Why::Everything(why.clone()))))
+                .collect(),
+        }
     }
 
     /// The targets proved unable to notice the change, which is all a caller may leave out.
@@ -1000,6 +1021,11 @@ pub fn changed_items(
                 path: path.to_owned(),
             });
         }
+        if !measured.items.iter().any(|item| item.path == path) {
+            return Err(Everything::Unitemized {
+                path: path.to_owned(),
+            });
+        }
         let revision = match change {
             Changed::Whole { path } => {
                 return Err(Everything::Whole {
@@ -1013,11 +1039,6 @@ pub fn changed_items(
             }
             Changed::Revised(revision) => revision,
         };
-        if !measured.items.iter().any(|item| item.path == path) {
-            return Err(Everything::Unitemized {
-                path: path.to_owned(),
-            });
-        }
         items.extend(revised(measured, revision)?);
     }
     Ok(items)
@@ -1032,6 +1053,8 @@ pub struct Now<'a> {
     pub survey: &'a crate::snapshot::Survey,
     /// The environment a run would select.
     pub environment: &'a BTreeMap<String, String>,
+    /// What a run would compile and start the tree with.
+    pub settings: &'a BTreeMap<String, String>,
     /// Every variable a build would see, which is where a variable the compiler read is looked up.
     pub vars: &'a BTreeMap<String, String>,
 }
@@ -1049,6 +1072,14 @@ pub enum Difference {
         /// The file.
         path: String,
     },
+}
+
+/// The first name the two maps disagree about, set on one side only or to two values.
+fn unequal(was: &BTreeMap<String, String>, is: &BTreeMap<String, String>) -> Option<String> {
+    was.keys()
+        .chain(is.keys())
+        .find(|name| was.get(*name) != is.get(*name))
+        .cloned()
 }
 
 /// Whether a variable is one cargo sets for a compilation, which is a function of the manifests and the paths it builds in rather than of anything a person sets.
@@ -1070,16 +1101,11 @@ pub fn differences(measured: &Measurement, now: &Now<'_>) -> Result<Vec<Differen
     if measured.survey.rules != now.survey.rules {
         return Err(Everything::Rules);
     }
-    let names: BTreeSet<&String> = measured
-        .environment
-        .keys()
-        .chain(now.environment.keys())
-        .collect();
-    if let Some(name) = names
-        .into_iter()
-        .find(|name| measured.environment.get(*name) != now.environment.get(*name))
-    {
-        return Err(Everything::Environment { name: name.clone() });
+    if let Some(name) = unequal(&measured.settings, now.settings) {
+        return Err(Everything::Setting { name });
+    }
+    if let Some(name) = unequal(&measured.environment, now.environment) {
+        return Err(Everything::Environment { name });
     }
     if let Some((name, _)) = measured
         .inputs
@@ -1234,6 +1260,7 @@ pub fn beta(x: u8) -> u8 {
                 survey: &surveyed(&[(PATH, source)]),
                 inputs: &Inputs::default(),
                 environment: &BTreeMap::new(),
+                settings: &BTreeMap::from([("build".to_owned(), "default".to_owned())]),
                 touched: &touched,
                 standing: &standing,
             },
@@ -1595,6 +1622,7 @@ pub fn beta(x: u8) -> u8 {
                 toolchain: "rustc",
                 survey,
                 environment: &BTreeMap::new(),
+                settings: &BTreeMap::from([("build".to_owned(), "default".to_owned())]),
                 vars: &vars,
             },
         )
@@ -1642,6 +1670,17 @@ pub fn beta(x: u8) -> u8 {
             found(&toolchain, &same, &[]),
             Err(Everything::Toolchain { .. })
         ));
+        let mut built = measured.clone();
+        built
+            .settings
+            .insert("build".to_owned(), "imperial".to_owned());
+        assert_eq!(
+            found(&built, &same, &[]),
+            Err(Everything::Setting {
+                name: "build".to_owned()
+            }),
+            "another build selection compiles another program"
+        );
         let mut rules = same.clone();
         rules.rules = "other".to_owned();
         assert_eq!(found(&measured, &rules, &[]), Err(Everything::Rules));

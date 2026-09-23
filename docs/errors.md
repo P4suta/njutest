@@ -106,6 +106,7 @@ The first digit names an area:
 | `NJ1004` | The configuration names a version this release does not understand. | this release reads version 1; a newer file needs a newer release |
 | `NJ1005` | A configuration file is already there, and `init` was not told to replace it. | remove the file first, or edit the one already there: init never writes over a configuration somebody wrote |
 | `NJ2001` | The tree a run is about could not be read: a directory that cannot be listed, a file that cannot be read, a lock file that is not the document cargo writes. | run this inside the tree you mean to verify, or pass --root at it |
+| `NJ2002` | The tree changed while it was being measured, so the measurement would describe files it did not read. | run again on a tree nothing else is writing: a measurement is kept only of the bytes it read |
 | `NJ3001` | A test binary could not be asked what tests it holds. | run `cargo test --no-run` yourself: a binary that will not list its tests is one the build did not finish |
 | `NJ3002` | The build could not be run: cargo would not start, or was stopped. A workspace that does not *compile* is a finding in the report, not this. | run the same cargo command yourself; what it says there is what it said here |
 | `NJ3003` | The build's output is not the message stream this version understands. | run `cargo clean` and try again; output from an interrupted build cannot be read |
@@ -125,6 +126,8 @@ The first digit names an area:
 | `NJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. | the document is from another release or another tool; `njutest verify` writes one this release reads |
 | `NJ6004` | The report could not be written where a reader will look for it. | check the report directory exists and this user may write in it; the path names the file |
 | `NJ6005` | There is no such run to answer about, or none at all. A command never answers about a different run than the one it was asked about. | `njutest report --list` names the runs that are stored under this root |
+| `NJ6020` | The measurement a selection reads could not be written. | check the report directory exists and this user may write in it; the path names the file |
+| `NJ6021` | There is no measurement to select by, or it is not one this release reads. | `njutest measure` writes one; a selection with nothing measured to stand on selects nothing |
 | `NJ8003` | The store of earlier answers could not be used, a report was offered for storage that must not be stored, or the stream answers were being carried on or off this machine stopped. | remove the store and let it be rebuilt: what is in it is read-only evidence and nothing is lost |
 | `NJ8004` | A stored answer is not the answer it claims to be, or a line offered to this machine is not an answer at all: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. | remove the store and let it be rebuilt: a stored answer that is not what it claims is never used |
 | `NJ8005` | No port could be listened on in front of a seam, so a run that was to record what went past it could record nothing. | check this machine allows a listener on the loopback interface, and that nothing has taken every port |

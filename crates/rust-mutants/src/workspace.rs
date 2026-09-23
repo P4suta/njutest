@@ -895,6 +895,12 @@ impl Workspace {
         self.snapshot.workspace_digest()
     }
 
+    /// Every regular file the copy holds, as it was copied, sorted by path.
+    #[must_use]
+    pub fn copied(&self) -> &[snapshot::Entry] {
+        self.snapshot.manifest()
+    }
+
     /// What the source tree holds now, read under the rules it was copied by.
     ///
     /// # Errors

@@ -11,12 +11,14 @@ pub mod explain;
 pub mod fix;
 pub mod init;
 pub mod lsp;
+pub mod measure;
 pub mod merge;
 pub mod plan;
 pub mod replay;
 pub mod reports;
 pub mod review;
 pub mod runs;
+pub mod select;
 pub mod show;
 pub mod trace;
 pub mod verify;
@@ -55,6 +57,8 @@ pub fn run(
         Command::Review(arguments) => review::run(arguments, environment, stdout, stderr),
         Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),
         Command::Replay(arguments) => replay::run(arguments, environment, stdout, stderr),
+        Command::Measure(arguments) => measure::run(*arguments, environment, stdout, stderr),
+        Command::Select(arguments) => select::run(*arguments, environment, stdout, stderr),
         Command::Trace { command } => trace::run(command, environment, stdout, stderr),
         Command::Diagnostics(arguments) => diagnostics::run(arguments, environment, stdout, stderr),
     }

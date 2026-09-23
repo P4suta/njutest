@@ -370,6 +370,12 @@ pub enum RunnerError {
     /// Its codes are `RM`-prefixed and live in the engine's half of `docs/errors.md`; a runner that renamed them would make a user's report unsearchable.
     #[error(transparent)]
     Engine(#[from] rust_mutants::EngineError),
+    /// A tree could not be measured for a selection.
+    #[error(transparent)]
+    Measure(#[from] crate::assure::measure::MeasureError),
+    /// A measurement could not be kept or read back.
+    #[error(transparent)]
+    Reach(#[from] crate::reach::ReachError),
 }
 
 impl RunnerError {
@@ -401,6 +407,8 @@ impl RunnerError {
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
             Self::Build(error) => error.code(),
+            Self::Measure(error) => error.code(),
+            Self::Reach(error) => error.code(),
             Self::Engine(error) => {
                 let engine = error.code();
                 ErrorCode {
@@ -419,6 +427,25 @@ impl RunnerError {
     }
 }
 
+code!(
+    TREE_WRITTEN_DURING_MEASUREMENT,
+    "NJ2002",
+    "the tree changed while it was being measured, so the measurement would describe files it did not read",
+    "run again on a tree nothing else is writing: a measurement is kept only of the bytes it read"
+);
+code!(
+    MEASUREMENT_UNWRITABLE,
+    "NJ6020",
+    "the measurement a selection reads could not be written",
+    "check the report directory exists and this user may write in it; the path names the file"
+);
+code!(
+    MEASUREMENT_UNREADABLE,
+    "NJ6021",
+    "there is no measurement to select by, or it is not one this release reads",
+    "`njutest measure` writes one; a selection with nothing measured to stand on selects nothing"
+);
+
 /// Every code the runner can report, in code order.
 #[must_use]
 #[cfg(feature = "testkit")]
@@ -432,6 +459,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CONFIG_UNSUPPORTED_VERSION,
         CONFIG_EXISTS,
         EVIDENCE_UNREADABLE,
+        TREE_WRITTEN_DURING_MEASUREMENT,
         TARGET_LIST_FAILED,
         BUILD_FAILED,
         BUILD_UNREADABLE,
@@ -452,6 +480,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_UNSOUND,
         REPORT_NOT_KEPT,
         RUN_NOT_FOUND,
+        MEASUREMENT_UNWRITABLE,
+        MEASUREMENT_UNREADABLE,
         MIRI_MISSING,
         MODEL_PHASE_FAILED,
         SCHEDULER_UNUSABLE,

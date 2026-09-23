@@ -1,0 +1,24 @@
+Say which test targets can notice what changed since `njutest measure`
+
+Usage: njutest select [OPTIONS]
+
+Options:
+      --format <FORMAT>
+          How to say what was decided
+
+          Possible values:
+          - human:     Every target, whether it runs, and why
+          - nextest:   A nextest filterset that leaves out every target proved unable to notice the
+            change
+          - skippable: The targets proved unable to notice the change, one per line
+          
+          [default: human]
+
+      --offline
+          Pass `--offline` to cargo
+
+      --locked
+          Pass `--locked` to cargo
+
+  -h, --help
+          Print help (see a summary with '-h')

@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 - [Architecture](architecture.md)
 - [The assurance contract](assurance-contract.md)
+- [Selecting the tests a change can reach](select.md)
 - [Configuration](configuration.md)
 - [Limitations](limitations.md)
 - [Error codes](errors.md)
