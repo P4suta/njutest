@@ -2350,6 +2350,12 @@ pub struct BuildEvidence {
 }
 
 impl BuildEvidence {
+    /// What this build's controls established about each target's baseline reach, over every part, one record each.
+    #[must_use]
+    pub fn drift(&self) -> Vec<drift::Drift> {
+        drift::combined(self.parts.iter().flat_map(|part| part.drift.iter()))
+    }
+
     /// Joins already proved typed components without exposing mutable fields.
     pub(crate) const fn from_parts(
         name: BuildName,
@@ -5064,6 +5070,18 @@ impl BuildMutationDecision {
     #[must_use]
     pub const fn reuse(&self) -> &Reuse {
         &self.reuse
+    }
+
+    /// Whether a reviewer accepted the source row.
+    #[must_use]
+    pub const fn accepted(&self) -> bool {
+        self.accepted
+    }
+
+    /// Which targets could have noticed the source row's mutation, and what removed the rest, where the run asked.
+    #[must_use]
+    pub const fn routing(&self) -> Option<&Routing> {
+        self.routing.as_ref()
     }
 }
 

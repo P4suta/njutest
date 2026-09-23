@@ -130,6 +130,12 @@ code!(
     "`njutest report --list` names the runs that are stored under this root"
 );
 code!(
+    SUBJECT_NOT_CATALOGED,
+    "NJ6006",
+    "the run made no change in anything the subject names",
+    "`njutest report` lists what the run changed; name a file, `PATH:ITEM`, or an item as the source names it"
+);
+code!(
     REPORT_NOT_KEPT,
     "NJ6004",
     "the report could not be written where a reader will look for it",
@@ -452,6 +458,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_UNSOUND,
         REPORT_NOT_KEPT,
         RUN_NOT_FOUND,
+        SUBJECT_NOT_CATALOGED,
         MIRI_MISSING,
         MODEL_PHASE_FAILED,
         SCHEDULER_UNUSABLE,

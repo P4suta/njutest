@@ -1076,3 +1076,382 @@ If the change cannot affect anything a caller can observe, record that instead: 
 A mutation run changed the code in 3 places and ran the tests each time. 3 of those changes were noticed and 0 were not.
 
 There is nothing to do.
+
+=== spec: the specification of one item — eighty columns, no colour
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  Ledger::settle
+  what is pinned
+    - `n > 0` => `n >= 0`  njutest explain src/lib.rs:Ledger::settle:gt-to-ge@4
+        pkg/test/it notices it; pkg/lib/pkg ran it first and did not notice; 1
+          more target reaches it and was never asked: pkg/test/more
+    - `limit - 1` => `limit - 2`
+      njutest explain src/lib.rs:Ledger::settle:int-increment@5
+        the compiler refuses it
+  what is left free
+    - `1` => `2`  njutest explain src/lib.rs:Ledger::settle:int-increment@7
+        pkg/lib/pkg ran it and did not notice; never-infected removed
+          pkg/test/it
+    - `<` => `<=`  njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
+        never-infected removed every target that reaches it (pkg/lib/pkg), so
+          nothing ran it; check the proof, not the tests
+    - deleting `total += fee;`
+      njutest explain src/lib.rs:Ledger::settle:delete-assignment@9
+        nothing the suite runs executes it; a reviewer accepted it
+  what is the same program
+    - `x * 1` => `x / 1`
+      njutest explain src/lib.rs:Ledger::settle:mul-to-div@11
+        the compiler renders it identically
+  what the run could not tell
+    - `retry()` => `Default::default()`
+      njutest explain src/lib.rs:Ledger::settle:return-default@12
+        this machine stopped waiting for pkg/test/it
+
+=== spec: the specification of one item — forty columns, no colour
+
+spec of 1 item from run the-run, a full
+run, 1 build, default
+
+src/lib.rs  Ledger::settle
+  what is pinned
+    - `n > 0` => `n >= 0`
+      njutest explain src/lib.rs:Ledger::settle:gt-to-ge@4
+        pkg/test/it notices it;
+          pkg/lib/pkg ran it first and
+          did not notice; 1 more target
+          reaches it and was never
+          asked: pkg/test/more
+    - `limit - 1` => `limit - 2`
+      njutest explain src/lib.rs:Ledger::settle:int-increment@5
+        the compiler refuses it
+  what is left free
+    - `1` => `2`
+      njutest explain src/lib.rs:Ledger::settle:int-increment@7
+        pkg/lib/pkg ran it and did not
+          notice; never-infected removed
+          pkg/test/it
+    - `<` => `<=`
+      njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
+        never-infected removed every
+          target that reaches it
+          (pkg/lib/pkg), so nothing ran
+          it; check the proof, not the
+          tests
+    - deleting `total += fee;`
+      njutest explain src/lib.rs:Ledger::settle:delete-assignment@9
+        nothing the suite runs
+          executes it; a reviewer
+          accepted it
+  what is the same program
+    - `x * 1` => `x / 1`
+      njutest explain src/lib.rs:Ledger::settle:mul-to-div@11
+        the compiler renders it
+          identically
+  what the run could not tell
+    - `retry()` =>
+      `Default::default()`
+      njutest explain src/lib.rs:Ledger::settle:return-default@12
+        this machine stopped waiting
+          for pkg/test/it
+
+=== spec: the specification of one item — eighty columns, colour
+
+[38;5;244mspec of 1 item from run the-run, a full run, 1 build, default[0m
+
+[1;38;5;253msrc/lib.rs[0m  [1;38;5;253mLedger::settle[0m
+  [1;38;5;114mwhat is pinned[0m
+    - `n > 0` => [1;4;38;5;204m`n >= 0`[0m  [38;5;252mnjutest explain src/lib.rs:Ledger::settle:gt-to-ge@4[0m
+        pkg/test/it notices it; pkg/lib/pkg ran it first and did not notice; 1
+          more target reaches it and was never asked: pkg/test/more
+    - `limit - 1` => [1;4;38;5;204m`limit - 2`[0m
+      [38;5;252mnjutest explain src/lib.rs:Ledger::settle:int-increment@5[0m
+        the compiler refuses it
+  [1;38;5;214mwhat is left free[0m
+    - `1` => [1;4;38;5;204m`2`[0m  [38;5;252mnjutest explain src/lib.rs:Ledger::settle:int-increment@7[0m
+        pkg/lib/pkg ran it and did not notice; never-infected removed
+          pkg/test/it
+    - `<` => [1;4;38;5;204m`<=`[0m  [38;5;252mnjutest explain src/lib.rs:Ledger::settle:lt-to-le@8[0m
+        never-infected removed every target that reaches it (pkg/lib/pkg), so
+          nothing ran it; check the proof, not the tests
+    - deleting `total += fee;`
+      [38;5;252mnjutest explain src/lib.rs:Ledger::settle:delete-assignment@9[0m
+        nothing the suite runs executes it; a reviewer accepted it
+  [38;5;244mwhat is the same program[0m
+    - `x * 1` => [1;4;38;5;204m`x / 1`[0m
+      [38;5;252mnjutest explain src/lib.rs:Ledger::settle:mul-to-div@11[0m
+        the compiler renders it identically
+  [38;5;73mwhat the run could not tell[0m
+    - `retry()` => [1;4;38;5;204m`Default::default()`[0m
+      [38;5;252mnjutest explain src/lib.rs:Ledger::settle:return-default@12[0m
+        this machine stopped waiting for pkg/test/it
+
+=== spec: the specification of one item — eighty columns, unicode
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  Ledger::settle
+  what is pinned
+    - `n > 0` ⇢ `n >= 0`  njutest explain src/lib.rs:Ledger::settle:gt-to-ge@4
+        pkg/test/it notices it; pkg/lib/pkg ran it first and did not notice; 1
+          more target reaches it and was never asked: pkg/test/more
+    - `limit - 1` ⇢ `limit - 2`
+      njutest explain src/lib.rs:Ledger::settle:int-increment@5
+        the compiler refuses it
+  what is left free
+    - `1` ⇢ `2`  njutest explain src/lib.rs:Ledger::settle:int-increment@7
+        pkg/lib/pkg ran it and did not notice; never-infected removed
+          pkg/test/it
+    - `<` ⇢ `<=`  njutest explain src/lib.rs:Ledger::settle:lt-to-le@8
+        never-infected removed every target that reaches it (pkg/lib/pkg), so
+          nothing ran it; check the proof, not the tests
+    - deleting `total += fee;`
+      njutest explain src/lib.rs:Ledger::settle:delete-assignment@9
+        nothing the suite runs executes it; a reviewer accepted it
+  what is the same program
+    - `x * 1` ⇢ `x / 1`  njutest explain src/lib.rs:Ledger::settle:mul-to-div@11
+        the compiler renders it identically
+  what the run could not tell
+    - `retry()` ⇢ `Default::default()`
+      njutest explain src/lib.rs:Ledger::settle:return-default@12
+        this machine stopped waiting for pkg/test/it
+
+=== spec: a change two builds disagree about, one read back — eighty columns, no colour
+
+spec of 1 item from run the-run, a full run, 2 builds, default, release
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` => `n >= 0`  njutest explain src/lib.rs:settle:gt-to-ge@4
+        default: pkg/test/it notices it; pkg/lib/pkg ran it first and did not
+          notice; 1 more target reaches it and was never asked: pkg/test/more
+        release: nothing noticed it, and the record does not say what ran it;
+          established by run 20260923T000000Z-000009
+
+=== spec: a change two builds disagree about, one read back — forty columns, no colour
+
+spec of 1 item from run the-run, a full
+run, 2 builds, default, release
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` => `n >= 0`
+      njutest explain src/lib.rs:settle:gt-to-ge@4
+        default: pkg/test/it notices
+          it; pkg/lib/pkg ran it first
+          and did not notice; 1 more
+          target reaches it and was
+          never asked: pkg/test/more
+        release: nothing noticed it,
+          and the record does not say
+          what ran it; established by
+          run 20260923T000000Z-000009
+
+=== spec: a change two builds disagree about, one read back — eighty columns, colour
+
+[38;5;244mspec of 1 item from run the-run, a full run, 2 builds, default, release[0m
+
+[1;38;5;253msrc/lib.rs[0m  [1;38;5;253msettle[0m
+  [1;38;5;214mwhat is left free[0m
+    - `n > 0` => [1;4;38;5;204m`n >= 0`[0m  [38;5;252mnjutest explain src/lib.rs:settle:gt-to-ge@4[0m
+        default: pkg/test/it notices it; pkg/lib/pkg ran it first and did not
+          notice; 1 more target reaches it and was never asked: pkg/test/more
+        release: nothing noticed it, and the record does not say what ran it;
+          established by run 20260923T000000Z-000009
+
+=== spec: a change two builds disagree about, one read back — eighty columns, unicode
+
+spec of 1 item from run the-run, a full run, 2 builds, default, release
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` ⇢ `n >= 0`  njutest explain src/lib.rs:settle:gt-to-ge@4
+        default: pkg/test/it notices it; pkg/lib/pkg ran it first and did not
+          notice; 1 more target reaches it and was never asked: pkg/test/more
+        release: nothing noticed it, and the record does not say what ran it;
+          established by run 20260923T000000Z-000009
+
+=== spec: a change that rests on a reach that moved — eighty columns, no colour
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` => `n >= 0`  njutest explain src/lib.rs:settle:gt-to-ge@4
+        pkg/test/it ran it and did not notice; pkg/lib/pkg reached something
+          on a control that its baseline did not, so what kept it from this
+          change is not a measurement
+
+=== spec: a change that rests on a reach that moved — forty columns, no colour
+
+spec of 1 item from run the-run, a full
+run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` => `n >= 0`
+      njutest explain src/lib.rs:settle:gt-to-ge@4
+        pkg/test/it ran it and did not
+          notice; pkg/lib/pkg reached
+          something on a control that
+          its baseline did not, so what
+          kept it from this change is
+          not a measurement
+
+=== spec: a change that rests on a reach that moved — eighty columns, colour
+
+[38;5;244mspec of 1 item from run the-run, a full run, 1 build, default[0m
+
+[1;38;5;253msrc/lib.rs[0m  [1;38;5;253msettle[0m
+  [1;38;5;214mwhat is left free[0m
+    - `n > 0` => [1;4;38;5;204m`n >= 0`[0m  [38;5;252mnjutest explain src/lib.rs:settle:gt-to-ge@4[0m
+        pkg/test/it ran it and did not notice; pkg/lib/pkg reached something
+          on a control that its baseline did not, so what kept it from this
+          change is not a measurement
+
+=== spec: a change that rests on a reach that moved — eighty columns, unicode
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - `n > 0` ⇢ `n >= 0`  njutest explain src/lib.rs:settle:gt-to-ge@4
+        pkg/test/it ran it and did not notice; pkg/lib/pkg reached something
+          on a control that its baseline did not, so what kept it from this
+          change is not a measurement
+
+=== spec: a change whose code does not fit — eighty columns, no colour
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - deleting `if total > limit {`... (2 more lines)
+      njutest explain src/lib.rs:settle:delete-match-arm@20
+        pkg/lib/pkg, pkg/test/it, pkg/test/more ran it and none noticed
+
+=== spec: a change whose code does not fit — forty columns, no colour
+
+spec of 1 item from run the-run, a full
+run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - deleting `if total > limit {`...
+      (2 more lines)
+      njutest explain src/lib.rs:settle:delete-match-arm@20
+        pkg/lib/pkg, pkg/test/it,
+          pkg/test/more ran it and none
+          noticed
+
+=== spec: a change whose code does not fit — eighty columns, colour
+
+[38;5;244mspec of 1 item from run the-run, a full run, 1 build, default[0m
+
+[1;38;5;253msrc/lib.rs[0m  [1;38;5;253msettle[0m
+  [1;38;5;214mwhat is left free[0m
+    - deleting `if total > limit {`... (2 more lines)
+      [38;5;252mnjutest explain src/lib.rs:settle:delete-match-arm@20[0m
+        pkg/lib/pkg, pkg/test/it, pkg/test/more ran it and none noticed
+
+=== spec: a change whose code does not fit — eighty columns, unicode
+
+spec of 1 item from run the-run, a full run, 1 build, default
+
+src/lib.rs  settle
+  what is left free
+    - deleting `if total > limit {`… (2 more lines)
+      njutest explain src/lib.rs:settle:delete-match-arm@20
+        pkg/lib/pkg, pkg/test/it, pkg/test/more ran it and none noticed
+
+=== spec: one name in two files, from a changed run that read a kill back — eighty columns, no colour
+
+spec of 2 items from run the-run, a changed run, which asked only about what
+changed, 1 build, default
+
+src/lexer.rs  Lexer::new
+  what is the same program
+    - `Vec::new()` => `Default::default()`
+      njutest explain src/lexer.rs:Lexer::new:return-default@3
+        the compiler renders it identically
+
+src/parser.rs  Parser::new
+  what is pinned
+    - `tokens.len()` => `Default::default()`
+      njutest explain src/parser.rs:Parser::new:return-default@6
+        pkg/test/it notices it; established by run 20260923T000000Z-000009
+  what is the same program
+    - `Vec::new()` => `Default::default()`
+      njutest explain src/parser.rs:Parser::new:return-default@3
+        the compiler renders it identically
+
+=== spec: one name in two files, from a changed run that read a kill back — forty columns, no colour
+
+spec of 2 items from run the-run, a
+changed run, which asked only about what
+changed, 1 build, default
+
+src/lexer.rs  Lexer::new
+  what is the same program
+    - `Vec::new()` =>
+      `Default::default()`
+      njutest explain src/lexer.rs:Lexer::new:return-default@3
+        the compiler renders it
+          identically
+
+src/parser.rs  Parser::new
+  what is pinned
+    - `tokens.len()` =>
+      `Default::default()`
+      njutest explain src/parser.rs:Parser::new:return-default@6
+        pkg/test/it notices it;
+          established by run
+          20260923T000000Z-000009
+  what is the same program
+    - `Vec::new()` =>
+      `Default::default()`
+      njutest explain src/parser.rs:Parser::new:return-default@3
+        the compiler renders it
+          identically
+
+=== spec: one name in two files, from a changed run that read a kill back — eighty columns, colour
+
+[38;5;244mspec of 2 items from run the-run, a changed run, which asked only about what[0m
+[38;5;244mchanged, 1 build, default[0m
+
+[1;38;5;253msrc/lexer.rs[0m  [1;38;5;253mLexer::new[0m
+  [38;5;244mwhat is the same program[0m
+    - `Vec::new()` => [1;4;38;5;204m`Default::default()`[0m
+      [38;5;252mnjutest explain src/lexer.rs:Lexer::new:return-default@3[0m
+        the compiler renders it identically
+
+[1;38;5;253msrc/parser.rs[0m  [1;38;5;253mParser::new[0m
+  [1;38;5;114mwhat is pinned[0m
+    - `tokens.len()` => [1;4;38;5;204m`Default::default()`[0m
+      [38;5;252mnjutest explain src/parser.rs:Parser::new:return-default@6[0m
+        pkg/test/it notices it; established by run 20260923T000000Z-000009
+  [38;5;244mwhat is the same program[0m
+    - `Vec::new()` => [1;4;38;5;204m`Default::default()`[0m
+      [38;5;252mnjutest explain src/parser.rs:Parser::new:return-default@3[0m
+        the compiler renders it identically
+
+=== spec: one name in two files, from a changed run that read a kill back — eighty columns, unicode
+
+spec of 2 items from run the-run, a changed run, which asked only about what
+changed, 1 build, default
+
+src/lexer.rs  Lexer::new
+  what is the same program
+    - `Vec::new()` ⇢ `Default::default()`
+      njutest explain src/lexer.rs:Lexer::new:return-default@3
+        the compiler renders it identically
+
+src/parser.rs  Parser::new
+  what is pinned
+    - `tokens.len()` ⇢ `Default::default()`
+      njutest explain src/parser.rs:Parser::new:return-default@6
+        pkg/test/it notices it; established by run 20260923T000000Z-000009
+  what is the same program
+    - `Vec::new()` ⇢ `Default::default()`
+      njutest explain src/parser.rs:Parser::new:return-default@3
+        the compiler renders it identically
