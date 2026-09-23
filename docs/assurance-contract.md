@@ -287,6 +287,7 @@ A mutant the premise of `unreached` holds for is a claim about the code and is r
 A bound that expired is not a proof about the mutant.
 Reusing one keeps a finding and never removes one.
 Each mutation command, and the probe command that measures the same target, gets five times its measured baseline duration plus five seconds, with a 30-second floor; the contract caps calibration at 30 minutes for `standard-v1` and five hours for `deep-v1`, and `[execution].timeout` is a further upper bound.
+For a mutation command that counts its steps, that budget is how long it may go without raising the count, and ten of them are the ceiling over the whole command ([ADR 0025](adr/0025-a-bound-measures-quiet-not-duration.md)).
 
 An expired budget buys one measurement with the machine to itself.
 The budget is derived from a duration the baseline measured, and a duration measured while other test processes were running is a fact about the load as much as about the mutation, so before a run decides that time really ran out it stops starting anything else and measures once more.

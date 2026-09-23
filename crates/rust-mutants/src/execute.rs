@@ -20,7 +20,7 @@ use crate::instrument::{
 };
 use crate::outcome::Outcome;
 use crate::runner::{
-    Bound, Cancel, EXIT_CODE_UNAVAILABLE, ProcessExit, RunResult, Spec, Termination, run,
+    Bound, Cancel, EXIT_CODE_UNAVAILABLE, ProcessExit, Progress, RunResult, Spec, Termination, run,
 };
 use crate::trace::{ExecRecord, Recorder};
 
@@ -47,6 +47,9 @@ pub const COMPOSED_ENV: [&str; 8] = [
     STEP_STATE_ENV,
     crate::coverage::PROFILE_ENV,
 ];
+
+/// How many quiet windows a step-counted execution may run for in all before the clock ends it anyway.
+pub const QUIET_WINDOWS_PER_CEILING: u32 = 10;
 
 /// The name a test process writes its coverage profile under, when the run is not the one measuring.
 pub const SPILLED_PROFILE: &str = "spilled-coverage-%p-%m.profraw";
@@ -372,13 +375,18 @@ pub enum Stopped {
         /// The one way it exited.
         exit: ProcessExit,
     },
-    /// This machine's wall-clock bound expired.
+    /// This machine's wall-clock bound expired, which for a process counting its steps is the ceiling over one that never went quiet.
     TimedOut {
         /// How many step boundaries the process had raised, where the run could read its state.
         ///
         /// Above zero says the clock ended a computation the allowance would have ended, which is a race this machine won and another would not: the number to change is the allowance, not the bound.
         /// Zero says the computation was raising no boundary at all, so no allowance could have ended it and the clock is the only instrument there is (ADR 0023).
         /// `None` says the state could not be read, which is not a count of zero.
+        raised: Option<u64>,
+    },
+    /// The process raised no step boundary for a whole quiet window, so nothing was moving through the mutated source.
+    Stalled {
+        /// How many step boundaries the process had raised before it went quiet, or `None` where its state could not be read.
         raised: Option<u64>,
     },
     /// The caller asked it to stop.
@@ -487,6 +495,7 @@ enum StoppedWire {
     NotStarted {},
     Exited { exit: ProcessExit },
     TimedOut { raised: Option<u64> },
+    Stalled { raised: Option<u64> },
     Cancelled { started: bool },
     WaitFailed {},
     StepLimitReached { notice: StepLimitNotice },
@@ -503,6 +512,7 @@ impl<'de> serde::Deserialize<'de> for Stopped {
                 StoppedWire::NotStarted {} => Self::NotStarted,
                 StoppedWire::Exited { exit } => Self::Exited { exit },
                 StoppedWire::TimedOut { raised } => Self::TimedOut { raised },
+                StoppedWire::Stalled { raised } => Self::Stalled { raised },
                 StoppedWire::Cancelled { started } => Self::Cancelled { started },
                 StoppedWire::WaitFailed {} => Self::WaitFailed,
                 StoppedWire::StepLimitReached { notice } => Self::StepLimitReached { notice },
@@ -670,6 +680,7 @@ impl Stopped {
             Termination::NotStarted { .. } => Self::NotStarted,
             Termination::Exited(exit) => Self::Exited { exit: *exit },
             Termination::TimedOut => Self::TimedOut { raised: None },
+            Termination::Stalled => Self::Stalled { raised: None },
             Termination::StoppedByMonitor => Self::StepProtocolFailed {
                 reason: StepProtocolFailure::NoticeMissing {},
             },
@@ -946,9 +957,13 @@ impl ExpectedStep {
     /// A clock that ends one raising nothing ended a computation that was not passing through instrumented source at all, and there the clock is the only instrument there is (ADR 0023).
     /// `None` says the state could not be read, which is not the same as a count of zero.
     fn raised(&self) -> Option<u64> {
-        let text = match std::fs::read_to_string(&self.state_path) {
-            Ok(text) => text,
+        let bytes = match crate::runner::read_side_channel(&self.state_path) {
+            Ok(bytes) => bytes,
             Err(_the_state_is_not_readable) => return None,
+        };
+        let text = match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_the_state_is_not_text) => return None,
         };
         let mut fields = text.trim_end().split('\t');
         let spent = fields.next_back()?;
@@ -1119,6 +1134,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
         return Stopped::of(result);
     };
     let notice = expected.read();
+    let raised = expected.raised();
     if let Err(reason) = expected.clear() {
         return Stopped::StepProtocolFailed {
             reason: reason.failure(),
@@ -1141,9 +1157,12 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
                 reason: StepProtocolFailure::NoticeMissing {},
             }
         }
-        Ok(None) if matches!(result.termination, Termination::TimedOut) => Stopped::TimedOut {
-            raised: expected.raised(),
-        },
+        Ok(None) if matches!(result.termination, Termination::TimedOut) => {
+            Stopped::TimedOut { raised }
+        }
+        Ok(None) if matches!(result.termination, Termination::Stalled) => {
+            Stopped::Stalled { raised }
+        }
         Ok(None) => Stopped::of(result),
         Err(reason) => Stopped::StepProtocolFailed {
             reason: reason.failure(),
@@ -1163,7 +1182,7 @@ pub const fn outcome_of(
         Stopped::NotStarted | Stopped::WaitFailed | Stopped::StepProtocolFailed { .. } => {
             return Outcome::Errored;
         }
-        Stopped::TimedOut { .. } => return Outcome::Waited,
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. } => return Outcome::Waited,
         Stopped::Cancelled { .. } => return Outcome::NotRun,
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
@@ -1664,6 +1683,21 @@ pub const fn answered(outcome: Outcome) -> bool {
     !matches!(outcome, Outcome::Inconclusive | Outcome::StepLimitReached)
 }
 
+/// The bound one execution runs under: a quiet window under a ceiling where it counts its steps, and the bound it was given where it does not.
+fn watched(timeout: Option<Duration>, step: Option<&ExpectedStep>) -> (Bound, Option<Progress>) {
+    match (timeout, step) {
+        (Some(quiet), Some(step)) => (
+            Bound::After(quiet.saturating_mul(QUIET_WINDOWS_PER_CEILING)),
+            Some(Progress {
+                path: step.state_path.clone(),
+                quiet,
+            }),
+        ),
+        (Some(bound), None) => (Bound::After(bound), None),
+        (None, _) => (Bound::Unbounded, None),
+    }
+}
+
 /// Runs one test process and reads what it means.
 #[must_use]
 pub fn exec(
@@ -1681,10 +1715,9 @@ pub fn exec(
             return MutantResult::apparatus_error(&target.id, message);
         }
     };
-    let mut spec = Spec::new(
-        request.argv(),
-        request.timeout.map_or(Bound::Unbounded, Bound::After),
-    );
+    let (bound, progress) = watched(request.timeout, step.as_ref());
+    let mut spec = Spec::new(request.argv(), bound);
+    spec.progress = progress;
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),
@@ -2060,12 +2093,12 @@ mod tests {
     };
 
     use super::{
-        Context, ExpectedStep, NoticeError, Observation, STEP_STATE_ENV, STEP_STATE_SCHEMA,
-        StepBoundaryScope, StepLimitNotice, StepProtocolFailure, StepSetupError, Stopped,
-        observed_stop, outcome_of, rustlib_targets,
+        Context, ExpectedStep, NoticeError, Observation, QUIET_WINDOWS_PER_CEILING, STEP_STATE_ENV,
+        STEP_STATE_SCHEMA, StepBoundaryScope, StepLimitNotice, StepProtocolFailure, StepSetupError,
+        Stopped, observed_stop, outcome_of, rustlib_targets, watched,
     };
     use crate::outcome::Outcome;
-    use crate::runner::{ProcessExit, RunResult, Termination};
+    use crate::runner::{Bound, ProcessExit, RunResult, Termination};
 
     const CATALOG_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const CATALOG_B: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -2543,6 +2576,76 @@ mod tests {
             observed_stop(&result(Termination::TimedOut), Some(&step)),
             Stopped::TimedOut { raised: None }
         );
+    }
+
+    #[test]
+    fn a_wall_clock_deadline_says_how_far_the_count_had_got() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let step = expected(directory.path(), "0000000000000000000000000000000a");
+        let written = std::fs::write(
+            &step.state_path,
+            format!(
+                "{STEP_STATE_SCHEMA}\t0000000000000000000000000000000a\t{CATALOG_A}\t{MUTANT_A}\t10\tactive\t7\n"
+            ),
+        );
+        assert_eq!(result_state(&written), Returned, "state: {written:?}");
+
+        assert_eq!(
+            observed_stop(&result(Termination::TimedOut), Some(&step)),
+            Stopped::TimedOut { raised: Some(7) },
+            "the count is read before the state it lives in is cleared away"
+        );
+        assert_absent(&step.state_path);
+    }
+
+    #[test]
+    fn a_quiet_window_says_how_far_the_count_had_got_before_it_went_quiet() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let step = expected(directory.path(), "0000000000000000000000000000000b");
+        let written = std::fs::write(
+            &step.state_path,
+            format!(
+                "{STEP_STATE_SCHEMA}\t0000000000000000000000000000000b\t{CATALOG_A}\t{MUTANT_A}\t10\tactive\t4\n"
+            ),
+        );
+        assert_eq!(result_state(&written), Returned, "state: {written:?}");
+
+        assert_eq!(
+            observed_stop(&result(Termination::Stalled), Some(&step)),
+            Stopped::Stalled { raised: Some(4) }
+        );
+        assert_absent(&step.state_path);
+    }
+
+    #[test]
+    fn only_an_execution_counting_its_steps_is_watched_for_progress() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let step = expected(directory.path(), "0000000000000000000000000000000c");
+        let second = Duration::from_secs(1);
+
+        let (bound, progress) = watched(Some(second), None);
+        assert_eq!(
+            bound,
+            Bound::After(second),
+            "a baseline keeps its bound exactly"
+        );
+        assert!(progress.is_none(), "and nothing watches it for progress");
+
+        let (bound, progress) = watched(Some(second), Some(&step));
+        assert_eq!(bound, Bound::After(second * QUIET_WINDOWS_PER_CEILING));
+        assert_eq!(
+            progress.map(|progress| (progress.path, progress.quiet)),
+            Some((step.state_path.clone(), second)),
+            "a counted execution is watched through its step state for a window of its bound"
+        );
+
+        let (bound, progress) = watched(None, Some(&step));
+        assert_eq!(
+            bound,
+            Bound::Unbounded,
+            "an unbounded execution stays unbounded"
+        );
+        assert!(progress.is_none());
     }
 
     #[test]

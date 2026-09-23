@@ -85,6 +85,7 @@ fn exec(argv: &[&str]) -> ExecRecord {
         dir: None,
         env_names: Vec::new(),
         timeout_ms: None,
+        quiet_ms: None,
         stopped: rust_mutants::execute::Stopped::Exited {
             exit: rust_mutants::runner::ProcessExit::Code(0),
         },

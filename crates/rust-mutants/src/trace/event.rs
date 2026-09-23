@@ -485,9 +485,12 @@ pub struct ExecRecord {
     /// The names of the environment variables set for the process.
     /// Never a value: the recorder strips `=value` from every entry.
     pub env_names: Vec<String>,
-    /// The timeout, if one applied.
+    /// The bound on the whole execution, if one applied; for one watched for progress, the ceiling.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub timeout_ms: Option<u64>,
+    /// How long the process could go without raising its step count, where it was watched for that.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub quiet_ms: Option<u64>,
     /// How the process came to an end.
     pub stopped: crate::execute::Stopped,
     /// How long the process ran.
