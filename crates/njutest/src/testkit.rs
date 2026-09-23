@@ -570,6 +570,10 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                         gained: std::collections::BTreeSet::new(),
                         lost: std::collections::BTreeSet::new(),
                     },
+                    entered: crate::report::drift::Moved {
+                        gained: std::collections::BTreeSet::from([4]),
+                        lost: std::collections::BTreeSet::new(),
+                    },
                 },
             },
         },

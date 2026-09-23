@@ -1438,7 +1438,8 @@
             "target",
             "reached",
             "bodies",
-            "infected"
+            "infected",
+            "entered"
           ],
           "properties": {
             "state": {
@@ -1455,6 +1456,9 @@
               "$ref": "#/$defs/driftMoved"
             },
             "infected": {
+              "$ref": "#/$defs/driftMoved"
+            },
+            "entered": {
               "$ref": "#/$defs/driftMoved"
             }
           }

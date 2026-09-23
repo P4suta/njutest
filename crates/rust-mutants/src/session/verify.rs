@@ -850,6 +850,7 @@ pub(super) fn touch_record(
         )?,
         infected: trace_count("infected baseline sites", infected.len())?,
         entered: trace_count("entered baseline items", gathered.entered_by_any().len())?,
+        entered_items: gathered.entered_by_any().into_iter().collect(),
         reached_sites: reached.into_iter().collect(),
         entered_bodies: gathered.bodies.union().into_iter().collect(),
         infected_sites: infected.into_iter().collect(),

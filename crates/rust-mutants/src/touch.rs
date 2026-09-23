@@ -405,7 +405,6 @@ impl Moved {
 
 /// How a whole target's reach on a control differed from its reach on the baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct ReachMoved {
     /// The mutant sites.
     pub reached: Moved,
@@ -413,17 +412,26 @@ pub struct ReachMoved {
     pub bodies: Moved,
     /// The mutations a guard saw its two branches differ over.
     pub infected: Moved,
+    /// The items whose bodies anything of the target entered, which is what `select` narrows by.
+    pub entered: Moved,
 }
 
-/// How a control's per-target unions differ from the baseline's, or nothing where all three agree; that both passed the same tests is the caller's premise (ADR 0025).
+/// How a control's per-target unions differ from the baseline's, or nothing where all four agree; that both passed the same tests is the caller's premise (ADR 0025).
 #[must_use]
 pub fn unions_differ(baseline: &TargetTouches, control: &TargetTouches) -> Option<ReachMoved> {
     let moved = ReachMoved {
         reached: Moved::between(&baseline.reached, &control.reached),
         bodies: Moved::between(&baseline.bodies, &control.bodies),
         infected: Moved::between(&baseline.infected, &control.infected),
+        entered: Moved::between(&baseline.entered, &control.entered),
     };
-    if moved.reached.is_empty() && moved.bodies.is_empty() && moved.infected.is_empty() {
+    let ReachMoved {
+        reached,
+        bodies,
+        infected,
+        entered,
+    } = &moved;
+    if reached.is_empty() && bodies.is_empty() && infected.is_empty() && entered.is_empty() {
         return None;
     }
     Some(moved)

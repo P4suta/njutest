@@ -933,6 +933,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         loose: 1,
         infected: 2,
         entered: 4,
+        entered_items: vec![0, 1, 2, 3],
     });
     recorder.witness(WitnessRecord {
         index: 1,

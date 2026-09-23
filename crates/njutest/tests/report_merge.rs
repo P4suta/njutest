@@ -783,6 +783,7 @@ fn moved_at(target: &str) -> njutest::report::drift::Drift {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     }
 }
 

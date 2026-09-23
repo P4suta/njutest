@@ -398,6 +398,7 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     };
     let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
     findings.extend(njutest::report::drift::found(&[moved], &[]));
