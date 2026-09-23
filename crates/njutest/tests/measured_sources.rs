@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! A file edited after the run is never drawn as the code the run measured, on any surface.
+//! A file is drawn only as the bytes the run measured, on any surface, and one that cannot be drawn says why.
 
 #![expect(
     clippy::expect_used,
@@ -26,9 +26,14 @@ const EDITED: &str = "pub fn sign(n: i32) -> bool {\n    n > 100 && n < 5\n}\n";
 
 /// A run that measured `MEASURED` at `src/lib.rs` and found `>` on line 2 survived.
 fn reported() -> Report {
+    reading(digest_of(MEASURED.as_bytes()))
+}
+
+/// The same run, recording `read` as the digest of the bytes it read at `src/lib.rs`.
+fn reading(read: rust_mutants::id::HexDigest) -> Report {
     completed(vec![(
         njutest::config::DEFAULT_CONFIGURATION,
-        measured(Some(digest_of(MEASURED))),
+        measured(Some(read)),
     )])
     .expect("a report of one build that read one file")
 }
@@ -139,19 +144,41 @@ fn measured(read: Option<rust_mutants::id::HexDigest>) -> BuildReport {
     source
 }
 
-/// The SHA-256 of `text`, as the run records the file it read.
-fn digest_of(text: &str) -> rust_mutants::id::HexDigest {
+/// The SHA-256 of `bytes`, as the run records the file it read.
+fn digest_of(bytes: &[u8]) -> rust_mutants::id::HexDigest {
     let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-    sha2::Digest::update(&mut hasher, text.as_bytes());
+    sha2::Digest::update(&mut hasher, bytes);
     rust_mutants::id::HexDigest::finish(hasher)
 }
 
-/// A workspace holding `text` at `src/lib.rs`.
-fn holding(text: &str) -> tempfile::TempDir {
+/// A workspace holding `bytes` at `src/lib.rs`.
+fn holding(bytes: impl AsRef<[u8]>) -> tempfile::TempDir {
     let root = tempfile::tempdir().expect("a directory");
     std::fs::create_dir_all(root.path().join("src")).expect("src");
-    std::fs::write(root.path().join("src/lib.rs"), text).expect("the file");
+    std::fs::write(root.path().join("src/lib.rs"), bytes).expect("the file");
     root
+}
+
+/// What each surface says when `root` is the tree and `report` the run: the page, the briefing, and the language server's messages.
+fn surfaces(root: &Path, report: &Report) -> [(&'static str, String); 3] {
+    let sources = Sources::read(root, report).expect("the sources a report names");
+    let told = njutest::presentation::Told::of(report, &sources, "the-report")
+        .expect("what a person is told about the run");
+    let noted = njutest::app::lsp::diagnostics(report, root, njutest::app::lsp::Encoding::Utf8)
+        .expect("the checked report has representable diagnostics")
+        .iter()
+        .flat_map(|file| file.diagnostics.iter())
+        .filter_map(|one| one["message"].as_str().map(str::to_owned))
+        .collect::<Vec<String>>()
+        .join("\n");
+    [
+        (
+            "the page",
+            njutest::presentation::human::draw(&told, njutest::presentation::Terminal::plain(160)),
+        ),
+        ("the briefing", njutest::presentation::agent::brief(&told)),
+        ("the language server", noted),
+    ]
 }
 
 fn excerpt(root: &Path) -> Excerpt {
@@ -256,12 +283,12 @@ fn a_report_naming_a_file_it_recorded_no_digest_for_is_refused() {
 
 #[test]
 fn two_builds_that_read_different_bytes_for_one_file_are_refused() {
-    let mut other = measured(Some(digest_of(EDITED)));
+    let mut other = measured(Some(digest_of(EDITED.as_bytes())));
     "source-two".clone_into(&mut other.run_id);
     let refused = completed(vec![
         (
             njutest::config::DEFAULT_CONFIGURATION,
-            measured(Some(digest_of(MEASURED))),
+            measured(Some(digest_of(MEASURED.as_bytes()))),
         ),
         ("release", other),
     ])
@@ -296,17 +323,12 @@ fn a_document_that_writes_one_file_twice_is_not_read() {
 }
 
 #[test]
-fn the_page_the_briefing_and_the_review_all_say_an_edited_file_changed_and_draw_none_of_it() {
+fn every_surface_says_an_edited_file_changed_and_draws_none_of_it() {
     let report = reported();
     for (text, drawn) in [(MEASURED, true), (EDITED, false)] {
         let root = holding(text);
-        let sources = Sources::read(root.path(), &report).expect("the sources a report names");
-        let told = njutest::presentation::Told::of(&report, &sources, "the-report")
-            .expect("what a person is told about the run");
-        let page =
-            njutest::presentation::human::draw(&told, njutest::presentation::Terminal::plain(100));
-        let briefing = njutest::presentation::agent::brief(&told);
-        for (surface, said) in [("the page", &page), ("the briefing", &briefing)] {
+        let said = surfaces(root.path(), &report);
+        for (surface, said) in &said {
             assert!(
                 !said.contains("n > 100 && n < 5"),
                 "{surface} never draws an edited line: {said}"
@@ -317,10 +339,67 @@ fn the_page_the_briefing_and_the_review_all_say_an_edited_file_changed_and_draw_
                 "{surface} says the file changed exactly when it did: {said}"
             );
         }
+        let [(_, page), ..] = &said;
         assert_eq!(
             page.contains("n > 0"),
             drawn,
             "the page draws the line the run measured when the file still holds it: {page}"
         );
     }
+}
+
+#[test]
+fn a_file_gone_since_the_run_is_said_to_be_gone_rather_than_unreadable() {
+    let root = tempfile::tempdir().expect("a directory");
+    for (surface, said) in surfaces(root.path(), &reported()) {
+        assert!(
+            said.contains("the file is not there any more"),
+            "{surface} says the file the run read has gone, which a new run answers, rather than \
+             that it could not be read, which sends a reader to its permissions: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_file_that_cannot_be_read_is_said_to_be_unreadable_for_the_reason_reading_it_gave() {
+    let root = tempfile::tempdir().expect("a directory");
+    let path = root.path().join("src/lib.rs");
+    std::fs::create_dir_all(&path).expect("a directory where the file was");
+    let kind = std::fs::read(&path)
+        .expect_err("a directory is not read as a file")
+        .kind();
+    let reason = format!("the file could not be read ({kind})");
+    for (surface, said) in surfaces(root.path(), &reported()) {
+        assert!(
+            said.contains(&reason),
+            "{surface} says why reading failed, which decides what a reader does about it: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_file_holding_the_bytes_the_run_read_that_are_not_text_says_so() {
+    let bytes = b"pub fn sign(n: i32) -> bool {\n    n > 0 \xff\n}\n";
+    let root = holding(bytes);
+    for (surface, said) in surfaces(root.path(), &reading(digest_of(bytes))) {
+        assert!(
+            said.contains("the file holds the bytes the run read, which are not text"),
+            "{surface} does not call a file it read unreadable, nor send a reader to its \
+             permissions: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_file_checked_out_with_windows_line_endings_is_drawn_without_them() {
+    let checked_out = MEASURED.replace('\n', "\r\n");
+    let root = holding(&checked_out);
+    let sources = Sources::read(root.path(), &reading(digest_of(checked_out.as_bytes())))
+        .expect("the sources a report names");
+    assert_eq!(
+        sources.at("src/lib.rs", 2),
+        Excerpt::Read(MeasuredLine::specimen("    n > 0")),
+        "a carriage return is the checkout's rather than the line's, and drawn it would return \
+         the cursor over whatever the page prints after the line"
+    );
 }

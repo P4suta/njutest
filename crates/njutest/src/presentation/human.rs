@@ -136,7 +136,7 @@ fn heads(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
     let opening = gutter
         .saturating_add(1)
         .saturating_add(strokes.rule.chars().count());
-    let mut lines = super::folded(why, telling.room(opening.saturating_add(1))).into_iter();
+    let mut lines = super::folded(&why, telling.room(opening.saturating_add(1))).into_iter();
     if let Some(first) = lines.next() {
         super::line(
             out,
@@ -349,7 +349,7 @@ fn at(out: &mut String, site: &Site, gutter: usize, telling: Telling) {
                 super::line(out, format_args!("{:gutter$} {beside} {caret}", ""));
             }
         }
-        Excerpt::Instead(missing) => aside(out, gutter, missing.why(), telling),
+        Excerpt::Instead(missing) => aside(out, gutter, &missing.why(), telling),
     }
 }
 

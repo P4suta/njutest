@@ -169,6 +169,8 @@ Every part carries `sources`, one `{ path, digest }` per file its mutants were r
 It is what lets a reader of the report tell the file the run measured from the file there now.
 Every surface that quotes source code — the terminal page, the review loop, the briefing, the language server — draws a line only from a file whose SHA-256 now is the one recorded; a file edited since the run is said to have changed, never drawn as though it were the code the run measured, even when the edited line still holds the text the run replaced.
 The language server places nothing in such a file and says instead which run measured it.
+A file that cannot be drawn says why, because each why is a different thing to do: it has changed since the run, it is not there any more, it could not be read for the reason reading it gave, or it holds the bytes the run read and they are not text.
+A carriage return a Windows checkout left is the checkout's and not the line's, so no surface draws one.
 
 A row or finding naming a file with no entry is refused, and so are two parts or builds of one run that recorded different digests for one file, since then they did not read one tree.
 A document that writes a path twice, or out of path order, is not read: a file has one digest, and a document has one spelling of it.

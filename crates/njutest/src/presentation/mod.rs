@@ -475,8 +475,13 @@ impl MeasuredLine {
 pub enum Missing {
     /// The file holds other bytes than the run read, so a line there now is not a line the run measured.
     Edited,
-    /// The file could not be read at all.
-    Unreadable,
+    /// The file could not be read, for the reason reading it gave.
+    Unreadable {
+        /// What reading it failed with, which decides what a reader does about it.
+        kind: std::io::ErrorKind,
+    },
+    /// The file holds the bytes the run read, and they are not text.
+    NotText,
     /// The report recorded no digest for the file, so nothing can say it is the file the run read.
     Unrecorded,
     /// The report names a line the file the run read does not have.
@@ -486,36 +491,37 @@ pub enum Missing {
 impl Missing {
     /// Why the lines are not there, as a reader is told it.
     #[must_use]
-    pub const fn why(self) -> &'static str {
-        match self {
-            Self::Edited => {
-                "the file has changed since the run read it, so its source is not shown"
-            }
-            Self::Unreadable => "the file could not be read, so its source is not shown",
-            Self::Unrecorded => {
-                "the run recorded nothing that tells the file it read from the file there now, so \
-                 its source is not shown"
-            }
-            Self::NoSuchLine => {
-                "the report names a line the file the run read does not have, so its source is \
-                 not shown"
-            }
-        }
+    pub fn why(self) -> String {
+        format!("{}, so its source is not shown", self.found())
     }
 
     /// The same, for something that will go and read the file itself.
     #[must_use]
-    pub const fn told(self) -> &'static str {
+    pub fn told(self) -> String {
         match self {
-            Self::Edited => {
-                "the file has changed since the run read it, so read it yourself before acting"
+            Self::Edited | Self::Unrecorded => {
+                format!("{}, so read it yourself before acting", self.found())
             }
-            Self::Unreadable => "the file could not be read",
+            Self::Unreadable { .. } | Self::NotText | Self::NoSuchLine => self.found(),
+        }
+    }
+
+    /// What was found where the lines would have come from.
+    fn found(self) -> String {
+        match self {
+            Self::Edited => "the file has changed since the run read it".to_owned(),
+            Self::Unreadable {
+                kind: std::io::ErrorKind::NotFound,
+            } => "the file is not there any more".to_owned(),
+            Self::Unreadable { kind } => format!("the file could not be read ({kind})"),
+            Self::NotText => "the file holds the bytes the run read, which are not text".to_owned(),
             Self::Unrecorded => {
-                "the run recorded nothing that tells the file it read from the file there now, so \
-                 read it yourself before acting"
+                "the run recorded nothing that tells the file it read from the file there now"
+                    .to_owned()
             }
-            Self::NoSuchLine => "the report names a line the file the run read does not have",
+            Self::NoSuchLine => {
+                "the report names a line the file the run read does not have".to_owned()
+            }
         }
     }
 }
@@ -1012,8 +1018,10 @@ enum Source {
     Measured(Vec<String>),
     /// The file holds other bytes than the run read.
     Edited,
-    /// The file could not be read, or its bytes are not text.
-    Unreadable,
+    /// The file could not be read, for the reason reading it gave.
+    Unreadable(std::io::ErrorKind),
+    /// The file holds the bytes the run read, and they are not text.
+    NotText,
 }
 
 /// The source files a presentation may quote, each held to the digest the run recorded for it.
@@ -1059,7 +1067,8 @@ impl Sources {
         match self.0.get(path) {
             Some(Source::Measured(lines)) => Ok(lines),
             Some(Source::Edited) => Err(Missing::Edited),
-            Some(Source::Unreadable) => Err(Missing::Unreadable),
+            Some(Source::Unreadable(kind)) => Err(Missing::Unreadable { kind: *kind }),
+            Some(Source::NotText) => Err(Missing::NotText),
             None => Err(Missing::Unrecorded),
         }
     }
@@ -1101,8 +1110,9 @@ impl Sources {
 impl Source {
     /// What the file at `path` holds against the digest the run recorded for it.
     fn of(path: &std::path::Path, recorded: &rust_mutants::id::HexDigest) -> Self {
-        let Ok(bytes) = std::fs::read(path) else {
-            return Self::Unreadable;
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(failed) => return Self::Unreadable(failed.kind()),
         };
         let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
         sha2::Digest::update(&mut hasher, &bytes);
@@ -1111,7 +1121,7 @@ impl Source {
         }
         match String::from_utf8(bytes) {
             Ok(text) => Self::Measured(lines_of(&text)),
-            Err(_not_text) => Self::Unreadable,
+            Err(_not_text) => Self::NotText,
         }
     }
 }
