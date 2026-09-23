@@ -59,7 +59,7 @@ struct Holes {
 
 impl Holes {
     /// Adds one finding per reason that has something to say.
-    fn stated(&self, done: &mut Measured) {
+    fn stated(&self, done: &mut Measured, before: &crate::wire::settle::Before) {
         if self.unput > 0 {
             done.findings.push(Finding::new(
                 FindingKind::NotMeasured,
@@ -79,9 +79,14 @@ impl Holes {
                 &format!(
                     "{} question(s) were put and not one target that answered them was \
                      passing without the fault, so no failure is attributable to it and the \
-                     run says nothing about whether anything would have noticed: fix the \
-                     failing tests and ask again",
-                    self.unattributable
+                     run says nothing about whether anything would have noticed. These were \
+                     failing without one: {}. Fix them and ask again",
+                    self.unattributable,
+                    if before.already_failing().is_empty() {
+                        "nothing the run recorded an outcome for".to_owned()
+                    } else {
+                        before.already_failing().join(", ")
+                    }
                 ),
             ));
         }
@@ -187,7 +192,7 @@ where
         }
         asked_about(&mut done, measuring, (fault, decision));
     }
-    holes.stated(&mut done);
+    holes.stated(&mut done, measuring.before);
     Ok(done)
 }
 

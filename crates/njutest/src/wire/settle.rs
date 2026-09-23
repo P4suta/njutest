@@ -33,6 +33,7 @@ pub enum Asked {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Before {
     passed: std::collections::BTreeSet<String>,
+    failed: std::collections::BTreeSet<String>,
 }
 
 impl Before {
@@ -45,7 +46,20 @@ impl Before {
                 .filter(|one| one.passed)
                 .map(|one| one.target.clone())
                 .collect(),
+            failed: answers
+                .iter()
+                .filter(|one| !one.passed)
+                .map(|one| one.target.clone())
+                .collect(),
         }
+    }
+
+    /// Which targets failed with no fault in place, which is why a question about one establishes nothing.
+    ///
+    /// A run that could not attribute a failure knows which target was already red, and saying nothing about it leaves a reader to guess at the machine.
+    #[must_use]
+    pub fn already_failing(&self) -> Vec<&str> {
+        self.failed.iter().map(String::as_str).collect()
     }
 
     /// Whether a failure of `target` is one a fault could have caused, which is to say it passed without one.
