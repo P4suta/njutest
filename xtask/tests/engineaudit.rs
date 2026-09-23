@@ -1710,9 +1710,10 @@ fn simple_with_touched(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
         std::fs::copy(committed.join(name), run.path().join(name)).expect("a committed document");
     }
     let path = run.path().join("touched-v1.json");
-    let mut touched: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).expect("the touched record"))
-            .expect("a touched document");
+    let mut touched: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&path).expect("the touched record"),
+    )
+    .expect("a touched document");
     edit(&mut touched);
     std::fs::write(&path, touched.to_string()).expect("the edited record");
     gates::engine_audit(&asked(run.path(), Some(&committed.join("trace")), None))
