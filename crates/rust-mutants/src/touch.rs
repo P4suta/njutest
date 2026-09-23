@@ -385,6 +385,8 @@ pub enum Unmeasured {
     OtherTests,
     /// The baseline recorded nothing for the target to be compared against.
     NoBaseline,
+    /// The baseline passed only when run again in the directory its first attempt left, so it did not run under the conditions a control does.
+    BaselineRetried,
 }
 
 impl Unmeasured {
@@ -397,6 +399,7 @@ impl Unmeasured {
             Self::ControlFailed => "control-failed",
             Self::OtherTests => "other-tests",
             Self::NoBaseline => "no-baseline",
+            Self::BaselineRetried => "baseline-retried",
         }
     }
 }

@@ -46,6 +46,8 @@ pub enum Unmeasured {
     OtherTests,
     /// The baseline recorded nothing for the target to be compared against.
     NoBaseline,
+    /// The baseline passed only when run again in the directory its first attempt left, so it did not run under the conditions a control does.
+    BaselineRetried,
 }
 
 impl Unmeasured {
@@ -56,6 +58,7 @@ impl Unmeasured {
             rust_mutants::touch::Unmeasured::ControlFailed => Self::ControlFailed,
             rust_mutants::touch::Unmeasured::OtherTests => Self::OtherTests,
             rust_mutants::touch::Unmeasured::NoBaseline => Self::NoBaseline,
+            rust_mutants::touch::Unmeasured::BaselineRetried => Self::BaselineRetried,
         }
     }
 }
@@ -132,7 +135,8 @@ impl Drift {
                     | Unmeasured::Unreadable
                     | Unmeasured::ControlFailed
                     | Unmeasured::OtherTests
-                    | Unmeasured::NoBaseline,
+                    | Unmeasured::NoBaseline
+                    | Unmeasured::BaselineRetried,
                 ..
             } => 1,
             Self::Held { .. } => 2,

@@ -457,3 +457,66 @@ fn a_control_of_a_suite_whose_reach_depends_on_an_earlier_process_says_its_basel
         "the baseline was the first process to look and the control was not: {moved:?}"
     );
 }
+
+/// A library whose one test fails the first time any process of a run runs it, for a reason that is not the temporary directory, and reaches one function or the other by what an earlier attempt left in that directory.
+const FLAKES_ONCE: &str = r#"// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A test that flakes once per run and reaches by what its own temporary directory holds.
+
+/// Reached where the temporary directory was left empty.
+#[must_use]
+pub fn first_visit(n: u32) -> u32 {
+    n + 1
+}
+
+/// Reached where an earlier attempt left something in the temporary directory.
+#[must_use]
+pub fn return_visit(n: u32) -> u32 {
+    n * 2
+}
+
+/// What the test checks either way.
+#[must_use]
+pub fn sum(a: u32, b: u32) -> u32 {
+    a + b
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn adds() {
+        let own = std::env::temp_dir().join("left-by-an-earlier-attempt");
+        if own.exists() {
+            std::hint::black_box(super::return_visit(2));
+        } else {
+            std::hint::black_box(super::first_visit(1));
+        }
+        assert!(own.exists() || std::fs::write(&own, b"").is_ok());
+        let run = std::env::temp_dir().parent().map(|parent| parent.join("flaked-once"));
+        let flaked = run.is_some_and(|mark| mark.exists() || std::fs::write(&mark, b"").is_err());
+        assert!(flaked, "the first process of the run fails, for a reason of its own");
+        assert_eq!(super::sum(2, 3), 5);
+    }
+}
+"#;
+
+#[test]
+fn a_baseline_that_passed_only_on_retry_is_not_compared_with_a_fresh_control() {
+    let fixture = Fixture::copy("fixture-drifts");
+    fixture.write("src/lib.rs", FLAKES_ONCE.as_bytes());
+    let session = prepared(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    assert_eq!(
+        observed(&session, target),
+        [(
+            target.to_owned(),
+            rust_mutants::touch::Steadiness::NotMeasured(
+                rust_mutants::touch::Unmeasured::BaselineRetried
+            )
+        )],
+        "the baseline's retry saw what its failed first attempt left in the directory they \
+         share, and a control gets a fresh one, so what differs between them is how the run \
+         measured: the premise that the two ran under the same conditions does not hold"
+    );
+}

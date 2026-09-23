@@ -92,6 +92,8 @@ pub struct Touched {
     pub touches: Vec<Touch>,
     /// How many records lacked it, which a re-derivation cannot count as agreement.
     pub unreadable: usize,
+    /// Every target whose baseline passed only when run again, so it was not measured under the conditions a control is.
+    pub retried: BTreeSet<String>,
 }
 
 /// Every touch record of one engine recording.
@@ -101,6 +103,13 @@ pub struct Touched {
 pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
     let mut touched = Touched::default();
     for event in crate::route::events(recorded)? {
+        if event.get("type").and_then(Value::as_str) == Some("verify")
+            && let Some(verify) = event.get("verify")
+            && verify.get("retried").and_then(Value::as_bool) == Some(true)
+            && let Some(target) = verify.get("target").and_then(Value::as_str)
+        {
+            touched.retried.insert(target.to_owned());
+        }
         if event.get("type").and_then(Value::as_str) != Some("touch") {
             continue;
         }
@@ -132,11 +141,12 @@ fn indices(value: &Value) -> Option<BTreeSet<u64>> {
     value.as_array()?.iter().map(Value::as_u64).collect()
 }
 
-/// What the records say about every target a baseline record names, re-derived without the engine.
+/// What the records say about every target a baseline record names, re-derived without the engine; a baseline that passed only on retry is compared with nothing.
 #[must_use]
-pub fn standings(touches: &[Touch]) -> BTreeMap<String, Standing> {
+pub fn standings(touched: &Touched) -> BTreeMap<String, Standing> {
     let mut baselines: BTreeMap<&str, &Touch> = BTreeMap::new();
-    for touch in touches
+    for touch in touched
+        .touches
         .iter()
         .filter(|touch| touch.measured == Measured::Baseline)
     {
@@ -145,12 +155,13 @@ pub fn standings(touches: &[Touch]) -> BTreeMap<String, Standing> {
     baselines
         .into_iter()
         .map(|(target, baseline)| {
-            let comparable: Vec<&Touch> = touches
+            let comparable: Vec<&Touch> = touched
+                .touches
                 .iter()
                 .filter(|touch| touch.measured == Measured::Control)
                 .filter(|touch| touch.target == target && touch.passed == baseline.passed)
                 .collect();
-            let standing = if comparable.is_empty() {
+            let standing = if comparable.is_empty() || touched.retried.contains(target) {
                 Standing::NotMeasured
             } else if comparable
                 .iter()

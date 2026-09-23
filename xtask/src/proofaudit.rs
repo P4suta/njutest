@@ -584,7 +584,7 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
             ),
         );
     }
-    let derived = crate::drift::standings(&touched.touches);
+    let derived = crate::drift::standings(touched);
     let Some(recorded) = recorded else {
         if !derived.is_empty() {
             notes.violated(

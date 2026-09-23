@@ -1482,7 +1482,8 @@
                 "unreadable",
                 "control-failed",
                 "other-tests",
-                "no-baseline"
+                "no-baseline",
+                "baseline-retried"
               ]
             }
           }

@@ -1430,6 +1430,14 @@ impl Session {
             crate::trace::Measurement::Control,
             &control,
         )?);
+        let retried = format!(
+            "{}:{}",
+            crate::limitation::BASELINE_PASSED_ON_RETRY,
+            target.id
+        );
+        if self.verified.touched.limitations.contains(&retried) {
+            return Ok(Steadiness::NotMeasured(Unmeasured::BaselineRetried));
+        }
         let Some(baseline) = self.verified.touched.targets.get(&target.id) else {
             return Ok(Steadiness::NotMeasured(Unmeasured::NoBaseline));
         };

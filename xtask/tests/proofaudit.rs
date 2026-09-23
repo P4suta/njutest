@@ -2201,3 +2201,38 @@ fn a_complete_report_of_two_builds_is_refused_rather_than_read_as_one() {
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
     assert!(error.to_string().contains("2 configured builds"), "{error}");
 }
+
+#[test]
+fn a_baseline_that_passed_only_on_retry_is_owed_not_measured_rather_than_a_comparison() {
+    let retried = serde_json::json!({
+        "type": "verify",
+        "verify": {
+            "target": TARGET, "outcome": "survived", "tests_run": 1, "duration_ms": 1,
+            "remembered": false, "retried": true
+        }
+    });
+    let engine = vec![
+        retried,
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let said = drift_violations(&drift_audit(
+        with(sentinel::drifted("moved")),
+        engine.clone(),
+    ));
+    assert!(
+        said.iter().any(|line| line.contains("not-measured")),
+        "a retry saw what its first attempt left and a control does not, so the difference is \
+         the apparatus and the report must not call it a move: {said:?}"
+    );
+    let mut stated = with(sentinel::drifted("not-measured"));
+    merge(
+        &mut stated,
+        serde_json::json!({ "limitations": [{
+            "name": "drift-not-measured",
+            "detail": format!("1 target was not measured ({TARGET})")
+        }] }),
+    );
+    let audit = drift_audit(stated, engine);
+    assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
+}
