@@ -85,7 +85,13 @@ The typed scope of that fact is `InstrumentedWorkspaceSource`.
 Macro expansion and dependency bodies are not rewritten.
 An execution that activates in the workspace and then remains inside either has no source boundary to count and can still reach the clock as `waited`; that limitation cannot be upgraded into `step_limit_reached` or any verdict.
 
-The default of fifty million spends in roughly a second and a half for a loop that cannot terminate, which sits well inside the thirty-second floor a derived `timeout` never goes below.
+The default of fifty million was sized for an in-memory counter that this durable protocol replaced, and what it costs is no longer a property of the engine.
+Measured on one developer machine after the per-take `fsync` was lifted out of the hot path, a take costs about half a microsecond and fifty million of them spend about twenty-five seconds, against the thirty-second floor a derived `timeout` never goes below; measured on Windows with that `fsync` still in place, a take cost 7.3ms and fifty million would have spent days.
+So whether the count is reached before the clock is a fact about the machine, which is the one thing a verdict may not rest on ([ADR 0023](../adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
+
+Tuning the number does not fix that, because the number is machine-independent and its cost is not.
+What fixes it is taking the clock out of the decision where the count can answer: a process raising the count is one the allowance will end, so a bound that ends it instead has decided from how fast this machine is.
+Until that is built, a project whose fixtures race the two sizes its own allowance down until the count wins on its slowest machine, which is what `fixtures/fixture-hang` documents doing.
 `0` counts nothing and leaves the clock as the only thing that can stop an execution that does not end.
 
 The reason to lower it is a project whose own bound is short: **a bound the count cannot beat produces `waited` instead of `step_limit_reached`**. Both are unresolved, and the latter says exactly which deterministic boundary the execution reached.
