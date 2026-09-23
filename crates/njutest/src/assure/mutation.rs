@@ -390,8 +390,9 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
             FindingKind::WaitedMutant,
             format!(
                 "this machine stopped waiting for {on} with {} at {} active: an expired bound \
-                 establishes nothing about the mutation. Give the run a step allowance and a \
-                 mutation that cannot terminate is stopped by a count instead",
+                 establishes nothing about the mutation. With a step allowance, the bound ends \
+                 only a process that raised no step for a whole window, which is a wait rather \
+                 than a loop; a mutation that spins is stopped by the count instead",
                 judged.rule, judged.path
             ),
         ),

@@ -180,7 +180,7 @@ fn timed(path: &Path) -> Result<Duration, ExecCostError> {
                 seconds: PROBE_LIMIT.as_secs(),
             });
         }
-        crate::runner::Termination::StoppedByMonitor => {
+        crate::runner::Termination::StoppedByMonitor | crate::runner::Termination::Stalled => {
             return Err(ExecCostError::StoppedByMonitor {
                 path: path.to_path_buf(),
             });
