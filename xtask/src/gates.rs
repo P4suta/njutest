@@ -865,6 +865,18 @@ pub fn waivers(root: &Path) -> Result<String, GateFailure> {
 /// Every finding, one per line, or a file that could not be read or parsed.
 pub fn lints(root: &Path) -> Result<String, GateFailure> {
     let planted = lint_sentinels()?;
+    let scanned = lints_scanned(root)?;
+    Ok(format!(
+        "{scanned}. Before any of it was read, {planted} planted shapes were found, each as the \
+         kind it was planted as"
+    ))
+}
+
+/// The lint scan of `root` alone, for a synthetic tree whose gate has already been shown its planted shapes.
+///
+/// # Errors
+/// Every finding, one per line, or a file that could not be read or parsed.
+pub fn lints_scanned(root: &Path) -> Result<String, GateFailure> {
     let (files, found) = lint_findings(root)?;
     if found.is_empty() {
         let kinds = lint_scan::Kind::ALL
@@ -873,8 +885,7 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
             .collect::<Vec<_>>()
             .join(", ");
         return Ok(format!(
-            "lints: {planted} planted shapes found first, each as the kind it was planted as; \
-             then {files} files carry none of {} prohibited Rust shapes ({kinds}). {} catch-all \
+            "lints: {files} files carry none of {} prohibited Rust shapes ({kinds}). {} catch-all \
              waiver(s) are \
              still standing; `cargo xtask waivers` reads each of them a second time",
             lint_scan::Kind::ALL.len(),
