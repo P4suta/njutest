@@ -1092,3 +1092,52 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
         drop(stopped);
     }
 }
+
+#[test]
+fn a_recording_from_other_seams_is_refused_rather_than_paired_by_position() {
+    use njutest::assure::wire::{asking, watched};
+    use std::collections::BTreeMap;
+
+    let up = upstream("ok");
+    let at = up.address();
+    let one = lease("api", &[("BASE_URL", &format!("http://{at}/v1"))]);
+    let other = lease("ledger", &[("BASE_URL", &format!("http://{at}/v1"))]);
+    let resource = njutest::config::Resource {
+        command: vec!["x".to_owned()],
+        timeout: std::time::Duration::from_secs(1),
+        shared: false,
+        exclusive: false,
+        environment: Vec::new(),
+        interpose: "BASE_URL".to_owned(),
+        wire: Wire::Http,
+        hold: BRIEFLY,
+    };
+    let mut configured: BTreeMap<String, njutest::config::Resource> = BTreeMap::new();
+    configured.insert("api".to_owned(), resource.clone());
+    configured.insert("ledger".to_owned(), resource);
+
+    let asked = watched(&[&one], &configured);
+    let elsewhere = watched(&[&other], &configured);
+    let recording = elsewhere.observing(Vec::new);
+
+    let held = (
+        rust_mutants::runner::Cancel::new(),
+        njutest::trace::Recorder::disabled(),
+    );
+    let answer = asking(
+        &asked,
+        &recording,
+        || njutest::wire::settle::Asked::Answered(Vec::new()),
+        njutest::watch::Watch::new(&held.0, &held.1),
+    );
+    assert!(
+        matches!(
+            answer,
+            Err(njutest::wire::derive::DeriveError::NotOneBaseline { .. })
+        ),
+        "got {answer:?}; the recording came from a different seam and holds as many seams as this one, so \
+         nothing about its length says it is the wrong one. Pairing them by position would \
+         derive the ledger seam's questions and put them to the api seam, and every row \
+         would name a capability the answers were never about"
+    );
+}

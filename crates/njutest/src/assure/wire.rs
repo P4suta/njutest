@@ -265,7 +265,18 @@ where
     R: FnMut() -> crate::wire::settle::Asked,
 {
     let mut done = Measured::default();
-    if seams.watching.len() != baseline.per_seam.len() {
+    let asking_of: Vec<&str> = seams
+        .watching
+        .iter()
+        .map(|one| one.capability.as_str())
+        .collect();
+    if asking_of
+        != baseline
+            .of
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<&str>>()
+    {
         return Err(crate::wire::derive::DeriveError::NotOneBaseline {
             seams: seams.watching.len(),
             recordings: baseline.per_seam.len(),
@@ -373,6 +384,8 @@ pub fn licensing(
 pub struct Baseline {
     /// One recording per seam, in the order the seams were started.
     per_seam: Vec<Vec<Exchange>>,
+    /// The capability each recording came from, in the same order, so pairing them back is checked rather than assumed.
+    of: Vec<String>,
     /// What each target did with no fault in place, which is what makes a later failure attributable to one.
     before: crate::wire::settle::Before,
 }
@@ -432,6 +445,11 @@ impl Seams {
                 .map(|one| one.interposer.seal())
                 .collect(),
             before: crate::wire::settle::Before::of(&answered),
+            of: self
+                .watching
+                .iter()
+                .map(|one| one.capability.clone())
+                .collect(),
         }
     }
 
