@@ -230,14 +230,8 @@ fn chain(
         let written = write!(text, "{}({}, ", paths.of(question.runtime()), one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    if !probed.is_empty() {
-        text.push('(');
-    }
     let original_at = text.len();
     text.push_str(original);
-    if !probed.is_empty() {
-        text.push(')');
-    }
     for _ in &probed {
         text.push(')');
     }

@@ -423,3 +423,86 @@ fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
         .expect("attempt");
     assert!(final_attempt.success, "the accepted tree compiles");
 }
+
+/// A session over `fixture`, with `RUSTFLAGS` set to `flags` or left alone.
+fn prepared(
+    fixture: &njutest_devkit::fixture::Fixture,
+    flags: Option<&str>,
+) -> rust_mutants::session::Session {
+    let cancel = Cancel::new();
+    let mut options = rust_mutants::testkit::opening::opening(
+        &njutest_devkit::paths::cargo_binary(),
+        fixture.temp(),
+    );
+    if let Some(flags) = flags {
+        options.env.push((
+            std::ffi::OsString::from("RUSTFLAGS"),
+            std::ffi::OsString::from(flags),
+        ));
+    }
+    rust_mutants::workspace::Workspace::open(fixture.root(), options, &cancel)
+        .expect("the workspace opens")
+        .prepare(
+            &rust_mutants::session::PrepareOptions {
+                tier: Tier::All,
+                ..rust_mutants::session::PrepareOptions::default()
+            },
+            &cancel,
+        )
+        .expect("the session prepares")
+}
+
+/// Whether `candidate`, written into a fresh copy of `name` by hand, compiles with every warning denied.
+fn compiles_by_hand(name: &str, candidate: &rust_mutants::catalog::Candidate) -> bool {
+    let fixture = njutest_devkit::fixture::Fixture::copy(name);
+    let path = fixture.root().join(&candidate.path);
+    let mut source = std::fs::read(&path).expect("the mutated file");
+    let start = usize::try_from(candidate.span.start).expect("a small offset");
+    let end = usize::try_from(candidate.span.end).expect("a small offset");
+    source.splice(start..end, candidate.replacement.iter().copied());
+    std::fs::write(&path, source).expect("the edit by hand");
+    std::process::Command::new(njutest_devkit::paths::cargo_binary())
+        .args(["check", "--all-targets", "--offline", "--locked", "--quiet"])
+        .current_dir(fixture.root())
+        .env("RUSTFLAGS", "-D warnings")
+        .env("CARGO_TARGET_DIR", fixture.temp().join("by-hand"))
+        .status()
+        .expect("cargo runs")
+        .success()
+}
+
+#[test]
+fn denying_warnings_refuses_no_mutant_the_generated_code_alone_would_warn_about() {
+    for name in [
+        "fixture-probeable",
+        "fixture-simple",
+        "fixture-families",
+        "fixture-modern",
+    ] {
+        let fixture = njutest_devkit::fixture::Fixture::copy(name);
+        let lenient: BTreeSet<String> = prepared(&fixture, None)
+            .rejections()
+            .iter()
+            .map(|rejection| rejection.id.clone())
+            .collect();
+        let strict = prepared(&fixture, Some("-D warnings"));
+        let added: Vec<&str> = strict
+            .rejections()
+            .iter()
+            .filter(|rejection| !lenient.contains(&rejection.id))
+            .filter(|rejection| {
+                let mutant = strict
+                    .resolve(&rejection.id)
+                    .expect("a refused mutant resolves");
+                compiles_by_hand(name, &mutant.candidate)
+            })
+            .map(|rejection| rejection.diagnostic.as_str())
+            .collect();
+        assert!(
+            added.is_empty(),
+            "{name}: denying warnings refused mutants that compile cleanly when written by hand, \
+             so the lint came from code the engine wrote around them rather than from the \
+             mutation: {added:#?}"
+        );
+    }
+}
