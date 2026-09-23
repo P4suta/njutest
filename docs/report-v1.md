@@ -143,6 +143,12 @@ duplicates and missing counterparts are rejected.
 | `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete` |
 | `answered` | targets actually asked, in order, with their outcomes |
 
+A row this run decided by a route it asked is held to that route's own answers, and a report that contradicts them is refused.
+A `killed` row's answers end with the target it names noticing, and hold no other kill: the mutation phase stops at the first target that notices.
+A `survived` row's answers hold one survival from each target in `reaching` and nothing else, in whatever order the run asked them.
+A row read back from another run, or inherited from a checkpoint without a route, was not asked here, so the rule has nothing to hold it to.
+For a kill this run established, `by` is therefore a second copy of the last answer's target; the rule keeps the two in step until a later schema stops storing both.
+
 Evidence consultation records either the source run it reused or one closed refusal: `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`,
 `key-changed`, `not-passing`, `target-entered`, or `nothing-routed`.
 

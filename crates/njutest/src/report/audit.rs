@@ -84,6 +84,18 @@ pub enum Violation {
         /// The impossible relation.
         because: String,
     },
+    /// A kill this run established is not the last answer its own route recorded, or not the only kill among them.
+    KillNotItsLastAnswer {
+        /// The mutation identity.
+        id: String,
+        /// The target the row says noticed.
+        by: String,
+    },
+    /// A survivor this run established was not asked, once each, of exactly the targets its own route kept, or one of them noticed.
+    SurvivorNotAskedOfItsRoute {
+        /// The mutation identity.
+        id: String,
+    },
     /// A mutation row and the actionable finding that should expose it disagree.
     MutantFindingIncoherent {
         /// The mutation identity.
@@ -197,6 +209,8 @@ impl fmt::Display for Violation {
             Self::MutantRowIncoherent { id, because } => {
                 write!(f, "the mutation row {id} is incoherent: {because}")
             }
+            Self::KillNotItsLastAnswer { id, by } => fmt_kill_not_last(f, id, by),
+            Self::SurvivorNotAskedOfItsRoute { id } => fmt_survivor_not_asked(f, id),
             Self::MutantFindingIncoherent { id, because } => {
                 write!(
                     f,
@@ -238,6 +252,25 @@ impl fmt::Display for Violation {
             }
         }
     }
+}
+
+fn fmt_kill_not_last(f: &mut fmt::Formatter<'_>, id: &str, by: &str) -> fmt::Result {
+    write!(
+        f,
+        "mutation {id} was killed by {by} in this run, and its own route's answers do not end \
+         with {by} noticing it: the mutation phase stops at the first target that notices, so a \
+         kill is the last answer a run records and the only kill among them"
+    )
+}
+
+fn fmt_survivor_not_asked(f: &mut fmt::Formatter<'_>, id: &str) -> fmt::Result {
+    write!(
+        f,
+        "mutation {id} survived in this run, and its own route's answers are not one survival \
+         from each target the route kept: a survivor is a mutation every target that could \
+         notice ran it and did not, so a kept target never asked, one asked twice, or one that \
+         noticed says something else happened"
+    )
 }
 
 fn fmt_target_sum(f: &mut fmt::Formatter<'_>, selected: u32, accounted: u32) -> fmt::Result {
@@ -513,7 +546,79 @@ fn validate_flat(report: &BuildReport) -> Vec<Violation> {
     check_findings(report, &mut violations);
     check_acceptances(report, &mut violations);
     check_provenance(report, &mut violations);
+    check_answers(report, &mut violations);
     violations
+}
+
+/// Whether the mutation phase goes on to the next target after a target answers `outcome`: it stops only at a kill it confirmed, and a target never answers what only a whole mutation can be.
+const fn carried_on_past(outcome: Outcome) -> bool {
+    match outcome {
+        Outcome::Survived
+        | Outcome::Unconfirmed
+        | Outcome::Waited
+        | Outcome::StepLimitReached
+        | Outcome::Errored => true,
+        Outcome::Killed
+        | Outcome::CompileRejected
+        | Outcome::Equivalent
+        | Outcome::ModelNoticed
+        | Outcome::ModelProved
+        | Outcome::Unreached => false,
+    }
+}
+
+/// Whether each row this run decided by a route it asked agrees with that route's answers: a kill is the last of them and the only kill, and a survivor was asked once of every target the route kept and each survived.
+///
+/// A row read back from another run or inherited without a route was not asked here, so this run's record holds no answers to hold it to.
+fn check_answers(report: &BuildReport, violations: &mut Vec<Violation>) {
+    for row in &report.mutants {
+        let (super::Established::Here, Some(routing)) = (&row.reuse.0, &row.routing) else {
+            continue;
+        };
+        match &row.outcome {
+            super::Decided::Killed { by } => {
+                let stopped = routing
+                    .answered
+                    .split_last()
+                    .is_some_and(|(last, earlier)| {
+                        last.target == *by
+                            && last.outcome == Outcome::Killed
+                            && earlier.iter().all(|one| carried_on_past(one.outcome))
+                    });
+                if !stopped {
+                    violations.push(Violation::KillNotItsLastAnswer {
+                        id: row.id.clone(),
+                        by: by.clone(),
+                    });
+                }
+            }
+            super::Decided::Survived => {
+                let asked: BTreeSet<&str> = routing
+                    .answered
+                    .iter()
+                    .map(|one| one.target.as_str())
+                    .collect();
+                let kept: BTreeSet<&str> = routing.reaching.iter().map(String::as_str).collect();
+                let once_each = asked.len() == routing.answered.len();
+                let every_one_survived = routing
+                    .answered
+                    .iter()
+                    .all(|one| one.outcome == Outcome::Survived);
+                if asked != kept || !once_each || !every_one_survived {
+                    violations.push(Violation::SurvivorNotAskedOfItsRoute { id: row.id.clone() });
+                }
+            }
+            super::Decided::CompileRejected
+            | super::Decided::ModelNoticed
+            | super::Decided::ModelProved
+            | super::Decided::StepLimitReached { .. }
+            | super::Decided::Waited { .. }
+            | super::Decided::Unreached
+            | super::Decided::Equivalent
+            | super::Decided::Unconfirmed { .. }
+            | super::Decided::Errored { .. } => {}
+        }
+    }
 }
 
 /// Validates the non-empty, ordered build ledger and audits every build as an ordinary report.

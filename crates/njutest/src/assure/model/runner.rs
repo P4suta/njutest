@@ -367,6 +367,7 @@ fn discover(
         }
         Termination::NotStarted { .. }
         | Termination::StoppedByMonitor
+        | Termination::Stalled
         | Termination::WaitFailed { .. }
         | Termination::Exited(
             ProcessExit::Signal(_) | ProcessExit::Unknown | ProcessExit::Code(_),
@@ -428,7 +429,9 @@ fn terminated(invocation: &Invocation<'_>, termination: &Termination) -> Attempt
             },
         ),
         Termination::NotStarted { .. } => failed_process(invocation, ProcessFailure::NotStarted),
-        Termination::StoppedByMonitor => failed_process(invocation, ProcessFailure::Stopped),
+        Termination::StoppedByMonitor | Termination::Stalled => {
+            failed_process(invocation, ProcessFailure::Stopped)
+        }
         Termination::MonitorFailed { .. } => failed_process(invocation, ProcessFailure::Monitor),
         Termination::WaitFailed { .. } => failed_process(invocation, ProcessFailure::Wait),
         Termination::Exited(ProcessExit::Signal(_signal)) => {
@@ -952,6 +955,7 @@ fn version_failure(ran: &rust_mutants::runner::RunResult) -> Option<VersionFailu
             return Some(VersionFailure::Tool(ToolFailure::Unavailable));
         }
         Termination::StoppedByMonitor
+        | Termination::Stalled
         | Termination::Exited(
             ProcessExit::Signal(_) | ProcessExit::Unknown | ProcessExit::Code(1.. | ..0),
         ) => {

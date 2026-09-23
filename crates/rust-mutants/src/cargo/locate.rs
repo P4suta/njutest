@@ -173,6 +173,9 @@ pub fn command_failed(spec: &Spec, result: &crate::runner::RunResult) -> CargoEr
             format!("{} monitor failed: {failure}", argv.join(" "))
         }
         crate::runner::Termination::TimedOut => format!("{} timed out", argv.join(" ")),
+        crate::runner::Termination::Stalled => {
+            format!("{} made no progress for its quiet window", argv.join(" "))
+        }
         crate::runner::Termination::StoppedByMonitor => {
             format!("{} was stopped by its execution monitor", argv.join(" "))
         }
