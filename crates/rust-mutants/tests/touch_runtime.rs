@@ -238,13 +238,27 @@ fn one_allowance_spans_file_modules_and_repeated_guard_checks_do_not_spend_twice
     );
 }
 
+/// How long a wait for a fixture process runs before it fails, sized for a machine building several workspaces at once, because a wait that decides by the clock reports the machine.
+const BACKSTOP: Duration = Duration::from_secs(120);
+
+/// Waits until `path` is a regular file, or fails with `escaped` once the backstop passes.
+fn wait_until_present(path: &std::path::Path, escaped: &str) {
+    let deadline = Instant::now()
+        .checked_add(BACKSTOP)
+        .expect("a deadline one backstop from now");
+    while !regular_file_present(path).expect("inspect notice") {
+        assert!(Instant::now() < deadline, "{escaped}");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// Waits until `state` reads exactly `wanted`, or fails saying what it read instead.
 ///
 /// A read can fail rather than answer while the process that owns the file is writing it: a Windows lock is mandatory where a POSIX one is advisory, so unreadable here means the same as not yet.
 fn wait_until_state_reads(state: &std::path::Path, wanted: &str) {
     let deadline = Instant::now()
-        .checked_add(Duration::from_secs(5))
-        .expect("a deadline five seconds from now");
+        .checked_add(BACKSTOP)
+        .expect("a deadline one backstop from now");
     loop {
         match std::fs::read_to_string(state) {
             Ok(observed) if observed == wanted => return,
@@ -437,17 +451,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
         .env(STEP_NOTICE_ENV, &notice)
         .env(STEP_STATE_ENV, &state);
     let child = FixtureChild::launch(&mut command).expect("program starts");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if regular_file_present(&notice).expect("inspect notice") {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the expression closure escaped the allowance"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    wait_until_present(&notice, "the expression closure escaped the allowance");
     child.terminate().expect("fixture process is reaped");
     assert_eq!(
         std::fs::read_to_string(&notice).expect("notice"),

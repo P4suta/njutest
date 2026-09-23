@@ -1,0 +1,33 @@
+=== struct-without-deny source crates/app/src/lib.rs
+//! A file.
+#[derive(serde::Deserialize)] struct Config { path: String }
+=== tagged-enum source crates/app/src/lib.rs
+//! A file.
+#[derive(serde::Deserialize)] #[serde(tag = "type")] enum State { Waiting, Done }
+=== renamed-derive source crates/app/src/lib.rs
+//! A file.
+use serde::Deserialize as Decode;
+#[derive(Decode)] struct Config { path: String }
+=== cfg-attr-derive source crates/app/src/lib.rs
+//! A file.
+#[cfg_attr(test, derive(serde::Deserialize))] struct Config { path: String }
+=== owned-input-default source crates/demo/src/trace/event.rs
+//! A file.
+#[derive(serde::Deserialize)] #[serde(deny_unknown_fields)] struct Event { #[serde(default)] detail: String }
+=== owned-input-untagged source crates/demo/src/trace/event.rs
+//! A file.
+#[derive(serde::Deserialize)] #[serde(untagged)] enum Event { Text(String), Number(u64) }
+=== foreign-capture-misnamed source crates/rust-mutants/src/cargo/messages.rs
+//! Cargo's JSON.
+#[derive(serde::Deserialize)] struct Artifact { name: String, #[serde(flatten)] unknown: std::collections::BTreeMap<String, serde_json::Value> }
+=== foreign-capture-outside-its-module source crates/demo/src/wire.rs
+//! Cargo's JSON.
+#[derive(serde::Deserialize)]
+struct Artifact {
+    name: String,
+    #[serde(flatten)]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
+}
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! config { () => { #[derive(serde::Deserialize)] struct Config { path: String } } }

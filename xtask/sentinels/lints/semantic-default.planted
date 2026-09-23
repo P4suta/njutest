@@ -1,0 +1,12 @@
+=== explicit-enum-default source crates/app/src/lib.rs
+//! A file.
+pub enum State { Waiting, Done }
+impl Default for State { fn default() -> Self { Self::Waiting } }
+=== explicit-struct-default source crates/app/src/lib.rs
+//! A file.
+struct Domain;
+impl Domain { const EMPTY: Self = Self; }
+impl Default for Domain { fn default() -> Self { Self::EMPTY } }
+=== macro-rules-default source crates/app/src/lib.rs
+//! A file.
+macro_rules! state { () => { impl Default for State { fn default() -> Self { State::Waiting } } } }

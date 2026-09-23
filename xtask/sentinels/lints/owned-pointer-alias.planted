@@ -1,0 +1,26 @@
+=== renamed-import source crates/app/src/lib.rs
+//! A file.
+use std::boxed::Box as Heap;
+type Erased = dyn std::fmt::Debug;
+pub struct S { f: Heap<Erased> }
+=== type-alias source crates/app/src/lib.rs
+//! A file.
+type Heap<T> = Box<T>;
+type Erased = dyn std::fmt::Debug;
+pub struct S { f: Heap<Erased> }
+=== nested-type-alias source crates/app/src/lib.rs
+//! A file.
+type Heap<T> = Option<Box<T>>;
+pub struct S { f: Heap<dyn std::fmt::Debug> }
+=== macro-generated-alias source crates/app/src/lib.rs
+//! A file.
+macro_rules! pointer { ($name:ident) => { type $name<T> = Box<T>; } }
+pointer!(Heap);
+pub struct S { field: Heap<dyn std::fmt::Debug> }
+=== associated-type source crates/app/src/lib.rs
+//! A file.
+trait Owner<T: ?Sized> { type Out: ?Sized; }
+struct Factory;
+impl<T: ?Sized> Owner<T> for Factory { type Out = Box<T>; }
+type Heap<T> = <Factory as Owner<T>>::Out;
+struct S(Heap<dyn std::fmt::Debug>);

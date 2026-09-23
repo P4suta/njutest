@@ -1,0 +1,15 @@
+=== lossy-bytes source crates/app/src/lib.rs
+//! A file.
+fn read(bytes: &[u8]) { drop(std::string::String::from_utf8_lossy(bytes)); }
+=== lossy-path source crates/app/src/lib.rs
+//! A file.
+fn name(path: &std::path::Path) { drop(path.to_string_lossy()); }
+=== renamed-import source crates/app/src/lib.rs
+//! A file.
+use std::string::String::from_utf8_lossy as decode;
+=== macro-rules-bytes source crates/app/src/lib.rs
+//! A file.
+macro_rules! decode { ($bytes:expr) => { String::from_utf8_lossy($bytes) } }
+=== macro-rules-path source crates/app/src/lib.rs
+//! A file.
+macro_rules! name { ($path:expr) => { $path.to_string_lossy() } }

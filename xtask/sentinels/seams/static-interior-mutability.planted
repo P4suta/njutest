@@ -1,0 +1,19 @@
+=== lock tree
+--- crates/app/src/lib.rs
+use std::sync::Mutex;
+static HELD: Mutex<u32> = Mutex::new(0);
+=== once tree
+--- crates/app/src/lib.rs
+use std::sync::OnceLock;
+static ONCE: OnceLock<String> = OnceLock::new();
+=== lazy tree
+--- crates/app/src/lib.rs
+use std::sync::LazyLock;
+static LAZY: LazyLock<Vec<u8>> = LazyLock::new(Vec::new);
+=== atomic tree
+--- crates/app/src/lib.rs
+use std::sync::atomic::AtomicBool;
+static FLAG: AtomicBool = AtomicBool::new(false);
+=== cell-by-path tree
+--- crates/app/src/lib.rs
+static CELL: std::cell::Cell<u8> = std::cell::Cell::new(0);

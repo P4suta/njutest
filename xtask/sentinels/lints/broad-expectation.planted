@@ -1,0 +1,8 @@
+=== module-expectation source crates/app/src/lib.rs
+//! A file.
+#![expect(dead_code, reason = "one current item")]
+fn unused() {}
+=== cfg-attr-expectation source crates/app/src/lib.rs
+//! A file.
+#[cfg_attr(test, expect(unsafe_code, reason = "one current block"))]
+mod ffi {}

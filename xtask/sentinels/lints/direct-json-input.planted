@@ -1,0 +1,35 @@
+=== from-str source crates/app/src/lib.rs
+//! A file.
+fn read(s: &str) { let _ = serde_json::from_str::<serde_json::Value>(s); }
+=== deserializer source crates/app/src/lib.rs
+//! A file.
+fn read(s: &str) { let _ = serde_json::Deserializer::from_str(s); }
+=== value-from-str source crates/app/src/lib.rs
+//! A file.
+fn read(s: &str) { let _ = <serde_json::Value as std::str::FromStr>::from_str(s); }
+=== parse-turbofish source crates/app/src/lib.rs
+//! A file.
+fn read(s: &str) { let _ = s.parse::<serde_json::Value>(); }
+=== parse-inferred source crates/app/src/lib.rs
+//! A file.
+fn read(s: &str) { let _: u32 = s.parse().unwrap_or(0); }
+=== reexported-value source crates/app/src/lib.rs
+//! A file.
+pub use serde_json::Value;
+=== renamed-crate source crates/app/src/lib.rs
+//! A file.
+use serde_json as json;
+=== parser-alias source crates/app/src/lib.rs
+//! A file.
+type Parser<'a> = serde_json::Deserializer<serde_json::de::StrRead<'a>>;
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! read { ($input:expr) => { serde_json::from_str($input) } }
+=== macro-method-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! read { ($method:ident) => { serde_json::$method(input) } }
+read!(from_str);
+=== macro-type-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! read { ($ty:ty) => { input.parse::<$ty>() } }
+read!(serde_json::Value);

@@ -1,0 +1,6 @@
+=== pointer-cast source crates/rust-mutants/src/runner/windows.rs
+fn handle(raw: *mut core::ffi::c_void) -> HANDLE { raw as HANDLE }
+=== integer-cast source crates/rust-mutants/src/runner/windows.rs
+fn size(value: usize) -> u32 { value as u32 }
+=== macro-rules-body source crates/rust-mutants/src/runner/windows.rs
+macro_rules! handle { ($raw:expr) => { $raw as HANDLE } }

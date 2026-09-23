@@ -1,0 +1,14 @@
+=== option-bool source crates/app/src/lib.rs
+struct Decision { accepted: Option<bool> }
+=== bool-alias source crates/app/src/lib.rs
+type Flag = bool; struct Decision { accepted: Option<Flag> }
+=== option-alias source crates/app/src/lib.rs
+type Maybe<T> = Option<T>; struct Decision { accepted: Maybe<bool> }
+=== renamed-option source crates/app/src/lib.rs
+use std::option::Option as Maybe; struct Decision { accepted: Maybe<bool> }
+=== macro-rules-body source crates/app/src/lib.rs
+macro_rules! field { () => { accepted: Option<bool> } }
+=== macro-type-argument source crates/app/src/lib.rs
+macro_rules! field { ($held:ty) => { accepted: Option<$held> } }
+=== macro-constructor-argument source crates/app/src/lib.rs
+macro_rules! field { ($maybe:ident) => { accepted: $maybe<bool> } }

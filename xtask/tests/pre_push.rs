@@ -57,10 +57,9 @@ impl Repository {
             &["commit", "--quiet", "-m", "fixture"],
         );
         let head = String::from_utf8(
-            Command::new("git")
+            isolated("git")
                 .args(["rev-parse", "HEAD"])
                 .current_dir(directory.path())
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .output()
                 .expect("git rev-parse")
                 .stdout,
@@ -101,21 +100,32 @@ impl Repository {
     }
 
     fn push_terminated(&self, local: &str, remote: &str, end: &str) -> Output {
+        self.push_with(&update(local, remote, end), &[])
+    }
+
+    fn push_as_a_hook(&self, local: &str) -> Output {
+        let git = self.directory.path().join(".git");
+        self.push_with(
+            &update(local, &"0".repeat(40), "\n"),
+            &[("GIT_DIR", git.as_os_str()), ("GIT_PREFIX", "".as_ref())],
+        )
+    }
+
+    fn push_with(&self, line: &str, handed: &[(&str, &std::ffi::OsStr)]) -> Output {
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("the workspace root")
             .join("scripts/pre-push-check.sh");
-        let mut command = Command::new("bash");
+        let mut command = isolated("bash");
         command
             .arg(script)
             .current_dir(self.directory.path())
             .env("PATH", &self.path)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .envs(handed.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = SupervisedChild::launch(&mut command).expect("the pre-push gate");
-        let line = format!("refs/heads/local {local} refs/heads/remote {remote}{end}");
         child
             .take_stdin()
             .expect("the gate's stdin")
@@ -125,12 +135,29 @@ impl Repository {
     }
 }
 
+fn update(local: &str, remote: &str, end: &str) -> String {
+    format!("refs/heads/local {local} refs/heads/remote {remote}{end}")
+}
+
+fn symbolic_head(directory: &Path) -> String {
+    String::from_utf8(
+        isolated("git")
+            .args(["symbolic-ref", "--quiet", "HEAD"])
+            .current_dir(directory)
+            .output()
+            .expect("git symbolic-ref")
+            .stdout,
+    )
+    .expect("an ASCII ref name")
+    .trim()
+    .to_owned()
+}
+
 fn object_id(directory: &Path, revision: &str) -> String {
     String::from_utf8(
-        Command::new("git")
+        isolated("git")
             .args(["rev-parse", revision])
             .current_dir(directory)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .output()
             .expect("git rev-parse")
             .stdout,
@@ -140,11 +167,22 @@ fn object_id(directory: &Path, revision: &str) -> String {
     .to_owned()
 }
 
+/// A command with none of the `GIT_*` variables a hook hands down, so it touches only the repository it runs in.
+fn isolated(program: &str) -> Command {
+    let mut command = Command::new(program);
+    for (name, _) in std::env::vars_os() {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
+            command.env_remove(name);
+        }
+    }
+    command.env("GIT_CONFIG_GLOBAL", "/dev/null");
+    command
+}
+
 fn command(directory: &Path, program: &str, arguments: &[&str]) {
-    let status = Command::new(program)
+    let status = isolated(program)
         .args(arguments)
         .current_dir(directory)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .status()
         .expect("the fixture command");
     assert!(status.success(), "{program} {arguments:?}: {status}");
@@ -180,6 +218,40 @@ fn a_clean_exact_head_is_checked() {
         Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
     let output = repository.push(&repository.head);
     assert!(output.status.success(), "{}", stderr(&output));
+}
+
+#[test]
+fn the_check_is_handed_none_of_the_hooks_git_environment() {
+    let repository = Repository::new(
+        "if compgen -e | grep -q '^GIT_'; then compgen -e | grep '^GIT_' >&2; exit 98; fi",
+    );
+    let output = repository.push_as_a_hook(&repository.head);
+    assert!(
+        output.status.success(),
+        "a check that inherits GIT_DIR answers about the repository being pushed, and a test \
+         inside it that runs `git init` or `git config` rewrites that repository: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn a_push_leaves_the_pushers_head_on_its_branch() {
+    let repository =
+        Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
+    let before = symbolic_head(repository.directory.path());
+    for push in [
+        "the one that makes the gate's tree",
+        "the one that reuses it",
+    ] {
+        let output = repository.push_as_a_hook(&repository.head);
+        assert!(output.status.success(), "{push}: {}", stderr(&output));
+    }
+    assert_eq!(
+        symbolic_head(repository.directory.path()),
+        before,
+        "the gate's own checkout ran with the hook's GIT_DIR and moved the pusher's HEAD instead \
+         of the isolated tree's"
+    );
 }
 
 #[test]

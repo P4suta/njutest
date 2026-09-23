@@ -1,0 +1,12 @@
+=== atomic-fetch-add source crates/demo/src/counter.rs
+fn next(counter: &AtomicU64) -> u64 { counter.fetch_add(1, Ordering::Relaxed) }
+=== atomic-fetch-sub-path source crates/demo/src/counter.rs
+fn next(counter: &AtomicU64) -> u64 { AtomicU64::fetch_sub(counter, 1, Ordering::Relaxed) }
+=== wrapping-method source crates/demo/src/counter.rs
+fn next(counter: u64) -> u64 { counter.wrapping_add(1) }
+=== wrapping-negation source crates/demo/src/counter.rs
+fn next(counter: i64) -> i64 { counter.wrapping_neg() }
+=== renamed-import source crates/demo/src/counter.rs
+use u64::wrapping_sub as earlier; fn previous(counter: u64) -> u64 { earlier(counter, 1) }
+=== macro-rules-body source crates/demo/src/counter.rs
+macro_rules! next { ($counter:expr) => { $counter.fetch_add(1, Ordering::Relaxed) } }

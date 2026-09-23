@@ -1,0 +1,20 @@
+=== item-allow source crates/app/src/lib.rs
+//! A file.
+
+#[allow(dead_code)]
+pub fn f() {}
+=== crate-allow source crates/app/src/lib.rs
+//! A file.
+#![allow(clippy::pedantic)]
+=== cfg-attr-allow source crates/app/src/lib.rs
+//! A file.
+#[cfg_attr(test, allow(unsafe_code, reason = "forever"))]
+fn f() {}
+=== nested-cfg-attr-allow source crates/app/src/lib.rs
+//! A file.
+#[cfg_attr(test, cfg_attr(test, allow(dead_code, reason = "forever")))]
+fn f() {}
+=== macro-rules-allow source crates/app/src/lib.rs
+//! A file.
+macro_rules! hidden { () => { #[allow(dead_code, reason = "forever")] const fn unused() {} } }
+hidden!();

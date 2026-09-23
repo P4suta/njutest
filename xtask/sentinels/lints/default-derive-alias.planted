@@ -1,0 +1,5 @@
+=== renamed-import source crates/app/src/lib.rs
+//! A file.
+use std::default::Default as Initial;
+#[derive(Initial)]
+pub enum State { #[default] Waiting, Done }

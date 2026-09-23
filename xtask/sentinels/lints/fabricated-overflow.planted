@@ -1,0 +1,12 @@
+=== unwrap-or-sentinel source crates/rust-mutants/src/work.rs
+fn count(value: Result<u64, E>) -> u64 { value.unwrap_or(u64::MAX) }
+=== saturating-method source crates/rust-mutants/src/work.rs
+fn count(value: u64) -> u64 { value.saturating_add(1) }
+=== saturating-path source crates/rust-mutants/src/work.rs
+fn count(value: u64) -> u64 { u64::saturating_mul(value, 2) }
+=== renamed-import source crates/rust-mutants/src/work.rs
+use u64::saturating_add as add; fn count(value: u64) -> u64 { add(value, 1) }
+=== macro-rules-body source crates/rust-mutants/src/work.rs
+macro_rules! count { ($value:expr) => { $value.saturating_sub(1) } }
+=== central-count-type source crates/rust-mutants/src/count.rs
+fn count(value: u64) -> u64 { value.saturating_add(1) }

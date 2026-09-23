@@ -1,0 +1,38 @@
+=== plain-catch-all tree
+--- crates/app/src/lib.rs
+enum Outcome { Killed, Survived, Errored }
+fn said(outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Killed => Outcome::Killed,
+        _ => Outcome::Errored,
+    }
+}
+=== guarded-arm tree
+--- crates/app/src/lib.rs
+enum Message { Compiler { error: bool }, Finished { ok: bool } }
+fn first(message: &Message, other: syn::Expr) -> Option<u8> {
+    match message {
+        Message::Compiler { error } if *error => Some(1),
+        syn::Expr::Lit(_) => None,
+        _ => None,
+    }
+}
+=== guarded-arm-over-an-untyped-scrutinee tree
+--- crates/app/src/lib.rs
+enum Message { Compiler { error: bool }, Finished { ok: bool } }
+fn first(next: impl Fn() -> Message, other: syn::Expr) -> Option<u8> {
+    match next() {
+        Message::Compiler { error } if error => Some(1),
+        syn::Expr::Lit(_) => None,
+        _ => None,
+    }
+}
+=== binding-catch-all tree
+--- crates/app/src/lib.rs
+enum Decision { Tests, Block }
+fn narrow(decision: Decision) -> Decision {
+    match decision {
+        Decision::Tests => Decision::Tests,
+        other => other,
+    }
+}

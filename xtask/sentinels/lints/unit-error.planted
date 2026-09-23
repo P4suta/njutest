@@ -1,0 +1,17 @@
+=== unit source crates/app/src/lib.rs
+//! A file.
+fn run() -> Result<u8, ()> { Err(()) }
+=== unit-alias source crates/app/src/lib.rs
+//! A file.
+type Empty = ();
+fn run() -> Result<u8, Empty> { Err(()) }
+=== renamed-result source crates/app/src/lib.rs
+//! A file.
+use std::result::Result as Fallible;
+fn run() -> Fallible<u8, ()> { Err(()) }
+=== macro-rules-body source crates/app/src/lib.rs
+//! A file.
+macro_rules! run { () => { fn run() -> Result<u8, ()> { Err(()) } } }
+=== macro-type-argument source crates/app/src/lib.rs
+//! A file.
+macro_rules! run { ($error:ty) => { fn run() -> Result<u8, $error> { unimplemented!() } } }

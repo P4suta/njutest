@@ -1,0 +1,13 @@
+=== renamed-import source crates/app/src/lib.rs
+//! A file.
+use std::result::Result as Fallible;
+type Failure = String;
+fn read() -> Fallible<(), Failure> { Ok(()) }
+=== type-alias source crates/app/src/lib.rs
+//! A file.
+type Fallible<T, E> = Result<T, E>;
+type Failure = String;
+fn read() -> Fallible<(), Failure> { Ok(()) }
+=== nested-type-alias source crates/app/src/lib.rs
+//! A file.
+type Both<T, E> = Box<Result<T, E>>;

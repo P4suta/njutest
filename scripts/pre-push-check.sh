@@ -9,6 +9,17 @@
 
 set -euo pipefail
 
+# None of the `GIT_*` variables Git exports into a hook survive past this point.
+#
+# Git runs this script with `GIT_DIR` naming the repository being pushed, and a variable wins over `git -C`.
+# With it, the gate's own `checkout --detach` in its isolated tree moved the pusher's `HEAD`, and a test in the check that ran `git init` and `git config` in a temporary directory made the pushed repository bare and gave it the fixture's author.
+# The hook starts in the pusher's worktree, so discovery finds the same repository without them, and every command below names the tree it means with `-C`.
+while IFS= read -r name; do
+  if [[ "${name}" == GIT_* ]]; then
+    unset "${name}"
+  fi
+done < <(compgen -e)
+
 # Two numbers, because one cannot be both the detector and the backstop.
 #
 # A gate that quietly takes an hour is not a slow gate, it is a broken one, and the way that breaks is always the same: something stopped being cached and nobody noticed, because waiting looks exactly like working.
@@ -128,13 +139,16 @@ trap 'exit 143' TERM
 # `git worktree add` writes every file afresh, and cargo fingerprints on mtime, so a tree with identical content still rebuilds the workspace from nothing.
 # That is the last thing that made a push cost twenty minutes with a cache that was already warm: measured in this very worktree, `build` is 1s and `clippy` is 0s once the mtimes stop moving.
 # A checkout in place touches only the files that differ, which is exactly the set that should be recompiled.
+# Only a clean tree is moved, and without `--force`: the exit trap leaves it clean, and one that is not is made again rather than overwritten, which costs a rebuild and never an answer about something other than the pushed object.
 mkdir -p "$(dirname "${checkout}")"
 git -C "${repository}" worktree prune
-if [[ -e "${checkout}/.git" ]]; then
-  git -C "${checkout}" checkout --quiet --force --detach "${head}"
-  git -C "${checkout}" clean --quiet -fd -e /target
+if [[ -e "${checkout}/.git" ]] \
+  && [[ -z "$(git -C "${checkout}" status --porcelain=v1 --untracked-files=all)" ]] \
+  && git -C "${checkout}" checkout --quiet --detach "${head}"; then
+  :
 else
   rm -rf "${checkout}"
+  git -C "${repository}" worktree prune
   git -C "${repository}" worktree add --quiet --detach "${checkout}" "${head}"
 fi
 mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/release" "${checkout}/target"
