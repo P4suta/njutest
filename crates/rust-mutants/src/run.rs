@@ -1428,6 +1428,7 @@ fn execute(
     } = judgement;
     let result = attempts.into_result();
     let outcome = result.outcome();
+    let tests_run = result.tests_run();
     Ok(Judged {
         index: mutant.index,
         id: mutant.id.to_string(),
@@ -1437,7 +1438,7 @@ fn execute(
         target: result.target,
         exit_code: result.exit_code,
         duration,
-        tests_run: result.tests_run,
+        tests_run,
         failed_tests: result.failed_tests,
         signal: result.signal,
         retried,

@@ -98,6 +98,11 @@ pub enum Payload {
         /// The same independently auditable record retained in the report.
         model: Box<crate::report::ModelRecord>,
     },
+    /// What one original-code control established about one target's baseline reach.
+    Drift {
+        /// The record.
+        drift: DriftRecord,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -128,6 +133,7 @@ impl Payload {
             Self::WireExec { .. } => "wire-exec",
             Self::Sentinel { .. } => "sentinel",
             Self::Model { .. } => "model",
+            Self::Drift { .. } => "drift",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -400,6 +406,16 @@ pub struct ProbeExecRecord {
     /// A target the pass did not measure carries no facts, and none is not zero.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub infected: Option<u64>,
+}
+
+/// What one original-code control, run to confirm a kill, established about whether one target reached what its baseline did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriftRecord {
+    /// The mutation whose kill the control was confirming.
+    pub mutant: String,
+    /// What it established, as the report records it.
+    pub observed: crate::report::drift::Drift,
 }
 
 /// How much of one exchange the wire said to read, and what that reading found.

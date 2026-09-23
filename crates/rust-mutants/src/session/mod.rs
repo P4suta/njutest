@@ -25,7 +25,8 @@ use crate::EngineError;
 use crate::catalog::{Catalog, Mutant};
 use crate::discover::{self, DiscoverOptions, FileReport, SkipClaim};
 use crate::execute::{
-    self, Context, ExecRequest, MutantConclusion, MutantResult, TargetKind, TestTarget, target_id,
+    self, Context, ExecRequest, MutantConclusion, MutantResult, Protocol, Reading, TargetKind,
+    TestTarget, target_id,
 };
 use crate::glob::Pattern;
 use crate::rule::Tier;
@@ -110,6 +111,46 @@ pub enum LocateError {
 /// Whether an item path is the one a locator names, which a suffix says.
 fn names(item: &str, wanted: &str) -> bool {
     item == wanted || item.ends_with(&format!("::{wanted}"))
+}
+
+/// Whether a control records what its guards reached, so a caller that confirms a kill can learn whether the baseline's reach held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Observing {
+    /// Record, and compare each whole target's unions with its baseline's.
+    Reach,
+    /// Record nothing.
+    Nothing,
+}
+
+/// What a control came to, and what it established about each whole target's baseline reach where it was asked to record.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Controlled {
+    /// What the original code said.
+    pub result: MutantResult,
+    /// Whether each whole target it recorded reached what its baseline did, in the order they ran.
+    pub observed: Vec<Observed>,
+}
+
+/// What one control established about one target's baseline reach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Observed {
+    /// The target, by the identity its baseline is recorded under.
+    pub target: String,
+    /// Whether its reach held.
+    pub steadiness: crate::touch::Steadiness,
+}
+
+/// The file a control's guards append what they reached to, in the control's own scratch.
+const CONTROL_TOUCH_LOG: &str = "touch.log";
+
+/// One control process's question: which target, asked how, for how long.
+struct Once<'a> {
+    request: &'a Request,
+    target: &'a TestTarget,
+    timeout: Duration,
 }
 
 /// What preparing does about a target whose baseline does not pass with nothing active.
@@ -820,7 +861,7 @@ impl Session {
         if cancel.is_cancelled() {
             return Ok(None);
         }
-        let ran = result.tests_run;
+        let ran = result.tests_run();
         let answer = (result.outcome() == crate::outcome::Outcome::Survived && ran == Some(asked))
             .then_some(result.duration);
         if answer.is_none() {
@@ -1222,7 +1263,7 @@ impl Session {
             step_notice: result.step_notice().cloned(),
             exit_code: result.exit_code,
             duration_ms: duration_ms(result.duration)?,
-            tests_run: result.tests_run,
+            tests_run: result.tests_run(),
             signal: result.signal,
             failed_tests: result.failed_tests.clone(),
             timeout_ms: duration_ms(timeout)?,
@@ -1241,33 +1282,46 @@ impl Session {
         }
     }
 
-    /// Runs one target with no mutant active: the original control.
+    /// Runs one target with no mutant active: the original control, recording what it reached where `observing` asks.
     ///
     /// # Errors
     /// [`SessionError::UnknownTarget`] and [`SessionError::NoTargets`].
-    pub fn control(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
+    pub fn control(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+        observing: Observing,
+    ) -> Result<Controlled, EngineError> {
         let targets = self.selected(request.target.as_deref())?;
-        let context = Context {
-            base_env: &self.workspace.base_env,
-            cargo: Some(self.workspace.toolchain.cargo()),
-            sysroot: self.workspace.toolchain.sysroot(),
-            active: None,
-            touch: None,
-            steps: None,
-            profile: None,
-        };
         let mut asked = Vec::new();
+        let mut observed = Vec::new();
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id)?;
-            let mut exec = ExecRequest::new(target)
-                .with_args(self.arguments(request))
-                .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch()?)
-                .in_scratch(self.scratch_working_directory);
-            if let Some(test) = &request.test {
-                exec = exec.with_test(test.clone());
+            let own = self.exec_scratch()?;
+            let log = (observing == Observing::Reach
+                && request.test.is_none()
+                && verify::recordable(target))
+            .then(|| own.join(CONTROL_TOUCH_LOG));
+            let once = Once {
+                request,
+                target,
+                timeout,
+            };
+            let mut result = self.control_once(&once, (&own, log.as_deref()), cancel);
+            let unrecorded =
+                log.is_some() && result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT;
+            if unrecorded {
+                self.workspace.trace.note(
+                    crate::touch::UNRECORDED,
+                    &format!(
+                        "{}: the control could not write what its guards reached, so it is run \
+                         again with nothing to record and whether its baseline reach holds is \
+                         not measured",
+                        target.id
+                    ),
+                );
+                result = self.control_once(&once, (&self.exec_scratch()?, None), cancel);
             }
-            let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
             self.workspace.trace.mutant_exec(MutantExecRecord {
                 id: String::new(),
                 index: u32::MAX,
@@ -1276,24 +1330,136 @@ impl Session {
                 step_notice: result.step_notice().cloned(),
                 exit_code: result.exit_code,
                 duration_ms: duration_ms(result.duration)?,
-                tests_run: result.tests_run,
+                tests_run: result.tests_run(),
                 signal: result.signal,
                 failed_tests: result.failed_tests.clone(),
                 timeout_ms: duration_ms(timeout)?,
                 timeout_source: source.name().to_owned(),
                 alone: false,
             });
+            if let Some(log) = log.as_deref() {
+                let steadiness = if unrecorded {
+                    crate::touch::Steadiness::NotMeasured(crate::touch::Unmeasured::Unrecorded)
+                } else {
+                    self.steadiness(target, log, &result)?
+                };
+                observed.push(Observed {
+                    target: target.id.clone(),
+                    steadiness,
+                });
+            }
             if cancel.is_cancelled()
                 || (result.outcome() != crate::outcome::Outcome::Survived && spoke(&result))
             {
-                return Ok(result);
+                return Ok(Controlled { result, observed });
             }
             asked.push(result);
         }
-        aggregate_result(&asked).cloned().ok_or_else(|| {
+        let result = aggregate_result(&asked).cloned().ok_or_else(|| {
             EngineError::from(SessionError::NoTargets {
                 packages: self.packages(),
             })
+        })?;
+        Ok(Controlled { result, observed })
+    }
+
+    /// One process of a control, in `own` scratch, recording into `log` when there is one.
+    fn control_once(
+        &self,
+        once: &Once<'_>,
+        (own, log): (&std::path::Path, Option<&std::path::Path>),
+        cancel: &Cancel,
+    ) -> MutantResult {
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: None,
+            touch: log.map(|log| execute::Touching {
+                log,
+                catalog: self.catalog.digest(),
+            }),
+            steps: None,
+            profile: None,
+        };
+        let mut exec = ExecRequest::new(once.target)
+            .with_args(self.arguments(once.request))
+            .with_timeout(Some(once.timeout))
+            .with_scratch(own)
+            .in_scratch(self.scratch_working_directory);
+        if let Some(test) = &once.request.test {
+            exec = exec.with_test(test.clone());
+        }
+        execute::exec(&exec, &context, cancel, &self.workspace.trace)
+    }
+
+    /// Whether the control that wrote `log` reached what the baseline of `target` did, over the same passing tests.
+    fn steadiness(
+        &self,
+        target: &TestTarget,
+        log: &std::path::Path,
+        result: &MutantResult,
+    ) -> Result<crate::touch::Steadiness, EngineError> {
+        use crate::touch::{Steadiness, Unmeasured};
+        if result.outcome() != crate::outcome::Outcome::Survived {
+            return Ok(Steadiness::NotMeasured(Unmeasured::ControlFailed));
+        }
+        let unreadable = |why: &dyn std::fmt::Display| {
+            self.workspace.trace.note(
+                crate::touch::UNREADABLE,
+                &format!("{}: the control's record: {why}", target.id),
+            );
+            Steadiness::NotMeasured(Unmeasured::Unreadable)
+        };
+        let text = match crate::limitation::appended(std::fs::read_to_string(log)) {
+            Ok(text) => text,
+            Err(error) => return Ok(unreadable(&error)),
+        };
+        let mutants = self.catalog.mutants().len();
+        let count =
+            u32::try_from(mutants).map_err(|_outside_range| SessionError::TraceCountTooLarge {
+                subject: "catalog mutants in a touch record",
+                count: mutants,
+            })?;
+        let recorded = match crate::touch::read(&text, self.catalog.digest(), count) {
+            Ok(recorded) => recorded,
+            Err(error) => return Ok(unreadable(&error)),
+        };
+        let control = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
+        self.workspace.trace.touch(verify::touch_record(
+            &target.id,
+            crate::trace::Measurement::Control,
+            &control,
+            crate::trace::SummaryRecord::of(result),
+        )?);
+        let retried = format!(
+            "{}:{}",
+            crate::limitation::BASELINE_PASSED_ON_RETRY,
+            target.id
+        );
+        if self.verified.touched.limitations.contains(&retried) {
+            return Ok(Steadiness::NotMeasured(Unmeasured::BaselineRetried));
+        }
+        let unparsed = format!(
+            "{}:{}",
+            crate::limitation::BASELINE_PASSED_UNPARSED,
+            target.id
+        );
+        if result.reading() == Reading::Short
+            || self.verified.touched.limitations.contains(&unparsed)
+        {
+            return Ok(Steadiness::NotMeasured(Unmeasured::Unparsed));
+        }
+        let Some(baseline) = self.verified.touched.targets.get(&target.id) else {
+            return Ok(Steadiness::NotMeasured(Unmeasured::NoBaseline));
+        };
+        let passed = |ran: &[String]| ran.iter().cloned().collect::<BTreeSet<String>>();
+        if passed(&baseline.ran) != passed(&control.ran) {
+            return Ok(Steadiness::NotMeasured(Unmeasured::OtherTests));
+        }
+        Ok(match crate::touch::unions_differ(baseline, &control) {
+            Some(moved) => Steadiness::Moved(moved),
+            None => Steadiness::Held,
         })
     }
 
@@ -1338,7 +1504,7 @@ impl Session {
                 step_notice: result.step_notice().cloned(),
                 exit_code: result.exit_code,
                 duration_ms: duration_ms(result.duration)?,
-                tests_run: result.tests_run,
+                tests_run: result.tests_run(),
                 signal: result.signal,
                 failed_tests: result.failed_tests.clone(),
                 timeout_ms: duration_ms(timeout)?,
@@ -1919,8 +2085,8 @@ mod kani_laws {
             exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
+            protocol: crate::execute::Protocol::Unanswered,
             summary: None,
-            tests_run: None,
             signal: None,
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
@@ -2304,8 +2470,8 @@ const fn unreached() -> MutantResult {
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
         duration: Duration::ZERO,
         output: Vec::new(),
+        protocol: Protocol::Unanswered,
         summary: None,
-        tests_run: None,
         signal: None,
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
@@ -2335,8 +2501,8 @@ mod tests {
             exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
+            protocol: crate::execute::Protocol::Unanswered,
             summary: None,
-            tests_run: None,
             signal: None,
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),

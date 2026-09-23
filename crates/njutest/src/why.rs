@@ -206,6 +206,7 @@ fn mutation(id: &str, events: &[Event]) -> Why {
             | Payload::WireExec { .. }
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
+            | Payload::Drift { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }
@@ -287,6 +288,7 @@ fn mutations(events: &[Event]) -> usize {
             | Payload::WireExec { .. }
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
+            | Payload::Drift { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }

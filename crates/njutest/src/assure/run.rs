@@ -260,7 +260,13 @@ fn attributed(
         let asked = rust_mutants::session::Request::new(String::new())
             .with_target(target.id.as_str())
             .with_timeout(Some(timeout));
-        let ran = session.control(&asked, watch.cancel)?;
+        let ran = session
+            .control(
+                &asked,
+                watch.cancel,
+                rust_mutants::session::Observing::Nothing,
+            )?
+            .result;
         if ran.target != target.id {
             return Err(RunInvariantError::ControlTargetMismatch {
                 requested: target.id.clone(),
@@ -1605,10 +1611,17 @@ pub fn record(
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));
+    report.drift.clone_from(&mutation.drift);
     if report.scope.shard.is_none() {
         report
             .findings
             .extend(crate::report::hollow::found(&report.mutants));
+        report
+            .findings
+            .extend(crate::report::drift::found(&report.drift, &report.mutants));
+        report
+            .limitations
+            .extend(crate::report::drift::unmeasured(&report.drift));
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
@@ -1841,6 +1854,11 @@ pub fn limitation_detail(name: &str) -> String {
             "the target's own tests did not pass the first time they were run with nothing \
              active and passed the second time, so something outside the code decided an \
              answer once and every result against this target is worth that much less"
+        }
+        rust_mutants::limitation::BASELINE_PASSED_UNPARSED => {
+            "the tests the target's baseline was read as passing do not come to the count its \
+             own summary gave, so a line the suite wrote past the harness read as a result; \
+             which tests passed is not known, and its reach is not compared with a control's"
         }
         rust_mutants::limitation::TOUCH_NOT_RECORDED => {
             "the target's guards recorded nothing this run can route by, so every test of \

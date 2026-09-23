@@ -72,6 +72,14 @@ pub enum AuditError {
         #[source]
         source: crate::route::ReadError,
     },
+    /// The document is a whole report of a shape this audit does not project onto the one build it re-decides.
+    #[error("{path}: {shape}; this audit re-decides one configured build measured whole")]
+    Unprojected {
+        /// The document.
+        path: String,
+        /// What it holds instead.
+        shape: Unprojectable,
+    },
     /// The document is JSON and calls itself something other than the assurance report.
     #[error("{path}: {schema:?} is not the assurance report this audit re-decides")]
     Unrecognised {
@@ -79,6 +87,30 @@ pub enum AuditError {
         path: String,
         /// What it calls itself.
         schema: String,
+    },
+}
+
+/// What a report holds instead of the one configured build measured whole this audit re-decides.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum Unprojectable {
+    /// The document is one part of a catalog rather than a complete answer.
+    #[error("a {kind} document is one part of a catalog")]
+    Part {
+        /// What the document calls itself.
+        kind: String,
+    },
+    /// The report measured more than one configured build, or none.
+    #[error("a report of {count} configured builds")]
+    Builds {
+        /// How many it holds.
+        count: usize,
+    },
+    /// The build was measured in parts, or its part is missing.
+    #[error("a build of {count} parts")]
+    Parts {
+        /// How many it holds.
+        count: usize,
     },
 }
 
@@ -123,6 +155,8 @@ pub enum Layer {
     Wire,
     /// Affirmative model answers re-derived from retained generated source and raw Kani JSON.
     Model,
+    /// Which targets reached something different on a control than on their baseline, re-derived from the engine's touch records and held to what the report says of each.
+    Drift,
 }
 
 impl Layer {
@@ -139,6 +173,7 @@ impl Layer {
             Self::Hollow => "hollow",
             Self::Wire => "wire",
             Self::Model => "model",
+            Self::Drift => "drift",
         }
     }
 }
@@ -341,22 +376,35 @@ struct Equation<'a> {
     because: &'a str,
 }
 
-/// Re-decides a report and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
+/// What a run recorded beside its report: the runner's recording and every engine recording under it, each as its path and its text.
+#[derive(Debug, Clone, Copy)]
+pub struct Recorded<'a> {
+    /// The runner's recording, when the run kept one.
+    pub runner: Option<(&'a str, &'a str)>,
+    /// Every configured build's engine recording, in namespace order.
+    pub engines: &'a [(String, String)],
+}
+
+/// Re-decides a report against what the run recorded beside it and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
 ///
 /// # Errors
-/// [`AuditError::Unparsable`] for a document that is not JSON,
-/// [`AuditError::Unrecognised`] for one that is not the assurance report, and the corresponding retained-artifact error when `run` cannot be re-read.
-pub fn audit_at(
+/// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::Unprojected`] for a report this audit does not re-decide as one build,
+/// [`AuditError::Unrecognised`] for one that is not the assurance report, [`AuditError::MalformedRecording`] for a recording with a corrupt line, and the corresponding retained-artifact error when `run` cannot be re-read.
+pub fn audit_with(
     path: &str,
     text: &str,
-    recorded: Option<(&str, &str)>,
+    recorded: Recorded<'_>,
     run: Option<&Path>,
 ) -> Result<Audit, AuditError> {
-    let document: serde_json::Value =
+    let read: serde_json::Value =
         crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
             path: path.to_owned(),
             source,
         })?;
+    let document = projected(read).map_err(|shape| AuditError::Unprojected {
+        path: path.to_owned(),
+        shape,
+    })?;
     let schema = document
         .get("schema")
         .and_then(serde_json::Value::as_str)
@@ -367,8 +415,9 @@ pub fn audit_at(
             schema: schema.to_owned(),
         });
     }
+    let recorded_runner = recorded.runner;
     let recording = Recording::of(&document);
-    let routing = recorded
+    let routing = recorded_runner
         .map(|(recording_path, text)| {
             crate::route::read(text).map_err(|source| AuditError::MalformedRecording {
                 path: recording_path.to_owned(),
@@ -376,7 +425,7 @@ pub fn audit_at(
             })
         })
         .transpose()?;
-    let watched = recorded
+    let watched = recorded_runner
         .map(|(recording_path, text)| {
             crate::wire::read(text).map_err(|source| AuditError::MalformedRecording {
                 path: recording_path.to_owned(),
@@ -384,6 +433,16 @@ pub fn audit_at(
             })
         })
         .transpose()?;
+    let engines = recorded
+        .engines
+        .iter()
+        .map(|(recording_path, text)| {
+            crate::drift::read(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.clone(),
+                source,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut audit = Audit {
         run_id: recording.run_id.clone(),
         mutants: recording.mutants.len(),
@@ -402,9 +461,298 @@ pub fn audit_at(
     hollow(&recording, routing.as_ref(), &mut audit);
     wire(&recording, watched.as_ref(), &mut audit);
     models(&recording, run, &mut audit);
+    drift(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
+}
+
+/// The flat view of one configured build measured whole that every layer re-decides, taken from a complete report or as it is.
+fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
+    let Some(kind) = document.get("document_type") else {
+        return Ok(document);
+    };
+    if kind.as_str() != Some("complete") {
+        return Err(Unprojectable::Part {
+            kind: kind.to_string(),
+        });
+    }
+    let report = document.get("report").cloned().unwrap_or_default();
+    let builds = rows(&report, "builds");
+    let [build] = builds else {
+        return Err(Unprojectable::Builds {
+            count: builds.len(),
+        });
+    };
+    let parts = rows(build, "parts");
+    let [part] = parts else {
+        return Err(Unprojectable::Parts { count: parts.len() });
+    };
+    let mut flat = serde_json::Map::new();
+    for key in [
+        "schema",
+        "schema_version",
+        "run_id",
+        "run_kind",
+        "contract",
+        "scope",
+    ] {
+        if let Some(value) = report.get(key) {
+            flat.insert(key.to_owned(), value.clone());
+        }
+    }
+    for key in [
+        "toolchain",
+        "accounting",
+        "targets",
+        "mutants",
+        "limitations",
+        "drift",
+    ] {
+        if let Some(value) = part.get(key) {
+            flat.insert(key.to_owned(), value.clone());
+        }
+    }
+    let findings: Vec<serde_json::Value> = rows(&report, "global_findings")
+        .iter()
+        .chain(rows(part, "findings"))
+        .cloned()
+        .collect();
+    flat.insert("findings".to_owned(), serde_json::Value::Array(findings));
+    let models = report
+        .get("model_completion")
+        .and_then(|completion| completion.get("batch"))
+        .map(|batch| rows(batch, "records").to_vec())
+        .unwrap_or_default();
+    flat.insert("models".to_owned(), serde_json::Value::Array(models));
+    Ok(serde_json::Value::Object(flat))
+}
+
+/// The finding a report raises about a target whose baseline reach moved.
+const UNSTABLE_BASELINE: &str = "unstable-baseline";
+
+/// The limitation a report states about the targets no comparable control measured.
+const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
+
+/// Which targets moved between their baseline and a control, re-derived from the engine's touch records and held to the report's records, findings, and limitation.
+fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Drift);
+    let recorded = recording.document.get("drift").map(|rows| {
+        rows.as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(|row| {
+                (
+                    field(row, "target").unwrap_or_default(),
+                    field(row, "state").unwrap_or_default(),
+                )
+            })
+            .collect::<Vec<(String, String)>>()
+    });
+    let touched = match (engines, recorded.as_ref()) {
+        ([], None) => return,
+        ([], Some(_)) => {
+            notes.unaudited(
+                "drift",
+                "the run kept no engine recording, so which targets moved between their \
+                 baseline and a control cannot be re-derived"
+                    .to_owned(),
+            );
+            return;
+        }
+        ([one], _) => one,
+        (several, _) => {
+            notes.unaudited(
+                "drift",
+                format!(
+                    "the recording holds {} engine recordings and the report is one build's, \
+                     so which of them it answers to cannot be told from the recording",
+                    several.len()
+                ),
+            );
+            return;
+        }
+    };
+    if touched.unreadable > 0 {
+        notes.unaudited(
+            "drift",
+            format!(
+                "{} touch record(s) do not say which run they were measured on or what it \
+                 reached, so what they would have shown cannot be counted as agreement",
+                touched.unreadable
+            ),
+        );
+    }
+    let derived = crate::drift::standings(touched);
+    let Some(recorded) = recorded else {
+        if !derived.is_empty() {
+            notes.violated(
+                "drift",
+                format!(
+                    "the engine measured the baseline reach of {} target(s) and the report \
+                     records nothing about whether any of it held",
+                    derived.len()
+                ),
+            );
+        }
+        return;
+    };
+    held_to_records(&derived, &recorded, &mut notes);
+    if recording.shard.is_some() {
+        return;
+    }
+    held_to_findings(recording, &derived, &mut notes);
+    held_to_limitation(recording, &derived, &mut notes);
+}
+
+fn held_to_records(
+    derived: &BTreeMap<String, crate::drift::Standing>,
+    recorded: &[(String, String)],
+    notes: &mut Notes<'_>,
+) {
+    for (target, standing) in derived {
+        let said: Vec<&str> = recorded
+            .iter()
+            .filter(|(named, _)| named == target)
+            .map(|(_, state)| state.as_str())
+            .collect();
+        match said.as_slice() {
+            [one] if *one == standing.name() => {}
+            [one] => notes.violated(
+                target,
+                format!(
+                    "the engine's touch records say {target} {} and the report records it as \
+                     {one}",
+                    standing.name()
+                ),
+            ),
+            others => notes.violated(
+                target,
+                format!(
+                    "the engine measured the baseline reach of {target} and the report records \
+                     {} drift record(s) about it where it owes exactly one",
+                    others.len()
+                ),
+            ),
+        }
+    }
+    for (target, state) in recorded {
+        if !derived.contains_key(target) {
+            notes.violated(
+                target,
+                format!(
+                    "the report records {target} as {state} and the engine recorded no baseline \
+                     reach for it to have held or moved from"
+                ),
+            );
+        }
+        if crate::drift::Standing::parse(state).is_none() {
+            notes.violated(
+                target,
+                format!("{state:?} is not a standing a drift record can have"),
+            );
+        }
+    }
+}
+
+fn held_to_findings(
+    recording: &Recording<'_>,
+    derived: &BTreeMap<String, crate::drift::Standing>,
+    notes: &mut Notes<'_>,
+) {
+    let owed: BTreeSet<&str> = derived
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .map(|(target, _)| target.as_str())
+        .collect();
+    let named: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == UNSTABLE_BASELINE)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    for target in owed.difference(&named) {
+        notes.violated(
+            target,
+            format!(
+                "a control of {target} that passed the same tests reached something its \
+                 baseline did not, and the report raises no {UNSTABLE_BASELINE} finding about it"
+            ),
+        );
+    }
+    for target in named.difference(&owed) {
+        notes.violated(
+            target,
+            format!(
+                "the report raises {UNSTABLE_BASELINE} about {target}, and the engine's touch \
+                 records do not show its reach moving"
+            ),
+        );
+    }
+}
+
+fn held_to_limitation(
+    recording: &Recording<'_>,
+    derived: &BTreeMap<String, crate::drift::Standing>,
+    notes: &mut Notes<'_>,
+) {
+    let owed: Vec<&str> = derived
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::NotMeasured)
+        .map(|(target, _)| target.as_str())
+        .collect();
+    let stated: Vec<String> = rows(recording.document, "limitations")
+        .iter()
+        .filter(|row| field(row, "name").as_deref() == Some(DRIFT_NOT_MEASURED))
+        .map(|row| field(row, "detail").unwrap_or_default())
+        .collect();
+    match (owed.as_slice(), stated.as_slice()) {
+        ([], []) => {}
+        ([], _) => notes.violated(
+            DRIFT_NOT_MEASURED,
+            "the report says a target's drift was not measured, and a comparable control \
+             recorded every target the baseline measured"
+                .to_owned(),
+        ),
+        (_, []) => notes.violated(
+            DRIFT_NOT_MEASURED,
+            format!(
+                "no comparable control recorded what {} reached, and the report does not say \
+                 so",
+                owed.join(", ")
+            ),
+        ),
+        (_, [detail]) => {
+            for target in &owed {
+                if !listed(detail, target) {
+                    notes.violated(
+                        target,
+                        format!(
+                            "no comparable control recorded what {target} reached, and the \
+                             {DRIFT_NOT_MEASURED} limitation does not name it"
+                        ),
+                    );
+                }
+            }
+        }
+        (_, several) => notes.violated(
+            DRIFT_NOT_MEASURED,
+            format!(
+                "the report states {} {DRIFT_NOT_MEASURED} limitations where one names every \
+                 target",
+                several.len()
+            ),
+        ),
+    }
+}
+
+/// Whether a limitation's detail names `target` in its closing list, which is how a report names the targets a limitation is about.
+fn listed(detail: &str, target: &str) -> bool {
+    detail
+        .rsplit_once(" (")
+        .and_then(|(_, list)| list.strip_suffix(')'))
+        .is_some_and(|list| list.split(", ").any(|one| one == target))
 }
 
 #[derive(Debug)]

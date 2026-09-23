@@ -57,6 +57,16 @@
             }
           },
           "candidates": [],
+          "drift": [
+            {
+              "state": "held",
+              "target": "<volatile>"
+            },
+            {
+              "state": "held",
+              "target": "<volatile>"
+            }
+          ],
           "findings": [
             {
               "detail": "no test could have noticed gt-to-ge at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",
