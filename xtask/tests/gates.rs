@@ -225,7 +225,7 @@ fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestFailure> {
         root.path().join("crates/app/src/support/ok.rs"),
         "pub fn supported() {}\n",
     )?;
-    let report = gates::lints(root.path())?;
+    let report = gates::lints_scanned(root.path())?;
     require(report.starts_with("lints: "), report)
 }
 
@@ -242,7 +242,7 @@ fn opaque_or_unscanned_source_redirects_are_refused() -> Result<(), TestFailure>
     ] {
         let root = lint_tree(source)?;
         let failure = refused(
-            gates::lints(root.path()),
+            gates::lints_scanned(root.path()),
             "a compiled source redirect escaped the scanned Rust universe",
         )?;
         require(
@@ -270,7 +270,7 @@ fn included_proc_macro_source_cannot_escape_the_exact_export_inventory() -> Resu
          -> proc_macro::TokenStream { input }\n",
     )?;
     let failure = refused(
-        gates::lints(root.path()),
+        gates::lints_scanned(root.path()),
         "an included procedural-macro export escaped the exact inventory",
     )?;
     require(
@@ -314,7 +314,7 @@ fn a_new_dependency_proc_macro_is_refused_before_its_expansion_is_trusted()
          \"njutest-macros\"\nversion = \"0.0.0\"\n",
     )?;
     let failure = refused(
-        gates::lints(root.path()),
+        gates::lints_scanned(root.path()),
         "a new dependency procedural macro passed without an inventory decision",
     )?;
     require(
@@ -337,7 +337,7 @@ fn a_non_rs_cargo_target_is_not_a_proved_source_tree() -> Result<(), TestFailure
         "#![allow(unsafe_code)]\npub unsafe fn hidden() {}\n",
     )?;
     let failure = refused(
-        gates::lints(root.path()),
+        gates::lints_scanned(root.path()),
         "a Cargo target outside the exact .rs set passed",
     )?;
     require(
@@ -363,7 +363,7 @@ fn recursive_local_path_dependencies_stay_inside_the_source_roots() -> Result<()
         "#![allow(unsafe_code)]\npub fn hidden() {}\n",
     )?;
     let failure = refused(
-        gates::lints(root.path()),
+        gates::lints_scanned(root.path()),
         "an excluded local path dependency passed as external code",
     )?;
     require(
