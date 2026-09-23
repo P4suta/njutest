@@ -1436,7 +1436,7 @@ fn record_exec(
         mutant: ran.mutant.display_id.to_string(),
         target: ran
             .measured
-            .map_or_else(|| SUITE.to_owned(), |one| one.target.id.to_string()),
+            .map_or_else(|| SUITE.to_owned(), |one| one.target.name()),
         args: ran.request.args.clone(),
         outcome: ran.result.outcome().name().to_owned(),
         step_boundary: ran
