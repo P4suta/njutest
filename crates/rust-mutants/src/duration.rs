@@ -6,7 +6,8 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-/// Why some text is not a duration. Every case names the text, so a configuration error points at the line a person wrote.
+/// Why some text is not a duration.
+/// Every case names the text, so a configuration error points at the line a person wrote.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DurationError {
@@ -72,9 +73,11 @@ pub fn parse(text: &str) -> Result<Duration, DurationError> {
             });
         }
         let (number, tail) = rest.split_at(digits);
-        let value: u64 = number.parse().map_err(|_error| DurationError::TooLarge {
-            text: text.to_owned(),
-        })?;
+        let value = number
+            .parse::<u64>()
+            .map_err(|_error| DurationError::TooLarge {
+                text: text.to_owned(),
+            })?;
         let unit_length = tail
             .find(|character: char| character.is_ascii_digit())
             .unwrap_or(tail.len());

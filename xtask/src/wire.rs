@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! An independent re-derivation of the faults a run's seam recording licensed. Nothing here calls the runner's catalogue: the rules and the identity recipe are written out again from what `docs/trace-v1.md` and `docs/report-v1.md` say they are, so a run and this audit agreeing means two implementations agreed.
+//! An independent re-derivation of the faults a run's seam recording licensed.
+//!
+//! Nothing here calls the runner's catalogue: the rules and the identity recipe are written out again from the runner trace and assurance contracts, so a run and this audit agreeing means two implementations agreed.
 
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -66,14 +68,26 @@ pub struct Watched {
     pub execs: Vec<Exec>,
 }
 
+/// Why the independent audit could not mint the identity that the producer is required to mint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum IdentityError {
+    /// A length-prefixed identity field lies outside the v1 recipe.
+    #[error("the {field} identity field has {bytes} bytes; the v1 recipe permits at most u32::MAX")]
+    FieldTooLong {
+        /// Which field exceeded the recipe.
+        field: &'static str,
+        /// Its exact byte length.
+        bytes: usize,
+    },
+}
+
 /// Everything the recording says about the seams, read from the stream alone.
-#[must_use]
-pub fn read(recorded: &str) -> Watched {
+///
+/// # Errors
+/// A corrupt non-empty line is rejected rather than disappearing from the evidence.
+pub fn read(recorded: &str) -> Result<Watched, crate::route::ReadError> {
     let mut watched = Watched::default();
-    for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(event) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for event in crate::route::events(recorded)? {
         match text(&event, "type").as_deref() {
             Some("wire-exchange") => {
                 if let Some(record) = event.get("exchange") {
@@ -88,12 +102,14 @@ pub fn read(recorded: &str) -> Watched {
             _ => {}
         }
     }
-    watched
+    Ok(watched)
 }
 
 /// Every fault an exchange licenses, re-derived rather than read back.
-#[must_use]
-pub fn licensed(exchange: &Exchange) -> Vec<(String, String)> {
+///
+/// # Errors
+/// Returns [`IdentityError::FieldTooLong`] when any field lies outside the length-prefixed v1 identity recipe.
+pub fn licensed(exchange: &Exchange) -> Result<Vec<(String, String)>, IdentityError> {
     let mut rules: Vec<&str> = UNPARSED.to_vec();
     if exchange.seq > 0 {
         rules.extend(PRECEDED);
@@ -103,13 +119,15 @@ pub fn licensed(exchange: &Exchange) -> Vec<(String, String)> {
     }
     rules
         .into_iter()
-        .map(|rule| (identity(exchange, rule), rule.to_owned()))
+        .map(|rule| identity(exchange, rule).map(|id| (id, rule.to_owned())))
         .collect()
 }
 
 /// The identity of one question about one exchange, minted from those alone.
-#[must_use]
-pub fn identity(exchange: &Exchange, rule: &str) -> String {
+///
+/// # Errors
+/// Returns [`IdentityError::FieldTooLong`] when any field lies outside the length-prefixed v1 identity recipe.
+pub fn identity(exchange: &Exchange, rule: &str) -> Result<String, IdentityError> {
     let spoken = if exchange.wire == "http" {
         format!(
             "http {} {} {}",
@@ -121,18 +139,27 @@ pub fn identity(exchange: &Exchange, rule: &str) -> String {
         "raw".to_owned()
     };
     let mut hasher = Sha256::new();
-    for part in [
-        ID_DOMAIN,
-        &exchange.capability,
-        &exchange.seq.to_string(),
-        rule,
-        &spoken,
+    let sequence = exchange.seq.to_string();
+    for (field, part) in [
+        ("domain", ID_DOMAIN),
+        ("capability", exchange.capability.as_str()),
+        ("sequence", sequence.as_str()),
+        ("rule", rule),
+        ("spoken", spoken.as_str()),
     ] {
         let bytes = part.as_bytes();
-        hasher.update(u32::try_from(bytes.len()).unwrap_or(u32::MAX).to_be_bytes());
+        let length = field_length(field, bytes.len())?;
+        hasher.update(length.to_be_bytes());
         hasher.update(bytes);
     }
-    hex::encode(hasher.finalize())
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn field_length(field: &'static str, bytes: usize) -> Result<u32, IdentityError> {
+    match u32::try_from(bytes) {
+        Ok(length) => Ok(length),
+        Err(_outside_wire_recipe) => Err(IdentityError::FieldTooLong { field, bytes }),
+    }
 }
 
 /// One exchange, as the recording writes it.
@@ -143,7 +170,28 @@ fn exchange(record: &Value) -> Exchange {
         wire: text(record, "wire").unwrap_or_default(),
         method: text(record, "method"),
         path: text(record, "path"),
-        status: number(record, "status").and_then(|one| u16::try_from(one).ok()),
+        status: number(record, "status").and_then(|one| match u16::try_from(one) {
+            Ok(status) => Some(status),
+            Err(_) => None,
+        }),
+    }
+}
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod tests {
+
+    use super::{IdentityError, field_length};
+
+    #[test]
+    fn an_identity_field_outside_the_wire_recipe_is_a_typed_refusal() {
+        let bytes = usize::try_from(u64::from(u32::MAX) + 1).expect("a 64-bit usize");
+        assert_eq!(
+            field_length("capability", bytes),
+            Err(IdentityError::FieldTooLong {
+                field: "capability",
+                bytes,
+            })
+        );
     }
 }
 

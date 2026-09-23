@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! `.rust-mutants.toml`: optional, strict, and defaulted. What the file cannot say is as much a contract as what it can.
+//! `.rust-mutants.toml`: optional, strict, and defaulted.
+//! What the file cannot say is as much a contract as what it can.
 
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::create_dir,
+    clippy::panic,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -504,7 +506,7 @@ fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is()
          been told about a tree it did not name"
     );
     assert_eq!(
-        named(Some(&inside.to_string_lossy())),
+        named(Some(njutest_devkit::paths::utf8(&inside))),
         inside,
         "while an absolute root is the tree it names, wherever the caller is"
     );
@@ -513,4 +515,87 @@ fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is()
         Path::new(here.path()).join("."),
         "a dot is the directory the command was told it is in"
     );
+}
+
+/// A scope for `list` with nothing on it, which every test below narrows.
+fn listing() -> rust_mutants_cli::cli::Scope {
+    use rust_mutants_cli::cli;
+    let parsed = cli::parse(
+        ["rust-mutants", "list"]
+            .into_iter()
+            .map(std::ffi::OsString::from),
+    )
+    .expect("`list` with nothing else on it parses");
+    match parsed.command {
+        cli::Command::List { scope, .. } => scope,
+        other => panic!("`list` parses as List, not {other:?}"),
+    }
+}
+
+/// An environment rooted at `root`, asking the process for nothing.
+fn nowhere(root: &Path) -> rust_mutants_cli::Environment {
+    rust_mutants_cli::Environment {
+        vars: Vec::new(),
+        temp_directory: std::path::PathBuf::from("/tmp"),
+        program: std::path::PathBuf::from("this test never runs it"),
+        cache_directory: std::path::PathBuf::from("/tmp/cache"),
+        working_directory: root.to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
+}
+
+#[test]
+fn a_list_a_command_gives_replaces_the_files_list_rather_than_adding_to_it() {
+    use rust_mutants_cli::settings::Settings;
+
+    let root = tempfile::tempdir().expect("a directory");
+    std::fs::write(
+        root.path().join(FILE_NAME),
+        "version = 1\n\
+         [mutation]\n\
+         operators = [\"add-to-sub\"]\n\
+         [project]\n\
+         include = [\"from-the-file\"]\n\
+         exclude = [\"from-the-file\"]\n\
+         packages = [\"from-the-file\"]\n\
+         [snapshot]\n\
+         omit = [\"from-the-file\"]\n\
+         [execution]\n\
+         skip_targets = [\"from/the/file\"]\n",
+    )
+    .expect("write");
+    let environment = nowhere(root.path());
+    let mut scope = listing();
+    scope.operators = vec!["int-increment".to_owned()];
+    scope.include = vec!["from-the-command".to_owned()];
+    scope.exclude = vec!["from-the-command".to_owned()];
+    scope.packages = vec!["from-the-command".to_owned()];
+    scope.omit = vec!["from-the-command".to_owned()];
+    scope.skip_targets = vec!["from/the/command".to_owned()];
+
+    let settings = Settings::resolve(&scope, &environment).expect("a scope with nothing wrong");
+    let given: Vec<(&str, &Vec<String>)> = vec![
+        ("mutation.operators", &settings.config.mutation.operators),
+        ("project.include", &settings.config.project.include),
+        ("project.exclude", &settings.config.project.exclude),
+        ("project.packages", &settings.config.project.packages),
+        ("snapshot.omit", &settings.config.snapshot.omit),
+        (
+            "execution.skip_targets",
+            &settings.config.execution.skip_targets,
+        ),
+    ];
+    for (key, resolved) in given {
+        assert!(
+            !resolved
+                .iter()
+                .any(|value| value.contains("from-the-file") || value.contains("from/the/file")),
+            "{key} kept the file's entry beside the command's: `resolve` documents that a \
+             list given on the command line replaces the file's list, and a reader who \
+             narrowed a run on the command line would be measuring the union: {resolved:?}"
+        );
+        assert_eq!(resolved.len(), 1, "{key}: {resolved:?}");
+    }
 }

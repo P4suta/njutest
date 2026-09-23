@@ -11,12 +11,12 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn run(fixture: &Fixture, extra: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root());
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(["run"])
-            .chain(["--root", root.as_str()])
+            .chain(["--root", root])
             .chain(["--tier", "all"])
             .chain(["--offline", "--locked", "--no-coverage", "--jobs", "1"])
             .chain(extra.iter().copied())
@@ -32,7 +32,7 @@ fn run(fixture: &Fixture, extra: &[&str]) -> Output {
 }
 
 fn said(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 /// The outcome of every mutant the lines named.
@@ -41,14 +41,10 @@ fn judged(text: &str) -> Vec<(String, String)> {
         .filter_map(|line| line.strip_prefix('['))
         .filter_map(|line| line.split_once("] "))
         .filter_map(|(_, rest)| rest.split_once(' '))
-        .map(|(id, rest)| {
-            (
-                id.to_owned(),
-                rest.split_whitespace()
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
+        .filter_map(|(id, rest)| {
+            rest.split_whitespace()
+                .next()
+                .map(|outcome| (id.to_owned(), outcome.to_owned()))
         })
         .collect()
 }
@@ -100,7 +96,7 @@ fn a_family_a_file_and_an_identity_each_narrow_the_same_way() {
     let bad = run(&fixture, &["--file", "src/lib.rs:nine"]);
     assert_eq!(bad.status.code(), Some(2), "{bad:?}");
     assert!(
-        String::from_utf8_lossy(&bad.stderr).contains("--file"),
+        njutest_devkit::process::strict_utf8(&bad.stderr).contains("--file"),
         "a value a flag cannot take names the flag: {bad:?}"
     );
 }
@@ -256,7 +252,7 @@ fn a_file_the_workspace_does_not_hold_is_refused_rather_than_measured_as_empty()
          was missed, which is the one answer a person cannot tell from a clean one: {}",
         said(&narrowed)
     );
-    let refusal = String::from_utf8_lossy(&narrowed.stderr).into_owned();
+    let refusal = njutest_devkit::process::strict_utf8(&narrowed.stderr);
     assert!(
         refusal.contains("src/nosuch.rs") && refusal.contains("--file"),
         "and the refusal names the path and the flag: {refusal}"
@@ -267,7 +263,7 @@ fn a_file_the_workspace_does_not_hold_is_refused_rather_than_measured_as_empty()
         held.status.code(),
         Some(0),
         "while a file the workspace holds is measured: {}",
-        String::from_utf8_lossy(&held.stderr)
+        njutest_devkit::process::strict_utf8(&held.stderr)
     );
 
     let lines = run(&fixture, &["--file", "src/nosuch.rs:1-3", "--dry-run"]);
@@ -296,7 +292,7 @@ fn a_file_the_walk_found_nothing_in_is_still_a_file_it_read() {
         Some(0),
         "a file that is there and yields no candidate is not a mistake: the walk read it, \
          and `no candidate here` is a true answer about it: {}",
-        String::from_utf8_lossy(&narrowed.stderr)
+        njutest_devkit::process::strict_utf8(&narrowed.stderr)
     );
 }
 
@@ -319,7 +315,7 @@ fn a_rule_or_family_this_release_does_not_know_is_refused() {
              pass over: {}",
             said(&refused)
         );
-        let refusal = String::from_utf8_lossy(&refused.stderr).into_owned();
+        let refusal = njutest_devkit::process::strict_utf8(&refused.stderr);
         assert!(
             refusal.contains(value) && refusal.contains(flag) && refusal.contains("rules"),
             "and the refusal names the flag, the value, and where the names are: {refusal}"
@@ -331,14 +327,14 @@ fn a_rule_or_family_this_release_does_not_know_is_refused() {
         held.status.code(),
         Some(0),
         "while a rule this release knows narrows the run: {}",
-        String::from_utf8_lossy(&held.stderr)
+        njutest_devkit::process::strict_utf8(&held.stderr)
     );
     let by_family = run(&fixture, &["--family", "comparison", "--dry-run"]);
     assert_eq!(
         by_family.status.code(),
         Some(0),
         "and so does a family: {}",
-        String::from_utf8_lossy(&by_family.stderr)
+        njutest_devkit::process::strict_utf8(&by_family.stderr)
     );
 }
 
@@ -355,7 +351,7 @@ fn an_identity_that_names_no_mutation_of_the_catalog_is_refused() {
          cannot tell from the one they wanted: {}",
         said(&refused)
     );
-    let refusal = String::from_utf8_lossy(&refused.stderr).into_owned();
+    let refusal = njutest_devkit::process::strict_utf8(&refused.stderr);
     assert!(
         refusal.contains("ffffffffffffffffffff") && refusal.contains("--id"),
         "and the refusal names the flag and the value: {refusal}"
@@ -373,7 +369,7 @@ fn an_identity_that_names_no_mutation_of_the_catalog_is_refused() {
         narrowed.status.code(),
         Some(0),
         "while an identity the catalog holds narrows the run: {}",
-        String::from_utf8_lossy(&narrowed.stderr)
+        njutest_devkit::process::strict_utf8(&narrowed.stderr)
     );
 }
 
@@ -390,7 +386,7 @@ fn patterns_that_leave_no_file_to_read_are_refused() {
          like for as long as nobody reads the file count: {}",
         said(&refused)
     );
-    let refusal = String::from_utf8_lossy(&refused.stderr).into_owned();
+    let refusal = njutest_devkit::process::strict_utf8(&refused.stderr);
     assert!(
         refusal.contains("src/nosuch/**"),
         "and the refusal says which patterns left nothing: {refusal}"
@@ -401,13 +397,13 @@ fn patterns_that_leave_no_file_to_read_are_refused() {
         kept.status.code(),
         Some(0),
         "while patterns that leave a file are the narrowing a person asked for: {}",
-        String::from_utf8_lossy(&kept.stderr)
+        njutest_devkit::process::strict_utf8(&kept.stderr)
     );
     let excluded = run(&fixture, &["--exclude", "tests/**", "--dry-run"]);
     assert_eq!(
         excluded.status.code(),
         Some(0),
         "and so is one that removes some files and leaves the rest: {}",
-        String::from_utf8_lossy(&excluded.stderr)
+        njutest_devkit::process::strict_utf8(&excluded.stderr)
     );
 }

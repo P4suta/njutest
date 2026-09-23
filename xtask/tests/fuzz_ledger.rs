@@ -11,6 +11,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::result::{OptionState, option_state};
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -20,6 +22,31 @@ fn root() -> PathBuf {
 fn read(relative: &str) -> String {
     std::fs::read_to_string(root().join(relative))
         .unwrap_or_else(|error| panic!("{relative}: {error}"))
+}
+
+fn directory_entries(directory: &Path) -> Vec<std::fs::DirEntry> {
+    std::fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+        .map(|entry| {
+            entry.unwrap_or_else(|error| panic!("entry under {}: {error}", directory.display()))
+        })
+        .collect()
+}
+
+fn file_type(entry: &std::fs::DirEntry) -> std::fs::FileType {
+    entry
+        .file_type()
+        .unwrap_or_else(|error| panic!("{}: {error}", entry.path().display()))
+}
+
+fn file_name(entry: &std::fs::DirEntry) -> String {
+    match entry.file_name().into_string() {
+        Ok(name) => name,
+        Err(name) => panic!(
+            "a repository file name is not UTF-8; encoded bytes: {:02x?}",
+            name.as_os_str().as_encoded_bytes()
+        ),
+    }
 }
 
 /// Every target the fuzz crate declares, and whether its stanza keeps it out of `cargo bench`.
@@ -44,16 +71,9 @@ fn declared() -> Vec<(String, bool)> {
 fn every_fuzz_target_is_a_source_file_a_readme_row_and_a_workflow_matrix_entry() {
     let declared = declared();
     let names: BTreeSet<&str> = declared.iter().map(|(name, _)| name.as_str()).collect();
-    let sources: BTreeSet<String> = std::fs::read_dir(root().join("fuzz/fuzz_targets"))
-        .expect("the fuzz targets")
-        .flatten()
-        .filter_map(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .strip_suffix(".rs")
-                .map(str::to_owned)
-        })
+    let sources: BTreeSet<String> = directory_entries(&root().join("fuzz/fuzz_targets"))
+        .into_iter()
+        .filter_map(|entry| file_name(&entry).strip_suffix(".rs").map(str::to_owned))
         .collect();
     let orphans: Vec<&String> = sources
         .iter()
@@ -102,8 +122,15 @@ fn the_readme_says_the_number_of_runs_the_smoke_task_actually_does() {
     let runs = mise
         .split("-runs=")
         .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("the smoke task names a number of runs");
+        .and_then(|rest| rest.split_whitespace().next());
+    assert_eq!(
+        option_state(runs.as_ref()),
+        OptionState::Present,
+        "the smoke task names a number of runs"
+    );
+    let Some(runs) = runs else {
+        return;
+    };
     assert!(
         readme.contains(&format!("{runs} runs")),
         "fuzz/README.md says something other than {runs} runs, which is what the task does"
@@ -114,11 +141,10 @@ fn the_readme_says_the_number_of_runs_the_smoke_task_actually_does() {
 fn every_seed_corpus_belongs_to_a_target_that_still_exists() {
     let named: Vec<String> = declared().into_iter().map(|(name, _bench)| name).collect();
     let seeds = root().join("fuzz/seeds");
-    let mut seeded: Vec<String> = std::fs::read_dir(&seeds)
-        .expect("the seed corpora")
-        .flatten()
-        .filter(|entry| entry.path().is_dir())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+    let mut seeded: Vec<String> = directory_entries(&seeds)
+        .into_iter()
+        .filter(|entry| file_type(entry).is_dir())
+        .map(|entry| file_name(&entry))
         .collect();
     seeded.sort();
     assert!(
@@ -134,10 +160,7 @@ fn every_seed_corpus_belongs_to_a_target_that_still_exists() {
          will ever read them: {orphaned:?}"
     );
     for name in &seeded {
-        let held = std::fs::read_dir(seeds.join(name))
-            .expect("one seed corpus")
-            .flatten()
-            .count();
+        let held = directory_entries(&seeds.join(name)).len();
         assert!(
             held > 0,
             "and {name} has a seed directory with nothing in it, which is the empty \

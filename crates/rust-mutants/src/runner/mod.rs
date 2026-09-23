@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Starts one child process, supervises its whole process tree, and returns what happened.
+//! Starts one child process, supervises the platform's declared process set, and returns what happened.
 
 pub mod output;
 
@@ -16,38 +16,62 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::thread;
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use output::TailBuffer;
+use output::{OutputError, TailBuffer};
 
 pub use output::{DEFAULT_OUTPUT_LIMIT, HeadBuffer, MIN_OUTPUT_LIMIT, OUTPUT_TRUNCATED_PREFIX};
 
-/// [`RunResult::exit_code`] when there is no exit status to report.
+/// The conventional stand-in used only by legacy report projections when there is no exit status to report.
 pub const EXIT_CODE_UNAVAILABLE: i32 = -1;
 
 /// How much stdout a short probe may retain: version banners and one-line paths are bounded well below this.
 pub const PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
 
-/// How long a POSIX process group is given to shut down after SIGTERM before it is sent SIGKILL. Windows has no equivalent phase.
+/// The containment guarantee the platform supervisor can actually provide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum SupervisionBoundary {
+    /// POSIX process-group inheritance: members are forcefully signalled unless they deliberately leave the group with `setsid` or `setpgid`; the kernel need not finish an uninterruptible member before the runner returns.
+    InheritedProcessGroup,
+    /// An operating-system container that descendants cannot leave on their own.
+    ContainedTree,
+}
+
+/// What the non-reaping leader observation established before a forceful process-set signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaderObservation {
+    /// The leader may still execute.
+    Running,
+    /// The leader has exited but remains waitable, pinning its numeric process identity.
+    ExitedWaitable,
+}
+
+/// How long a POSIX process group is given to shut down after SIGTERM before it is sent SIGKILL.
+/// Windows has no equivalent phase.
 pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
 /// How long [`run`] waits for the output pipe to reach EOF after the child itself has exited.
 pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// A cooperative cancellation flag shared between the caller and a run.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Cancel(Arc<AtomicBool>);
 
 impl Cancel {
     /// A flag that is not yet cancelled.
     #[must_use]
+    #[expect(
+        clippy::new_without_default,
+        reason = "an execution-control state must be constructed explicitly, never by a semantic Default"
+    )]
     pub fn new() -> Self {
-        Self::default()
+        Self(Arc::new(AtomicBool::new(false)))
     }
 
-    /// Requests cancellation. Idempotent.
+    /// Requests cancellation.
+    /// Idempotent.
     pub fn cancel(&self) {
         self.0.store(true, Ordering::SeqCst);
     }
@@ -58,7 +82,8 @@ impl Cancel {
         self.0.load(Ordering::SeqCst)
     }
 
-    /// The flag itself, so a composition root can raise it from a signal handler. This crate never installs one: a signal is the process's business, not a library's.
+    /// The flag itself, so a composition root can raise it from a signal handler.
+    /// This crate never installs one: a signal is the process's business, not a library's.
     #[must_use]
     pub fn flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.0)
@@ -67,14 +92,11 @@ impl Cancel {
 
 /// How long a child may run before this process stops it.
 ///
-/// A required argument rather than a field with a default, because a wait
-/// nobody bounded is a wait that can be forever: five commands here asked a
-/// tool for its version with no bound at all, and one of them held a Windows
-/// runner for forty minutes until the job's own timeout killed it. There is no
-/// value of this that can be reached by forgetting.
+/// A required argument rather than a field with a default, because a wait nobody bounded is a wait that can be forever: five commands here asked a tool for its version with no bound at all, and one of them held a Windows runner for forty minutes until the job's own timeout killed it.
+/// There is no value of this that can be reached by forgetting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bound {
-    /// Stopped after this long, and reported as [`RunResult::timed_out`].
+    /// Stopped after this long, and reported as [`Termination::TimedOut`].
     After(Duration),
     /// Never stopped by this process, which is a claim that something else ends it.
     Unbounded,
@@ -82,8 +104,7 @@ pub enum Bound {
 
 /// How long a tool asked a question it already knows the answer to may take.
 ///
-/// A version banner, a path the compiler prints, a line from git: none of them
-/// does work, so a minute is already an answer of its own.
+/// A version banner, a path the compiler prints, a line from git: none of them does work, so a minute is already an answer of its own.
 pub const PROBE: Duration = Duration::from_secs(60);
 
 impl Bound {
@@ -98,21 +119,33 @@ impl Bound {
 }
 
 /// One process to run.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Spec {
-    /// The argument vector, executable first. Each element becomes exactly one argument to the child. A bare program name is resolved through `PATH`; anything with a separator is used as given.
+    /// The argument vector, executable first.
+    /// Each element becomes exactly one argument to the child.
+    /// A bare program name is resolved through `PATH`; anything with a separator is used as given.
     pub argv: Vec<OsString>,
-    /// The child's working directory. `None` means this process's directory.
+    /// The child's working directory.
+    /// `None` means this process's directory.
     pub dir: Option<PathBuf>,
-    /// The child's complete environment. `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
+    /// The child's complete environment.
+    /// `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
     pub env: Option<Vec<(OsString, OsString)>>,
-    /// Bounds the child's wall-clock run time. `None` means no timeout.
+    /// Bounds the child's wall-clock run time.
+    /// `None` means no timeout.
     pub timeout: Option<Duration>,
-    /// Caps the retained combined output in bytes. `None` selects [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised to it so the truncation notice still fits inside the budget.
+    /// Caps the retained combined output in bytes.
+    /// `None` selects [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised to it so the truncation notice still fits inside the budget.
     pub output_limit: Option<usize>,
-    /// Captures stdout on its own, head-capped at this many bytes, for a child that writes structured data (JSON lines) to stdout and chatter to stderr — `cargo metadata`, `cargo check --message-format=json`. `None` merges stdout into [`RunResult::output`] with stderr.
+    /// Captures stdout on its own, head-capped at this many bytes, for a child that writes structured data (JSON lines) to stdout and chatter to stderr — `cargo metadata`, `cargo check --message-format=json`.
+    /// `None` merges stdout into [`RunResult::output`] with stderr.
     pub structured_stdout: Option<usize>,
+    /// A private side-channel file whose appearance asks the supervisor to stop the declared process set.
+    /// The execution layer validates its contents before drawing any conclusion.
+    pub(crate) stop_file: Option<PathBuf>,
+    /// Test-only terminal ownership fault selected explicitly by the composition root.
+    reaping: Reaping,
 }
 
 impl Spec {
@@ -125,18 +158,37 @@ impl Spec {
     {
         Self {
             argv: argv.into_iter().map(Into::into).collect(),
+            dir: None,
+            env: None,
             timeout: bound.timeout(),
-            ..Self::default()
+            output_limit: None,
+            structured_stdout: None,
+            stop_file: None,
+            reaping: Reaping::Normal,
         }
     }
+
+    /// Makes this test process exercise the bounded terminal ownership failure.
+    #[cfg(any(test, feature = "testkit"))]
+    pub const fn simulate_unreapable_child(&mut self) {
+        self.reaping = Reaping::SimulatedUnreapable;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Reaping {
+    Normal,
+    #[cfg(any(test, feature = "testkit"))]
+    SimulatedUnreapable,
 }
 
 /// A failure to start or supervise a process — never a process that ran and failed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RunnerError {
-    /// The process tree could not be placed under supervision. Always fatal to the run: the engine does not execute a test binary it cannot guarantee it can kill.
-    #[error("could not supervise the child process tree: {message}")]
+    /// The platform's declared process set could not be placed under supervision.
+    /// Always fatal to the run.
+    #[error("could not supervise the child process set: {message}")]
     SupervisionUnavailable {
         /// What failed.
         message: String,
@@ -145,10 +197,10 @@ pub enum RunnerError {
         source: Option<io::Error>,
     },
     /// The child could not be started at all.
-    #[error("could not start {program}: {source}")]
+    #[error("could not start {program:?}: {source}")]
     ProcessStartFailed {
         /// The program that was asked for.
-        program: String,
+        program: OsString,
         /// The failure.
         #[source]
         source: io::Error,
@@ -166,35 +218,337 @@ pub enum RunnerError {
         #[source]
         source: io::Error,
     },
+    /// A child output pipe could not be read exactly.
+    #[error("could not read the child process's output: {source}")]
+    OutputReadFailed {
+        /// The pipe read failure.
+        #[source]
+        source: io::Error,
+    },
+    /// A bounded child-output buffer could not preserve its invariants.
+    #[error("could not capture the child process's output: {source}")]
+    OutputCaptureFailed {
+        /// The bounded-buffer failure.
+        #[source]
+        source: OutputError,
+    },
+    /// A child output reader did not close after the supervised process ended.
+    #[error("the child process's {stream} pipe did not close within the drain bound")]
+    OutputDrainTimedOut {
+        /// Which capture did not reach EOF.
+        stream: &'static str,
+    },
+    /// A child output reader ended without reporting whether the pipe was read exactly.
+    #[error("the child process's {stream} reader ended without a result")]
+    OutputReaderDisconnected {
+        /// Which capture lost its reader.
+        stream: &'static str,
+    },
+    /// A child output reader thread could not be created.
+    #[error("could not start the child process's {stream} reader: {source}")]
+    OutputReaderStartFailed {
+        /// Which capture could not start.
+        stream: &'static str,
+        /// The operating system's reason.
+        #[source]
+        source: io::Error,
+    },
+    /// A child output reader panicked before its owner joined it.
+    #[error("the child process's {stream} reader panicked")]
+    OutputReaderPanicked {
+        /// Which capture panicked.
+        stream: &'static str,
+    },
+    /// A child output reader owner no longer held the join handle it must consume.
+    #[error("the child process's {stream} reader lost its owned join handle")]
+    OutputReaderOwnershipLost {
+        /// Which capture lost ownership.
+        stream: &'static str,
+    },
+    /// A child output pipe could not be configured for bounded, cancellable reads.
+    #[error("could not configure the child process's {stream} pipe: {source}")]
+    OutputReaderConfigurationFailed {
+        /// Which capture could not be configured.
+        stream: &'static str,
+        /// The platform failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The configured wall-clock duration cannot be represented as a deadline.
+    #[error("the child process timeout {timeout:?} cannot be represented as a deadline")]
+    DeadlineOverflow {
+        /// The configured finite timeout.
+        timeout: Duration,
+    },
+    /// The supervisor could not send a termination request to the supervised process set.
+    #[error("could not perform {phase} termination of the supervised process set: {source}")]
+    ProcessControlFailed {
+        /// Which bounded termination phase failed.
+        phase: TerminationPhase,
+        /// The platform failure.
+        #[source]
+        source: io::Error,
+    },
+    /// Both the cooperative and forceful process-set controls failed.
+    /// Both failures are retained because either can explain members remaining in the declared process set.
+    #[error(
+        "could not terminate the supervised process set: gentle control failed: {gentle}; forceful control failed: {forceful}"
+    )]
+    ProcessControlSequenceFailed {
+        /// The cooperative-control failure.
+        gentle: io::Error,
+        /// The forceful-control failure.
+        forceful: io::Error,
+    },
+    /// The platform supervisor could not release its operating-system resource after the process was reaped or explicitly abandoned.
+    #[error("could not release the child process supervisor: {source}")]
+    SupervisorReleaseFailed {
+        /// The platform failure.
+        #[source]
+        source: io::Error,
+    },
+}
+
+/// Which bounded process-set termination phase an operating-system failure interrupted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum TerminationPhase {
+    /// The cooperative termination request before the grace period.
+    Gentle,
+    /// The forceful termination request after the grace period.
+    Forceful,
+}
+
+impl std::fmt::Display for TerminationPhase {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Gentle => "gentle",
+            Self::Forceful => "forceful",
+        })
+    }
+}
+
+/// Why an execution-specific monitor could not establish whether its stop request existed.
+#[derive(Debug, thiserror::Error)]
+pub enum MonitorFailure {
+    /// The side-channel path existed but was not a regular file.
+    #[error("the execution monitor path {path} is not a regular file")]
+    InvalidType {
+        /// The path inspected.
+        path: PathBuf,
+    },
+    /// The side-channel path could not be inspected.
+    #[error("could not inspect execution monitor path {path}: {source}")]
+    Inspect {
+        /// The path inspected.
+        path: PathBuf,
+        /// The operating system's reason.
+        #[source]
+        source: io::Error,
+    },
+}
+
+/// How a process that exited by itself did so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+pub enum ProcessExit {
+    /// The process returned this status code.
+    Code(i32),
+    /// The process was ended by this signal.
+    /// Only POSIX platforms produce it.
+    Signal(i32),
+    /// The operating system returned a status that exposed neither a code nor a signal.
+    Unknown,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum ProcessExitWire {
+    Code { value: i32 },
+    Signal { value: i32 },
+    Unknown {},
+}
+
+impl<'de> serde::Deserialize<'de> for ProcessExit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(
+            match <ProcessExitWire as serde::Deserialize>::deserialize(deserializer)? {
+                ProcessExitWire::Code { value } => Self::Code(value),
+                ProcessExitWire::Signal { value } => Self::Signal(value),
+                ProcessExitWire::Unknown {} => Self::Unknown,
+            },
+        )
+    }
+}
+
+impl ProcessExit {
+    /// The process's own status code, absent for a signal or an unclassified status.
+    #[must_use]
+    pub const fn code(self) -> Option<i32> {
+        match self {
+            Self::Code(code) => Some(code),
+            Self::Signal(_) | Self::Unknown => None,
+        }
+    }
+
+    /// The terminating signal, on a platform that has one.
+    #[must_use]
+    pub const fn signal(self) -> Option<i32> {
+        match self {
+            Self::Signal(signal) => Some(signal),
+            Self::Code(_) | Self::Unknown => None,
+        }
+    }
+
+    /// The shell-compatible status used at legacy presentation boundaries.
+    #[must_use]
+    pub const fn conventional_code(self) -> Option<i32> {
+        match self {
+            Self::Code(code) => Some(code),
+            Self::Signal(signal) => Some(128i32.saturating_add(signal)),
+            Self::Unknown => None,
+        }
+    }
+}
+
+/// The one way a supervised process ended.
+#[derive(Debug)]
+pub enum Termination {
+    /// No program ran: the specification, launch, or initial supervision failed.
+    NotStarted {
+        /// Why nothing ran.
+        error: RunnerError,
+    },
+    /// The process ended on its own.
+    Exited(ProcessExit),
+    /// The configured wall-clock bound expired and the supervised process set was ended.
+    TimedOut,
+    /// An execution-specific monitor observed its stop request and the supervised process set was ended.
+    StoppedByMonitor,
+    /// The execution-specific monitor could not establish whether a valid stop request existed.
+    MonitorFailed {
+        /// Why the monitor could not be trusted.
+        failure: MonitorFailure,
+    },
+    /// The caller asked the run to stop.
+    Cancelled {
+        /// Whether a child had been started before cancellation was observed.
+        started: bool,
+    },
+    /// A child was started, but the operating system did not yield its final status.
+    WaitFailed {
+        /// Why its status could not be collected.
+        error: RunnerError,
+    },
+}
+
+/// A borrowed, closed view of the two failure domains a supervised run can expose.
+#[derive(Debug, Clone, Copy)]
+pub enum RunFailure<'a> {
+    /// Launch, supervision, or exit-status collection failed.
+    Runner(&'a RunnerError),
+    /// The execution-specific monitor could not be inspected safely.
+    Monitor(&'a MonitorFailure),
+}
+
+impl std::fmt::Display for RunFailure<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Runner(error) => std::fmt::Display::fmt(error, formatter),
+            Self::Monitor(failure) => std::fmt::Display::fmt(failure, formatter),
+        }
+    }
+}
+
+impl Termination {
+    /// The process's conventional status code, where a process supplied one.
+    #[must_use]
+    pub const fn exit_code(&self) -> Option<i32> {
+        match self {
+            Self::Exited(exit) => exit.conventional_code(),
+            Self::NotStarted { .. }
+            | Self::TimedOut
+            | Self::StoppedByMonitor
+            | Self::Cancelled { .. }
+            | Self::WaitFailed { .. }
+            | Self::MonitorFailed { .. } => None,
+        }
+    }
+
+    /// The failure that prevented a trustworthy process result.
+    #[must_use]
+    pub const fn error(&self) -> Option<RunFailure<'_>> {
+        match self {
+            Self::NotStarted { error } | Self::WaitFailed { error } => {
+                Some(RunFailure::Runner(error))
+            }
+            Self::MonitorFailed { failure } => Some(RunFailure::Monitor(failure)),
+            Self::Exited(_) | Self::TimedOut | Self::StoppedByMonitor | Self::Cancelled { .. } => {
+                None
+            }
+        }
+    }
 }
 
 /// What one [`run`] produced.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct RunResult {
-    /// The child's exit status, or [`EXIT_CODE_UNAVAILABLE`]. On POSIX a death by signal is reported as 128 + N.
-    pub exit_code: i32,
-    /// Whether [`Spec::timeout`] expired and the tree was killed. The only field that distinguishes a timeout from a cancellation.
-    pub timed_out: bool,
+    /// The single reason the run ended.
+    pub termination: Termination,
     /// The wall-clock time the run took, supervision and killing included: the engine derives mutant timeouts from baseline durations, and a budget that excluded this overhead would be one the same work could exceed.
     pub duration: Duration,
-    /// Combined stdout and stderr in the order the child wrote them, capped at the effective output limit by keeping the tail. Stderr alone when [`Spec::structured_stdout`] is set.
+    /// Combined stdout and stderr in the order the child wrote them, capped at the effective output limit by keeping the tail.
+    /// Stderr alone when [`Spec::structured_stdout`] is set.
     pub output: Vec<u8>,
     /// The child's stdout when [`Spec::structured_stdout`] is set, head-capped at that many bytes; empty otherwise.
     pub stdout: Vec<u8>,
     /// Whether `stdout` was cut at the cap.
     pub stdout_truncated: bool,
-    /// Set only when the process could not be started or supervised.
-    pub error: Option<RunnerError>,
-    /// The signal the process died from, on the platforms that have them. A process that exited normally, and every process on Windows, has none.
-    pub signal: Option<i32>,
 }
 
 impl RunResult {
     /// Whether the process ran to completion with a zero exit status.
     #[must_use]
-    pub const fn ok(&self) -> bool {
-        self.error.is_none() && !self.timed_out && self.exit_code == 0
+    pub const fn succeeded(&self) -> bool {
+        matches!(self.termination, Termination::Exited(ProcessExit::Code(0)))
+    }
+
+    /// The process's conventional status code, or [`EXIT_CODE_UNAVAILABLE`] at a legacy presentation boundary.
+    #[must_use]
+    pub const fn conventional_exit_code(&self) -> i32 {
+        match self.termination.exit_code() {
+            Some(code) => code,
+            None => EXIT_CODE_UNAVAILABLE,
+        }
+    }
+
+    /// Whether the wall-clock bound ended the run.
+    #[must_use]
+    pub const fn timed_out(&self) -> bool {
+        matches!(self.termination, Termination::TimedOut)
+    }
+
+    /// The failure that prevented a trustworthy process result.
+    #[must_use]
+    pub const fn error(&self) -> Option<RunFailure<'_>> {
+        self.termination.error()
+    }
+
+    /// The terminating signal, on a platform that has one.
+    #[must_use]
+    pub const fn signal(&self) -> Option<i32> {
+        match self.termination {
+            Termination::Exited(exit) => exit.signal(),
+            Termination::NotStarted { .. }
+            | Termination::TimedOut
+            | Termination::StoppedByMonitor
+            | Termination::MonitorFailed { .. }
+            | Termination::Cancelled { .. }
+            | Termination::WaitFailed { .. } => None,
+        }
     }
 }
 
@@ -230,101 +584,253 @@ impl Watch for Watched<'_> {
     }
 
     fn exec(&self, spec: &Spec, result: &RunResult) {
-        self.trace.exec(crate::trace::ExecRecord::of(spec, result));
+        self.trace
+            .exec_result(crate::trace::ExecRecord::of(spec, result));
     }
 }
 
-/// Starts the process described by `spec`, supervises its whole process tree, and returns when it has finished, timed out, or been cancelled.
+/// Starts the process described by `spec`, supervises the platform's declared process set, and returns when it has finished, timed out, or been cancelled.
 #[must_use]
 pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
     let started = Instant::now();
-    let unavailable = |error: Option<RunnerError>, output: Vec<u8>| RunResult {
-        exit_code: EXIT_CODE_UNAVAILABLE,
-        timed_out: false,
-        duration: started.elapsed(),
-        output,
-        stdout: Vec::new(),
-        stdout_truncated: false,
-        error,
-        signal: None,
+    let program = match preflight(spec, cancel, started) {
+        Preflight::Ready(program) => program,
+        Preflight::Done(result) => return result,
     };
-    let Some(program) = spec.argv.first() else {
-        return unavailable(
-            Some(RunnerError::SpecInvalid {
-                message: "has no argument vector",
-            }),
-            Vec::new(),
-        );
+    let deadline = match deadline_of(started, spec.timeout) {
+        Ok(deadline) => deadline,
+        Err(error) => return not_started(started, error, Vec::new()),
     };
-    if program.to_string_lossy().trim().is_empty() {
-        return unavailable(
-            Some(RunnerError::SpecInvalid {
-                message: "has an empty executable name",
-            }),
-            Vec::new(),
-        );
+    let running = match start(spec, program) {
+        Ok(started) => started,
+        Err(Failed { error, output }) => return not_started(started, error, output),
+    };
+    let outcome = await_exit(
+        &running.supervisor,
+        &running.child,
+        Stops {
+            deadline,
+            cancel,
+            monitor: spec.stop_file.as_deref(),
+        },
+    );
+    complete(started, running, outcome)
+}
+
+fn deadline_of(
+    started: Instant,
+    timeout: Option<Duration>,
+) -> Result<Option<Instant>, RunnerError> {
+    match timeout {
+        Some(timeout) => started
+            .checked_add(timeout)
+            .map(Some)
+            .ok_or(RunnerError::DeadlineOverflow { timeout }),
+        None => Ok(None),
     }
-    if cancel.is_cancelled() {
-        return unavailable(None, Vec::new());
-    }
+}
+
+fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
     let Started {
         mut supervisor,
-        tail,
-        eof,
+        merged,
         head,
         mut child,
-    } = match start(spec, program) {
-        Ok(started) => started,
-        Err(Failed { error, output }) => return unavailable(Some(error), output),
-    };
-
-    let (exit_sender, exited) = mpsc::channel::<io::Result<ExitStatus>>();
-    let _wait_thread = thread::spawn(move || {
-        let _sent = exit_sender.send(child.wait());
-    });
-    let deadline = spec
-        .timeout
-        .map(|timeout| started.checked_add(timeout).unwrap_or(started));
-    let outcome = await_exit(&supervisor, &exited, deadline, cancel);
-    let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
-    let (stdout, stdout_truncated) = head.map_or((Vec::new(), false), |(head, eof)| {
-        let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
-        let (bytes, truncated, _total) = head.capture();
-        (bytes, truncated)
-    });
-    supervisor.release();
-    let output = tail.capture();
+    } = running;
+    force_signal_or_abort(&supervisor, LeaderObservation::ExitedWaitable);
+    let status = child.reap_observed();
+    let released = release_supervisor(&mut supervisor);
+    let merged_finish = merged.finish();
+    let structured_finish = head.map(JoinedReader::finish);
+    child.finish();
     let duration = started.elapsed();
-    let (exit_code, timed_out, error, signal) = match outcome {
-        Exit::Killed { timed_out } => (EXIT_CODE_UNAVAILABLE, timed_out, None, None),
-        Exit::Status(Ok(status)) => (sys::exit_code(status), false, None, sys::signal(status)),
-        Exit::Status(Err(source)) => (
-            EXIT_CODE_UNAVAILABLE,
-            false,
-            Some(RunnerError::ProcessWaitFailed { source }),
-            None,
-        ),
+    let process_termination = match outcome {
+        Exit::TimedOut => Termination::TimedOut,
+        Exit::StoppedByMonitor => Termination::StoppedByMonitor,
+        Exit::MonitorFailed(failure) => Termination::MonitorFailed { failure },
+        Exit::Cancelled => Termination::Cancelled { started: true },
+        Exit::Exited => Termination::Exited(sys::process_exit(status)),
+        Exit::WaitFailed(source) => Termination::WaitFailed {
+            error: RunnerError::ProcessWaitFailed { source },
+        },
+        Exit::SupervisionFailed(error) => Termination::WaitFailed { error },
     };
+    let mut capture_failure = match released {
+        Ok(()) => None,
+        Err(error) => Some(error),
+    };
+    let output = match finished_capture(merged_finish, &mut capture_failure) {
+        Some(output) => output,
+        None => Vec::new(),
+    };
+    let (stdout, stdout_truncated) = match structured_finish {
+        None => (Vec::new(), false),
+        Some(finished) => match finished_capture(finished, &mut capture_failure) {
+            Some((bytes, truncated, _total)) => (bytes, truncated),
+            None => (Vec::new(), false),
+        },
+    };
+    let termination = capture_failure.map_or(process_termination, |error| {
+        Termination::WaitFailed { error }
+    });
     RunResult {
-        exit_code,
-        timed_out,
+        termination,
         duration,
         output,
         stdout,
         stdout_truncated,
-        error,
-        signal,
+    }
+}
+
+fn finished_capture<Output>(
+    finished: Result<ReaderFinish<Output>, RunnerError>,
+    failure: &mut Option<RunnerError>,
+) -> Option<Output> {
+    let ReaderFinish { capture, drain } = match finished {
+        Ok(finished) => finished,
+        Err(error) => {
+            if failure.is_none() {
+                *failure = Some(error);
+            }
+            return None;
+        }
+    };
+    if let Err(error) = drain
+        && failure.is_none()
+    {
+        *failure = Some(error);
+    }
+    match capture {
+        Ok(capture) => Some(capture),
+        Err(error) => {
+            if failure.is_none() {
+                *failure = Some(error);
+            }
+            None
+        }
+    }
+}
+
+enum Preflight<'a> {
+    Ready(&'a OsString),
+    Done(RunResult),
+}
+
+fn preflight<'a>(spec: &'a Spec, cancel: &Cancel, started: Instant) -> Preflight<'a> {
+    let Some(program) = spec.argv.first() else {
+        return Preflight::Done(not_started(
+            started,
+            RunnerError::SpecInvalid {
+                message: "has no argument vector",
+            },
+            Vec::new(),
+        ));
+    };
+    if program
+        .as_encoded_bytes()
+        .iter()
+        .all(u8::is_ascii_whitespace)
+    {
+        return Preflight::Done(not_started(
+            started,
+            RunnerError::SpecInvalid {
+                message: "has an empty executable name",
+            },
+            Vec::new(),
+        ));
+    }
+    if cancel.is_cancelled() {
+        return Preflight::Done(RunResult {
+            termination: Termination::Cancelled { started: false },
+            duration: started.elapsed(),
+            output: Vec::new(),
+            stdout: Vec::new(),
+            stdout_truncated: false,
+        });
+    }
+    Preflight::Ready(program)
+}
+
+fn not_started(started: Instant, error: RunnerError, output: Vec<u8>) -> RunResult {
+    RunResult {
+        termination: Termination::NotStarted { error },
+        duration: started.elapsed(),
+        output,
+        stdout: Vec::new(),
+        stdout_truncated: false,
     }
 }
 
 /// What [`start`] hands to the wait half of [`run`].
 struct Started {
     supervisor: sys::Supervisor,
-    tail: Arc<TailBuffer>,
-    eof: mpsc::Receiver<()>,
-    /// The separate stdout capture and its EOF signal, when requested.
-    head: Option<(Arc<HeadBuffer>, mpsc::Receiver<()>)>,
+    merged: JoinedReader<Vec<u8>>,
+    /// The separate stdout capture, when requested.
+    head: Option<JoinedReader<(Vec<u8>, bool, u64)>>,
+    child: SupervisedChild,
+}
+
+type StructuredReader = Option<JoinedReader<(Vec<u8>, bool, u64)>>;
+
+struct StartingReaders {
+    merged: JoinedReader<Vec<u8>>,
+    head: StructuredReader,
+}
+
+/// A child process that cannot be detached by dropping its raw handle.
+#[derive(Debug)]
+struct SupervisedChild {
     child: Child,
+    reaping: Reaping,
+}
+
+impl SupervisedChild {
+    fn launch(command: &mut Command, reaping: Reaping) -> io::Result<Self> {
+        let child = command.spawn()?;
+        Ok(Self { child, reaping })
+    }
+
+    const fn handle(&self) -> &Child {
+        &self.child
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    fn exit_observed(&self) -> io::Result<bool> {
+        sys::exit_observed(&self.child)
+    }
+
+    fn reap_observed(&mut self) -> ExitStatus {
+        match self.try_wait() {
+            Ok(Some(status)) => status,
+            Ok(None) | Err(_) => terminal_process_ownership_failure(),
+        }
+    }
+
+    fn terminate_unadopted(&mut self) {
+        let kill = self.child.kill();
+        if !reap_or_abort(self, REAPING_GRACE) {
+            terminal_process_ownership_failure();
+        }
+        match kill {
+            Ok(()) | Err(_) => {}
+        }
+    }
+
+    fn finish(self) {
+        drop(self);
+    }
+}
+
+impl Drop for SupervisedChild {
+    fn drop(&mut self) {
+        match self.child.try_wait() {
+            Ok(Some(_status)) => {}
+            Ok(None) | Err(_) => terminal_process_ownership_failure(),
+        }
+    }
 }
 
 /// A start that failed, with whatever output was captured before it did.
@@ -333,7 +839,8 @@ struct Failed {
     output: Vec<u8>,
 }
 
-/// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption. On any failure the child, if any, is dead.
+/// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption.
+/// On any failure the child, if any, is dead.
 fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     let failed = |error: RunnerError| Failed {
         error,
@@ -341,14 +848,11 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     };
     let start_failed = |source: io::Error| {
         failed(RunnerError::ProcessStartFailed {
-            program: program.to_string_lossy().into_owned(),
+            program: program.clone(),
             source,
         })
     };
     let mut supervisor = sys::Supervisor::new().map_err(failed)?;
-    let tail = Arc::new(TailBuffer::new(
-        spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
-    ));
     let Wired {
         mut command,
         merged,
@@ -356,48 +860,114 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     } = match wire(spec, program) {
         Ok(wired) => wired,
         Err(source) => {
-            supervisor.release();
-            return Err(start_failed(source));
+            let primary = start_failed(source);
+            return match release_supervisor(&mut supervisor) {
+                Ok(()) => Err(primary),
+                Err(error) => Err(Failed {
+                    error,
+                    output: Vec::new(),
+                }),
+            };
         }
     };
     supervisor.configure(&mut command);
-    let mut child = match command.spawn() {
+    let readers = match launch_readers(
+        merged,
+        structured,
+        spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
+    ) {
+        Ok(readers) => readers,
+        Err(error) => {
+            drop(command);
+            return match release_supervisor(&mut supervisor) {
+                Ok(()) => Err(Failed {
+                    error,
+                    output: Vec::new(),
+                }),
+                Err(cleanup) => Err(Failed {
+                    error: cleanup,
+                    output: Vec::new(),
+                }),
+            };
+        }
+    };
+    let child = match SupervisedChild::launch(&mut command, spec.reaping) {
         Ok(child) => child,
         Err(source) => {
-            supervisor.release();
-            return Err(start_failed(source));
+            drop(command);
+            let readers_finished = finish_readers(readers);
+            let released = release_supervisor(&mut supervisor);
+            let output = readers_finished.map_err(|error| Failed {
+                error,
+                output: Vec::new(),
+            })?;
+            if let Err(error) = released {
+                return Err(Failed { error, output });
+            }
+            let mut failed = start_failed(source);
+            failed.output = output;
+            return Err(failed);
         }
     };
     drop(command);
-    let head = structured.map(|(limit, reader)| {
-        let head = Arc::new(HeadBuffer::new(limit));
-        let capture = Arc::clone(&head);
-        let eof = spawn_reader(reader, move |bytes| capture.write(bytes));
-        (head, eof)
-    });
-    let capture = Arc::clone(&tail);
-    let eof = spawn_reader(merged, move |bytes| capture.write(bytes));
+    adopt(supervisor, child, readers)
+}
 
-    if let Err(error) = supervisor.adopt(&child) {
-        let _killed = child.kill();
-        let _reaped = child.wait();
-        supervisor.release();
-        let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
-        if let Some((_, eof)) = &head {
-            let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
-        }
-        return Err(Failed {
+fn adopt(
+    mut supervisor: sys::Supervisor,
+    mut child: SupervisedChild,
+    readers: StartingReaders,
+) -> Result<Started, Failed> {
+    if let Err(error) = supervisor.adopt(child.handle()) {
+        child.terminate_unadopted();
+        let released = release_supervisor(&mut supervisor);
+        let output = finish_readers(readers).map_err(|error| Failed {
             error,
-            output: tail.capture(),
-        });
+            output: Vec::new(),
+        })?;
+        if let Err(error) = released {
+            return Err(Failed { error, output });
+        }
+        return Err(Failed { error, output });
     }
     Ok(Started {
         supervisor,
-        tail,
-        eof,
-        head,
+        merged: readers.merged,
+        head: readers.head,
         child,
     })
+}
+
+fn launch_readers(
+    merged: io::PipeReader,
+    structured: Option<(usize, io::PipeReader)>,
+    output_limit: usize,
+) -> Result<StartingReaders, RunnerError> {
+    let head = match structured {
+        Some((limit, reader)) => Some(JoinedReader::launch(
+            reader,
+            "structured stdout",
+            HeadCapture(HeadBuffer::new(limit)),
+        )?),
+        None => None,
+    };
+    let merged = JoinedReader::launch(
+        merged,
+        "combined stdout/stderr",
+        TailCapture(TailBuffer::new(output_limit)),
+    )?;
+    Ok(StartingReaders { merged, head })
+}
+
+fn finish_readers(readers: StartingReaders) -> Result<Vec<u8>, RunnerError> {
+    let merged = readers.merged.finish();
+    let structured = readers.head.map(JoinedReader::finish);
+    let merged = merged?;
+    if let Some(structured) = structured {
+        structured?.drain?;
+    }
+    merged.drain?;
+    merged.capture
 }
 
 /// The program to start, found on the search path the spec's own environment names.
@@ -420,7 +990,9 @@ struct Wired {
     structured: Option<(usize, io::PipeReader)>,
 }
 
-/// Builds the command and the pipes it writes to. No stdin: a test binary that reads from the terminal would hang. One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
+/// Builds the command and the pipes it writes to.
+/// No stdin: a test binary that reads from the terminal would hang.
+/// One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
 fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     let (merged, stderr) = io::pipe()?;
     let mut command = Command::new(resolved(spec, program)?);
@@ -449,82 +1021,428 @@ fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     })
 }
 
-/// Reads a pipe to EOF on its own thread, handing every chunk to `sink`, and signals EOF through the returned receiver.
-fn spawn_reader(
-    reader: io::PipeReader,
-    sink: impl Fn(&[u8]) + Send + 'static,
-) -> mpsc::Receiver<()> {
-    let (eof_sender, eof) = mpsc::channel::<()>();
-    let _reader_thread = thread::spawn(move || {
-        let mut reader = reader;
-        let mut buffer = [0u8; 8192];
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(read) => sink(buffer.get(..read).unwrap_or_default()),
+/// How often a cancellable, nonblocking pipe reader checks whether its owner has stopped waiting.
+const READER_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+#[derive(Debug, Clone, Copy)]
+enum ReaderInstruction {
+    Stop,
+}
+
+trait ReaderCapture: Send + 'static {
+    type Output: Send + 'static;
+
+    fn write(&mut self, bytes: &[u8]) -> Result<(), OutputError>;
+    fn finish(self) -> Result<Self::Output, OutputError>;
+}
+
+struct TailCapture(TailBuffer);
+
+impl ReaderCapture for TailCapture {
+    type Output = Vec<u8>;
+
+    fn write(&mut self, bytes: &[u8]) -> Result<(), OutputError> {
+        self.0.write(bytes)
+    }
+
+    fn finish(self) -> Result<Self::Output, OutputError> {
+        self.0.capture()
+    }
+}
+
+struct HeadCapture(HeadBuffer);
+
+impl ReaderCapture for HeadCapture {
+    type Output = (Vec<u8>, bool, u64);
+
+    fn write(&mut self, bytes: &[u8]) -> Result<(), OutputError> {
+        self.0.write(bytes)
+    }
+
+    fn finish(self) -> Result<Self::Output, OutputError> {
+        self.0.capture()
+    }
+}
+
+struct ReaderFinish<Output> {
+    capture: Result<Output, RunnerError>,
+    drain: Result<(), RunnerError>,
+}
+
+/// A pipe reader whose bounded owner always joins the one thread it creates.
+#[derive(Debug)]
+struct JoinedReader<Output: Send + 'static> {
+    stream: &'static str,
+    stop: SyncSender<ReaderInstruction>,
+    completed: mpsc::Receiver<ReaderFinish<Output>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl<Output: Send + 'static> JoinedReader<Output> {
+    fn launch<C: ReaderCapture<Output = Output>>(
+        mut reader: io::PipeReader,
+        stream: &'static str,
+        mut capture: C,
+    ) -> Result<Self, RunnerError> {
+        sys::configure_reader(&reader)
+            .map_err(|source| RunnerError::OutputReaderConfigurationFailed { stream, source })?;
+        let (stop, instructions) = mpsc::sync_channel::<ReaderInstruction>(1);
+        let (completion, completed) = mpsc::sync_channel::<ReaderFinish<Output>>(1);
+        let handle = thread::Builder::new()
+            .name(format!("rust-mutants-{stream}"))
+            .spawn(move || {
+                let mut buffer = [0u8; 8192];
+                let drain = loop {
+                    match instructions.try_recv() {
+                        Ok(ReaderInstruction::Stop) | Err(TryRecvError::Disconnected) => {
+                            break Ok(());
+                        }
+                        Err(TryRecvError::Empty) => {}
+                    }
+                    let outcome = reader.read(&mut buffer);
+                    match outcome {
+                        Ok(0) => match sys::stream_ended(&reader) {
+                            Ok(true) => break Ok(()),
+                            Ok(false) => thread::sleep(READER_POLL_INTERVAL),
+                            Err(source) => break Err(RunnerError::OutputReadFailed { source }),
+                        },
+                        Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
+                            thread::sleep(READER_POLL_INTERVAL);
+                        }
+                        Err(source) if source.kind() == io::ErrorKind::Interrupted => {}
+                        Err(source) => break Err(RunnerError::OutputReadFailed { source }),
+                        Ok(read) => {
+                            let Some(bytes) = buffer.get(..read) else {
+                                break Err(RunnerError::OutputCaptureFailed {
+                                    source: OutputError::CapacityInvariant,
+                                });
+                            };
+                            if let Err(source) = capture.write(bytes) {
+                                break Err(RunnerError::OutputCaptureFailed { source });
+                            }
+                        }
+                    }
+                };
+                let finished = ReaderFinish {
+                    capture: capture.finish().map_err(output_error),
+                    drain,
+                };
+                if completion.send(finished).is_err() {
+                    terminal_reader_ownership_failure();
+                }
+            })
+            .map_err(|source| RunnerError::OutputReaderStartFailed { stream, source })?;
+        Ok(Self {
+            stream,
+            stop,
+            completed,
+            handle: Some(handle),
+        })
+    }
+
+    fn request_stop(&self) {
+        match self.stop.try_send(ReaderInstruction::Stop) {
+            Ok(())
+            | Err(
+                TrySendError::Full(ReaderInstruction::Stop)
+                | TrySendError::Disconnected(ReaderInstruction::Stop),
+            ) => {}
+        }
+    }
+
+    fn finish(mut self) -> Result<ReaderFinish<Output>, RunnerError> {
+        let finished = match self.completed.recv_timeout(IO_DRAIN_GRACE) {
+            Ok(finished) => finished,
+            Err(RecvTimeoutError::Timeout) => {
+                self.request_stop();
+                let mut finished = match self.completed.recv_timeout(IO_DRAIN_GRACE) {
+                    Ok(finished) => finished,
+                    Err(RecvTimeoutError::Timeout) => terminal_reader_ownership_failure(),
+                    Err(RecvTimeoutError::Disconnected) => {
+                        self.join()?;
+                        return Err(RunnerError::OutputReaderDisconnected {
+                            stream: self.stream,
+                        });
+                    }
+                };
+                finished.drain = Err(RunnerError::OutputDrainTimedOut {
+                    stream: self.stream,
+                });
+                finished
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                self.join()?;
+                return Err(RunnerError::OutputReaderDisconnected {
+                    stream: self.stream,
+                });
+            }
+        };
+        self.join()?;
+        Ok(finished)
+    }
+
+    fn join(&mut self) -> Result<(), RunnerError> {
+        let handle = self
+            .handle
+            .take()
+            .ok_or(RunnerError::OutputReaderOwnershipLost {
+                stream: self.stream,
+            })?;
+        await_reader_exit_or_abort(&handle);
+        handle
+            .join()
+            .map_err(|_panic| RunnerError::OutputReaderPanicked {
+                stream: self.stream,
+            })
+    }
+}
+
+impl<Output: Send + 'static> Drop for JoinedReader<Output> {
+    fn drop(&mut self) {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        self.request_stop();
+        match self.completed.recv_timeout(IO_DRAIN_GRACE) {
+            Ok(finished) => drop(finished),
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                terminal_reader_ownership_failure();
             }
         }
-        let _sent = eof_sender.send(());
-    });
-    eof
+        await_reader_exit_or_abort(&handle);
+        if handle.join().is_err() {
+            terminal_reader_ownership_failure();
+        }
+    }
+}
+
+fn await_reader_exit_or_abort(handle: &JoinHandle<()>) {
+    let started = Instant::now();
+    while !handle.is_finished() {
+        if started.elapsed() >= IO_DRAIN_GRACE {
+            terminal_reader_ownership_failure();
+        }
+        thread::sleep(READER_POLL_INTERVAL);
+    }
+}
+
+#[cold]
+fn terminal_reader_ownership_failure() -> ! {
+    std::process::abort();
+}
+
+const fn output_error(source: OutputError) -> RunnerError {
+    RunnerError::OutputCaptureFailed { source }
+}
+
+fn release_supervisor(supervisor: &mut sys::Supervisor) -> Result<(), RunnerError> {
+    supervisor
+        .release()
+        .map_err(|source| RunnerError::SupervisorReleaseFailed { source })
 }
 
 /// How the wait half of [`run`] ended.
 enum Exit {
-    /// The child was reaped on its own.
-    Status(io::Result<ExitStatus>),
-    /// The tree was killed, on a timeout or a cancellation.
-    Killed {
-        /// Whether the timeout, rather than the cancellation, did it.
-        timed_out: bool,
-    },
+    /// The child exited and remains waitable until its declared process set is forcefully signalled.
+    Exited,
+    /// Observing the child status failed before the supervised process set was ended.
+    WaitFailed(io::Error),
+    /// The wall-clock deadline expired and the declared process set was ended.
+    TimedOut,
+    /// The caller asked the declared process set to stop.
+    Cancelled,
+    /// An execution-specific monitor asked the declared process set to stop.
+    StoppedByMonitor,
+    /// The execution-specific monitor could not be inspected safely.
+    MonitorFailed(MonitorFailure),
+    /// Stopping or reaping the child failed, so the triggering event cannot be reported as a trustworthy termination.
+    SupervisionFailed(RunnerError),
 }
 
 /// How often the wait loop looks at the cancellation flag.
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-/// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the tree.
-fn await_exit(
-    supervisor: &sys::Supervisor,
-    exited: &mpsc::Receiver<io::Result<ExitStatus>>,
+#[derive(Clone, Copy)]
+struct Stops<'a> {
     deadline: Option<Instant>,
-    cancel: &Cancel,
-) -> Exit {
+    cancel: &'a Cancel,
+    monitor: Option<&'a Path>,
+}
+
+/// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the declared process set.
+fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stops<'_>) -> Exit {
     loop {
-        let remaining = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        let poll = remaining.map_or(POLL_INTERVAL, |remaining| remaining.min(POLL_INTERVAL));
-        match exited.recv_timeout(poll) {
-            Ok(status) => return Exit::Status(status),
-            Err(RecvTimeoutError::Disconnected) => {
-                return Exit::Status(Err(io::Error::other(
-                    "the wait thread ended without a status",
-                )));
+        match child.exit_observed() {
+            Ok(true) => return Exit::Exited,
+            Ok(false) => {}
+            Err(source) => {
+                return match terminate(supervisor, child) {
+                    Ok(()) => Exit::WaitFailed(source),
+                    Err(error) => Exit::SupervisionFailed(error),
+                };
             }
-            Err(RecvTimeoutError::Timeout) => {}
         }
-        let expired = remaining.is_some_and(|remaining| remaining.is_zero());
-        if expired || cancel.is_cancelled() {
-            terminate(supervisor, exited);
-            return Exit::Killed { timed_out: expired };
+        let now = Instant::now();
+        let remaining = stops.deadline.map(|deadline| {
+            if deadline <= now {
+                Duration::ZERO
+            } else {
+                deadline.duration_since(now)
+            }
+        });
+        let poll = remaining.map_or(POLL_INTERVAL, |remaining| remaining.min(POLL_INTERVAL));
+        if stops.cancel.is_cancelled() {
+            return match terminate(supervisor, child) {
+                Ok(()) => Exit::Cancelled,
+                Err(error) => Exit::SupervisionFailed(error),
+            };
+        }
+        if let Some(path) = stops.monitor {
+            match inspect_monitor(path) {
+                MonitorState::Absent => {}
+                MonitorState::PresentRegular => {
+                    return match terminate(supervisor, child) {
+                        Ok(()) => Exit::StoppedByMonitor,
+                        Err(error) => Exit::SupervisionFailed(error),
+                    };
+                }
+                MonitorState::InvalidType => {
+                    return match terminate(supervisor, child) {
+                        Ok(()) => Exit::MonitorFailed(MonitorFailure::InvalidType {
+                            path: path.to_path_buf(),
+                        }),
+                        Err(error) => Exit::SupervisionFailed(error),
+                    };
+                }
+                MonitorState::InspectFailed(source) => {
+                    return match terminate(supervisor, child) {
+                        Ok(()) => Exit::MonitorFailed(MonitorFailure::Inspect {
+                            path: path.to_path_buf(),
+                            source,
+                        }),
+                        Err(error) => Exit::SupervisionFailed(error),
+                    };
+                }
+            }
+        }
+        if remaining.is_some_and(|remaining| remaining.is_zero()) {
+            return match terminate(supervisor, child) {
+                Ok(()) => Exit::TimedOut,
+                Err(error) => Exit::SupervisionFailed(error),
+            };
+        }
+        thread::sleep(poll);
+    }
+}
+
+enum MonitorState {
+    Absent,
+    PresentRegular,
+    InvalidType,
+    InspectFailed(io::Error),
+}
+
+fn inspect_monitor(path: &Path) -> MonitorState {
+    classify_monitor(std::fs::symlink_metadata(path))
+}
+
+fn classify_monitor(inspected: io::Result<std::fs::Metadata>) -> MonitorState {
+    match inspected {
+        Ok(metadata) if metadata.file_type().is_file() => MonitorState::PresentRegular,
+        Ok(_metadata) => MonitorState::InvalidType,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => MonitorState::Absent,
+        Err(error) => MonitorState::InspectFailed(error),
+    }
+}
+
+/// Signals the supervised process set, politely first where the platform has a polite phase, and waits a bounded time for the leader to become waitable.
+///
+/// The wait after the forceful signal is about the leader only.
+/// Exhausting its bound is a terminal ownership failure because this owner cannot drop a live leader.
+/// On POSIX, another inherited group member may remain in an uninterruptible kernel wait after receiving SIGKILL; the process-group boundary promises signal delivery, not kernel quiescence.
+fn terminate(supervisor: &sys::Supervisor, child: &SupervisedChild) -> Result<(), RunnerError> {
+    let gentle = supervisor.terminate_gently();
+    let leader_exited_during_grace = gentle.is_ok() && reap_or_abort(child, TERMINATION_GRACE);
+
+    let leader = if leader_exited_during_grace {
+        LeaderObservation::ExitedWaitable
+    } else {
+        LeaderObservation::Running
+    };
+    let forceful = supervisor.terminate_forcefully(leader);
+    if !leader_exited_during_grace && !reap_or_abort(child, REAPING_GRACE) {
+        terminal_process_ownership_failure();
+    }
+    match (gentle, forceful) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(source), Ok(())) => Err(RunnerError::ProcessControlFailed {
+            phase: TerminationPhase::Gentle,
+            source,
+        }),
+        (Ok(()), Err(source)) => Err(RunnerError::ProcessControlFailed {
+            phase: TerminationPhase::Forceful,
+            source,
+        }),
+        (Err(gentle), Err(forceful)) => {
+            Err(RunnerError::ProcessControlSequenceFailed { gentle, forceful })
         }
     }
 }
 
-/// Ends the tree, politely first where the platform has a polite phase, and waits a bounded time for the child to be reaped.
-///
-/// The wait after the forceful end is bounded because a forceful end is not
-/// always the end: a process in an uninterruptible wait — a wedged mount, a
-/// driver call — does not die when it is killed, and waiting for it with no
-/// bound is a run that never returns from a keystroke asking it to stop. The
-/// process is left to the operating system, which is the only thing that can
-/// reap it, and the run exits.
-fn terminate(supervisor: &sys::Supervisor, exited: &mpsc::Receiver<io::Result<ExitStatus>>) {
-    supervisor.terminate_gently();
-    if exited.recv_timeout(TERMINATION_GRACE).is_ok() {
-        return;
+fn force_signal_or_abort(supervisor: &sys::Supervisor, leader: LeaderObservation) {
+    if let Err(why) = supervisor.terminate_forcefully(leader) {
+        note_ownership_failure(
+            &format!(
+                "signalling the process group forcefully, {}",
+                supervisor.state()
+            ),
+            &why,
+        );
+        terminal_process_ownership_failure();
     }
-    supervisor.terminate_forcefully();
-    let _reaped = exited.recv_timeout(REAPING_GRACE);
+}
+
+fn reap_or_abort(child: &SupervisedChild, bound: Duration) -> bool {
+    let started = Instant::now();
+    loop {
+        match child.reaping {
+            Reaping::Normal => {}
+            #[cfg(any(test, feature = "testkit"))]
+            Reaping::SimulatedUnreapable => return false,
+        }
+        match child.exit_observed() {
+            Ok(true) => return true,
+            Ok(false) => {}
+            Err(_source) => terminal_process_ownership_failure(),
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= bound {
+            return false;
+        }
+        let Some(remaining) = bound.checked_sub(elapsed) else {
+            return false;
+        };
+        thread::sleep(remaining.min(POLL_INTERVAL));
+    }
+}
+
+/// Says why the process set could not be owned, before the abort that says nothing.
+///
+/// `SIGABRT` names no place, and the site that fires on a machine the author does not have is the one worth naming.
+#[cold]
+fn note_ownership_failure(step: &str, why: &io::Error) {
+    use io::Write as _;
+    match writeln!(
+        io::stderr(),
+        "rust-mutants: {step}: {why}: the supervised process set could not be owned to the end, so this process ends rather than leave it running"
+    ) {
+        Ok(()) | Err(_) => {}
+    }
+}
+
+#[cold]
+fn terminal_process_ownership_failure() -> ! {
+    std::process::abort();
 }
 
 #[cfg(unix)]
@@ -532,8 +1450,75 @@ use unix as sys;
 #[cfg(windows)]
 use windows as sys;
 
-/// How long a forceful end waits to see the child reaped before leaving it to the operating system.
+/// How long a forceful end waits to see the child reaped before aborting the supervising process.
 pub const REAPING_GRACE: Duration = Duration::from_secs(10);
 
-/// The mechanism this platform supervises with: `process-group` or `job-object`. Diagnostic, for traces and `doctor`.
+/// The mechanism this platform supervises with: `process-group` or `job-object`.
+/// Diagnostic, for traces and `doctor`.
 pub const SUPERVISOR_KIND: &str = sys::SUPERVISOR_KIND;
+
+/// The containment boundary this platform supervisor enforces.
+pub const SUPERVISION_BOUNDARY: SupervisionBoundary = sys::SUPERVISION_BOUNDARY;
+
+#[cfg(test)]
+mod tests {
+    use njutest_devkit::result::{ResultState::Returned, result_state};
+
+    use super::{MonitorState, classify_monitor, inspect_monitor};
+
+    #[test]
+    fn monitor_inspection_distinguishes_absence_regular_files_and_invalid_types() {
+        let directory = tempfile::tempdir();
+        assert_eq!(result_state(&directory), Returned, "tempdir: {directory:?}");
+        let Ok(directory) = directory else { return };
+        let path = directory.path().join("notice");
+        assert!(matches!(inspect_monitor(&path), MonitorState::Absent));
+
+        let written = std::fs::write(&path, "notice");
+        assert_eq!(result_state(&written), Returned, "notice: {written:?}");
+        assert!(matches!(
+            inspect_monitor(&path),
+            MonitorState::PresentRegular
+        ));
+
+        let removed = std::fs::remove_file(&path);
+        assert_eq!(
+            result_state(&removed),
+            Returned,
+            "remove notice: {removed:?}"
+        );
+        let created = std::fs::create_dir_all(&path);
+        assert_eq!(
+            result_state(&created),
+            Returned,
+            "notice directory: {created:?}"
+        );
+        assert!(matches!(inspect_monitor(&path), MonitorState::InvalidType));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn monitor_inspection_never_follows_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir();
+        assert_eq!(result_state(&directory), Returned, "tempdir: {directory:?}");
+        let Ok(directory) = directory else { return };
+        let target = directory.path().join("target");
+        let path = directory.path().join("notice");
+        let written = std::fs::write(&target, "notice");
+        assert_eq!(result_state(&written), Returned, "target: {written:?}");
+        let linked = symlink(target, &path);
+        assert_eq!(result_state(&linked), Returned, "symlink: {linked:?}");
+        assert!(matches!(inspect_monitor(&path), MonitorState::InvalidType));
+    }
+
+    #[test]
+    fn monitor_inspection_preserves_operating_system_failures() {
+        let failure = classify_monitor(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "refused",
+        )));
+        assert!(matches!(failure, MonitorState::InspectFailed(_)));
+    }
+}

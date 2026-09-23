@@ -25,7 +25,7 @@
       "const": "rust-mutants/run-report"
     },
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "tool_version": {
       "type": "string",
@@ -143,7 +143,9 @@
         "operators",
         "include",
         "exclude",
-        "packages"
+        "packages",
+        "build",
+        "mutant_steps"
       ],
       "properties": {
         "tier": {
@@ -182,6 +184,18 @@
           "items": {
             "type": "string"
           }
+        },
+        "mutant_steps": {
+          "description": "The per-process guard-take allowance, or null when the bound is disabled.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
         }
       }
     },
@@ -195,10 +209,13 @@
         "executed",
         "killed",
         "survived",
-        "timed_out",
+        "step_limit_reached",
+        "waited",
         "inconclusive",
         "errored",
         "not_run",
+        "unreached",
+        "discharged",
         "expected"
       ],
       "properties": {
@@ -227,9 +244,15 @@
           "type": "integer",
           "minimum": 0
         },
-        "timed_out": {
+        "step_limit_reached": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Executions that reached the configured guard-take allowance. This is not a detection and is excluded from the score and reusable outcome cache."
+        },
+        "waited": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Mutants whose bound expired before anything finished. Not detected: nothing was established about them, in either direction."
         },
         "inconclusive": {
           "type": "integer",
@@ -304,6 +327,7 @@
           "package",
           "family",
           "rule",
+          "item",
           "rule_version",
           "line",
           "column",
@@ -317,8 +341,15 @@
           "exit_code",
           "duration_ms",
           "tests_run",
+          "killed_by",
+          "signal",
+          "step_notice",
           "retried",
+          "not_run_reason",
+          "route",
+          "identical",
           "expected",
+          "unreached",
           "source_run_id"
         ],
         "properties": {
@@ -383,7 +414,8 @@
               "not_run",
               "killed",
               "survived",
-              "timed_out",
+              "step_limit_reached",
+              "waited",
               "inconclusive",
               "errored"
             ]
@@ -416,84 +448,141 @@
             }
           },
           "signal": {
-            "type": "integer"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "step_notice": {
+            "description": "The nonce-correlated runtime notice, present only for step_limit_reached.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["nonce", "catalog", "mutant", "limit", "observed"],
+                "properties": {
+                  "nonce": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+                  "catalog": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "mutant": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "limit": {"type": "integer", "minimum": 1},
+                  "observed": {"type": "integer", "minimum": 2}
+                }
+              }
+            ]
           },
           "not_run_reason": {
-            "enum": [
-              "unreached",
-              "discharged",
-              "interrupted",
-              "unselected",
-              "stopped-early"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "enum": [
+                  "unreached",
+                  "discharged",
+                  "interrupted",
+                  "unselected",
+                  "stopped-early"
+                ]
+              }
             ],
             "description": "Why execution did not occur. unselected may mean the scoped preparation deliberately omitted compiler validation and instrumentation for this candidate."
           },
           "identical": {
-            "type": "boolean",
-            "description": "Whether the compiler renders the mutation identically to what it mutates. Never a claim that the mutation is equivalent."
+            "enum": [
+              "not-measured",
+              "identical",
+              "different",
+              "not-established"
+            ],
+            "description": "What the optional compiler-artifact comparison established. Identity is never a claim that the mutation is semantically equivalent."
           },
           "route": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "granularity",
-              "reaching"
-            ],
-            "properties": {
-              "granularity": {
-                "enum": [
-                  "all",
-                  "test",
-                  "block",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "granularity",
+                  "fallback",
+                  "reaching",
                   "discharged",
-                  "unreached"
-                ]
-              },
-              "fallback": {
-                "type": "string"
-              },
-              "reaching": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "discharged": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "target",
-                    "proof"
-                  ],
-                  "properties": {
-                    "target": {
+                  "executed",
+                  "tests"
+                ],
+                "properties": {
+                  "granularity": {
+                    "enum": [
+                      "all",
+                      "test",
+                      "block",
+                      "discharged",
+                      "unreached"
+                    ]
+                  },
+                  "fallback": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "reaching": {
+                    "type": "array",
+                    "items": {
                       "type": "string"
-                    },
-                    "proof": {
+                    }
+                  },
+                  "discharged": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "target",
+                        "proof"
+                      ],
+                      "properties": {
+                        "target": {
+                          "type": "string"
+                        },
+                        "proof": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "executed": {
+                    "type": "array",
+                    "items": {
                       "type": "string"
+                    }
+                  },
+                  "tests": {
+                    "description": "For each target the measurement narrowed to some of its tests, exactly those tests.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
-              },
-              "executed": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "tests": {
-                "description": "For each target the measurement narrowed to some of its tests, exactly those tests.",
-                "type": "object",
-                "additionalProperties": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
               }
-            }
+            ]
           },
           "retried": {
             "type": "boolean",
@@ -518,7 +607,17 @@
             ],
             "description": "The run that established this outcome, when it was read back rather than executed."
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": ["outcome"],
+              "properties": {"outcome": {"const": "step_limit_reached"}}
+            },
+            "then": {"properties": {"step_notice": {"type": "object"}}},
+            "else": {"properties": {"step_notice": {"type": "null"}}}
+          }
+        ]
       }
     },
     "rejections": {
@@ -533,7 +632,8 @@
           "path",
           "rule",
           "code",
-          "diagnostic"
+          "diagnostic",
+          "isolated"
         ],
         "properties": {
           "index": {
@@ -608,9 +708,11 @@
         "additionalProperties": false,
         "required": [
           "id",
+          "locator",
           "reason",
           "outcome",
           "mutant",
+          "covered",
           "standing",
           "actual",
           "why"
@@ -621,39 +723,62 @@
             "minLength": 1
           },
           "locator": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "path",
-              "item",
-              "rule",
-              "original"
-            ],
-            "properties": {
-              "path": {
-                "type": "string",
-                "minLength": 1
+            "oneOf": [
+              {
+                "type": "null"
               },
-              "item": {
-                "type": "string"
-              },
-              "rule": {
-                "type": "string",
-                "minLength": 1
-              },
-              "original": {
-                "type": "string"
-              },
-              "line": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "count": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "How many mutations the locator names, when one reason is written for a set of them."
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "item",
+                  "rule",
+                  "original",
+                  "line",
+                  "count"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "item": {
+                    "type": "string"
+                  },
+                  "rule": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "original": {
+                    "type": "string"
+                  },
+                  "line": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    ]
+                  },
+                  "count": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    ],
+                    "description": "How many mutations the locator names, when one reason is written for a set of them."
+                  }
+                }
               }
-            },
+            ],
             "description": "Where the mutation is and what it edits, when the claim named it that way rather than by identity."
           },
           "reason": {
@@ -663,8 +788,7 @@
           "outcome": {
             "enum": [
               "killed",
-              "survived",
-              "timed_out"
+              "survived"
             ]
           },
           "mutant": {
@@ -705,8 +829,15 @@
             ]
           },
           "covered": {
-            "type": "integer",
-            "minimum": 2,
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer",
+                "minimum": 2
+              }
+            ],
             "description": "How many mutants one claim was resolved against, when its locator stated a count. Absent when the claim names one."
           }
         }
@@ -726,6 +857,8 @@
           "kind": {
             "enum": [
               "surviving-mutant",
+              "step-limit-reached-mutant",
+              "waited-mutant",
               "inconclusive-mutant",
               "errored-mutant",
               "not-run-mutant",
@@ -762,7 +895,9 @@
         "required": [
           "id",
           "kind",
-          "harness"
+          "harness",
+          "limitations",
+          "tests"
         ],
         "properties": {
           "id": {

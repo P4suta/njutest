@@ -1,14 +1,10 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# The documentation as a book. The pages are the ones this repository already
-# keeps and reviews; nothing here rewrites them, and a page that is not in
-# `SUMMARY.md` is one a reader of the book cannot reach, which is why the
-# summary is a gate rather than a convenience.
+# The documentation as a book.
+# The pages are the ones this repository already keeps and reviews; nothing here rewrites them, and a page that is not in `SUMMARY.md` is one a reader of the book cannot reach, which is why the summary is a gate rather than a convenience.
 #
-# The book is built into `target/`, outside the source it is built from: a
-# build directory under `docs/` would be a directory of generated pages inside
-# the directory of written ones, and the next build would read its own output.
+# The book is built into `target/`, outside the source it is built from: a build directory under `docs/` would be a directory of generated pages inside the directory of written ones, and the next build would read its own output.
 
 [book]
 title = "njutest"

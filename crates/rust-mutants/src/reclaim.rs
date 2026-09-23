@@ -8,19 +8,14 @@ use std::time::{Duration, Instant};
 
 /// How long taking things back may take before the rest is left for next time.
 ///
-/// Removing a directory is usually instant and occasionally is not: one a
-/// wedged device still holds takes minutes to refuse, and a loop over a few
-/// hundred of those runs for a day. Every reclamation here is housekeeping
-/// done on the way to the work or on the way out of it, so it is the one thing
-/// that has to be faster than what it is cleaning up after.
+/// Removing a directory is usually instant and occasionally is not: one a wedged device still holds takes minutes to refuse, and a loop over a few hundred of those runs for a day.
+/// Every reclamation here is housekeeping done on the way to the work or on the way out of it, so it is the one thing that has to be faster than what it is cleaning up after.
 pub const BUDGET: Duration = Duration::from_secs(10);
 
 /// What a reclamation did, and what it did not.
 ///
-/// The second half is the part that was being dropped everywhere: a directory
-/// that refused and a directory that was never reached both stay on the disk,
-/// and a caller that is handed only a count of successes has nothing to put in
-/// a ledger and nothing to tell a person.
+/// The second half is the part that was being dropped everywhere: a directory that refused and a directory that was never reached both stay on the disk,
+/// and a caller that is handed only a count of successes has nothing to put in a ledger and nothing to tell a person.
 #[derive(Debug, Default)]
 pub struct Reclaimed {
     /// Every directory that went.
@@ -58,8 +53,20 @@ pub fn with<'a>(
     let started = Instant::now();
     let mut done = Reclaimed::default();
     for path in directories {
-        if !path.exists() {
-            continue;
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_irregular) => {
+                done.refused.push((
+                    path.to_path_buf(),
+                    String::from("refusing to reclaim a non-directory or symbolic link"),
+                ));
+                continue;
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                done.refused.push((path.to_path_buf(), source.to_string()));
+                continue;
+            }
         }
         if started.elapsed() >= BUDGET {
             done.unreached.push(path.to_path_buf());

@@ -8,7 +8,18 @@
 use std::path::Path;
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::repair;
+use njutest::repair;
+
+#[expect(
+    clippy::manual_ok_err,
+    reason = "invalid configured globs are explicitly absent here; Result::ok is forbidden because it hides that policy"
+)]
+fn compiled(pattern: &str) -> Option<rust_mutants::glob::Pattern> {
+    match rust_mutants::glob::Pattern::compile(pattern) {
+        Ok(pattern) => Some(pattern),
+        Err(_error) => None,
+    }
+}
 
 fuzz_target!(|said: &str| {
     let root = Path::new("/workspace");
@@ -35,7 +46,7 @@ fuzz_target!(|said: &str| {
         assert!(
             allowed
                 .iter()
-                .filter_map(|pattern| rust_mutants::glob::Pattern::compile(pattern).ok())
+                .filter_map(|pattern| compiled(pattern))
                 .any(|pattern| pattern.matches(&proposal.path)),
             "and every one that comes back is somewhere the configuration allowed, \
              because what comes back is what `fix --apply` writes: {}",

@@ -2,18 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://njutest.dev/schema/rust-mutants-run-stream-v1.json",
   "title": "rust-mutants run stream v1",
-  "description": "One JSON object per line, written as a run happens. A reader takes a line at a time and ignores a type it does not know.",
+  "description": "One JSON object per line, written as a run happens. Version 2 is closed: a reader rejects unknown event types and extra, missing, or ambiguous fields.",
   "oneOf": [
     {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
-        "schema",
-        "tool_version",
-        "run_id",
         "root_name",
-        "selection"
+        "run_id",
+        "schema",
+        "selection",
+        "tool_version",
+        "type"
       ],
       "properties": {
         "type": {
@@ -34,7 +34,63 @@
           "type": "string"
         },
         "selection": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "build",
+            "exclude",
+            "include",
+            "mutant_steps",
+            "operators",
+            "packages",
+            "tier"
+          ],
+          "properties": {
+            "tier": {
+              "enum": [
+                "balanced",
+                "strong",
+                "all"
+              ]
+            },
+            "operators": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "include": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "packages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "build": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "mutant_steps": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
         }
       }
     },
@@ -42,8 +98,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
-        "phase"
+        "phase",
+        "type"
       ],
       "properties": {
         "type": {
@@ -59,9 +115,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
+        "duration_ms",
         "phase",
-        "duration_ms"
+        "type"
       ],
       "properties": {
         "type": {
@@ -81,10 +137,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
         "completed",
+        "mutant",
         "total",
-        "mutant"
+        "type"
       ],
       "properties": {
         "type": {
@@ -102,18 +158,23 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "index",
-            "id",
-            "display_id",
-            "rule",
-            "family",
-            "path",
-            "line",
             "column",
-            "outcome",
-            "target",
+            "display_id",
             "duration_ms",
-            "retried"
+            "failed_tests",
+            "family",
+            "id",
+            "index",
+            "line",
+            "not_run_reason",
+            "outcome",
+            "path",
+            "retried",
+            "rule",
+            "source_run_id",
+            "step_notice",
+            "target",
+            "tests_run"
           ],
           "properties": {
             "index": {
@@ -122,11 +183,11 @@
             },
             "id": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[0-9a-f]{64}$"
             },
             "display_id": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[0-9a-f]{20}$"
             },
             "rule": {
               "type": "string"
@@ -149,11 +210,11 @@
               "enum": [
                 "killed",
                 "survived",
-                "timed_out",
+                "step_limit_reached",
+                "waited",
                 "inconclusive",
                 "errored",
-                "not_run",
-                "equivalent"
+                "not_run"
               ]
             },
             "target": {
@@ -164,7 +225,10 @@
               "minimum": 0
             },
             "tests_run": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0
             },
             "failed_tests": {
@@ -173,16 +237,94 @@
                 "type": "string"
               }
             },
+            "step_notice": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "catalog",
+                    "limit",
+                    "mutant",
+                    "nonce",
+                    "observed"
+                  ],
+                  "properties": {
+                    "nonce": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{32}$"
+                    },
+                    "catalog": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "mutant": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "observed": {
+                      "type": "integer",
+                      "minimum": 2
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "retried": {
               "type": "boolean"
             },
             "not_run_reason": {
-              "type": "string"
+              "enum": [
+                "unreached",
+                "discharged",
+                "interrupted",
+                "unselected",
+                "stopped-early",
+                null
+              ]
             },
             "source_run_id": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "const": "step_limit_reached"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "step_notice": {
+                    "type": "object"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "step_notice": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
         }
       }
     },
@@ -190,8 +332,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
-        "finding"
+        "finding",
+        "type"
       ],
       "properties": {
         "type": {
@@ -201,14 +343,25 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "detail",
             "kind",
-            "mutant",
-            "detail"
+            "mutant"
           ],
           "properties": {
             "kind": {
-              "type": "string",
-              "minLength": 1
+              "enum": [
+                "surviving-mutant",
+                "inconclusive-mutant",
+                "step-limit-reached-mutant",
+                "waited-mutant",
+                "errored-mutant",
+                "not-run-mutant",
+                "unreached-mutant",
+                "discharged-mutant",
+                "stale-expectation",
+                "unmatched-expectation",
+                "unmatched-skip"
+              ]
             },
             "mutant": {
               "oneOf": [
@@ -232,10 +385,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
+        "accounting",
         "exit_code",
         "interrupted",
-        "accounting"
+        "report",
+        "score",
+        "type"
       ],
       "properties": {
         "type": {
@@ -254,13 +409,65 @@
           "type": "boolean"
         },
         "accounting": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cataloged",
+            "discharged",
+            "errored",
+            "executed",
+            "expected",
+            "inconclusive",
+            "killed",
+            "not_run",
+            "refused",
+            "skipped",
+            "step_limit_reached",
+            "survived",
+            "unreached",
+            "waited"
+          ],
+          "properties": {
+            "cataloged": { "type": "integer", "minimum": 0 },
+            "refused": { "type": "integer", "minimum": 0 },
+            "skipped": { "type": "integer", "minimum": 0 },
+            "executed": { "type": "integer", "minimum": 0 },
+            "killed": { "type": "integer", "minimum": 0 },
+            "survived": { "type": "integer", "minimum": 0 },
+            "step_limit_reached": { "type": "integer", "minimum": 0 },
+            "waited": { "type": "integer", "minimum": 0 },
+            "inconclusive": { "type": "integer", "minimum": 0 },
+            "errored": { "type": "integer", "minimum": 0 },
+            "not_run": { "type": "integer", "minimum": 0 },
+            "unreached": { "type": "integer", "minimum": 0 },
+            "discharged": { "type": "integer", "minimum": 0 },
+            "expected": { "type": "integer", "minimum": 0 }
+          }
         },
         "score": {
-          "type": "object"
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "decided",
+                "detected",
+                "value"
+              ],
+              "properties": {
+                "detected": { "type": "integer", "minimum": 0 },
+                "decided": { "type": "integer", "minimum": 1 },
+                "value": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            },
+            { "type": "null" }
+          ]
         },
         "report": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -268,9 +475,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "type",
         "code",
-        "message"
+        "message",
+        "remedy",
+        "type"
       ],
       "properties": {
         "type": {
@@ -285,7 +493,10 @@
           "minLength": 1
         },
         "remedy": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     }

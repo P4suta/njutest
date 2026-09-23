@@ -3,7 +3,8 @@
 
 //! What a release is made of: what the document says, and what it leaves out.
 
-use xtask::sbom::{BOM_FORMAT, PURL_PREFIX, SPEC_VERSION, of};
+use njutest_devkit::result::{OptionState, ResultState, option_state, result_state};
+use xtask::sbom::{BOM_FORMAT, Bom, PURL_PREFIX, SPEC_VERSION, of};
 
 const METADATA: &str = r#"{
   "packages": [
@@ -14,9 +15,22 @@ const METADATA: &str = r#"{
   "workspace_members": ["path+file:///w/crates/a#a@0.1.0"]
 }"#;
 
+fn bom() -> Option<Bom> {
+    let document = of(METADATA, ("njutest", "0.1.0"));
+    assert_eq!(
+        result_state(&document),
+        ResultState::Returned,
+        "the literal Cargo metadata was refused: {document:?}"
+    );
+    match document {
+        Ok(bom) => Some(bom),
+        Err(_already_reported) => None,
+    }
+}
+
 #[test]
 fn the_document_says_what_it_is_and_what_it_is_about() {
-    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
+    let Some(bom) = bom() else { return };
     assert_eq!(bom.format, BOM_FORMAT);
     assert_eq!(bom.spec_version, SPEC_VERSION);
     assert_eq!(bom.version, 1);
@@ -29,7 +43,7 @@ fn the_document_says_what_it_is_and_what_it_is_about() {
 
 #[test]
 fn a_workspace_member_is_what_is_released_rather_than_what_it_is_made_of() {
-    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
+    let Some(bom) = bom() else { return };
     let names: Vec<&str> = bom
         .components
         .iter()
@@ -40,7 +54,7 @@ fn a_workspace_member_is_what_is_released_rather_than_what_it_is_made_of() {
 
 #[test]
 fn every_component_carries_an_identity_another_tool_can_look_up() {
-    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
+    let Some(bom) = bom() else { return };
     for component in &bom.components {
         assert_eq!(
             component.purl,
@@ -52,12 +66,19 @@ fn every_component_carries_an_identity_another_tool_can_look_up() {
 
 #[test]
 fn a_package_that_names_no_licence_is_listed_without_one_rather_than_with_a_guess() {
-    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
+    let Some(bom) = bom() else { return };
     let serde = bom
         .components
         .iter()
-        .find(|component| component.name == "serde")
-        .expect("serde");
+        .find(|component| component.name == "serde");
+    assert_eq!(
+        option_state(serde),
+        OptionState::Present,
+        "serde is absent from the bill of materials"
+    );
+    let Some(serde) = serde else {
+        return;
+    };
     assert_eq!(
         serde.licenses.first().map(|one| one.expression.clone()),
         Some("MIT OR Apache-2.0".to_owned())
@@ -65,13 +86,26 @@ fn a_package_that_names_no_licence_is_listed_without_one_rather_than_with_a_gues
     let unlicensed = bom
         .components
         .iter()
-        .find(|component| component.name == "unlicensed")
-        .expect("the one with no licence");
+        .find(|component| component.name == "unlicensed");
+    assert_eq!(
+        option_state(unlicensed),
+        OptionState::Present,
+        "the unlicensed fixture package is absent"
+    );
+    let Some(unlicensed) = unlicensed else {
+        return;
+    };
     assert!(unlicensed.licenses.is_empty());
 }
 
 #[test]
 fn metadata_that_is_not_metadata_is_refused() {
-    of("not json", ("njutest", "0.1.0")).expect_err("not metadata");
-    of("{}", ("njutest", "0.1.0")).expect_err("metadata without packages");
+    for malformed in ["not json", "{}"] {
+        let document = of(malformed, ("njutest", "0.1.0"));
+        assert_eq!(
+            result_state(&document),
+            ResultState::Refused,
+            "malformed metadata produced {document:?}"
+        );
+    }
 }

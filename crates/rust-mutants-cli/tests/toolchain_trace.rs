@@ -20,8 +20,11 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/directory.rs");
+include!("support/regular_file.rs");
+
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -42,7 +45,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 
 /// A reading of a recording, which names its own root rather than taking one before the subcommand.
 fn reading(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -67,11 +70,11 @@ fn reports(fixture: &Fixture) -> PathBuf {
 }
 
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stderr).into_owned()
 }
 
 /// Every event of a recording, as the JSON a reader would parse.
@@ -80,7 +83,7 @@ fn recorded(directory: &Path) -> Vec<serde_json::Value> {
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     text.lines()
-        .map(|line| serde_json::from_str(line).expect("every line is an event"))
+        .map(|line| njutest_devkit::strictjson::decode_str(line).expect("every line is an event"))
         .collect()
 }
 
@@ -88,9 +91,10 @@ fn recorded(directory: &Path) -> Vec<serde_json::Value> {
 fn only_run(reports: &Path) -> PathBuf {
     let mut runs: Vec<PathBuf> = std::fs::read_dir(reports)
         .expect("reports")
-        .flatten()
+        .map(|entry| entry.expect("stored report directory entry"))
         .map(|entry| entry.path())
-        .filter(|path| path.join("run-report-v1.json").is_file())
+        .filter(|path| test_directory(path))
+        .filter(|path| test_regular_file(&path.join("run-report-v1.json")))
         .collect();
     runs.sort();
     runs.pop().expect("one stored run")
@@ -99,7 +103,7 @@ fn only_run(reports: &Path) -> PathBuf {
 fn types(events: &[serde_json::Value]) -> Vec<String> {
     events
         .iter()
-        .filter_map(|event| event.get("type")?.as_str().map(str::to_owned))
+        .filter_map(|event| event.pointer("/payload/type")?.as_str().map(str::to_owned))
         .collect()
 }
 
@@ -122,7 +126,7 @@ fn run_with_trace_records_under_the_run_directory_and_ends_with_run_end() {
     );
     let end = events.last().expect("run-end");
     assert_eq!(
-        end.pointer("/run/outcome")
+        end.pointer("/payload/run/outcome")
             .and_then(serde_json::Value::as_str),
         Some(if output.status.code() == Some(0) {
             "detected"
@@ -132,7 +136,7 @@ fn run_with_trace_records_under_the_run_directory_and_ends_with_run_end() {
         "{end}"
     );
     assert_eq!(
-        end.pointer("/run/events_dropped")
+        end.pointer("/payload/run/events_dropped")
             .and_then(serde_json::Value::as_u64),
         Some(0),
         "{end}"
@@ -140,9 +144,12 @@ fn run_with_trace_records_under_the_run_directory_and_ends_with_run_end() {
     for wanted in ["open", "prepare", "build", "verify"] {
         assert!(
             events.iter().any(|event| {
-                event.get("type").and_then(serde_json::Value::as_str) == Some("phase-end")
+                event
+                    .pointer("/payload/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("phase-end")
                     && event
-                        .pointer("/phase/name")
+                        .pointer("/payload/phase/name")
                         .and_then(serde_json::Value::as_str)
                         == Some(wanted)
             }),
@@ -186,9 +193,14 @@ fn every_judged_mutant_leaves_one_route_record_and_an_unreached_one_leaves_no_ex
     let events = recorded(&run.join("trace"));
     let routes: Vec<&serde_json::Value> = events
         .iter()
-        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("route"))
+        .filter(|event| {
+            event
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("route")
+        })
         .collect();
-    let report: serde_json::Value = serde_json::from_str(
+    let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
@@ -207,7 +219,7 @@ fn every_judged_mutant_leaves_one_route_record_and_an_unreached_one_leaves_no_ex
         .iter()
         .filter(|route| {
             route
-                .pointer("/route/granularity")
+                .pointer("/payload/route/granularity")
                 .and_then(serde_json::Value::as_str)
                 == Some("unreached")
         })
@@ -218,20 +230,23 @@ fn every_judged_mutant_leaves_one_route_record_and_an_unreached_one_leaves_no_ex
     );
     for route in unreached {
         let index = route
-            .pointer("/route/index")
+            .pointer("/payload/route/index")
             .and_then(serde_json::Value::as_u64);
         assert!(
             route
-                .pointer("/route/executed")
+                .pointer("/payload/route/executed")
                 .and_then(serde_json::Value::as_array)
                 .is_none_or(Vec::is_empty),
             "an unreached mutant runs nothing: {route}"
         );
         assert!(
             !events.iter().any(|event| {
-                event.get("type").and_then(serde_json::Value::as_str) == Some("mutant-exec")
+                event
+                    .pointer("/payload/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("mutant-exec")
                     && event
-                        .pointer("/mutant/index")
+                        .pointer("/payload/mutant/index")
                         .and_then(serde_json::Value::as_u64)
                         == index
             }),
@@ -268,7 +283,10 @@ fn trace_check_exits_1_on_a_recording_without_run_end() {
         &["list", &format!("--trace={}", directory.display())],
     );
     assert_eq!(listed.status.code(), Some(0), "{}", stderr(&listed));
-    let whole = reading(&fixture, &["check", "--dir", &directory.to_string_lossy()]);
+    let whole = reading(
+        &fixture,
+        &["check", "--dir", njutest_devkit::paths::utf8(&directory)],
+    );
     assert_eq!(whole.status.code(), Some(0), "{}", stdout(&whole));
     assert!(stdout(&whole).contains("COMPLETE"), "{}", stdout(&whole));
 
@@ -279,7 +297,10 @@ fn trace_check_exits_1_on_a_recording_without_run_end() {
         .filter(|line| !line.contains("\"run-end\""))
         .collect();
     std::fs::write(&path, format!("{}\n", kept.join("\n"))).expect("truncating the recording");
-    let cut = reading(&fixture, &["check", "--dir", &directory.to_string_lossy()]);
+    let cut = reading(
+        &fixture,
+        &["check", "--dir", njutest_devkit::paths::utf8(&directory)],
+    );
     assert_eq!(cut.status.code(), Some(1), "{}", stdout(&cut));
     assert!(
         stdout(&cut).contains("does not end with run-end"),
@@ -327,9 +348,10 @@ fn trace_diff_between_two_runs_reports_the_moved_columns() {
     let stored = reports(&fixture);
     let mut runs: Vec<String> = std::fs::read_dir(&stored)
         .expect("reports")
-        .flatten()
-        .filter(|entry| entry.path().join("run-report-v1.json").is_file())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .map(|entry| entry.expect("stored report directory entry"))
+        .filter(|entry| test_directory(&entry.path()))
+        .filter(|entry| test_regular_file(&entry.path().join("run-report-v1.json")))
+        .map(|entry| njutest_devkit::paths::owned_utf8(entry.file_name()))
         .collect();
     runs.sort();
     assert_eq!(runs.len(), 2, "{runs:?}");
@@ -349,7 +371,7 @@ fn trace_diff_between_two_runs_reports_the_moved_columns() {
 }
 
 #[test]
-fn a_trace_directory_that_cannot_be_created_costs_one_line_on_stderr_not_the_run() {
+fn an_explicit_trace_directory_that_cannot_be_created_refuses_before_the_command() {
     let fixture = Fixture::copy("fixture-simple");
     let blocked = fixture.temp().join("blocked");
     std::fs::write(&blocked, "not a directory").expect("the file in the way");
@@ -357,16 +379,25 @@ fn a_trace_directory_that_cannot_be_created_costs_one_line_on_stderr_not_the_run
         &fixture,
         &["list", &format!("--trace={}", blocked.display())],
     );
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "a recording that could not be made is not the command: {}",
-        stderr(&output)
-    );
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     let said = stderr(&output);
-    assert_eq!(said.lines().count(), 1, "{said}");
-    assert!(said.contains("not recording into"), "{said}");
-    assert!(!stdout(&output).is_empty(), "the command still answered");
+    assert_eq!(
+        said.lines().count(),
+        2,
+        "one typed error and its remedy: {said}"
+    );
+    assert!(
+        said.contains("writing") && said.contains("blocked"),
+        "{said}"
+    );
+    assert!(
+        said.contains("try:"),
+        "the setup refusal keeps its remedy: {said}"
+    );
+    assert!(
+        stdout(&output).is_empty(),
+        "trace setup happens before the command produces an answer"
+    );
 }
 
 #[test]
@@ -402,16 +433,17 @@ fn a_recording_never_costs_a_stored_run_its_place_and_neither_grows_forever() {
     let stored = reports(&fixture);
     let runs: Vec<PathBuf> = std::fs::read_dir(&stored)
         .expect("reports")
-        .flatten()
+        .map(|entry| entry.expect("stored report directory entry"))
         .map(|entry| entry.path())
-        .filter(|path| path.join("run-report-v1.json").is_file())
+        .filter(|path| test_directory(path))
+        .filter(|path| test_regular_file(&path.join("run-report-v1.json")))
         .collect();
     assert_eq!(runs.len(), 2, "keep = 2 keeps two stored runs: {runs:?}");
     let recordings: Vec<PathBuf> = std::fs::read_dir(&stored)
         .expect("reports")
-        .flatten()
+        .map(|entry| entry.expect("stored report directory entry"))
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && !path.join("run-report-v1.json").is_file())
+        .filter(|path| test_directory(path) && !test_regular_file(&path.join("run-report-v1.json")))
         .filter(|path| path.file_name().is_some_and(|name| name != "traces"))
         .collect();
     assert!(
@@ -421,7 +453,7 @@ fn a_recording_never_costs_a_stored_run_its_place_and_neither_grows_forever() {
     );
     let traces: Vec<PathBuf> = std::fs::read_dir(stored.join("traces"))
         .expect("the traces directory")
-        .flatten()
+        .map(|entry| entry.expect("trace directory entry"))
         .map(|entry| entry.path())
         .collect();
     assert!(
@@ -439,7 +471,7 @@ fn a_mutation_a_run_leaves_out_records_why_it_was_left_out() {
     );
     let run = only_run(&reports(&fixture));
     let events = recorded(&run.join("trace"));
-    let report: serde_json::Value = serde_json::from_str(
+    let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
@@ -472,9 +504,12 @@ fn a_mutation_a_run_leaves_out_records_why_it_was_left_out() {
     for named in unselected.into_iter().chain(otherwise) {
         assert!(
             events.iter().any(|event| {
-                event.get("type").and_then(serde_json::Value::as_str) == Some("select")
+                event
+                    .pointer("/payload/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("select")
                     && event
-                        .pointer("/select/mutant")
+                        .pointer("/payload/select/mutant")
                         .and_then(serde_json::Value::as_str)
                         == Some(named.as_str())
             }),
@@ -506,8 +541,13 @@ fn a_filtered_run_compiler_validates_only_the_mutants_it_selected() {
     let events = recorded(&run.join("trace"));
     let guarded: Vec<u64> = events
         .iter()
-        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("instrument"))
-        .filter_map(|event| event.pointer("/instrument/guards")?.as_u64())
+        .filter(|event| {
+            event
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("instrument")
+        })
+        .filter_map(|event| event.pointer("/payload/instrument/guards")?.as_u64())
         .filter(|guards| *guards > 0)
         .collect();
     assert!(
@@ -518,7 +558,7 @@ fn a_filtered_run_compiler_validates_only_the_mutants_it_selected() {
         stderr(&output)
     );
 
-    let report: serde_json::Value = serde_json::from_str(
+    let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
@@ -531,8 +571,13 @@ fn a_filtered_run_compiler_validates_only_the_mutants_it_selected() {
         .collect();
     let witnessed: Vec<u64> = events
         .iter()
-        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("witness"))
-        .filter_map(|event| event.pointer("/witness/index")?.as_u64())
+        .filter(|event| {
+            event
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("witness")
+        })
+        .filter_map(|event| event.pointer("/payload/witness/index")?.as_u64())
         .collect();
     assert_eq!(
         selected, witnessed,
@@ -557,7 +602,7 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
     let output = against(&fixture, &["run", "--trace", "--tier", "balanced"]);
     let run = only_run(&reports(&fixture));
     let events = recorded(&run.join("trace"));
-    let report: serde_json::Value = serde_json::from_str(
+    let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
     )
     .expect("a report");
@@ -577,9 +622,12 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
     for index in executed {
         assert!(
             events.iter().any(|event| {
-                event.get("type").and_then(serde_json::Value::as_str) == Some("mutant-exec")
+                event
+                    .pointer("/payload/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("mutant-exec")
                     && event
-                        .pointer("/mutant/index")
+                        .pointer("/payload/mutant/index")
                         .and_then(serde_json::Value::as_u64)
                         == Some(index)
             }),

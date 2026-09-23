@@ -5,30 +5,29 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON documents of the engine
 
-**Status: implemented and validated. The catalog document is
-`schema/rust-mutants-catalog-v1.json`, the run report
-`schema/rust-mutants-run-report-v1.json`.**
-Both carry `document_type` and `schema_version`, close every object with
-`additionalProperties: false`, and are validated by tests against the
-schemas under `schema/`, so a field added without a version bump fails a
-test rather than a consumer.
+**Status: implemented and validated.
+The catalog document is `schema/rust-mutants-catalog-v1.json`, the run report `schema/rust-mutants-run-report-v1.json`.** Both carry `document_type` and `schema_version`, close every object with `additionalProperties: false`, and are validated by tests against the schemas under `schema/`, so a field added without a version bump fails a test rather than a consumer.
 
-## Writers are strict, readers are lenient
+## Writers and readers are exact within one version
 
-A writer emits exactly what the schema describes, and a test proves it. A
-reader ignores a field it does not know, so a document one release wrote is
-read by the one before it.
+A writer emits exactly what the schema describes, and a test proves it.
+A current reader rejects an unknown, missing, duplicate, aliased, or defaulted field at every owned object boundary.
+Nullable fields must be explicitly present as `null`; absence is not another spelling of null.
+This keeps one schema identity from meaning two different object shapes depending on which reader saw it.
 
-That makes the version rule a short one. **Adding an optional field, and the
-schema entry for it in the same change, keeps the version.** Making a field
-required, renaming one, or changing what an existing one means is a new
-version and a new schema file. A consumer that must know whether a field was
-present reads it as absent rather than as a default; a consumer that reads a
-document as a whole never fails on a field it has no use for.
+The version rule is therefore deliberately short: **any field addition,
+removal, rename, requiredness change, or semantic change creates a new schema identity.** Compatibility belongs in a separate historical reader and schema,
+not in defaults or catch-all fields on the current type.
+The engine's configuration and outcome store follow the same fail-closed rule because a discarded key there would silently change what was asked or what was proved.
 
-The engine's own configuration file and its outcome store are the exception:
-both refuse a key they do not know, because there a typo is a silent change
-of what was asked rather than a field from the future.
+## Historical schemas
+
+Current writers emit only run report v1, run stream v1, and trace v1.
+The immutable v1 schemas remain shipped so a stored artifact can still be identified and validated as the artifact an earlier release wrote:
+`schema/rust-mutants-run-report-v1.json`,
+`schema/rust-mutants-run-stream-v1.json`, and `schema/rust-mutants-trace-v1.json`.
+They are historical contracts, not an instruction to reinterpret v1 as v1.
+Current independent audits require the v1 schema names and reject v1 explicitly; the compatibility fixture validates each v1 specimen against v1 and proves that the corresponding v1 schema does not accept it.
 
 ## `rust-mutants/catalog` v1
 
@@ -54,35 +53,30 @@ of what was asked rather than a field from the future.
 }
 ```
 
-`branch` is absent, not null, when no proof was claimed. `direction` is
-diagnostic: a consumer must not branch on it.
+`branch` is absent, not null, when no proof was claimed.
+`direction` is diagnostic: a consumer must not branch on it.
 
-`index` is dense over the accepted mutants and the refused candidates
-together: every index from zero to their combined count appears exactly once
-in one list or the other, which is what lets a reader check that a catalog
-lost nothing. `path`, `rule`, `rule_version`, `start_byte`, `end_byte`,
-`source_digest`, `original`, and `replacement` are exactly what minting the
-identity takes, so a reader can re-mint `id` from the row and find out
-whether it is the mutant it says it is.
+`index` is dense over the accepted mutants and the refused candidates together: every index from zero to their combined count appears exactly once in one list or the other, which is what lets a reader check that a catalog lost nothing.
+`path`, `rule`, `rule_version`, `start_byte`, `end_byte`,
+`source_digest`, `original`, and `replacement` are exactly what minting the identity takes, so a reader can re-mint `id` from the row and find out whether it is the mutant it says it is.
 
 ## `rust-mutants/run-report` v1
 
-Written by `rust-mutants run` to
-`<reports.directory>/<run id>/run-report-v1.json`, with
-`<reports.directory>/latest.json` naming the newest.
+Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.json`, with `<reports.directory>/latest.json` naming the newest.
 
 ```jsonc
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 1,
+  "schema_version": 2,
   "tool_version": "0.1.0",
   "run": { "id": "20260905T132650666Z", "started_at": "…", "finished_at": "…",
            "duration_ms": 812, "interrupted": false, "exit_code": 1 },
   "workspace": { "…": "as in the catalog document, plus catalog_digest" },
   "selection": { "tier": "all", "operators": [], "include": [], "exclude": [], "packages": [],
-                 "build": ["--features", "extra"] },
+                 "build": ["--features", "extra"], "mutant_steps": 50000000 },
   "accounting": { "cataloged": 6, "refused": 0, "skipped": 5, "executed": 6,
-                  "killed": 5, "survived": 1, "timed_out": 0, "inconclusive": 0,
+                  "killed": 5, "survived": 1, "step_limit_reached": 0, "waited": 0,
+                  "inconclusive": 0,
                   "errored": 0, "not_run": 0, "unreached": 0, "expected": 0 },
   "score": { "detected": 5, "decided": 6, "value": 0.8333333333333334 },
   "mutants": [{ "…": "as in the catalog document, plus:",
@@ -96,142 +90,95 @@ Written by `rust-mutants run` to
 }
 ```
 
-The outcome columns add up: `killed + survived + timed_out + inconclusive +
-errored == executed`, and `executed + not_run == cataloged`. `unreached`
-counts the `not_run` mutants a coverage measurement proved no target reaches,
-so it is never larger than `not_run` and is zero in a run that measured none. `score` is
-`detected / decided` where `detected = killed + timed_out` and `decided =
-detected + survived`; it is **absent** when the run decided nothing, which is
-not the same as a score of zero. A timeout is `timed_out` only after a serial
-retry timed out again; one that did not reproduce is `inconclusive`, which is
-a hole rather than a detection.
+The outcome columns add up: `killed + survived + step_limit_reached + waited + inconclusive + errored == executed`, and `executed + not_run == cataloged`.
+`unreached` counts the `not_run` mutants a coverage measurement proved no target reaches,
+so it is never larger than `not_run` and is zero in a run that measured none.
+`score` is `detected / decided` where `detected = killed` and `decided = killed + survived`; it is **absent** when the run decided nothing, which is not the same as a score of zero.
+`step_limit_reached` carries `step_notice`, whose nonce,
+catalog, mutant, allowance and observed `N + 1` count were verified against that execution.
+It is an execution bound, not a verdict, so it contributes to neither half of the score and is not reusable from the outcome cache.
+Every other outcome prohibits `step_notice` in the schema.
+`waited` is a bound that expired with nothing else running, which is also unresolved; a bound that expired once and did not expire again is `inconclusive`.
 
-Here `cataloged` is the number of candidate rows in `mutants`, not a blanket
-claim that the compiler accepted every row. `refused` candidates live in
-`rejections`. In a filtered run, a row with `outcome: "not_run"` and
-`not_run_reason: "unselected"` may deliberately have skipped instrumentation
-and compiler validation. Every other outcome is about a compiler-accepted
-guard present in that run's build.
+Here `cataloged` is the number of candidate rows in `mutants`, not a blanket claim that the compiler accepted every row.
+`refused` candidates live in `rejections`.
+In a filtered run, a row with `outcome: "not_run"` and `not_run_reason: "unselected"` may deliberately have skipped instrumentation and compiler validation.
+Every other outcome is about a compiler-accepted guard present in that run's build.
 
 `exit_code` is the one the process returned: `0` every mutant was noticed,
-`1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it
-was terminated.
+`1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it was terminated.
 
-A `finding` is one of `surviving-mutant`, `inconclusive-mutant`,
-`errored-mutant`, `not-run-mutant`, `unreached-mutant`, `discharged-mutant`,
-`stale-expectation`, `unmatched-expectation`, or `unmatched-skip`. A mutant no
-measured target reaches is an `unreached-mutant` finding rather than a
-`not-run-mutant` one: it says the tests have a gap where the mutant is, not
-that the run failed to get to it. A `discharged-mutant` says the same thing
-about a mutation the tests do run and cannot observe: every target that could
-have noticed it was removed by a proof. An `unmatched-skip` is a
-`rust-mutants: skip` marker that hid nothing, which is a claim about code that
-has moved or gone.
+A `finding` is one of `surviving-mutant`, `step-limit-reached-mutant`, `inconclusive-mutant`,
+`waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`,
+`discharged-mutant`, `stale-expectation`, `unmatched-expectation`, or `unmatched-skip`.
+A `waited-mutant` is one this machine stopped waiting for twice: a bound expiring is a fact about the machine that watched, so the run established nothing about the mutation and says so rather than counting it.
+A mutant no measured target reaches is an `unreached-mutant` finding rather than a `not-run-mutant` one: it says the tests have a gap where the mutant is, not that the run failed to get to it.
+A `discharged-mutant` says the same thing about a mutation the tests do run and cannot observe: every target that could have noticed it was removed by a proof.
+An `unmatched-skip` is a `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
 
 A mutant's `not_run_reason` says which of five things left it unexecuted:
-`unreached` and `discharged` are proofs and are findings, `interrupted` is a
-run that was killed, and `unselected` and `stopped-early` are the run doing
-what it was asked to — a filter took the mutant out, or `--fail-fast` stopped
-before reaching it. Neither of the last two is a finding, and both keep their
-row, so a report of a narrowed run still accounts for the whole catalog it was
-cut from. An `unselected` row makes no compiler-acceptance claim; this is what
-lets the expensive preparation work scale with a filtered selection without
-changing catalog identity.
+`unreached` and `discharged` are proofs and are findings, `interrupted` is a run that was killed, and `unselected` and `stopped-early` are the run doing what it was asked to — a filter took the mutant out, or `--fail-fast` stopped before reaching it.
+Neither of the last two is a finding, and both keep their row, so a report of a narrowed run still accounts for the whole catalog it was cut from.
+An `unselected` row makes no compiler-acceptance claim; this is what lets the expensive preparation work scale with a filtered selection without changing catalog identity.
 
 ## The run as it happens
 
-`run --json` writes `rust-mutants-run-stream-v1`
-(`schema/rust-mutants-run-stream-v1.json`): one JSON object per line, each
-flushed as it is written, for a program rather than a person. The kinds are
-`run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`, and
-`error`, each carrying a `type`.
+`run --json` writes `rust-mutants-run-stream-v1` (`schema/rust-mutants-run-stream-v1.json`): one JSON object per line, each flushed as it is written, for a program rather than a person.
+The kinds are `run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`, and `error`, each carrying a `type`.
 
 `run-start` is written **before anything is prepared** — before the snapshot,
-the instrumented build and the validation rounds — so a consumer knows what
-the run is about the moment it begins, and can tell a slow run from a hung
-one. The phase lines follow when preparing finishes, and a `mutant` line
-arrives as each mutant is judged. A reader takes a line at a time and
-ignores a kind it does not know, which is what lets a later release say more
-without breaking a consumer that already works;
-`rust_mutants::report::stream::read_line` is that reader, shipped so a
-consumer does not have to write one.
+the instrumented build and the validation rounds — so a consumer knows what the run is about the moment it begins, and can tell a slow run from a hung one.
+The phase lines follow when preparing finishes, and a `mutant` line arrives as each mutant is judged.
+A reader takes a line at a time and ignores a kind it does not know, which is what lets a later release say more without breaking a consumer that already works;
+`rust_mutants::report::stream::read_line` is that reader, shipped so a consumer does not have to write one.
 
-A `mutant` line is not a report row. It carries what a consumer needs the
-moment a mutant is judged — what was mutated, where, and what the tests made
-of it — and the report holds the rest, because a report is read afterwards
-and a stream is read as it arrives.
+A `mutant` line is not a report row.
+It carries what a consumer needs the moment a mutant is judged — what was mutated, where, and what the tests made of it — and the report holds the rest, because a report is read afterwards and a stream is read as it arrives.
 
-`--json` and `--ui` are two ways of saying one thing, so a run is asked for
-one or the other and never both.
+`--json` and `--ui` are two ways of saying one thing, so a run is asked for one or the other and never both.
 
 ## One mutant, explained
 
-`explain <prefix>` writes `rust-mutants/explain` v1
-(`schema/rust-mutants-explain-v1.json`): the catalog's row for the
-mutant, what the run made of it, the route it took, the command that puts it
-back to the tests, and the mutation as a unified diff against the file. It is
-built from the two documents a run stores — the catalog it kept and the report
-it wrote — so an explanation costs no snapshot, no build and no instrumented
-tree. `--fresh` prepares the tree instead, for a mutant no stored run answers
-for.
+`explain <prefix>` writes `rust-mutants/explain` v1 (`schema/rust-mutants-explain-v1.json`): the catalog's row for the mutant, what the run made of it, the route it took, the command that puts it back to the tests, and the mutation as a unified diff against the file.
+It is built from the two documents a run stores — the catalog it kept and the report it wrote — so an explanation costs no snapshot, no build and no instrumented tree.
+`--fresh` prepares the tree instead, for a mutant no stored run answers for.
 
 The diff is shown only when the file is the one the mutation was taken from,
-which the recorded `source_digest` settles. When it is not, `source` says why
-there is none: a diff against a file the run never saw would be a lie about
-what was measured.
+which the recorded `source_digest` settles.
+When it is not, `source` says why there is none: a diff against a file the run never saw would be a lie about what was measured.
 
 ## What this environment would do
 
-`doctor` writes `rust-mutants/doctor` v1
-(`schema/rust-mutants-doctor-v1.json`): one check per thing a run needs, each
-with a `name`, a `detail`, a `status` of `ok`, `warn` or `fail`, and a
-`remedy` when there is something to do about it. `ok` on the document is true
-when no check failed — a warning is a run that costs more or measures less,
+`doctor` writes `rust-mutants/doctor` v1 (`schema/rust-mutants-doctor-v1.json`): one check per thing a run needs, each with a `name`, a `detail`, a `status` of `ok`, `warn` or `fail`, and a `remedy` when there is something to do about it.
+`ok` on the document is true when no check failed — a warning is a run that costs more or measures less,
 not a run that cannot happen — and the exit code follows it.
 
 The checks are `cargo`, `rustc`, `host`, `workspace`, `config`, `temp`,
-`git`, `targets`, `environment`, `cache`, `disk`, `snapshots` and
-`llvm-tools`. A reserved variable is the one thing every other command
-normally refuses to start under; the only accepted pair belongs to an
-instrumented engine binary whose embedded catalog matches it. `doctor` and
-`diagnostics` report reserved variables instead, because they are what a
-person runs to find out that one is set.
+`git`, `targets`, `environment`, `cache`, `disk`, `snapshots` and `llvm-tools`.
+A reserved variable is the one thing every other command normally refuses to start under; the only accepted pair belongs to an instrumented engine binary whose embedded catalog matches it.
+`doctor` and `diagnostics` report reserved variables instead, because they are what a person runs to find out that one is set.
 
 ## A bug report, gathered
 
-`diagnostics [RUN]` writes `rust-mutants/diagnostics` v1
-(`schema/rust-mutants-diagnostics-v1.json`) as `bundle.json`, beside a
-directory holding the run report, the catalog, the measurement, the
-recording, the configuration, a fresh `doctor-v1.json`,
-`toolchain.txt`, and `environment.txt`. `held` names what is in it and
-`absent` names what the run did not leave, so a reader knows the difference
-between a run that had nothing to say and a file that never arrived.
+`diagnostics [RUN]` writes `rust-mutants/diagnostics` v1 (`schema/rust-mutants-diagnostics-v1.json`) as `bundle.json`, beside a directory holding the run report, the catalog, the measurement, the recording, the configuration, a fresh `doctor-v1.json`,
+`toolchain.txt`, and `environment.txt`.
+`held` names what is in it and `absent` names what the run did not leave, so a reader knows the difference between a run that had nothing to say and a file that never arrived.
 
-`environment.txt` carries the **names** of the variables that were set and no
-value of any of them. A bundle travels, and a value that travels with it is a
-value its owner did not choose to publish.
+`environment.txt` carries the **names** of the variables that were set and no value of any of them.
+A bundle travels, and a value that travels with it is a value its owner did not choose to publish.
 
 ## Evidence
 
 A run writes `touched-v1.json` (`schema/rust-mutants-touched-v1.json`),
-`reached-v1.json` (`schema/rust-mutants-reached-v1.json`) and
-`catalog-v1.json` beside its report. They are the premises its proof layers
-rest on: what each target's guards recorded about which of its tests reached
-which mutation, entered which proved body, and saw which mutation differ from
-what it replaces — with `narrowing` saying which mutants the tree could record
-anything about, so an absence in it is evidence rather than silence — the
-measurement the coverage build left behind, empty when nothing was measured,
-which says so, and the catalog with the branch bodies the compiler vouched
-for. `cargo xtask engine-audit` reads them and re-decides every route without
-the engine that produced them, which is what makes a report's `discharged` a
-proof rather than a claim.
+`reached-v1.json` (`schema/rust-mutants-reached-v1.json`) and `catalog-v1.json` beside its report.
+They are the premises its proof layers rest on: what each target's guards recorded about which of its tests reached which mutation, entered which proved body, and saw which mutation differ from what it replaces — with `narrowing` saying which mutants the tree could record anything about, so an absence in it is evidence rather than silence — the measurement the coverage build left behind, empty when nothing was measured,
+which says so, and the catalog with the branch bodies the compiler vouched for.
+`cargo xtask engine-audit` reads them and re-decides every route without the engine that produced them, which is what makes a report's `discharged` a proof rather than a claim.
 
-Writing them never fails a run. A file that could not be written is one an
-audit calls unaudited, which is the honest answer.
+Writing them never fails a run.
+A file that could not be written is one an audit calls unaudited, which is the honest answer.
 
 ## Recordings
 
-`rust-mutants trace` writes JSON Lines rather than a document; its shape is
-`schema/rust-mutants-trace-v1.json` and its rules are in
-[trace](trace.md). A recording is never evidence, so nothing here reads one
-to decide anything.
+`rust-mutants trace` writes JSON Lines rather than a document; its shape is `schema/rust-mutants-trace-v1.json` and its rules are in [trace](trace.md).
+A recording is never evidence, so nothing here reads one to decide anything.

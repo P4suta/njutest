@@ -16,7 +16,7 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn run(fixture: &Fixture, extra: &[&str]) -> std::process::Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -38,14 +38,14 @@ fn run(fixture: &Fixture, extra: &[&str]) -> std::process::Output {
 
 fn document(fixture: &Fixture) -> serde_json::Value {
     let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
-    let pointer: serde_json::Value = serde_json::from_str(
+    let pointer: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &std::fs::read_to_string(directory.join("latest.json"))
             .expect("a pointer to the newest run"),
     )
     .expect("the pointer is a document");
     let relative = pointer["document"].as_str().expect("a document path");
     let text = std::fs::read_to_string(directory.join(relative)).expect("the report");
-    serde_json::from_str(&text).expect("JSON")
+    njutest_devkit::strictjson::decode_str(&text).expect("JSON")
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn every_marker_hides_what_it_says_and_the_one_that_hides_nothing_is_a_finding()
         output.status.code(),
         Some(1),
         "a marker that hides nothing is a finding: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let report = document(&fixture);
     assert_eq!(

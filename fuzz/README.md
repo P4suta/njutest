@@ -22,7 +22,7 @@ and `kind` in the dictionary it learned.
 So `fuzz/seeds/<target>/` is committed and the workflow copies it into the
 corpus before running. Three gates keep it honest: `xtask/tests/fuzz_ledger.rs`
 refuses a seed directory that names no target or holds nothing, and
-`crates/njutest-cli/tests/fuzz_seeds.rs` — with the three whose readers live
+`crates/njutest/tests/fuzz_seeds.rs` — with the three whose readers live
 on the other side in `crates/rust-mutants-cli/tests/fuzz_seeds.rs` — puts
 every seed to the reader its target uses. **A seed the reader refuses is not
 a seed**: the target returns on the first line and the run explores what it
@@ -50,6 +50,7 @@ so each has to fail closed rather than plausibly.
 | `libtest_lines` | never panics; every test name it reports is text that was there, and no line becomes two |
 | `libtest_summary` | never panics; a target reaches `Passed` only through a line that counted a passing test, and a timeout is a failure whatever the line said |
 | `report_document` | never panics; an accepted report round-trips, its record stream carries exactly one `VERDICT`, and one that fails the audit is refused by the write path |
+| `model_result` | never panics; every Kani export is classified by the production strict parser as proved, noticed, or fail-closed undecided |
 | `engine_config` | never panics; an accepted `.rust-mutants.toml` is one every later stage can honour, checked against the rules the reader states |
 | `engine_coverage_export` | never panics; the engine's own reader accepts only regions `contains` can answer about, and what a run reached is part of what the build instrumented |
 | `depinfo` | never panics; every unit source it accepts is a named Rust file, listed once |

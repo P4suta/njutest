@@ -32,6 +32,9 @@ confidence-threshold = 0.9
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
+# A crate dev-depending on itself turns on its own testkit feature for the
+# test build; the path is exact by construction, so no version is unspecified.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

@@ -33,67 +33,78 @@ pub(super) struct Alternative {
     pub(super) probe: Option<crate::probe::Question>,
 }
 
-/// A composed guard: its text, where each alternative's own text sits in it, and where the original branch does. The offsets are relative to the start of the text.
+/// A composed guard: its text, where each alternative's own text sits in it, and where the original branch does.
+/// The offsets are relative to the start of the text.
 pub(super) struct Composed {
     pub(super) text: String,
     /// One entry per alternative, in the order given: the mutant index and the byte range its text occupies.
     pub(super) alternatives: Vec<(u32, std::ops::Range<usize>)>,
     /// Where the original branch's text starts.
     pub(super) original_at: usize,
-    /// Every mutant this guard evaluates beside what it replaces, ascending. A form that cannot compare reports none, whatever it was offered.
+    /// Every mutant this guard evaluates beside what it replaces, ascending.
+    /// A form that cannot compare reports none, whatever it was offered.
     pub(super) compared: Vec<u32>,
 }
 
+/// A guard whose byte offsets cannot be represented by the platform's string index type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct OffsetOverflow;
+
+impl std::fmt::Display for OffsetOverflow {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the composed guard's byte offsets overflowed")
+    }
+}
+
 /// Composes one guard from its alternatives (index and text, in catalog order) and the original branch.
-#[must_use]
 pub(super) fn compose(
     form: Form,
     paths: &Paths<'_>,
     alternatives: &[Alternative],
     original: &str,
-) -> Composed {
+) -> Result<Composed, OffsetOverflow> {
     match form {
-        Form::C => selector(paths, alternatives, original),
+        Form::C => Ok(selector(paths, alternatives, original)),
         Form::E => {
             let mut composed = chain(paths, alternatives, original, Probing::Written);
-            let (open, close) = wrapping(original);
-            composed.text.insert(0, open);
-            composed.text.push(close);
+            let open = format!("{}!(", paths.of("value"));
+            composed.text.insert_str(0, &open);
+            composed.text.push(')');
             for (_, range) in &mut composed.alternatives {
-                range.start = range.start.saturating_add(1);
-                range.end = range.end.saturating_add(1);
+                range.start = range.start.checked_add(open.len()).ok_or(OffsetOverflow)?;
+                range.end = range.end.checked_add(open.len()).ok_or(OffsetOverflow)?;
             }
-            composed.original_at = composed.original_at.saturating_add(1);
-            composed
+            composed.original_at = composed
+                .original_at
+                .checked_add(open.len())
+                .ok_or(OffsetOverflow)?;
+            Ok(composed)
         }
-        Form::S => chain(paths, alternatives, original, Probing::Refused),
+        Form::S => Ok(chain(paths, alternatives, original, Probing::Refused)),
         Form::M => arm(paths, alternatives, original),
     }
 }
 
-/// What a value-position guard is wrapped in, which is a block wherever the site already was one.
-fn wrapping(original: &str) -> (char, char) {
-    let trimmed = original.trim();
-    if trimmed.starts_with('{') && trimmed.ends_with('}') {
-        ('{', '}')
-    } else {
-        ('(', ')')
-    }
-}
-
 /// Form M: the guard an arm did not have, written after the pattern that did not need one.
-fn arm(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
+fn arm(
+    paths: &Paths<'_>,
+    alternatives: &[Alternative],
+    original: &str,
+) -> Result<Composed, OffsetOverflow> {
     const KEPT: &str = "true";
     let mut composed = selector(paths, alternatives, KEPT);
-    let prefix = original.len().saturating_add(" if ".len());
+    let prefix = original
+        .len()
+        .checked_add(" if ".len())
+        .ok_or(OffsetOverflow)?;
     composed.text.insert_str(0, " if ");
     composed.text.insert_str(0, original);
     for (_, range) in &mut composed.alternatives {
-        range.start = range.start.saturating_add(prefix);
-        range.end = range.end.saturating_add(prefix);
+        range.start = range.start.checked_add(prefix).ok_or(OffsetOverflow)?;
+        range.end = range.end.checked_add(prefix).ok_or(OffsetOverflow)?;
     }
     composed.original_at = 0;
-    composed
+    Ok(composed)
 }
 
 /// How a site reaches the runtime module its guards call into.
@@ -122,14 +133,18 @@ impl Paths<'_> {
     }
 }
 
-/// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own. The outer parentheses are load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.
+/// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own.
+/// The outer generated macro invocation is load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.
+/// Unlike a generic function,
+/// the identity macro preserves the surrounding expression's coercion site.
 fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
     let path = paths.active();
     let path = path.as_str();
-    let mut text = String::from("(");
+    let value = paths.of("value");
+    let mut text = format!("{value}!(");
     let mut spans = Vec::with_capacity(alternatives.len());
     for one in alternatives {
-        let written = write!(text, "{path}({}) && (", one.index);
+        let written = write!(text, "{path}({}) && {value}!(", one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
         let start = text.len();
         text.push_str(&one.text);
@@ -137,20 +152,18 @@ fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> 
         text.push_str(") || ");
     }
     for one in alternatives {
-        let written = write!(text, "!({path}({})) && ", one.index);
+        let written = write!(text, "!{path}({}) && ", one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     let comparable: Vec<&Alternative> = alternatives.iter().filter(|one| one.comparable).collect();
     for one in &comparable {
-        let written = write!(text, "{}({}, ", paths.differing(), one.index);
+        let written = write!(text, "{}({}, {value}!(", paths.differing(), one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    text.push('(');
     let original_at = text.len();
     text.push_str(original);
-    text.push(')');
     for one in comparable.iter().rev() {
-        let written = write!(text, ", || ({}))", one.text);
+        let written = write!(text, "), || {value}!({}))", one.text);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     text.push(')');
@@ -171,7 +184,8 @@ enum Probing {
     Refused,
 }
 
-/// Forms E and S: a branch chain. Both are the same text; only Form E is parenthesised, because it stands where a value does.
+/// Forms E and S: a branch chain.
+/// Both have the same branches; Form E is grouped by the generated identity macro because it stands where a value does.
 fn chain(
     paths: &Paths<'_>,
     alternatives: &[Alternative],

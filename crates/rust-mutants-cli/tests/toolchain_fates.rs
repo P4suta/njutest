@@ -12,56 +12,75 @@
 )]
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use njutest_devkit::fixture::{Fate, Fixture};
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/directory.rs");
+include!("support/metadata.rs");
+
 /// The variable that rewrites the blocks rather than refusing them, as `UPDATE_GOLDEN` does for a golden.
 const UPDATE: &str = "UPDATE_FATES";
 
 fn fixtures() -> Vec<String> {
-    let mut names: Vec<String> =
-        std::fs::read_dir(njutest_devkit::paths::workspace_root().join("fixtures"))
-            .expect("the fixtures")
-            .flatten()
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with("fixture-"))
-            .collect();
-    names.sort();
-    names
+    njutest_devkit::fixture::names()
+}
+
+/// The fixture a climbing argument lands on, when it is one.
+fn climbed(arg: &str) -> Option<&str> {
+    let parts: Vec<&str> = arg.split('/').collect();
+    let up = parts.iter().take_while(|part| **part == "..").count();
+    if up == 0 || parts.len().checked_sub(up) != Some(1) {
+        return None;
+    }
+    parts
+        .get(up)
+        .copied()
+        .filter(|last| last.starts_with("fixture-"))
 }
 
 /// Every other fixture a block's arguments name, so a path that climbs out of the tree lands in something.
 fn siblings(args: &[String]) -> Vec<&str> {
-    args.iter()
-        .filter_map(|arg| arg.strip_prefix("../"))
-        .filter(|name| name.starts_with("fixture-"))
-        .collect()
+    args.iter().filter_map(|arg| climbed(arg)).collect()
 }
 
-/// The block's arguments with each `../fixture-…` spelled as the copy's own path.
+/// The block's arguments with each climbing `fixture-…` spelled as the copy's own path.
 fn resolved(fixture: &Fixture, args: &[String]) -> Vec<String> {
-    let beside = fixture
-        .root()
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
     args.iter()
-        .map(|arg| match arg.strip_prefix("../") {
-            Some(name) if name.starts_with("fixture-") => {
-                beside.join(name).to_string_lossy().into_owned()
+        .map(|arg| {
+            if climbed(arg).is_none() {
+                return arg.clone();
             }
-            _ => arg.clone(),
+            let landed = normalized(&fixture.root().join(arg));
+            njutest_devkit::paths::utf8(&landed).to_owned()
         })
         .collect()
 }
 
+/// `path` with every `.` removed and every `..` folded, without asking the filesystem.
+fn normalized(path: &Path) -> PathBuf {
+    let mut parts: Vec<OsString> = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if let Some(last) = parts.len().checked_sub(1)
+                    && last > 0
+                {
+                    parts.truncate(last);
+                }
+            }
+            other => parts.push(other.as_os_str().to_owned()),
+        }
+    }
+    parts.iter().collect()
+}
+
 /// What a run of one fixture establishes, in the order a block states it.
 fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -79,9 +98,9 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     );
     let output = njutest_devkit::process::answered(code, out, err);
     let code = output.status.code();
-    let said = String::from_utf8_lossy(&output.stderr);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
     let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
-    if !directory.is_dir() {
+    if !test_directory(&directory) {
         assert_eq!(
             code,
             Some(2),
@@ -91,7 +110,7 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
         return Vec::new();
     }
     assert!(
-        code.is_some_and(|code| code < 2),
+        code.is_some_and(|code| code <= 2),
         "the run itself failed: {said}"
     );
     rows(&newest(&directory))
@@ -100,22 +119,34 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
 fn newest(directory: &Path) -> PathBuf {
     let mut runs: Vec<PathBuf> = std::fs::read_dir(directory)
         .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
-        .flatten()
-        .map(|entry| entry.path().join("run-report-v1.json"))
-        .filter(|path| path.is_file())
+        .map(|entry| entry.expect("stored run directory entry"))
+        .map(|entry| entry.path())
+        .filter(|path| test_directory(path))
+        .map(|path| path.join("run-report-v1.json"))
+        .filter(|path| test_metadata(path).is_file())
         .collect();
     runs.sort();
     runs.pop().expect("one stored run")
 }
 
 fn rows(report: &Path) -> Vec<Fate> {
-    let document: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(report).expect("the report"))
-            .expect("the report is a document");
-    let text =
-        |value: &serde_json::Value, key: &str| value[key].as_str().unwrap_or_default().to_owned();
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(report).expect("the report"),
+    )
+    .expect("the report is a document");
+    let text = |value: &serde_json::Value, key: &str| {
+        value[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{key} is text in {value}"))
+            .to_owned()
+    };
     let number = |value: &serde_json::Value, key: &str| {
-        u32::try_from(value[key].as_u64().unwrap_or_default()).unwrap_or_default()
+        u32::try_from(
+            value[key]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{key} is an unsigned integer in {value}")),
+        )
+        .unwrap_or_else(|error| panic!("{key} fits its schema in {value}: {error}"))
     };
     let mut found: Vec<Fate> = document["mutants"]
         .as_array()
@@ -161,7 +192,12 @@ fn rewrite(name: &str, found: &[Fate]) {
         .split_once(njutest_devkit::fixture::FATES_FENCE)
         .expect("the block");
     let (fence, rest) = rest.split_once('\n').expect("the fence line");
-    let (_old, after) = rest.split_once("```").expect("the end of the block");
+    let (old, after) = rest.split_once("```").expect("the end of the block");
+    assert!(
+        !old.contains("```"),
+        "the fence that closes the block is the first one after it, so what is replaced \
+         is the block and never the page: {name}"
+    );
     let mut block = String::new();
     for one in found {
         block.push_str(&one.to_string());
@@ -218,25 +254,38 @@ fn every_fixture_is_driven_by_a_test_that_names_it() {
     for crate_name in [
         "rust-mutants",
         "rust-mutants-cli",
-        "njutest-cli",
+        "njutest",
         "njutest",
         "njutest-devkit",
     ] {
         for directory in ["tests", "src", "benches"] {
             let base = root.join("crates").join(crate_name).join(directory);
             for entry in walk(&base) {
-                sources.push_str(&std::fs::read_to_string(&entry).unwrap_or_default());
+                sources.push_str(
+                    &std::fs::read_to_string(&entry)
+                        .unwrap_or_else(|error| panic!("{}: {error}", entry.display())),
+                );
             }
         }
     }
     let orphans: Vec<String> = fixtures()
         .into_iter()
-        .filter(|name| !sources.contains(name.as_str()))
+        .filter(|name| !names_it(&sources, name))
         .collect();
     assert!(
         orphans.is_empty(),
         "these fixtures are committed and no test names them: {orphans:?}"
     );
+}
+
+/// Whether `sources` names this fixture, and not merely a longer name starting with it.
+fn names_it(sources: &str, name: &str) -> bool {
+    sources.match_indices(name).any(|(at, matched)| {
+        at.checked_add(matched.len())
+            .and_then(|after| sources.get(after..))
+            .and_then(|rest| rest.chars().next())
+            .is_none_or(|next| !next.is_ascii_alphanumeric() && next != '-')
+    })
 }
 
 /// Every Rust file under `base`, however deep.
@@ -245,9 +294,10 @@ fn walk(base: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(base) else {
         return found;
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.expect("fixture tree directory entry");
         let path = entry.path();
-        if path.is_dir() {
+        if test_metadata(&path).is_dir() {
             found.extend(walk(&path));
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             found.push(path);

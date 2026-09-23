@@ -6,6 +6,37 @@
 use std::collections::BTreeMap;
 
 use crate::catalog::Mutant;
+use crate::count::{Count, Tests};
+
+/// Why a route's projected work cannot be represented exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RouteAccountingError {
+    /// One explicit test set is larger than the durable counter.
+    #[error("a route names {count} tests, which does not fit its u64 accounting counter")]
+    TestCountTooLarge {
+        /// The unrepresentable collection length.
+        count: usize,
+    },
+    /// The sum of individually representable test counts is too large.
+    #[error("the total number of tests a route starts does not fit its u64 accounting counter")]
+    TestCountOverflow,
+    /// A narrowed route retained a target but named no test to start.
+    #[error("a narrowed route retained a target with an empty test set")]
+    EmptyNamedTestSet,
+    /// A narrowed route names more tests than the measured target ran.
+    #[error(
+        "a narrowed route names {named} tests, but the target baseline measured only {measured}"
+    )]
+    NamedTestsExceedBaseline {
+        /// How many tests the route names.
+        named: u32,
+        /// How many tests the target's baseline measured.
+        measured: u32,
+    },
+    /// Scaling or summing target baselines exceeded [`std::time::Duration`].
+    #[error("the duration projected for a route exceeds the duration type")]
+    DurationOverflow,
+}
 
 /// Which targets could notice a mutation, and what the route rests on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,11 +71,18 @@ pub enum Route {
 
 /// Why a target that could have been asked about a mutation was not.
 ///
-/// A closed set rather than a name, because the report carries these into a
-/// schema and an audit re-derives them: a proof spelled one way in one place
-/// and another way elsewhere is a discharge nobody can hold the run to.
+/// A closed set rather than a name, because the report carries these into a schema and an audit re-derives them: a proof spelled one way in one place and another way elsewhere is a discharge nobody can hold the run to.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Proof {
@@ -55,9 +93,6 @@ pub enum Proof {
 }
 
 impl Proof {
-    /// Every proof that removes a target, which is what a schema and an audit have to know in full.
-    pub const ALL: [Self; 2] = [Self::BranchNeverTaken, Self::NeverInfected];
-
     /// The name a route record carries.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -82,7 +117,16 @@ pub const NEVER_INFECTED: Proof = Proof::NeverInfected;
 
 /// How narrowly a run chose which targets to ask about a mutation.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Granularity {
@@ -99,15 +143,6 @@ pub enum Granularity {
 }
 
 impl Granularity {
-    /// Every granularity a route can be decided at, which is what a schema and an audit have to know in full.
-    pub const ALL: [Self; 5] = [
-        Self::All,
-        Self::Block,
-        Self::Test,
-        Self::Discharged,
-        Self::Unreached,
-    ];
-
     /// The name a route record carries.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -121,9 +156,19 @@ impl Granularity {
     }
 }
 
-/// Why a route is wider than a measurement alone would make it. Every one of these runs more, never less.
+/// Why a route is wider than a measurement alone would make it.
+/// Every one of these runs more, never less.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Fallback {
@@ -140,15 +185,6 @@ pub enum Fallback {
 }
 
 impl Fallback {
-    /// Every reason a route widens, which is what a schema and an audit have to know in full.
-    pub const ALL: [Self; 5] = [
-        Self::NotMeasured,
-        Self::PositionUnknown,
-        Self::OutsideBlocks,
-        Self::CoverageIncomplete,
-        Self::TouchIncomplete,
-    ];
-
     /// The name a route record carries.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -173,7 +209,6 @@ pub struct Reaches {
 
 /// Which of a target's tests a route puts a mutation to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Asked {
     /// Every test the target has, because nothing narrowed it to fewer.
     Every,
@@ -191,12 +226,24 @@ impl Asked {
         }
     }
 
-    /// How many tests one execution of the target starts, given how many it has.
-    #[must_use]
-    pub const fn counting(&self, held: usize) -> usize {
+    fn exact_count(&self, held: u32) -> Result<u32, RouteAccountingError> {
         match self {
-            Self::Every => held,
-            Self::These(tests) => tests.len(),
+            Self::Every => Ok(held),
+            Self::These(tests) => {
+                let named = u32::try_from(tests.len()).map_err(|_overflow| {
+                    RouteAccountingError::TestCountTooLarge { count: tests.len() }
+                })?;
+                if named == 0 {
+                    return Err(RouteAccountingError::EmptyNamedTestSet);
+                }
+                if named > held {
+                    return Err(RouteAccountingError::NamedTestsExceedBaseline {
+                        named,
+                        measured: held,
+                    });
+                }
+                Ok(named)
+            }
         }
     }
 }
@@ -240,10 +287,6 @@ pub struct Routing<'a> {
 }
 
 impl Route {
-    /// Every name [`Route::granularity`] can answer, which is what a schema and an audit have to know in full.
-    pub const GRANULARITIES: [&'static str; 5] =
-        ["all", "block", "test", "discharged", "unreached"];
-
     /// Which targets a measurement puts at `position` of `path`, out of `targets`.
     #[must_use]
     pub fn decide(
@@ -403,35 +446,53 @@ impl Route {
     }
 
     /// Every test this route would start, counted, which is the work it asks for.
-    #[must_use]
-    pub fn started<F: Fn(&str) -> usize>(&self, of: F) -> usize {
-        match self {
-            Self::Block { reaching, .. } => reaching
-                .iter()
-                .map(|one| one.tests.counting(of(&one.target)))
-                .sum(),
-            Self::All { reaching, .. } => reaching.iter().map(|target| of(target)).sum(),
+    ///
+    /// # Errors
+    /// Returns [`RouteAccountingError`] instead of truncating or saturating an unrepresentable test count.
+    pub fn started<F: Fn(&str) -> u32>(&self, of: F) -> Result<Count<Tests>, RouteAccountingError> {
+        let total = match self {
+            Self::Block { reaching, .. } => reaching.iter().try_fold(0u64, |total, one| {
+                let asked = one.tests.exact_count(of(&one.target))?;
+                total
+                    .checked_add(u64::from(asked))
+                    .ok_or(RouteAccountingError::TestCountOverflow)
+            })?,
+            Self::All { reaching, .. } => reaching.iter().try_fold(0u64, |total, target| {
+                total
+                    .checked_add(u64::from(of(target)))
+                    .ok_or(RouteAccountingError::TestCountOverflow)
+            })?,
             Self::Discharged { .. } | Self::Unreached { .. } => 0,
-        }
+        };
+        Ok(Count::new(total))
     }
 
     /// What this route would take, as the share of each target's own baseline the tests it names come to.
-    #[must_use]
-    pub fn costing<F: Fn(&str) -> Timing>(&self, of: F) -> std::time::Duration {
+    ///
+    /// # Errors
+    /// Returns [`RouteAccountingError`] instead of truncating a named-test count or saturating a projected duration.
+    pub fn costing<F: Fn(&str) -> Timing>(
+        &self,
+        of: F,
+    ) -> Result<std::time::Duration, RouteAccountingError> {
         self.reaching()
             .iter()
-            .map(|target| {
+            .try_fold(std::time::Duration::ZERO, |total, target| {
                 let timing = of(target);
                 let all = timing.tests.max(1);
-                let named = u32::try_from(self.tests_of(target).len()).unwrap_or(all);
-                let asked = if named == 0 { all } else { named.min(all) };
-                timing
+                let asked = match self.keeps(target).map(|one| &one.tests) {
+                    None | Some(Asked::Every) => all,
+                    Some(tests @ Asked::These(_)) => tests.exact_count(timing.tests)?,
+                };
+                let projected = timing
                     .baseline
                     .checked_div(all)
-                    .unwrap_or_default()
-                    .saturating_mul(asked)
+                    .and_then(|each| each.checked_mul(asked))
+                    .ok_or(RouteAccountingError::DurationOverflow)?;
+                total
+                    .checked_add(projected)
+                    .ok_or(RouteAccountingError::DurationOverflow)
             })
-            .sum()
     }
 
     /// The granularity a route record carries: `all`, `test`, `block`, `discharged`, or `unreached`.
@@ -539,7 +600,7 @@ impl Route {
     #[must_use]
     pub fn record(&self, mutant: &Mutant, executed: Vec<String>) -> crate::trace::RouteRecord {
         crate::trace::RouteRecord {
-            mutant: mutant.display_id.clone(),
+            mutant: mutant.display_id.to_string(),
             index: mutant.index,
             granularity: self.granularity(),
             fallback: self.fallback(),

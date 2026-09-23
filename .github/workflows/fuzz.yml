@@ -1,20 +1,14 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# cargo-fuzz against the fail-closed parsers and byte transformations of both
-# products (fuzz/README.md lists the targets and their properties).
-# A crash is uploaded as an artifact and is a test to write, never an input to
-# blame.
+# cargo-fuzz against the fail-closed parsers and byte transformations of both products (fuzz/README.md lists the targets and their properties).
+# A crash is uploaded as an artifact and is a test to write, never an input to blame.
 #
-# This runs weekly and on request, and never on a pull request. Twenty-three
-# targets built on nightly and given five thousand executions each is
-# twenty-three machines spending a quarter of an hour to search a space that
-# wants hours, and none of it gates anything: `ci-success` does not wait for
-# it, so a crash it found could not have stopped a merge anyway. What guards a
-# pull request is that the targets still compile against the API they fuzz,
-# which `lint` answers in seconds as `mise run fuzz:check`. What finds a crash
-# is time, which the weekly run spends and `mise run fuzz:smoke` spends on the
-# machine of whoever is changing a parser.
+# This runs weekly and on request, and never on a pull request.
+# Twenty-three targets built on nightly and given five thousand executions each is twenty-three machines spending a quarter of an hour to search a space that wants hours, and none of it gates anything: `ci-success` does not wait for it, so a crash it found could not have stopped a merge anyway.
+# What guards a pull request is that the targets still compile against the API they fuzz,
+# which `lint` answers in seconds as `mise run fuzz:clippy`.
+# What finds a crash is time, which the weekly run spends and `mise run fuzz:smoke` spends on the machine of whoever is changing a parser.
 name: fuzz
 
 on:
@@ -39,8 +33,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      # The repository pins stable in rust-toolchain.toml. Make the fuzz
-      # process select the nightly that the action below installs.
+      # The repository pins stable in rust-toolchain.toml.
+      # Make the fuzz process select the nightly that the action below installs.
       RUSTUP_TOOLCHAIN: nightly
     strategy:
       fail-fast: false
@@ -57,6 +51,7 @@ jobs:
           - coverage_export
           - libtest_summary
           - report_document
+          - model_result
           - carried_answers
           - offered_candidates
           - engine_config
@@ -73,8 +68,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Fuzzing needs nightly for the sanitizer. Each rust-toolchain action
-      # branch bakes in its toolchain, so pin the nightly branch itself.
+      # Fuzzing needs nightly for the sanitizer.
+      # Each rust-toolchain action branch bakes in its toolchain, so pin the nightly branch itself.
       - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly branch
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
@@ -96,10 +91,7 @@ jobs:
           FUZZ_TARGET: ${{ matrix.target }}
         run: |
           budget="-max_total_time=1500"
-          if [ -d "fuzz/seeds/$FUZZ_TARGET" ]; then
-            mkdir -p "fuzz/corpus/$FUZZ_TARGET"
-            cp "fuzz/seeds/$FUZZ_TARGET/"* "fuzz/corpus/$FUZZ_TARGET/"
-          fi
+          bash ../scripts/seed-fuzz-corpus.sh "$FUZZ_TARGET"
           cargo fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- "$budget" -max_len=4096
       - name: Upload crash artifacts
         if: failure()

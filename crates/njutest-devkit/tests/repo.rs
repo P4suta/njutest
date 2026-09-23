@@ -8,6 +8,10 @@
     reason = "a test reads a JSON document by the names its own fixture put there"
 )]
 
+include!("support/metadata.rs");
+include!("support/missing.rs");
+include!("support/ok.rs");
+
 use njutest_devkit::repo::Repo;
 use njutest_devkit::report::{PLACEHOLDER, normalize};
 
@@ -17,15 +21,24 @@ fn a_repo_writes_a_project_that_builds_offline_against_no_registry() {
     repo.package("example")
         .lib("pub fn double(n: i32) -> i32 {\n    n * 2\n}\n");
 
-    let manifest = std::fs::read_to_string(repo.root().join("Cargo.toml")).expect("the manifest");
+    let manifest = test_ok(
+        std::fs::read_to_string(repo.root().join("Cargo.toml")),
+        "the manifest",
+    );
     assert!(manifest.contains("name = \"example\""), "{manifest}");
     assert!(
         manifest.contains("[workspace]"),
         "its own workspace table, so cargo does not look upwards: {manifest}"
     );
-    assert!(repo.root().join("Cargo.lock").is_file(), "a committed lock");
+    assert!(
+        test_metadata(&repo.root().join("Cargo.lock")).is_file(),
+        "a committed lock"
+    );
 
-    let lib = std::fs::read_to_string(repo.root().join("src/lib.rs")).expect("the library");
+    let lib = test_ok(
+        std::fs::read_to_string(repo.root().join("src/lib.rs")),
+        "the library",
+    );
     assert!(lib.starts_with("// SPDX-FileCopyrightText:"), "{lib}");
     assert!(lib.contains("pub fn double"), "{lib}");
 }
@@ -36,7 +49,7 @@ fn a_repo_writes_an_integration_target_where_cargo_looks_for_one() {
     let package = repo.package("example");
     package.lib("pub const N: i32 = 1;\n");
     package.integration_test("wide", "#[test]\nfn it_works() {}\n");
-    assert!(repo.root().join("tests/wide.rs").is_file());
+    assert!(test_metadata(&repo.root().join("tests/wide.rs")).is_file());
 }
 
 #[test]
@@ -44,9 +57,9 @@ fn a_repo_that_was_committed_is_a_repository_with_one_commit() {
     let repo = Repo::new();
     repo.package("example").lib("pub const N: i32 = 1;\n");
     repo.commit();
-    assert!(repo.root().join(".git").is_dir());
+    assert!(test_metadata(&repo.root().join(".git")).is_dir());
     assert!(
-        repo.root().join(".git/refs/heads/main").is_file(),
+        test_metadata(&repo.root().join(".git/refs/heads/main")).is_file(),
         "on a branch a test can name"
     );
 }
@@ -58,7 +71,7 @@ fn the_tree_goes_away_with_the_value_so_a_test_bounds_its_own_mess() {
         repo.package("example").lib("pub const N: i32 = 1;\n");
         repo.root().to_path_buf()
     };
-    assert!(!path.exists(), "{}", path.display());
+    assert!(test_missing(&path), "{}", path.display());
 }
 
 #[test]

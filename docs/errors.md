@@ -2,13 +2,13 @@
 
 **Status: implemented.** Every code here is one the engine or the runner can return, and a test keeps this table and `rust_mutants::error::error_codes` in step in both directions.
 
-Every failure the engine and the runner report carries a stable code. The
-code is the searchable name of the failure: grep this file, the issue tracker,
-and a trace for it. A test in each crate keeps this table and the code's own
-list equal in both directions, so a code is either here or it does not exist.
+Every failure the engine and the runner report carries a stable code.
+The code is the searchable name of the failure: grep this file, the issue tracker,
+and a trace for it.
+A test in each crate keeps this table and the code's own list equal in both directions, so a code is either here or it does not exist.
 
-Codes are `RM` (rust-mutants) or `NJ` (njutest) followed by four digits. The
-first digit names an area:
+Codes are `RM` (rust-mutants) or `NJ` (njutest) followed by four digits.
+The first digit names an area:
 
 | Digit | rust-mutants | njutest |
 | ---: | --- | --- |
@@ -39,6 +39,7 @@ first digit names an area:
 | `RM0010` | A change set git could not be asked for: the tree is not a repository, or it does not know the revision. A run that could not see what changed never reads as a run that saw nothing change. | run inside a git working tree, or name what to measure with --include |
 | `RM0011` | The reports given are not the parts of one catalog: a different tree, a different catalog, or two parts that hold the same mutant. | merge the parts of one run: the same tree, the same catalog, and one report per --shard |
 | `RM0012` | A source file a report names cannot be read from the root given, so the mutation cannot be shown as a change. | pass --root at the tree the run measured, or check the file out again |
+| `RM0013` | An outcome cache cannot be enumerated completely, so its size or removal cannot be stated exactly. | check the cache directory is readable by this user, or pass --cache-dir at another one |
 | `RM1001` | Snapshot options that cannot be honoured, such as a report directory that is absolute or climbs out of the source root. | name a report directory inside the workspace; one that climbs out of it would have the run write where nothing sweeps |
 | `RM1002` | A source root that is relative, cannot be read, or is not a directory. | pass --root at a directory that exists and holds the workspace manifest |
 | `RM1003` | An operating system failure while reading a tree: a directory that cannot be listed, an entry that cannot be stat'ed. | this is what the operating system said; the path it names is the one to look at |
@@ -55,8 +56,10 @@ first digit names an area:
 | `RM1014` | A cargo command could not start, timed out, or exited unsuccessfully; cargo's own words follow. | run the same cargo command yourself: what it says there is what it said here |
 | `RM1015` | `cargo metadata` printed something that is not its document. | run `cargo metadata` yourself on this tree; what it prints is what could not be read |
 | `RM1016` | A `--message-format=json` line is not a message. | run the same cargo command with --message-format=json yourself; what it prints is what could not be read |
-| `RM1017` | The workspace reads code from a path outside itself, which the copy a run measures does not hold. Allow the directory with `--allow-outside`, or vendor it inside the tree. | --allow-outside DIR copies that directory beside the tree, or [project] allow_outside does |
+| `RM1017` | The workspace reads code from a path outside itself, which the copy a run measures does not hold. Allow the directory with `--allow-outside`, or vendor it inside the tree. | --allow-outside DIR copies that directory into the copy where the tree reaches it, or [project] allow_outside does |
 | `RM1018` | `--root` names a member of a workspace rather than the workspace. A run measures a copy of what it was given, and a member on its own is not a buildable tree. | run with --root at the workspace root the message names, and --package to narrow it |
+| `RM1019` | A directory a run would copy has no place in the copy that keeps every path into it resolving: it is not absolute, it still climbs, it is the tree or holds it or is inside it, or it lies on another filesystem root. A copy places what it holds by substituting one prefix, so a directory it cannot place is one every path into it would stop reaching. | --allow-outside takes an existing absolute directory outside the tree and on the same filesystem root as it; a copy reproduces the shape of what it copies, and cannot hold a directory that is the tree, holds it, or lies across a volume |
+| `RM1020` | A manifest a run has to read is there and could not be read. A run decides what it may copy, which targets carry a harness, and which lints a crate forbids from these, and an empty answer to any of them is a different run rather than a missing one. | read the manifest the message names yourself: a run decides what it may copy, which targets carry a harness, and which lints a crate forbids from it, and an empty answer to any of those is a different run rather than a missing one |
 | `RM2001` | A dep-info file has no rule to read. | run `cargo test --no-run` yourself, then try again: a build that did not finish leaves this behind |
 | `RM2002` | An artifact's dep-info file could not be read, so the files its unit compiled are unknown. | run `cargo clean` and try again; a dep-info file from an interrupted build cannot be read |
 | `RM2003` | A source file a unit compiled could not be read. | the file a unit compiled is not readable from the copy; check it is not written while the run reads it |
@@ -72,7 +75,7 @@ first digit names an area:
 | `RM3004` | An alternative could not be folded onto one line. | this is a defect in this tool: a guard has to fit on the line it replaces, and this one did not |
 | `RM3005` | The guards could not be applied to the file. | this is a defect in this tool: the guards could not be written back over the file they were cut from |
 | `RM3006` | A guard would have moved a line, breaking the invariant every position depends on. | this is a defect in this tool: a guard moved a line, and every position a run reports is relative to lines that did not move |
-| `RM3007` | A mutant index collides with the runtime's sentinel values. | this is a defect in this tool: the catalog outgrew the range the generated runtime reserves for real mutants |
+| `RM3007` | A mutant index makes the generated runtime's inclusive window overflow. | this is a defect in this tool: the catalog outgrew the u32 window the generated runtime can represent |
 | `RM4001` | The tree does not compile before any mutant is live, so nothing about the failure is the mutants' doing. | make `cargo test --no-run` pass on the tree as committed, then run again |
 | `RM4002` | The mutants a compilation failure came from could not be isolated. | run `cargo test --no-run` on the tree yourself; the compilation failed for a reason this tool could not attribute to one mutant |
 | `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. | the compilation could not be started at all: check cargo runs on this tree and that there is room under TMPDIR |
@@ -86,6 +89,7 @@ first digit names an area:
 | `RM6002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). | rustup component add llvm-tools, or run with --no-coverage |
 | `RM6003` | `llvm-profdata` or `llvm-cov` failed. | `rustup component add llvm-tools-preview`, and check the versions match the toolchain in use |
 | `RM6004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. | the test process wrote no profile: check nothing in the suite sets LLVM_PROFILE_FILE for itself |
+| `RM7001` | An executable a successful build named could not be read back for equivalence comparison. | run again after checking nothing removes or rewrites target files while the build is being measured |
 | `RM9001` | A rule name the canonical registry does not know. | `rust-mutants rules` lists every rule this release knows |
 | `RM9002` | A pattern the caller gave is not a pattern. | a pattern is workspace-relative with forward slashes: `src/**/*.rs`, never a leading or trailing slash |
 | `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. | write a duration as 30s, 5m, or 1h30m |
@@ -95,6 +99,7 @@ first digit names an area:
 | Code | Meaning | Remedy |
 | --- | --- | --- |
 | `NJ0001` | The caller cancelled the operation before it completed. | nothing was left half-done; run it again when you are ready |
+| `NJ0002` | The command's output stream could not be written. | check the destination is writable and has space; a composition root may treat a deliberately closed pipe as success |
 | `NJ1001` | The configuration file could not be read. | check the file is readable by this user; the path names it |
 | `NJ1002` | The configuration file is not the document this version understands: an unknown key, a malformed value. | `njutest init` writes a file this release understands, with every key commented |
 | `NJ1003` | The configuration says something a run cannot honour: a harness flag njutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. | the message says which key and why; `njutest init` writes one that is valid |
@@ -124,6 +129,9 @@ first digit names an area:
 | `NJ8004` | A stored answer is not the answer it claims to be, or a line offered to this machine is not an answer at all: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. | remove the store and let it be rebuilt: a stored answer that is not what it claims is never used |
 | `NJ8005` | No port could be listened on in front of a seam, so a run that was to record what went past it could record nothing. | check this machine allows a listener on the loopback interface, and that nothing has taken every port |
 | `NJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. | `rustup +nightly component add miri`, or ask for a contract that does not promise interpretation |
+| `NJ7002` | The verified model-checking phase could not preserve its own evidence. | the message names the internal source or artifact boundary that failed; fix its permissions or report the invariant failure |
+| `NJ7003` | The run could not schedule measurements without trusting state interrupted by a panic. | run it again; a worker panic or poisoned coordination lock is never recovered as ordinary state |
+| `NJ7004` | An assurance phase printed output that is not valid UTF-8, so its text protocol cannot be interpreted exactly. | the named tool violated its text-output contract; fix or replace that tool before trusting its result |
 | `NJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. | check TMPDIR is a directory this user may write in, and that there is room under it |
 | `NJ9001` | The reports offered to `njutest merge` are neither one whole report nor one complete division of one catalog: none were offered; a `K/N` label is missing, repeated, malformed, mixed with an unsharded report, or uses another N; the reports disagree about the tree, configuration, contract, effective scope, or tool versions; or two judged the same mutant. A partial union cannot be relabelled as the whole. | every part of one catalog has the same catalog digest; the parts offered do not, so they are not parts of one run |
 | `NJ6003` | The report contradicts itself — the numbers do not add up, the verdict is more than what ran supports, a fact recorded as unavailable is also present — so nothing was written. | this is a defect in this tool: it refused to write a report whose parts disagree, rather than store one a reader could not trust |

@@ -21,6 +21,17 @@ pub const RUSTFLAGS: &str = "RUSTFLAGS";
 /// What separates arguments inside `CARGO_ENCODED_RUSTFLAGS`.
 pub const SEPARATOR: char = '\u{1f}';
 
+/// A compiler-flag environment value which cannot be preserved exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigError {
+    /// Cargo's textual flag protocol was supplied through a non-UTF-8 value.
+    #[error("{variable} is not valid UTF-8, so its compiler flags cannot be preserved exactly")]
+    NonUtf8Environment {
+        /// The environment variable whose bytes were refused.
+        variable: &'static str,
+    },
+}
+
 /// What the configuration files say about compiler flags.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Configured {
@@ -38,8 +49,13 @@ pub fn configured(root: &Path, cargo_home: Option<&Path>) -> Configured {
     let mut layers: Vec<Vec<String>> = Vec::new();
     let mut found = Configured::default();
     for directory in root.ancestors().chain(cargo_home) {
-        let Some(text) = holding(directory) else {
-            continue;
+        let text = match holding(directory) {
+            Held::Absent => continue,
+            Held::Text(text) => text,
+            Held::Unreadable => {
+                found.unreadable = true;
+                continue;
+            }
         };
         let one = read(&text);
         found.target_specific |= one.target_specific;
@@ -47,7 +63,10 @@ pub fn configured(root: &Path, cargo_home: Option<&Path>) -> Configured {
         layers.push(one.build);
     }
     layers.reverse();
-    found.build = layers.into_iter().flatten().collect();
+    found.build = layers
+        .into_iter()
+        .flat_map(IntoIterator::into_iter)
+        .collect();
     found
 }
 
@@ -62,11 +81,22 @@ pub fn read(text: &str) -> Configured {
     };
     let target_specific = matches!(document.get("target"), Some(toml::Value::Table(targets))
         if targets.values().any(|one| one.get("rustflags").is_some()));
-    let build = document
+    let build = match document
         .get("build")
         .and_then(|build| build.get("rustflags"))
-        .map(as_flags)
-        .unwrap_or_default();
+    {
+        Some(value) => match as_flags(value) {
+            Some(flags) => flags,
+            None => {
+                return Configured {
+                    target_specific,
+                    unreadable: true,
+                    ..Configured::default()
+                };
+            }
+        },
+        None => Vec::new(),
+    };
     if build.iter().any(|flag| flag.contains(SEPARATOR)) {
         return Configured {
             build: Vec::new(),
@@ -89,62 +119,89 @@ pub fn home(env: &[(OsString, OsString)]) -> Option<PathBuf> {
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
     };
-    of("CARGO_HOME").or_else(|| {
-        of("HOME")
-            .or_else(|| of("USERPROFILE"))
-            .map(|home| home.join(".cargo"))
-    })
+    if let Some(cargo_home) = of("CARGO_HOME") {
+        return Some(cargo_home);
+    }
+    let home = match of("HOME") {
+        Some(home) => home,
+        None => of("USERPROFILE")?,
+    };
+    Some(home.join(".cargo"))
 }
 
 /// The value of `CARGO_ENCODED_RUSTFLAGS` for a command, or nothing when there is nothing to say and the project's own configuration keeps applying.
-#[must_use]
+///
+/// # Errors
+/// Refuses a non-UTF-8 flag variable instead of changing its bytes with a lossy conversion.
 pub fn encoded(
     env: &[(OsString, OsString)],
     configured: &Configured,
     extra: &[&str],
-) -> Option<OsString> {
-    let mut flags = inherited(env).unwrap_or_else(|| configured.build.clone());
+) -> Result<Option<OsString>, ConfigError> {
+    let mut flags = match inherited(env)? {
+        Some(inherited) => inherited,
+        None => configured.build.clone(),
+    };
     flags.extend(extra.iter().map(|flag| (*flag).to_owned()));
     if flags.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(OsString::from(flags.join(&SEPARATOR.to_string())))
+    Ok(Some(OsString::from(flags.join(&SEPARATOR.to_string()))))
 }
 
 /// What the first of the two names that one directory holds says.
-fn holding(directory: &Path) -> Option<String> {
+enum Held {
+    Absent,
+    Text(String),
+    Unreadable,
+}
+
+fn holding(directory: &Path) -> Held {
     let base = directory.join(DIRECTORY);
-    FILE_NAMES
-        .iter()
-        .find_map(|name| std::fs::read_to_string(base.join(name)).ok())
+    for name in FILE_NAMES {
+        match std::fs::read_to_string(base.join(name)) {
+            Ok(text) => return Held::Text(text),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_unreadable) => return Held::Unreadable,
+        }
+    }
+    Held::Absent
 }
 
 /// A `rustflags` value: a list of arguments, or one string cargo splits on whitespace.
-fn as_flags(value: &toml::Value) -> Vec<String> {
+fn as_flags(value: &toml::Value) -> Option<Vec<String>> {
     match value {
-        toml::Value::String(text) => split_plain(text),
+        toml::Value::String(text) => Some(split_plain(text)),
         toml::Value::Array(items) => items
             .iter()
-            .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+            .map(|item| item.as_str().map(ToOwned::to_owned))
             .collect(),
-        _ => Vec::new(),
+        _ => None,
     }
 }
 
 /// What cargo takes from the environment instead of the configuration, in cargo's order.
-fn inherited(env: &[(OsString, OsString)]) -> Option<Vec<String>> {
-    let of =
-        |name: &str| crate::vars::var(env, name).map(|value| value.to_string_lossy().into_owned());
-    if let Some(encoded) = of("CARGO_ENCODED_RUSTFLAGS") {
-        return Some(
+fn inherited(env: &[(OsString, OsString)]) -> Result<Option<Vec<String>>, ConfigError> {
+    let of = |name: &'static str| -> Result<Option<String>, ConfigError> {
+        match crate::vars::var(env, name) {
+            Some(value) => value
+                .to_str()
+                .map(str::to_owned)
+                .map(Some)
+                .ok_or(ConfigError::NonUtf8Environment { variable: name }),
+            None => Ok(None),
+        }
+    };
+    if let Some(encoded) = of("CARGO_ENCODED_RUSTFLAGS")? {
+        return Ok(Some(
             encoded
                 .split(SEPARATOR)
                 .filter(|flag| !flag.is_empty())
                 .map(ToOwned::to_owned)
                 .collect(),
-        );
+        ));
     }
-    of("RUSTFLAGS").map(|plain| split_plain(&plain))
+    Ok(of("RUSTFLAGS")?.map(|plain| split_plain(&plain)))
 }
 
 /// How cargo splits a plain `RUSTFLAGS`: on whitespace, with empty pieces dropped.

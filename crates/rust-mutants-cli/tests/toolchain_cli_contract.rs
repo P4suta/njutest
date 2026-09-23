@@ -17,11 +17,11 @@ use std::process::Output;
 
 /// Runs the binary against a fixture, with the environment a real run has.
 fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -48,7 +48,7 @@ fn list_names_every_candidate_without_building_anything() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     let rows: Vec<&str> = text.lines().filter(|line| line.contains(" => ")).collect();
@@ -62,7 +62,11 @@ fn list_names_every_candidate_without_building_anything() {
         "a list says how many it listed and what listing them is not: {text}"
     );
     assert!(text.contains("gt-to-ge@1"), "{text}");
-    assert!(text.contains("\">\" => \">=\""), "{text}");
+    assert!(text.contains("utf8:\">\" => utf8:\">=\""), "{text}");
+    assert!(
+        !text.contains("LosslessBytes"),
+        "the human boundary exposed a renderer's Debug representation: {text}"
+    );
 }
 #[test]
 fn why_skipped_tallies_the_reasons_with_a_sentence_each() {
@@ -85,7 +89,7 @@ fn catalog_says_what_compiles_and_what_the_compiler_refused() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     assert!(text.contains("refused by the compiler:"), "{text}");
@@ -100,10 +104,10 @@ fn catalog_as_json_is_one_document_a_program_can_read() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let document: serde_json::Value =
-        serde_json::from_str(&stdout(&output)).expect("one JSON document");
+        njutest_devkit::strictjson::decode_str(&stdout(&output)).expect("one JSON document");
     assert_eq!(document["document_type"], "rust-mutants/catalog");
     assert_eq!(document["schema_version"], 1);
     assert_eq!(document["tool_version"], rust_mutants::VERSION);
@@ -113,7 +117,25 @@ fn catalog_as_json_is_one_document_a_program_can_read() {
             .map(str::len),
         Some(64)
     );
-    assert_eq!(document["skips"].as_array().expect("skips").len(), 2);
+    let skips = document["skips"].as_array().expect("skips");
+    let observed: Vec<(&str, u64)> = skips
+        .iter()
+        .map(|skip| {
+            (
+                skip["reason"].as_str().expect("a named skip reason"),
+                skip["count"].as_u64().expect("an exact skip count"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        observed,
+        [
+            ("test-code", 22),
+            ("test-only-file", 6),
+            ("let-condition", 1),
+        ],
+        "the all-tier fixture's complete skip ledger drifted"
+    );
 }
 #[test]
 fn explain_says_everything_known_about_one_mutant() {
@@ -131,7 +153,7 @@ fn explain_says_everything_known_about_one_mutant() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     assert!(text.contains(&format!("SHORT     {short}")), "{text}");
@@ -167,7 +189,7 @@ fn run_exits_by_what_the_tests_said() {
         killed.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&killed.stderr)
+        njutest_devkit::process::strict_utf8(&killed.stderr)
     );
     let text = stdout(&killed);
     assert!(text.contains("killed"), "{text}");
@@ -179,7 +201,7 @@ fn run_exits_by_what_the_tests_said() {
 
     let unknown = against(&fixture, &["run", "--mutant", "ffffffff"]);
     assert_eq!(unknown.status.code(), Some(2));
-    let said = String::from_utf8_lossy(&unknown.stderr);
+    let said = njutest_devkit::process::strict_utf8(&unknown.stderr);
     assert!(said.contains("RM5003"), "{said}");
 }
 #[test]
@@ -190,15 +212,26 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
-    let module = rust_mutants::instrument::module_name("src/lib.rs", "");
+    let module =
+        rust_mutants::instrument::module_name("src/lib.rs", "").expect("valid source tokens");
     assert!(
         text.contains(&format!("{module}::active(")) && text.contains(&format!("mod {module} {{")),
         "{text}"
     );
-    assert!(text.contains("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn max"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "{allow}\nmod {module} {{",
+            allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
+        )),
+        "only the private generated module owns the exact lint exception: {text}"
+    );
+    assert!(
+        !text.contains("#[allow(warnings") && !text.contains("#[allow(unused) pub fn max"),
+        "instrumentation must not suppress a diagnostic in user code: {text}"
+    );
 
     let source = std::fs::read_to_string(fixture.root().join("src/lib.rs")).expect("read");
     assert!(
@@ -208,7 +241,7 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
 
     let missing = against(&fixture, &["instrument", "--file", "src/nope.rs"]);
     assert_eq!(missing.status.code(), Some(2));
-    let refusal = String::from_utf8_lossy(&missing.stderr).into_owned();
+    let refusal = njutest_devkit::process::strict_utf8(&missing.stderr).into_owned();
     assert!(
         refusal.contains("RM0004") && refusal.contains("src/nope.rs"),
         "a path the workspace does not hold is a value the flag cannot take, which is \
@@ -224,9 +257,10 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
 fn the_catalog_document_validates_against_its_schema() {
     let schema_path =
         njutest_devkit::paths::workspace_root().join("schema/rust-mutants-catalog-v1.json");
-    let schema: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&schema_path).expect("the schema"))
-            .expect("the schema is JSON");
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&schema_path).expect("the schema"),
+    )
+    .expect("the schema is JSON");
     let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
 
     for fixture_name in ["fixture-simple", "fixture-rejectable"] {
@@ -236,10 +270,10 @@ fn the_catalog_document_validates_against_its_schema() {
             output.status.code(),
             Some(0),
             "{}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
         let document: serde_json::Value =
-            serde_json::from_str(&stdout(&output)).expect("one JSON document");
+            njutest_devkit::strictjson::decode_str(&stdout(&output)).expect("one JSON document");
         let problems: Vec<String> = validator
             .iter_errors(&document)
             .map(|error| format!("{} at {}", error, error.instance_path()))
@@ -270,7 +304,7 @@ fn equivalence_says_what_the_compiler_renders_identically_and_never_says_equival
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     let rows: Vec<&str> = text.lines().filter(|line| line.contains('\t')).collect();
@@ -351,7 +385,7 @@ fn equivalence_asks_about_at_most_the_limit_it_was_given() {
         output.status.code(),
         Some(0),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = stdout(&output);
     assert!(text.contains("asked=2"), "{text}");

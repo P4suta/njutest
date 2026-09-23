@@ -4,9 +4,38 @@
 //! Reading a recording as numbers: where a run went, and what moved between two of them.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 use super::{Event, Payload};
+
+/// Why a recording could not be summarized exactly.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SummaryError {
+    /// A collection length does not fit the trace wire's u64 counters.
+    #[error("the {field} count does not fit u64")]
+    CountOutsideWire {
+        /// The counter that could not represent the exact value.
+        field: &'static str,
+    },
+    /// Adding one event or attempt overflowed a u64 counter.
+    #[error("the {field} counter overflowed u64")]
+    CounterOverflow {
+        /// The counter that overflowed.
+        field: &'static str,
+    },
+    /// Summing process durations overflowed the trace wire's u64 milliseconds.
+    #[error("the accumulated duration for {program:?} overflowed u64 milliseconds")]
+    DurationOverflow {
+        /// The program whose exact total no longer fit.
+        program: String,
+    },
+    /// A phase-end event omitted the duration it is required to carry.
+    #[error("phase {phase:?} ended without a duration")]
+    MissingPhaseDuration {
+        /// The phase whose end was incomplete.
+        phase: String,
+    },
+}
 
 /// How long one phase took, by the path a reader would follow to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,58 +99,66 @@ pub struct Summary {
 /// Folds one event into the numbers, which is every kind of event a recording holds.
 ///
 /// Every payload the summary does not count is named rather than swept up,
-/// because a kind nobody counted reads exactly like a kind that happened
-/// nought times. Naming them makes the next one somebody adds a question the
-/// compiler asks here.
+/// because a kind nobody counted reads exactly like a kind that happened nought times.
+/// Naming them makes the next one somebody adds a question the compiler asks here.
 fn counted(
     summary: &mut Summary,
     open: &mut Vec<String>,
     commands: &mut Vec<CommandTiming>,
     event: &Event,
-) {
+) -> Result<(), SummaryError> {
     match &event.payload {
         Payload::PhaseStart { phase } => open.push(phase.name.clone()),
         Payload::PhaseEnd { phase } => {
             let path = path_of(open, &phase.name);
             if let Some(at) = open.iter().rposition(|name| *name == phase.name) {
-                let _closed = open.remove(at);
+                let closed = open.remove(at);
+                debug_assert_eq!(closed, phase.name);
             }
             summary.phases.push(PhaseTiming {
                 path,
-                duration_ms: phase.duration_ms.unwrap_or_default(),
+                duration_ms: phase.duration_ms.ok_or_else(|| {
+                    SummaryError::MissingPhaseDuration {
+                        phase: phase.name.clone(),
+                    }
+                })?,
             });
         }
-        Payload::Exec { exec } => {
-            let command = said(&exec.argv);
-            let program = program_of(&exec.argv);
-            let spent = summary.programs.entry(program.clone()).or_default();
-            *spent = spent.saturating_add(exec.duration_ms);
-            let started = summary.invocations.entry(program).or_default();
-            *started = started.saturating_add(1);
-            commands.push(CommandTiming {
-                command,
-                duration_ms: exec.duration_ms,
-            });
-        }
+        Payload::Exec { exec } => count_exec(summary, commands, exec)?,
         Payload::MutantExec { mutant } => {
             let count = summary
                 .executions
                 .entry(mutant.outcome.clone())
                 .or_default();
-            *count = count.saturating_add(1);
+            *count = count.checked_add(1).ok_or(SummaryError::CounterOverflow {
+                field: "mutant executions",
+            })?;
         }
         Payload::Route { route } => {
             let count = summary
                 .routes
                 .entry(route.granularity.name().to_owned())
                 .or_default();
-            *count = count.saturating_add(1);
+            *count = count
+                .checked_add(1)
+                .ok_or(SummaryError::CounterOverflow { field: "routes" })?;
         }
-        Payload::ValidateRound { .. } => summary.rounds = summary.rounds.saturating_add(1),
+        Payload::ValidateRound { .. } => {
+            summary.rounds =
+                summary
+                    .rounds
+                    .checked_add(1)
+                    .ok_or(SummaryError::CounterOverflow {
+                        field: "validation rounds",
+                    })?;
+        }
         Payload::Bisect { bisect } => {
             summary.bisections = summary
                 .bisections
-                .saturating_add(u64::from(bisect.attempts));
+                .checked_add(u64::from(bisect.attempts))
+                .ok_or(SummaryError::CounterOverflow {
+                    field: "bisection attempts",
+                })?;
         }
         Payload::RunEnd { run } => {
             summary.outcome.clone_from(&run.outcome);
@@ -144,13 +181,44 @@ fn counted(
         | Payload::Evidence { .. }
         | Payload::Note { .. } => {}
     }
+    Ok(())
+}
+
+fn count_exec(
+    summary: &mut Summary,
+    commands: &mut Vec<CommandTiming>,
+    exec: &super::ExecRecord,
+) -> Result<(), SummaryError> {
+    let command = said(&exec.argv);
+    let program = program_of(&exec.argv);
+    let spent = summary.programs.entry(program.clone()).or_default();
+    *spent = spent
+        .checked_add(exec.duration_ms)
+        .ok_or_else(|| SummaryError::DurationOverflow {
+            program: program.clone(),
+        })?;
+    let started = summary.invocations.entry(program).or_default();
+    *started = started
+        .checked_add(1)
+        .ok_or(SummaryError::CounterOverflow {
+            field: "program invocations",
+        })?;
+    commands.push(CommandTiming {
+        command,
+        duration_ms: exec.duration_ms,
+    });
+    Ok(())
 }
 
 /// Reads a recording as numbers, keeping the `slowest` longest commands.
-#[must_use]
-pub fn summarize(events: &[Event], slowest: usize) -> Summary {
+///
+/// # Errors
+/// A count or duration cannot be represented exactly by the trace wire.
+pub fn summarize(events: &[Event], slowest: usize) -> Result<Summary, SummaryError> {
+    let event_count = u64::try_from(events.len())
+        .map_err(|_outside_wire| SummaryError::CountOutsideWire { field: "events" })?;
     let mut summary = Summary {
-        events: u64::try_from(events.len()).unwrap_or(u64::MAX),
+        events: event_count,
         ..Summary::default()
     };
     let mut open: Vec<String> = Vec::new();
@@ -158,8 +226,10 @@ pub fn summarize(events: &[Event], slowest: usize) -> Summary {
     for event in events {
         let name = event.payload.type_name();
         let count = summary.counts.entry(name.to_owned()).or_default();
-        *count = count.saturating_add(1);
-        counted(&mut summary, &mut open, &mut commands, event);
+        *count = count.checked_add(1).ok_or(SummaryError::CounterOverflow {
+            field: "event types",
+        })?;
+        counted(&mut summary, &mut open, &mut commands, event)?;
     }
     summary.phases.sort_by(|a, b| a.path.cmp(&b.path));
     commands.sort_by(|a, b| {
@@ -169,50 +239,60 @@ pub fn summarize(events: &[Event], slowest: usize) -> Summary {
     });
     commands.truncate(slowest);
     summary.slowest = commands;
-    summary
+    Ok(summary)
 }
 
 /// The summary as lines a person reads, one fact per line, tab separated.
 #[must_use]
 pub fn render(summary: &Summary) -> String {
     let mut out = String::new();
-    let _written = writeln!(out, "EVENTS\t{}", summary.events);
+    line(&mut out, format_args!("EVENTS\t{}", summary.events));
     if summary.dropped > 0 {
-        let _written = writeln!(out, "DROPPED\t{}", summary.dropped);
+        line(&mut out, format_args!("DROPPED\t{}", summary.dropped));
     }
     if !summary.outcome.is_empty() {
-        let _written = writeln!(out, "OUTCOME\t{}", summary.outcome);
+        line(&mut out, format_args!("OUTCOME\t{}", summary.outcome));
     }
     for (name, count) in &summary.counts {
-        let _written = writeln!(out, "TYPE\t{name}\t{count}");
+        line(&mut out, format_args!("TYPE\t{name}\t{count}"));
     }
     for phase in &summary.phases {
-        let _written = writeln!(out, "PHASE\t{}\t{}ms", phase.path, phase.duration_ms);
+        line(
+            &mut out,
+            format_args!("PHASE\t{}\t{}ms", phase.path, phase.duration_ms),
+        );
     }
     for (program, started) in &summary.invocations {
         let duration = summary.programs.get(program).copied().unwrap_or_default();
-        let _written = writeln!(out, "PROGRAM\t{program}\t{started} started\t{duration}ms");
+        line(
+            &mut out,
+            format_args!("PROGRAM\t{program}\t{started} started\t{duration}ms"),
+        );
     }
     for command in &summary.slowest {
-        let _written = writeln!(
-            out,
-            "SLOWEST\t{}ms\t{}",
-            command.duration_ms, command.command
+        line(
+            &mut out,
+            format_args!("SLOWEST\t{}ms\t{}", command.duration_ms, command.command),
         );
     }
     for (outcome, count) in &summary.executions {
-        let _written = writeln!(out, "EXEC\t{outcome}\t{count}");
+        line(&mut out, format_args!("EXEC\t{outcome}\t{count}"));
     }
     for (granularity, count) in &summary.routes {
-        let _written = writeln!(out, "ROUTE\t{granularity}\t{count}");
+        line(&mut out, format_args!("ROUTE\t{granularity}\t{count}"));
     }
     if summary.rounds > 0 {
-        let _written = writeln!(out, "ROUNDS\t{}", summary.rounds);
+        line(&mut out, format_args!("ROUNDS\t{}", summary.rounds));
     }
     if summary.bisections > 0 {
-        let _written = writeln!(out, "BISECTIONS\t{}", summary.bisections);
+        line(&mut out, format_args!("BISECTIONS\t{}", summary.bisections));
     }
     out
+}
+
+fn line(out: &mut String, arguments: fmt::Arguments<'_>) {
+    let written = out.write_fmt(arguments).and_then(|()| out.write_char('\n'));
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
 }
 
 /// What moved between two recordings: every count that is not the same in both, in name order.
@@ -269,14 +349,21 @@ fn path_of(open: &[String], name: &str) -> String {
 /// The program a command line starts with, by file name, without the suffix a platform puts on an executable.
 fn program_of(argv: &[String]) -> String {
     argv.first().map_or_else(String::new, |first| {
-        let name = std::path::Path::new(first)
+        let name = match std::path::Path::new(first)
             .file_name()
-            .map_or_else(|| first.clone(), |name| name.to_string_lossy().into_owned());
+            .and_then(std::ffi::OsStr::to_str)
+        {
+            Some(name) => name.to_owned(),
+            None => first.clone(),
+        };
         let suffix = std::env::consts::EXE_SUFFIX;
         if suffix.is_empty() || name.len() <= suffix.len() {
             return name;
         }
-        let (stem, end) = name.split_at(name.len().saturating_sub(suffix.len()));
+        let Some(stem_length) = name.len().checked_sub(suffix.len()) else {
+            return name;
+        };
+        let (stem, end) = name.split_at(stem_length);
         if end.eq_ignore_ascii_case(suffix) {
             stem.to_owned()
         } else {

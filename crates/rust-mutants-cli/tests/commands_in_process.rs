@@ -38,7 +38,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn ask(fixture: &Fixture, args: &[&str]) -> Said {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     rooted(fixture, args, &["--root", &root])
 }
 
@@ -63,8 +63,8 @@ fn rooted(fixture: &Fixture, args: &[&str], tail: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
@@ -90,8 +90,8 @@ fn rooted_with_catalog(
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
@@ -217,7 +217,7 @@ fn a_mutation_is_explained_and_a_name_that_is_not_one_is_refused() {
     let fixture = measured();
     let document = ask(&fixture, &["report", "--format", "json"]);
     let parsed: serde_json::Value =
-        serde_json::from_str(&document.out).expect("the report is a document");
+        njutest_devkit::strictjson::decode_str(&document.out).expect("the report is a document");
     let mutant = parsed["mutants"][0]["display_id"]
         .as_str()
         .expect("a mutation the run judged")
@@ -299,11 +299,14 @@ fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
     assert_eq!(written.code, 0, "{}{}", written.out, written.err);
     let skeleton = std::fs::read_to_string(&path).expect("the skeleton");
     let parsed: Result<rust_mutants_cli::config::Config, _> = toml::from_str(&skeleton);
+    let failure = match &parsed {
+        Ok(_) => None,
+        Err(error) => Some(error),
+    };
     assert!(
         parsed.is_ok(),
         "what init writes is what the reader reads, or the first thing a person does \
-         with this program leaves them a file it refuses: {:?}",
-        parsed.err()
+         with this program leaves them a file it refuses: {failure:?}",
     );
 }
 
@@ -320,8 +323,8 @@ fn the_toolchain_a_run_needs_is_reported_as_a_document_and_as_lines() {
     );
 
     let document = ask(&fixture, &["doctor", "--json"]);
-    let parsed: serde_json::Value =
-        serde_json::from_str(&document.out).expect("the doctor answers as a document");
+    let parsed: serde_json::Value = njutest_devkit::strictjson::decode_str(&document.out)
+        .expect("the doctor answers as a document");
     assert_eq!(
         parsed["document_type"], "rust-mutants/doctor",
         "and says which shape it is before anything reads it: {}",

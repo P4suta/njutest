@@ -13,6 +13,7 @@ use rust_mutants::{snapshot, workspace};
 
 use super::{json_line, locating, write};
 use crate::Environment;
+use crate::filesystem::{EntryKind, entry_kind};
 use crate::report::doctor as doctor_report;
 
 pub(super) fn doctor(
@@ -20,15 +21,15 @@ pub(super) fn doctor(
     environment: &Environment,
     stdout: &mut dyn Write,
     cancel: &Cancel,
-) -> u8 {
+) -> Result<u8, crate::error::CliError> {
     let document = doctor_document(asked, environment, cancel);
     let text = if asked.json {
-        json_line(&document)
+        json_line(&document)?
     } else {
         doctor_report::lines(&document)
     };
-    write(stdout, &text);
-    if document.ok { 0 } else { crate::EXIT_USAGE }
+    write(stdout, &text)?;
+    Ok(if document.ok { 0 } else { crate::EXIT_USAGE })
 }
 
 /// What a run would find in this environment, as the document both the lines and a bundle are made of.
@@ -61,21 +62,43 @@ pub(super) fn doctor_document(
 
     let config_path = root.join(crate::config::FILE_NAME);
     let mut reports = super::stored::Store::read(&root).root();
-    if config_path.is_file() {
-        match crate::config::Config::load(&root) {
+    checks.push(config_check(&root, &config_path, &mut reports));
+
+    let temp = &environment.temp_directory;
+    checks.push(temp_check(temp));
+
+    checks.extend(machine(environment));
+    let available_toolchain = match toolchain.as_ref() {
+        Ok(toolchain) => Some(toolchain),
+        Err(_) => None,
+    };
+    checks.push(targets_check(
+        available_toolchain,
+        &root,
+        asked.packages,
+        cancel,
+    ));
+    checks.push(snapshots_check(&reports, environment));
+    checks.push(llvm_tools_check(available_toolchain));
+    checks.push(guards_check(
+        available_toolchain.map(rust_mutants::cargo::Toolchain::host),
+    ));
+    doctor_report::DoctorDocument::of(checks)
+}
+
+fn config_check(root: &Path, path: &Path, reports: &mut PathBuf) -> doctor_report::Check {
+    use doctor_report::Standing::{Fail, Ok as Well};
+    match entry_kind(path) {
+        Ok(EntryKind::File) => match crate::config::Config::load(root) {
             Ok(read) => {
-                reports = super::stored::Store::of(&root, &read.reports.directory).root();
-                checks.push(noted("config", Well, &config_path.display().to_string()));
+                *reports = super::stored::Store::of(root, &read.reports.directory).root();
+                noted("config", Well, &path.display().to_string())
             }
-            Err(error) => checks.push(doctor_report::Check::new(
-                "config",
-                Fail,
-                &error.to_string(),
-                error.code().remedy,
-            )),
-        }
-    } else {
-        checks.push(noted(
+            Err(error) => {
+                doctor_report::Check::new("config", Fail, &error.to_string(), error.code().remedy)
+            }
+        },
+        Ok(EntryKind::Missing) => noted(
             "config",
             Well,
             &format!(
@@ -83,39 +106,42 @@ pub(super) fn doctor_document(
                 crate::config::FILE_NAME,
                 root.display()
             ),
-        ));
+        ),
+        Ok(EntryKind::Directory | EntryKind::Other) => doctor_report::Check::new(
+            "config",
+            Fail,
+            &format!("{} is not a regular file", path.display()),
+            Some("replace it with a regular configuration file, or remove it to use defaults"),
+        ),
+        Err(error) => doctor_report::Check::new(
+            "config",
+            Fail,
+            &format!("cannot inspect {}: {error}", path.display()),
+            Some("make the configuration path readable, or remove it to use defaults"),
+        ),
     }
+}
 
-    let temp = &environment.temp_directory;
-    checks.push(doctor_report::Check::new(
+fn temp_check(temp: &Path) -> doctor_report::Check {
+    use doctor_report::Standing::{Fail, Ok as Well};
+    let (standing, problem) = match std::fs::metadata(temp) {
+        Ok(metadata) if metadata.is_dir() => (Well, None),
+        Ok(_not_a_directory) => (Fail, Some("it is not a directory".to_owned())),
+        Err(error) => (Fail, Some(format!("its metadata cannot be read: {error}"))),
+    };
+    let suffix = problem.map_or_else(String::new, |problem| format!("; {problem}"));
+    doctor_report::Check::new(
         "temp",
-        if temp.is_dir() { Well } else { Fail },
+        standing,
         &format!(
-            "{} (snapshots as {}*, target directories as {}*, scratch as {}*)",
+            "{} (snapshots as {}*, target directories as {}*, scratch as {}*){suffix}",
             temp.display(),
             snapshot::DIR_PREFIX,
             workspace::TARGET_DIR_PREFIX,
             workspace::SCRATCH_DIR_PREFIX
         ),
-        (!temp.is_dir()).then_some("set TMPDIR to a directory a run may write in"),
-    ));
-
-    checks.extend(machine(environment));
-    checks.push(targets_check(
-        toolchain.as_ref().ok(),
-        &root,
-        asked.packages,
-        cancel,
-    ));
-    checks.push(snapshots_check(&reports, environment));
-    checks.push(llvm_tools_check(toolchain.as_ref().ok()));
-    checks.push(guards_check(
-        toolchain
-            .as_ref()
-            .ok()
-            .map(rust_mutants::cargo::Toolchain::host),
-    ));
-    doctor_report::DoctorDocument::of(checks)
+        (standing == Fail).then_some("set TMPDIR to a directory a run may write in"),
+    )
 }
 
 /// What this machine offers a run, as against what the workspace does.
@@ -137,12 +163,15 @@ fn git_check(environment: &Environment) -> doctor_report::Check {
         .envs(environment.vars.clone())
         .output();
     match printed {
-        Ok(printed) if printed.status.success() => doctor_report::Check::new(
-            "git",
-            Well,
-            String::from_utf8_lossy(&printed.stdout).trim(),
-            None,
-        ),
+        Ok(printed) if printed.status.success() => {
+            let version = match std::str::from_utf8(&printed.stdout) {
+                Ok(text) => text.trim().to_owned(),
+                Err(_not_utf8) => {
+                    rust_mutants::telling::LosslessBytes::new(&printed.stdout).to_string()
+                }
+            };
+            doctor_report::Check::new("git", Well, &version, None)
+        }
         _ => doctor_report::Check::new(
             "git",
             Warn,
@@ -199,7 +228,17 @@ fn targets_check(
         .filter(|package| !package.targets.iter().any(tests_something))
         .map(|package| package.name.as_str())
         .collect();
-    let tested = selected.len().saturating_sub(barren.len());
+    let tested = match selected.len().checked_sub(barren.len()) {
+        Some(tested) => tested,
+        None => {
+            return doctor_report::Check::new(
+                "targets",
+                Fail,
+                "the package classification was internally inconsistent",
+                Some("report this invariant failure"),
+            );
+        }
+    };
     if selected.is_empty() || tested == 0 {
         return doctor_report::Check::new(
             "targets",
@@ -239,11 +278,8 @@ fn tests_something(target: &rust_mutants::cargo::Target) -> bool {
 /// Whether the temporary directory has room for the snapshots and target directories a run makes.
 /// Whether there is room, said in whole gigabytes.
 ///
-/// The figure is rounded because it is read twice: a check that reported the
-/// exact free bytes disagreed with itself between two invocations a moment
-/// apart, which is the same thing that made the execution check unreadable
-/// before it was made to rest on a ratio. Whole gigabytes is the granularity a
-/// person decides at, and it does not move while they are looking.
+/// The figure is rounded because it is read twice: a check that reported the exact free bytes disagreed with itself between two invocations a moment apart, which is the same thing that made the execution check unreadable before it was made to rest on a ratio.
+/// Whole gigabytes is the granularity a person decides at, and it does not move while they are looking.
 fn disk_check(temp: &Path) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well, Warn};
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -255,11 +291,7 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
             None,
         );
     };
-    let detail = format!(
-        "{} GiB free under {}",
-        free.wrapping_div(GIB),
-        temp.display()
-    );
+    let detail = format!("{} GiB free under {}", free / GIB, temp.display());
     let standing = if free < GIB / 4 {
         Fail
     } else if free < GIB {
@@ -321,13 +353,16 @@ const fn standing_of(first: f64, second: f64) -> doctor_report::Standing {
 /// How many bytes the filesystem holding `path` will still take.
 #[cfg(unix)]
 fn free_space(path: &Path) -> Option<u64> {
-    let statistics = rustix::fs::statvfs(path).ok()?;
+    let statistics = match rustix::fs::statvfs(path) {
+        Ok(statistics) => statistics,
+        Err(_) => return None,
+    };
     let block = if statistics.f_frsize == 0 {
         statistics.f_bsize
     } else {
         statistics.f_frsize
     };
-    Some(block.saturating_mul(statistics.f_bavail))
+    block.checked_mul(statistics.f_bavail)
 }
 
 /// How many bytes the filesystem holding `path` will still take.
@@ -337,23 +372,41 @@ const fn free_space(_path: &Path) -> Option<u64> {
 }
 
 /// Bytes as a person reads them.
-#[must_use]
-pub fn rendered_bytes(bytes: u64) -> String {
+///
+/// # Errors
+/// Returns when an intermediate unit or fractional value cannot be represented exactly.
+#[cfg(feature = "testkit")]
+pub fn rendered_bytes(bytes: u64) -> Result<String, crate::error::CliError> {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut whole = bytes;
     let mut remainder: u64 = 0;
     let mut unit: usize = 0;
-    while whole >= 1024 && unit.saturating_add(1) < UNITS.len() {
-        remainder = whole.wrapping_rem(1024);
-        whole = whole.wrapping_div(1024);
-        unit = unit.saturating_add(1);
+    while whole >= 1024 {
+        let Some(next) = unit.checked_add(1) else {
+            return Err(crate::error::CliError::ProjectionOverflow {
+                projection: "doctor",
+                field: "the byte-size unit index",
+            });
+        };
+        if next >= UNITS.len() {
+            break;
+        }
+        remainder = whole % 1024;
+        whole /= 1024;
+        unit = next;
     }
     let name = UNITS.get(unit).copied().unwrap_or("B");
     if unit == 0 {
-        return format!("{whole} {name}");
+        return Ok(format!("{whole} {name}"));
     }
-    let tenths = remainder.saturating_mul(10).wrapping_div(1024);
-    format!("{whole}.{tenths} {name}")
+    let tenths = remainder
+        .checked_mul(10)
+        .ok_or(crate::error::CliError::ProjectionOverflow {
+            projection: "doctor",
+            field: "the rendered byte-size fraction",
+        })?
+        / 1024;
+    Ok(format!("{whole}.{tenths} {name}"))
 }
 
 /// A check that carries no remedy because nothing is wrong with it.
@@ -364,15 +417,44 @@ fn noted(name: &str, standing: doctor_report::Standing, detail: &str) -> doctor_
 /// Whether the root is the workspace, which is what a run measures.
 fn workspace_check(root: &Path, manifest: &Path) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well};
-    if !manifest.is_file() {
-        return doctor_report::Check::new(
-            "workspace",
-            Fail,
-            &format!("{} is not there", manifest.display()),
-            Some("run inside a cargo workspace, or pass --root at one"),
-        );
+    match entry_kind(manifest) {
+        Ok(EntryKind::File) => {}
+        Ok(EntryKind::Missing) => {
+            return doctor_report::Check::new(
+                "workspace",
+                Fail,
+                &format!("{} is not there", manifest.display()),
+                Some("run inside a cargo workspace, or pass --root at one"),
+            );
+        }
+        Ok(EntryKind::Directory | EntryKind::Other) => {
+            return doctor_report::Check::new(
+                "workspace",
+                Fail,
+                &format!("{} is not a regular file", manifest.display()),
+                Some("pass --root at a Cargo workspace"),
+            );
+        }
+        Err(error) => {
+            return doctor_report::Check::new(
+                "workspace",
+                Fail,
+                &format!("cannot inspect {}: {error}", manifest.display()),
+                Some("make the workspace manifest readable"),
+            );
+        }
     }
-    let own = std::fs::read_to_string(manifest).unwrap_or_default();
+    let own = match std::fs::read_to_string(manifest) {
+        Ok(own) => own,
+        Err(error) => {
+            return doctor_report::Check::new(
+                "workspace",
+                Fail,
+                &format!("cannot read {}: {error}", manifest.display()),
+                Some("make the workspace manifest readable"),
+            );
+        }
+    };
     if own
         .lines()
         .any(|line| line.trim_start().starts_with("[workspace"))
@@ -406,7 +488,10 @@ fn environment_check(environment: &Environment) -> doctor_report::Check {
         return doctor_report::Check::new(
             "environment",
             Well,
-            &format!("none of {} is set", crate::app::RESERVED_ENV.join(", ")),
+            &format!(
+                "none of {} is set",
+                rust_mutants::execute::RESERVED_ENV.join(", ")
+            ),
             None,
         );
     }
@@ -422,10 +507,10 @@ fn environment_check(environment: &Environment) -> doctor_report::Check {
 fn cache_check(environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
     let store = crate::outcomes::Store::new(&environment.cache_directory);
-    let (records, bytes) = store.size();
     let writable = std::fs::create_dir_all(store.root()).is_ok();
-    if writable {
-        doctor_report::Check::new(
+    let size = store.size();
+    match (writable, size) {
+        (true, Ok((records, bytes))) => doctor_report::Check::new(
             "cache",
             Well,
             &format!(
@@ -433,34 +518,80 @@ fn cache_check(environment: &Environment) -> doctor_report::Check {
                 store.root().display()
             ),
             None,
-        )
-    } else {
-        doctor_report::Check::new(
+        ),
+        (false, _) => doctor_report::Check::new(
             "cache",
             Warn,
             &format!("{} cannot be written", store.root().display()),
             Some("set XDG_CACHE_HOME, or pass --cache-dir, or run with --no-cache"),
-        )
+        ),
+        (true, Err(error)) => doctor_report::Check::new(
+            "cache",
+            Warn,
+            &format!(
+                "{} cannot be read completely: {error}",
+                store.root().display()
+            ),
+            Some("check the cache directory is readable, or pass --cache-dir at another one"),
+        ),
     }
 }
 
 /// What earlier runs left in the temporary directory, and what a run kept on purpose.
 fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
-    let ledger = crate::kept::Ledger::read(reports);
-    let abandoned = std::fs::read_dir(&environment.temp_directory)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|entry| {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    name.starts_with(snapshot::DIR_PREFIX)
-                        || name.starts_with(workspace::TARGET_DIR_PREFIX)
-                        || name.starts_with(workspace::SCRATCH_DIR_PREFIX)
-                })
-                .count()
+    let ledger = match crate::kept::Ledger::read(reports) {
+        Ok(ledger) => ledger,
+        Err(error) => {
+            return doctor_report::Check::new(
+                "snapshots",
+                Warn,
+                &format!(
+                    "{} cannot be read exactly: {error}",
+                    reports.join(crate::kept::FILE_NAME).display()
+                ),
+                Some("repair or remove the malformed kept-directory ledger"),
+            );
+        }
+    };
+    let entries = match std::fs::read_dir(&environment.temp_directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return doctor_report::Check::new(
+                "snapshots",
+                Warn,
+                &format!(
+                    "{} cannot be read completely: {error}",
+                    environment.temp_directory.display()
+                ),
+                Some("check the temporary directory is readable by this user"),
+            );
+        }
+    };
+    let entries = match entries.collect::<std::io::Result<Vec<_>>>() {
+        Ok(entries) => entries,
+        Err(error) => {
+            return doctor_report::Check::new(
+                "snapshots",
+                Warn,
+                &format!(
+                    "{} cannot be enumerated completely: {error}",
+                    environment.temp_directory.display()
+                ),
+                Some("check the temporary directory is readable by this user"),
+            );
+        }
+    };
+    let abandoned = entries
+        .into_iter()
+        .filter(|entry| {
+            let name = entry.file_name();
+            let bytes = name.as_encoded_bytes();
+            bytes.starts_with(snapshot::DIR_PREFIX.as_bytes())
+                || bytes.starts_with(workspace::TARGET_DIR_PREFIX.as_bytes())
+                || bytes.starts_with(workspace::SCRATCH_DIR_PREFIX.as_bytes())
         })
-        .unwrap_or_default();
+        .count();
     if abandoned == 0 && ledger.kept.is_empty() {
         return doctor_report::Check::new(
             "snapshots",
@@ -543,7 +674,20 @@ fn llvm_tools_check(toolchain: Option<&rust_mutants::cargo::Toolchain>) -> docto
             advise,
         );
     };
-    let libdir = PathBuf::from(String::from_utf8_lossy(&printed.stdout).trim().to_owned());
+    let libdir = match std::str::from_utf8(&printed.stdout) {
+        Ok(text) => PathBuf::from(text.trim()),
+        Err(_not_utf8) => {
+            return doctor_report::Check::new(
+                "llvm-tools",
+                Warn,
+                &format!(
+                    "rustc printed a non-UTF-8 target library directory ({})",
+                    rust_mutants::telling::LosslessBytes::new(&printed.stdout)
+                ),
+                advise,
+            );
+        }
+    };
     let profdata = libdir.parent().map(|parent| {
         parent.join("bin").join(if cfg!(windows) {
             "llvm-profdata.exe"
@@ -551,18 +695,28 @@ fn llvm_tools_check(toolchain: Option<&rust_mutants::cargo::Toolchain>) -> docto
             "llvm-profdata"
         })
     });
-    profdata.filter(|path| path.is_file()).map_or_else(
-        || {
-            doctor_report::Check::new(
-                "llvm-tools",
-                Warn,
-                "llvm-profdata is not in the toolchain's sysroot, so coverage routing falls back \
-                 to every target",
-                advise,
-            )
-        },
-        |path| doctor_report::Check::new("llvm-tools", Well, &path.display().to_string(), None),
-    )
+    match profdata {
+        Some(path) if matches!(entry_kind(&path), Ok(EntryKind::File)) => {
+            doctor_report::Check::new("llvm-tools", Well, &path.display().to_string(), None)
+        }
+        Some(path) => doctor_report::Check::new(
+            "llvm-tools",
+            Warn,
+            &format!(
+                "{} is not a readable regular file, so coverage routing falls back to every \
+                 target",
+                path.display()
+            ),
+            advise,
+        ),
+        None => doctor_report::Check::new(
+            "llvm-tools",
+            Warn,
+            "llvm-profdata is not in the toolchain's sysroot, so coverage routing falls back to \
+             every target",
+            advise,
+        ),
+    }
 }
 
 /// What `doctor` was asked, and how it answers.

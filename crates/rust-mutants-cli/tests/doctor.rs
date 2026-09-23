@@ -6,6 +6,7 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
@@ -14,6 +15,8 @@ use std::process::Output;
 
 use njutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
 use njutest_devkit::fixture::Fixture;
+
+include!("support/metadata.rs");
 
 const CARGO_BANNER: &str = "cargo 1.98.0 (abc 2026-08-05)\nrelease: 1.98.0\ncommit-hash: abc\ncommit-date: 2026-08-05\nhost: x86_64-unknown-linux-gnu\n";
 const RUSTC_BANNER: &str = "rustc 1.98.0 (abc 2026-08-05)\nbinary: rustc\nrelease: 1.98.0\nhost: x86_64-unknown-linux-gnu\nLLVM version: 20.1.0\n";
@@ -30,13 +33,53 @@ fn asked(fixture: &Fixture, path: &Path, extra: &[(&str, &str)]) -> Output {
         command.env(name, value);
     }
     command
-        .args(["doctor", "--root", &fixture.root().to_string_lossy()])
+        .args([
+            "doctor",
+            "--root",
+            njutest_devkit::paths::utf8(fixture.root()),
+        ])
         .output()
         .expect("rust-mutants runs")
 }
 
 fn checks(output: &Output) -> serde_json::Value {
-    serde_json::from_slice(&output.stdout).expect("the answer is JSON")
+    njutest_devkit::strictjson::decode_slice(&output.stdout).expect("the answer is JSON")
+}
+
+fn held_doctor(value: &serde_json::Value) -> rust_mutants_cli::report::doctor::DoctorDocument {
+    fn text(object: &serde_json::Value, field: &str) -> String {
+        object[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("{field} is a string"))
+            .to_owned()
+    }
+
+    let held_checks = value["checks"]
+        .as_array()
+        .expect("checks are an array")
+        .iter()
+        .map(|check| rust_mutants_cli::report::doctor::Check {
+            name: text(check, "name"),
+            ok: check["ok"].as_bool().expect("ok is a boolean"),
+            status: text(check, "status"),
+            detail: text(check, "detail"),
+            remedy: check
+                .get("remedy")
+                .map(|remedy| remedy.as_str().expect("remedy is a string").to_owned()),
+        })
+        .collect();
+    rust_mutants_cli::report::doctor::DoctorDocument {
+        document_type: text(value, "document_type"),
+        schema_version: u32::try_from(
+            value["schema_version"]
+                .as_u64()
+                .expect("schema_version is an unsigned integer"),
+        )
+        .expect("schema_version fits u32"),
+        tool_version: text(value, "tool_version"),
+        ok: value["ok"].as_bool().expect("ok is a boolean"),
+        checks: held_checks,
+    }
 }
 
 fn scripted(fixture: &Fixture, script: &Script, extra: &[(&str, &str)]) -> (Output, Installed) {
@@ -46,8 +89,8 @@ fn scripted(fixture: &Fixture, script: &Script, extra: &[(&str, &str)]) -> (Outp
         .into_iter()
         .map(|(name, value)| {
             (
-                name.to_string_lossy().into_owned(),
-                value.to_string_lossy().into_owned(),
+                njutest_devkit::paths::owned_utf8(name),
+                njutest_devkit::paths::owned_utf8(value),
             )
         })
         .collect();
@@ -68,7 +111,7 @@ fn a_doctor_without_a_cargo_fails_and_says_where_to_get_one() {
     let empty = fixture.temp().join("nothing");
     std::fs::create_dir_all(&empty).expect("an empty directory");
     let output = asked(&fixture, &empty, &[]);
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let text = njutest_devkit::process::strict_utf8(&output.stdout).into_owned();
     assert_eq!(output.status.code(), Some(2), "{text}");
     assert!(text.contains("FAIL toolchain"), "{text}");
     assert!(
@@ -87,8 +130,12 @@ fn a_sysroot_without_llvm_profdata_is_a_warning_that_names_the_component() {
             Invocation::new("rustc", &["--print", "target-libdir"])
                 .printing("/nonexistent/sysroot/lib/rustlib/x86_64-unknown-linux-gnu/lib\n"),
         );
-    let (output, _installed) = scripted(&fixture, &script, &[("RUST_MUTANTS_JSON", "1")]);
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let (output, installed) = scripted(&fixture, &script, &[("RUST_MUTANTS_JSON", "1")]);
+    assert!(
+        test_metadata(installed.bin()).is_dir(),
+        "the scripted toolchain remains installed while read"
+    );
+    let text = njutest_devkit::process::strict_utf8(&output.stdout).into_owned();
     assert!(text.contains("WARN llvm-tools"), "{text}");
     assert!(
         text.contains("try: rustup component add llvm-tools"),
@@ -107,7 +154,7 @@ fn a_reserved_variable_is_what_the_doctor_reports_rather_than_what_stops_it() {
         &empty,
         &[("RUST_MUTANTS_TOUCH", "/nowhere/touch.log")],
     );
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let text = njutest_devkit::process::strict_utf8(&output.stdout).into_owned();
     assert!(
         text.contains("FAIL environment"),
         "the one command a broken environment is for answers about it: {text}"
@@ -132,13 +179,12 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
             "doctor",
             "--json",
             "--root",
-            &fixture.root().to_string_lossy(),
+            njutest_devkit::paths::utf8(fixture.root()),
         ])
         .output()
         .expect("rust-mutants runs");
     let value: serde_json::Value = checks(&document);
-    let held: rust_mutants_cli::report::doctor::DoctorDocument =
-        serde_json::from_value(value.clone()).expect("the document this release writes");
+    let held = held_doctor(&value);
     let text = rust_mutants_cli::report::doctor::lines(&held);
     for check in value["checks"].as_array().expect("the checks") {
         let name = check["name"].as_str().expect("a name");
@@ -166,10 +212,8 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
 
 /// Whether a detail names a thing rather than only asserting a state.
 ///
-/// A number, a path, a variable or a quoted name is something a reader can go
-/// and look at. "Nothing is left over" is a claim about somewhere nobody
-/// identified, and a reader whose `TMPDIR` is not what they think has been
-/// given a clean bill for the wrong place.
+/// A number, a path, a variable or a quoted name is something a reader can go and look at.
+/// "Nothing is left over" is a claim about somewhere nobody identified, and a reader whose `TMPDIR` is not what they think has been given a clean bill for the wrong place.
 fn names_something(detail: &str) -> bool {
     detail.chars().any(|one| one.is_ascii_digit())
         || detail.contains('/')
@@ -182,10 +226,8 @@ fn names_something(detail: &str) -> bool {
 
 /// A check that passed says what it looked at, not only that it was well.
 ///
-/// Two of them said "nothing is left over" and "no reserved variable is set"
-/// and named neither the directory nor the variables, so a reader whose
-/// `TMPDIR` was not what they thought got a clean bill for somewhere nobody
-/// had identified. A pass a reader cannot check is a pass they learn to skip,
+/// Two of them said "nothing is left over" and "no reserved variable is set" and named neither the directory nor the variables, so a reader whose `TMPDIR` was not what they thought got a clean bill for somewhere nobody had identified.
+/// A pass a reader cannot check is a pass they learn to skip,
 /// and the failing branch of each of those checks already named the thing.
 #[test]
 fn every_check_that_passed_names_what_it_looked_at() {
@@ -203,7 +245,7 @@ fn every_check_that_passed_names_what_it_looked_at() {
             "doctor",
             "--json",
             "--root",
-            &fixture.root().to_string_lossy(),
+            njutest_devkit::paths::utf8(fixture.root()),
         ])
         .output()
         .expect("rust-mutants runs");

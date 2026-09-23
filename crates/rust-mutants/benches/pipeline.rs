@@ -9,9 +9,6 @@
               by panicking is the whole of its error handling"
 )]
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
-
 use criterion::Criterion;
 use rust_mutants::cargo::config::configured;
 use rust_mutants::catalog::Builder;
@@ -22,12 +19,14 @@ use rust_mutants::rule::Tier;
 use rust_mutants::session::{Route, Routing};
 use rust_mutants::syntax::{Selection, discover_file};
 use rust_mutants::touch::{Seen, TargetTouches, Touched};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 /// A file of `functions` functions, each with a comparison, a branch, and an arithmetic tail.
 fn source(functions: usize) -> String {
     let mut text = String::from("//! A module the size of a real one.\n\n");
     for index in 0..functions {
-        let _written = writeln!(
+        let appended = write!(
             text,
             "pub fn f{index}(a: i32, b: i32) -> i32 {{\n    \
              let mut total = 0;\n    \
@@ -35,20 +34,33 @@ fn source(functions: usize) -> String {
              while total > 10 {{\n        total /= 2;\n    }}\n    \
              total + a * b\n}}\n"
         );
+        assert!(
+            matches!(appended, Ok(())),
+            "writing to a String is infallible"
+        );
     }
     text
 }
 
-/// A coverage export naming `functions` functions with four regions each. A match of `arms` arms, half of them guarded, ending in a bare wildcard.
+/// A coverage export naming `functions` functions with four regions each.
+/// A match of `arms` arms, half of them guarded, ending in a bare wildcard.
 fn arms(count: usize) -> String {
     let mut text =
         String::from("//! A generated match.\n\npub fn pick(n: i32) -> i32 {\n    match n {\n");
     for index in 0..count {
-        let _written = if index % 2 == 0 {
-            writeln!(text, "        {index} => {index},")
+        if index % 2 == 0 {
+            let appended = writeln!(text, "        {index} => {index},");
+            assert!(
+                matches!(appended, Ok(())),
+                "writing to a String is infallible"
+            );
         } else {
-            writeln!(text, "        {index} if n > {index} => {index},")
-        };
+            let appended = writeln!(text, "        {index} if n > {index} => {index},");
+            assert!(
+                matches!(appended, Ok(())),
+                "writing to a String is infallible"
+            );
+        }
     }
     text.push_str("        _ => -1,\n    }\n}\n");
     text
@@ -58,9 +70,13 @@ fn arms(count: usize) -> String {
 fn annotated(lines: usize) -> String {
     let mut text = String::from("//! A generated module.\n\n");
     for index in 0..lines.saturating_div(4) {
-        let _written = writeln!(
+        let appended = write!(
             text,
             "// rust-mutants: skip generated {index}\npub fn f{index}(a: i32, b: i32) -> i32 {{\n    a + b\n}}"
+        );
+        assert!(
+            matches!(appended, Ok(())),
+            "writing to a String is infallible"
         );
     }
     text
@@ -74,12 +90,16 @@ fn export(functions: usize) -> String {
             if !regions.is_empty() {
                 regions.push(',');
             }
-            let _written = write!(
+            let appended = write!(
                 regions,
                 "{{\"filenames\":[\"src/lib.rs\"],\"regions\":[[{},1,{},9,{},0,0,0]]}}",
                 line.saturating_add(step),
                 line.saturating_add(step),
                 step
+            );
+            assert!(
+                matches!(appended, Ok(())),
+                "writing to a String is infallible"
             );
         }
     }
@@ -138,7 +158,9 @@ fn benchmarks(criterion: &mut Criterion) {
         bencher.iter(|| {
             let mut builder = Builder::new();
             for candidate in std::hint::black_box(&candidates) {
-                let _added = builder.add(candidate.clone());
+                builder
+                    .add(candidate.clone())
+                    .expect("benchmark candidates have unique canonical identities");
             }
             builder.build()
         });
@@ -208,7 +230,7 @@ fn routes(criterion: &mut Criterion) {
                     std::hint::black_box(index),
                     &among,
                 );
-                let _reaching = std::hint::black_box(route.reaching().len());
+                std::hint::black_box(route.reaching().len());
             }
         });
     });
@@ -228,7 +250,7 @@ fn routes(criterion: &mut Criterion) {
                     Point { line, column: 5 },
                     &among,
                 );
-                let _reaching = std::hint::black_box(route.reaching().len());
+                std::hint::black_box(route.reaching().len());
             }
         });
     });
@@ -243,15 +265,17 @@ fn recorded(targets: usize, tests: usize, mutants: u32) -> Touched {
         let mut ran = Vec::with_capacity(tests);
         for test in 0..tests {
             let name = format!("reaches_{target}_{test}");
-            let first = u32::try_from(test).unwrap_or(0);
+            let first = u32::try_from(test).expect("benchmark test count fits u32");
             let seen: BTreeSet<u32> = (first..mutants).step_by(tests.max(1)).collect();
-            drop(reached.tests.insert(name.clone(), seen));
+            reached.tests.entry(name.clone()).or_insert(seen);
             ran.push(name);
         }
         let mut touches = TargetTouches::default();
         touches.reached = reached;
         touches.ran = ran;
-        drop(held.targets.insert(format!("demo/test/t{target}"), touches));
+        held.targets
+            .entry(format!("demo/test/t{target}"))
+            .or_insert(touches);
     }
     held
 }
@@ -268,16 +292,18 @@ fn coverage(targets: usize, blocks: u32) -> Reached {
         ..Reached::default()
     };
     for target in 0..targets {
-        let first = u32::try_from(target).unwrap_or(0).saturating_add(1);
+        let first = u32::try_from(target)
+            .expect("benchmark target count fits u32")
+            .checked_add(1)
+            .expect("the benchmark target index has a successor");
         let covered: BTreeSet<Block> = (first..=blocks)
             .step_by(targets.max(1))
             .map(block)
             .collect();
-        drop(
-            reached
-                .targets
-                .insert(format!("demo/test/t{target}"), covered),
-        );
+        reached
+            .targets
+            .entry(format!("demo/test/t{target}"))
+            .or_insert(covered);
     }
     reached
 }

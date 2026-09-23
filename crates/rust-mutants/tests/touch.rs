@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::touch::{self, Seen, TouchError};
 
 const CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -22,7 +23,9 @@ fn set(indices: &[u32]) -> BTreeSet<u32> {
 fn seen(named: &[(&str, &[u32])], loose: &[u32]) -> Seen {
     let mut seen = Seen::default();
     for (test, indices) in named {
-        drop(seen.tests.insert((*test).to_owned(), set(indices)));
+        seen.tests
+            .entry((*test).to_owned())
+            .or_insert_with(|| set(indices));
     }
     seen.loose = set(loose);
     seen
@@ -71,7 +74,9 @@ fn a_report_nothing_could_attribute_is_one_every_test_made() {
 
 #[test]
 fn the_last_site_the_catalog_holds_is_one_a_record_may_name() {
-    let touches = touch::read(&log("t\talpha\t3\n"), CATALOG, 4).expect("the log reads");
+    let touches = touch::read(&log("t\talpha\t3\n"), CATALOG, 4);
+    assert_eq!(result_state(&touches), Returned, "log: {touches:?}");
+    let Ok(touches) = touches else { return };
     assert_eq!(
         touches.reached.tests.get("alpha"),
         Some(&set(&[3])),
@@ -138,8 +143,9 @@ fn a_site_that_is_not_a_number_says_nothing() {
 
 #[test]
 fn a_blank_line_is_not_the_end_of_the_log() {
-    let touches =
-        touch::read(&log("t\talpha\t0\n\nt\tbeta\t1\n"), CATALOG, 4).expect("the log reads");
+    let touches = touch::read(&log("t\talpha\t0\n\nt\tbeta\t1\n"), CATALOG, 4);
+    assert_eq!(result_state(&touches), Returned, "log: {touches:?}");
+    let Ok(touches) = touches else { return };
     assert_eq!(
         touches.reached.tests.get("beta"),
         Some(&set(&[1])),
@@ -156,8 +162,10 @@ fn the_header_a_runtime_writes_is_the_one_the_reader_wants() {
         "the generated runtime writes this line and this reader reads it, so it is one thing \
          said twice and this is where the two are held together"
     );
-    assert!(
-        touch::read(&header, CATALOG, 4).is_ok(),
+    let parsed = touch::read(&header, CATALOG, 4);
+    assert_eq!(
+        result_state(&parsed),
+        Returned,
         "a log of nothing but the header is a process whose guards never ran"
     );
 }

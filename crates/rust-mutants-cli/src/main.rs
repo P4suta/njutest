@@ -5,19 +5,38 @@
 
 #![forbid(unsafe_code)]
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use rust_mutants_cli::Environment;
 
-fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
     let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
-    let (cancel, signalled) = rust_mutants_cli::interruptible();
+    let interrupt = match rust_mutants_cli::interruptible() {
+        Ok(interruptible) => interruptible,
+        Err(error) => {
+            eprintln!("rust-mutants: cannot install the cancellation handlers: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let program = match std::env::current_exe() {
+        Ok(program) => program,
+        Err(error) => {
+            eprintln!("rust-mutants: cannot identify the running executable: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let working_directory = match std::env::current_dir() {
+        Ok(directory) => directory,
+        Err(error) => {
+            eprintln!("rust-mutants: cannot read the working directory: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let environment = Environment {
         temp_directory: std::env::temp_dir(),
-        program: std::env::current_exe().unwrap_or_else(|_error| PathBuf::from("rust-mutants")),
+        program,
         cache_directory: Environment::cache_directory_of(&vars),
-        working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
+        working_directory,
         no_color: Environment::no_color_of(&vars),
         stdout_is_terminal: std::io::IsTerminal::is_terminal(&std::io::stdout()),
         paints: false,
@@ -29,11 +48,11 @@ fn main() -> ExitCode {
             &environment,
             option_env!("RUST_MUTANTS_COMPILED_CATALOG"),
         ),
-        &cancel,
+        interrupt.cancel(),
         rust_mutants_cli::Streams {
             out: &mut std::io::stdout().lock(),
             err: &mut std::io::stderr().lock(),
         },
     );
-    rust_mutants_cli::ended(code, &signalled)
+    rust_mutants_cli::ended(code, interrupt.signalled())
 }

@@ -27,7 +27,6 @@ pub fn is_negating(rule: &str) -> bool {
 
 /// What the compiler must vouch for before a claim becomes a proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum WitnessKind {
     /// Both operands of a comparison are one primitive type that compares without running any of the program's code.
     Ordered,
@@ -97,7 +96,8 @@ pub struct Claim {
     pub witnesses: Vec<Witness>,
 }
 
-/// How the caller measures what it parsed. The walker already knows; this module only asks.
+/// How the caller measures what it parsed.
+/// The walker already knows; this module only asks.
 #[derive(Clone, Copy)]
 pub struct Spans<'a> {
     /// The bytes one expression covers.
@@ -119,7 +119,8 @@ pub struct Gate<'a> {
     pub condition: &'a Expr,
     /// The body's brace-to-brace span.
     pub body: Span,
-    /// How many statements the body holds. A body that runs nothing says nothing by not running.
+    /// How many statements the body holds.
+    /// A body that runs nothing says nothing by not running.
     pub statements: usize,
 }
 
@@ -132,7 +133,8 @@ pub struct Prepared {
     pub body: Span,
     /// What the compiler must vouch for.
     pub witnesses: Vec<Witness>,
-    /// The operator tokens an edit may sit on: those reached from the condition through nothing but `&&`, `||`, `!`, and parentheses. An edit anywhere else is not one this proof is about.
+    /// The operator tokens an edit may sit on: those reached from the condition through nothing but `&&`, `||`, `!`, and parentheses.
+    /// An edit anywhere else is not one this proof is about.
     pub reachable: Vec<Span>,
     /// How many statements the body holds, which is what makes a target's silence about it mean something.
     pub statements: usize,

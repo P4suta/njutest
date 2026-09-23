@@ -6,24 +6,31 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::assure::baseline::status_of;
-use njutest_cli::report::TargetStatus;
+use njutest::assure::baseline::status_of;
+use njutest::report::{FindingKind, TargetStatus};
 use rust_mutants::execute::parse_summary;
 use rust_mutants::outcome::Outcome;
 
 fuzz_target!(|data: &[u8]| {
-    let _parsed = parse_summary(data);
-    let output = String::from_utf8_lossy(data);
+    let Ok(parsed) = parse_summary(data) else {
+        return;
+    };
+    std::hint::black_box(&parsed);
+    let Ok(output) = std::str::from_utf8(data) else {
+        return;
+    };
     for outcome in [
         Outcome::Survived,
         Outcome::Killed,
-        Outcome::TimedOut,
+        Outcome::StepLimitReached,
+        Outcome::Waited,
         Outcome::Inconclusive,
         Outcome::NotRun,
         Outcome::Errored,
     ] {
         for ignored in [0u32, 1, 4096] {
-            let (status, message) = status_of(outcome, ignored, &output);
+            let became = status_of(outcome, ignored, output);
+            let status = became.status;
             assert_eq!(
                 status == TargetStatus::Passed,
                 outcome == Outcome::Survived,
@@ -31,12 +38,20 @@ fuzz_target!(|data: &[u8]| {
             );
             assert_eq!(
                 status == TargetStatus::Passed,
-                message.is_none(),
+                became.message.is_none(),
                 "a target that did not pass says why, and one that passed has nothing to say"
             );
             assert!(
                 status != TargetStatus::Skipped || ignored > 0,
                 "a target is skipped only when libtest was told to skip every test of it"
+            );
+            assert_eq!(
+                became.finding.is_some_and(FindingKind::is_defect),
+                outcome == Outcome::Killed,
+                "a defect is something wrong with the code under test, and every other \
+                 way a target can end is a fact about the run or the machine: \
+                 {outcome:?} earned {:?}",
+                became.finding
             );
         }
     }

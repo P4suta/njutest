@@ -10,7 +10,8 @@ pub struct ErrorCode {
     pub code: &'static str,
     /// One line saying what the code means.
     pub summary: &'static str,
-    /// What to do about it. Every code carries one.
+    /// What to do about it.
+    /// Every code carries one.
     pub remedy: Option<&'static str>,
 }
 
@@ -44,7 +45,8 @@ pub const INTERRUPTED: ErrorCode = ErrorCode {
     remedy: Some("nothing was left half-done; run it again when you are ready"),
 };
 
-/// A configuration file that could not be read. The command line reports it; the ledger of `RM` codes is one, so it lives here.
+/// A configuration file that could not be read.
+/// The command line reports it; the ledger of `RM` codes is one, so it lives here.
 pub const CONFIG_UNREADABLE: ErrorCode = ErrorCode {
     code: "RM0002",
     summary: "a configuration file that could not be read",
@@ -142,6 +144,15 @@ pub const COVERAGE_NOTHING_WRITTEN: ErrorCode = ErrorCode {
     ),
 };
 
+/// An executable a successful build named could not be read back for equivalence comparison.
+pub const EQUIVALENCE_ARTIFACT_UNREADABLE: ErrorCode = ErrorCode {
+    code: "RM7001",
+    summary: "an executable a successful build named could not be read back",
+    remedy: Some(
+        "run again after checking nothing removes or rewrites target files while the build is being measured",
+    ),
+};
+
 /// A change set that git could not be asked for.
 pub const CHANGE_SET_UNAVAILABLE: ErrorCode = ErrorCode {
     code: "RM0010",
@@ -165,7 +176,17 @@ pub const SOURCE_UNREADABLE: ErrorCode = ErrorCode {
     remedy: Some("pass --root at the tree the run measured, or check the file out again"),
 };
 
-/// Declares one error code. There is no form without a remedy, on purpose.
+/// An outcome cache could not be enumerated completely.
+pub const CACHE_UNREADABLE: ErrorCode = ErrorCode {
+    code: "RM0013",
+    summary: "an outcome cache could not be enumerated completely",
+    remedy: Some(
+        "check the cache directory is readable by this user, or pass --cache-dir at another one",
+    ),
+};
+
+/// Declares one error code.
+/// There is no form without a remedy, on purpose.
 macro_rules! snapshot_code {
     ($name:ident, $code:literal, $summary:literal, $remedy:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {
@@ -276,13 +297,25 @@ snapshot_code!(
     WORKSPACE_REACHES_OUTSIDE,
     "RM1017",
     "the workspace reads code from outside itself, which a copy of it does not hold",
-    "--allow-outside DIR copies that directory beside the tree, or [project] allow_outside does"
+    "--allow-outside DIR copies that directory into the copy where the tree reaches it, or [project] allow_outside does"
 );
 snapshot_code!(
     ROOT_IS_NOT_THE_WORKSPACE,
     "RM1018",
     "the root is a member of a workspace rather than the workspace",
     "run with --root at the workspace root the message names, and --package to narrow it"
+);
+snapshot_code!(
+    SNAPSHOT_LAYOUT,
+    "RM1019",
+    "a directory a run would copy has no place in the copy that keeps every path into it resolving",
+    "--allow-outside takes an existing absolute directory outside the tree and on the same filesystem root as it; a copy reproduces the shape of what it copies, and cannot hold a directory that is the tree, holds it, or lies across a volume"
+);
+snapshot_code!(
+    MANIFEST_UNREADABLE,
+    "RM1020",
+    "a manifest a run has to read is there and could not be read",
+    "read the manifest the message names yourself: a run decides what it may copy, which targets carry a harness, and which lints a crate forbids from it, and an empty answer to any of those is a different run rather than a missing one"
 );
 snapshot_code!(
     DEP_INFO_UNREADABLE,
@@ -320,6 +353,9 @@ snapshot_code!(
     "the candidates could not be assembled into a catalog",
     "this is a defect in this tool: no candidate the walk produces should be one the catalog refuses"
 );
+
+/// A discovered candidate broke an identity invariant before it could be displayed.
+pub const CANDIDATE_INVALID: ErrorCode = DISCOVER_CATALOG_FAILED;
 snapshot_code!(
     DISCOVER_UNKNOWN_PACKAGE,
     "RM2007",
@@ -377,8 +413,8 @@ snapshot_code!(
 snapshot_code!(
     INSTRUMENT_INDEX_RESERVED,
     "RM3007",
-    "a mutant index collides with the runtime's sentinel values",
-    "this is a defect in this tool: the catalog outgrew the range the generated runtime reserves for real mutants"
+    "a mutant index makes the generated runtime's inclusive window overflow",
+    "this is a defect in this tool: the catalog outgrew the u32 window the generated runtime can represent"
 );
 snapshot_code!(
     VALIDATE_NOT_MUTANT_INDUCED,
@@ -448,6 +484,9 @@ pub enum EngineError {
     /// The toolchain could not be located or driven, or what it printed could not be read.
     #[error(transparent)]
     Cargo(#[from] crate::cargo::CargoError),
+    /// Compiler flags from the environment could not be preserved exactly.
+    #[error(transparent)]
+    CargoConfig(#[from] crate::cargo::config::ConfigError),
     /// The workspace's files could not be turned into a catalog.
     #[error(transparent)]
     Discover(#[from] crate::discover::DiscoverError),
@@ -469,6 +508,18 @@ pub enum EngineError {
     /// A duration the caller gave is not a duration.
     #[error(transparent)]
     Duration(#[from] crate::duration::DurationError),
+    /// A successful build named an executable whose bytes could not be read back for equivalence comparison.
+    #[error(transparent)]
+    Equivalence(#[from] crate::equivalence::artifacts::ArtifactError),
+    /// A durable outcome identity was not canonical.
+    #[error(transparent)]
+    OutcomeIdentity(#[from] crate::id::HexDigestError),
+    /// A durable outcome could not be read or written exactly.
+    #[error(transparent)]
+    Outcomes(#[from] crate::outcomes::StoreError),
+    /// A remembered passing baseline could not be read or checked exactly.
+    #[error(transparent)]
+    BaselineCache(#[from] crate::session::BaselineCacheError),
 }
 
 impl EngineError {
@@ -479,6 +530,7 @@ impl EngineError {
             Self::Interrupted => INTERRUPTED,
             Self::Snapshot(error) => error.code(),
             Self::Cargo(error) => error.code(),
+            Self::CargoConfig(_) => CONFIG_UNREADABLE,
             Self::Discover(error) => error.code(),
             Self::Instrument(error) => error.code(),
             Self::Validate(error) => error.code(),
@@ -486,6 +538,10 @@ impl EngineError {
             Self::Rule(_) => RULE_UNKNOWN,
             Self::Glob(_) => GLOB_INVALID,
             Self::Duration(_) => DURATION_INVALID,
+            Self::Equivalence(_) => EQUIVALENCE_ARTIFACT_UNREADABLE,
+            Self::OutcomeIdentity(_) | Self::Outcomes(_) | Self::BaselineCache(_) => {
+                CACHE_UNREADABLE
+            }
         }
     }
 }
@@ -506,6 +562,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CHANGE_SET_UNAVAILABLE,
         MERGE_REFUSED,
         SOURCE_UNREADABLE,
+        CACHE_UNREADABLE,
         SNAPSHOT_INVALID_OPTIONS,
         SNAPSHOT_SOURCE_ROOT,
         SNAPSHOT_WALK,
@@ -524,6 +581,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CARGO_MESSAGE_UNPARSABLE,
         WORKSPACE_REACHES_OUTSIDE,
         ROOT_IS_NOT_THE_WORKSPACE,
+        SNAPSHOT_LAYOUT,
+        MANIFEST_UNREADABLE,
         DEP_INFO_UNREADABLE,
         DEP_INFO_MISSING,
         DISCOVER_FILE_UNREADABLE,
@@ -553,6 +612,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,
         COVERAGE_NOTHING_WRITTEN,
+        EQUIVALENCE_ARTIFACT_UNREADABLE,
         RULE_UNKNOWN,
         GLOB_INVALID,
         DURATION_INVALID,

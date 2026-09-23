@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Repository gates. Each gate is a pure function over the tree it is given, so a test can hand it a synthetic tree and watch it refuse the right things; the command line only points it at this repository.
+//! Repository gates.
+//! Each gate is a pure function over the tree it is given, so a test can hand it a synthetic tree and watch it refuse the right things; the command line only points it at this repository.
 
 #![forbid(unsafe_code)]
 
@@ -9,16 +10,23 @@ pub mod deps;
 pub mod devgates;
 pub mod engineaudit;
 pub mod fixtures;
+pub mod fuzzclippy;
 pub mod gates;
+pub mod kaniaudit;
 pub mod lints;
+pub mod milestones;
+pub mod modelaudit;
 pub mod proofaudit;
 pub mod release;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
+pub mod shapes;
+pub mod strictjson;
+pub mod surface;
 pub mod wire;
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::ExitCode;
 
@@ -35,14 +43,31 @@ struct Cli {
 enum Gate {
     /// The seam ratchet (ADR 0001): production code against `xtask/seam_allowlist.txt`.
     Devgates,
-    /// `#[allow]` and `Box<dyn Trait>`, which this repository does not write.
+    /// Lossy Rust shapes this repository does not write.
     Lints,
     /// Dependency direction between the workspace crates.
     Deps,
     /// Conventions of the independent fixture projects under fixtures/.
     Fixtures,
+    /// Clippy every independent fuzz target under the root workspace lint policy.
+    FuzzClippy {
+        /// Reserved for a future alternate manifest; keeps this execution gate out of `all`.
+        #[arg(long, default_value_t = false, hide = true)]
+        alternate: bool,
+    },
     /// Version consistency between the workspace and the release manifest.
     ReleaseCheck,
+    /// Fail closed unless Kani's raw law export proves every assertion reachable and every cover satisfiable.
+    KaniLawsAudit {
+        /// The fresh JSON document written by pinned Kani 0.68.
+        export: std::path::PathBuf,
+    },
+    /// Every milestone named in the documentation resolves to one roadmap row.
+    Milestones,
+    /// Every public function of an incidental surface is reached by something that ships.
+    Reached,
+    /// Every crate declares what its visibility means; incidental APIs are compiled privately.
+    Surfaces,
     /// Whether a completed run's verdicts are the ones its own recording supports (ADR 0004).
     Proofaudit {
         /// The directory the run left its report in.
@@ -58,7 +83,8 @@ enum Gate {
         /// The directory the run left its recording in, which is what the trace layer is re-derived from.
         #[arg(long)]
         trace: Option<std::path::PathBuf>,
-        /// The reports of the other parts of this catalog, when the run was one part. Repeatable.
+        /// The reports of the other parts of this catalog, when the run was one part.
+        /// Repeatable.
         #[arg(long = "shard", value_name = "REPORT")]
         shards: Vec<std::path::PathBuf>,
         /// The configuration file whose accepted survivors the run is held to.
@@ -81,12 +107,21 @@ enum Gate {
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
     },
+    /// A second opinion, by body shape alone, on every catch-all the ledger waives.
+    /// Refuses nothing.
+    Waivers,
     /// Every gate, in order.
     All,
 }
 
 /// Runs the gate named by `args` against the workspace and reports.
-pub fn run_from<I>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode
+/// `cargo` is the exact program selected by the process-environment composition root.
+pub fn run_from<I>(
+    args: I,
+    cargo: &OsStr,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode
 where
     I: IntoIterator<Item = OsString>,
 {
@@ -94,12 +129,13 @@ where
         Ok(cli) => cli,
         Err(error) => {
             let stream: &mut dyn Write = if error.use_stderr() { stderr } else { stdout };
-            let _written = stream.write_all(error.render().to_string().as_bytes());
-            return if error.use_stderr() {
+            let rendered = error.render().to_string();
+            let intended = if error.use_stderr() {
                 ExitCode::from(2)
             } else {
                 ExitCode::SUCCESS
             };
+            return after_output(stream.write_all(rendered.as_bytes()), intended);
         }
     };
     let root = gates::workspace_root();
@@ -108,7 +144,16 @@ where
         Gate::Lints => gates::lints(&root),
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
+        Gate::FuzzClippy { alternate: _ } => {
+            fuzzclippy::check(&root, cargo).map_err(|error| gates::GateFailure(error.to_string()))
+        }
         Gate::ReleaseCheck => gates::release_check(&root),
+        Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
+            .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
+            .map_err(|error| gates::GateFailure(error.to_string())),
+        Gate::Milestones => gates::milestones(&root),
+        Gate::Reached => gates::reached(&root),
+        Gate::Surfaces => gates::surfaces(&root),
         Gate::Proofaudit { run, trace } => {
             return audit_run(&run, trace.as_deref(), stdout, stderr);
         }
@@ -133,17 +178,12 @@ where
         }
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
+        Gate::Waivers => gates::waivers(&root),
         Gate::All => gates::all(&root),
     };
     match outcome {
-        Ok(report) => {
-            let _written = writeln!(stdout, "{report}");
-            ExitCode::SUCCESS
-        }
-        Err(failure) => {
-            let _written = writeln!(stderr, "{failure}");
-            ExitCode::FAILURE
-        }
+        Ok(report) => after_output(writeln!(stdout, "{report}"), ExitCode::SUCCESS),
+        Err(failure) => after_output(writeln!(stderr, "{failure}"), ExitCode::FAILURE),
     }
 }
 
@@ -155,13 +195,13 @@ fn audit_engine(
 ) -> ExitCode {
     match gates::engine_audit(asked) {
         Ok(audit) => {
-            let _written = writeln!(stdout, "{audit}");
-            ExitCode::from(audit.exit_code())
+            let intended = ExitCode::from(audit.exit_code());
+            after_output(writeln!(stdout, "{audit}"), intended)
         }
-        Err(failure) => {
-            let _written = writeln!(stderr, "{failure}");
-            ExitCode::from(engineaudit::EXIT_UNREADABLE)
-        }
+        Err(failure) => after_output(
+            writeln!(stderr, "{failure}"),
+            ExitCode::from(engineaudit::EXIT_UNREADABLE),
+        ),
     }
 }
 
@@ -174,12 +214,20 @@ fn audit_run(
 ) -> ExitCode {
     match gates::proofaudit(run, trace) {
         Ok(audit) => {
-            let _written = writeln!(stdout, "{audit}");
-            ExitCode::from(audit.exit_code())
+            let intended = ExitCode::from(audit.exit_code());
+            after_output(writeln!(stdout, "{audit}"), intended)
         }
-        Err(failure) => {
-            let _written = writeln!(stderr, "{failure}");
-            ExitCode::from(proofaudit::EXIT_UNREADABLE)
-        }
+        Err(failure) => after_output(
+            writeln!(stderr, "{failure}"),
+            ExitCode::from(proofaudit::EXIT_UNREADABLE),
+        ),
+    }
+}
+
+/// Applies process policy after the composition root has attempted its only observable output.
+fn after_output(written: std::io::Result<()>, intended: ExitCode) -> ExitCode {
+    match written {
+        Ok(()) => intended,
+        Err(_output_failure) => ExitCode::FAILURE,
     }
 }

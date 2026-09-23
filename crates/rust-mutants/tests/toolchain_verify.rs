@@ -53,6 +53,55 @@ fn baseline_options(fixture: &Fixture) -> PrepareOptions {
     }
 }
 
+fn reuse_checks(
+    fixture: &Fixture,
+    options: &PrepareOptions,
+    first: (
+        &std::collections::BTreeMap<String, rust_mutants::session::Measured>,
+        &rust_mutants::touch::Touched,
+        usize,
+    ),
+) -> Recorder {
+    let second_trace = memory_trace();
+    let second = traced_prepare(fixture, &second_trace, options);
+    assert_eq!(second.verified().targets, *first.0);
+    assert_eq!(second.verified().touched, *first.1);
+    let second_events = second_trace.events();
+    assert!(
+        remembered(&second_trace),
+        "the second identical build reads the passing measurement"
+    );
+    let verify_records = second_events
+        .iter()
+        .filter(|event| matches!(event.payload, Payload::Verify { .. }))
+        .count();
+    let named = second.targets().len();
+    second.close().expect("close");
+    assert_eq!(
+        verify_records, named,
+        "remembering work does not remove its auditable verify records"
+    );
+    assert!(
+        first.2 > executions(&second_trace),
+        "the remembered run starts no baseline target process"
+    );
+    second_trace
+}
+
+fn damage_the_remembered_baseline(fixture: &Fixture) {
+    let baseline_path = baseline_path(fixture);
+    let mut damaged: serde_json::Value = njutest_devkit::strictjson::decode_slice(
+        &std::fs::read(&baseline_path).expect("read the remembered baseline"),
+    )
+    .expect("baseline document");
+    damaged["touched"]["targets"] = serde_json::json!({});
+    std::fs::write(
+        &baseline_path,
+        serde_json::to_vec(&damaged).expect("damaged document"),
+    )
+    .expect("damage the cache");
+}
+
 fn traced_prepare(fixture: &Fixture, recorder: &Recorder, options: &PrepareOptions) -> Session {
     Workspace::open(
         fixture.root(),
@@ -84,14 +133,22 @@ fn executions(trace: &Recorder) -> usize {
         .count()
 }
 
+fn memory_trace() -> Recorder {
+    Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    )
+}
+
 fn baseline_path(fixture: &Fixture) -> std::path::PathBuf {
     std::fs::read_dir(fixture.cache())
         .expect("cache directory")
-        .flatten()
+        .map(|entry| entry.expect("cache directory entry"))
         .map(|entry| entry.path())
         .find(|path| {
             path.file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("baseline-"))
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| name.starts_with("baseline-"))
         })
         .expect("the remembered baseline")
 }
@@ -100,8 +157,15 @@ fn baseline_path(fixture: &Fixture) -> std::path::PathBuf {
 fn refusing_names_every_target_that_failed_rather_than_the_one_it_reached_first() {
     let fixture = Fixture::copy("fixture-verify-fails");
     let error = prepare(&fixture, Failing::Refuse).expect_err("refused");
+    assert!(
+        matches!(
+            &error,
+            EngineError::Session(SessionError::VerifyFailed { .. })
+        ),
+        "a tree whose baseline fails is refused by RM5002: {error}"
+    );
     let EngineError::Session(SessionError::VerifyFailed { targets, output }) = error else {
-        panic!("a tree whose baseline fails is refused by RM5002: {error}");
+        return;
     };
     assert_eq!(
         targets,
@@ -160,7 +224,7 @@ fn a_session_whose_every_target_was_excluded_refuses_to_run_rather_than_score_no
     let session = prepare(&fixture, Failing::Exclude).expect("prepare");
     let mutant = session.catalog().mutants()[0].display_id.clone();
     let error = session
-        .exec(&Request::new(mutant), &Cancel::new())
+        .exec(&Request::new(mutant.to_string()), &Cancel::new())
         .expect_err("a run of no targets is not a run that found nothing");
     assert!(
         matches!(error, EngineError::Session(SessionError::NoTargets { .. })),
@@ -227,7 +291,7 @@ fn an_exact_passing_baseline_is_reused_without_starting_its_targets_again() {
     let fixture = Fixture::copy("fixture-simple");
     let options = baseline_options(&fixture);
 
-    let first_trace = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+    let first_trace = memory_trace();
     let first = traced_prepare(&fixture, &first_trace, &options);
     let first_targets = first.verified().targets.clone();
     let first_touched = first.verified().touched.clone();
@@ -238,7 +302,7 @@ fn an_exact_passing_baseline_is_reused_without_starting_its_targets_again() {
     );
 
     if !njutest_devkit::reproducible::builds_the_same_twice() {
-        let again = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+        let again = memory_trace();
         let measured = traced_prepare(&fixture, &again, &options);
         assert!(
             !remembered(&again),
@@ -250,49 +314,41 @@ fn an_exact_passing_baseline_is_reused_without_starting_its_targets_again() {
         return;
     }
 
-    let second_trace = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
-    let second = traced_prepare(&fixture, &second_trace, &options);
-    assert_eq!(second.verified().targets, first_targets);
-    assert_eq!(second.verified().touched, first_touched);
-    let second_events = second_trace.events();
-    assert!(
-        remembered(&second_trace),
-        "the second identical build reads the passing measurement"
+    let second_trace = reuse_checks(
+        &fixture,
+        &options,
+        (&first_targets, &first_touched, executions(&first_trace)),
     );
-    assert_eq!(
-        second_events
-            .iter()
-            .filter(|event| matches!(event.payload, Payload::Verify { .. }))
-            .count(),
-        second.targets().len(),
-        "remembering work does not remove its auditable verify records"
-    );
-    assert!(
-        executions(&first_trace) > executions(&second_trace),
-        "the remembered run starts no baseline target process"
-    );
-    second.close().expect("close");
+    drop(second_trace);
 
-    let baseline_path = baseline_path(&fixture);
-    let mut damaged: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&baseline_path).expect("read the remembered baseline"),
+    damage_the_remembered_baseline(&fixture);
+    let damaged_trace = memory_trace();
+    let refused = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            trace: damaged_trace.clone(),
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
+        },
+        &Cancel::new(),
     )
-    .expect("baseline document");
-    damaged["touched"]["targets"] = serde_json::json!({});
-    std::fs::write(
-        &baseline_path,
-        serde_json::to_vec(&damaged).expect("damaged document"),
-    )
-    .expect("damage the cache");
-    let damaged_trace = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
-    let measured_again = traced_prepare(&fixture, &damaged_trace, &options);
+    .expect("open")
+    .prepare(&options, &Cancel::new());
     assert!(
         !remembered(&damaged_trace),
-        "a parseable but incomplete answer is a miss, never a narrower route"
+        "a refused answer is not a remembered one"
     );
-    measured_again.close().expect("close");
+    assert!(
+        matches!(
+            &refused,
+            Err(EngineError::BaselineCache(
+                rust_mutants::session::BaselineCacheError::Contradiction { .. }
+            ))
+        ),
+        "a remembered answer whose facts do not match its digest is refused by name, \
+         never silently narrowed: {refused:?}"
+    );
 
-    let changed_trace = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+    let changed_trace = memory_trace();
     let changed = traced_prepare(
         &fixture,
         &changed_trace,
@@ -335,7 +391,8 @@ fn a_failing_baseline_is_never_remembered() {
             .all(|entry| !entry
                 .expect("cache entry")
                 .file_name()
-                .to_string_lossy()
+                .to_str()
+                .expect("the fixture writes exact UTF-8 names")
                 .starts_with("baseline-")),
         "a failure is never an answer for another run"
     );
@@ -408,10 +465,8 @@ fn a_target_that_did_not_pass_the_first_time_is_run_once_more_before_the_session
 
 /// A target whose own tests fail hands back nothing a result may rest on.
 ///
-/// The check used to be a method every caller had to remember to call, and a
-/// caller who forgot would report a kill for every mutation put to a target
-/// that answers every one of them with the same failure. There is no longer a
-/// way from a failing baseline to something a judgement can take.
+/// The check used to be a method every caller had to remember to call, and a caller who forgot would report a kill for every mutation put to a target that answers every one of them with the same failure.
+/// There is no longer a way from a failing baseline to something a judgement can take.
 #[test]
 fn a_failing_baseline_is_not_something_a_result_can_rest_on() {
     let fixture = Fixture::copy("fixture-verify-fails");

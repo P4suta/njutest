@@ -8,13 +8,13 @@
     clippy::indexing_slicing,
     clippy::as_conversions,
     clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::syntax::{
-    FileDiscovery, Form, Selection, Skip, SkipReason, SyntaxError, discover_file,
+    FileDiscovery, Form, LineIndex, PositionError, Selection, Skip, SkipReason, SyntaxError,
+    discover_file,
 };
 
 fn registry() -> &'static Registry {
@@ -38,8 +38,10 @@ fn render(discovery: &FileDiscovery) -> Vec<String> {
                 found.candidate.rule.name,
                 found.position.line,
                 found.position.byte_column,
-                String::from_utf8_lossy(&found.candidate.original),
-                String::from_utf8_lossy(&found.candidate.replacement),
+                std::str::from_utf8(&found.candidate.original)
+                    .expect("the Rust source fixture is exact UTF-8"),
+                std::str::from_utf8(&found.candidate.replacement)
+                    .expect("the generated Rust replacement is exact UTF-8"),
                 found.hint.form,
                 found.hint.site_text
             )
@@ -364,12 +366,6 @@ fn positions_count_bytes_and_chars_and_spans_are_absolute_past_a_bom_and_shebang
     assert_eq!(add.position.byte_column, 51);
     assert_eq!(add.position.char_column, 47);
     assert_eq!(add.hint.super_depth, 1);
-    let allow_at = add.hint.allow_at.expect("inside a fn") as usize;
-    assert!(
-        src[allow_at..].starts_with("pub fn f("),
-        "{:?}",
-        &src[allow_at..allow_at + 12]
-    );
     let ret = d
         .candidates
         .iter()
@@ -386,23 +382,48 @@ fn positions_count_bytes_and_chars_and_spans_are_absolute_past_a_bom_and_shebang
 }
 
 #[test]
-fn the_allow_attribute_goes_on_the_innermost_fn_and_top_level_code_has_depth_zero() {
+fn a_line_index_borrows_one_source_and_reports_utf8_byte_offsets_exactly() {
+    let source = "a日本\nz";
+    let index = LineIndex::new(source).expect("small source");
+    assert_eq!(
+        index.position(2).expect("inside a scalar has a position"),
+        rust_mutants::syntax::Position {
+            line: 1,
+            byte_column: 3,
+            char_column: 2,
+        }
+    );
+    assert_eq!(
+        index.position(99).expect("past the end clamps exactly"),
+        rust_mutants::syntax::Position {
+            line: 2,
+            byte_column: 2,
+            char_column: 2,
+        }
+    );
+}
+
+#[test]
+fn the_source_too_large_error_explains_the_one_based_wire_boundary() {
+    let error = PositionError::SourceTooLarge { bytes: usize::MAX };
+    assert!(error.to_string().contains("one-based u32"));
+}
+
+#[test]
+fn nested_functions_keep_their_own_sites_and_the_file_root_runtime_depth() {
     let src = "struct S;\nimpl S {\n    fn m(&self, x: i32) -> i32 {\n        fn inner(y: i32) -> i32 { y * 2 }\n        inner(x) + 1\n    }\n}\n";
     let d = discover(src);
     assert_coherent(src, &d);
-    let at = |rule: &str| {
+    let depth = |rule: &str| {
         let f = d
             .candidates
             .iter()
             .find(|f| f.candidate.rule.name == rule)
             .expect(rule);
-        (
-            f.hint.super_depth,
-            f.hint.allow_at.map(|o| &src[o as usize..o as usize + 8]),
-        )
+        f.hint.super_depth
     };
-    assert_eq!(at("mul-to-div"), (0, Some("fn inner")));
-    assert_eq!(at("add-to-sub"), (0, Some("fn m(&se")));
+    assert_eq!(depth("mul-to-div"), 0);
+    assert_eq!(depth("add-to-sub"), 0);
     let returns: Vec<(u32, &str)> = d
         .candidates
         .iter()
@@ -429,13 +450,15 @@ fn closures_and_async_blocks_have_no_known_return_type_unless_spelled() {
 #[test]
 fn a_file_that_does_not_parse_is_an_error_naming_the_line() {
     let selection = Selection::tier(registry(), Tier::All);
-    let error = discover_file("src/bad.rs", b"fn f( {", &selection).unwrap_err();
+    let error = discover_file("src/bad.rs", b"fn f( {", &selection).expect_err("invalid syntax");
+    assert!(matches!(&error, SyntaxError::Parse { .. }), "{error:?}");
     let SyntaxError::Parse { path, line, .. } = &error else {
-        panic!("{error:?}");
+        return;
     };
     assert_eq!(path, "src/bad.rs");
     assert_eq!(*line, 1);
-    let error = discover_file("src/bin.rs", &[0xff, 0xfe], &selection).unwrap_err();
+    let error = discover_file("src/bin.rs", &[0xff, 0xfe], &selection)
+        .expect_err("non-UTF-8 source is refused");
     assert!(matches!(error, SyntaxError::NotUtf8 { .. }), "{error:?}");
 }
 
@@ -449,7 +472,8 @@ fn the_selection_limits_the_rules_and_discovery_is_deterministic() {
     let only = Selection::rules(registry(), &["gt-to-ge"]).expect("known rule");
     let d = discover_file("src/lib.rs", src.as_bytes(), &only).expect("discover");
     assert_eq!(render(&d), ["gt-to-ge@2:11 \">\"=>\">=\" E[\"a + 1 > 2\"]"]);
-    let unknown = Selection::rules(registry(), &["no-such-rule"]).unwrap_err();
+    let unknown =
+        Selection::rules(registry(), &["no-such-rule"]).expect_err("an unknown rule is refused");
     assert!(
         matches!(unknown, rust_mutants::rule::RuleError::UnknownRule { .. }),
         "{unknown:?}"
@@ -462,7 +486,7 @@ fn the_selection_limits_the_rules_and_discovery_is_deterministic() {
 fn the_trace_record_lists_every_decision_in_source_order() {
     let src = "fn f(a: i32) -> i32 {\n    println!(\"{a}\");\n    a + 1\n}\n";
     let d = discover(src);
-    let record = d.trace_record();
+    let record = d.trace_record().expect("candidate count fits the trace");
     assert_eq!(record.path, "src/lib.rs");
     assert_eq!(record.candidates, 4);
     let sites: Vec<(u32, u32, &str, Option<&str>, Option<&str>)> = record
@@ -580,8 +604,10 @@ fn by_rule(discovery: &FileDiscovery, names: &[&str]) -> Vec<String> {
                 "{}@{} {:?}=>{:?} {}",
                 found.candidate.rule.name,
                 found.position.line,
-                String::from_utf8_lossy(&found.candidate.original),
-                String::from_utf8_lossy(&found.candidate.replacement),
+                std::str::from_utf8(&found.candidate.original)
+                    .expect("the Rust source fixture is exact UTF-8"),
+                std::str::from_utf8(&found.candidate.replacement)
+                    .expect("the generated Rust replacement is exact UTF-8"),
                 found.hint.form,
             )
         })
@@ -863,14 +889,16 @@ fn a_marker_inside_a_string_is_not_a_marker_and_a_block_comment_marker_is() {
 fn a_marker_without_a_reason_is_rm2008_and_an_unknown_directive_is_rm2009() {
     let selection = Selection::tier(registry(), Tier::All);
     let bare = "// rust-mutants: skip\nfn f(a: i32) -> i32 {\n    a + 1\n}\n";
-    let error = discover_file("src/lib.rs", bare.as_bytes(), &selection).unwrap_err();
+    let error = discover_file("src/lib.rs", bare.as_bytes(), &selection)
+        .expect_err("a marker without a reason is refused");
     assert!(
         matches!(error, SyntaxError::AnnotationWithoutReason { line: 1, .. }),
         "{error:?}"
     );
     assert_eq!(error.code().code, "RM2008", "{error}");
     let unknown = "// rust-mutants: hide me\nfn f(a: i32) -> i32 {\n    a + 1\n}\n";
-    let error = discover_file("src/lib.rs", unknown.as_bytes(), &selection).unwrap_err();
+    let error = discover_file("src/lib.rs", unknown.as_bytes(), &selection)
+        .expect_err("an unknown directive is refused");
     assert!(
         matches!(error, SyntaxError::UnknownAnnotation { line: 1, .. }),
         "{error:?}"

@@ -1,0 +1,5 @@
+error: AllVariants requires every variant to carry no fields
+ --> tests/ui/all_variants_payload.rs:4:10
+  |
+4 |     Tuple(u8),
+  |          ^^^^

@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 use rust_mutants_cli::kept::Ledger;
 
+include!("support/missing.rs");
+
 /// A directory that is there, for a run to have kept.
 fn made(root: &std::path::Path, name: &str) -> PathBuf {
     let path = root.join(name);
@@ -23,7 +25,10 @@ fn made(root: &std::path::Path, name: &str) -> PathBuf {
 fn a_tree_with_no_ledger_has_kept_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
     assert!(
-        Ledger::read(dir.path()).kept.is_empty(),
+        Ledger::read(dir.path())
+            .expect("an absent ledger is an empty ledger")
+            .kept
+            .is_empty(),
         "a report directory nobody has kept anything under names nothing, rather than \
          failing: the answer to what a run left behind is usually nothing"
     );
@@ -46,11 +51,9 @@ fn a_tree_with_no_ledger_has_kept_nothing() {
     ] {
         std::fs::write(&path, &wrong).expect("a file that is not this ledger");
         assert!(
-            Ledger::read(dir.path()).kept.is_empty(),
-            "a ledger this release cannot read authorises nothing: removing a directory \
-             because a file nobody could parse seemed to name it is the one thing a \
-             collection may never do, and a document from another program or another \
-             shape is one nobody parsed. It read {wrong}"
+            Ledger::read(dir.path()).is_err(),
+            "a ledger this release cannot read is reported rather than collapsed into absence; \
+             otherwise a caller could overwrite the only record of kept directories. It read {wrong}"
         );
     }
 }
@@ -76,7 +79,7 @@ fn what_a_run_kept_is_named_with_the_run_that_kept_it() {
         Some("20260101T000000000Z"),
     );
     assert_eq!(
-        Ledger::read(dir.path()),
+        Ledger::read(dir.path()).expect("the written ledger reads"),
         ledger,
         "and what one run wrote is what the next one reads"
     );
@@ -125,12 +128,13 @@ fn a_directory_that_went_away_stops_being_reported() {
     let dir = tempfile::tempdir().expect("tempdir");
     let gone = made(dir.path(), "gone");
     let here = made(dir.path(), "here");
-    let _ledger = Ledger::record(
+    let ledger = Ledger::record(
         dir.path(),
         "20260101T000000000Z",
         std::slice::from_ref(&gone),
     )
     .expect("the ledger");
+    assert_eq!(ledger.kept.len(), 1, "the removed entry was first recorded");
     std::fs::remove_dir_all(&gone).expect("somebody removed it");
 
     let ledger = Ledger::record(
@@ -156,22 +160,31 @@ fn clearing_removes_what_the_ledger_names_and_says_how_many() {
     let dir = tempfile::tempdir().expect("tempdir");
     let one = made(dir.path(), "one");
     let two = made(dir.path(), "two");
-    let _ledger = Ledger::record(
+    let ledger = Ledger::record(
         dir.path(),
         "20260101T000000000Z",
         &[one.clone(), two.clone()],
     )
     .expect("the ledger");
+    assert_eq!(ledger.kept.len(), 2, "both directories were recorded");
 
     let (removed, left) = Ledger::clear(dir.path()).expect("the ledger");
     assert_eq!(
-        (removed, left.kept.len(), one.exists(), two.exists()),
-        (2, 0, false, false),
+        (
+            removed,
+            left.kept.len(),
+            test_missing(&one),
+            test_missing(&two),
+        ),
+        (2, 0, true, true),
         "clearing takes what the ledger names, all of it, and says how many: a person \
          freeing a disk needs the number to know whether it was worth it"
     );
     assert!(
-        Ledger::read(dir.path()).kept.is_empty(),
+        Ledger::read(dir.path())
+            .expect("the cleared ledger reads")
+            .kept
+            .is_empty(),
         "and what it wrote back is what the next run reads: a ledger still naming \
          directories that are gone sends the next person looking for them"
     );
@@ -226,7 +239,10 @@ fn a_path_no_document_can_hold_is_a_refusal_and_never_a_ledger_that_lost_it() {
          directory missing from it: {refused}"
     );
     assert!(
-        Ledger::read(dir.path()).kept.is_empty(),
+        Ledger::read(dir.path())
+            .expect("the absent ledger remains absent")
+            .kept
+            .is_empty(),
         "and nothing is written: half a ledger names some of what a run kept and reads \
          as all of it"
     );

@@ -4,9 +4,8 @@
 //! The pipeline as the documentation describes it, against the pipeline.
 
 #![expect(
-    clippy::expect_used,
     clippy::panic,
-    reason = "the helpers that read the repository's own files are not themselves tests"
+    reason = "repository fixture discovery must stop at the exact unreadable entry instead of silently weakening the audit"
 )]
 
 use std::collections::BTreeSet;
@@ -23,12 +22,43 @@ fn read(relative: &str) -> String {
         .unwrap_or_else(|error| panic!("{relative}: {error}"))
 }
 
+fn directory_entries(directory: &Path) -> Vec<std::fs::DirEntry> {
+    std::fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+        .map(|entry| {
+            entry.unwrap_or_else(|error| panic!("entry under {}: {error}", directory.display()))
+        })
+        .collect()
+}
+
+fn file_type(entry: &std::fs::DirEntry) -> std::fs::FileType {
+    entry
+        .file_type()
+        .unwrap_or_else(|error| panic!("{}: {error}", entry.path().display()))
+}
+
+fn file_name(entry: &std::fs::DirEntry) -> String {
+    match entry.file_name().into_string() {
+        Ok(name) => name,
+        Err(name) => panic!(
+            "a repository file name is not UTF-8; encoded bytes: {:02x?}",
+            name.as_os_str().as_encoded_bytes()
+        ),
+    }
+}
+
+fn path_label(path: &Path) -> String {
+    match path.to_str() {
+        Some(text) => text.to_owned(),
+        None => format!("bytes:{}", hex::encode(path.as_os_str().as_encoded_bytes())),
+    }
+}
+
 /// Every workflow file the repository commits.
 fn workflows() -> Vec<String> {
-    let mut found: Vec<String> = std::fs::read_dir(root().join(".github/workflows"))
-        .expect("the workflow directory")
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+    let mut found: Vec<String> = directory_entries(&root().join(".github/workflows"))
+        .into_iter()
+        .map(|entry| file_name(&entry))
         .filter(|name| Path::new(name).extension().is_some_and(|it| it == "yml"))
         .collect();
     found.sort();
@@ -150,16 +180,37 @@ fn every_relative_link_in_the_documentation_resolves() {
     let root = root();
     let mut broken = Vec::new();
     for page in pages(&root) {
-        let text = std::fs::read_to_string(&page).unwrap_or_default();
+        let text = match std::fs::read_to_string(&page) {
+            Ok(text) => text,
+            Err(error) => {
+                broken.push(format!("{} could not be read: {error}", path_label(&page)));
+                continue;
+            }
+        };
         for link in links(&text) {
             let Some(parent) = page.parent() else {
                 continue;
             };
-            if !parent.join(&link).exists() {
-                broken.push(format!(
+            let relative = match page.strip_prefix(&root) {
+                Ok(relative) => relative,
+                Err(error) => {
+                    broken.push(format!(
+                        "{} escaped the page root: {error}",
+                        path_label(&page)
+                    ));
+                    continue;
+                }
+            };
+            match parent.join(&link).try_exists() {
+                Ok(true) => {}
+                Ok(false) => broken.push(format!(
                     "{} names {link}, which is not there",
-                    page.strip_prefix(&root).unwrap_or(&page).display()
-                ));
+                    path_label(relative)
+                )),
+                Err(error) => broken.push(format!(
+                    "{} names {link}, which could not be inspected: {error}",
+                    path_label(relative)
+                )),
             }
         }
     }
@@ -171,16 +222,13 @@ fn pages(root: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(directory) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
+        for entry in directory_entries(&directory) {
             let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = file_name(&entry);
             if name.starts_with('.') || name == "target" || name == "node_modules" {
                 continue;
             }
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            if file_type(&entry).is_dir() {
                 stack.push(path);
             } else if path
                 .extension()
@@ -219,13 +267,10 @@ fn linking_files() -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![root()];
     while let Some(directory) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
+        for entry in directory_entries(&directory) {
             let path = entry.path();
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let name = file_name(&entry);
+            if file_type(&entry).is_dir() {
                 if !matches!(name.as_str(), "target" | ".git" | "node_modules") {
                     stack.push(path);
                 }
@@ -271,16 +316,33 @@ fn linked(text: &str) -> BTreeSet<String> {
 fn every_page_a_file_of_this_repository_links_to_is_one_it_holds() {
     let mut dangling = Vec::new();
     for path in linking_files() {
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let relative = path.strip_prefix(root()).unwrap_or(&path).to_owned();
-        let beside = path.parent().map_or_else(root, Path::to_path_buf);
-        for target in linked(&text) {
-            if beside.join(&target).exists() {
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                dangling.push(format!("{}: could not be read: {error}", path_label(&path)));
                 continue;
             }
-            dangling.push(format!("{}: {target}", relative.display()));
+        };
+        let relative = match path.strip_prefix(root()) {
+            Ok(relative) => relative.to_owned(),
+            Err(error) => {
+                dangling.push(format!(
+                    "{}: escaped the repository: {error}",
+                    path_label(&path)
+                ));
+                continue;
+            }
+        };
+        let beside = path.parent().map_or_else(root, Path::to_path_buf);
+        for target in linked(&text) {
+            match beside.join(&target).try_exists() {
+                Ok(true) => {}
+                Ok(false) => dangling.push(format!("{}: {target}", path_label(&relative))),
+                Err(error) => dangling.push(format!(
+                    "{}: {target} could not be inspected: {error}",
+                    path_label(&relative)
+                )),
+            }
         }
     }
     assert!(
@@ -296,14 +358,30 @@ fn every_page_the_documentation_holds_is_one_the_book_summary_reaches() {
     let root = root();
     let summary = read("docs/SUMMARY.md");
     let held = linked(&summary);
-    let missing: Vec<String> = pages(&root.join("docs"))
-        .into_iter()
-        .filter_map(|page| {
-            let relative = page.strip_prefix(root.join("docs")).ok()?;
-            let name = relative.to_string_lossy().replace('\\', "/");
-            (name != "SUMMARY.md" && !held.contains(&name)).then_some(name)
-        })
-        .collect();
+    let docs = root.join("docs");
+    let mut missing = Vec::new();
+    for page in pages(&docs) {
+        let relative = match page.strip_prefix(&docs) {
+            Ok(relative) => relative,
+            Err(error) => {
+                missing.push(format!("{} escaped docs/: {error}", path_label(&page)));
+                continue;
+            }
+        };
+        let name = match relative.to_str() {
+            Some(name) => name.replace('\\', "/"),
+            None => {
+                missing.push(format!(
+                    "{} is not UTF-8 and cannot be named by SUMMARY.md",
+                    path_label(relative)
+                ));
+                continue;
+            }
+        };
+        if name != "SUMMARY.md" && !held.contains(&name) {
+            missing.push(name);
+        }
+    }
 
     assert!(
         missing.is_empty(),

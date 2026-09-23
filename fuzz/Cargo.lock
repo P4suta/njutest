@@ -176,6 +176,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
+name = "camino"
+version = "1.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb1307f12aa967b5a58416e87b3653360e0fd614a016b6e970db08fecbb1b80d"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "cargo-platform"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
+dependencies = [
+ "camino",
+ "cargo-platform",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -978,12 +1011,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "njutest-cli"
+name = "njutest"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "getrandom 0.3.4",
  "hex",
  "jiff",
+ "njutest-macros",
  "proc-macro2",
  "rust-mutants",
  "rustix",
@@ -996,6 +1031,29 @@ dependencies = [
  "toml",
  "toml_edit",
  "unicode-width",
+]
+
+[[package]]
+name = "njutest-devkit"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "njutest-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -1429,8 +1487,10 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rust-mutants"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.3.4",
  "hex",
  "jiff",
+ "njutest-macros",
  "proc-macro2",
  "rustix",
  "serde",
@@ -1449,6 +1509,7 @@ dependencies = [
  "clap",
  "hex",
  "jiff",
+ "njutest-macros",
  "ratatui",
  "rust-mutants",
  "rustix",
@@ -1466,7 +1527,8 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "libfuzzer-sys",
- "njutest-cli",
+ "njutest",
+ "njutest-devkit",
  "rust-mutants",
  "rust-mutants-cli",
  "serde_json",
@@ -1519,6 +1581,10 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
+]
 
 [[package]]
 name = "serde"
@@ -1640,6 +1706,12 @@ dependencies = [
  "errno",
  "libc",
 ]
+
+[[package]]
+name = "similar"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f66ca1f7aca2474dc10c942eb22feffc897735f54cd1db90138c2fddb490987"
 
 [[package]]
 name = "siphasher"

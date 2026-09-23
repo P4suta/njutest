@@ -1,7 +1,0 @@
-error: integration requires at least one capability
- --> tests/ui/no_capabilities.rs:1:1
-  |
-1 | #[njutest::integration]
-  | ^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `njutest::integration` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -28,6 +28,48 @@ pub fn cargo_binary() -> PathBuf {
     std::env::var_os("CARGO").map_or_else(|| PathBuf::from("cargo"), PathBuf::from)
 }
 
+/// Borrows the exact UTF-8 spelling of a path used by a textual test protocol.
+///
+/// # Panics
+/// The path is not UTF-8.
+/// A test that passed replacement characters to the subject would exercise a different path and could not support its claim.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "non-UTF-8 fixture paths are protocol failures at this test-only boundary"
+)]
+pub fn utf8(path: &Path) -> &str {
+    match path.to_str() {
+        Some(text) => text,
+        None => panic!(
+            "test protocol path is not UTF-8; encoded bytes: {}",
+            hex::encode(path.as_os_str().as_encoded_bytes())
+        ),
+    }
+}
+
+/// Owns the exact UTF-8 spelling of a filesystem name used by a textual test protocol.
+///
+/// # Panics
+/// The name is not UTF-8.
+/// Replacing bytes would let two filesystem entries become one test-oracle value.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "non-UTF-8 fixture names are protocol failures at this test-only boundary"
+)]
+pub fn owned_utf8(name: std::ffi::OsString) -> String {
+    match name.into_string() {
+        Ok(text) => text,
+        Err(name) => panic!(
+            "test protocol name is not UTF-8; encoded bytes: {}",
+            hex::encode(name.as_encoded_bytes())
+        ),
+    }
+}
+
 /// A directory beside `root` for what a run puts in the temporary directory.
 ///
 /// # Errors
@@ -51,13 +93,32 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 }
 
 /// `path`, escaped the way a JSON string escapes its contents, without the quotes.
+///
+/// # Panics
+/// A test fixture path is not UTF-8.
+/// Fixture paths enter textual Cargo and JSON protocols, so accepting a lossy spelling would test a different path.
 #[must_use]
 pub fn in_json(path: &Path) -> String {
-    let quoted = serde_json::to_string(&path.to_string_lossy()).unwrap_or_default();
+    text_in_json(utf8(path))
+}
+
+/// `text`, escaped the way a JSON string escapes its contents, without the quotes.
+///
+/// A package identity spells a path inside itself, and on Windows that path holds backslashes a JSON string reads as escapes, so a document built by pasting one in is not the document cargo prints.
+///
+/// # Panics
+/// Never: JSON string serialization of a `str` cannot fail.
+#[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "JSON string serialization of a str cannot fail, and a test that lost the spelling would assert about a different package"
+)]
+pub fn text_in_json(text: &str) -> String {
+    let quoted = serde_json::to_string(text).expect("a string serializes to JSON");
     quoted
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
-        .unwrap_or_default()
+        .expect("a serialized JSON string has quotes")
         .to_owned()
 }
 
@@ -125,7 +186,7 @@ pub fn environment_for_a_toolchain_run(
     also: &[&str],
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let wanted: [&str; 4] = ["PATH", "HOME", "RUSTUP_HOME", "CARGO_HOME"];
-    environment_for_a_run()
+    let mut kept: Vec<(std::ffi::OsString, std::ffi::OsString)> = environment_for_a_run()
         .into_iter()
         .filter(|(name, _value)| {
             wanted
@@ -134,7 +195,40 @@ pub fn environment_for_a_toolchain_run(
                 .chain(also.iter())
                 .any(|wanted| same_name(name, std::ffi::OsStr::new(wanted)))
         })
-        .collect()
+        .collect();
+    if let Some(cache) = compilation_cache() {
+        kept.push((std::ffi::OsString::from(WRAPPER), cache));
+    }
+    kept
+}
+
+/// The variable a compiler wrapper is named in, which two different things use.
+const WRAPPER: &str = "RUSTC_WRAPPER";
+
+/// What names a compilation cache, rather than anything else a wrapper can be.
+const CACHE: &str = "sccache";
+
+/// The parent's compiler wrapper, when it is a compilation cache and nothing else.
+///
+/// A nested run builds a fixture from scratch, three hundred times over thirty-eight fixtures, each under its own target directory because sharing one would let a test pick up another's instrumented artifact (ADR 0019).
+/// The isolation is the point and it stays; what it costs is recompiling identical units, and a cache keyed on content removes that without touching it.
+///
+/// Read by value rather than forwarded, because this variable is where `cargo-llvm-cov` puts a shim that instruments whatever it wraps — and a coverage run of this suite that let that reach a fixture would be measuring its own instrumentation.
+/// Two different things under one name (ADR 0023); only one of them is wanted here.
+fn compilation_cache() -> Option<std::ffi::OsString> {
+    environment_for_a_run()
+        .into_iter()
+        .find(|(name, _value)| same_name(name, std::ffi::OsStr::new(WRAPPER)))
+        .map(|(_name, value)| value)
+        .filter(|value| names_a_cache(value))
+}
+
+/// Whether a compiler wrapper is the compilation cache rather than something else wearing the variable.
+#[must_use]
+pub fn names_a_cache(wrapper: &std::ffi::OsStr) -> bool {
+    Path::new(wrapper)
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case(CACHE))
 }
 
 fn cargo_llvm_cov_owns(name: &std::ffi::OsStr) -> bool {
@@ -147,9 +241,27 @@ fn cargo_llvm_cov_owns(name: &std::ffi::OsStr) -> bool {
 }
 
 /// A command for `program`, preserving mutation identity while isolating coverage output.
+///
+/// The compiler flags go with it: a run that inherits them refuses to reach into the code it is measuring, and reports the mutants it could not probe as refused rather than killed.
+/// That turns a suite into a report about whoever set the variable — `RUSTFLAGS: -D warnings` in CI is enough — so a test that drives the engine states the environment it wants instead of inheriting one.
 #[must_use]
 pub fn command(program: &Path) -> std::process::Command {
     let mut command = std::process::Command::new(program);
-    let _configured = command.env_remove("LLVM_PROFILE_FILE");
+    for inherited in NOT_INHERITED {
+        remove_environment(&mut command, inherited);
+    }
     command
+}
+
+/// What a fixture run is insulated from, spelled here because this crate depends on nothing.
+///
+/// `crates/rust-mutants/tests/devkit_environment.rs` holds these against the engine's own constants, which is the only place that can see both.
+pub const NOT_INHERITED: [&str; 3] = ["LLVM_PROFILE_FILE", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"];
+
+#[expect(
+    unused_results,
+    reason = "Command's infallible builder API returns self; this unit helper is the explicit boundary"
+)]
+fn remove_environment(command: &mut std::process::Command, name: &str) {
+    command.env_remove(name);
 }

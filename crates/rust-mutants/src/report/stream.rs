@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::catalog::SelectionDocument;
 use super::run::{Accounting, FindingDocument, ScoreDocument};
+use crate::outcome::Outcome;
+use crate::run::NotRunReason;
 
 /// The document type every line of a run stream carries.
 pub const SCHEMA: &str = "rust-mutants-run-stream-v1";
@@ -14,7 +16,7 @@ pub const SCHEMA: &str = "rust-mutants-run-stream-v1";
 /// One line of a run stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-#[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub enum Line {
     /// The run has started, and this is what it is about.
     RunStart {
@@ -64,10 +66,10 @@ pub enum Line {
         /// The columns, as the report will hold them.
         accounting: Accounting,
         /// The score, when the run decided anything.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(deserialize_with = "crate::strictjson::required_option")]
         score: Option<ScoreDocument>,
         /// Where the report was written, when one was.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(deserialize_with = "crate::strictjson::required_option")]
         report: Option<String>,
     },
     /// The run failed, and this is what it said.
@@ -77,13 +79,14 @@ pub enum Line {
         /// What went wrong.
         message: String,
         /// What to do about it, when the code carries one.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(deserialize_with = "crate::strictjson::required_option")]
         remedy: Option<String>,
     },
 }
 
 /// One judged mutant, as a stream says it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutantLine {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -102,34 +105,41 @@ pub struct MutantLine {
     /// The 1-based byte column of the edit.
     pub column: u32,
     /// What the execution says.
-    pub outcome: String,
+    pub outcome: Outcome,
+    /// The verified runtime notice when this execution reached its step limit.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub step_notice: Option<crate::execute::StepLimitNotice>,
     /// The target that ran, empty when none did.
     pub target: String,
     /// How long every execution of it took together.
     pub duration_ms: u64,
     /// How many tests ran, when the harness said.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub tests_run: Option<u32>,
     /// Every test that failed with the mutant active, which is what noticed it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed_tests: Vec<String>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
     /// Why it was never executed, when it was not.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub not_run_reason: Option<String>,
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub not_run_reason: Option<NotRunReason>,
     /// The run that established this, when it was not this one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub source_run_id: Option<String>,
 }
 
 impl MutantLine {
     /// What a stream says about one judged mutant of `session`.
-    #[must_use]
-    pub fn of(session: &crate::session::Session, judged: &crate::run::Judged) -> Self {
+    ///
+    /// # Errors
+    /// Returns an exact-projection error when the execution duration does not fit the stream schema's millisecond field.
+    pub fn of(
+        session: &crate::session::Session,
+        judged: &crate::run::Judged,
+    ) -> Result<Self, crate::workspace::SessionError> {
         let found = session.catalog().by_index(judged.index);
         let position = found.and_then(|mutant| session.position(mutant));
-        Self {
+        Ok(Self {
             index: judged.index,
             id: judged.id.clone(),
             display_id: judged.display_id.clone(),
@@ -140,15 +150,20 @@ impl MutantLine {
             path: found.map_or_else(String::new, |mutant| mutant.candidate.path.clone()),
             line: position.map_or(0, |at| at.line),
             column: position.map_or(0, |at| at.byte_column),
-            outcome: judged.outcome.name().to_owned(),
+            outcome: judged.outcome,
+            step_notice: judged.step_notice.clone(),
             target: judged.target.clone(),
-            duration_ms: u64::try_from(judged.duration.as_millis()).unwrap_or(u64::MAX),
+            duration_ms: u64::try_from(judged.duration.as_millis()).map_err(|_overflow| {
+                crate::workspace::SessionError::DurationMillisOverflow {
+                    duration: judged.duration,
+                }
+            })?,
             tests_run: judged.tests_run,
             failed_tests: judged.failed_tests.clone(),
             retried: judged.retried,
-            not_run_reason: judged.not_run_reason.map(|reason| reason.name().to_owned()),
+            not_run_reason: judged.not_run_reason,
             source_run_id: judged.source_run_id.clone(),
-        }
+        })
     }
 }
 
@@ -165,6 +180,12 @@ pub enum StreamError {
         #[source]
         source: serde_json::Error,
     },
+    /// The input has more lines than the stream schema can number exactly.
+    #[error("zero-based input line {zero_based} does not fit a one-based u64 line number")]
+    LineNumberOverflow {
+        /// The exact zero-based position reported by the iterator.
+        zero_based: usize,
+    },
 }
 
 /// One line of a run stream, read back.
@@ -172,23 +193,31 @@ pub enum StreamError {
 /// # Errors
 /// [`StreamError::Unreadable`] for a line that is not one of this stream's.
 pub fn read_line(at: u64, text: &str) -> Result<Line, StreamError> {
-    serde_json::from_str(text).map_err(|source| StreamError::Unreadable { line: at, source })
+    let value = crate::strictjson::from_str(text)
+        .map_err(|source| StreamError::Unreadable { line: at, source })?;
+    Line::deserialize(value).map_err(|source| StreamError::Unreadable { line: at, source })
 }
 
 /// Every line of a stream, read back in order.
 ///
 /// # Errors
-/// The first line that is not one of this stream's, by its number.
+/// The first line that is not one of this stream's, by its number, or an input too large for the stream's exact line-number field.
 pub fn read(text: &str) -> Result<Vec<Line>, StreamError> {
     text.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .enumerate()
         .map(|(at, line)| {
-            read_line(
-                u64::try_from(at).unwrap_or(u64::MAX).saturating_add(1),
-                line,
-            )
+            let zero_based = match u64::try_from(at) {
+                Ok(zero_based) => zero_based,
+                Err(_overflow) => {
+                    return Err(StreamError::LineNumberOverflow { zero_based: at });
+                }
+            };
+            let line_number = zero_based
+                .checked_add(1)
+                .ok_or(StreamError::LineNumberOverflow { zero_based: at })?;
+            read_line(line_number, line)
         })
         .collect()
 }

@@ -126,7 +126,9 @@ pub fn respell_int(lit: &syn::LitInt, delta: i32) -> Option<String> {
         _ => ("", 10),
     };
     let body = digits.get(prefix.len()..)?;
-    let value = u128::from_str_radix(body, radix).ok()?;
+    let Ok(value) = u128::from_str_radix(body, radix) else {
+        return None;
+    };
     let moved = if delta < 0 {
         value.checked_sub(1)?
     } else {
@@ -144,7 +146,8 @@ pub fn respell_int(lit: &syn::LitInt, delta: i32) -> Option<String> {
     Some(format!("{prefix}{written}{suffix}"))
 }
 
-/// The largest value a suffix says the literal may hold. An unsuffixed literal is bounded by nothing the syntax knows, and `usize` and `isize` are read as the sixty-four bit ones the compiler will settle.
+/// The largest value a suffix says the literal may hold.
+/// An unsuffixed literal is bounded by nothing the syntax knows, and `usize` and `isize` are read as the sixty-four bit ones the compiler will settle.
 fn ceiling(suffix: &str) -> u128 {
     match suffix {
         "u8" => u128::from(u8::MAX),
@@ -192,7 +195,9 @@ fn unary_call<'e>(expr: &'e Expr, name: &str) -> Option<&'e Expr> {
     call.args.first()
 }
 
-/// Whether `expr` is spelled as the value `Default::default()` would produce, as far as syntax can tell: `0`, `0.0`, `false`, `""`, `()`, `None`, `[]`, `&[]`, `vec![]`, `Default::default()`, `T::default()`, and a zero-argument `T::new()`. A return replacement that would write the same value again is not a mutation, so these produce no candidate. The list is necessarily incomplete; what it misses is an equivalent mutant that survives, never a missed defect.
+/// Whether `expr` is spelled as the value `Default::default()` would produce, as far as syntax can tell: `0`, `0.0`, `false`, `""`, `()`, `None`, `[]`, `&[]`, `vec![]`, `Default::default()`, `T::default()`, and a zero-argument `T::new()`.
+/// A return replacement that would write the same value again is not a mutation, so these produce no candidate.
+/// The list is necessarily incomplete; what it misses is an equivalent mutant that survives, never a missed defect.
 pub(super) fn is_default_spelling(expr: &Expr) -> bool {
     match expr {
         Expr::Paren(paren) => is_default_spelling(&paren.expr),
@@ -247,7 +252,8 @@ pub(super) fn is_true_literal(expr: &Expr) -> bool {
     }
 }
 
-/// Whether a condition holds a `let` anywhere `&&` and parentheses can reach: an `if let`, a `while let`, or a let chain. Such a condition can neither be negated nor have its connective swapped.
+/// Whether a condition holds a `let` anywhere `&&` and parentheses can reach: an `if let`, a `while let`, or a let chain.
+/// Such a condition can neither be negated nor have its connective swapped.
 pub(super) fn has_let(expr: &Expr) -> bool {
     match expr {
         Expr::Let(_) => true,
@@ -302,7 +308,8 @@ pub(super) fn arguments(tokens: &proc_macro2::TokenStream) -> Vec<proc_macro2::T
             proc_macro2::TokenTree::Punct(punct)
                 if punct.as_char() == ',' && punct.spacing() == proc_macro2::Spacing::Alone =>
             {
-                split.push(std::mem::take(&mut current).into_iter().collect());
+                split.push(current.into_iter().collect());
+                current = Vec::new();
             }
             _ => current.push(tree),
         }

@@ -1,69 +1,74 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 1,
+  "schema_version": 2,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260909T230752768Z",
-    "started_at": "2026-09-09T23:07:52.768515692Z",
-    "finished_at": "2026-09-09T23:07:53.390668572Z",
-    "duration_ms": 6,
+    "id": "current-v1",
+    "started_at": "2026-09-19T17:35:51.565174Z",
+    "finished_at": "2026-09-19T17:35:53.601717Z",
+    "duration_ms": 130,
     "interrupted": false,
     "exit_code": 1,
     "shard": null
   },
   "workspace": {
-    "root_name": "fixture-baseline",
-    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "eb370d98395e76cb285ee9980558ea11455e13aa7da5978bc4de97d414c9fc43",
-    "catalog_digest": "ea0d8c716458270180acc101d875493b2673202f4135e018cb48a352e07abf1a",
+    "root_name": "fixture-simple",
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "workspace_digest": "b2680362765e627c9cab628d07340a85afd460aa775fe63b95cacefe5708d448",
+    "catalog_digest": "cb243cbeb556f8d9ec501bdbe491caaec8c94b76a6a305b6b87d55636c946fcd",
     "platform": {
-      "os": "gnu",
-      "arch": "x86_64",
-      "target": "x86_64-unknown-linux-gnu"
+      "os": "darwin",
+      "arch": "aarch64",
+      "target": "aarch64-apple-darwin"
     }
   },
   "selection": {
-    "tier": "balanced",
+    "tier": "all",
     "operators": [],
     "include": [],
     "exclude": [],
-    "packages": []
+    "packages": [],
+    "build": [],
+    "mutant_steps": 50000000
   },
   "accounting": {
-    "cataloged": 10,
+    "cataloged": 13,
     "refused": 0,
-    "skipped": 1,
-    "executed": 7,
-    "killed": 7,
+    "skipped": 23,
+    "executed": 12,
+    "killed": 12,
     "survived": 0,
-    "timed_out": 0,
+    "step_limit_reached": 0,
+    "waited": 0,
     "inconclusive": 0,
     "errored": 0,
-    "not_run": 3,
-    "unreached": 1,
-    "discharged": 2,
+    "not_run": 1,
+    "unreached": 0,
+    "discharged": 1,
     "expected": 0
   },
   "score": {
-    "detected": 7,
-    "decided": 7,
+    "detected": 12,
+    "decided": 12,
     "value": 1.0
   },
   "targets": [
     {
-      "id": "fixture-baseline/lib/fixture_baseline",
+      "id": "fixture-simple/lib/fixture_simple",
       "kind": "lib",
       "harness": true,
-      "tests": 1
+      "tests": 1,
+      "limitations": []
     },
     {
-      "id": "fixture-baseline/test/doubling",
+      "id": "fixture-simple/test/parity",
       "kind": "test",
       "harness": true,
-      "tests": 1
+      "tests": 1,
+      "limitations": []
     },
     {
-      "id": "fixture-baseline/doc/fixture_baseline",
+      "id": "fixture-simple/doc/fixture_simple",
       "kind": "doc",
       "harness": true,
       "tests": 1,
@@ -77,94 +82,203 @@
   "mutants": [
     {
       "index": 0,
-      "id": "0cb3400e6fea6d01b5b03bb8184b305aedbe265b49c32cb61560a7afa2ae6d65",
-      "display_id": "0cb3400e6fea6d01b5b0",
+      "id": "2d0e069ea1d64c1e5d5728b9f5a345c8c723cd582392b1e513cd79c1052da1d2",
+      "display_id": "2d0e069ea1d64c1e5d57",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
+      "package": "fixture-simple",
       "family": "return-replacement",
       "rule": "return-default",
+      "item": "max",
       "rule_version": 1,
-      "line": 8,
+      "line": 11,
       "column": 5,
-      "start_byte": 461,
-      "end_byte": 565,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "if n > 0 {\n        \"positive\"\n    } else if n < 0 {\n        \"negative\"\n    } else {\n        \"zero\"\n    }",
+      "start_byte": 389,
+      "end_byte": 414,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "if a > b { a } else { b }",
       "replacement": "Default::default()",
       "outcome": "killed",
-      "target": "fixture-baseline/lib/fixture_baseline",
+      "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 1,
+      "duration_ms": 2,
       "tests_run": 1,
       "killed_by": [
-        "tests::sign_names_both_sides_of_zero"
+        "tests::max_picks_the_larger"
       ],
       "retried": false,
       "route": {
         "granularity": "block",
         "reaching": [
-          "fixture-baseline/lib/fixture_baseline"
+          "fixture-simple/lib/fixture_simple"
         ],
         "executed": [
-          "fixture-baseline/lib/fixture_baseline"
-        ]
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
       },
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
     },
     {
       "index": 1,
-      "id": "ae6162ece39e3389335db4344482a86f8b7e93863b0b492fdf8868cea5b12c7b",
-      "display_id": "ae6162ece39e3389335d",
+      "id": "8db2e600ef9b43baee5b93a4b0707747365a91553cfb1012a9e86993e82bd64d",
+      "display_id": "8db2e600ef9b43baee5b",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
+      "package": "fixture-simple",
       "family": "condition-negation",
       "rule": "negate-condition",
+      "item": "max",
       "rule_version": 1,
-      "line": 8,
+      "line": 11,
       "column": 8,
-      "start_byte": 464,
-      "end_byte": 469,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "n > 0",
-      "replacement": "!(n > 0)",
+      "start_byte": 392,
+      "end_byte": 397,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "a > b",
+      "replacement": "!(a > b)",
       "outcome": "killed",
-      "target": "fixture-baseline/lib/fixture_baseline",
+      "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 1,
+      "duration_ms": 2,
       "tests_run": 1,
       "killed_by": [
-        "tests::sign_names_both_sides_of_zero"
+        "tests::max_picks_the_larger"
       ],
       "retried": false,
       "route": {
         "granularity": "block",
         "reaching": [
-          "fixture-baseline/lib/fixture_baseline"
+          "fixture-simple/lib/fixture_simple"
         ],
         "executed": [
-          "fixture-baseline/lib/fixture_baseline"
-        ]
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
       },
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
     },
     {
       "index": 2,
-      "id": "366948fbe36bfd19786d81fbae6446524d338a866fb8e99a17def9f50fd3485d",
-      "display_id": "366948fbe36bfd19786d",
+      "id": "154c05d614d8ec0e22dbff82de1481746af67dcc5e6baba6ca1f75a9ae503212",
+      "display_id": "154c05d614d8ec0e22db",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
+      "package": "fixture-simple",
+      "family": "condition-removal",
+      "rule": "condition-to-true",
+      "item": "max",
+      "rule_version": 1,
+      "line": 11,
+      "column": 8,
+      "start_byte": 392,
+      "end_byte": 397,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "a > b",
+      "replacement": "true",
+      "outcome": "killed",
+      "target": "fixture-simple/lib/fixture_simple",
+      "exit_code": 101,
+      "duration_ms": 2,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::max_picks_the_larger"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "executed": [
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
+    },
+    {
+      "index": 3,
+      "id": "4947d1cf09bf6ab266099b96f707a0576783f0370b994dc276bb1ade474fc5c1",
+      "display_id": "4947d1cf09bf6ab26609",
+      "path": "src/lib.rs",
+      "package": "fixture-simple",
+      "family": "condition-removal",
+      "rule": "condition-to-false",
+      "item": "max",
+      "rule_version": 1,
+      "line": 11,
+      "column": 8,
+      "start_byte": 392,
+      "end_byte": 397,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "a > b",
+      "replacement": "false",
+      "outcome": "killed",
+      "target": "fixture-simple/lib/fixture_simple",
+      "exit_code": 101,
+      "duration_ms": 2,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::max_picks_the_larger"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "executed": [
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
+    },
+    {
+      "index": 4,
+      "id": "16b0cd40508fc0785477d495daa14695fcff4d61ada9eb35a8c2c995eb1f881f",
+      "display_id": "16b0cd40508fc0785477",
+      "path": "src/lib.rs",
+      "package": "fixture-simple",
       "family": "comparison",
       "rule": "gt-to-ge",
+      "item": "max",
       "rule_version": 1,
-      "line": 8,
+      "line": 11,
       "column": 10,
-      "start_byte": 466,
-      "end_byte": 467,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "start_byte": 394,
+      "end_byte": 395,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
       "original": ">",
       "replacement": ">=",
       "outcome": "not_run",
@@ -179,272 +293,389 @@
         "reaching": [],
         "discharged": [
           {
-            "target": "fixture-baseline/lib/fixture_baseline",
+            "target": "fixture-simple/lib/fixture_simple",
             "proof": "never-infected"
           }
-        ]
-      },
-      "expected": false,
-      "unreached": false,
-      "source_run_id": null
-    },
-    {
-      "index": 3,
-      "id": "b6f6f7454e99e11dfd807eeea7e2e121461d68b588ccb1a0015d6e75d32adfb1",
-      "display_id": "b6f6f7454e99e11dfd80",
-      "path": "src/lib.rs",
-      "package": "fixture-baseline",
-      "family": "return-replacement",
-      "rule": "return-default",
-      "rule_version": 1,
-      "line": 9,
-      "column": 9,
-      "start_byte": 480,
-      "end_byte": 490,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "\"positive\"",
-      "replacement": "Default::default()",
-      "outcome": "killed",
-      "target": "fixture-baseline/lib/fixture_baseline",
-      "exit_code": 101,
-      "duration_ms": 1,
-      "tests_run": 1,
-      "killed_by": [
-        "tests::sign_names_both_sides_of_zero"
-      ],
-      "retried": false,
-      "route": {
-        "granularity": "block",
-        "reaching": [
-          "fixture-baseline/lib/fixture_baseline"
         ],
-        "executed": [
-          "fixture-baseline/lib/fixture_baseline"
-        ]
+        "fallback": null,
+        "tests": {},
+        "executed": []
       },
       "expected": false,
       "unreached": false,
-      "source_run_id": null
-    },
-    {
-      "index": 4,
-      "id": "9618aa1c71c281ae983584d26d09b1411bae1974fad571eb0a814eb4b44a2f17",
-      "display_id": "9618aa1c71c281ae9835",
-      "path": "src/lib.rs",
-      "package": "fixture-baseline",
-      "family": "condition-negation",
-      "rule": "negate-condition",
-      "rule_version": 1,
-      "line": 10,
-      "column": 15,
-      "start_byte": 505,
-      "end_byte": 510,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "n < 0",
-      "replacement": "!(n < 0)",
-      "outcome": "killed",
-      "target": "fixture-baseline/lib/fixture_baseline",
-      "exit_code": 101,
-      "duration_ms": 1,
-      "tests_run": 1,
-      "killed_by": [
-        "tests::sign_names_both_sides_of_zero"
-      ],
-      "retried": false,
-      "route": {
-        "granularity": "block",
-        "reaching": [
-          "fixture-baseline/lib/fixture_baseline"
-        ],
-        "executed": [
-          "fixture-baseline/lib/fixture_baseline"
-        ]
-      },
-      "expected": false,
-      "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "identical": "not-measured",
+      "killed_by": []
     },
     {
       "index": 5,
-      "id": "2bcb6eb7d96056277fa103492ff96c0d2aac9bdbcb6631aa89793025fc77c4a0",
-      "display_id": "2bcb6eb7d96056277fa1",
+      "id": "a98c26807febd47a6246a5dedce1eded40df0440f054ea18eefb5dc0ceae7142",
+      "display_id": "a98c26807febd47a6246",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
-      "family": "comparison",
-      "rule": "lt-to-le",
+      "package": "fixture-simple",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "item": "max",
       "rule_version": 1,
-      "line": 10,
-      "column": 17,
-      "start_byte": 507,
-      "end_byte": 508,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "<",
-      "replacement": "<=",
-      "outcome": "not_run",
-      "target": "",
-      "exit_code": -1,
-      "duration_ms": 0,
-      "tests_run": null,
+      "line": 11,
+      "column": 16,
+      "start_byte": 400,
+      "end_byte": 401,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "a",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "target": "fixture-simple/lib/fixture_simple",
+      "exit_code": 101,
+      "duration_ms": 2,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::max_picks_the_larger"
+      ],
       "retried": false,
-      "not_run_reason": "discharged",
       "route": {
-        "granularity": "discharged",
-        "reaching": [],
-        "discharged": [
-          {
-            "target": "fixture-baseline/lib/fixture_baseline",
-            "proof": "never-infected"
-          }
-        ]
+        "granularity": "block",
+        "reaching": [
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "executed": [
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
       },
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
     },
     {
       "index": 6,
-      "id": "ee0a61bc9f91d9acc4cf69d15879a1df1d4f7892ef853789a1d98cff5979cd4e",
-      "display_id": "ee0a61bc9f91d9acc4cf",
+      "id": "7407a3cacd6194e21669ee2ca70945294e434025268e65263666c7f95d22666d",
+      "display_id": "7407a3cacd6194e21669",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
+      "package": "fixture-simple",
       "family": "return-replacement",
       "rule": "return-default",
+      "item": "max",
       "rule_version": 1,
       "line": 11,
-      "column": 9,
-      "start_byte": 521,
-      "end_byte": 531,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "\"negative\"",
+      "column": 27,
+      "start_byte": 411,
+      "end_byte": 412,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "b",
       "replacement": "Default::default()",
       "outcome": "killed",
-      "target": "fixture-baseline/lib/fixture_baseline",
+      "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 1,
+      "duration_ms": 2,
       "tests_run": 1,
       "killed_by": [
-        "tests::sign_names_both_sides_of_zero"
+        "tests::max_picks_the_larger"
       ],
       "retried": false,
       "route": {
         "granularity": "block",
         "reaching": [
-          "fixture-baseline/lib/fixture_baseline"
+          "fixture-simple/lib/fixture_simple"
         ],
         "executed": [
-          "fixture-baseline/lib/fixture_baseline"
-        ]
+          "fixture-simple/lib/fixture_simple"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
       },
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
     },
     {
       "index": 7,
-      "id": "97b5a75a9e1efeeff23366ed26389245afc47b6091c7a2595eca2eb5cd052886",
-      "display_id": "97b5a75a9e1efeeff233",
+      "id": "7d6be71c9322f7602c3b21febb185dbf71349a274cd9100ca0b82d53e98be701",
+      "display_id": "7d6be71c9322f7602c3b",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
+      "package": "fixture-simple",
       "family": "return-replacement",
-      "rule": "return-default",
+      "rule": "return-true",
+      "item": "is_even",
       "rule_version": 1,
-      "line": 13,
-      "column": 9,
-      "start_byte": 553,
-      "end_byte": 559,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "\"zero\"",
-      "replacement": "Default::default()",
-      "outcome": "not_run",
-      "target": "",
-      "exit_code": -1,
-      "duration_ms": 0,
-      "tests_run": null,
+      "line": 16,
+      "column": 5,
+      "start_byte": 480,
+      "end_byte": 490,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "n % 2 == 0",
+      "replacement": "true",
+      "outcome": "killed",
+      "target": "fixture-simple/test/parity",
+      "exit_code": 101,
+      "duration_ms": 2,
+      "tests_run": 1,
+      "killed_by": [
+        "even_numbers_are_even"
+      ],
       "retried": false,
-      "not_run_reason": "unreached",
       "route": {
-        "granularity": "unreached",
-        "reaching": []
+        "granularity": "block",
+        "reaching": [
+          "fixture-simple/test/parity"
+        ],
+        "executed": [
+          "fixture-simple/test/parity"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
       },
       "expected": false,
-      "unreached": true,
-      "source_run_id": null
+      "unreached": false,
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
     },
     {
       "index": 8,
-      "id": "f0bd7961d77aed7f5cbad88497803bfdca9aec313cb41c9f0e970f7861d756a2",
-      "display_id": "f0bd7961d77aed7f5cba",
+      "id": "f33e0301812c1dc62a16cea43922b2dae7661f1dd41d7a2a0f7725aa63bb0eb8",
+      "display_id": "f33e0301812c1dc62a16",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
-      "family": "return-replacement",
-      "rule": "return-default",
+      "package": "fixture-simple",
+      "family": "arithmetic",
+      "rule": "rem-to-mul",
+      "item": "is_even",
       "rule_version": 1,
-      "line": 19,
-      "column": 5,
-      "start_byte": 690,
-      "end_byte": 695,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "n * 2",
-      "replacement": "Default::default()",
+      "line": 16,
+      "column": 7,
+      "start_byte": 482,
+      "end_byte": 483,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "%",
+      "replacement": "*",
       "outcome": "killed",
-      "target": "fixture-baseline/test/doubling",
+      "target": "fixture-simple/test/parity",
       "exit_code": 101,
-      "duration_ms": 1,
+      "duration_ms": 2,
       "tests_run": 1,
       "killed_by": [
-        "doubling_is_addition_twice"
+        "even_numbers_are_even"
       ],
       "retried": false,
       "route": {
         "granularity": "block",
         "reaching": [
-          "fixture-baseline/test/doubling"
+          "fixture-simple/test/parity"
         ],
         "executed": [
-          "fixture-baseline/test/doubling"
-        ]
+          "fixture-simple/test/parity"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
       },
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
     },
     {
       "index": 9,
-      "id": "d0f665a548910bd9ed45eae5a3c02fa1e5b826af1bf0ed2ae01a52d493a3961e",
-      "display_id": "d0f665a548910bd9ed45",
+      "id": "3818e901e8c328157cfa747f07f50cc4c92319f1036124d1a9e65fac584c6351",
+      "display_id": "3818e901e8c328157cfa",
       "path": "src/lib.rs",
-      "package": "fixture-baseline",
-      "family": "arithmetic",
-      "rule": "mul-to-div",
+      "package": "fixture-simple",
+      "family": "literal",
+      "rule": "int-increment",
+      "item": "is_even",
       "rule_version": 1,
-      "line": 19,
-      "column": 7,
-      "start_byte": 692,
-      "end_byte": 693,
-      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
-      "original": "*",
-      "replacement": "/",
+      "line": 16,
+      "column": 9,
+      "start_byte": 484,
+      "end_byte": 485,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "2",
+      "replacement": "3",
       "outcome": "killed",
-      "target": "fixture-baseline/test/doubling",
+      "target": "fixture-simple/test/parity",
       "exit_code": 101,
-      "duration_ms": 1,
+      "duration_ms": 2,
       "tests_run": 1,
       "killed_by": [
-        "doubling_is_addition_twice"
+        "even_numbers_are_even"
       ],
       "retried": false,
       "route": {
         "granularity": "block",
         "reaching": [
-          "fixture-baseline/test/doubling"
+          "fixture-simple/test/parity"
         ],
         "executed": [
-          "fixture-baseline/test/doubling"
-        ]
+          "fixture-simple/test/parity"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
       },
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
+    },
+    {
+      "index": 10,
+      "id": "076fcafa1dc248bedc019bf59b0b5ad74f1e4413caf7255d4618c939d8d10349",
+      "display_id": "076fcafa1dc248bedc01",
+      "path": "src/lib.rs",
+      "package": "fixture-simple",
+      "family": "literal",
+      "rule": "int-decrement",
+      "item": "is_even",
+      "rule_version": 1,
+      "line": 16,
+      "column": 9,
+      "start_byte": 484,
+      "end_byte": 485,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "2",
+      "replacement": "1",
+      "outcome": "killed",
+      "target": "fixture-simple/test/parity",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "even_numbers_are_even"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-simple/test/parity"
+        ],
+        "executed": [
+          "fixture-simple/test/parity"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
+    },
+    {
+      "index": 11,
+      "id": "26d9c76ac4907790899a9487138dee23a732f95d98d44f474e13f01b91f3e67d",
+      "display_id": "26d9c76ac4907790899a",
+      "path": "src/lib.rs",
+      "package": "fixture-simple",
+      "family": "comparison",
+      "rule": "eq-to-neq",
+      "item": "is_even",
+      "rule_version": 1,
+      "line": 16,
+      "column": 11,
+      "start_byte": 486,
+      "end_byte": 488,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "==",
+      "replacement": "!=",
+      "outcome": "killed",
+      "target": "fixture-simple/test/parity",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "even_numbers_are_even"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-simple/test/parity"
+        ],
+        "executed": [
+          "fixture-simple/test/parity"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
+    },
+    {
+      "index": 12,
+      "id": "6916f360cc43cc6e39195a585d5b2d12130a60efd40c2636e04dbd6851dff5e6",
+      "display_id": "6916f360cc43cc6e3919",
+      "path": "src/lib.rs",
+      "package": "fixture-simple",
+      "family": "literal",
+      "rule": "int-increment",
+      "item": "is_even",
+      "rule_version": 1,
+      "line": 16,
+      "column": 14,
+      "start_byte": 489,
+      "end_byte": 490,
+      "source_digest": "aa8e8104536a8f460fafd0427718238c4a162fbb95ec4a21db2b2ee708175d17",
+      "original": "0",
+      "replacement": "1",
+      "outcome": "killed",
+      "target": "fixture-simple/test/parity",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "even_numbers_are_even"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-simple/test/parity"
+        ],
+        "executed": [
+          "fixture-simple/test/parity"
+        ],
+        "fallback": null,
+        "discharged": [],
+        "tests": {}
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "step_notice": null,
+      "signal": null,
+      "not_run_reason": null,
+      "identical": "not-measured"
     }
   ],
   "rejections": [],
@@ -452,26 +683,22 @@
     {
       "reason": "test-code",
       "path": "src/lib.rs",
-      "count": 1,
+      "count": 17,
       "explanation": "the code is a test: a #[test] function or anything behind #[cfg(test)], which measures itself"
+    },
+    {
+      "reason": "test-only-file",
+      "path": "src/testutil.rs",
+      "count": 6,
+      "explanation": "only a test unit compiles the file, so no non-test binary could carry the mutant"
     }
   ],
   "expectations": [],
   "findings": [
     {
       "kind": "discharged-mutant",
-      "mutant": "366948fbe36bfd19786d81fbae6446524d338a866fb8e99a17def9f50fd3485d",
-      "detail": "every target that could have noticed 366948fbe36bfd19786d was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
-    },
-    {
-      "kind": "discharged-mutant",
-      "mutant": "2bcb6eb7d96056277fa103492ff96c0d2aac9bdbcb6631aa89793025fc77c4a0",
-      "detail": "every target that could have noticed 2bcb6eb7d96056277fa1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
-    },
-    {
-      "kind": "unreached-mutant",
-      "mutant": "97b5a75a9e1efeeff23366ed26389245afc47b6091c7a2595eca2eb5cd052886",
-      "detail": "no measured test reaches 97b5a75a9e1efeeff233: the mutation lives in code the tests never execute"
+      "mutant": "16b0cd40508fc0785477d495daa14695fcff4d61ada9eb35a8c2c995eb1f881f",
+      "detail": "every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
     }
   ]
 }

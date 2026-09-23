@@ -17,7 +17,7 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -36,9 +36,9 @@ fn report(fixture: &Fixture) -> serde_json::Value {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+    njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     ))
     .expect("the report is a document")

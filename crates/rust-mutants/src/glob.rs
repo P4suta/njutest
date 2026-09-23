@@ -60,8 +60,7 @@ impl Pattern {
     /// Parses a pattern.
     ///
     /// # Errors
-    /// Refuses the empty pattern, a leading `/`, a trailing `/`, and an
-    /// empty element in the middle such as `a//b`.
+    /// Refuses the empty pattern, a leading `/`, a trailing `/`, and an empty element in the middle such as `a//b`.
     pub fn compile(pattern: &str) -> Result<Self, GlobError> {
         let refuse = |column: usize, message: &str| GlobError {
             pattern: pattern.to_owned(),
@@ -98,7 +97,9 @@ impl Pattern {
         })
     }
 
-    /// Whether `path` matches. `path` uses `/` as its only separator; an empty path, or one holding an empty element, matches nothing. Total: never an error, never a panic.
+    /// Whether `path` matches.
+    /// `path` uses `/` as its only separator; an empty path, or one holding an empty element, matches nothing.
+    /// Total: never an error, never a panic.
     #[must_use]
     pub fn matches(&self, path: &str) -> bool {
         let segments: Vec<&str> = path.split('/').collect();
@@ -109,7 +110,8 @@ impl Pattern {
     }
 }
 
-/// `next[j]` answers "do the elements from `i + 1` onward match the path from element `j` onward", and `current[j]` the same for `i`. Sweeping `i` backwards over two rows bounds the whole matcher at O(pattern × path); the obvious recursive reading of `**` explores an exponential number of splits on a pattern such as `**/**/**/*a`.
+/// `next[j]` answers "do the elements from `i + 1` onward match the path from element `j` onward", and `current[j]` the same for `i`.
+/// Sweeping `i` backwards over two rows bounds the whole matcher at O(pattern × path); the obvious recursive reading of `**` explores an exponential number of splits on a pattern such as `**/**/**/*a`.
 #[expect(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
@@ -137,7 +139,8 @@ fn match_elements(elements: &[Element], segments: &[&str]) -> bool {
     next[0]
 }
 
-/// The same two-row dynamic programme one level down: `current[j]` answers "does `pattern[..=i]` match `segment[..j]`". A table rather than a greedy scan keeps `a*a*a*a*b` linear in the product of the lengths instead of exponential in the number of stars.
+/// The same two-row dynamic programme one level down: `current[j]` answers "does `pattern[..=i]` match `segment[..j]`".
+/// A table rather than a greedy scan keeps `a*a*a*a*b` linear in the product of the lengths instead of exponential in the number of stars.
 #[expect(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,

@@ -30,7 +30,10 @@ pub fn dep_info_path(artifact: &Path) -> Option<PathBuf> {
         Some(_) => artifact.file_stem()?.to_str()?,
         None => name,
     };
-    let stem = stem.strip_prefix("lib").unwrap_or(stem);
+    let stem = match stem.strip_prefix("lib") {
+        Some(stripped) => stripped,
+        None => stem,
+    };
     Some(artifact.with_file_name(format!("{stem}.d")))
 }
 
@@ -47,9 +50,12 @@ pub fn parse_dep_info(text: &str) -> Result<Vec<String>, CargoError> {
     let colon = rule
         .char_indices()
         .find(|&(index, ch)| {
+            let Some(after_colon) = index.checked_add(1) else {
+                return false;
+            };
             ch == ':'
                 && rule
-                    .get(index.saturating_add(1)..)
+                    .get(after_colon..)
                     .is_none_or(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
         })
         .map(|(index, _)| index)
@@ -59,7 +65,18 @@ pub fn parse_dep_info(text: &str) -> Result<Vec<String>, CargoError> {
                 format!("dep-info has no rule: {rule:?}"),
             )
         })?;
-    let prerequisites = rule.get(colon.saturating_add(1)..).unwrap_or_default();
+    let after_colon = colon.checked_add(1).ok_or_else(|| {
+        CargoError::new(
+            CargoErrorKind::DepInfoUnreadable,
+            "dep-info rule separator position overflowed",
+        )
+    })?;
+    let prerequisites = rule.get(after_colon..).ok_or_else(|| {
+        CargoError::new(
+            CargoErrorKind::DepInfoUnreadable,
+            "dep-info rule separator was not on a UTF-8 boundary",
+        )
+    })?;
     Ok(split_escaped(prerequisites))
 }
 
@@ -80,7 +97,8 @@ fn split_escaped(text: &str) -> Vec<String> {
             },
             ' ' | '\t' => {
                 if !current.is_empty() {
-                    items.push(std::mem::take(&mut current));
+                    items.push(current);
+                    current = String::new();
                 }
             }
             other => current.push(other),
@@ -97,11 +115,11 @@ fn is_rust(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }
 
-/// The units of a compilation, each with the sources its dep-info names, resolved against `workspace_root` (the directory rustc ran in). Build scripts are left out: they are never mutated.
+/// The units of a compilation, each with the sources its dep-info names, resolved against `workspace_root` (the directory rustc ran in).
+/// Build scripts are left out: they are never mutated.
 ///
 /// # Errors
-/// [`CargoErrorKind::DepInfoMissing`] when an artifact's dep-info cannot be
-/// read, and [`CargoErrorKind::DepInfoUnreadable`] when it has no rule.
+/// [`CargoErrorKind::DepInfoMissing`] when an artifact's dep-info cannot be read, and [`CargoErrorKind::DepInfoUnreadable`] when it has no rule.
 pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>, CargoError> {
     let mut units = Vec::new();
     for message in messages {
@@ -129,24 +147,29 @@ fn is_uplift(artifact: &Artifact) -> bool {
 }
 
 /// Every place this artifact's dep-info could sit: cargo puts it beside the hashed file in `deps/` and, for a binary it uplifts, beside the copy too.
-fn dep_info_candidates(artifact: &Artifact) -> Vec<PathBuf> {
-    let mut candidates: Vec<PathBuf> = artifact
-        .filenames
-        .iter()
-        .chain(artifact.executable.iter())
-        .filter_map(|file| dep_info_path(file))
-        .collect();
+fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> {
+    let mut candidates = Vec::new();
+    for file in artifact.filenames.iter().chain(artifact.executable.iter()) {
+        let candidate = dep_info_path(file).ok_or_else(|| {
+            CargoError::new(
+                CargoErrorKind::DepInfoMissing,
+                format!(
+                    "artifact output {} has no file name for a dep-info",
+                    file.display()
+                ),
+            )
+        })?;
+        candidates.push(candidate);
+    }
     candidates.dedup();
-    candidates
+    Ok(candidates)
 }
 
 fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {
-    let candidates = dep_info_candidates(artifact);
-    let file = candidates
-        .iter()
-        .find(|path| path.is_file())
-        .or_else(|| candidates.first())
-        .ok_or_else(|| {
+    let candidates = dep_info_candidates(artifact)?;
+    let file = match regular_dep_info(&candidates)? {
+        Some(file) => file,
+        None => candidates.first().cloned().ok_or_else(|| {
             CargoError::new(
                 CargoErrorKind::DepInfoMissing,
                 format!(
@@ -154,8 +177,9 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
                     artifact.target.name, artifact.package_id
                 ),
             )
-        })?;
-    let text = std::fs::read_to_string(file).map_err(|source| {
+        })?,
+    };
+    let text = std::fs::read_to_string(&file).map_err(|source| {
         CargoError::new(
             CargoErrorKind::DepInfoMissing,
             format!("cannot read dep-info {}", file.display()),
@@ -182,4 +206,29 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
         test: artifact.profile.test,
         sources,
     })
+}
+
+/// The first existing regular candidate.
+/// Missing candidates are expected for Cargo's uplifted copies; an unreadable or irregular one is not silently skipped in favour of a different view of the same compilation.
+fn regular_dep_info(candidates: &[PathBuf]) -> Result<Option<PathBuf>, CargoError> {
+    for path in candidates {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_file() => return Ok(Some(path.clone())),
+            Ok(_irregular_or_link) => {
+                return Err(CargoError::new(
+                    CargoErrorKind::DepInfoMissing,
+                    format!("dep-info {} is not a regular file", path.display()),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(CargoError::new(
+                    CargoErrorKind::DepInfoMissing,
+                    format!("cannot inspect dep-info {}", path.display()),
+                )
+                .with_source(source));
+            }
+        }
+    }
+    Ok(None)
 }

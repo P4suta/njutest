@@ -16,6 +16,15 @@ fn page(relative: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
+fn directory_entries(directory: &std::path::Path) -> Vec<std::fs::DirEntry> {
+    std::fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+        .map(|entry| {
+            entry.unwrap_or_else(|error| panic!("entry under {}: {error}", directory.display()))
+        })
+        .collect()
+}
+
 #[test]
 fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
     let text = page("docs/engine/json-schema.md");
@@ -106,10 +115,14 @@ fn every_key_the_page_shows_is_one_the_reader_accepts() {
         .collect::<Vec<&str>>()
         .join("\n");
     let parsed: Result<rust_mutants_cli::config::Config, _> = toml::from_str(&skeleton);
+    let failure = match &parsed {
+        Ok(_) => None,
+        Err(error) => Some(error),
+    };
     assert!(
         parsed.is_ok(),
-        "the skeleton on docs/engine/configuration.md is not one the reader accepts: {:?}\n{skeleton}",
-        parsed.err()
+        "the skeleton on docs/engine/configuration.md is not one the reader accepts: \
+         {failure:?}\n{skeleton}",
     );
 }
 
@@ -117,10 +130,13 @@ fn every_key_the_page_shows_is_one_the_reader_accepts() {
 fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
     let text = page(".rust-mutants.toml");
     let parsed: Result<rust_mutants_cli::config::Config, _> = toml::from_str(&text);
+    let failure = match &parsed {
+        Ok(_) => None,
+        Err(error) => Some(error),
+    };
     assert!(
         parsed.is_ok(),
-        "the repository's own ledger is not one the engine reads: {:?}",
-        parsed.err()
+        "the repository's own ledger is not one the engine reads: {failure:?}",
     );
     let config = parsed.expect("the ledger");
     assert_eq!(
@@ -128,7 +144,7 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
         vec![
             "rust-mutants".to_owned(),
             "rust-mutants-cli".to_owned(),
-            "njutest-cli".to_owned(),
+            "njutest".to_owned(),
             "xtask".to_owned(),
         ],
         "the ledger measures every package of this workspace: the engine, the command line it \
@@ -155,7 +171,10 @@ fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
         .lines()
         .skip(1)
         .filter_map(|line| line.split_whitespace().next())
-        .filter_map(|code| code.parse().ok())
+        .map(|code| {
+            code.parse::<u8>()
+                .expect("every exit-code row starts with a number")
+        })
         .collect();
     assert_eq!(
         returned.len(),
@@ -208,10 +227,8 @@ fn every_schema_the_engine_ships_is_named_on_the_page_that_documents_them() {
     let directory = njutest_devkit::paths::workspace_root().join("schema");
     let text = page("docs/engine/json-schema.md");
     let mut shipped = BTreeSet::new();
-    let entries = std::fs::read_dir(&directory)
-        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()));
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
+    for entry in directory_entries(&directory) {
+        let name = njutest_devkit::paths::owned_utf8(entry.file_name());
         let json = std::path::Path::new(&name)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
@@ -302,11 +319,9 @@ fn the_url_a_sarif_result_sends_a_reader_to_is_this_project() {
 #[test]
 fn every_schema_this_workspace_ships_is_one_a_test_holds_a_real_document_to() {
     let root = njutest_devkit::paths::workspace_root();
-    let entries =
-        std::fs::read_dir(root.join("schema")).unwrap_or_else(|error| panic!("schema: {error}"));
-    let shipped: BTreeSet<String> = entries
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+    let shipped: BTreeSet<String> = directory_entries(&root.join("schema"))
+        .into_iter()
+        .map(|entry| njutest_devkit::paths::owned_utf8(entry.file_name()))
         .filter(|name| {
             std::path::Path::new(name)
                 .extension()
@@ -316,14 +331,15 @@ fn every_schema_this_workspace_ships_is_one_a_test_holds_a_real_document_to() {
     assert!(!shipped.is_empty(), "this workspace ships schemas");
 
     let mut suites = Vec::new();
-    for crate_name in ["njutest-cli", "rust-mutants-cli", "rust-mutants", "njutest"] {
+    for crate_name in ["njutest", "rust-mutants-cli", "rust-mutants", "njutest"] {
         let directory = root.join("crates").join(crate_name).join("tests");
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
+        for entry in directory_entries(&directory) {
             if entry.path().extension().is_some_and(|one| one == "rs") {
-                suites.push(std::fs::read_to_string(entry.path()).unwrap_or_default());
+                let path = entry.path();
+                suites.push(
+                    std::fs::read_to_string(&path)
+                        .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+                );
             }
         }
     }
@@ -363,14 +379,15 @@ fn every_finding_kind_a_report_can_carry_is_one_a_test_names() {
 fn suites() -> String {
     let root = njutest_devkit::paths::workspace_root();
     let mut read = String::new();
-    for crate_name in ["njutest-cli", "rust-mutants-cli", "rust-mutants", "njutest"] {
+    for crate_name in ["njutest", "rust-mutants-cli", "rust-mutants", "njutest"] {
         let directory = root.join("crates").join(crate_name).join("tests");
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
+        for entry in directory_entries(&directory) {
             if entry.path().extension().is_some_and(|one| one == "rs") {
-                read.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                let path = entry.path();
+                read.push_str(
+                    &std::fs::read_to_string(&path)
+                        .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+                );
                 read.push('\n');
             }
         }

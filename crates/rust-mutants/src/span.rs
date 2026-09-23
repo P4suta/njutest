@@ -43,6 +43,7 @@ pub enum SpanError {
     serde::Serialize,
     serde::Deserialize,
 )]
+#[serde(deny_unknown_fields)]
 pub struct Span {
     /// The first byte covered.
     pub start: u32,
@@ -88,7 +89,8 @@ impl Span {
         self.len() == 0
     }
 
-    /// Whether `other` lies entirely within `self`. A span contains itself, and an empty span sitting on either boundary counts as contained.
+    /// Whether `other` lies entirely within `self`.
+    /// A span contains itself, and an empty span sitting on either boundary counts as contained.
     #[must_use]
     pub const fn contains(self, other: Self) -> bool {
         self.start <= other.start && other.end <= self.end
@@ -100,7 +102,8 @@ impl Span {
         self.contains(other) && !(self.start == other.start && self.end == other.end)
     }
 
-    /// Whether the spans share at least one byte. Empty spans overlap nothing, including each other, wherever they sit.
+    /// Whether the spans share at least one byte.
+    /// Empty spans overlap nothing, including each other, wherever they sit.
     #[must_use]
     pub const fn overlaps(self, other: Self) -> bool {
         let starts_before_other_ends = self.start < other.end;
@@ -111,9 +114,7 @@ impl Span {
     /// The bytes the span covers in `source`, without copying.
     ///
     /// # Errors
-    /// Returns [`SpanError::Reversed`] or [`SpanError::OutOfRange`] rather than
-    /// panicking: spans travel through caches and reports and may outlive the
-    /// source they were minted from.
+    /// Returns [`SpanError::Reversed`] or [`SpanError::OutOfRange`] rather than panicking: spans travel through caches and reports and may outlive the source they were minted from.
     pub fn slice(self, source: &[u8]) -> Result<&[u8], SpanError> {
         self.validate()?;
         let out_of_range = || SpanError::OutOfRange {

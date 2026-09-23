@@ -17,7 +17,8 @@ use std::path::PathBuf;
 use rust_mutants::catalog::{Builder, Catalog};
 use rust_mutants::instrument::{
     ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, InstrumentErrorKind, Instrumenting, MODULE_STEM,
-    RUNTIME_MARKER, STALE_CATALOG_EXIT, instrument_file, module_name, plan_file,
+    RUNTIME_MARKER, STALE_CATALOG_EXIT, STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA,
+    instrument_file, module_name, plan_file,
 };
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::splice::count_lines;
@@ -28,7 +29,10 @@ static REGISTRY: Registry = Registry::canonical();
 /// Discovers, catalogs, and instruments one source, returning the text with the file's own runtime module named `__rm`.
 fn instrument(source: &str) -> String {
     let (text, _) = instrument_with_catalog(source);
-    text.replace(&module_name("src/lib.rs", source), MODULE_STEM)
+    text.replace(
+        &module_name("src/lib.rs", source).expect("valid source tokens"),
+        MODULE_STEM,
+    )
 }
 
 fn instrument_with_catalog(source: &str) -> (String, Catalog) {
@@ -59,7 +63,12 @@ fn offered(discovery: &rust_mutants::syntax::FileDiscovery, catalog: &Catalog) -
         .candidates
         .iter()
         .filter(|found| found.comparable.is_some())
-        .filter_map(|found| found.candidate.id().ok())
+        .map(|found| {
+            found
+                .candidate
+                .id()
+                .expect("a discovered candidate has an identity")
+        })
         .filter_map(|id| catalog.by_id(id.as_str()))
         .map(|mutant| mutant.index)
         .collect()
@@ -77,7 +86,8 @@ fn golden_case(name: &str) {
     let source = String::from_utf8(input).expect("utf-8");
     let text = instrument(&source);
     syn::parse_file(&text).expect("the instrumented file parses");
-    let (body, _runtime) = split_runtime(&text);
+    let (body, runtime) = split_runtime(&text);
+    assert!(runtime.contains(RUNTIME_MARKER));
     assert_eq!(
         count_lines(body.as_bytes()),
         count_lines(source.as_bytes()),
@@ -104,6 +114,9 @@ fn the_constants_are_frozen() {
     assert_eq!(COMPILED_CATALOG_ENV, "RUST_MUTANTS_COMPILED_CATALOG");
     assert_eq!(MODULE_STEM, "__rm");
     assert_eq!(STALE_CATALOG_EXIT, 97);
+    assert_eq!(STEP_PROTOCOL_EXIT, 94);
+    assert_eq!(STEP_STATE_ENV, "RUST_MUTANTS_STEP_STATE");
+    assert_eq!(STEP_STATE_SCHEMA, "rust-mutants-step-state-v1");
     assert_eq!(RUNTIME_MARKER, "rust-mutants-runtime-v1");
 }
 
@@ -113,15 +126,17 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
         "pub fn f(a: i32, b: i32, c: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    a + c > b\n}\n",
     );
     assert!(
-        text.contains("if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (true) || __rm::active(2) && (false) || __rm::active(3) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && !(__rm::active(2)) && !(__rm::active(3)) && __rm::differing(3, (a > b), || (a >= b))) {"),
+        text.contains("if __rm::value!(__rm::active(0) && __rm::value!(!(a > b)) || __rm::active(1) && __rm::value!(true) || __rm::active(2) && __rm::value!(false) || __rm::active(3) && __rm::value!(a >= b) || !__rm::active(0) && !__rm::active(1) && !__rm::active(2) && !__rm::active(3) && __rm::differing(3, __rm::value!(a > b), || __rm::value!(a >= b))) {"),
         "{text}"
     );
     assert!(
-        text.contains("return (if __rm::active(4) { false } else { true });"),
+        text.contains("return __rm::value!(if __rm::active(4) { false } else { true });"),
         "{text}"
     );
     assert!(
-        text.contains("(if __rm::active(5) { true } else if __rm::active(7) { a + c >= b } else {"),
+        text.contains(
+            "__rm::value!(if __rm::active(5) { true } else if __rm::active(7) { a + c >= b } else {"
+        ),
         "{text}"
     );
 }
@@ -302,6 +317,10 @@ fn a_statement_takes_the_statement_form_and_a_deletion_renders_an_empty_branch()
         ),
         "one chain holds every alternative of a site: {text}"
     );
+    assert!(
+        !text.contains("macro_rules! value"),
+        "a statement-only file emits no unused expression macro: {text}"
+    );
 }
 
 #[test]
@@ -316,7 +335,7 @@ fn nested_sites_become_nested_guards_and_only_the_original_branch_carries_them()
         "an alternative is the pristine site with one edit and no nested guard: {line}"
     );
     assert!(
-        line.contains("else { (if __rm::active("),
+        line.contains("else { __rm::value!(if __rm::active("),
         "the original branch is the only one carrying the nested guard: {line}"
     );
     let (_, tail) = line.split_once("else {").expect("an original branch");
@@ -332,10 +351,7 @@ fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
     let source = "pub fn f(a: i32) -> i32 {\n    a + 1\n}\n";
     let (text, catalog) = instrument_with_catalog(source);
     let (body, runtime) = split_runtime(&text);
-    assert!(
-        body.starts_with("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn f(a: i32) -> i32 {"),
-        "{body}"
-    );
+    assert!(body.starts_with("pub fn f(a: i32) -> i32 {"), "{body}");
     assert!(runtime.contains(RUNTIME_MARKER), "{runtime}");
     assert!(
         runtime.contains(&format!("{:?}", catalog.digest())),
@@ -343,7 +359,7 @@ fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
     );
     for mutant in catalog.mutants() {
         assert!(
-            runtime.contains(&format!("({:?}, {})", mutant.id, mutant.index)),
+            runtime.contains(&format!("({:?}, {})", mutant.id.as_str(), mutant.index)),
             "{runtime}"
         );
     }
@@ -360,7 +376,51 @@ fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
 }
 
 #[test]
-fn an_untouched_file_is_returned_byte_for_byte_with_no_runtime() {
+fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boundary() {
+    let text = instrument("pub fn f(a: i32) -> i32 { a + 1 }\n");
+    let (_, runtime) = split_runtime(&text);
+
+    for required in [
+        "enum Budget",
+        "enum StepNoticeError",
+        "StepPhase {",
+        "enum StepStateError",
+        "Budget::Invalid(_) => protocol_failure()",
+        "pub(crate) fn checkpoint()",
+        "file.lock().map_err",
+        "file.unlock().map_err",
+        "RUST_MUTANTS_STEP_STATE",
+        ".create_new(true)",
+        "Write::write_all",
+        "file.sync_data().map_err",
+        "fs::rename(partial, path).map_err",
+        "process::exit(94)",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "missing {required:?}: {runtime}"
+        );
+    }
+    assert!(
+        !runtime.contains("unwrap_or(STEPS_UNBOUNDED)"),
+        "a malformed bound must not become unbounded: {runtime}"
+    );
+    for prohibited in [
+        "Result<(), ()>",
+        "Ordering::Relaxed",
+        "wrapping_sub",
+        "poisoned.into_inner()",
+        "let _ = SEEN.try_with",
+    ] {
+        assert!(
+            !runtime.contains(prohibited),
+            "generated code must not regain {prohibited:?}: {runtime}"
+        );
+    }
+}
+
+#[test]
+fn a_file_without_a_mutant_still_carries_the_process_wide_checkpoint_runtime() {
     let source = "//! No candidates here.\n\npub struct S;\n";
     let selection = Selection::tier(&REGISTRY, Tier::All);
     let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
@@ -377,38 +437,84 @@ fn an_untouched_file_is_returned_byte_for_byte_with_no_runtime() {
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
-    assert_eq!(file.text, source);
+    assert!(file.text.starts_with(source), "{}", file.text);
+    assert!(file.text.contains(RUNTIME_MARKER), "{}", file.text);
+    assert!(
+        !file.text.contains("macro_rules! value"),
+        "a candidate-free file emits no unused expression macro: {}",
+        file.text
+    );
     assert!(file.guards.is_empty());
-    assert!(!file.instrumented);
+    assert!(file.instrumented);
+    assert!(!file.module.is_empty());
 }
 
 #[test]
-fn the_innermost_function_carries_the_allow_and_carries_it_once() {
+fn a_checkpoint_inside_a_mutant_edit_stays_in_the_original_branch() {
+    let source = include_str!("../../../fixtures/fixture-modern/src/lib.rs");
+    let text = instrument(source);
+    syn::parse_file(&text).expect("the checkpointed mutant file parses");
+    assert!(
+        text.contains("filter(|one| { __rm::checkpoint(); within(**one, bound) })"),
+        "the expression closure remains bounded in the original branch: {text}"
+    );
+    assert!(
+        text.contains("map(|one| { __rm::checkpoint();"),
+        "every expression closure enclosed by the mutation stays bounded: {text}"
+    );
+}
+
+#[test]
+fn only_the_private_generated_module_carries_the_exact_lint_exception() {
     let text = instrument(
         "pub fn f(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn g(a: i32) -> i32 {\n    fn inner(x: i32) -> i32 { x * 2 }\n    inner(a) - 1\n}\n",
     );
     assert_eq!(
         text.matches("#[allow(").count(),
-        4,
-        "three functions and the runtime: {text}"
+        1,
+        "user functions never inherit a generated-code exception: {text}"
     );
+    let parsed = syn::parse_file(&text).expect("instrumented source parses");
+    let module = parsed
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Mod(module) if module.ident == "__rm" => Some(module),
+            _ => None,
+        })
+        .expect("the generated support module");
     assert!(
-        text.contains("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn f(a: i32, b: i32) -> i32 {"),
-        "{text}"
+        matches!(module.vis, syn::Visibility::Inherited),
+        "the lint exception is confined to a private module: {:?}",
+        module.vis
     );
-    assert!(
-        text.contains("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] fn inner(x: i32) -> i32 {"),
-        "{text}"
-    );
-    assert!(
-        text.contains("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn g(a: i32) -> i32 {"),
-        "{text}"
-    );
+    let attributes: Vec<&syn::Attribute> = module
+        .attrs
+        .iter()
+        .filter(|attribute| attribute.path().is_ident("allow"))
+        .collect();
+    assert_eq!(attributes.len(), 1, "{text}");
+    let names = attributes
+        .first()
+        .expect("the one generated allow attribute")
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
+        .expect("the generated allow is a literal lint list")
+        .iter()
+        .map(|path| {
+            path.segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["dead_code", "unused_qualifications"]);
+    assert!(!text.contains("allow(warnings"), "{text}");
 }
 
 #[test]
 fn a_file_that_already_spells_the_module_name_gets_the_next_one() {
-    let taken = module_name("src/lib.rs", "");
+    let taken = module_name("src/lib.rs", "").expect("valid source tokens");
     let source = format!(
         "mod {taken} {{\n    pub fn helper() -> i32 {{ 1 }}\n}}\n\npub fn f() -> i32 {{\n    {taken}::helper() + 1\n}}\n"
     );
@@ -425,8 +531,8 @@ fn a_file_that_already_spells_the_module_name_gets_the_next_one() {
 
 #[test]
 fn each_file_names_its_runtime_module_after_its_own_path() {
-    let one = module_name("src/lib.rs", "");
-    let other = module_name("src/items.rs", "");
+    let one = module_name("src/lib.rs", "").expect("valid source tokens");
+    let other = module_name("src/items.rs", "").expect("valid source tokens");
 
     assert!(one.starts_with(&format!("{MODULE_STEM}_")), "{one}");
     assert_ne!(
@@ -437,7 +543,7 @@ fn each_file_names_its_runtime_module_after_its_own_path() {
     );
     assert_eq!(
         one,
-        module_name("src/lib.rs", ""),
+        module_name("src/lib.rs", "").expect("valid source tokens"),
         "and it is a function of the path"
     );
 }
@@ -479,14 +585,15 @@ fn line_endings_and_non_ascii_bytes_survive() {
 fn a_multi_line_site_keeps_its_lines_because_only_the_original_branch_holds_them() {
     let source = "pub fn f(a: i32, b: i32) -> bool {\n    if a < b\n        && b > 0\n    {\n        return true;\n    }\n    false\n}\n";
     let text = instrument(source);
-    let (body, _) = split_runtime(&text);
+    let (body, runtime) = split_runtime(&text);
+    assert!(runtime.contains(RUNTIME_MARKER));
     assert_eq!(count_lines(body.as_bytes()), count_lines(source.as_bytes()));
     assert!(
         body.contains("(!(a < b && b > 0))"),
         "an alternative is folded onto one line: {body}"
     );
     assert!(
-        body.contains(")\n        && (__rm::active("),
+        body.contains(")\n        && __rm::value!("),
         "the original branch is where the line break stayed: {body}"
     );
 }
@@ -497,7 +604,8 @@ fn a_placement_naming_an_unknown_mutant_is_refused() {
     let selection = Selection::tier(&REGISTRY, Tier::All);
     let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
     let catalog = Builder::new().build().expect("empty catalog");
-    let error = plan_file(&catalog, "src/lib.rs", &discovery.candidates).unwrap_err();
+    let error = plan_file(&catalog, "src/lib.rs", &discovery.candidates)
+        .expect_err("a placement cannot name a mutant outside its catalog");
     assert_eq!(error.kind(), InstrumentErrorKind::UnknownMutant);
     assert!(error.to_string().contains("RM3001"), "{error}");
 }
@@ -523,7 +631,7 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
-    .unwrap_err();
+    .expect_err("the source must be the one the candidates came from");
     assert_eq!(error.kind(), InstrumentErrorKind::SourceMismatch);
 }
 
@@ -541,7 +649,8 @@ fn the_crlf_variant_of_every_recorded_case_keeps_its_lines_and_reparses() {
         let source = rust_mutants::testkit::source::crlf(&String::from_utf8(input).expect("utf-8"));
         let text = instrument(&source);
         syn::parse_file(&text).expect("the instrumented file parses");
-        let (body, _runtime) = split_runtime(&text);
+        let (body, runtime) = split_runtime(&text);
+        assert!(runtime.contains(RUNTIME_MARKER));
         assert_eq!(
             count_lines(body.as_bytes()),
             count_lines(source.as_bytes()),
@@ -649,24 +758,32 @@ fn every_alternative_reports_where_its_own_text_landed() {
 }
 
 #[test]
-fn the_allow_names_every_lint_a_guard_can_trip_rather_than_the_warning_group() {
-    for lint in [
-        "warnings",
-        "unused",
-        "unfulfilled_lint_expectations",
-        "clippy::all",
-        "clippy::pedantic",
-        "clippy::restriction",
-        "clippy::nursery",
-    ] {
-        assert!(
-            rust_mutants::instrument::ALLOW_ATTRIBUTE.contains(lint),
-            "`allow(warnings)` covers only the lints still at warn level, and a workspace that \
-             denies {lint} has taken it out of that group; a guard's own parentheses would \
-             then fail the build of every mutant at once: {}",
-            rust_mutants::instrument::ALLOW_ATTRIBUTE
-        );
-    }
+fn generated_guards_do_not_change_the_user_functions_lint_policy() {
+    let text = instrument("#![deny(warnings)]\npub fn positive(n: u32) -> bool { n > 0 }\n");
+    let (body, runtime) = split_runtime(&text);
+    assert!(!body.contains("#[allow"), "{body}");
+    assert!(!runtime.contains("allow(warnings"), "{runtime}");
+    assert!(
+        runtime.contains(rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE),
+        "{runtime}"
+    );
+}
+
+#[test]
+fn the_generated_allowance_names_the_lints_a_forbid_of_which_is_a_conflict() {
+    let allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE;
+    let named: Vec<&str> = allow
+        .trim_start_matches("#[allow(")
+        .trim_end_matches(")]")
+        .split(", ")
+        .collect();
+    assert_eq!(
+        named,
+        rust_mutants::instrument::GENERATED_MODULE_ALLOWED_LINTS,
+        "the attribute goes into somebody else's tree and the conflicting-lints list decides \
+         whether their `forbid` is refused before it does, so a lint in one and not the other \
+         is a build this engine breaks and says nothing about: {allow}"
+    );
 }
 
 /// A file of `functions` generated functions, each with a comparison, a branch, and a tail.
@@ -674,13 +791,14 @@ fn generated(functions: usize) -> String {
     use std::fmt::Write as _;
     let mut text = String::from("//! A generated module.\n\n");
     for index in 0..functions {
-        let _written = writeln!(
+        let written = writeln!(
             text,
             "pub fn f{index}(a: i32, b: i32) -> i32 {{\n    \
              let mut total = 0;\n    \
              if a > b {{\n        total += a - b;\n    }} else {{\n        total += b - a;\n    }}\n    \
              total + a * b\n}}\n"
         );
+        written.expect("writing into a String cannot fail");
     }
     text
 }
@@ -691,15 +809,16 @@ fn generated_match(arms: usize, guarded: bool) -> String {
     let mut text =
         String::from("//! A generated match.\n\npub fn pick(n: i32) -> i32 {\n    match n {\n");
     for index in 0..arms {
-        let _written = if guarded && index % 2 == 1 {
+        let written = if guarded && index % 2 == 1 {
+            let distant = index.checked_add(1000).expect("the generated arm fits");
             writeln!(
                 text,
-                "        {index}\n        | {} if n > {index} => {index},",
-                index.saturating_add(1000)
+                "        {index}\n        | {distant} if n > {index} => {index},"
             )
         } else {
             writeln!(text, "        {index} => {index},")
         };
+        written.expect("writing into a String cannot fail");
     }
     text.push_str("        _ => -1,\n    }\n}\n");
     text
@@ -721,7 +840,8 @@ proptest::proptest! {
         };
         let text = instrument(&source);
         syn::parse_file(&text).expect("the instrumented file parses");
-        let (body, _runtime) = split_runtime(&text);
+        let (body, runtime) = split_runtime(&text);
+        proptest::prop_assert!(runtime.contains(RUNTIME_MARKER));
         proptest::prop_assert_eq!(
             count_lines(body.as_bytes()),
             count_lines(source.as_bytes()),
@@ -742,7 +862,8 @@ proptest::proptest! {
         };
         let text = instrument(&source);
         syn::parse_file(&text).expect("the instrumented file parses");
-        let (body, _runtime) = split_runtime(&text);
+        let (body, runtime) = split_runtime(&text);
+        proptest::prop_assert!(runtime.contains(RUNTIME_MARKER));
         proptest::prop_assert_eq!(
             count_lines(body.as_bytes()),
             count_lines(source.as_bytes()),
@@ -770,15 +891,15 @@ fn a_match_arm_whose_body_is_a_block_still_parses_after_the_guard_goes_in() {
          \x20   }\n\
          }\n",
     );
-    syn::parse_file(&text).unwrap_or_else(|error| {
-        panic!(
-            "an arm whose body is a block needs no comma after it, and one whose body is a \
-             parenthesised expression does: {error}\n{text}"
-        )
-    });
+    let parsed = syn::parse_file(&text);
     assert!(
-        text.contains("Ok(two) => {if "),
-        "so a block site keeps its braces rather than gaining parentheses: {text}"
+        parsed.is_ok(),
+        "an arm whose body is a block needs no comma after it, and one whose body is a \
+         parenthesised expression does: {parsed:?}\n{text}"
+    );
+    assert!(
+        text.contains("Ok(two) => __rm::value!(if "),
+        "so the macro groups the block site without a coercing call or lint-producing +         parentheses: {text}"
     );
 }
 
@@ -791,7 +912,8 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.expect("fixture directory entry");
             let path = entry.path();
             if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                 if entry.file_name() != "target" {
@@ -810,16 +932,21 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
             }
             let relative = path
                 .strip_prefix(&root)
-                .unwrap_or(&path)
-                .to_string_lossy()
+                .expect("every walked source stays below the repository root")
+                .to_str()
+                .expect("repository source paths are exact UTF-8")
                 .replace('\\', "/");
             let Some((text, _)) = instrumented(&relative, &source) else {
                 continue;
             };
-            checked = checked.saturating_add(1);
-            if let Err(error) = syn::parse_file(&text) {
-                panic!("{relative} does not parse once instrumented: {error}");
-            }
+            checked = checked
+                .checked_add(1)
+                .expect("the repository has fewer than u32::MAX files");
+            let parsed = syn::parse_file(&text);
+            assert!(
+                parsed.is_ok(),
+                "{relative} does not parse once instrumented: {parsed:?}"
+            );
         }
     }
     assert!(
@@ -831,14 +958,25 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
 /// One file instrumented as a run would instrument it, or nothing when discovery refuses it.
 fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
     let selection = Selection::tier(&REGISTRY, Tier::All);
-    let discovery = discover_file(path, source.as_bytes(), &selection).ok()?;
+    let discovery = match discover_file(path, source.as_bytes(), &selection) {
+        Ok(discovery) => discovery,
+        Err(_) => return None,
+    };
     let mut builder = Builder::new();
     for found in &discovery.candidates {
-        builder.add(found.candidate.clone()).ok()?;
+        if builder.add(found.candidate.clone()).is_err() {
+            return None;
+        }
     }
-    let catalog = builder.build().ok()?;
-    let placements = plan_file(&catalog, path, &discovery.candidates).ok()?;
-    let file = instrument_file(&Instrumenting {
+    let catalog = match builder.build() {
+        Ok(catalog) => catalog,
+        Err(_) => return None,
+    };
+    let placements = match plan_file(&catalog, path, &discovery.candidates) {
+        Ok(placements) => placements,
+        Err(_) => return None,
+    };
+    let file = match instrument_file(&Instrumenting {
         path,
         source: source.as_bytes(),
         placements: &placements,
@@ -846,8 +984,10 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
-    })
-    .ok()?;
+    }) {
+        Ok(file) => file,
+        Err(_) => return None,
+    };
     Some((file.text, catalog))
 }
 
@@ -859,7 +999,17 @@ fn probeable(
     discovery
         .candidates
         .iter()
-        .filter_map(|found| Some((found.candidate.id().ok()?, found.probe?)))
+        .filter_map(|found| {
+            found.probe.map(|question| {
+                (
+                    found
+                        .candidate
+                        .id()
+                        .expect("a discovered candidate has an identity"),
+                    question,
+                )
+            })
+        })
         .filter_map(|(id, question)| Some((catalog.by_id(id.as_str())?.index, question)))
         .collect()
 }
@@ -889,8 +1039,10 @@ fn instrument_probing(source: &str) -> String {
         "the tree reports what it wrote, and this source has a probe in it: {}",
         file.text
     );
-    file.text
-        .replace(&module_name("src/lib.rs", source), MODULE_STEM)
+    file.text.replace(
+        &module_name("src/lib.rs", source).expect("valid source tokens"),
+        MODULE_STEM,
+    )
 }
 
 #[test]
@@ -959,7 +1111,11 @@ fn a_tree_holds_the_call_for_a_probe_only_where_the_compiler_vouched_for_one() {
         "nothing was vouched for, so nothing is compared: {:?}",
         file.compared
     );
-    let body = file.text.split("#[doc(hidden)]").next().unwrap_or_default();
+    let body = file
+        .text
+        .split("#[doc(hidden)]")
+        .next()
+        .expect("split always yields its prefix");
     assert!(
         !body.contains("undefaulted"),
         "and no guard of the tree calls it, however the runtime defines it: {body}"
@@ -1012,15 +1168,20 @@ fn a_form_that_cannot_hold_the_call_writes_no_probe_however_many_it_was_offered(
 
 /// The site as the guard writes it when this mutant is the live one: its own bytes with the edit made.
 fn edited(placement: &rust_mutants::instrument::Placement) -> String {
-    let at = |offset: u32| usize::try_from(offset).unwrap_or(usize::MAX);
+    let at = |offset: u32| usize::try_from(offset).expect("a u32 offset fits this test platform");
     let start = at(placement
         .edit
         .start
-        .saturating_sub(placement.hint.site.start));
-    let end = at(placement.edit.end.saturating_sub(placement.hint.site.start));
+        .checked_sub(placement.hint.site.start)
+        .expect("the edit starts inside the site"));
+    let end = at(placement
+        .edit
+        .end
+        .checked_sub(placement.hint.site.start)
+        .expect("the edit ends inside the site"));
     let mut text = placement.hint.site_text.clone().into_bytes();
     text.splice(start..end, placement.replacement.iter().copied());
-    String::from_utf8_lossy(&text).into_owned()
+    String::from_utf8(text).expect("instrumenting exact UTF-8 source keeps exact UTF-8")
 }
 
 #[test]
@@ -1059,14 +1220,15 @@ fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() 
         .find(" else { ")
         .expect("a value-position guard keeps the original in an else");
     assert!(
-        file.branches
-            .iter()
-            .any(|branch| usize::try_from(branch.span.start).unwrap_or(usize::MAX) > kept),
+        file.branches.iter().any(|branch| {
+            usize::try_from(branch.span.start).expect("a u32 offset fits this test platform") > kept
+        }),
         "a branch inside the probed original is what this is about: {}",
         file.text
     );
     for branch in &file.branches {
-        let at = |offset: u32| usize::try_from(offset).unwrap_or(usize::MAX);
+        let at =
+            |offset: u32| usize::try_from(offset).expect("a u32 offset fits this test platform");
         let held = file
             .text
             .get(at(branch.span.start)..at(branch.span.end))

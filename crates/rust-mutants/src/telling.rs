@@ -4,14 +4,13 @@
 //! What a thing a run establishes looks like, decided once for every surface either product draws.
 
 use crate::outcome::Outcome;
+use std::fmt;
 
 /// What a piece of text is, which is how it is painted.
 ///
-/// A surface asks for what a thing *is* and never for a colour. Two surfaces
-/// that each named a colour would drift, and they did: the same run drew a
-/// timed-out mutation amber in its progress line and green in its dashboard,
-/// because two modules had each decided what a timeout was worth
-/// (ADR 0023).
+/// A surface asks for what a thing *is* and never for a colour.
+/// Two surfaces that each named a colour would drift, and they did: the same run drew a timed-out mutation amber in its progress line and green in its dashboard,
+/// because two modules had each decided what a timeout was worth (ADR 0023).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style {
     /// A gap in the tests: the thing a run is for.
@@ -53,11 +52,8 @@ pub enum Style {
 /// What a style means, for a screen that has its own palette rather than escapes.
 ///
 /// A terminal library has sixteen names and no idea what any of them are for.
-/// This is the layer between: a style says what a thing is, a hue says what
-/// that is worth, and a screen program turns a hue into whatever its own
-/// palette calls that. Six rather than sixteen, because the question is how
-/// much of a reader's attention something deserves and there are not sixteen
-/// answers to it.
+/// This is the layer between: a style says what a thing is, a hue says what that is worth, and a screen program turns a hue into whatever its own palette calls that.
+/// Six rather than sixteen, because the question is how much of a reader's attention something deserves and there are not sixteen answers to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hue {
     /// A gap: the thing a run is for.
@@ -96,9 +92,7 @@ impl Style {
 
     /// What to write before the text, as the parameters of one escape.
     ///
-    /// Amber, teal and rose rather than the sixteen a theme redefines: a
-    /// palette chosen once and read the same on every terminal that has 256
-    /// colours, which is every terminal anybody has used this decade.
+    /// Amber, teal and rose rather than the sixteen a theme redefines: a palette chosen once and read the same on every terminal that has 256 colours, which is every terminal anybody has used this decade.
     #[must_use]
     pub const fn code(self) -> &'static str {
         match self {
@@ -124,30 +118,25 @@ impl Style {
 
     /// What one mutation's outcome looks like, wherever this engine draws it.
     ///
-    /// Exhaustive on purpose: an outcome added later is one somebody is made
-    /// to place, rather than one that inherits whatever the last arm said.
+    /// Exhaustive on purpose: an outcome added later is one somebody is made to place, rather than one that inherits whatever the last arm said.
     ///
-    /// `TimedOut` here is a *confirmed* timeout — over the budget, retried
-    /// alone, over it again — which this engine counts as a detection, so it
-    /// is painted like one. njutest's assurance layer spells a differently
-    /// shaped fact with the same English word: a bound that expired, which
-    /// establishes nothing. Two facts, two products, and the reason this
-    /// function is about `rust_mutants::outcome::Outcome` and answers for
-    /// nothing else.
+    /// Painted from what caught the mutant rather than from a list of variants, so a new way of catching one cannot be painted as a gap by whoever forgets to add it here.
     #[must_use]
     pub const fn of(outcome: Outcome) -> Self {
         match outcome {
-            Outcome::Killed | Outcome::TimedOut => Self::Well,
+            Outcome::Killed => Self::Well,
             Outcome::Survived => Self::Gap,
-            Outcome::Inconclusive | Outcome::Errored => Self::Limitation,
+            Outcome::StepLimitReached
+            | Outcome::Waited
+            | Outcome::Inconclusive
+            | Outcome::Errored => Self::Limitation,
             Outcome::NotRun => Self::Frame,
         }
     }
 
     /// `text` painted, or `text`, depending on what the stream will take.
     ///
-    /// The one place in the workspace that turns a style into bytes, which is
-    /// what `cargo xtask lints` refuses everywhere else.
+    /// The one place in the workspace that turns a style into bytes, which is what `cargo xtask lints` refuses everywhere else.
     #[must_use]
     pub fn painted(self, text: &str, colour: bool) -> String {
         if !colour {
@@ -159,15 +148,77 @@ impl Style {
 
 /// `text` as a link to `target`, where the terminal follows one.
 ///
-/// A path a reader can click is a file they do not have to find, and a
-/// terminal that does not know the sequence shows the text and drops the
-/// rest, so this costs nothing where it does nothing. Here beside the
-/// painting because it is the same job: turning something a surface meant
-/// into bytes a terminal reads, in the one place that does.
+/// A path a reader can click is a file they do not have to find, and a terminal that does not know the sequence shows the text and drops the rest, so this costs nothing where it does nothing.
+/// Here beside the painting because it is the same job: turning something a surface meant into bytes a terminal reads, in the one place that does.
 #[must_use]
 pub fn linked(target: &str, text: &str, colour: bool) -> String {
     if !colour {
         return text.to_owned();
     }
     format!("\u{1b}]8;;{target}\u{7}{text}\u{1b}]8;;\u{7}")
+}
+
+/// A reversible human rendering of bytes that may not be UTF-8.
+///
+/// Valid text is written as a Rust string literal after `utf8:`.
+/// Any invalid byte string is written as lowercase hexadecimal after `bytes:`.
+/// The tags keep the two domains disjoint, and both payload encodings are injective, so diagnostics never replace two different inputs with the same text.
+#[derive(Clone, Copy)]
+pub struct LosslessBytes<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> LosslessBytes<'a> {
+    /// Prepares `bytes` for reversible display.
+    #[must_use]
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+}
+
+impl fmt::Debug for LosslessBytes<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl fmt::Display for LosslessBytes<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match std::str::from_utf8(self.bytes) {
+            Ok(text) => write!(formatter, "utf8:{text:?}"),
+            Err(_not_utf8) => {
+                formatter.write_str("bytes:")?;
+                for byte in self.bytes {
+                    write!(formatter, "{byte:02x}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::LosslessBytes;
+
+    #[test]
+    fn byte_rendering_keeps_utf8_and_raw_bytes_in_disjoint_exact_domains() {
+        assert_eq!(
+            LosslessBytes::new(b"hello\n").to_string(),
+            "utf8:\"hello\\n\""
+        );
+        assert_eq!(LosslessBytes::new(&[0xff, 0]).to_string(), "bytes:ff00");
+        assert_eq!(
+            format!("{:?}", LosslessBytes::new(b"hello\n")),
+            "utf8:\"hello\\n\"",
+            "debug output cannot expose the renderer's private representation"
+        );
+
+        let rendered: BTreeSet<String> = (u8::MIN..=u8::MAX)
+            .map(|byte| LosslessBytes::new(&[byte]).to_string())
+            .collect();
+        assert_eq!(rendered.len(), 256);
+    }
 }

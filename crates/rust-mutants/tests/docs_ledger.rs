@@ -3,17 +3,13 @@
 
 //! Every ledger the documentation keeps, against the code that is the ledger.
 
-#![expect(
-    clippy::panic,
-    reason = "the helpers that read the repository's own pages are not themselves tests: a page \
-              that cannot be read leaves nothing to assert"
-)]
-
 use std::collections::BTreeSet;
 
-fn page(relative: &str) -> String {
+use njutest_devkit::docs::{TraceSpecimen, table_count, trace_field_ledger};
+
+fn page(relative: &str) -> std::io::Result<String> {
     let path = njutest_devkit::paths::workspace_root().join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+    std::fs::read_to_string(path)
 }
 
 /// Every name in backticks on the lines of `text` a table row occupies.
@@ -23,15 +19,6 @@ fn named_in_table(text: &str) -> BTreeSet<String> {
         found.extend(backticked(line));
     }
     found
-}
-
-/// Every name in backticks in the first cell of each row: what the row is about, rather than what it says.
-fn subjects(text: &str) -> BTreeSet<String> {
-    text.lines()
-        .filter(|line| line.starts_with("| `"))
-        .filter_map(|line| line.get(1..)?.split('|').next())
-        .flat_map(backticked)
-        .collect()
 }
 
 /// Every backticked name of one line, splitting a cell that lists several with a slash.
@@ -56,34 +43,36 @@ fn backticked(line: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_trace_page_names_every_event_type_and_no_other() {
-    let documented = subjects(&page("docs/engine/trace.md"));
-    let in_code: BTreeSet<String> = rust_mutants::trace::EVERY_TYPE
+fn every_trace_type_and_its_serialized_fields_are_exactly_one_row_on_the_page() {
+    let text = page("docs/engine/trace.md");
+    assert!(text.is_ok(), "the trace page is readable: {text:?}");
+    let Ok(text) = text else { return };
+    let payloads = rust_mutants::testkit::trace::every_payload();
+    let specimens: Vec<TraceSpecimen<'_, rust_mutants::trace::Payload>> = payloads
         .iter()
-        .map(|name| (*name).to_owned())
+        .map(|payload| {
+            TraceSpecimen::new(payload, rust_mutants::testkit::trace::record_key(payload))
+        })
         .collect();
-    let missing: Vec<&String> = in_code.difference(&documented).collect();
+    let checked = trace_field_ledger(&text, "| Type | Fields | Records |", &specimens);
     assert!(
-        missing.is_empty(),
-        "docs/engine/trace.md does not name {missing:?}"
-    );
-    let extra: Vec<&String> = documented.difference(&in_code).collect();
-    assert!(
-        extra.is_empty(),
-        "docs/engine/trace.md names {extra:?}, which the engine does not record"
+        checked.is_ok(),
+        "a trace row is the wire vocabulary a reader implements; missing, extra or repeated \
+         names let the page and a recording describe different objects: {checked:?}"
     );
 }
 
 #[test]
 fn the_architecture_page_names_every_skip_reason_and_no_other() {
     let text = page("docs/engine/architecture.md");
-    let section = text
-        .split("## Skips, stated")
-        .nth(1)
-        .expect("the skips section")
-        .split("\n## ")
-        .next()
-        .expect("the end of it");
+    assert!(text.is_ok(), "the architecture page is readable: {text:?}");
+    let Ok(text) = text else { return };
+    let section = text.split("## Skips, stated").nth(1);
+    assert!(section.is_some(), "the skips section exists");
+    let Some(section) = section else { return };
+    let section = section.split("\n## ").next();
+    assert!(section.is_some(), "the end of the skips section exists");
+    let Some(section) = section else { return };
     let documented: BTreeSet<String> = section.lines().flat_map(backticked).collect();
     let in_code: BTreeSet<String> = rust_mutants::syntax::SkipReason::ALL
         .iter()
@@ -97,8 +86,45 @@ fn the_architecture_page_names_every_skip_reason_and_no_other() {
 }
 
 #[test]
+fn the_catalog_schema_accepts_exactly_every_compiler_named_skip_reason() {
+    let source = page("schema/rust-mutants-catalog-v1.json");
+    assert!(source.is_ok(), "the catalog schema is readable: {source:?}");
+    let Ok(source) = source else { return };
+    let schema = njutest_devkit::strictjson::decode_str::<serde_json::Value>(&source);
+    assert!(
+        schema.is_ok(),
+        "the catalog schema is strict JSON: {schema:?}"
+    );
+    let Ok(schema) = schema else { return };
+    let declared = schema
+        .pointer("/$defs/skip/properties/reason/enum")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|values| {
+            values
+                .iter()
+                .map(serde_json::Value::as_str)
+                .collect::<Option<BTreeSet<_>>>()
+        });
+    assert!(
+        declared.is_some(),
+        "the catalog schema has no closed text enum for skip reasons"
+    );
+    let Some(declared) = declared else { return };
+    let in_code = rust_mutants::syntax::SkipReason::ALL
+        .iter()
+        .map(|reason| reason.name())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        declared, in_code,
+        "the wire schema and the compiler's exhaustive skip vocabulary drifted"
+    );
+}
+
+#[test]
 fn the_operators_page_names_every_rule_and_counts_them_as_the_table_does() {
     let text = page("docs/engine/operators.md");
+    assert!(text.is_ok(), "the operators page is readable: {text:?}");
+    let Ok(text) = text else { return };
     let documented = named_in_table(&text);
     let in_code: BTreeSet<String> = rust_mutants::rule::CANONICAL_TABLE
         .iter()
@@ -118,38 +144,20 @@ fn the_operators_page_names_every_rule_and_counts_them_as_the_table_does() {
         missing.is_empty(),
         "docs/engine/operators.md does not name the families {missing:?}"
     );
-    let counted = format!(
-        "{} families, {} rules",
-        spelled(rust_mutants::rule::CANONICAL_FAMILY_COUNT),
-        spelled(rust_mutants::rule::CANONICAL_RULE_COUNT)
-    );
-    assert!(
-        text.contains(&counted),
-        "the page says something other than {counted:?}"
-    );
-}
-
-/// The English for the two counts the operators page spells out.
-fn spelled(count: usize) -> &'static str {
-    match count {
-        12 => "twelve",
-        13 => "thirteen",
-        15 => "fifteen",
-        16 => "sixteen",
-        17 => "seventeen",
-        51 => "fifty-one",
-        61 => "sixty-one",
-        63 => "sixty-three",
-        69 => "sixty-nine",
-        72 => "seventy-two",
-        74 => "seventy-four",
-        other => panic!("nobody has spelled {other} on the operators page yet"),
+    for (many, noun) in [
+        (rust_mutants::rule::CANONICAL_FAMILY_COUNT, "families"),
+        (rust_mutants::rule::CANONICAL_RULE_COUNT, "rules"),
+    ] {
+        let counted = table_count(&text, "| Family | Rules | Tier |", many, noun);
+        assert!(counted.is_ok(), "{counted:?}");
     }
 }
 
 #[test]
 fn the_limitations_page_names_every_limitation_the_engine_can_state() {
     let text = page("docs/limitations.md");
+    assert!(text.is_ok(), "the limitations page is readable: {text:?}");
+    let Ok(text) = text else { return };
     for limitation in rust_mutants::limitation::ALL {
         assert!(
             text.contains(&format!("`{limitation}`")),
@@ -164,10 +172,12 @@ fn every_engine_page_says_what_it_is_the_status_of() {
     let mut without = Vec::new();
     let contents_of_the_book = std::ffi::OsStr::new("SUMMARY.md");
     for directory in ["docs", "docs/engine", "docs/adr"] {
-        let Ok(entries) = std::fs::read_dir(root.join(directory)) else {
-            continue;
-        };
-        for entry in entries.flatten() {
+        let entries = std::fs::read_dir(root.join(directory));
+        assert!(entries.is_ok(), "{directory} is readable: {entries:?}");
+        let Ok(entries) = entries else { return };
+        for entry in entries {
+            assert!(entry.is_ok(), "documentation directory entry: {entry:?}");
+            let Ok(entry) = entry else { return };
             let path = entry.path();
             if path.extension().is_none_or(|extension| extension != "md") {
                 continue;
@@ -175,12 +185,14 @@ fn every_engine_page_says_what_it_is_the_status_of() {
             if entry.file_name() == contents_of_the_book {
                 continue;
             }
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let text = std::fs::read_to_string(&path);
+            assert!(text.is_ok(), "{} is readable: {text:?}", path.display());
+            let Ok(text) = text else { return };
             if !text.contains("**Status:") && !text.contains("## Status") {
-                without.push(format!(
-                    "{directory}/{}",
-                    entry.file_name().to_string_lossy()
-                ));
+                let name = entry.file_name().into_string();
+                assert!(name.is_ok(), "documentation names are exact UTF-8");
+                let Ok(name) = name else { return };
+                without.push(format!("{directory}/{name}"));
             }
         }
     }
@@ -193,13 +205,17 @@ fn every_engine_page_says_what_it_is_the_status_of() {
 #[test]
 fn the_configuration_page_names_every_variable_a_run_composes_and_no_other() {
     let text = page("docs/engine/configuration.md");
-    let section = text
-        .split("## Reserved environment")
-        .nth(1)
-        .expect("the reserved environment section")
-        .split("\n## ")
-        .next()
-        .expect("the end of it");
+    assert!(text.is_ok(), "the configuration page is readable: {text:?}");
+    let Ok(text) = text else { return };
+    let section = text.split("## Reserved environment").nth(1);
+    assert!(section.is_some(), "the reserved environment section exists");
+    let Some(section) = section else { return };
+    let section = section.split("\n## ").next();
+    assert!(
+        section.is_some(),
+        "the end of the reserved environment section exists"
+    );
+    let Some(section) = section else { return };
     let documented: BTreeSet<String> = section
         .lines()
         .flat_map(backticked)

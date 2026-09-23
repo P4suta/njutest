@@ -38,13 +38,16 @@ fn a_scripted_command_answers_with_what_the_script_says() {
     );
 
     let banner = run(&installed, "cargo", &["-vV"]);
-    assert_eq!(String::from_utf8_lossy(&banner.stdout), "cargo 1.98.0\n");
+    assert_eq!(
+        std::str::from_utf8(&banner.stdout).expect("the scripted stdout is UTF-8"),
+        "cargo 1.98.0\n"
+    );
     assert_eq!(banner.status.code(), Some(0));
 
     let metadata = run(&installed, "cargo", &["metadata", "--format-version", "1"]);
     assert_eq!(metadata.status.code(), Some(101));
     assert_eq!(
-        String::from_utf8_lossy(&metadata.stderr),
+        std::str::from_utf8(&metadata.stderr).expect("the scripted stderr is UTF-8"),
         "error: no manifest\n"
     );
     assert_eq!(installed.answered(), vec![0, 1], "in the order they ran");
@@ -59,7 +62,7 @@ fn a_command_no_entry_matches_fails_loudly_with_its_own_command_line() {
         Some(i32::from(UNMATCHED_EXIT)),
         "an unscripted command is a test that forgot something, not a tool that ran"
     );
-    let said = String::from_utf8_lossy(&output.stderr);
+    let said = std::str::from_utf8(&output.stderr).expect("the scripted stderr is UTF-8");
     assert!(said.contains("no entry of the script matches"), "{said}");
     assert!(said.contains("cargo build --release"), "{said}");
 }
@@ -87,11 +90,19 @@ fn a_scripted_binary_can_be_told_apart_by_the_mutant_it_was_started_for() {
     active.env("RUST_MUTANTS_ACTIVE", "beef");
     let killed = active.output().expect("the fake runs");
     assert_eq!(killed.status.code(), Some(101));
-    assert!(String::from_utf8_lossy(&killed.stdout).contains("FAILED"));
+    assert!(
+        std::str::from_utf8(&killed.stdout)
+            .expect("the scripted stdout is UTF-8")
+            .contains("FAILED")
+    );
 
     let survived = run(&installed, "demo", &[]);
     assert_eq!(survived.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&survived.stdout).contains("ok. 1 passed"));
+    assert!(
+        std::str::from_utf8(&survived.stdout)
+            .expect("the scripted stdout is UTF-8")
+            .contains("ok. 1 passed")
+    );
 }
 
 #[test]
@@ -104,11 +115,13 @@ fn an_entry_answers_only_as_many_times_as_it_says() {
             .answering(Invocation::new("cargo", &["-vV"]).printing("second\n")),
     );
     assert_eq!(
-        String::from_utf8_lossy(&run(&installed, "cargo", &["-vV"]).stdout),
+        std::str::from_utf8(&run(&installed, "cargo", &["-vV"]).stdout)
+            .expect("the scripted stdout is UTF-8"),
         "first\n"
     );
     assert_eq!(
-        String::from_utf8_lossy(&run(&installed, "cargo", &["-vV"]).stdout),
+        std::str::from_utf8(&run(&installed, "cargo", &["-vV"]).stdout)
+            .expect("the scripted stdout is UTF-8"),
         "second\n",
         "an entry that has answered its last time steps aside"
     );
@@ -122,7 +135,8 @@ fn a_scripted_command_writes_the_files_a_build_would_have_left_behind() {
                 .writing("{{script_dir}}/out/artifact.d", "demo: src/lib.rs\n"),
         ),
     );
-    let _output = run(&installed, "cargo", &["build"]);
+    let output = run(&installed, "cargo", &["build"]);
+    assert!(output.status.success(), "the scripted build succeeds");
     let written = installed
         .bin()
         .parent()
@@ -137,7 +151,13 @@ fn a_scripted_command_writes_the_files_a_build_would_have_left_behind() {
 #[test]
 fn the_fake_is_found_or_built_rather_than_leaving_a_suite_with_nothing_to_drive() {
     let fake = njutest_devkit::fake_cargo::locate();
-    assert!(fake.is_file(), "{}", fake.display());
+    assert!(
+        std::fs::metadata(&fake)
+            .expect("the fake's metadata")
+            .is_file(),
+        "{}",
+        fake.display()
+    );
     assert!(
         fake.parent()
             .is_some_and(|directory| directory.ends_with("examples")),

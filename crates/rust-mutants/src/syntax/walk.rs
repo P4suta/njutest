@@ -3,12 +3,13 @@
 
 //! The walk over one file's syntax tree.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use syn::spanned::Spanned;
 use syn::{
     Attribute, BinOp, Block, Expr, ImplItem, Item, Macro, Pat, ReturnType, Signature, Stmt,
-    TraitItem, Visibility,
+    TraitItem,
 };
 
 use super::annotate::Marker;
@@ -69,7 +70,6 @@ pub(super) enum TailRole {
 /// The innermost function-like scope.
 #[derive(Debug, Clone, Copy)]
 struct Frame {
-    allow_at: Option<u32>,
     ret: ReturnKind,
 }
 
@@ -78,6 +78,21 @@ struct Frame {
 struct Site {
     form: Form,
     span: Span,
+}
+
+/// Everything an offered return replacement inherits from its expression.
+#[derive(Debug, Clone, Copy)]
+struct ReturnOffer {
+    span: Span,
+    site: Option<Site>,
+    probeable: bool,
+}
+
+/// Which `Result` arms have a return type whose spelling promises `Default`.
+#[derive(Debug, Clone, Copy)]
+struct ResultDefaults {
+    ok: bool,
+    err: bool,
 }
 
 /// What an expression's position allows.
@@ -189,6 +204,10 @@ pub(super) struct Walked {
     pub(super) annotations: Vec<Claim>,
 }
 
+/// A walk whose internal offsets or exact counters contradicted the bounded source established at discovery entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct WalkBoundsError;
+
 /// The file being walked.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Input<'a> {
@@ -224,7 +243,7 @@ pub(super) struct Walker<'a> {
     path: &'a str,
     digest: &'a str,
     selection: &'a Selection<'a>,
-    index: &'a LineIndex,
+    index: LineIndex<'a>,
     found: Vec<Found>,
     skips: BTreeMap<SkipReason, u32>,
     decisions: Vec<Decision>,
@@ -244,13 +263,16 @@ pub(super) struct Walker<'a> {
     /// The items the walk is inside, outermost first: modules, impls, traits, and the function or constant itself.
     items: Vec<String>,
     includes: Vec<Include>,
+    /// Poisoned on the first impossible conversion or counter overflow.
+    /// The walk may keep traversing, but [`Self::finish`] then fails closed and releases none of its candidates.
+    bounds_failed: Cell<bool>,
 }
 
 impl<'a> Walker<'a> {
     pub(super) const fn new(
         input: Input<'a>,
         selection: &'a Selection<'a>,
-        index: &'a LineIndex,
+        index: LineIndex<'a>,
     ) -> Self {
         Self {
             src: input.text,
@@ -272,16 +294,21 @@ impl<'a> Walker<'a> {
             annotation: None,
             items: Vec::new(),
             includes: Vec::new(),
+            bounds_failed: Cell::new(false),
         }
     }
 
-    /// The results, unsorted. Hands the walk the markers it is to honour, before it starts.
+    /// The results, unsorted.
+    /// Hands the walk the markers it is to honour, before it starts.
     pub(super) fn annotate(&mut self, markers: Vec<Marker>) {
         self.matched = vec![false; markers.len()];
         self.markers = markers;
     }
 
-    pub(super) fn finish(self) -> Walked {
+    pub(super) fn finish(self) -> Result<Walked, WalkBoundsError> {
+        if self.bounds_failed.get() {
+            return Err(WalkBoundsError);
+        }
         let annotations = self
             .markers
             .iter()
@@ -289,16 +316,19 @@ impl<'a> Walker<'a> {
             .map(|(index, marker)| Claim {
                 line: marker.line,
                 reason: marker.reason.clone(),
-                matched: self.matched.get(index).copied().unwrap_or_default(),
+                matched: match self.matched.get(index) {
+                    Some(matched) => *matched,
+                    None => false,
+                },
             })
             .collect();
-        Walked {
+        Ok(Walked {
             found: self.found,
             skips: self.skips,
             decisions: self.decisions,
             includes: self.includes,
             annotations,
-        }
+        })
     }
 
     /// The marker that speaks about a place starting on `line`, if one does.
@@ -315,12 +345,28 @@ impl<'a> Walker<'a> {
     fn within_item(&mut self, name: String, walk: impl FnOnce(&mut Self)) {
         self.items.push(name);
         walk(self);
-        let _left = self.items.pop();
+        if self.items.pop().is_none() {
+            self.bounds_failed.set(true);
+        }
     }
 
     /// The line a byte offset sits on.
     fn line_of(&self, offset: u32) -> u32 {
-        self.index.position(self.src, offset).line
+        self.position(offset).line
+    }
+
+    fn position(&self, offset: u32) -> super::Position {
+        match self.index.position(offset) {
+            Ok(position) => position,
+            Err(_bounds) => {
+                self.bounds_failed.set(true);
+                super::Position {
+                    line: 1,
+                    byte_column: 1,
+                    char_column: 1,
+                }
+            }
+        }
     }
 
     /// The lines a marker may sit above to speak about this construct: where its attributes start, and where the first token after them does.
@@ -329,13 +375,26 @@ impl<'a> Walker<'a> {
         let Some(last) = attrs.last() else {
             return [outer, outer];
         };
-        let after = self.span(last).end;
-        let rest = self
-            .src
-            .get(usize::try_from(after).unwrap_or(usize::MAX)..)
-            .unwrap_or_default();
-        let skipped = rest.len().saturating_sub(rest.trim_start().len());
-        let inner = self.line_of(after.saturating_add(u32::try_from(skipped).unwrap_or(0)));
+        let after_offset = self.span(last).end;
+        let Some(after) = self.usize_offset(after_offset) else {
+            return [outer, outer];
+        };
+        let Some(rest) = self.src.get(after..) else {
+            self.bounds_failed.set(true);
+            return [outer, outer];
+        };
+        let Some(skipped) = rest.len().checked_sub(rest.trim_start().len()) else {
+            self.bounds_failed.set(true);
+            return [outer, outer];
+        };
+        let Some(skipped) = self.relative_offset(skipped) else {
+            return [outer, outer];
+        };
+        let Some(inner_offset) = after_offset.checked_add(skipped) else {
+            self.bounds_failed.set(true);
+            return [outer, outer];
+        };
+        let inner = self.line_of(inner_offset);
         [outer, inner]
     }
 
@@ -359,17 +418,16 @@ impl<'a> Walker<'a> {
     }
 
     /// Records an `include!`, when its argument names a file this run can name.
-    fn record_include(&mut self, mac: &Macro, at_item: bool) -> bool {
+    fn record_include(&mut self, mac: &Macro, at_item: bool) {
         if !mac.path.is_ident("include") {
-            return false;
+            return;
         }
         let Ok(literal) = syn::parse2::<syn::LitStr>(mac.tokens.clone()) else {
-            return true;
+            return;
         };
         if let Some(path) = beside(self.path, &literal.value()) {
             self.includes.push(Include { path, at_item });
         }
-        true
     }
 
     /// Walks a file and reports whether it carries `#![no_std]`.
@@ -381,10 +439,9 @@ impl<'a> Walker<'a> {
     /// The absolute span of a node.
     fn span<T: Spanned + ?Sized>(&self, node: &T) -> Span {
         let range = node.span().byte_range();
-        let offset = |at: usize| {
-            u32::try_from(at)
-                .unwrap_or(u32::MAX)
-                .saturating_add(self.base)
+        let offset = |at: usize| match self.absolute_offset(at) {
+            Some(offset) => offset,
+            None => 0,
         };
         Span {
             start: offset(range.start),
@@ -393,9 +450,47 @@ impl<'a> Walker<'a> {
     }
 
     fn text(&self, span: Span) -> &'a str {
-        let start = usize::try_from(span.start).unwrap_or(usize::MAX);
-        let end = usize::try_from(span.end).unwrap_or(usize::MAX);
-        self.src.get(start..end).unwrap_or_default()
+        let (Some(start), Some(end)) = (self.usize_offset(span.start), self.usize_offset(span.end))
+        else {
+            return "";
+        };
+        match self.src.get(start..end) {
+            Some(text) => text,
+            None => {
+                self.bounds_failed.set(true);
+                ""
+            }
+        }
+    }
+
+    fn usize_offset(&self, value: u32) -> Option<usize> {
+        match usize::try_from(value) {
+            Ok(value) => Some(value),
+            Err(_overflow) => {
+                self.bounds_failed.set(true);
+                None
+            }
+        }
+    }
+
+    fn relative_offset(&self, value: usize) -> Option<u32> {
+        match u32::try_from(value) {
+            Ok(value) => Some(value),
+            Err(_overflow) => {
+                self.bounds_failed.set(true);
+                None
+            }
+        }
+    }
+
+    fn absolute_offset(&self, value: usize) -> Option<u32> {
+        self.relative_offset(value).and_then(|relative| {
+            let absolute = relative.checked_add(self.base);
+            if absolute.is_none() {
+                self.bounds_failed.set(true);
+            }
+            absolute
+        })
     }
 
     const fn site_for(ctx: Ctx, own: Span) -> Option<Site> {
@@ -412,7 +507,8 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// Proposes one edit. Under a suppression it is counted rather than kept; without a site it is an unsupported-site skip.
+    /// Proposes one edit.
+    /// Under a suppression it is counted rather than kept; without a site it is an unsupported-site skip.
     fn emit(&mut self, rule_name: &str, edit: Edit) {
         let Some(rule) = self.selection.rule(rule_name) else {
             return;
@@ -468,9 +564,8 @@ impl<'a> Walker<'a> {
             site: site.span,
             site_text: self.text(site.span).to_owned(),
             super_depth: self.mod_depth,
-            allow_at: self.frames.last().and_then(|frame| frame.allow_at),
         };
-        let position = self.index.position(self.src, edit.span.start);
+        let position = self.position(edit.span.start);
         let gate = self.gates.last().and_then(Option::as_ref);
         let branch = gate.and_then(|gate| gate.claim(rule_name, edit.span));
         let comparable = gate.and_then(|gate| gate.comparable(rule_name, edit.span));
@@ -494,7 +589,10 @@ impl<'a> Walker<'a> {
             *claimed = true;
         }
         let count = self.skips.entry(reason).or_insert(0);
-        *count = count.saturating_add(1);
+        match count.checked_add(1) {
+            Some(incremented) => *count = incremented,
+            None => self.bounds_failed.set(true),
+        }
     }
 
     fn decide(&mut self, offset: u32, rule: &str, outcome: Outcome) {
@@ -509,7 +607,7 @@ impl<'a> Walker<'a> {
         };
         self.decisions.push(Decision {
             offset: at.offset,
-            position: self.index.position(self.src, at.offset),
+            position: self.position(at.offset),
             rule: at.rule.to_owned(),
             form,
             skip,
@@ -528,13 +626,14 @@ impl<'a> Walker<'a> {
 
     /// A macro invocation in expression or statement position: the arguments of an assertion, or one skip.
     fn macro_expr(&mut self, mac: &Macro) {
-        let _included = self.record_include(mac, false);
+        self.record_include(mac, false);
         if !self.walk_assertion(mac) {
             self.macro_site(mac);
         }
     }
 
-    /// The leading arguments of an assertion macro, walked as the expressions they are. Answers whether they were.
+    /// The leading arguments of an assertion macro, walked as the expressions they are.
+    /// Answers whether they were.
     fn walk_assertion(&mut self, mac: &Macro) -> bool {
         let Some(arity) = assertion_arity(&mac.path) else {
             return false;
@@ -543,11 +642,14 @@ impl<'a> Walker<'a> {
         let Some(leading) = split.get(..arity) else {
             return false;
         };
-        let parsed: Vec<Expr> = leading
+        let parsed: Vec<Expr> = match leading
             .iter()
             .map(|one| syn::parse2::<Expr>(one.clone()))
             .collect::<Result<_, _>>()
-            .unwrap_or_default();
+        {
+            Ok(parsed) => parsed,
+            Err(_opaque_macro_tokens) => return false,
+        };
         if parsed.len() != arity {
             return false;
         }
@@ -564,14 +666,17 @@ impl<'a> Walker<'a> {
 
     /// An item-position macro invocation, which is where `include!` pastes items.
     fn macro_item(&mut self, mac: &Macro) {
-        let _included = self.record_include(mac, true);
+        self.record_include(mac, true);
         self.macro_site(mac);
     }
 
     /// A macro invocation: one skip, under the outer reason if there is one.
     fn macro_site(&mut self, mac: &Macro) {
         let span = self.span(mac);
-        let reason = self.suppressed.unwrap_or(SkipReason::MacroInvocation);
+        let reason = match self.suppressed {
+            Some(reason) => reason,
+            None => SkipReason::MacroInvocation,
+        };
         self.skip(reason);
         self.decide(
             span.start,
@@ -598,10 +703,13 @@ impl<'a> Walker<'a> {
 
     fn with_frame(&mut self, frame: Frame, walk: impl FnOnce(&mut Self)) {
         self.frames.push(frame);
-        let loops = std::mem::take(&mut self.loops);
+        let mut loops = Vec::new();
+        std::mem::swap(&mut loops, &mut self.loops);
         walk(self);
         self.loops = loops;
-        self.frames.pop();
+        if self.frames.pop().is_none() {
+            self.bounds_failed.set(true);
+        }
     }
 
     fn within_loop(
@@ -613,7 +721,9 @@ impl<'a> Walker<'a> {
         self.loops
             .push((label.map(|label| label.name.ident.to_string()), valued));
         walk(self);
-        let _left = self.loops.pop();
+        if self.loops.pop().is_none() {
+            self.bounds_failed.set(true);
+        }
     }
 
     /// Whether the loop a jump names is one whose breaks decide its value.
@@ -629,10 +739,6 @@ impl<'a> Walker<'a> {
                     .is_none_or(|(_, valued)| *valued)
             },
         )
-    }
-
-    fn inherited_allow(&self) -> Option<u32> {
-        self.frames.last().and_then(|frame| frame.allow_at)
     }
 
     fn walk_items(&mut self, items: &[Item]) {
@@ -651,9 +757,8 @@ impl<'a> Walker<'a> {
     fn walk_item_inner(&mut self, item: &Item) {
         match item {
             Item::Fn(f) => {
-                let start = self.allow_offset(Some(&f.vis), &f.sig);
                 let name = f.sig.ident.to_string();
-                self.within_item(name, |walker| walker.walk_fn(&f.sig, &f.block, start));
+                self.within_item(name, |walker| walker.walk_fn(&f.sig, &f.block));
             }
             Item::Impl(i) => {
                 self.within_item(implemented(i), |walker| {
@@ -671,9 +776,16 @@ impl<'a> Walker<'a> {
             }
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
-                    self.mod_depth = self.mod_depth.saturating_add(1);
+                    let Some(deeper) = self.mod_depth.checked_add(1) else {
+                        self.bounds_failed.set(true);
+                        return;
+                    };
+                    self.mod_depth = deeper;
                     self.within_item(m.ident.to_string(), |walker| walker.walk_items(items));
-                    self.mod_depth = self.mod_depth.saturating_sub(1);
+                    match self.mod_depth.checked_sub(1) {
+                        Some(shallower) => self.mod_depth = shallower,
+                        None => self.bounds_failed.set(true),
+                    }
                 }
             }
             Item::Const(c) => {
@@ -699,11 +811,10 @@ impl<'a> Walker<'a> {
     fn walk_impl_item(&mut self, member: &ImplItem) {
         match member {
             ImplItem::Fn(f) => {
-                let start = self.allow_offset(Some(&f.vis), &f.sig);
                 let name = f.sig.ident.to_string();
                 self.within_item(name, |walker| {
                     walker.maybe_suppressed(&f.attrs, |walker| {
-                        walker.walk_fn(&f.sig, &f.block, start);
+                        walker.walk_fn(&f.sig, &f.block);
                     });
                 });
             }
@@ -722,11 +833,10 @@ impl<'a> Walker<'a> {
         match member {
             TraitItem::Fn(f) => {
                 if let Some(block) = &f.default {
-                    let start = self.allow_offset(None, &f.sig);
                     let name = f.sig.ident.to_string();
                     self.within_item(name, |walker| {
                         walker.maybe_suppressed(&f.attrs, |walker| {
-                            walker.walk_fn(&f.sig, block, start);
+                            walker.walk_fn(&f.sig, block);
                         });
                     });
                 }
@@ -744,19 +854,9 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// Where the allow attribute goes for a function: before its visibility if it has one, and otherwise before its signature. Never before the item's attributes, so a doc comment keeps its own line and the attribute lands on the line the reader expects it on.
-    fn allow_offset(&self, vis: Option<&Visibility>, sig: &Signature) -> u32 {
-        match vis {
-            Some(Visibility::Public(token)) => self.span(token).start,
-            Some(Visibility::Restricted(restricted)) => self.span(restricted).start,
-            Some(Visibility::Inherited) | None => self.span(sig).start,
-        }
-    }
-
-    fn walk_fn(&mut self, sig: &Signature, block: &Block, item_start: u32) {
+    fn walk_fn(&mut self, sig: &Signature, block: &Block) {
         let (generic, defaultable) = parameters(&sig.generics);
         let frame = Frame {
-            allow_at: Some(item_start),
             ret: return_kind_within(&sig.output, &generic, &defaultable),
         };
         if sig.constness.is_some() {
@@ -776,7 +876,9 @@ impl<'a> Walker<'a> {
 
     /// Walks a block; when it is a function body, its tail expression is a return site.
     fn walk_block(&mut self, block: &Block, fn_body: bool) {
-        let last = block.stmts.len().saturating_sub(1);
+        let Some(last) = block.stmts.len().checked_sub(1) else {
+            return;
+        };
         for (index, stmt) in block.stmts.iter().enumerate() {
             let role = if index != last {
                 TailRole::NotLast
@@ -970,14 +1072,12 @@ impl<'a> Walker<'a> {
             }
             Expr::Async(a) => {
                 let frame = Frame {
-                    allow_at: self.inherited_allow(),
                     ret: ReturnKind::Unknown,
                 };
                 self.with_frame(frame, |walker| walker.walk_block(&a.block, false));
             }
             Expr::TryBlock(t) => {
                 let frame = Frame {
-                    allow_at: self.inherited_allow(),
                     ret: ReturnKind::Unknown,
                 };
                 self.with_frame(frame, |walker| walker.walk_block(&t.block, false));
@@ -1115,7 +1215,13 @@ impl<'a> Walker<'a> {
                 Edit {
                     span: self.span(&m.method),
                     replacement: replacement.as_bytes().to_vec(),
-                    site: Self::site_for(ctx, ctx.wrap.unwrap_or(own)),
+                    site: Self::site_for(
+                        ctx,
+                        match ctx.wrap {
+                            Some(wrap) => wrap,
+                            None => own,
+                        },
+                    ),
                     probe: None,
                 },
             );
@@ -1462,81 +1568,92 @@ impl<'a> Walker<'a> {
             return;
         };
         let span = self.span(expr);
-        let site = Some(Site {
-            form: Form::E,
+        let offer = ReturnOffer {
             span,
-        });
-        let probeable = crate::probe::is_effect_free(expr);
-        let offer = |walker: &mut Self, rule: &str, replacement: &str| {
-            walker.emit(
-                rule,
-                Edit {
-                    span,
-                    replacement: replacement.as_bytes().to_vec(),
-                    site,
-                    probe: probeable.then(|| Question::of(rule)).flatten(),
-                },
-            );
+            site: Some(Site {
+                form: Form::E,
+                span,
+            }),
+            probeable: crate::probe::is_effect_free(expr),
         };
         match frame.ret {
             ReturnKind::Bool => {
                 if !is_true_literal(expr) {
-                    offer(self, "return-true", "true");
+                    self.offer_return(offer, "return-true", "true");
                 }
             }
             ReturnKind::Result { ok, err } => {
-                if ok {
-                    if !is_ok_default(expr) {
-                        offer(self, "return-ok-default", "Ok(Default::default())");
-                    }
-                } else {
-                    self.declined(
-                        At::new(span.start, "return-ok-default"),
-                        SkipReason::UnstatedReturnType,
-                    );
-                }
-                if err {
-                    if !is_err_default(expr) {
-                        offer(self, "return-err-default", "Err(Default::default())");
-                    }
-                } else {
-                    self.declined(
-                        At::new(span.start, "return-err-default"),
-                        SkipReason::UnstatedReturnType,
-                    );
-                }
+                self.result_returns(expr, offer, ResultDefaults { ok, err });
             }
-            ReturnKind::Option(inner) => {
-                if !is_default_spelling(expr) {
-                    offer(self, "return-default", "Default::default()");
-                }
-                if !inner {
-                    self.declined(
-                        At::new(span.start, "return-some-default"),
-                        SkipReason::UnstatedReturnType,
-                    );
-                } else if !is_some_default(expr) {
-                    offer(self, "return-some-default", "Some(Default::default())");
-                }
-            }
+            ReturnKind::Option(inner) => self.option_returns(expr, offer, inner),
             ReturnKind::Other => {
                 if !is_default_spelling(expr) {
-                    offer(self, "return-default", "Default::default()");
+                    self.offer_return(offer, "return-default", "Default::default()");
                 }
             }
-            ReturnKind::Unstated => {
-                for rule in [
-                    "return-default",
-                    "return-ok-default",
-                    "return-some-default",
-                    "return-err-default",
-                ] {
-                    self.declined(At::new(span.start, rule), SkipReason::UnstatedReturnType);
-                }
-            }
+            ReturnKind::Unstated => self.decline_unstated_returns(span),
             ReturnKind::Unknown | ReturnKind::Unit | ReturnKind::Never => {}
         }
         self.branches_of(expr);
+    }
+
+    fn result_returns(&mut self, expr: &Expr, offer: ReturnOffer, defaults: ResultDefaults) {
+        if defaults.ok && !is_ok_default(expr) {
+            self.offer_return(offer, "return-ok-default", "Ok(Default::default())");
+        } else if !defaults.ok {
+            self.declined(
+                At::new(offer.span.start, "return-ok-default"),
+                SkipReason::UnstatedReturnType,
+            );
+        }
+        if defaults.err && !is_err_default(expr) {
+            self.offer_return(offer, "return-err-default", "Err(Default::default())");
+        } else if !defaults.err {
+            self.declined(
+                At::new(offer.span.start, "return-err-default"),
+                SkipReason::UnstatedReturnType,
+            );
+        }
+    }
+
+    fn option_returns(&mut self, expr: &Expr, offer: ReturnOffer, inner: bool) {
+        if !is_default_spelling(expr) {
+            self.offer_return(offer, "return-default", "Default::default()");
+        }
+        if inner && !is_some_default(expr) {
+            self.offer_return(offer, "return-some-default", "Some(Default::default())");
+        } else if !inner {
+            self.declined(
+                At::new(offer.span.start, "return-some-default"),
+                SkipReason::UnstatedReturnType,
+            );
+        }
+    }
+
+    fn decline_unstated_returns(&mut self, span: Span) {
+        for rule in [
+            "return-default",
+            "return-ok-default",
+            "return-some-default",
+            "return-err-default",
+        ] {
+            self.declined(At::new(span.start, rule), SkipReason::UnstatedReturnType);
+        }
+    }
+
+    fn offer_return(&mut self, offer: ReturnOffer, rule: &str, replacement: &str) {
+        self.emit(
+            rule,
+            Edit {
+                span: offer.span,
+                replacement: replacement.as_bytes().to_vec(),
+                site: offer.site,
+                probe: offer
+                    .probeable
+                    .then(|| Question::of(rule))
+                    .and_then(std::convert::identity),
+            },
+        );
     }
 
     /// Every branch of a returned `if` or `match` is a place the function returns from too.
@@ -1616,7 +1733,6 @@ impl<'a> Walker<'a> {
 
     fn walk_closure(&mut self, c: &syn::ExprClosure) {
         let frame = Frame {
-            allow_at: self.inherited_allow(),
             ret: match &c.output {
                 ReturnType::Default => ReturnKind::Unknown,
                 typed @ ReturnType::Type(..) => return_kind(typed),

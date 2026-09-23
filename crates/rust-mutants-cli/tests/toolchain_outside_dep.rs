@@ -11,7 +11,7 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn run(fixture: &Fixture, args: &[&str]) -> Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -39,7 +39,7 @@ fn a_path_dependency_outside_the_root_is_named_before_any_build() {
         Some(2),
         "a tree a copy of which cannot build is refused rather than measured"
     );
-    let said = String::from_utf8_lossy(&output.stderr);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(said.contains("RM1017"), "{said}");
     assert!(
         said.contains("fixture-outside-dep-lib"),
@@ -63,13 +63,16 @@ fn an_allowed_sibling_is_copied_beside_the_tree_and_the_run_measures() {
         .parent()
         .expect("the trees directory")
         .join("fixture-outside-dep-lib");
-    let output = run(&fixture, &["--allow-outside", &sibling.to_string_lossy()]);
+    let output = run(
+        &fixture,
+        &["--allow-outside", njutest_devkit::paths::utf8(&sibling)],
+    );
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
         text.contains("mutants were cataloged"),
         "the run measured the tree: {text}"
@@ -91,4 +94,31 @@ fn environment(fixture: &Fixture) -> Environment {
         stdout_is_terminal: false,
         paints: false,
     }
+}
+
+#[test]
+fn an_allowed_dependency_that_climbs_more_than_one_level_is_measured() {
+    let fixture =
+        Fixture::copy_with_siblings("nested/fixture-climbs-dep", &["fixture-climbs-dep-lib"]);
+    let sibling = fixture
+        .root()
+        .parent()
+        .expect("the trees directory")
+        .parent()
+        .expect("the temporary trees root")
+        .join("fixture-climbs-dep-lib");
+    let output = run(
+        &fixture,
+        &["--allow-outside", njutest_devkit::paths::utf8(&sibling)],
+    );
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
+    let err = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "the run measures the tree: {err}"
+    );
+    assert!(
+        text.contains("mutants were cataloged"),
+        "the climbing dependency resolved inside the copy: {text}{err}"
+    );
 }

@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# How many seams `xtask/seam_allowlist.txt` may carry.
+#
+# **This file may shrink and never grow.** The ledger's own header has always
+# said so and nothing held it: `devgates::compare` is set equality, so a new
+# seam and the line recording it could arrive in one commit, written by the
+# same hand, and the gate would be green. The ledger stands at zero, so the
+# first growth would also have been the first test of the rule.
+#
+# This is `xtask/waiver_ceiling.txt` applied to the other ledger. The argument
+# is the same one, and that it was made once and not carried across is why
+# there is a second file rather than a second habit.
+#
+# Lowering it is two edits in one change — a seam out of the ledger and the
+# number here — and both are the diff a reviewer reads. Raising it is a bare
+# number going up in a file of its own, which is the one shape of change
+# nobody misses.
+0

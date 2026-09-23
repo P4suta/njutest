@@ -17,7 +17,7 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -50,7 +50,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+    njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     ))
     .expect("the report is a document")
@@ -63,7 +63,7 @@ fn a_harness_free_target_answers_by_exit_code_alone() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let document = report(&fixture);
     assert_eq!(
@@ -102,7 +102,7 @@ fn a_skipped_target_is_never_started_and_is_listed_as_a_limitation() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let document = report(&fixture);
     for row in document["mutants"].as_array().expect("the rows") {
@@ -115,21 +115,21 @@ fn a_skipped_target_is_never_started_and_is_listed_as_a_limitation() {
     let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
     let events: Vec<serde_json::Value> = text
         .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
+        .map(|line| njutest_devkit::strictjson::decode_str(line).expect("a trace event"))
         .collect();
     assert!(
         !events.iter().any(|event| {
-            event["type"].as_str() == Some("mutant-exec")
-                && event["mutant"]["target"].as_str()
+            event["payload"]["type"].as_str() == Some("mutant-exec")
+                && event["payload"]["mutant"]["target"].as_str()
                     == Some("fixture-custom-harness/test/by_exit_code")
         }),
         "and the recording holds no execution against it"
     );
     let build = events
         .iter()
-        .find(|event| event["type"].as_str() == Some("build"))
+        .find(|event| event["payload"]["type"].as_str() == Some("build"))
         .expect("the build event");
-    let one = build["build"]["details"]
+    let one = build["payload"]["build"]["details"]
         .as_array()
         .expect("the details")
         .iter()
@@ -153,15 +153,20 @@ fn the_recording_says_what_each_target_is_and_which_one_was_skipped() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
     let build = text
         .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|event| event["type"].as_str() == Some("build"))
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a trace event")
+        })
+        .find(|event| event["payload"]["type"].as_str() == Some("build"))
         .expect("the build event");
-    let details = build["build"]["details"].as_array().expect("the details");
+    let details = build["payload"]["build"]["details"]
+        .as_array()
+        .expect("the details");
     let one = details
         .iter()
         .find(|detail| detail["id"].as_str() == Some("fixture-custom-harness/test/by_exit_code"))

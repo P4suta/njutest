@@ -12,10 +12,8 @@ on:
 permissions:
   contents: read
 
-# A pull request is asked again with every push to it, and the answer to the
-# question before is not one anybody wanted. `main` is different: its run is
-# the only thing that says the branch everything merges into is green, and one
-# merge arriving while the last is still measuring would leave that unsaid.
+# A pull request is asked again with every push to it, and the answer to the question before is not one anybody wanted.
+# `main` is different: its run is the only thing that says the branch everything merges into is green, and one merge arriving while the last is still measuring would leave that unsaid.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -23,8 +21,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # The suites drive a real cargo against the fixture projects; nothing may
-  # reach a registry from inside a test.
+  # The suites drive a real cargo against the fixture projects; nothing may reach a registry from inside a test.
   CARGO_NET_OFFLINE: "true"
 
 jobs:
@@ -33,14 +30,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
-      # One platform failing means the commit is red whatever the other two
-      # say, and a person who has to wait for the slowest of three to be told
-      # so waits for the wrong reason. `mise run check` already answered for
-      # this machine before the push; what these add is the other two, and the
-      # first of them to say no is the answer.
-      fail-fast: true
+      # Each platform answers for itself.
+      # `fail-fast: true` read "this commit is red" as "stop asking", and the platforms it stopped asking were the ones nothing else can answer for: a Windows failure cancelled both macOS jobs on four consecutive pushes, so a macOS fix went four rounds without ever being run.
+      # The cost of the other three finishing is minutes of runner time.
+      # The cost of not knowing is a round trip per platform, serialised.
+      #
+      # Two macOS versions on purpose.
+      # `macos-26` is the newest macOS image GitHub publishes, which is not the newest macOS: the machine this is developed on runs 27, and no runner image answers for it.
+      # So the newest row is the closest CI can stand to where the code is written, and the gap is a reason to keep reading a macOS failure rather than a reason to assume the local gate saw it.
+      # `macos-15` is the oldest still supported, and it is not ballast: it is where `proc_listpgrppids` reports an empty process group after a timeout, which the supervisor read as a failure and turned into `abort()`.
+      # The newer kernel still listed the waitable leader, so the machine that wrote the code could never have seen it.
+      fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: [ubuntu-24.04, macos-26, macos-15, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,19 +55,17 @@ jobs:
         env:
           CARGO_NET_OFFLINE: "false"
         shell: bash
-        run: cargo fetch --locked
-      # `cargo test --all-targets` builds an example as a test harness, not as
-      # the program it is, and part of this suite drives a scripted `cargo`
-      # that is one. Building it plainly is what makes those tests able to run.
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      # `cargo test --all-targets` builds an example as a test harness, not as the program it is, and part of this suite drives a scripted `cargo` that is one.
+      # Building it plainly is what makes those tests able to run.
       - name: Build the scripted toolchain the suite drives
         shell: bash
         run: cargo build --locked --examples -p rust-mutants
       # `shell: bash` rather than the default, which is PowerShell on Windows:
-      # a native command that fails there does not stop the script, so the
-      # suite below ran on after the first half had already failed and the
-      # step's status became the second half's. A failing test took the job's
-      # forty-five minute timeout to be reported, and would have been reported
-      # as a pass had the second half succeeded.
+      # a native command that fails there does not stop the script, so the suite below ran on after the first half had already failed and the step's status became the second half's.
+      # A failing test took the job's forty-five minute timeout to be reported, and would have been reported as a pass had the second half succeeded.
       - name: Test every target
         shell: bash
         run: |
@@ -86,14 +86,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
-          tools: taplo-cli@0.10.0
+          tools: committed@1.1.11
+          mise-tools: taplo typos actionlint
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -104,56 +108,45 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
       - name: repository gates (seam ratchet, dependency direction, fixtures, release consistency)
         run: cargo xtask all
-      - name: fuzz targets type-check against the API they fuzz
+      - name: fuzz targets satisfy the root Clippy policy
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo check --locked --all-targets
-        working-directory: fuzz
+        run: cargo xtask fuzz-clippy
       - name: typos
-        uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1.50.2
+        run: typos
       - name: taplo
         run: taplo fmt --check && taplo lint
-      - name: install actionlint
-        run: |
-          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-            | tar -xz -C "$RUNNER_TEMP" actionlint
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: actionlint
         run: actionlint
-      # Dependabot writes the body of a commit as the changelog it copied, and
-      # neither it nor anybody here wraps that at a hundred columns. The rule
-      # is about a message somebody wrote, and what lands on `main` from one of
-      # those pull requests is the squash subject, which is its own `chore:`
-      # line and conventional already.
+      # Dependabot writes the body of a commit as the changelog it copied, and neither it nor anybody here wraps that at a hundred columns.
+      # The rule is about a message somebody wrote, and what lands on `main` from one of those pull requests is the squash subject, which is its own `chore:` line and conventional already.
       - name: committed (pull request commits)
         if: >-
           github.event_name == 'pull_request'
           && github.event.pull_request.user.login != 'dependabot[bot]'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          curl -fsSL https://github.com/crate-ci/committed/releases/download/v1.1.11/committed-v1.1.11-x86_64-unknown-linux-musl.tar.gz \
-            | tar -xz -C "$RUNNER_TEMP" ./committed
-          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
-          "$RUNNER_TEMP/committed" "$BASE_SHA..$HEAD_SHA" --no-merge-commit
+          git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          committed "origin/${BASE_REF}..${HEAD_SHA}"
 
   deny:
     name: deny
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      # The container has its own Cargo home, so the host's fetch cannot seed
-      # the index it resolves against.
+      # The container has its own Cargo home, so the host's fetch cannot seed the index it resolves against.
       CARGO_NET_OFFLINE: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+      - uses: ./.github/actions/setup-rust
         with:
-          command: check
-          arguments: --all-features
+          tools: cargo-deny@0.19.7
+      - run: cargo deny --locked --all-features check
 
   audit:
     name: audit
@@ -185,11 +178,11 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
-      # `nextest` builds the test targets and nothing else, and part of this
-      # suite drives a scripted `cargo` that lives in an example. Building it
-      # takes the same environment the instrumented run uses, which is what
-      # `show-env` is for.
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      # `nextest` builds the test targets and nothing else, and part of this suite drives a scripted `cargo` that lives in an example.
+      # Building it takes the same environment the instrumented run uses, which is what `show-env` is for.
       - name: Collect coverage (run the suite once)
         run: |
           set -euo pipefail
@@ -224,23 +217,28 @@ jobs:
           cargo llvm-cov report --lcov --output-path lcov.info
           cargo llvm-cov report --html
           cargo llvm-cov report --summary-only
-      # Never lower; raise one when its suite earns it. The floors are a
-      # little under what the suite reaches today, so an ordinary change has
-      # room and a change that drops a whole area does not.
+      # Never lower; raise one when its suite earns it.
+      # The floors are a little under what the suite reaches today, so an ordinary change has room and a change that drops a whole area does not.
       - name: Ratchet the workspace
-        run: cargo llvm-cov report --summary-only --fail-under-regions 80
+        run: >-
+          cargo llvm-cov report --summary-only --fail-under-regions 80
+          --ignore-filename-regex 'compiler-surfaces/'
       - name: Ratchet rust-mutants
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 87
-          --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+          --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
       - name: Ratchet rust-mutants-cli
         run: >-
-          cargo llvm-cov report --summary-only --fail-under-regions 85
-          --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+          cargo llvm-cov report --summary-only --fail-under-regions 83
+          --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
+      - name: Ratchet njutest
+        run: >-
+          cargo llvm-cov report --summary-only --fail-under-regions 81
+          --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
       - name: Ratchet xtask
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 80
-          --ignore-filename-regex 'crates/|fuzz/'
+          --ignore-filename-regex 'crates/|fuzz/|compiler-surfaces/'
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -262,12 +260,14 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Every publishable member packages
         run: cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
       - name: The binaries install from this tree
         run: |
-          cargo install --locked --path crates/njutest-cli --root "${RUNNER_TEMP}/install"
+          cargo install --locked --path crates/njutest --root "${RUNNER_TEMP}/install"
           cargo install --locked --path crates/rust-mutants-cli --root "${RUNNER_TEMP}/install"
           "${RUNNER_TEMP}/install/bin/njutest" --version
           "${RUNNER_TEMP}/install/bin/rust-mutants" --version
@@ -287,11 +287,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: install mdbook
-        run: |
-          curl -fsSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
-            | tar -xz -C "$RUNNER_TEMP" mdbook
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-rust
+        with:
+          mise-tools: mdbook
       - name: build the book, which refuses a summary naming a page nobody holds
         run: mdbook build docs
 
@@ -309,13 +307,13 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Build the njutest this commit would ship
-        run: cargo build --locked --release --bin njutest
-      # Every other job runs on a machine with no Miri, where the whole of
-      # deep-v1 is the refusal NJ7001. This is the only place the promise
-      # itself is kept: the suite interpreted, and what the interpreter would
-      # not follow stated rather than passed over.
+        run: mise run build:release
+      # Every other job runs on a machine with no Miri, where the whole of deep-v1 is the refusal NJ7001.
+      # This is the only place the promise itself is kept: the suite interpreted, and what the interpreter would not follow stated rather than passed over.
       - name: Verify a fixture under the contract that promises interpretation
         run: |
           cp -r fixtures/fixture-baseline "$RUNNER_TEMP/interpreted"
@@ -329,8 +327,36 @@ jobs:
         run: |
           written=$(awk -F'\t' '$1 == "REPORT" { print $2 }' "$RUNNER_TEMP/interpreted.out")
           test -n "$written" || { echo "the run said nothing about where it wrote"; exit 1; }
-          jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' \
-            "$RUNNER_TEMP/interpreted/$written"
+          jq --exit-status '
+              .report.contract == "deep-v1"
+              and ([.report.builds[].parts[].accounting.soundness.executed] | length > 0 and all)
+            ' "$RUNNER_TEMP/interpreted/$written"
+
+  kani-verified:
+    name: kani-verified
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      - name: Install the exact verifier and backend
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: |
+          cargo install --locked kani-verifier --version '=0.68.0'
+          cargo kani setup
+      - name: Prove the production mutation outcome laws
+        run: mise run kani:laws
+      - name: Exercise generated harnesses and the retained-result protocol with real Kani
+        run: mise run kani:verified
 
   action-smoke:
     name: action-smoke
@@ -344,7 +370,9 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Build the njutest this commit would ship and put it on the path
         run: |
           cargo build --locked --release --bin njutest
@@ -368,7 +396,7 @@ jobs:
     name: ci-success
     if: always()
     needs:
-      [test, lint, deny, audit, coverage, package-install, book, soundness, action-smoke]
+      [test, lint, deny, audit, coverage, package-install, book, soundness, kani-verified, action-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

@@ -63,24 +63,25 @@ fn an_empty_span_inserts_and_an_empty_replacement_deletes() {
 #[test]
 fn a_splice_whose_original_does_not_match_is_refused_naming_both_sides() {
     let error = apply(SRC, &[splice(10, 11, b"-", b"+")]).expect_err("mismatch");
-    match error {
-        SpliceError::Mismatch {
-            index,
-            span: got,
-            covered,
-            original,
-        } => {
-            assert_eq!(index, 0);
-            assert_eq!(got, span(10, 11));
-            assert_eq!(covered, "\"+\"");
-            assert_eq!(original, "\"-\"");
-        }
-        other => panic!("{other:?}"),
-    }
+    assert!(matches!(error, SpliceError::Mismatch { .. }), "{error:?}");
+    let SpliceError::Mismatch {
+        index,
+        span: got,
+        covered,
+        original,
+    } = error
+    else {
+        return;
+    };
+    assert_eq!(index, 0);
+    assert_eq!(got, span(10, 11));
+    assert_eq!(covered, "\"+\"");
+    assert_eq!(original, "\"-\"");
     let long = vec![b'x'; 100];
     let error = apply(&long, &[splice(0, 100, &[b'y'; 100], b"")]).expect_err("mismatch");
+    assert!(matches!(error, SpliceError::Mismatch { .. }), "{error:?}");
     let SpliceError::Mismatch { covered, .. } = error else {
-        panic!("{error:?}")
+        return;
     };
     assert!(
         covered.ends_with("\u{2026} (100 bytes)"),
@@ -273,6 +274,22 @@ fn map_span_carries_a_span_that_encloses_splices_and_refuses_one_that_straddles(
         wide.map_span(Span { start: 9, end: 4 }),
         Err(SpliceError::Span { .. })
     ));
+}
+
+#[test]
+fn map_span_puts_insertions_at_the_start_before_the_span_and_at_the_end_after_it() {
+    let (_, map) =
+        apply(SRC, &[splice(8, 8, b"", b"("), splice(13, 13, b"", b")")]).expect("wraps");
+    assert_eq!(
+        map.map_span(span(8, 13)).expect("wrapped source span"),
+        span(9, 14),
+        "the mapped span covers the original bytes but neither wrapper"
+    );
+    assert_eq!(
+        map.map_span(span(8, 8)).expect("empty insertion point"),
+        span(9, 9),
+        "an empty span retains the established after-insertion affinity"
+    );
 }
 
 #[test]

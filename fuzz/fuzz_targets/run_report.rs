@@ -10,18 +10,34 @@ use rust_mutants_cli::report::lines;
 use rust_mutants_cli::report::run::RunDocument;
 
 fuzz_target!(|text: &str| {
-    let Ok(document) = serde_json::from_str::<RunDocument>(text) else {
+    let Ok(document) = rust_mutants_cli::report::run::parse(text) else {
         return;
     };
-    let rendered = lines(&document);
+    let Ok(rendered) = lines(&document) else {
+        return;
+    };
     assert!(
         rendered.contains("MUTANTS"),
         "every report renders its tally"
     );
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when a parsed report cannot be serialized"
+    )]
     let written = serde_json::to_string(&document).expect("what was read, writes");
-    let again: RunDocument = serde_json::from_str(&written).expect("what it writes, it reads");
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when the serializer emits a report its parser refuses"
+    )]
+    let again: RunDocument =
+        rust_mutants_cli::report::run::parse(&written).expect("what it writes, it reads");
+    #[expect(
+        clippy::expect_used,
+        reason = "the fuzzer must crash when the reparsed report cannot be serialized"
+    )]
+    let again_written = serde_json::to_string(&again).expect("writes");
     assert_eq!(
-        serde_json::to_string(&again).expect("writes"),
+        again_written,
         written,
         "the round trip is the identity"
     );

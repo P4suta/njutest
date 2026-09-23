@@ -11,6 +11,7 @@
 
 use std::collections::BTreeSet;
 
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::rule::{
     CANONICAL_FAMILY_COUNT, CANONICAL_RULE_COUNT, Family, Registry, Rule, RuleError, Tier,
 };
@@ -54,9 +55,12 @@ fn families_round_trip_through_their_names() {
 #[test]
 fn the_canonical_table_has_the_documented_shape() {
     let registry = Registry::canonical();
-    registry
-        .validate()
-        .expect("the canonical table satisfies every registry invariant");
+    let valid = registry.validate();
+    assert_eq!(
+        result_state(&valid),
+        Returned,
+        "the canonical table satisfies every registry invariant: {valid:?}"
+    );
     assert_eq!(registry.len(), CANONICAL_RULE_COUNT);
     assert_eq!(CANONICAL_RULE_COUNT, 74);
     assert_eq!(registry.families().len(), CANONICAL_FAMILY_COUNT);
@@ -251,13 +255,10 @@ fn rule_names_are_unique_kebab_case_and_render_with_their_version() {
             "{rule}"
         );
     }
-    assert_eq!(
-        registry
-            .lookup("eq-to-neq")
-            .expect("registered")
-            .to_string(),
-        "eq-to-neq@1"
-    );
+    let registered = registry.lookup("eq-to-neq");
+    assert!(registered.is_some(), "registered");
+    let Some(registered) = registered else { return };
+    assert_eq!(registered.to_string(), "eq-to-neq@1");
 }
 
 #[test]
@@ -286,8 +287,11 @@ fn select_tier_returns_every_rule_at_or_below_the_tier_in_table_order() {
 #[test]
 fn verify_accepts_exactly_the_registered_metadata() {
     let registry = Registry::canonical();
-    let registered = registry.lookup("lt-to-le").expect("registered");
-    registry.verify(registered).expect("exact match");
+    let registered = registry.lookup("lt-to-le");
+    assert!(registered.is_some(), "registered");
+    let Some(registered) = registered else { return };
+    let exact = registry.verify(registered);
+    assert_eq!(result_state(&exact), Returned, "exact match: {exact:?}");
     let bumped = Rule {
         version: 2,
         ..registered
@@ -388,7 +392,13 @@ fn a_registry_refuses_a_table_that_breaks_an_invariant() {
         Registry::new(&BAD_NAME),
         Err(RuleError::InvalidName { .. })
     ));
-    let registry = Registry::new(&FINE).expect("consistent");
+    let registry = Registry::new(&FINE);
+    assert_eq!(
+        result_state(&registry),
+        Returned,
+        "consistent: {registry:?}"
+    );
+    let Ok(registry) = registry else { return };
     assert_eq!(registry.families(), [Family::Comparison, Family::Bitwise]);
     assert_eq!(registry.select_tier(Tier::Balanced), [FINE[0]]);
 }
@@ -436,17 +446,14 @@ const THIRTY_SIX: [&str; 36] = [
 #[test]
 fn adding_a_rule_never_reorders_the_ones_that_were_there() {
     let registry = Registry::canonical();
-    let mut positions: Vec<(usize, &str)> = THIRTY_SIX
+    let positions: Option<Vec<(usize, &str)>> = THIRTY_SIX
         .iter()
-        .map(|name| {
-            (
-                registry
-                    .position(name)
-                    .unwrap_or_else(|| panic!("{name} is still in the table")),
-                *name,
-            )
-        })
+        .map(|name| registry.position(name).map(|position| (position, *name)))
         .collect();
+    assert!(positions.is_some(), "every v1 rule is still in the table");
+    let Some(mut positions) = positions else {
+        return;
+    };
     positions.sort_unstable();
 
     assert_eq!(
@@ -472,4 +479,17 @@ fn tiers_never_decrease_down_the_table() {
         highest = rule.tier;
     }
     assert_eq!(highest, Tier::All);
+}
+
+#[test]
+fn the_declared_order_of_a_family_is_the_order_the_table_first_names_it() {
+    let canonical = Registry::canonical().families();
+    assert_eq!(
+        Family::ALL.to_vec(),
+        canonical,
+        "`Family::ALL` and the canonical table each say what order the families come in, \
+         and they disagreed: `SaturatingArithmetic` was ninth in the enum and last in the \
+         table. Nothing reads `ALL` for its order today, which is exactly when two \
+         declarations of one fact are cheapest to bring together"
+    );
 }

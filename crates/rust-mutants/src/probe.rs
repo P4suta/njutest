@@ -61,7 +61,8 @@ fn is_constructor(call: &syn::ExprCall) -> bool {
     (is_wrapper || is_default) && call.args.iter().all(is_effect_free)
 }
 
-/// Whether comparing or combining with this operator runs none of the program's own code beyond what its operands do. Arithmetic is refused: in a debug build it can panic.
+/// Whether comparing or combining with this operator runs none of the program's own code beyond what its operands do.
+/// Arithmetic is refused: in a debug build it can panic.
 const fn is_safe_operator(op: &BinOp) -> bool {
     matches!(
         op,
@@ -78,7 +79,6 @@ const fn is_safe_operator(op: &BinOp) -> bool {
 
 /// What a probe asks about one return replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Question {
     /// Whether the value already equals what `Default::default()` would produce.
     Default,
@@ -137,7 +137,9 @@ impl Question {
     }
 }
 
-/// Whether the literal is one a probe can be stated about at all. A float is refused outright: `-0.0 == 0.0` holds and `-0.0` is not what `Default::default()` writes, so a probe would say the mutation changed nothing when it changed the sign of a zero.
+/// Whether the literal is one a probe can be stated about at all.
+///
+/// A float is refused outright: `-0.0 == 0.0` holds and `-0.0` is not what `Default::default()` writes, so a probe would say the mutation changed nothing when it changed the sign of a zero.
 #[must_use]
 pub const fn is_probeable_literal(lit: &Lit) -> bool {
     !matches!(lit, Lit::Float(_))

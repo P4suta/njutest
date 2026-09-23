@@ -31,7 +31,7 @@ fn asked(source: &str) -> Vec<Claimed> {
                 (None, None) => return None,
             };
             Some(Claimed {
-                index: u32::try_from(index).unwrap_or(0),
+                index: u32::try_from(index).expect("the fixture has fewer than u32::MAX claims"),
                 condition,
                 body,
                 witnesses,
@@ -52,7 +52,7 @@ fn probed(source: &str) -> Vec<Probing> {
         .enumerate()
         .filter_map(|(index, found)| {
             Some(Probing {
-                index: u32::try_from(index).unwrap_or(0),
+                index: u32::try_from(index).expect("the fixture has fewer than u32::MAX probes"),
                 value: found.hint.site,
                 question: found.probe?,
                 super_depth: found.hint.super_depth,
@@ -112,6 +112,56 @@ fn the_compiler_is_asked_about_the_operands_and_the_answer_costs_no_line() {
         after, before,
         "the witnesses go in front of the condition and the module after the last line"
     );
+}
+
+#[test]
+fn only_the_private_witness_module_carries_the_exact_lint_exception() {
+    let source = "pub fn f(a: i32, b: i32) -> i32 {\n    if a <= b { return 1; }\n    0\n}\n";
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &conditions(&claimed(source)),
+    )
+    .expect("witnessed");
+    assert_eq!(
+        written.text.matches("#[allow(").count(),
+        1,
+        "the user's function inherits no generated-code exception: {}",
+        written.text
+    );
+    let parsed = syn::parse_file(&written.text).expect("witnessed source parses");
+    let module = parsed
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Mod(module) if module.ident.to_string().starts_with("__rmw") => Some(module),
+            _ => None,
+        })
+        .expect("the generated witness module");
+    assert!(
+        matches!(module.vis, syn::Visibility::Inherited),
+        "the witness module is private: {:?}",
+        module.vis
+    );
+    let allow = module
+        .attrs
+        .iter()
+        .filter(|attribute| attribute.path().is_ident("allow"))
+        .collect::<Vec<_>>();
+    assert_eq!(allow.len(), 1, "{}", written.text);
+    let names = allow[0]
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
+        .expect("the generated allow is a literal lint list")
+        .iter()
+        .map(|path| {
+            path.segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["dead_code", "unused_qualifications"]);
 }
 
 #[test]
@@ -452,13 +502,13 @@ fn a_witnessed_file_is_still_a_program() {
         "the cast's operand is what the compiler is asked about: {}",
         written.text
     );
-    syn::parse_file(&written.text).unwrap_or_else(|error| {
-        panic!(
-            "an operand spelled over two lines is written on one, and what separates two tokens \
-             has to survive that: {error}\n{}",
-            written.text
-        )
-    });
+    let parsed = syn::parse_file(&written.text);
+    assert!(
+        parsed.is_ok(),
+        "an operand spelled over two lines is written on one, and what separates two tokens \
+         has to survive that: {parsed:?}\n{}",
+        written.text
+    );
 }
 
 #[test]
@@ -496,8 +546,11 @@ pub fn f(a: i32, b: i32, c: i32, d: i32) -> i32 {
 fn a_value_that_is_not_in_the_source_is_refused_rather_than_written_around() {
     let source = "pub fn f(a: i32) -> i32 {\n    return a;\n}\n";
     let mut probes = probed(source);
-    let past = u32::try_from(source.len()).unwrap_or(u32::MAX);
-    probes[0].value = rust_mutants::span::Span::new(past, past.saturating_add(4)).expect("a span");
+    let past = u32::try_from(source.len()).expect("the fixture length fits u32");
+    let end = past
+        .checked_add(4)
+        .expect("four more fixture bytes fit u32");
+    probes[0].value = rust_mutants::span::Span::new(past, end).expect("a span");
 
     let error = witness_file(
         "src/lib.rs",
@@ -559,7 +612,7 @@ fn two_claims_over_one_span_are_one_rewrite_rather_than_two() {
         "the same condition twice is what two claims over one span looks like"
     );
     for (at, one) in claims.iter_mut().enumerate() {
-        one.index = u32::try_from(at).unwrap_or(0);
+        one.index = u32::try_from(at).expect("the fixture has fewer than u32::MAX claims");
     }
     let written = witness_file("src/lib.rs", source.as_bytes(), &conditions(&claims))
         .expect("one rewrite of the span both claims name");

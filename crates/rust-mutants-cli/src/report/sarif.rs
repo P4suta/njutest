@@ -83,7 +83,8 @@ pub struct Reported {
     pub level: String,
     /// What a reader is told.
     pub message: Message,
-    /// Where it is. Empty when the finding is not about a place in the code.
+    /// Where it is.
+    /// Empty when the finding is not about a place in the code.
     pub locations: Vec<Location>,
     /// What makes two runs' findings the same finding.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -152,7 +153,7 @@ pub fn log(document: &RunDocument) -> Log {
         let Some(mutant) = finding.mutant.as_deref().and_then(|id| named.get(id)) else {
             results.push(Reported {
                 rule_id: None,
-                level: level_of(&finding.kind).to_owned(),
+                level: level_of(finding.kind.as_str()).to_owned(),
                 message: Message {
                     text: format!("{}: {}", finding.kind, finding.detail),
                 },
@@ -194,15 +195,13 @@ pub fn log(document: &RunDocument) -> Log {
 
 /// What makes two runs' findings the same finding, which has to survive the commit between them.
 ///
-/// Code scanning carries alert state on this — a dismissal, a "won't fix", a
-/// reviewer's comment. An identity is a function of the whole file, so keying
-/// on it closes every alert in a file and opens them again as new on any
-/// commit that touches it, taking the dismissals with them. The place is what
-/// stays: one file, one item, one rule, one original text.
+/// Code scanning carries alert state on this — a dismissal, a "won't fix", a reviewer's comment.
+/// An identity is a function of the whole file, so keying on it closes every alert in a file and opens them again as new on any commit that touches it, taking the dismissals with them.
+/// The place is what stays: one file, one item, one rule, one original text.
 fn reported(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Reported {
     let mut fingerprints = BTreeMap::new();
     fingerprints.insert(
-        "rustMutantsMutation/v2".to_owned(),
+        "rustMutantsMutation/v1".to_owned(),
         format!(
             "{}:{}:{}:{}",
             mutant.path, mutant.item, mutant.rule, mutant.original
@@ -222,7 +221,7 @@ fn reported(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Reported {
                 region: Region {
                     start_line: mutant.line,
                     start_column: mutant.column,
-                    end_column: width_of(mutant).map(|width| mutant.column.saturating_add(width)),
+                    end_column: width_of(mutant).and_then(|width| mutant.column.checked_add(width)),
                     snippet: (!mutant.original.is_empty()).then(|| Message {
                         text: mutant.original.clone(),
                     }),
@@ -246,7 +245,11 @@ fn level_of(kind: &str) -> &'static str {
 
 /// How wide the edit is, when it does not cross a line.
 fn width_of(mutant: &RunMutantDocument) -> Option<u32> {
-    (!mutant.original.contains('\n'))
-        .then(|| u32::try_from(mutant.original.len()).ok())
-        .flatten()
+    if mutant.original.contains('\n') {
+        return None;
+    }
+    match u32::try_from(mutant.original.len()) {
+        Ok(width) => Some(width),
+        Err(_) => None,
+    }
 }

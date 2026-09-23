@@ -20,6 +20,58 @@ pub enum CliError {
     /// The configuration could not be used.
     #[error(transparent)]
     Config(#[from] ConfigError),
+    /// The premises needed to audit a report could not be retained completely.
+    #[error(transparent)]
+    Evidence(#[from] rust_mutants::report::evidence::EvidenceError),
+    /// A trace summary could not represent the recording exactly.
+    #[error("{}: {source}", error::REPORT_MISSING.code)]
+    TraceSummary {
+        /// The exact counter or duration that did not fit.
+        #[source]
+        source: rust_mutants::trace::summary::SummaryError,
+    },
+    /// A route's projected test count or duration cannot be represented exactly.
+    #[error("{}: {source}", error::REPORT_MISSING.code)]
+    RouteAccounting {
+        /// The exact route accounting invariant that failed.
+        #[from]
+        source: rust_mutants::session::RouteAccountingError,
+    },
+    /// A run's work ledger cannot represent its counts exactly.
+    #[error("{}: {source}", error::REPORT_MISSING.code)]
+    WorkAccounting {
+        /// The exact work-ledger invariant that failed.
+        #[from]
+        source: rust_mutants::work::WorkError,
+    },
+    /// Discovery produced a candidate that cannot mint a stable identity.
+    #[error("{}: {source}", error::CANDIDATE_INVALID.code)]
+    InvalidCandidate {
+        /// The invariant the candidate broke.
+        #[source]
+        source: rust_mutants::catalog::CandidateError,
+    },
+    /// A candidate byte sequence cannot cross a textual report boundary.
+    #[error(
+        "{}: mutation {mutant} has non-UTF-8 {field} bytes: {source}",
+        error::CANDIDATE_INVALID.code
+    )]
+    CandidateTextNotUtf8 {
+        /// The stable mutation identity.
+        mutant: String,
+        /// Which candidate field failed.
+        field: &'static str,
+        /// The exact UTF-8 validation failure.
+        #[source]
+        source: std::str::Utf8Error,
+    },
+    /// A candidate's source position cannot be represented exactly.
+    #[error("{}: {source}", error::CANDIDATE_INVALID.code)]
+    CandidatePosition {
+        /// The exact source-position invariant that failed.
+        #[from]
+        source: rust_mutants::syntax::PositionError,
+    },
     /// The process environment already selects a mutant.
     #[error(
         "{}: {name} is already set; a run composes the activation itself, and nothing a test \
@@ -35,6 +87,57 @@ pub enum CliError {
     ReportMissing {
         /// What was looked for, and where.
         message: String,
+    },
+    /// The directory of stored runs could not be enumerated completely.
+    #[error(
+        "{}: reading stored runs under {}: {source}",
+        error::REPORT_MISSING.code,
+        path.display()
+    )]
+    StoredRunsUnreadable {
+        /// The directory being enumerated.
+        path: PathBuf,
+        /// The operating system's reason.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A stored-run pointer or directory name is present but not a canonical run identity.
+    #[error(
+        "{}: stored run metadata at {} is invalid: {message}",
+        error::REPORT_MISSING.code,
+        path.display()
+    )]
+    StoredRunCorrupt {
+        /// The metadata or directory.
+        path: PathBuf,
+        /// Why it cannot be trusted.
+        message: String,
+    },
+    /// The outcome cache could not be enumerated completely.
+    #[error(
+        "{}: reading outcome cache under {}: {source}",
+        error::CACHE_UNREADABLE.code,
+        path.display()
+    )]
+    CacheUnreadable {
+        /// The directory being enumerated.
+        path: PathBuf,
+        /// The operating system's reason.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The ledger of deliberately retained temporary directories could not be read exactly.
+    #[error(
+        "{}: reading kept-directory ledger at {}: {source}",
+        error::CACHE_UNREADABLE.code,
+        path.display()
+    )]
+    KeptLedgerUnreadable {
+        /// The ledger file.
+        path: PathBuf,
+        /// The operating system or decoding failure.
+        #[source]
+        source: std::io::Error,
     },
     /// A file the command would write is already there.
     #[error(
@@ -79,6 +182,15 @@ pub enum CliError {
         /// What it takes.
         expected: String,
     },
+    /// A platform path cannot cross a textual configuration or report boundary exactly.
+    #[error("{}: {context}: {source}", error::CONFIG_INVALID.code)]
+    PathNotUtf8 {
+        /// Which boundary required exact text.
+        context: &'static str,
+        /// The exact platform path that could not be represented.
+        #[source]
+        source: rust_mutants::id::SlashedPathError,
+    },
     /// A source file the report names is not the one the run measured, or is not there at all.
     #[error(
         "{}: {path} {why}, so the mutation cannot be shown as a change",
@@ -90,6 +202,18 @@ pub enum CliError {
         /// Which of the two things is wrong with it.
         why: String,
     },
+    /// A source file retained for a text report is not valid UTF-8.
+    #[error(
+        "{}: {path} is not valid UTF-8 and cannot be projected as source text: {source}",
+        error::SOURCE_UNREADABLE.code
+    )]
+    SourceTextNotUtf8 {
+        /// The workspace-relative source path.
+        path: String,
+        /// The exact UTF-8 validation failure.
+        #[source]
+        source: std::str::Utf8Error,
+    },
     /// A file the command had to write could not be written.
     #[error("{}: writing {}: {source}", error::WRITE_FAILED.code, path.display())]
     WriteFailed {
@@ -99,6 +223,44 @@ pub enum CliError {
         #[source]
         source: std::io::Error,
     },
+    /// A command's output stream refused bytes for a reason other than its reader closing it.
+    #[error("{}: writing command output: {source}", error::WRITE_FAILED.code)]
+    OutputFailed {
+        /// The operating system's reason.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A streamed document could not be encoded before it reached the output stream.
+    #[error("{}: encoding command output: {source}", error::WRITE_FAILED.code)]
+    OutputEncodingFailed {
+        /// The encoder's reason.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A report projection cannot represent one of the run document's coordinates exactly.
+    #[error(
+        "{}: {projection} cannot represent {field} exactly",
+        error::REPORT_MISSING.code
+    )]
+    ProjectionOverflow {
+        /// The projection whose numeric domain is too small.
+        projection: &'static str,
+        /// The coordinate that did not fit.
+        field: &'static str,
+    },
+    /// The owned preparation thread could not be started.
+    #[error("{}: cannot start the preparation worker: {source}", error::WRITE_FAILED.code)]
+    PreparationStartFailed {
+        /// The operating-system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The owned preparation thread panicked before it was joined.
+    #[error(
+        "{}: the preparation worker panicked before it was joined",
+        error::WRITE_FAILED.code
+    )]
+    PreparationPanicked,
 }
 
 impl From<crate::run::ShardError> for CliError {
@@ -114,13 +276,34 @@ impl CliError {
         match self {
             Self::Engine(inner) => inner.code(),
             Self::Config(inner) => inner.code(),
+            Self::Evidence(_)
+            | Self::WriteFailed { .. }
+            | Self::OutputFailed { .. }
+            | Self::OutputEncodingFailed { .. }
+            | Self::PreparationStartFailed { .. }
+            | Self::PreparationPanicked => error::WRITE_FAILED,
+            Self::TraceSummary { .. }
+            | Self::RouteAccounting { .. }
+            | Self::WorkAccounting { .. }
+            | Self::ReportMissing { .. }
+            | Self::StoredRunsUnreadable { .. }
+            | Self::StoredRunCorrupt { .. }
+            | Self::ProjectionOverflow { .. } => error::REPORT_MISSING,
+            Self::InvalidCandidate { .. }
+            | Self::CandidateTextNotUtf8 { .. }
+            | Self::CandidatePosition { .. } => error::CANDIDATE_INVALID,
             Self::EnvironmentReserved { .. } => error::ENVIRONMENT_RESERVED,
-            Self::ReportMissing { .. } => error::REPORT_MISSING,
+            Self::CacheUnreadable { .. } | Self::KeptLedgerUnreadable { .. } => {
+                error::CACHE_UNREADABLE
+            }
             Self::FileExists { .. } => error::FILE_EXISTS,
-            Self::Shard { .. } | Self::InvalidValue { .. } => error::CONFIG_INVALID,
+            Self::Shard { .. } | Self::InvalidValue { .. } | Self::PathNotUtf8 { .. } => {
+                error::CONFIG_INVALID
+            }
             Self::ChangeSetUnavailable { .. } => error::CHANGE_SET_UNAVAILABLE,
-            Self::SourceUnreadable { .. } => error::SOURCE_UNREADABLE,
-            Self::WriteFailed { .. } => error::WRITE_FAILED,
+            Self::SourceUnreadable { .. } | Self::SourceTextNotUtf8 { .. } => {
+                error::SOURCE_UNREADABLE
+            }
         }
     }
 
@@ -142,6 +325,15 @@ impl CliError {
         }
     }
 
+    /// A source file the command selected but the operating system would not yield.
+    #[must_use]
+    pub fn unreadable(path: &str, source: &std::io::Error) -> Self {
+        Self::SourceUnreadable {
+            path: path.to_owned(),
+            why: format!("could not be read: {source}"),
+        }
+    }
+
     /// The failure of writing `path`.
     #[must_use]
     pub fn writing(path: &Path, source: std::io::Error) -> Self {
@@ -149,5 +341,11 @@ impl CliError {
             path: path.to_path_buf(),
             source,
         }
+    }
+}
+
+impl From<rust_mutants::catalog::CandidateError> for CliError {
+    fn from(source: rust_mutants::catalog::CandidateError) -> Self {
+        Self::InvalidCandidate { source }
     }
 }

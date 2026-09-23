@@ -60,7 +60,10 @@ pub fn reaching_outside(metadata: &Metadata, root: &Path, patches: &[Patch]) -> 
 
 /// The path with every `.` and `..` it can resolve resolved, and the rest as written.
 fn resolved(path: &Path) -> PathBuf {
-    crate::canonical::canonical(path).unwrap_or_else(|_error| cleaned(path))
+    match crate::canonical::canonical(path) {
+        Ok(resolved) => resolved,
+        Err(_path_does_not_exist_yet) => cleaned(path),
+    }
 }
 
 /// The path with `.` removed and `..` folded, without asking the filesystem.
@@ -70,8 +73,10 @@ fn cleaned(path: &Path) -> PathBuf {
         match part {
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
-                if parts.len() > 1 {
-                    let _climbed = parts.pop();
+                if let Some(last) = parts.len().checked_sub(1)
+                    && last > 0
+                {
+                    parts.truncate(last);
                 }
             }
             other => parts.push(other.as_os_str().to_owned()),

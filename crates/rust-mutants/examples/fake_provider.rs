@@ -4,7 +4,6 @@
 //! A resource provider and a generation provider that answer what a test told them to answer.
 
 #![expect(
-    clippy::print_stdout,
     clippy::print_stderr,
     reason = "printing on the standard streams is what this program is: it stands in for a \
               provider whose whole answer is what it prints"
@@ -17,7 +16,11 @@ use std::process::ExitCode;
 const UNKNOWN_ROLE_EXIT: u8 = 99;
 
 fn main() -> ExitCode {
-    match std::env::args().nth(1).unwrap_or_default().as_str() {
+    let role = match std::env::args().nth(1) {
+        Some(role) => role,
+        None => String::new(),
+    };
+    match role.as_str() {
         "resource" => resource(),
         "generation" => generation(),
         other => {
@@ -31,13 +34,34 @@ fn main() -> ExitCode {
 fn resource() -> ExitCode {
     let silent = std::env::var_os("FAKE_PROVIDER_SILENT").is_some();
     let input = std::io::stdin();
-    for line in input.lock().lines().map_while(Result::ok) {
-        if line.contains(r#""action":"start""#) {
-            if !silent {
-                say(&told("FAKE_PROVIDER_READY"));
+    for line in input.lock().lines() {
+        let Ok(line) = line else {
+            return ExitCode::FAILURE;
+        };
+        if line.contains(r#""action":"start""#) && !silent {
+            let ready = match told("FAKE_PROVIDER_READY") {
+                Ok(ready) => ready,
+                Err(error) => {
+                    eprintln!("fake-provider: ready is not exact text: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(error) = say(&ready) {
+                eprintln!("fake-provider: cannot say ready: {error}");
+                return ExitCode::FAILURE;
             }
         } else if line.contains(r#""action":"stop""#) {
-            say(&told("FAKE_PROVIDER_STOPPED"));
+            let stopped = match told("FAKE_PROVIDER_STOPPED") {
+                Ok(stopped) => stopped,
+                Err(error) => {
+                    eprintln!("fake-provider: stopped answer is not exact text: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(error) = say(&stopped) {
+                eprintln!("fake-provider: cannot say stopped: {error}");
+                return ExitCode::FAILURE;
+            }
             return ExitCode::SUCCESS;
         }
     }
@@ -47,33 +71,66 @@ fn resource() -> ExitCode {
 /// Answers a run that asks for a candidate, keeping the question where the test can read it.
 fn generation() -> ExitCode {
     let mut asked = String::new();
-    let read = std::io::stdin().read_to_string(&mut asked);
-    drop(read);
+    if let Err(error) = std::io::stdin().read_to_string(&mut asked) {
+        eprintln!("fake-provider: cannot read the generation question: {error}");
+        return ExitCode::FAILURE;
+    }
     if let Some(name) = std::env::var_os("FAKE_GENERATOR_ASKED") {
         let path = std::path::PathBuf::from(name);
-        if let Some(parent) = path.parent() {
-            drop(std::fs::create_dir_all(parent));
+        if let Some(parent) = path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            eprintln!("fake-provider: cannot create {}: {error}", parent.display());
+            return ExitCode::FAILURE;
         }
-        if let Ok(mut file) = std::fs::OpenOptions::new()
+        let mut file = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
         {
-            drop(file.write_all(asked.as_bytes()));
-            drop(file.write_all(b"\n"));
+            Ok(file) => file,
+            Err(error) => {
+                eprintln!("fake-provider: cannot open {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        };
+        if let Err(error) = file.write_all(asked.as_bytes()) {
+            eprintln!("fake-provider: cannot write {}: {error}", path.display());
+            return ExitCode::FAILURE;
+        }
+        if let Err(error) = file.write_all(b"\n") {
+            eprintln!("fake-provider: cannot finish {}: {error}", path.display());
+            return ExitCode::FAILURE;
         }
     }
-    say(&told("FAKE_GENERATOR_OFFERS"));
-    ExitCode::SUCCESS
+    let offer = match told("FAKE_GENERATOR_OFFERS") {
+        Ok(offer) => offer,
+        Err(error) => {
+            eprintln!("fake-provider: offer is not exact text: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match say(&offer) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("fake-provider: cannot say its offer: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// What the environment told this process to say under `name`.
-fn told(name: &str) -> String {
-    std::env::var(name).unwrap_or_default()
+fn told(name: &str) -> Result<String, std::env::VarError> {
+    match std::env::var(name) {
+        Ok(value) => Ok(value),
+        Err(std::env::VarError::NotPresent) => Ok(String::new()),
+        Err(error @ std::env::VarError::NotUnicode(_)) => Err(error),
+    }
 }
 
 /// Says one line and lets the run read it now: a provider a run waits on says nothing while its output sits in a buffer.
-fn say(line: &str) {
-    println!("{line}");
-    drop(std::io::stdout().flush());
+fn say(line: &str) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{line}")?;
+    stdout.flush()
 }

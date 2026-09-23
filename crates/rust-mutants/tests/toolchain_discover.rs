@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::result::{ResultState::Refused, result_state};
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
     compile,
@@ -22,7 +23,7 @@ use rust_mutants::glob::Pattern;
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::Cancel;
 use rust_mutants::syntax::{Selection, SkipReason};
-use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
+use rust_mutants::trace::{DiscoverFileRecord, ExecRecord, MemorySink, Payload, Recorder, Sink};
 
 static REGISTRY: Registry = Registry::canonical();
 
@@ -31,6 +32,41 @@ struct Prepared {
     metadata: Metadata,
     checked: rust_mutants::cargo::Compiled,
     _target: tempfile::TempDir,
+}
+
+enum RelevantPayload<'a> {
+    DiscoverFile(&'a DiscoverFileRecord),
+    Exec(&'a ExecRecord),
+    Other,
+}
+
+const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
+    match payload {
+        Payload::DiscoverFile { discover } => RelevantPayload::DiscoverFile(discover),
+        Payload::Exec { exec } => RelevantPayload::Exec(exec),
+        Payload::RunStart { .. }
+        | Payload::PhaseStart { .. }
+        | Payload::PhaseEnd { .. }
+        | Payload::Open { .. }
+        | Payload::Snapshot { .. }
+        | Payload::Instrument { .. }
+        | Payload::ValidateRound { .. }
+        | Payload::Bisect { .. }
+        | Payload::Build { .. }
+        | Payload::Verify { .. }
+        | Payload::Touch { .. }
+        | Payload::Witness { .. }
+        | Payload::SkipClaim { .. }
+        | Payload::Kept { .. }
+        | Payload::Route { .. }
+        | Payload::Cache { .. }
+        | Payload::Select { .. }
+        | Payload::Identical { .. }
+        | Payload::Evidence { .. }
+        | Payload::MutantExec { .. }
+        | Payload::Note { .. }
+        | Payload::RunEnd { .. } => RelevantPayload::Other,
+    }
 }
 
 fn prepare(name: &str) -> Prepared {
@@ -147,7 +183,12 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
     assert_eq!(
         table(&discovery),
         [
-            row("src/lib.rs", "fixture-simple", 13, "test-code:17"),
+            row(
+                "src/lib.rs",
+                "fixture-simple",
+                13,
+                "test-code:22 let-condition:1"
+            ),
             row("src/testutil.rs", "fixture-simple", 0, "test-only-file:6"),
         ]
     );
@@ -193,7 +234,14 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
         .iter()
         .map(|s| (s.reason.name(), s.count))
         .collect();
-    assert_eq!(total, [("test-code", 17), ("test-only-file", 6)]);
+    assert_eq!(
+        total,
+        [
+            ("test-code", 22),
+            ("test-only-file", 6),
+            ("let-condition", 1)
+        ]
+    );
 }
 
 #[cfg(unix)]
@@ -355,7 +403,9 @@ fn selecting_packages_leaves_the_others_out_entirely() {
     );
     let mut opts = options();
     opts.packages = vec!["no-such-package".to_owned()];
-    let error = discover(&input(&prepared), &opts, &Recorder::disabled()).unwrap_err();
+    let error = discover(&input(&prepared), &opts, &Recorder::disabled());
+    assert_eq!(result_state(&error), Refused, "unknown package: {error:?}");
+    let Err(error) = error else { return };
     assert!(
         matches!(error, DiscoverError::UnknownPackage { .. }),
         "{error}"
@@ -382,19 +432,22 @@ fn the_selection_limits_the_rules_across_the_workspace() {
 fn discovery_is_deterministic_and_traced_per_file() {
     let prepared = prepare("fixture-workspace");
     let first = run(&prepared, &options(), &Recorder::disabled());
-    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+    let recorder = Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
     let second = run(&prepared, &options(), &recorder);
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     assert_eq!(first, second);
     assert_eq!(first.catalog.digest(), second.catalog.digest());
     let files: Vec<(String, u32)> = recorder
         .events()
         .iter()
-        .filter_map(|e| match &e.payload {
-            Payload::DiscoverFile { discover } => {
+        .filter_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::DiscoverFile(discover) => {
                 Some((discover.path.clone(), discover.candidates))
             }
-            _ => None,
+            RelevantPayload::Exec(_) | RelevantPayload::Other => None,
         })
         .collect();
     assert_eq!(
@@ -449,7 +502,10 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
     };
     let cancel = Cancel::new();
     let toolchain = Toolchain::locate(&options, &dir, &cancel).expect("locate");
-    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+    let recorder = Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
     let target = tempfile::tempdir().expect("tempdir");
     let checked = compile(
         &Driver {
@@ -479,9 +535,9 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
     let execs: Vec<Vec<String>> = recorder
         .events()
         .iter()
-        .filter_map(|e| match &e.payload {
-            Payload::Exec { exec } => Some(exec.argv.clone()),
-            _ => None,
+        .filter_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::Exec(exec) => Some(exec.argv.clone()),
+            RelevantPayload::DiscoverFile(_) | RelevantPayload::Other => None,
         })
         .collect();
     assert_eq!(execs.len(), 1);

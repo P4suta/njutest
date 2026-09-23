@@ -26,29 +26,45 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
         command.env(name, value);
     }
     command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
+    command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
     command.args(["--tier", "all", "--offline", "--locked"]);
     command.output().expect("rust-mutants runs")
 }
 
+/// What to add to a failure when the row says the clock answered instead of the count, and nothing when it does not.
+///
+/// The count and the bound are both timers, so which one answers is the one that arrives first, and on a machine slow enough that is the bound.
+/// This test then fails saying only that an outcome was `waited` where `step_limit_reached` was wanted, which reads as a broken step protocol and is not one: the reader goes looking at machinery that is working.
+/// The allowance is sized so that it takes roughly a fifteenth of the bound, so a run that lost this is a run where a take cost fifteen times what it costs here, and the number to change is in the fixture rather than in the engine.
+fn outran_by_the_clock(row: &serde_json::Value) -> String {
+    if row["outcome"].as_str() != Some("waited") || !row["step_notice"].is_null() {
+        return String::new();
+    }
+    format!(
+        "\n\nThe bound answered before the count did, which is this machine being slow rather \
+         than the step protocol being broken: the execution took {duration}ms of a bound \
+         that the allowance is sized to reach in about a fifteenth of, and left no step \
+         notice because it never reached the allowance. Lower `[mutation] steps` in \
+         fixtures/fixture-hang/.rust-mutants.toml — it costs nothing and is bounded below \
+         only by what an ordinary execution of this fixture spends, which is five",
+        duration = row["duration_ms"].as_u64().unwrap_or_default()
+    )
+}
+
 /// The row of the mutation one rule proposed at one line.
 fn row(fixture: &Fixture, rule: &str, line: u64) -> serde_json::Value {
-    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
-    let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(&directory)
-        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
-        .flatten()
-        .map(|entry| entry.path().join("run-report-v1.json"))
-        .filter(|path| path.is_file())
-        .collect();
-    runs.sort();
-    let newest = runs.pop().expect("one stored run");
+    let newest = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    )
+    .join("run-report-v1.json");
     read(&newest, rule, line)
 }
 
 fn read(report: &Path, rule: &str, line: u64) -> serde_json::Value {
-    let document: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(report).expect("the report"))
-            .expect("the report is a document");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(report).expect("the report"),
+    )
+    .expect("the report is a document");
     document["mutants"]
         .as_array()
         .expect("the rows")
@@ -59,24 +75,34 @@ fn read(report: &Path, rule: &str, line: u64) -> serde_json::Value {
 }
 
 #[test]
-fn a_mutant_that_never_returns_is_timed_out_after_a_serial_retry() {
+fn a_mutant_that_never_returns_is_stopped_by_a_count_and_not_asked_again() {
     let fixture = Fixture::copy("fixture-hang");
     let output = run(&fixture, &[]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output.status.code() == Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let stopped = row(&fixture, "delete-compound-assignment", 13);
     assert_eq!(
         stopped["outcome"].as_str(),
-        Some("timed_out"),
-        "deleting what ends the loop leaves a function that does not return: {stopped}"
+        Some("step_limit_reached"),
+        "deleting what ends the loop reaches the guard allowance. The report preserves \
+         that execution fact without claiming it proved nontermination.{}: {stopped}",
+        outran_by_the_clock(&stopped)
+    );
+    assert_eq!(stopped["step_notice"]["limit"], 10);
+    assert!(
+        stopped["step_notice"]["observed"]
+            .as_u64()
+            .is_some_and(|observed| observed > 10),
+        "the boundary names the first count beyond the allowance: {stopped}"
     );
     assert_eq!(
         stopped["retried"].as_bool(),
-        Some(true),
-        "a timeout is believed only after it repeats on its own: {stopped}"
+        Some(false),
+        "and it is not asked again: the serial retry exists because a clock is unreliable, \
+         and a count every machine agrees on cannot disagree with itself: {stopped}"
     );
     let ordinary = row(&fixture, "delete-compound-assignment", 12);
     assert_eq!(
@@ -97,15 +123,15 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
         &[
             (
                 "FIXTURE_HANG_MARKER",
-                markers.to_string_lossy().into_owned(),
+                njutest_devkit::paths::utf8(&markers).to_owned(),
             ),
             ("FIXTURE_HANG_PAUSE_MS", "4000".to_owned()),
         ],
     );
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output.status.code() == Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let undecided = row(&fixture, "gt-to-ge", 25);
     assert_eq!(
@@ -114,7 +140,7 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
         "a mutation that was slow once and quick again is one the run cannot decide: {undecided}"
     );
     assert_eq!(undecided["retried"].as_bool(), Some(true), "{undecided}");
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
         text.contains("inconclusive-mutant"),
         "a run that could not decide says so: {text}"
@@ -126,8 +152,9 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
     let still = row(&fixture, "delete-compound-assignment", 13);
     assert_eq!(
         still["outcome"].as_str(),
-        Some("timed_out"),
-        "a mutation that never returns is not a slow one: {still}"
+        Some("step_limit_reached"),
+        "the finite count and clock facts remain distinct without turning either into a \
+         proof that the mutation cannot terminate: {still}"
     );
 }
 
@@ -136,13 +163,15 @@ fn a_mutation_that_never_returns_is_stopped_rather_than_left_running() {
     let fixture = Fixture::copy("fixture-hang");
     let output = run(&fixture, &[]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output.status.code() == Some(2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
-        text.contains("timed_out=2"),
-        "the run ends rather than waiting on the process it started: {text}"
+        text.contains("step_limit_reached=2") && text.contains("waited=0"),
+        "the run ends rather than waiting on the process it started, and what ended it is \
+         a count rather than this machine's clock.{}: {text}",
+        outran_by_the_clock(&row(&fixture, "delete-compound-assignment", 13))
     );
 }

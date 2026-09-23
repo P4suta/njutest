@@ -172,7 +172,8 @@ pub(super) fn type_name(ty: &Type) -> String {
     }
 }
 
-/// The guard an arm's pattern carries, when it carries one. In `syn` the guard is part of the pattern rather than of the arm.
+/// The guard an arm's pattern carries, when it carries one.
+/// In `syn` the guard is part of the pattern rather than of the arm.
 pub(super) fn guard_of(pat: &Pat) -> Option<&Expr> {
     match pat {
         Pat::Guard(one) => Some(&one.guard),
@@ -258,9 +259,9 @@ pub(super) fn parameters(generics: &syn::Generics) -> (BTreeSet<String>, BTreeSe
         };
         let name = one.ident.to_string();
         if one.bounds.iter().any(spells_default) {
-            let _added = defaultable.insert(name.clone());
+            defaultable.extend(std::iter::once(name.clone()));
         }
-        let _added = named.insert(name);
+        named.extend(std::iter::once(name));
     }
     let Some(clause) = &generics.where_clause else {
         return (named, defaultable);
@@ -276,7 +277,7 @@ pub(super) fn parameters(generics: &syn::Generics) -> (BTreeSet<String>, BTreeSe
             continue;
         }
         if let Some(segment) = path.path.segments.first() {
-            let _added = defaultable.insert(segment.ident.to_string());
+            defaultable.extend(std::iter::once(segment.ident.to_string()));
         }
     }
     (named, defaultable)

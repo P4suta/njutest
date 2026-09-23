@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Argument parsing. This module knows the command tree and nothing about executing it.
+//! Argument parsing.
+//! This module knows the command tree and nothing about executing it.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -25,7 +26,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
     color = clap::ColorChoice::Never
 )]
 pub struct Cli {
-    /// Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`.
+    /// Whether to paint the output.
+    /// `auto` paints a terminal that has not set `NO_COLOR`.
     #[arg(long, value_enum, value_name = "WHEN", default_value_t = crate::ui::Color::Auto, global = true)]
     pub color: crate::ui::Color,
     /// What to do.
@@ -41,7 +43,8 @@ pub struct Cli {
               heap indirection between the parser and the flags a person typed"
 )]
 pub enum Command {
-    /// List the candidates that will be cataloged, before the compiler has ruled. What a configuration or an annotation removed is `why-skipped`.
+    /// List the candidates that will be cataloged, before the compiler has ruled.
+    /// What a configuration or an annotation removed is `why-skipped`.
     List {
         /// Which workspace to read.
         #[command(flatten)]
@@ -58,7 +61,8 @@ pub enum Command {
         /// Which workspace to read.
         #[command(flatten)]
         scope: Scope,
-        /// Ask about at most this many mutants, in catalog order. Zero asks about every one of them.
+        /// Ask about at most this many mutants, in catalog order.
+        /// Zero asks about every one of them.
         #[arg(long, value_name = "N", default_value_t = 0)]
         limit: usize,
     },
@@ -74,7 +78,8 @@ pub enum Command {
         #[arg(long, conflicts_with = "json")]
         rejections: bool,
     },
-    /// Run the mutants and report what the tests noticed. Every accepted mutant unless one is named.
+    /// Run the mutants and report what the tests noticed.
+    /// Every accepted mutant unless one is named.
     Run {
         /// Which workspace to read.
         #[command(flatten)]
@@ -88,7 +93,8 @@ pub enum Command {
         /// With `--mutant`, run only this test, by its libtest path.
         #[arg(long, value_name = "TEST", requires = "mutant")]
         test: Option<String>,
-        /// Run only this part of the catalog, as `K/N`. Every part of one tree cuts the same way, so the parts together are the whole.
+        /// Run only this part of the catalog, as `K/N`.
+        /// Every part of one tree cuts the same way, so the parts together are the whole.
         #[arg(long, value_name = "K/N", conflicts_with = "mutant")]
         shard: Option<String>,
         /// Do not write a run report under the report directory.
@@ -106,25 +112,32 @@ pub enum Command {
         /// Stop at the first thing a reader has to act on rather than measuring the rest.
         #[arg(long, conflicts_with = "mutant")]
         fail_fast: bool,
-        /// Measure only mutants of this rule. Repeatable.
+        /// Measure only mutants of this rule.
+        /// Repeatable.
         #[arg(long = "rule", value_name = "NAME")]
         rules: Vec<String>,
-        /// Measure only mutants of this family. Repeatable.
+        /// Measure only mutants of this family.
+        /// Repeatable.
         #[arg(long = "family", value_name = "NAME")]
         families: Vec<String>,
-        /// Never measure mutants of this rule. Repeatable.
+        /// Never measure mutants of this rule.
+        /// Repeatable.
         #[arg(long = "skip-rule", value_name = "NAME")]
         skip_rules: Vec<String>,
-        /// Never measure mutants of this family. Repeatable.
+        /// Never measure mutants of this family.
+        /// Repeatable.
         #[arg(long = "skip-family", value_name = "NAME")]
         skip_families: Vec<String>,
-        /// Measure only mutants in this file, and optionally only these lines, as `PATH[:FROM[-TO]]`. Repeatable.
+        /// Measure only mutants in this file, and optionally only these lines, as `PATH[:FROM[-TO]]`.
+        /// Repeatable.
         #[arg(long = "file", value_name = "PATH")]
         files: Vec<String>,
-        /// Measure only mutants whose identity starts with this. Repeatable.
+        /// Measure only mutants whose identity starts with this.
+        /// Repeatable.
         #[arg(long = "id", value_name = "PREFIX")]
         ids: Vec<String>,
-        /// Measure only the mutants a stored run left with this outcome. The newest run when no directory is named.
+        /// Measure only the mutants a stored run left with this outcome.
+        /// The newest run when no directory is named.
         #[arg(long, value_name = "RUN", num_args = 0..=1, default_missing_value = "")]
         from_report: Option<String>,
         /// With `--from-report`, the outcome to take from it.
@@ -138,7 +151,8 @@ pub enum Command {
         /// Prepare and verify, then say what a run would cost, without executing a mutant.
         #[arg(long, conflicts_with_all = ["mutant", "json"])]
         dry_run: bool,
-        /// Name this run, which is what its report directory is called. Letters, digits, `.`, `_` and `-`.
+        /// Name this run, which is what its report directory is called.
+        /// Letters, digits, `.`, `_` and `-`.
         #[arg(long, value_name = "NAME", conflicts_with = "mutant")]
         run_id: Option<String>,
         /// Arguments for the test harness itself.
@@ -153,7 +167,8 @@ pub enum Command {
         /// The mutant, by identity or by any prefix that names exactly one.
         #[arg(value_name = "PREFIX")]
         mutant: String,
-        /// The run to read it from. The newest when none is named.
+        /// The run to read it from.
+        /// The newest when none is named.
         #[arg(long, value_name = "RUN")]
         run: Option<String>,
         /// Prepare the tree again rather than reading what the last run stored.
@@ -189,7 +204,8 @@ pub enum Command {
     },
     /// Write a `.rust-mutants.toml` whose every value is already the default.
     Init {
-        /// The workspace root. Defaults to the working directory.
+        /// The workspace root.
+        /// Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
         /// Overwrite a file that is already there.
@@ -204,16 +220,19 @@ pub enum Command {
         /// The mutant, by identity or by any prefix that names exactly one.
         #[arg(value_name = "PREFIX")]
         mutant: String,
-        /// The run to read it from. The newest when none is named.
+        /// The run to read it from.
+        /// The newest when none is named.
         #[arg(long, value_name = "RUN")]
         run: Option<String>,
     },
     /// Say what a run would find in this environment: the toolchain, the configuration, the temporary directory.
     Doctor {
-        /// The workspace root. Defaults to the working directory.
+        /// The workspace root.
+        /// Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
-        /// Ask about these packages rather than every member. Repeatable.
+        /// Ask about these packages rather than every member.
+        /// Repeatable.
         #[arg(long = "package", short = 'p', value_name = "NAME")]
         packages: Vec<String>,
         /// Print the `rust-mutants/doctor` document rather than the lines a person reads.
@@ -243,10 +262,12 @@ pub enum Command {
     },
     /// Read back a stored run report.
     Report {
-        /// The workspace root. Defaults to the working directory.
+        /// The workspace root.
+        /// Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
-        /// The run, by its identity. Defaults to the newest.
+        /// The run, by its identity.
+        /// Defaults to the newest.
         #[arg(long, value_name = "ID")]
         run: Option<String>,
         /// How to write it.
@@ -261,7 +282,8 @@ pub enum Command {
     },
     /// List the operators this release knows, with the tier and version that pin them.
     Rules {
-        /// Only the rules this tier selects. Every tier when none is named.
+        /// Only the rules this tier selects.
+        /// Every tier when none is named.
         #[arg(long, value_name = "TIER")]
         tier: Option<String>,
         /// Print the rules as a document rather than the lines a person reads.
@@ -270,10 +292,12 @@ pub enum Command {
     },
     /// Gather everything one run established into one directory, for a bug report.
     Diagnostics {
-        /// The run, by its identity. Defaults to the newest.
+        /// The run, by its identity.
+        /// Defaults to the newest.
         #[arg(value_name = "RUN")]
         run: Option<String>,
-        /// The workspace root. Defaults to the working directory.
+        /// The workspace root.
+        /// Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
         /// Write the bundle here rather than beside the run.
@@ -322,10 +346,12 @@ pub enum Format {
     Markdown,
 }
 
-/// What a command reads, and how much of it. Every value here also has a key in `.rust-mutants.toml`; a flag given on the command line wins.
+/// What a command reads, and how much of it.
+/// Every value here also has a key in `.rust-mutants.toml`; a flag given on the command line wins.
 #[derive(Debug, Clone, Args)]
 pub struct Scope {
-    /// The workspace root. Defaults to the working directory.
+    /// The workspace root.
+    /// Defaults to the working directory.
     #[arg(long, value_name = "DIR")]
     pub root: Option<PathBuf>,
     /// Read this configuration file instead of the one in the workspace root.
@@ -337,34 +363,44 @@ pub struct Scope {
     /// Which tier of operators to apply.
     #[arg(long, value_enum, value_name = "TIER")]
     pub tier: Option<TierArg>,
-    /// Apply exactly these operators, by name. Repeatable.
+    /// Apply exactly these operators, by name.
+    /// Repeatable.
     #[arg(long = "operator", value_name = "RULE")]
     pub operators: Vec<String>,
-    /// Only mutate files matching this pattern. Repeatable.
+    /// Only mutate files matching this pattern.
+    /// Repeatable.
     #[arg(long = "include", value_name = "GLOB")]
     pub include: Vec<String>,
-    /// Mutate nothing in the files matching this pattern; they are still compiled. The other half of `--include`. Repeatable.
+    /// Mutate nothing in the files matching this pattern; they are still compiled.
+    /// The other half of `--include`.
+    /// Repeatable.
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
-    /// Leave files matching this pattern out of the copy the run works in. A file a crate declares as a module leaves a tree that does not compile. Repeatable.
+    /// Leave files matching this pattern out of the copy the run works in.
+    /// A file a crate declares as a module leaves a tree that does not compile.
+    /// Repeatable.
     #[arg(long = "omit", value_name = "GLOB")]
     pub omit: Vec<String>,
-    /// Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include` rather than widening it.
+    /// Mutate only the files that differ from `HEAD`, committed and not.
+    /// Narrows `--include` rather than widening it.
     #[arg(long, conflicts_with = "changed_from")]
     pub changed: bool,
     /// Mutate only the files that differ from this revision.
     #[arg(long, value_name = "REV")]
     pub changed_from: Option<String>,
-    /// Only mutate these packages. Repeatable.
+    /// Only mutate these packages.
+    /// Repeatable.
     #[arg(long = "package", short = 'p', value_name = "NAME")]
     pub packages: Vec<String>,
-    /// Let the build read this directory from outside the root, copying it beside the tree. Repeatable.
+    /// Let the build read this directory from outside the root, repeatably, copying it where the tree reaches it.
     #[arg(long = "allow-outside", value_name = "DIR")]
     pub allow_outside: Vec<PathBuf>,
-    /// Compile with these cargo features. Repeatable, and each may be a comma-separated list.
+    /// Compile with these cargo features.
+    /// Repeatable, and each may be a comma-separated list.
     #[arg(long = "features", value_name = "LIST", value_delimiter = ',')]
     pub features: Vec<String>,
-    /// Compile for this target triple instead of the host. Not `run --target`, which names a test target.
+    /// Compile for this target triple instead of the host.
+    /// Not `run --target`, which names a test target.
     #[arg(long = "build-target", value_name = "TRIPLE")]
     pub build_target: Option<String>,
     /// Compile with this cargo profile.
@@ -373,16 +409,19 @@ pub struct Scope {
     /// How many compilation jobs cargo may run at once.
     #[arg(long = "build-jobs", value_name = "N")]
     pub build_jobs: Option<u32>,
-    /// How many mutants to measure at once. Zero is as many as the machine has, capped at four.
+    /// How many mutants to measure at once.
+    /// Zero is as many as the machine has, capped at four.
     #[arg(long, short = 'j', value_name = "N")]
     pub jobs: Option<usize>,
-    /// Never start this target, by the id a report names it with. Repeatable.
+    /// Never start this target, by the id a report names it with.
+    /// Repeatable.
     #[arg(long = "skip-target", value_name = "PKG/KIND/NAME")]
     pub skip_targets: Vec<String>,
     /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
-    /// Record what the run does, as JSON Lines. Written with `--trace=DIR`; bare `--trace` writes beside the report, and every other command under `<reports>/traces/`.
+    /// Record what the run does, as JSON Lines.
+    /// Written with `--trace=DIR`; bare `--trace` writes beside the report, and every other command under `<reports>/traces/`.
     #[arg(
         long,
         value_name = "DIR",
@@ -484,23 +523,6 @@ impl Command {
             | Self::Cache { .. } => None,
         }
     }
-
-    /// The workspace root the command names, when it names one.
-    #[must_use]
-    pub const fn root(&self) -> Option<&PathBuf> {
-        match self {
-            Self::Init { root, .. }
-            | Self::Doctor { root, .. }
-            | Self::Report { root, .. }
-            | Self::Cache { root, .. }
-            | Self::Diagnostics { root, .. }
-            | Self::Merge { root, .. } => root.as_ref(),
-            _ => match self.scope() {
-                Some(scope) => scope.root.as_ref(),
-                None => None,
-            },
-        }
-    }
 }
 
 /// A command that could not be parsed, or a request to print help or the version, rendered for the stream it belongs on.
@@ -521,7 +543,10 @@ fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
         .and_then(|name| std::path::Path::new(name).file_stem())
         .is_some_and(|stem| stem == "cargo-rust-mutants");
     if called_by_cargo && args.get(1).is_some_and(|word| word == "rust-mutants") {
-        let _repeated = args.remove(1);
+        let repeated = args.remove(1);
+        if repeated != "rust-mutants" {
+            args.insert(1, repeated);
+        }
     }
     args
 }
@@ -549,7 +574,8 @@ where
 pub enum TraceCommand {
     /// What a recording counted, what every phase took, and which commands were the slowest.
     Summary {
-        /// The workspace root. Defaults to the working directory.
+        /// The workspace root.
+        /// Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
         /// Read this run's recording rather than the newest one.
@@ -564,7 +590,8 @@ pub enum TraceCommand {
     },
     /// Say whether a recording is complete: it begins, it ends, it lost nothing, and every phase it opened it closed.
     Check {
-        /// The workspace root. Defaults to the working directory.
+        /// The workspace root.
+        /// Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
         /// Check this run's recording rather than the newest one.
@@ -576,7 +603,8 @@ pub enum TraceCommand {
     },
     /// What moved between two recordings.
     Diff {
-        /// The workspace root. Defaults to the working directory.
+        /// The workspace root.
+        /// Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
         /// The run to read first.

@@ -5,13 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # The command line
 
-**Status: implemented.** Every flag on this page exists, and a test compares
-this page with `--help` in both directions: a flag the binary has and this
-page does not name fails, and so does a flag this page names and no command
-has.
+**Status: implemented.** Every flag on this page exists, and a test compares this page with `--help` in both directions: a flag the binary has and this page does not name fails, and so does a flag this page names and no command has.
 
-Every value here also has a key in [configuration](configuration.md), and a
-flag given on the command line wins over the file.
+Every value here also has a key in [configuration](configuration.md), and a flag given on the command line wins over the file.
 
 ## Everywhere
 
@@ -23,13 +19,11 @@ flag given on the command line wins over the file.
 | `--color auto\|always\|never` | when to colour; `NO_COLOR` and a pipe both mean never |
 | `--trace[=DIR]` | record what the command did, as JSON Lines |
 
-`rules` is the exception: the operator table is compiled into the release, so
-it reads no tree and takes none of these but `--help`.
+`rules` is the exception: the operator table is compiled into the release, so it reads no tree and takes none of these but `--help`.
 
 ## Choosing what to measure
 
-These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument`
-read them too, so what those preview is what a run would do.
+These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read them too, so what those preview is what a run would do.
 
 | Flag | What it does |
 | --- | --- |
@@ -52,7 +46,7 @@ read them too, so what those preview is what a run would do.
 | --- | --- |
 | `--features LIST`, `--all-features`, `--no-default-features` | what cargo compiles |
 | `--build-target TRIPLE`, `--profile NAME`, `--build-jobs N` | how cargo compiles it |
-| `--allow-outside DIR` | let the build read a directory outside the root, copied beside the tree |
+| `--allow-outside DIR` | let the build read a directory outside the root, copied into the snapshot where the tree reaches it |
 | `--offline`, `--locked` | what cargo may reach for and change |
 | `--jobs N`, `-j N` | mutants measured at once; the machine capped at 4 when 0 |
 | `--timeout DURATION` | a mutant's own bound; five times the target's baseline when absent |
@@ -92,11 +86,8 @@ read them too, so what those preview is what a run would do.
 | `init` | `--force` |
 | `cache` | `--gc`, `--all`, `--kept`, `--clear-outcomes`, `--cache-dir DIR` |
 
-`--run` names a stored run, and the newest is read when nothing is named. A
-name no directory answers to is refused (`RM0007`) rather than answered from
-another run: a reader who mistyped it would otherwise be told confidently
-about a run they did not ask for, and `replay` would report the stored answer
-as having changed when what changed was which run it read.
+`--run` names a stored run, and the newest is read when nothing is named.
+A name no directory answers to is refused (`RM0007`) rather than answered from another run: a reader who mistyped it would otherwise be told confidently about a run they did not ask for, and `replay` would report the stored answer as having changed when what changed was which run it read.
 
 ## What a run's exit code says
 
@@ -108,6 +99,5 @@ as having changed when what changed was which run it read.
 | 130 | it was interrupted |
 | 143 | it was terminated, which is what a cancelled job sends |
 
-An exit code is about what was established, never about a percentage. There
-is no threshold flag; see
-[ADR 0004](../adr/0004-proof-layers-not-budgets.md).
+An exit code is about what was established, never about a percentage.
+There is no threshold flag; see [ADR 0004](../adr/0004-proof-layers-not-budgets.md).

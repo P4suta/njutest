@@ -1,0 +1,18 @@
+RUN	run=20260905t081500z-abcdef	kind=full	contract=standard-v1
+BUILD	name=default
+TOOLCHAIN	rustc=unavailable	cargo=unavailable	target=unavailable	os=unavailable	arch=unavailable
+REPOSITORY	root=fixture-workspace	packages=2	commit=unavailable	branch=unavailable	dirty=false
+SCOPE	requested=(nothing named)	resolved=(nothing named)	included=(nothing named)	excluded=(nothing named)	from=(defaults)
+TIMING	started=2026-09-05T08:15:00Z	finished=2026-09-05T08:16:12Z	compute_total_ms=72000
+TARGET	failed	40ms	0123456789abcdef	core/lib/adds::works	assertion failed: left == right
+TARGET	passed	12ms	fedcba9876543210	core/lib/adds::rounds
+MUTANT	unnoticed	cccccccccccccccccccc	crates/core/src/lib.rs:12:9	lt-to-le@1
+FINDING	surviving-mutant	cccccccccccccccccccc	no test noticed the edit at crates/core/src/lib.rs:12
+LIMITATION	git-metadata-unavailable	the stream fixture is not a git repository
+NEXT	njutest explain crates/core/src/lib.rs:demo:lt-to-le@1@12	says which tests reached it	njutest accept crates/core/src/lib.rs:demo:lt-to-le@1@12 --reason "..."	records why it is not a gap
+TARGETS	selected=2	passed=1	failed=1	skipped=0	missing=0
+MUTANTS	cataloged=1	rejected=0	executed=1	unreached=0
+OUTCOMES	killed=0	survived=1	step_limit_reached=0	waited=0	equivalent=0
+WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
+SOUNDNESS	build=default	unsafe_items=0	packages_with_unsafe=0	was_executed=false
+VERDICT	INSUFFICIENT

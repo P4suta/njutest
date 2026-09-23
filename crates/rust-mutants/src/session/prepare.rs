@@ -72,7 +72,10 @@ pub(super) fn pristine(
 }
 
 /// The digest of the pristine sources every unit of the build compiled.
-fn closure_of(workspace: &Workspace, checked: &crate::cargo::Compiled) -> String {
+fn closure_of(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+) -> Result<String, SessionError> {
     let root = workspace.snapshot_root();
     let units = &checked.units;
     let mut files: BTreeMap<String, String> = BTreeMap::new();
@@ -81,30 +84,37 @@ fn closure_of(workspace: &Workspace, checked: &crate::cargo::Compiled) -> String
             let Ok(relative) = path.strip_prefix(root) else {
                 continue;
             };
-            let Ok(name) = crate::id::normalize_path(&relative.to_string_lossy()) else {
-                continue;
-            };
-            if files.contains_key(&name) {
-                continue;
+            let relative_text = relative
+                .to_str()
+                .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
+            let name = crate::id::normalize_path(relative_text).map_err(|source| {
+                SessionError::EvidencePathInvalid {
+                    path: path.clone(),
+                    source,
+                }
+            })?;
+            if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(name) {
+                let bytes =
+                    std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
+                        path: path.clone(),
+                        source,
+                    })?;
+                entry.insert(crate::id::digest(&bytes));
             }
-            let Ok(bytes) = std::fs::read(path) else {
-                continue;
-            };
-            drop(files.insert(name, crate::id::digest(&bytes)));
         }
     }
     if files.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
-    folded(
+    Ok(folded(
         files
             .iter()
             .map(|(name, digest)| (name.as_str(), digest.as_str())),
-    )
+    ))
 }
 
 /// The digest of every manifest, the lock file, and the cargo configuration the build read.
-fn manifests_of(workspace: &Workspace) -> String {
+fn manifests_of(workspace: &Workspace) -> Result<String, SessionError> {
     let root = workspace.snapshot_root();
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     let named: Vec<PathBuf> = workspace
@@ -125,22 +135,34 @@ fn manifests_of(workspace: &Workspace) -> String {
         let Ok(relative) = path.strip_prefix(root) else {
             continue;
         };
-        let Ok(name) = crate::id::normalize_path(&relative.to_string_lossy()) else {
-            continue;
-        };
-        if files.contains_key(&name) {
-            continue;
+        let relative_text = relative
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
+        let name = crate::id::normalize_path(relative_text).map_err(|source| {
+            SessionError::EvidencePathInvalid {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(name) {
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(source) => {
+                    return Err(SessionError::EvidenceReadFailed {
+                        path: path.clone(),
+                        source,
+                    });
+                }
+            };
+            entry.insert(crate::id::digest(&bytes));
         }
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        drop(files.insert(name, crate::id::digest(&bytes)));
     }
-    folded(
+    Ok(folded(
         files
             .iter()
             .map(|(name, digest)| (name.as_str(), digest.as_str())),
-    )
+    ))
 }
 
 /// One digest over a sorted list of names and their own digests.
@@ -197,7 +219,7 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
         last_build,
         &workspace.metadata.packages,
         Some(&workspace.target_dir),
-    );
+    )?;
     if targets.is_empty() {
         return Err(EngineError::from(SessionError::NoTargets {
             packages: options.packages.clone(),
@@ -225,7 +247,7 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
         })
         .collect();
     let skipped = left_out(workspace, &targets, &options.skip_targets)?;
-    targets.retain(|target| !skipped.contains(&target.id));
+    targets = execute::startable(&targets, &skipped);
     let mut details = built;
     for detail in &mut details {
         if skipped.contains(&detail.id) {
@@ -364,8 +386,11 @@ fn attributed(discovery: &discover::Discovery) -> (BTreeMap<u32, String>, BTreeM
         .candidates
         .iter()
         .filter_map(|located| {
-            let id = located.found.candidate.id().ok()?;
-            let mutant = discovery.catalog.by_id(&id)?;
+            let mutant = discovery
+                .catalog
+                .mutants()
+                .iter()
+                .find(|mutant| mutant.candidate == located.found.candidate)?;
             Some((mutant.index, located))
         })
         .collect();
@@ -409,7 +434,8 @@ fn remembering(
     ))
 }
 
-/// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed. The gate a run stands on, and what discovery found on the tree it passed.
+/// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed.
+/// The gate a run stands on, and what discovery found on the tree it passed.
 ///
 /// # Errors
 /// The pristine gate and the failures of discovery.
@@ -421,7 +447,7 @@ fn gated(
 ) -> Result<Gated, EngineError> {
     let pristine_phase = trace.phase("pristine");
     let checked = gate(workspace, options, cancel)?;
-    let closure = closure_of(workspace, &checked);
+    let closure = closure_of(workspace, &checked)?;
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -468,10 +494,22 @@ fn selection_plan(
         &discovery.catalog,
         &sources,
         options.validation_filter.as_ref(),
-    );
+    )?;
     let placements = selected_placements(placements, &eligible);
     phase.end();
     Ok((sources, placements, eligible))
+}
+
+/// Runs validation as one traced phase.
+fn validated(
+    asking: &Establishing<'_>,
+    cancel: &Cancel,
+    trace: &crate::trace::Recorder,
+) -> Result<Instrumented, EngineError> {
+    let phase = trace.phase("validate");
+    let instrumented = establish(asking, cancel, trace)?;
+    phase.end();
+    Ok(instrumented)
 }
 
 /// Discovers, instruments, validates, builds, and verifies.
@@ -486,7 +524,7 @@ pub fn prepare(
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
     let Gated { discovery, closure } = gated(&workspace, options, cancel, &trace)?;
-    let manifests = manifests_of(&workspace);
+    let manifests = manifests_of(&workspace)?;
     let (sources, placements, eligible) = selection_plan(&workspace, &discovery, options, &trace)?;
     let asking = crate::prove::Asking {
         workspace: &workspace,
@@ -497,12 +535,11 @@ pub fn prepare(
     let remembered = remembering(options, &closure, &manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
-    let validate_phase = trace.phase("validate");
     let Instrumented {
         validated,
         last_build,
         narrowing,
-    } = establish(
+    } = validated(
         &Establishing {
             workspace: &workspace,
             discovery: &discovery,
@@ -515,7 +552,6 @@ pub fn prepare(
         cancel,
         &trace,
     )?;
-    validate_phase.end();
 
     let mut workspace = workspace;
     let written_by_a_test = resealed(&mut workspace, &sources)?;
@@ -537,6 +573,7 @@ pub fn prepare(
     phase.end();
     let (packages, items) = attributed(&discovery);
     let verified = narrowed(verified, narrowing);
+    let sources = prepared_sources(sources)?;
     Ok(Session {
         catalog: discovery.catalog,
         files: discovery.files,
@@ -552,17 +589,42 @@ pub fn prepare(
         targets,
         scratch,
         verified,
-        filtered: std::sync::Mutex::new(BTreeMap::new()),
-        established: std::sync::atomic::AtomicU64::new(0),
+        established: std::sync::Mutex::new(super::EstablishmentState {
+            answers: BTreeMap::new(),
+            tests_started: 0,
+        }),
         written_by_a_test,
         closure,
         manifests,
-        executions: std::sync::atomic::AtomicU64::new(0),
+        executions: std::sync::Mutex::new(0),
         mutant_timeout: options.mutant_timeout,
+        mutant_steps: options.mutant_steps,
         harness_args: options.harness_args.clone(),
         scratch_working_directory: options.scratch_working_directory,
         workspace,
     })
+}
+
+/// Turns the mutable-file snapshot into the text a prepared session exposes.
+///
+/// Discovery parses Rust source as UTF-8, but the immutable session boundary checks that fact again instead of allowing every later position lookup to reinterpret an encoding failure as an absent position.
+fn prepared_sources(
+    sources: BTreeMap<String, Vec<u8>>,
+) -> Result<BTreeMap<String, String>, EngineError> {
+    sources
+        .into_iter()
+        .map(|(path, source)| {
+            String::from_utf8(source)
+                .map(|source| (path.clone(), source))
+                .map_err(|invalid| {
+                    SessionError::SelectionSourceNotUtf8 {
+                        path,
+                        source: invalid.utf8_error(),
+                    }
+                    .into()
+                })
+        })
+        .collect()
 }
 
 /// The verification with what the instrumented tree can say about a mutant it never named folded in.
@@ -688,7 +750,8 @@ fn resealed(
         .collect())
 }
 
-/// Reads every mutable file of the snapshot and pairs its candidates with their catalog entries, which is everything instrumentation needs.
+/// Reads every mutable file of the snapshot and pairs its candidates with their catalog entries.
+/// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
 fn plan_tree(
@@ -703,7 +766,7 @@ fn plan_tree(
     let mut sources: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut placements: BTreeMap<String, Vec<Placement>> = BTreeMap::new();
     for file in &discovery.files {
-        if file.candidates == 0 {
+        if file.whole_file.is_some() {
             continue;
         }
         let source =
@@ -725,60 +788,84 @@ fn eligible(
     catalog: &Catalog,
     sources: &BTreeMap<String, Vec<u8>>,
     filter: Option<&crate::run::Filter>,
-) -> BTreeSet<u32> {
+) -> Result<BTreeSet<u32>, EngineError> {
     let Some(filter) = filter.filter(|filter| !filter.is_empty()) else {
-        return catalog
+        return Ok(catalog
             .mutants()
             .iter()
             .map(|mutant| mutant.index)
-            .collect();
+            .collect());
     };
-    catalog
-        .mutants()
-        .iter()
-        .filter(|mutant| {
-            let line = sources
-                .get(&mutant.candidate.path)
-                .and_then(|source| std::str::from_utf8(source).ok())
-                .map_or(0, |text| {
-                    LineIndex::new(text)
-                        .position(text, mutant.candidate.span.start)
-                        .line
-                });
-            filter.selects(mutant, line)
-        })
-        .map(|mutant| mutant.index)
-        .collect()
+    let mut selected = BTreeSet::new();
+    for mutant in catalog.mutants() {
+        let path = &mutant.candidate.path;
+        let source = sources
+            .get(path)
+            .ok_or_else(|| SessionError::SelectionSourceMissing { path: path.clone() })?;
+        let text =
+            std::str::from_utf8(source).map_err(|source| SessionError::SelectionSourceNotUtf8 {
+                path: path.clone(),
+                source,
+            })?;
+        let index =
+            LineIndex::new(text).map_err(|source| SessionError::SelectionPositionInvalid {
+                path: path.clone(),
+                source,
+            })?;
+        let line = index
+            .position(mutant.candidate.span.start)
+            .map_err(|source| SessionError::SelectionPositionInvalid {
+                path: path.clone(),
+                source,
+            })?
+            .line;
+        if filter.selects(mutant, line) {
+            selected.extend([mutant.index]);
+        }
+    }
+    Ok(selected)
 }
 
-/// Keeps only placements validation was asked to decide, without renumbering them: every guard still names its index in the complete catalog.
+/// Keeps only placements validation was asked to decide, without renumbering them.
+/// Empty files remain in the plan so their function and loop boundaries still charge a mutation selected in another file.
 fn selected_placements(
     placements: BTreeMap<String, Vec<Placement>>,
     eligible: &BTreeSet<u32>,
 ) -> BTreeMap<String, Vec<Placement>> {
     placements
         .into_iter()
-        .filter_map(|(path, placements)| {
+        .map(|(path, placements)| {
             let selected: Vec<Placement> = placements
                 .into_iter()
                 .filter(|placement| eligible.contains(&placement.index))
                 .collect();
-            (!selected.is_empty()).then_some((path, selected))
+            (path, selected)
         })
         .collect()
 }
 
 /// How many lines a byte string holds.
-fn lines(bytes: &[u8]) -> u64 {
-    u64::try_from(crate::splice::count_lines(bytes)).unwrap_or(u64::MAX)
+fn lines(bytes: &[u8]) -> Result<u64, ValidateError> {
+    let count = crate::splice::count_lines(bytes);
+    u64::try_from(count).map_err(|_overflow| ValidateError::AttemptFailed {
+        message: format!("source line count {count} does not fit the trace wire"),
+    })
 }
 
 /// How many lines the rewritten body holds, the appended runtime excluded.
-fn body_lines(file: &FileOutput) -> u64 {
+fn body_lines(file: &FileOutput) -> Result<u64, ValidateError> {
     let text = file.text.as_bytes();
-    file.text
-        .rfind("\n#[doc(hidden)]")
-        .map_or_else(|| lines(text), |at| lines(text.get(..=at).unwrap_or(text)))
+    match file.text.rfind("\n#[doc(hidden)]") {
+        Some(at) => {
+            let body = text
+                .get(..=at)
+                .ok_or_else(|| ValidateError::AttemptFailed {
+                    message: format!("runtime boundary {at} is not a source byte boundary"),
+                })?;
+            lines(body)
+        }
+        None => lines(text),
+    }
 }
 
 /// The markers each file carries, by the file the bodies they mark are in.
@@ -798,10 +885,10 @@ fn marked(
         let Some(mutant) = catalog.by_index(*index) else {
             continue;
         };
-        let _placed = by_file
+        by_file
             .entry(mutant.candidate.path.clone())
             .or_default()
-            .insert(marker);
+            .extend([marker]);
     }
     by_file
         .into_iter()
@@ -837,46 +924,88 @@ struct TreeCompiler<'a> {
     marked: BTreeSet<u32>,
 }
 
+impl TreeCompiler<'_> {
+    /// Instruments and writes one planned file, reporting whether its bytes changed since the preceding validation round.
+    fn instrument_one(
+        &mut self,
+        path: &str,
+        kept: &[Placement],
+    ) -> Result<(FileOutput, bool), ValidateError> {
+        let source = self
+            .sources
+            .get(path)
+            .ok_or_else(|| ValidateError::AttemptFailed {
+                message: format!("{path} was never read"),
+            })?;
+        let file = instrument_file(&crate::instrument::Instrumenting {
+            path,
+            source,
+            placements: kept,
+            markers: self.markers.get(path).map_or(&[], Vec::as_slice),
+            comparable: self.comparable,
+            probed: self.probed,
+            catalog_digest: self.catalog.digest(),
+        })?;
+        let guards =
+            u32::try_from(file.guards.len()).map_err(|_overflow| ValidateError::AttemptFailed {
+                message: format!(
+                    "{} guards in {path} do not fit the trace wire",
+                    file.guards.len()
+                ),
+            })?;
+        self.workspace.trace.instrument(InstrumentRecord {
+            path: path.to_owned(),
+            guards,
+            module: file.module.clone(),
+            lines_before: lines(source)?,
+            lines_after: body_lines(&file)?,
+        });
+        let changed = rewrite_needed(self.written.get(path), &file.text);
+        if changed {
+            std::fs::write(self.workspace.snapshot_root().join(path), &file.text).map_err(
+                |error| ValidateError::AttemptFailed {
+                    message: format!("cannot write {path}: {error}"),
+                },
+            )?;
+            if self
+                .written
+                .insert(path.to_owned(), file.text.clone())
+                .as_ref()
+                .is_some_and(|previous| previous == &file.text)
+            {
+                return Err(ValidateError::AttemptFailed {
+                    message: format!("unchanged instrumentation for {path} was rewritten"),
+                });
+            }
+        }
+        Ok((file, changed))
+    }
+}
+
 impl Compile for TreeCompiler<'_> {
     fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
         let mut files: Vec<FileOutput> = Vec::new();
         let mut written: u32 = 0;
-        for (path, placements) in self.placements {
-            let kept: Vec<Placement> = placements
-                .iter()
-                .filter(|placement| !condemned.contains(&placement.index))
-                .cloned()
-                .collect();
-            let source = self
-                .sources
-                .get(path)
-                .ok_or_else(|| ValidateError::AttemptFailed {
-                    message: format!("{path} was never read"),
-                })?;
-            let file = instrument_file(&crate::instrument::Instrumenting {
-                path,
-                source,
-                placements: &kept,
-                markers: self.markers.get(path).map_or(&[], Vec::as_slice),
-                comparable: self.comparable,
-                probed: self.probed,
-                catalog_digest: self.catalog.digest(),
-            })?;
-            self.workspace.trace.instrument(InstrumentRecord {
-                path: path.clone(),
-                guards: u32::try_from(file.guards.len()).unwrap_or(u32::MAX),
-                module: file.module.clone(),
-                lines_before: lines(source),
-                lines_after: body_lines(&file),
-            });
-            if rewrite_needed(self.written.get(path), &file.text) {
-                std::fs::write(self.workspace.snapshot_root().join(path), &file.text).map_err(
-                    |error| ValidateError::AttemptFailed {
-                        message: format!("cannot write {path}: {error}"),
-                    },
-                )?;
-                let _replaced = self.written.insert(path.clone(), file.text.clone());
-                written = written.saturating_add(1);
+        let planned: Vec<(String, Vec<Placement>)> = self
+            .placements
+            .iter()
+            .map(|(path, placements)| {
+                let kept = placements
+                    .iter()
+                    .filter(|placement| !condemned.contains(&placement.index))
+                    .cloned()
+                    .collect();
+                (path.clone(), kept)
+            })
+            .collect();
+        for (path, kept) in planned {
+            let (file, changed) = self.instrument_one(&path, &kept)?;
+            if changed {
+                written = written
+                    .checked_add(1)
+                    .ok_or_else(|| ValidateError::AttemptFailed {
+                        message: "rewritten-file count exceeds the validation wire".to_owned(),
+                    })?;
             }
             files.push(file);
         }

@@ -122,10 +122,12 @@ pub fn copy_tree(from: &Path, to: &Path) {
         }
         let source = entry.path();
         let destination = to.join(&name);
-        if source.is_dir() {
+        let metadata = std::fs::metadata(&source).expect("the source entry's metadata");
+        if metadata.is_dir() {
             copy_tree(&source, &destination);
         } else {
-            let _copied = std::fs::copy(&source, &destination).expect("the file");
+            let copied = std::fs::copy(&source, &destination).expect("the file");
+            assert_eq!(copied, metadata.len(), "the complete file was copied");
         }
     }
 }
@@ -141,7 +143,10 @@ pub fn fingerprint(root: &Path) -> Vec<(String, String)> {
     while let Some(dir) = stack.pop() {
         for entry in sorted(&dir) {
             let path = entry.path();
-            if path.is_dir() {
+            if std::fs::metadata(&path)
+                .expect("the fingerprint entry's metadata")
+                .is_dir()
+            {
                 if entry.file_name() != "target" {
                     stack.push(path);
                 }
@@ -150,8 +155,9 @@ pub fn fingerprint(root: &Path) -> Vec<(String, String)> {
             let bytes = std::fs::read(&path).expect("the file");
             entries.push((
                 path.strip_prefix(root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
+                    .expect("a walked path stays below the fingerprint root")
+                    .to_str()
+                    .expect("fixture paths are UTF-8")
                     .replace('\\', "/"),
                 hex::encode(sha2::Sha256::digest(&bytes)),
             ));
@@ -172,18 +178,13 @@ fn sorted(dir: &Path) -> Vec<std::fs::DirEntry> {
 
 /// `path` resolved, in the one spelling the products hold a directory in.
 ///
-/// Windows answers `canonicalize` with the extended form, `\\?\C:\...`, and the
-/// products put what they resolved back into the plain one: the engine states
-/// the rule in `rust_mutants::canonical`, and the dependency direction
-/// `cargo xtask deps` holds keeps this crate below it rather than above, so the
-/// rule is stated again here for the suites. A fixture that handed a run the
-/// extended spelling would have the run answer in a name no assertion here
-/// writes.
+/// Windows answers `canonicalize` with the extended form, `\\?\C:\...`, and the products put what they resolved back into the plain one: the engine states the rule in `rust_mutants::canonical`, and the dependency direction `cargo xtask deps` holds keeps this crate below it rather than above, so the rule is stated again here for the suites.
+/// A fixture that handed a run the extended spelling would have the run answer in a name no assertion here writes.
 fn canonical(path: &Path) -> PathBuf {
-    let resolved = path.canonicalize().unwrap_or_else(|_error| path.to_owned());
+    let resolved = path.canonicalize().expect("the fixture path exists");
     #[cfg(windows)]
     {
-        let text = resolved.to_string_lossy();
+        let text = resolved.to_str().expect("fixture paths are UTF-8");
         if let Some(rest) = text.strip_prefix(r"\\?\")
             && !rest.starts_with("UNC\\")
             && Path::new(rest).is_absolute()
@@ -256,8 +257,12 @@ fn fate(line: &str) -> Option<Fate> {
         return None;
     }
     let mut at = place.rsplitn(3, ':');
-    let column = at.next()?.parse().ok()?;
-    let line = at.next()?.parse().ok()?;
+    let Ok(column) = at.next()?.parse::<u32>() else {
+        return None;
+    };
+    let Ok(line) = at.next()?.parse::<u32>() else {
+        return None;
+    };
     let path = at.next()?.to_owned();
     Some(Fate {
         path,
@@ -300,11 +305,13 @@ impl std::fmt::Display for Seam {
 /// Every seam fate the `seams` block of `readme` states, in the order it states them.
 #[must_use]
 pub fn seams(readme: &str) -> Vec<Seam> {
-    let Some(after) = readme.split_once(SEAMS_FENCE).map(|(_, rest)| rest) else {
+    let Some(after) = readme.split_once(SEAMS_FENCE).map(|parts| parts.1) else {
         return Vec::new();
     };
-    let (_fence, rest) = after.split_once('\n').unwrap_or((after, ""));
-    let block = rest.split_once("```").map_or(rest, |(block, _)| block);
+    let Some(rest) = after.strip_prefix('\n') else {
+        return Vec::new();
+    };
+    let block = rest.split_once("```").map_or(rest, |parts| parts.0);
     block.lines().filter_map(seam).collect()
 }
 
@@ -317,9 +324,12 @@ fn seam(line: &str) -> Option<Seam> {
         return None;
     }
     let (capability, seq) = place.rsplit_once(':')?;
+    let Ok(seq) = seq.parse::<u64>() else {
+        return None;
+    };
     Some(Seam {
         capability: capability.to_owned(),
-        seq: seq.parse().ok()?,
+        seq,
         rule: rule.to_owned(),
         decision: decision.to_owned(),
         by,
@@ -355,20 +365,18 @@ fn readme_of(name: &str) -> String {
 
 /// The directory of the newest stored run under `reports`, followed from the pointer a run writes.
 ///
-/// Where a project stores its runs is the project's to say, so the caller
-/// names the directory. A kit that guessed it would decide the layout for
-/// every test that uses it.
+/// Where a project stores its runs is the project's to say, so the caller names the directory.
+/// A kit that guessed it would decide the layout for every test that uses it.
 ///
 /// # Panics
-/// When the pointer is not there or does not name a document, which means no
-/// run stored a report under `reports`.
+/// When the pointer is not there or does not name a document, which means no run stored a report under `reports`.
 #[must_use]
 pub fn newest_run(reports: &Path) -> PathBuf {
     let directory = reports.to_path_buf();
     let pointer = directory.join("latest.json");
     let text = std::fs::read_to_string(&pointer)
         .unwrap_or_else(|error| panic!("{}: {error}", pointer.display()));
-    let document: serde_json::Value = serde_json::from_str(&text)
+    let document: serde_json::Value = crate::strictjson::decode_str(&text)
         .unwrap_or_else(|error| panic!("{}: {error}", pointer.display()));
     let named = document
         .get("document")
@@ -389,4 +397,40 @@ pub fn newest_run(reports: &Path) -> PathBuf {
 pub fn stored_report(reports: &Path) -> String {
     let path = newest_run(reports).join("run-report-v1.json");
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+/// Every fixture under `fixtures/`, as a `/`-joined name, in sorted order.
+///
+/// A directory holding a `Cargo.toml` is a fixture, and one holding no `Cargo.toml` is a group of them.
+/// `cargo xtask fixtures` reads the same rule and refuses a group holding anything else, so what a test drives and what the gate checks are the same set.
+///
+/// # Panics
+/// When the fixtures directory cannot be read, which a test cannot continue without.
+#[must_use]
+pub fn names() -> Vec<String> {
+    let root = crate::paths::fixtures_dir();
+    let mut found = Vec::new();
+    for (name, path) in directories(&root) {
+        if std::fs::metadata(path.join("Cargo.toml")).is_ok_and(|entry| entry.is_file()) {
+            found.push(name);
+            continue;
+        }
+        for (inner, _nested) in directories(&path) {
+            found.push(format!("{name}/{inner}"));
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Every subdirectory of `dir`, by name, in sorted order.
+fn directories(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut found: Vec<(String, PathBuf)> = std::fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
+        .map(|entry| entry.expect("a fixtures directory entry"))
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| (crate::paths::owned_utf8(entry.file_name()), entry.path()))
+        .collect();
+    found.sort();
+    found
 }

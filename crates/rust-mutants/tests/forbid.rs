@@ -5,24 +5,15 @@
 
 use rust_mutants::cargo::manifest::read_forbidden;
 use rust_mutants::discover::forbids_guard_noise;
-use rust_mutants::instrument::{ALLOW_ATTRIBUTE, GUARD_NOISE_LINTS};
 
 #[test]
-fn every_lint_the_guards_allow_is_one_the_attribute_names() {
-    for lint in GUARD_NOISE_LINTS {
-        assert!(
-            ALLOW_ATTRIBUTE.contains(lint),
-            "{lint} is not in the attribute the guards carry, so forbidding it would be read \
-             as a reason the run does not have"
-        );
+fn only_the_two_generated_module_lints_and_their_groups_conflict() {
+    for lint in ["warnings", "unused", "dead_code", "unused_qualifications"] {
+        assert!(forbids_guard_noise("pub fn f() {}\n", &[lint.to_owned()]));
     }
-    let named = ALLOW_ATTRIBUTE.matches(',').count().saturating_add(1);
-    assert_eq!(
-        GUARD_NOISE_LINTS.len(),
-        named,
-        "the attribute names a lint this list does not, so a crate could forbid it and every \
-         mutant would be refused with nobody able to say why"
-    );
+    for lint in ["clippy::all", "missing_docs", "unsafe_code"] {
+        assert!(!forbids_guard_noise("pub fn f() {}\n", &[lint.to_owned()]));
+    }
 }
 
 #[test]
@@ -40,12 +31,19 @@ fn forbid_is_read_from_the_crate_root_only_and_only_for_the_lints_guards_fire() 
         "an allow attribute overrides a deny, which is what the guards carry one for"
     );
     assert!(
+        forbids_guard_noise(
+            "#![cfg_attr(any(target_os = \"linux\", target_os = \"macos\"), forbid(dead_code))]\n",
+            &[]
+        ),
+        "a conditional forbid may be active in the build and must fail closed"
+    );
+    assert!(
         !forbids_guard_noise("#![forbid(unsafe_code)]\n", &[]),
-        "a lint the guards never fire is a lint a crate is free to forbid"
+        "a lint the generated module never allows is a lint a crate is free to forbid"
     );
     assert!(
         !forbids_guard_noise("pub mod inner {\n    #![forbid(warnings)]\n}\n", &[]),
-        "an attribute inside an item is about that item, and the crate root is what a run reads"
+        "the generated module is at the file root, outside this inline module"
     );
     assert!(
         !forbids_guard_noise("this is not rust [[[", &[]),

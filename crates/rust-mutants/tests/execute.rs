@@ -3,15 +3,25 @@
 
 //! Execution: one test process per mutant, and what its exit status means.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::execute::{
-    Context, ExecRequest, Lines, Observation, Summary, TargetKind, TestTarget, environment,
-    outcome_of, parse_lines, parse_summary, target_id,
+    Context, ExecRequest, Lines, Observation, StepLimitNotice, Stopped, Summary, TargetKind,
+    TestTarget, environment, outcome_of, parse_lines, parse_summary, target_id,
 };
 use rust_mutants::outcome::Outcome;
-use rust_mutants::runner::EXIT_CODE_UNAVAILABLE;
+use rust_mutants::runner::ProcessExit;
+
+fn exact_os_text(value: &OsStr) -> String {
+    let exact = value.to_str();
+    assert!(exact.is_some(), "test environment values are exact UTF-8");
+    let Some(exact) = exact else {
+        std::process::abort()
+    };
+    exact.to_owned()
+}
 
 #[test]
 fn the_summary_line_is_read_whatever_the_counts_say() {
@@ -64,10 +74,26 @@ fn the_summary_line_is_read_whatever_the_counts_say() {
         ("", None),
     ];
     for (text, expected) in cases {
-        assert_eq!(parse_summary(text.as_bytes()), expected, "{text:?}");
+        let parsed = parse_summary(text.as_bytes());
+        assert_eq!(
+            result_state(&parsed),
+            Returned,
+            "the fixture is exact UTF-8"
+        );
+        let Ok(parsed) = parsed else { return };
+        assert_eq!(parsed, expected, "{text:?}");
     }
     let two = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
-    assert_eq!(parse_summary(two.as_bytes()).expect("a summary").failed, 1);
+    let parsed = parse_summary(two.as_bytes());
+    assert_eq!(
+        result_state(&parsed),
+        Returned,
+        "the fixture is exact UTF-8"
+    );
+    let Ok(parsed) = parsed else { return };
+    assert!(parsed.is_some(), "a summary");
+    let Some(parsed) = parsed else { return };
+    assert_eq!(parsed.failed, 1);
 }
 
 #[test]
@@ -80,7 +106,11 @@ fn a_summary_counts_what_ran() {
         measured: 0,
         filtered_out: 4,
     };
-    assert_eq!(summary.tests_run(), 3, "passed and failed, not ignored");
+    assert_eq!(
+        summary.tests_run(),
+        Some(3),
+        "passed and failed, not ignored"
+    );
     assert!(!summary.ran_nothing());
     let nothing = Summary {
         ok: true,
@@ -98,9 +128,16 @@ fn a_summary_counts_what_ran() {
 
 const fn result(exit_code: i32) -> Observation {
     Observation {
-        unstarted: false,
-        timed_out: false,
-        exit_code,
+        stopped: Stopped::Exited {
+            exit: ProcessExit::Code(exit_code),
+        },
+        stale_catalog: false,
+    }
+}
+
+const fn stopped(stopped: Stopped) -> Observation {
+    Observation {
+        stopped,
         stale_catalog: false,
     }
 }
@@ -116,31 +153,58 @@ const fn green() -> Summary {
     }
 }
 
+fn step_notice() -> StepLimitNotice {
+    StepLimitNotice::specimen()
+}
+
 #[test]
 fn the_exit_status_is_read_in_one_fixed_order() {
-    let mut failed = result(EXIT_CODE_UNAVAILABLE);
-    failed.unstarted = true;
-    assert_eq!(outcome_of(failed, None, true), Outcome::Errored);
-
-    let mut timed_out = result(EXIT_CODE_UNAVAILABLE);
-    timed_out.timed_out = true;
-    assert_eq!(outcome_of(timed_out, None, true), Outcome::TimedOut);
+    assert_eq!(
+        outcome_of(&stopped(Stopped::NotStarted), None, true),
+        Outcome::Errored
+    );
 
     assert_eq!(
-        outcome_of(result(EXIT_CODE_UNAVAILABLE), None, true),
+        outcome_of(&stopped(Stopped::TimedOut), None, true),
+        Outcome::Waited,
+        "a bound expiring establishes that this machine stopped waiting, which is not a \
+         thing the tests did"
+    );
+
+    assert_eq!(
+        outcome_of(
+            &stopped(Stopped::StepLimitReached {
+                notice: step_notice(),
+            }),
+            None,
+            true,
+        ),
+        Outcome::StepLimitReached
+    );
+
+    assert_eq!(
+        outcome_of(
+            &stopped(Stopped::Exited {
+                exit: ProcessExit::Unknown,
+            }),
+            None,
+            true,
+        ),
         Outcome::NotRun
     );
 
     assert_eq!(
-        outcome_of(result(97), Some(green()), true),
-        Outcome::Errored
+        outcome_of(&result(95), Some(green()), true),
+        Outcome::Killed,
+        "a bare status formerly reserved by the runtime is only a nonzero process exit; the \
+         nonce-bound notice, not a colliding number, establishes the step fact"
     );
 
-    assert_eq!(outcome_of(result(101), None, true), Outcome::Killed);
-    assert_eq!(outcome_of(result(1), None, true), Outcome::Killed);
+    assert_eq!(outcome_of(&result(101), None, true), Outcome::Killed);
+    assert_eq!(outcome_of(&result(1), None, true), Outcome::Killed);
 
     assert_eq!(
-        outcome_of(result(0), Some(green()), true),
+        outcome_of(&result(0), Some(green()), true),
         Outcome::Survived
     );
 
@@ -152,9 +216,9 @@ fn the_exit_status_is_read_in_one_fixed_order() {
         measured: 0,
         filtered_out: 3,
     });
-    assert_eq!(outcome_of(result(0), empty, true), Outcome::Inconclusive);
+    assert_eq!(outcome_of(&result(0), empty, true), Outcome::Inconclusive);
 
-    assert_eq!(outcome_of(result(0), None, true), Outcome::Inconclusive);
+    assert_eq!(outcome_of(&result(0), None, true), Outcome::Inconclusive);
 }
 
 #[test]
@@ -175,7 +239,6 @@ fn a_target_is_named_by_package_kind_and_name() {
 
 fn target() -> TestTarget {
     TestTarget::new(
-        "demo/test/cli",
         "demo",
         TargetKind::Test,
         "cli",
@@ -213,15 +276,22 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             sysroot: None,
             active: Some(("abc", "digest")),
             touch: None,
+            steps: None,
             profile: None,
         },
         &target(),
         Some(scratch),
     );
+    assert_eq!(
+        result_state(&env),
+        Returned,
+        "compose the execution environment: {env:?}"
+    );
+    let Ok(env) = env else { return };
     let lookup = |key: &str| -> Option<String> {
         env.iter()
             .find(|(name, _)| name == key)
-            .map(|(_, value)| value.to_string_lossy().into_owned())
+            .map(|(_, value)| exact_os_text(value))
     };
     assert_eq!(lookup("PATH").as_deref(), Some("/usr/bin"));
     assert_eq!(lookup("CARGO_MANIFEST_DIR").as_deref(), Some("/w/demo"));
@@ -240,10 +310,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             "{key} points at the worker's own scratch"
         );
     }
-    let names: Vec<String> = env
-        .iter()
-        .map(|(name, _)| name.to_string_lossy().into_owned())
-        .collect();
+    let names: Vec<String> = env.iter().map(|(name, _)| exact_os_text(name)).collect();
     let mut sorted = names.clone();
     sorted.sort();
     sorted.dedup();
@@ -275,14 +342,21 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             sysroot: None,
             active: None,
             touch: None,
+            steps: None,
             profile: None,
         },
         &target(),
         None,
     );
+    assert_eq!(
+        result_state(&baseline),
+        Returned,
+        "compose the baseline environment: {baseline:?}"
+    );
+    let Ok(baseline) = baseline else { return };
     let names: Vec<String> = baseline
         .iter()
-        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .map(|(name, _)| exact_os_text(name))
         .collect();
     assert!(
         !names.iter().any(|name| name.starts_with("RUST_MUTANTS_")),
@@ -304,11 +378,18 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
                 log,
                 catalog: "digest",
             }),
+            steps: None,
             profile: None,
         },
         &target(),
         None,
     );
+    assert_eq!(
+        result_state(&asked),
+        Returned,
+        "compose the touch environment: {asked:?}"
+    );
+    let Ok(asked) = asked else { return };
     assert!(
         asked
             .iter()
@@ -375,7 +456,6 @@ fn a_request_names_the_arguments_the_binary_receives() {
 #[test]
 fn a_test_process_learns_which_cargo_built_it() {
     let target = TestTarget::new(
-        "core/lib/core",
         "core",
         TargetKind::Lib,
         "core",
@@ -389,11 +469,18 @@ fn a_test_process_learns_which_cargo_built_it() {
             sysroot: None,
             active: None,
             touch: None,
+            steps: None,
             profile: None,
         },
         &target,
         None,
     );
+    assert_eq!(
+        result_state(&composed),
+        Returned,
+        "compose the cargo environment: {composed:?}"
+    );
+    let Ok(composed) = composed else { return };
     let cargo = composed
         .iter()
         .find(|(name, _)| name == "CARGO")
@@ -412,11 +499,18 @@ fn a_test_process_learns_which_cargo_built_it() {
             sysroot: None,
             active: None,
             touch: None,
+            steps: None,
             profile: None,
         },
         &target,
         None,
     );
+    assert_eq!(
+        result_state(&without),
+        Returned,
+        "compose the environment without cargo: {without:?}"
+    );
+    let Ok(without) = without else { return };
     assert!(
         !without.iter().any(|(name, _)| name == "CARGO"),
         "a caller that names no cargo says nothing about it"
@@ -465,14 +559,14 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
         rust_mutants::instrument::STALE_CATALOG_MARKER
     );
     let observed = Observation {
-        unstarted: false,
-        timed_out: false,
-        exit_code: 101,
+        stopped: Stopped::Exited {
+            exit: ProcessExit::Code(101),
+        },
         stale_catalog: said.contains(rust_mutants::instrument::STALE_CATALOG_MARKER),
     };
 
     assert_eq!(
-        outcome_of(observed, None, true),
+        outcome_of(&observed, None, true),
         Outcome::Errored,
         "cargo turns the runtime's own 97 into its 101, which is the code a failing test \
          has: a tree rebuilt behind the run's back would otherwise look exactly like a kill"
@@ -496,17 +590,26 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
             sysroot: None,
             active: Some(("abc", "digest")),
             touch: None,
+            steps: None,
             profile: None,
         },
         &target(),
         Some(scratch),
     );
+    assert_eq!(
+        result_state(&env),
+        Returned,
+        "compose the instrumented environment: {env:?}"
+    );
+    let Ok(env) = env else { return };
     let lookup = |key: &str| -> Option<String> {
         env.iter()
             .find(|(name, _)| name == key)
-            .map(|(_, value)| value.to_string_lossy().into_owned())
+            .map(|(_, value)| exact_os_text(value))
     };
-    let profile = lookup("LLVM_PROFILE_FILE").expect("a path of the run's own");
+    let profile = lookup("LLVM_PROFILE_FILE");
+    assert!(profile.is_some(), "a path of the run's own");
+    let Some(profile) = profile else { return };
     assert_ne!(
         profile, "default_%p.profraw",
         "an inherited path would write over the measurement that started the run"
@@ -533,11 +636,18 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
             sysroot: None,
             active: None,
             touch: None,
+            steps: None,
             profile: Some(mine),
         },
         &target(),
         None,
     );
+    assert_eq!(
+        result_state(&env),
+        Returned,
+        "compose the coverage environment: {env:?}"
+    );
+    let Ok(env) = env else { return };
     let value = env
         .iter()
         .find(|(name, _)| name == "LLVM_PROFILE_FILE")
@@ -548,7 +658,6 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
 #[test]
 fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
     let built = TestTarget::new(
-        "demo/lib/demo",
         "demo",
         TargetKind::Lib,
         "demo",
@@ -569,7 +678,6 @@ fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
     assert_eq!(built.through.len(), 2);
 
     let plain = TestTarget::new(
-        "demo/lib/demo",
         "demo",
         TargetKind::Lib,
         "demo",
@@ -584,28 +692,34 @@ fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
 
 #[test]
 fn the_environment_reproduces_cargos_documented_set() {
-    let package = rust_mutants::cargo::Package {
-        id: "demo 0.1.0".to_owned(),
-        name: "demo".to_owned(),
-        version: "1.2.3-rc.4".to_owned(),
-        manifest_path: PathBuf::from("/w/demo/Cargo.toml"),
-        edition: "2024".to_owned(),
-        targets: Vec::new(),
-        dependencies: Vec::new(),
-        authors: vec!["A Person <a@example.invalid>".to_owned(), "B".to_owned()],
-        description: Some("what it is".to_owned()),
-        homepage: Some("https://example.invalid".to_owned()),
-        repository: Some("https://example.invalid/repo".to_owned()),
-        license: Some("MIT OR Apache-2.0".to_owned()),
-        license_file: Some(PathBuf::from("LICENSE")),
-        rust_version: Some("1.98".to_owned()),
-        readme: Some(PathBuf::from("README.md")),
-    };
+    let package = serde_json::from_value::<rust_mutants::cargo::Package>(serde_json::json!({
+        "id": "demo 0.1.0",
+        "name": "demo",
+        "version": "1.2.3-rc.4",
+        "manifest_path": "/w/demo/Cargo.toml",
+        "edition": "2024",
+        "targets": [],
+        "dependencies": [],
+        "authors": ["A Person <a@example.invalid>", "B"],
+        "description": "what it is",
+        "homepage": "https://example.invalid",
+        "repository": "https://example.invalid/repo",
+        "license": "MIT OR Apache-2.0",
+        "license_file": "LICENSE",
+        "rust_version": "1.98",
+        "readme": "README.md",
+    }));
+    assert_eq!(
+        result_state(&package),
+        Returned,
+        "the package is one: {package:?}"
+    );
+    let Ok(package) = package else { return };
     let env = rust_mutants::execute::package_environment(&package);
     let lookup = |key: &str| -> Option<String> {
         env.iter()
             .find(|(name, _)| name == key)
-            .map(|(_, value)| value.to_string_lossy().into_owned())
+            .map(|(_, value)| exact_os_text(value))
     };
     for (name, value) in [
         ("CARGO_PKG_NAME", "demo"),
@@ -634,28 +748,24 @@ fn the_environment_reproduces_cargos_documented_set() {
 
 #[test]
 fn a_package_that_says_nothing_about_itself_still_sets_what_cargo_sets() {
-    let package = rust_mutants::cargo::Package {
-        id: "demo 0.1.0".to_owned(),
-        name: "demo".to_owned(),
-        version: "0.1.0".to_owned(),
-        manifest_path: PathBuf::from("/w/demo/Cargo.toml"),
-        edition: "2024".to_owned(),
-        targets: Vec::new(),
-        dependencies: Vec::new(),
-        authors: Vec::new(),
-        description: None,
-        homepage: None,
-        repository: None,
-        license: None,
-        license_file: None,
-        rust_version: None,
-        readme: None,
-    };
+    let package = serde_json::from_value::<rust_mutants::cargo::Package>(serde_json::json!({
+        "id": "demo 0.1.0",
+        "name": "demo",
+        "version": "0.1.0",
+        "manifest_path": "/w/demo/Cargo.toml",
+        "edition": "2024",
+        "targets": [],
+        "dependencies": [],
+        "authors": [],
+    }));
+    assert_eq!(
+        result_state(&package),
+        Returned,
+        "the package is one: {package:?}"
+    );
+    let Ok(package) = package else { return };
     let env = rust_mutants::execute::package_environment(&package);
-    let names: Vec<String> = env
-        .iter()
-        .map(|(name, _)| name.to_string_lossy().into_owned())
-        .collect();
+    let names: Vec<String> = env.iter().map(|(name, _)| exact_os_text(name)).collect();
     for name in [
         "CARGO_PKG_DESCRIPTION",
         "CARGO_PKG_LICENSE",
@@ -670,7 +780,7 @@ fn a_package_that_says_nothing_about_itself_still_sets_what_cargo_sets() {
     let lookup = |key: &str| -> Option<String> {
         env.iter()
             .find(|(name, _)| name == key)
-            .map(|(_, value)| value.to_string_lossy().into_owned())
+            .map(|(_, value)| exact_os_text(value))
     };
     assert_eq!(lookup("CARGO_PKG_VERSION_PRE").as_deref(), Some(""));
     assert_eq!(lookup("CARGO_PKG_AUTHORS").as_deref(), Some(""));
@@ -680,10 +790,10 @@ fn a_package_that_says_nothing_about_itself_still_sets_what_cargo_sets() {
 fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed() {
     let ran = |exit_code: i32| {
         outcome_of(
-            Observation {
-                unstarted: false,
-                timed_out: false,
-                exit_code,
+            &Observation {
+                stopped: Stopped::Exited {
+                    exit: ProcessExit::Code(exit_code),
+                },
                 stale_catalog: false,
             },
             None,
@@ -703,10 +813,10 @@ fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed()
 #[test]
 fn a_libtest_target_that_printed_no_summary_is_undecided_rather_than_survived() {
     let silent = outcome_of(
-        Observation {
-            unstarted: false,
-            timed_out: false,
-            exit_code: 0,
+        &Observation {
+            stopped: Stopped::Exited {
+                exit: ProcessExit::Code(0),
+            },
             stale_catalog: false,
         },
         None,
@@ -731,7 +841,16 @@ fn silence_is_decided_by_the_harness() {
         ),
         (Outcome::Survived, true, "a test ran and passed"),
         (Outcome::Killed, true, "a target that failed"),
-        (Outcome::TimedOut, true, "a target that never returned"),
+        (
+            Outcome::StepLimitReached,
+            false,
+            "reaching a finite guard allowance leaves the mutation unanswered",
+        ),
+        (
+            Outcome::Waited,
+            true,
+            "a target this machine stopped waiting for",
+        ),
         (Outcome::Errored, true, "a harness that failed"),
         (Outcome::NotRun, true, "a target nothing reached"),
     ] {
@@ -743,6 +862,8 @@ fn silence_is_decided_by_the_harness() {
 fn parse_lines_names_every_test_and_its_verdict() {
     let output = b"\nrunning 4 tests\ntest tests::adds ... ok\ntest tests::subtracts ... FAILED\ntest tests::skipped ... ignored\ntest tests::explained ... ignored, needs a network\n\nfailures:\n\n---- tests::subtracts stdout ----\nassertion failed\n\nfailures:\n    tests::subtracts\n\ntest result: FAILED. 1 passed; 1 failed; 2 ignored; 0 measured; 0 filtered out\n";
     let lines = parse_lines(output);
+    assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
+    let Ok(lines) = lines else { return };
     assert_eq!(lines.passed, ["tests::adds"]);
     assert_eq!(
         lines.failed,
@@ -756,6 +877,8 @@ fn parse_lines_names_every_test_and_its_verdict() {
 #[test]
 fn a_documented_example_is_named_the_way_rustdoc_names_it() {
     let lines = parse_lines(b"test src/lib.rs - max (line 9) ... ok\n");
+    assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
+    let Ok(lines) = lines else { return };
     assert_eq!(lines.passed, ["src/lib.rs - max (line 9)"]);
 }
 
@@ -764,6 +887,8 @@ fn a_line_that_is_not_a_verdict_is_not_a_test() {
     let lines = parse_lines(
         b"test result: ok. 1 passed; 0 failed\nrunning 1 test\ntesting the water ... ok\n",
     );
+    assert_eq!(result_state(&lines), Returned, "the fixture is exact UTF-8");
+    let Ok(lines) = lines else { return };
     assert_eq!(lines, Lines::default());
 }
 
@@ -774,11 +899,21 @@ proptest::proptest! {
         text in "(test [a-z:_ ]{0,12} \\.\\.\\. (ok|FAILED|ignored)\n|[a-zA-Z:. \n]{0,40}){0,8}"
     ) {
         let lines = parse_lines(text.as_bytes());
-        let counted = lines
-            .passed
-            .len()
-            .saturating_add(lines.failed.len())
-            .saturating_add(lines.ignored.len());
+        proptest::prop_assert_eq!(
+            result_state(&lines),
+            Returned,
+            "the generator emits exact UTF-8: {:?}",
+            lines
+        );
+        let Ok(lines) = lines else { return Ok(()) };
+        let counted = lines.passed.len()
+            .checked_add(lines.failed.len())
+            .and_then(|count| count.checked_add(lines.ignored.len()));
+        proptest::prop_assert!(
+            counted.is_some(),
+            "the generated fixture is bounded to eight lines"
+        );
+        let Some(counted) = counted else { return Ok(()) };
         proptest::prop_assert!(
             counted <= text.lines().count(),
             "{counted} verdicts from {} lines of {text:?}",

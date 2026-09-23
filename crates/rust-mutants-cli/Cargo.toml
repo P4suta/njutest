@@ -3,7 +3,7 @@
 
 [package]
 name = "rust-mutants-cli"
-description = "Command line for the rust-mutants mutation testing engine"
+description = "The rust-mutants mutation testing engine at the command line: rust-mutants and cargo-rust-mutants"
 keywords = ["mutation-testing", "testing", "cargo", "cli"]
 categories = ["development-tools::testing", "command-line-utilities"]
 default-run = "rust-mutants"
@@ -15,6 +15,12 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
+
+[package.metadata.njutest]
+surface = "incidental"
+
+[features]
+testkit = []
 
 [[bin]]
 name = "rust-mutants"
@@ -32,6 +38,7 @@ pkg-fmt = "tgz"
 bin-dir = "njutest-{ version }-{ target }/{ bin }{ binary-ext }"
 
 [dependencies]
+njutest-macros = { workspace = true }
 clap = { workspace = true }
 jiff = { workspace = true }
 ratatui = { workspace = true }
@@ -52,6 +59,7 @@ rust-mutants = { workspace = true, features = ["testkit"] }
 njutest-devkit = { workspace = true }
 rustix = { workspace = true }
 tempfile = { workspace = true }
+rust-mutants-cli = { path = ".", features = ["testkit"] }
 
 [lints]
 workspace = true

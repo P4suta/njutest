@@ -17,7 +17,7 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -37,7 +37,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
 }
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+    njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     ))
     .expect("the report is a document")
@@ -50,7 +50,7 @@ fn a_file_a_build_script_wrote_is_skipped_by_name_and_the_rest_is_measured() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "a file the build wrote is not a reason to end the run: {}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let document = report(&fixture);
     let skips = document["skips"].as_array().expect("the skips");
@@ -79,7 +79,7 @@ fn a_test_process_sees_out_dir_and_the_build_scripts_environment() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let document = report(&fixture);
     assert_eq!(
@@ -96,7 +96,7 @@ fn why_skipped_says_what_a_generated_file_is() {
     let fixture = Fixture::copy("fixture-build-script");
     let output = against(&fixture, &["why-skipped"]);
     assert_eq!(output.status.code(), Some(0));
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(text.contains("generated-outside-workspace"), "{text}");
     assert!(
         text.contains("the next build would write over"),

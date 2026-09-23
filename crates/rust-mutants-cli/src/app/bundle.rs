@@ -19,9 +19,11 @@ use crate::report::run as run_report;
 /// Which run to gather, and where to put it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Gathering<'a> {
-    /// The workspace root. Defaults to the working directory.
+    /// The workspace root.
+    /// Defaults to the working directory.
     pub(super) root: Option<&'a Path>,
-    /// The run, by its identity. The newest when none is named.
+    /// The run, by its identity.
+    /// The newest when none is named.
     pub(super) run: Option<&'a str>,
     /// Where the bundle goes, when it does not go beside the run.
     pub(super) output: Option<&'a Path>,
@@ -30,8 +32,7 @@ pub(super) struct Gathering<'a> {
 /// Gathers everything one run established into one directory.
 ///
 /// # Errors
-/// [`CliError::ReportMissing`] when no stored run answers to what was asked
-/// for, and [`CliError::WriteFailed`] when the bundle cannot be written.
+/// [`CliError::ReportMissing`] when no stored run answers to what was asked for, and [`CliError::WriteFailed`] when the bundle cannot be written.
 pub(super) fn bundle(
     asked: &Gathering<'_>,
     environment: &Environment,
@@ -46,9 +47,7 @@ pub(super) fn bundle(
         .ok_or_else(|| CliError::ReportMissing {
             message: format!("no run report is stored under {}", reports.display()),
         })?;
-    let run_id = directory
-        .file_name()
-        .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+    let run_id = super::stored_spelling(&directory)?;
     let bundle = asked.output.map_or_else(
         || directory.join(crate::diagnostics::DIRECTORY_NAME),
         Path::to_path_buf,
@@ -63,7 +62,7 @@ pub(super) fn bundle(
         },
         environment,
         cancel,
-    ));
+    ))?;
     let toolchain = toolchain_text(&root, environment, cancel);
     let names = crate::diagnostics::environment_names(&environment.vars);
     let parts = gathered(
@@ -75,10 +74,11 @@ pub(super) fn bundle(
             names: &names,
         },
     );
-    let (held, absent) = crate::diagnostics::gather(&bundle, &parts);
+    let (held, absent) = crate::diagnostics::gather(&bundle, &parts)
+        .map_err(|source| CliError::writing(&bundle, source))?;
     let document = crate::diagnostics::manifest(&run_id, &directory, held, absent.clone());
     let manifest = bundle.join(crate::diagnostics::MANIFEST_NAME);
-    std::fs::write(&manifest, json_line(&document))
+    std::fs::write(&manifest, json_line(&document)?)
         .map_err(|source| CliError::writing(&manifest, source))?;
 
     let mut text = format!("{}\n", bundle.display());
@@ -86,7 +86,7 @@ pub(super) fn bundle(
         let written = writeln!(text, "absent\t{name}");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    write(stdout, &text);
+    write(stdout, &text)?;
     Ok(0)
 }
 

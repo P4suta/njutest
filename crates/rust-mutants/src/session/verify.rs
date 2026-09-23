@@ -18,7 +18,23 @@ use crate::catalog::Catalog;
 use crate::execute::{self, Context, ExecRequest, MutantResult, TargetKind, TestTarget};
 use crate::workspace::{SessionError, Workspace};
 
-/// Runs every target once with nothing active. A tree whose instrumented baseline fails is one whose every later result would be about the instrumentation rather than about a mutant.
+fn duration_millis(duration: Duration) -> Result<u64, SessionError> {
+    u64::try_from(duration.as_millis())
+        .map_err(|_outside_range| SessionError::DurationMillisOverflow { duration })
+}
+
+fn trace_count(subject: &'static str, count: usize) -> Result<u32, SessionError> {
+    u32::try_from(count)
+        .map_err(|_outside_range| SessionError::TraceCountTooLarge { subject, count })
+}
+
+fn baseline_count(quantity: BaselineQuantity, count: usize) -> Result<u64, BaselineCacheError> {
+    u64::try_from(count)
+        .map_err(|_outside_range| BaselineCacheError::CountOutsideRange { quantity, count })
+}
+
+/// Runs every target once with nothing active.
+/// A tree whose instrumented baseline fails is one whose every later result would be about the instrumentation rather than about a mutant.
 pub(super) fn verify(
     workspace: &Workspace,
     targets: &mut [TestTarget],
@@ -35,29 +51,33 @@ pub(super) fn verify(
     let remembering = match Remembering::of(targets, scratch, building) {
         Ok(remembering) => remembering,
         Err(why) => {
-            workspace.trace.note(BASELINE_NOT_REMEMBERED, &why);
+            workspace
+                .trace
+                .note(BASELINE_NOT_REMEMBERED, &why.to_string());
             None
         }
     };
     if !building.cancel.is_cancelled()
-        && let Some(recalled) = remembering
-            .as_ref()
-            .and_then(|one| one.read(targets, catalog))
+        && let Some(remembering) = remembering.as_ref()
+        && let Some(recalled) = remembering.read(targets, catalog)?
     {
-        workspace
-            .trace
-            .note(BASELINE_REMEMBERED, "the directly built executables are byte-identical and every other baseline input matches the passing measurement already made");
-        replay(
+        workspace.trace.note(
+            BASELINE_REMEMBERED,
+            "the directly built executables are byte-identical and every other baseline input matches the passing measurement already made",
+        );
+        let replayed = replay(
             &recalled.verified,
             &recalled.tests_run,
             targets,
             &workspace.trace,
         );
         phase.end();
+        replayed?;
         return Ok(recalled.verified);
     }
-    let (verified, tests_run) = verify_targets(targets, scratch, building);
+    let measured = verify_targets(targets, scratch, building);
     phase.end();
+    let (verified, tests_run) = measured?;
     refused(&verified, building.options.failing)?;
     if verified.failing().is_empty()
         && !building.cancel.is_cancelled()
@@ -66,7 +86,9 @@ pub(super) fn verify(
         match workspace.snapshot.redigest() {
             Ok(drift) if drift.is_empty() => {
                 if let Err(why) = remembering.write(&verified, &tests_run, targets) {
-                    workspace.trace.note(BASELINE_NOT_REMEMBERED, &why);
+                    workspace
+                        .trace
+                        .note(BASELINE_NOT_REMEMBERED, &why.to_string());
                 }
             }
             Ok(drift) => workspace.trace.note(
@@ -94,17 +116,24 @@ fn verify_targets(
     targets: &mut [TestTarget],
     scratch: &Path,
     building: &Building<'_>,
-) -> (Verified, BTreeMap<String, Option<u32>>) {
+) -> Result<(Verified, BTreeMap<String, Option<u32>>), EngineError> {
     let mut verified = Verified::default();
     let mut tests_run = BTreeMap::new();
     for target in targets {
-        let (baseline, observed) = verify_target(target, scratch, building, &mut verified.touched);
-        let _old = tests_run.insert(target.id.clone(), observed);
-        let _kept = verified
-            .targets
-            .insert(target.id.clone(), Measured::of(baseline));
+        let (baseline, observed) = verify_target(target, scratch, building, &mut verified.touched)?;
+        if tests_run.insert(target.id.clone(), observed).is_some()
+            || verified
+                .targets
+                .insert(target.id.clone(), Measured::of(baseline))
+                .is_some()
+        {
+            return Err(SessionError::DuplicateBaselineTarget {
+                target: target.id.clone(),
+            }
+            .into());
+        }
     }
-    (verified, tests_run)
+    Ok((verified, tests_run))
 }
 
 fn verify_target(
@@ -112,7 +141,7 @@ fn verify_target(
     scratch: &Path,
     building: &Building<'_>,
     touched: &mut crate::touch::Touched,
-) -> (Baseline, Option<u32>) {
+) -> Result<(Baseline, Option<u32>), EngineError> {
     let recording = (building.asked && recordable(target)).then(|| {
         scratch
             .join("touch")
@@ -140,26 +169,30 @@ fn verify_target(
     }
     building.trace.verify(crate::trace::VerifyRecord {
         target: target.id.clone(),
-        outcome: result.outcome.name().to_owned(),
+        outcome: result.outcome().name().to_owned(),
         tests_run: result.tests_run,
-        duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+        duration_ms: duration_millis(result.duration)?,
         remembered: false,
         retried,
     });
     let baseline = Baseline {
-        outcome: result.outcome,
+        outcome: result.outcome(),
         duration: result.duration,
-        tests: result
-            .tests_run
-            .unwrap_or_else(|| u32::try_from(result.passed_tests.len()).unwrap_or(u32::MAX)),
-        ignored: u32::try_from(result.ignored_tests.len()).unwrap_or(u32::MAX),
+        tests: match result.tests_run {
+            Some(tests) => tests,
+            None => trace_count("passed baseline tests", result.passed_tests.len())?,
+        },
+        ignored: trace_count("ignored baseline tests", result.ignored_tests.len())?,
         output: if matches!(
-            result.outcome,
+            result.outcome(),
             crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
         ) {
             String::new()
         } else {
-            String::from_utf8_lossy(&result.output).into_owned()
+            match std::str::from_utf8(&result.output) {
+                Ok(output) => output.to_owned(),
+                Err(_not_utf8) => crate::telling::LosslessBytes::new(&result.output).to_string(),
+            }
         },
     };
     if target.kind == TargetKind::Doc && result.tests_run == Some(0) {
@@ -180,11 +213,11 @@ fn verify_target(
                 ran: &result.passed_tests,
             },
             building.trace,
-        );
+        )?;
     } else {
         touched.limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
     }
-    (baseline, result.tests_run)
+    Ok((baseline, result.tests_run))
 }
 
 /// The trace note proving why no baseline process follows it.
@@ -200,7 +233,7 @@ fn again(
     (scratch, recording): (&Path, Option<&Path>),
     building: &Building<'_>,
 ) -> Option<MutantResult> {
-    if passing(result.outcome) || building.cancel.is_cancelled() {
+    if passing(result.outcome()) || building.cancel.is_cancelled() {
         return None;
     }
     building.trace.note(
@@ -218,7 +251,8 @@ fn again(
 /// Why a passing baseline could not safely become an answer for another run.
 const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
-/// The recipe of a remembered baseline. The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
+/// The recipe of a remembered baseline.
+/// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
 const BASELINE_ABI: u32 = 1;
 
 /// The on-disk shape of one passing baseline.
@@ -258,71 +292,245 @@ struct Recalled {
     tests_run: BTreeMap<String, Option<u32>>,
 }
 
+#[derive(Clone, Copy)]
+struct RecallPremise<'a> {
+    targets: &'a [TestTarget],
+    catalog: &'a Catalog,
+    path: &'a Path,
+}
+
+/// A baseline-cache count whose exact spelling enters the retained identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaselineQuantity {
+    /// Accepted catalog indices.
+    AcceptedMutants,
+    /// Compared catalog indices.
+    ComparedMutants,
+    /// Body-marker pairs.
+    BodyMarkers,
+    /// Test targets.
+    Targets,
+    /// Command-line arguments.
+    Arguments,
+    /// Environment entries.
+    Environment,
+    /// Values in a length-prefixed key field.
+    KeyValues,
+}
+
+impl std::fmt::Display for BaselineQuantity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::AcceptedMutants => "accepted-mutant count",
+            Self::ComparedMutants => "compared-mutant count",
+            Self::BodyMarkers => "body-marker count",
+            Self::Targets => "target count",
+            Self::Arguments => "argument count",
+            Self::Environment => "environment-entry count",
+            Self::KeyValues => "key field length",
+        })
+    }
+}
+
+/// Why a passing baseline could not be remembered without changing the run's answer.
+#[derive(Debug, thiserror::Error)]
+pub enum BaselineCacheError {
+    /// One cache-key collection length does not fit its canonical prefix.
+    #[error("{quantity} {count} does not fit the baseline-cache identity")]
+    CountOutsideRange {
+        /// The collection being represented.
+        quantity: BaselineQuantity,
+        /// The exact host count.
+        count: usize,
+    },
+    /// A measured duration does not fit the cache document's nanosecond field.
+    #[error("baseline duration {duration:?} does not fit the cache document")]
+    DurationNanosOutsideRange {
+        /// The exact measured duration.
+        duration: Duration,
+    },
+    /// Two rows claimed the same target identity in one closed cache document.
+    #[error("passing baseline cache records target {target:?} more than once")]
+    DuplicateTarget {
+        /// The duplicated target identity.
+        target: String,
+    },
+    /// The exact environment a baseline target would observe could not be derived.
+    #[error("cannot derive the baseline environment for {target}: {source}")]
+    EnvironmentUnavailable {
+        /// The target whose process environment was being bound into the key.
+        target: String,
+        /// The toolchain inspection failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The cache document could not be read.
+    #[error("cannot read passing baseline cache {}: {source}", path.display())]
+    ReadFailed {
+        /// The cache document.
+        path: PathBuf,
+        /// The filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The cache bytes are not this ABI's closed document.
+    #[error("cannot parse passing baseline cache {}: {source}", path.display())]
+    UnreadableDocument {
+        /// The cache document.
+        path: PathBuf,
+        /// The JSON failure.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A parseable cache contradicts the identity or answer it carries.
+    #[error("passing baseline cache {} contradicts itself: {detail}", path.display())]
+    Contradiction {
+        /// The cache document.
+        path: PathBuf,
+        /// The invariant that failed.
+        detail: &'static str,
+    },
+    /// A cached target outcome is not in the engine's closed vocabulary.
+    #[error("passing baseline cache {} records unknown outcome {outcome:?} for {target}", path.display())]
+    UnknownOutcome {
+        /// The cache document.
+        path: PathBuf,
+        /// The target whose row is invalid.
+        target: String,
+        /// The unrecognized spelling.
+        outcome: String,
+    },
+    /// A built artifact could not be read for its exact identity.
+    #[error("cannot read built target {}: {source}", path.display())]
+    ArtifactUnreadable {
+        /// The built artifact.
+        path: PathBuf,
+        /// The filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The operating system reported an impossible read count.
+    #[error(
+        "reading built target {} reported {read} bytes into a {capacity}-byte buffer",
+        path.display()
+    )]
+    InvalidReadCount {
+        /// The built artifact.
+        path: PathBuf,
+        /// The reported byte count.
+        read: usize,
+        /// The supplied buffer capacity.
+        capacity: usize,
+    },
+    /// A target has no passing baseline to persist.
+    #[error("{target} has no passing baseline to remember")]
+    MissingPassingBaseline {
+        /// The target identity.
+        target: String,
+    },
+    /// A target has no observed test count to persist.
+    #[error("{target} has no baseline test count to remember")]
+    MissingTestCount {
+        /// The target identity.
+        target: String,
+    },
+    /// The answer identity could not be encoded.
+    #[error("the passing baseline answer could not be encoded: {source}")]
+    AnswerUnencodable {
+        /// The JSON failure.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The cache document could not be encoded.
+    #[error("the passing baseline document could not be encoded: {source}")]
+    DocumentUnencodable {
+        /// The JSON failure.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The cache document could not be committed atomically.
+    #[error("the passing baseline could not be written at {}: {source}", path.display())]
+    WriteFailed {
+        /// The cache document.
+        path: PathBuf,
+        /// The filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 impl Remembering {
-    /// Names a baseline by every input visible to its processes or to the engine interpreting their answers. The actual executable bytes are checked on read as well: source equality never stands in for program equality.
+    /// Names a baseline by every input visible to its processes or to the engine interpreting their answers.
+    /// The actual executable bytes are checked on read as well: source equality never stands in for program equality.
     fn of(
         targets: &[TestTarget],
         scratch: &Path,
         building: &Building<'_>,
-    ) -> Result<Option<Self>, String> {
+    ) -> Result<Option<Self>, BaselineCacheError> {
         let Some(directory) = building.options.measurements.clone() else {
             return Ok(None);
         };
         let mut key = Key::default();
-        key.text("domain", "rust-mutants-passing-baseline");
-        key.u64("abi", u64::from(BASELINE_ABI));
-        key.text("engine", crate::VERSION);
-        key.text("workspace", building.workspace.workspace_digest());
-        key.text("closure", building.closure);
-        key.text("manifests", building.manifests);
-        key.text("catalog", building.catalog.digest());
+        key.text("domain", "rust-mutants-passing-baseline")?;
+        key.u64("abi", u64::from(BASELINE_ABI))?;
+        key.text("engine", crate::VERSION)?;
+        key.text("workspace", building.workspace.workspace_digest())?;
+        key.text("closure", building.closure)?;
+        key.text("manifests", building.manifests)?;
+        key.text("catalog", building.catalog.digest())?;
         key.text(
             "cargo-version",
             &building.workspace.toolchain.cargo_version().summary,
-        );
+        )?;
         key.text(
             "rustc-version",
             &building.workspace.toolchain.rustc_version().summary,
-        );
-        key.text("host", building.workspace.toolchain.host());
-        key.os("cargo", building.workspace.toolchain.cargo().as_os_str());
-        key.os("rustc", building.workspace.toolchain.rustc().as_os_str());
-        key.boolean("touch", building.asked);
-        key.boolean("doctests", building.options.doctests);
-        key.boolean("locked", building.workspace.locked);
-        key.boolean("offline", building.workspace.offline);
-        key.boolean("debug", building.options.build.debug);
-        key.texts("build", &building.options.build.arguments());
-        key.texts("packages", &building.options.packages);
-        key.texts("skip-targets", &building.options.skip_targets);
+        )?;
+        key.text("host", building.workspace.toolchain.host())?;
+        key.os("cargo", building.workspace.toolchain.cargo().as_os_str())?;
+        key.os("rustc", building.workspace.toolchain.rustc().as_os_str())?;
+        key.boolean("touch", building.asked)?;
+        key.boolean("doctests", building.options.doctests)?;
+        key.boolean("locked", building.workspace.locked)?;
+        key.boolean("offline", building.workspace.offline)?;
+        key.boolean("debug", building.options.build.debug)?;
+        key.texts("build", &building.options.build.arguments())?;
+        key.texts("packages", &building.options.packages)?;
+        key.texts("skip-targets", &building.options.skip_targets)?;
         key.u64(
             "accepted-count",
-            u64::try_from(building.accepted.len()).unwrap_or(u64::MAX),
-        );
+            baseline_count(BaselineQuantity::AcceptedMutants, building.accepted.len())?,
+        )?;
         for index in building.accepted {
-            key.u64("accepted", u64::from(*index));
+            key.u64("accepted", u64::from(*index))?;
         }
         key.u64(
             "compared-count",
-            u64::try_from(building.narrowing.compared.len()).unwrap_or(u64::MAX),
-        );
+            baseline_count(
+                BaselineQuantity::ComparedMutants,
+                building.narrowing.compared.len(),
+            )?,
+        )?;
         for index in &building.narrowing.compared {
-            key.u64("compared", u64::from(*index));
+            key.u64("compared", u64::from(*index))?;
         }
         key.u64(
             "bodies-count",
-            u64::try_from(building.narrowing.bodies.len()).unwrap_or(u64::MAX),
-        );
+            baseline_count(
+                BaselineQuantity::BodyMarkers,
+                building.narrowing.bodies.len(),
+            )?,
+        )?;
         for (index, marker) in &building.narrowing.bodies {
-            key.u64("body", u64::from(*index));
-            key.u64("marker", u64::from(*marker));
+            key.u64("body", u64::from(*index))?;
+            key.u64("marker", u64::from(*marker))?;
         }
         key.u64(
             "target-count",
-            u64::try_from(targets.len()).unwrap_or(u64::MAX),
-        );
+            baseline_count(BaselineQuantity::Targets, targets.len())?,
+        )?;
         for target in targets {
-            target_key(&mut key, target, scratch, building);
+            target_key(&mut key, target, scratch, building)?;
         }
         Ok(Some(Self {
             directory,
@@ -335,12 +543,55 @@ impl Remembering {
         self.directory.join(format!("baseline-{}.json", self.key))
     }
 
-    /// Reads only a whole, passing document for the exact binaries that are about to be run. Any malformed or stale part turns the whole document into a miss.
-    fn read(&self, targets: &[TestTarget], catalog: &Catalog) -> Option<Recalled> {
-        let bytes = std::fs::read(self.path()).ok()?;
-        let remembered: Remembered = serde_json::from_slice(&bytes).ok()?;
+    /// Reads only a whole, passing document for the exact binaries that are about to be run.
+    /// Any malformed or stale part turns the whole document into a miss.
+    fn read(
+        &self,
+        targets: &[TestTarget],
+        catalog: &Catalog,
+    ) -> Result<Option<Recalled>, BaselineCacheError> {
+        let path = self.path();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(BaselineCacheError::ReadFailed { path, source });
+            }
+        };
+        let remembered: Remembered = crate::strictjson::decode_slice(&bytes).map_err(|source| {
+            BaselineCacheError::UnreadableDocument {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        if !self.document_matches(
+            &remembered,
+            RecallPremise {
+                targets,
+                catalog,
+                path: &path,
+            },
+        )? {
+            return Ok(None);
+        }
+        recalled(remembered, &path).map(Some)
+    }
+
+    fn document_matches(
+        &self,
+        remembered: &Remembered,
+        premise: RecallPremise<'_>,
+    ) -> Result<bool, BaselineCacheError> {
+        let RecallPremise {
+            targets,
+            catalog,
+            path,
+        } = premise;
         if remembered.abi != BASELINE_ABI || remembered.key != self.key {
-            return None;
+            return Err(BaselineCacheError::Contradiction {
+                path: path.to_path_buf(),
+                detail: "the ABI or embedded key differs from the key in its file name",
+            });
         }
         let answer = answer_digest(
             &remembered.artifacts,
@@ -348,7 +599,10 @@ impl Remembering {
             &remembered.touched,
         )?;
         if answer != remembered.answer {
-            return None;
+            return Err(BaselineCacheError::Contradiction {
+                path: path.to_path_buf(),
+                detail: "the recorded answer digest does not match its facts",
+            });
         }
         let ids: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();
         if !remembered
@@ -364,43 +618,19 @@ impl Remembering {
             || self.artifacts != remembered.artifacts
             || !valid_touches(&remembered.touched, &ids, catalog)
         {
-            return None;
+            return Ok(false);
         }
-        let mut verified = Verified {
-            touched: remembered.touched,
-            ..Verified::default()
-        };
-        let mut tests_run = BTreeMap::new();
-        verified.touched.narrowing = crate::touch::Narrowing::default();
-        for (target, baseline) in remembered.targets {
-            let outcome = crate::outcome::Outcome::parse(&baseline.outcome)?;
-            let duration = Duration::from_nanos(baseline.duration_nanos);
-            let value = Baseline {
-                outcome,
-                duration,
-                tests: baseline.tests,
-                ignored: baseline.ignored,
-                output: String::new(),
-            };
-            if !value.passed() {
-                return None;
-            }
-            let _old = tests_run.insert(target.clone(), baseline.tests_run);
-            let _old = verified.targets.insert(target, Measured::of(value));
-        }
-        Some(Recalled {
-            verified,
-            tests_run,
-        })
+        Ok(true)
     }
 
-    /// Writes only a passing answer and the byte identity of every executable. A write failure merely makes the next run measure again.
+    /// Writes only a passing answer and the byte identity of every executable.
+    /// A write failure merely makes the next run measure again.
     fn write(
         &self,
         verified: &Verified,
         tests_run: &BTreeMap<String, Option<u32>>,
         targets: &[TestTarget],
-    ) -> Result<(), String> {
+    ) -> Result<(), BaselineCacheError> {
         let mut remembered_targets = BTreeMap::new();
         for target in targets {
             let Some(baseline) = verified
@@ -409,27 +639,38 @@ impl Remembering {
                 .and_then(Measured::judgeable)
                 .map(Passing::baseline)
             else {
-                return Err(format!("{} has no passing baseline to remember", target.id));
+                return Err(BaselineCacheError::MissingPassingBaseline {
+                    target: target.id.clone(),
+                });
             };
             let Some(observed_tests_run) = tests_run.get(&target.id) else {
-                return Err(format!(
-                    "{} has no baseline test count to remember",
-                    target.id
-                ));
+                return Err(BaselineCacheError::MissingTestCount {
+                    target: target.id.clone(),
+                });
             };
-            let _old = remembered_targets.insert(
+            let previous = remembered_targets.insert(
                 target.id.clone(),
                 RememberedBaseline {
                     outcome: baseline.outcome.name().to_owned(),
-                    duration_nanos: u64::try_from(baseline.duration.as_nanos()).unwrap_or(u64::MAX),
+                    duration_nanos: u64::try_from(baseline.duration.as_nanos()).map_err(
+                        |_outside_range| BaselineCacheError::DurationNanosOutsideRange {
+                            duration: baseline.duration,
+                        },
+                    )?,
                     tests: baseline.tests,
                     ignored: baseline.ignored,
                     tests_run: *observed_tests_run,
                 },
             );
+            if previous.is_some() {
+                return Err(BaselineCacheError::DuplicateTarget {
+                    target: target.id.clone(),
+                });
+            }
         }
-        let answer = answer_digest(&self.artifacts, &remembered_targets, &verified.touched)
-            .ok_or_else(|| "the passing baseline could not be encoded".to_owned())?;
+        let answer = serde_json::to_vec(&(&self.artifacts, &remembered_targets, &verified.touched))
+            .map(|bytes| crate::id::digest(&bytes))
+            .map_err(|source| BaselineCacheError::AnswerUnencodable { source })?;
         let document = Remembered {
             abi: BASELINE_ABI,
             key: self.key.clone(),
@@ -439,26 +680,71 @@ impl Remembering {
             touched: verified.touched.clone(),
         };
         let bytes = serde_json::to_vec(&document)
-            .map_err(|error| format!("the passing baseline could not be encoded: {error}"))?;
+            .map_err(|source| BaselineCacheError::DocumentUnencodable { source })?;
         crate::replace::file(&self.path(), &bytes).map_err(|error| {
-            format!(
-                "the passing baseline could not be written at {}: {}",
-                error.path.display(),
-                error.source
-            )
+            BaselineCacheError::WriteFailed {
+                path: error.path,
+                source: error.source,
+            }
         })
     }
 }
 
-/// Integrity of the remembered answer itself. The input key prevents a stale answer being selected; this prevents a parseable partial edit from being mistaken for the whole answer that was written.
+fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCacheError> {
+    let mut verified = Verified {
+        touched: remembered.touched,
+        ..Verified::default()
+    };
+    let mut tests_run = BTreeMap::new();
+    verified.touched.narrowing = crate::touch::Narrowing::default();
+    for (target, baseline) in remembered.targets {
+        let Some(outcome) = crate::outcome::Outcome::parse(&baseline.outcome) else {
+            return Err(BaselineCacheError::UnknownOutcome {
+                path: path.to_path_buf(),
+                target,
+                outcome: baseline.outcome,
+            });
+        };
+        let value = Baseline {
+            outcome,
+            duration: Duration::from_nanos(baseline.duration_nanos),
+            tests: baseline.tests,
+            ignored: baseline.ignored,
+            output: String::new(),
+        };
+        if !value.passed() {
+            return Err(BaselineCacheError::Contradiction {
+                path: path.to_path_buf(),
+                detail: "a remembered baseline is not passing",
+            });
+        }
+        if tests_run
+            .insert(target.clone(), baseline.tests_run)
+            .is_some()
+            || verified
+                .targets
+                .insert(target.clone(), Measured::of(value))
+                .is_some()
+        {
+            return Err(BaselineCacheError::DuplicateTarget { target });
+        }
+    }
+    Ok(Recalled {
+        verified,
+        tests_run,
+    })
+}
+
+/// Integrity of the remembered answer itself.
+/// The input key prevents a stale answer being selected; this prevents a parseable partial edit from being mistaken for the whole answer that was written.
 fn answer_digest(
     artifacts: &BTreeMap<String, String>,
     targets: &BTreeMap<String, RememberedBaseline>,
     touched: &crate::touch::Touched,
-) -> Option<String> {
+) -> Result<String, BaselineCacheError> {
     serde_json::to_vec(&(artifacts, targets, touched))
-        .ok()
         .map(|bytes| crate::id::digest(&bytes))
+        .map_err(|source| BaselineCacheError::AnswerUnencodable { source })
 }
 
 /// Re-emits the same auditable facts a fresh verification emits.
@@ -467,7 +753,7 @@ fn replay(
     tests_run: &BTreeMap<String, Option<u32>>,
     targets: &mut [TestTarget],
     trace: &crate::trace::Recorder,
-) {
+) -> Result<(), EngineError> {
     for target in targets {
         let Some(baseline) = verified.targets.get(&target.id).map(Measured::baseline) else {
             continue;
@@ -475,21 +761,30 @@ fn replay(
         trace.verify(crate::trace::VerifyRecord {
             target: target.id.clone(),
             outcome: baseline.outcome.name().to_owned(),
-            tests_run: tests_run.get(&target.id).copied().flatten(),
-            duration_ms: u64::try_from(baseline.duration.as_millis()).unwrap_or(u64::MAX),
+            tests_run: tests_run
+                .get(&target.id)
+                .copied()
+                .and_then(std::convert::identity),
+            duration_ms: duration_millis(baseline.duration)?,
             remembered: true,
             retried: false,
         });
-        if target.kind == TargetKind::Doc && tests_run.get(&target.id).copied().flatten() == Some(0)
+        if target.kind == TargetKind::Doc
+            && tests_run
+                .get(&target.id)
+                .copied()
+                .and_then(std::convert::identity)
+                == Some(0)
         {
             target
                 .limitations
                 .push(crate::limitation::DOCTESTS_NONE.to_owned());
         }
         if let Some(touched) = verified.touched.targets.get(&target.id) {
-            trace_touch(&target.id, touched, trace);
+            trace_touch(&target.id, touched, trace)?;
         }
     }
+    Ok(())
 }
 
 /// The aggregate record [`gather`] emits for one target, reconstructed from a remembered log without pretending that the log was run again.
@@ -497,36 +792,43 @@ fn trace_touch(
     target: &str,
     gathered: &crate::touch::TargetTouches,
     trace: &crate::trace::Recorder,
-) {
+) -> Result<(), SessionError> {
     trace.touch(crate::trace::TouchRecord {
         target: target.to_owned(),
-        tests: counted(gathered.reached.tests.len()),
-        sites: counted(
+        tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,
+        sites: trace_count(
+            "recorded baseline sites",
             gathered
                 .reached
                 .tests
                 .values()
-                .flatten()
+                .flat_map(|indices| indices.iter())
                 .chain(gathered.reached.loose.iter())
                 .collect::<BTreeSet<&u32>>()
                 .len(),
-        ),
-        loose: counted(gathered.reached.loose.len()),
-        infected: counted(
+        )?,
+        loose: trace_count(
+            "loosely attributed baseline sites",
+            gathered.reached.loose.len(),
+        )?,
+        infected: trace_count(
+            "infected baseline sites",
             gathered
                 .infected
                 .tests
                 .values()
-                .flatten()
+                .flat_map(|indices| indices.iter())
                 .chain(gathered.infected.loose.iter())
                 .collect::<BTreeSet<&u32>>()
                 .len(),
-        ),
+        )?,
     });
+    Ok(())
 }
 
-/// The actual programs built now, keyed by target. Repeated paths (notably Cargo for doctest targets) are hashed once.
-fn artifacts(targets: &[TestTarget]) -> Result<BTreeMap<String, String>, String> {
+/// The actual programs built now, keyed by target.
+/// Repeated paths (notably Cargo for doctest targets) are hashed once.
+fn artifacts(targets: &[TestTarget]) -> Result<BTreeMap<String, String>, BaselineCacheError> {
     let mut files: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut found = BTreeMap::new();
     for target in targets {
@@ -534,30 +836,52 @@ fn artifacts(targets: &[TestTarget]) -> Result<BTreeMap<String, String>, String>
             digest.clone()
         } else {
             let digest = file_digest(&target.executable)?;
-            let _old = files.insert(target.executable.clone(), digest.clone());
+            if files
+                .insert(target.executable.clone(), digest.clone())
+                .is_some()
+            {
+                return Err(BaselineCacheError::DuplicateTarget {
+                    target: target.id.clone(),
+                });
+            }
             digest
         };
-        let _old = found.insert(target.id.clone(), digest);
+        if found.insert(target.id.clone(), digest).is_some() {
+            return Err(BaselineCacheError::DuplicateTarget {
+                target: target.id.clone(),
+            });
+        }
     }
     Ok(found)
 }
 
-fn file_digest(path: &Path) -> Result<String, String> {
-    let file = std::fs::File::open(path)
-        .map_err(|error| format!("cannot read built target {}: {error}", path.display()))?;
+fn file_digest(path: &Path) -> Result<String, BaselineCacheError> {
+    let file =
+        std::fs::File::open(path).map_err(|source| BaselineCacheError::ArtifactUnreadable {
+            path: path.to_path_buf(),
+            source,
+        })?;
     let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
     let mut buffer = vec![0_u8; 256 * 1024];
     let mut hasher = Sha256::new();
     loop {
-        let read = reader
-            .read(&mut buffer)
-            .map_err(|error| format!("cannot read built target {}: {error}", path.display()))?;
+        let read =
+            reader
+                .read(&mut buffer)
+                .map_err(|source| BaselineCacheError::ArtifactUnreadable {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
         if read == 0 {
             break;
         }
-        let Some(bytes) = buffer.get(..read) else {
-            return Err(format!("cannot read built target {} whole", path.display()));
-        };
+        let bytes = buffer
+            .get(..read)
+            .ok_or_else(|| BaselineCacheError::InvalidReadCount {
+                path: path.to_path_buf(),
+                read,
+                capacity: buffer.len(),
+            })?;
         hasher.update(bytes);
     }
     Ok(hex::encode(hasher.finalize()))
@@ -597,7 +921,12 @@ fn valid_touches(
     }
     let valid = |index: &u32| catalog.by_index(*index).is_some();
     let seen = |seen: &crate::touch::Seen| {
-        seen.loose.iter().all(valid) && seen.tests.values().flatten().all(valid)
+        seen.loose.iter().all(valid)
+            && seen
+                .tests
+                .values()
+                .flat_map(|indices| indices.iter())
+                .all(valid)
     };
     touched.targets.values().all(|target| {
         let ran: BTreeSet<&str> = target.ran.iter().map(String::as_str).collect();
@@ -624,53 +953,60 @@ fn valid_touches(
 struct Key(Vec<u8>);
 
 impl Key {
-    fn bytes(&mut self, name: &str, value: &[u8]) {
-        self.raw(name.as_bytes());
-        self.raw(value);
+    fn bytes(&mut self, name: &str, value: &[u8]) -> Result<(), BaselineCacheError> {
+        self.raw(name.as_bytes())?;
+        self.raw(value)
     }
 
-    fn raw(&mut self, value: &[u8]) {
-        self.0
-            .extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    fn raw(&mut self, value: &[u8]) -> Result<(), BaselineCacheError> {
+        let length = baseline_count(BaselineQuantity::KeyValues, value.len())?;
+        self.0.extend_from_slice(&length.to_be_bytes());
         self.0.extend_from_slice(value);
+        Ok(())
     }
 
-    fn text(&mut self, name: &str, value: &str) {
-        self.bytes(name, value.as_bytes());
+    fn text(&mut self, name: &str, value: &str) -> Result<(), BaselineCacheError> {
+        self.bytes(name, value.as_bytes())
     }
 
-    fn os(&mut self, name: &str, value: &OsStr) {
-        self.bytes(name, &os_bytes(value));
+    fn os(&mut self, name: &str, value: &OsStr) -> Result<(), BaselineCacheError> {
+        self.bytes(name, &os_bytes(value))
     }
 
-    fn u64(&mut self, name: &str, value: u64) {
-        self.bytes(name, &value.to_be_bytes());
+    fn u64(&mut self, name: &str, value: u64) -> Result<(), BaselineCacheError> {
+        self.bytes(name, &value.to_be_bytes())
     }
 
-    fn boolean(&mut self, name: &str, value: bool) {
-        self.bytes(name, &[u8::from(value)]);
+    fn boolean(&mut self, name: &str, value: bool) -> Result<(), BaselineCacheError> {
+        self.bytes(name, &[u8::from(value)])
     }
 
-    fn texts(&mut self, name: &str, values: &[String]) {
+    fn texts(&mut self, name: &str, values: &[String]) -> Result<(), BaselineCacheError> {
         self.u64(
             &format!("{name}-count"),
-            u64::try_from(values.len()).unwrap_or(u64::MAX),
-        );
+            baseline_count(BaselineQuantity::KeyValues, values.len())?,
+        )?;
         for value in values {
-            self.text(name, value);
+            self.text(name, value)?;
         }
+        Ok(())
     }
 }
 
 /// Everything the baseline process actually observes for one target.
-fn target_key(key: &mut Key, target: &TestTarget, scratch: &Path, building: &Building<'_>) {
-    key.text("target-id", &target.id);
-    key.text("target-package", &target.package);
-    key.text("target-kind", target.kind.name());
-    key.text("target-name", &target.name);
-    key.boolean("target-harness", target.harness);
-    key.texts("target-limitations", &target.limitations);
-    key.os("target-cwd", target.cwd.as_os_str());
+fn target_key(
+    key: &mut Key,
+    target: &TestTarget,
+    scratch: &Path,
+    building: &Building<'_>,
+) -> Result<(), BaselineCacheError> {
+    key.text("target-id", &target.id)?;
+    key.text("target-package", &target.package)?;
+    key.text("target-kind", target.kind.name())?;
+    key.text("target-name", &target.name)?;
+    key.boolean("target-harness", target.harness)?;
+    key.texts("target-limitations", &target.limitations)?;
+    key.os("target-cwd", target.cwd.as_os_str())?;
     let recording = (building.asked && recordable(target)).then(|| {
         scratch
             .join("touch")
@@ -685,6 +1021,7 @@ fn target_key(key: &mut Key, target: &TestTarget, scratch: &Path, building: &Bui
             log,
             catalog: building.catalog.digest(),
         }),
+        steps: None,
         profile: None,
     };
     let request = ExecRequest::new(target)
@@ -692,19 +1029,28 @@ fn target_key(key: &mut Key, target: &TestTarget, scratch: &Path, building: &Bui
         .with_scratch(scratch)
         .in_scratch(building.options.scratch_working_directory);
     let argv = request.argv();
-    key.u64("argv-count", u64::try_from(argv.len()).unwrap_or(u64::MAX));
+    key.u64(
+        "argv-count",
+        baseline_count(BaselineQuantity::Arguments, argv.len())?,
+    )?;
     for argument in argv {
-        key.os("argv", &argument);
+        key.os("argv", &argument)?;
     }
-    let environment = execute::environment(&context, target, Some(scratch));
+    let environment = execute::environment(&context, target, Some(scratch)).map_err(|source| {
+        BaselineCacheError::EnvironmentUnavailable {
+            target: target.id.clone(),
+            source,
+        }
+    })?;
     key.u64(
         "environment-count",
-        u64::try_from(environment.len()).unwrap_or(u64::MAX),
-    );
+        baseline_count(BaselineQuantity::Environment, environment.len())?,
+    )?;
     for (name, value) in environment {
-        key.os("environment-name", &name);
-        key.os("environment-value", &value);
+        key.os("environment-name", &name)?;
+        key.os("environment-value", &value)?;
     }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -721,7 +1067,7 @@ fn os_bytes(value: &OsStr) -> Vec<u8> {
 
 #[cfg(not(any(unix, windows)))]
 fn os_bytes(value: &OsStr) -> Vec<u8> {
-    value.to_string_lossy().as_bytes().to_vec()
+    value.as_encoded_bytes().to_vec()
 }
 
 /// Refuses a tree whose instrumented baseline does not pass, once every target has been asked.
@@ -775,7 +1121,15 @@ fn ran(
         ..
     } = *building;
     if let Some(path) = log {
-        drop(std::fs::remove_file(path));
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                let message = format!("could not clear touch log {}: {error}", path.display());
+                workspace.trace.note(crate::touch::UNRECORDED, &message);
+                return MutantResult::apparatus_error(&target.id, message);
+            }
+        }
     }
     let context = Context {
         base_env: &workspace.base_env,
@@ -786,6 +1140,7 @@ fn ran(
             log,
             catalog: catalog.digest(),
         }),
+        steps: None,
         profile: None,
     };
     let request = ExecRequest::new(target)
@@ -839,15 +1194,10 @@ pub struct Verified {
 
 /// What one target's baseline came to, in the two cases that mean different things.
 ///
-/// The distinction used to be a method somebody had to remember to call. A
-/// target whose own tests do not pass answers every mutation with the same
-/// failure, so a run that judged against one would report a kill for every
-/// mutation it put to it and not one of those kills would be about a mutation.
-/// Taking a baseline out of here now makes the caller say which case they are
-/// in, and only one of the two hands back something a mutation can be judged
-/// against.
+/// The distinction used to be a method somebody had to remember to call.
+/// A target whose own tests do not pass answers every mutation with the same failure, so a run that judged against one would report a kill for every mutation it put to it and not one of those kills would be about a mutation.
+/// Taking a baseline out of here now makes the caller say which case they are in, and only one of the two hands back something a mutation can be judged against.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Measured {
     /// A baseline a mutation may be put to.
     Passing(Passing),
@@ -887,8 +1237,7 @@ impl Measured {
 
 /// A baseline that passed, which is the only kind a mutation may be judged against.
 ///
-/// There is no way to make one from a baseline that did not, so a function
-/// that takes this has been given the check rather than asked to remember it.
+/// There is no way to make one from a baseline that did not, so a function that takes this has been given the check rather than asked to remember it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Passing(Baseline);
 
@@ -913,9 +1262,8 @@ impl Verified {
 
     /// The baseline a mutation may be judged against for `target`, and nothing where there is none.
     ///
-    /// The only way to a baseline a result may rest on. Everything else hands
-    /// back what the target came to for an account of it, which is a different
-    /// question and reads differently at the call site.
+    /// The only way to a baseline a result may rest on.
+    /// Everything else hands back what the target came to for an account of it, which is a different question and reads differently at the call site.
     #[must_use]
     pub fn judgeable(&self, target: &str) -> Option<&Passing> {
         self.targets.get(target).and_then(Measured::judgeable)
@@ -944,10 +1292,10 @@ fn gather(
     touched: &mut crate::touch::Touched,
     recording: &Recording<'_>,
     trace: &crate::trace::Recorder,
-) {
+) -> Result<(), SessionError> {
     let Some(log) = recording.log else {
         touched.limited(crate::touch::UNRECORDED, recording.target);
-        return;
+        return Ok(());
     };
     let unreadable = |touched: &mut crate::touch::Touched, why: &dyn std::fmt::Display| {
         trace.note(
@@ -960,15 +1308,18 @@ fn gather(
         Ok(text) => text,
         Err(error) => {
             unreadable(touched, &error);
-            return;
+            return Ok(());
         }
     };
-    let count = u32::try_from(recording.catalog.mutants().len()).unwrap_or(u32::MAX);
+    let count = trace_count(
+        "catalog mutants in a touch record",
+        recording.catalog.mutants().len(),
+    )?;
     let recorded = match crate::touch::read(&text, recording.catalog.digest(), count) {
         Ok(recorded) => recorded,
         Err(error) => {
             unreadable(touched, &error);
-            return;
+            return Ok(());
         }
     };
     let gathered = crate::touch::TargetTouches {
@@ -979,39 +1330,44 @@ fn gather(
     };
     trace.touch(crate::trace::TouchRecord {
         target: recording.target.to_owned(),
-        tests: counted(gathered.reached.tests.len()),
-        sites: counted(
+        tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,
+        sites: trace_count(
+            "recorded baseline sites",
             gathered
                 .reached
                 .tests
                 .values()
-                .flatten()
+                .flat_map(|indices| indices.iter())
                 .chain(gathered.reached.loose.iter())
                 .collect::<BTreeSet<&u32>>()
                 .len(),
-        ),
-        loose: counted(gathered.reached.loose.len()),
-        infected: counted(
+        )?,
+        loose: trace_count(
+            "loosely attributed baseline sites",
+            gathered.reached.loose.len(),
+        )?,
+        infected: trace_count(
+            "infected baseline sites",
             gathered
                 .infected
                 .tests
                 .values()
-                .flatten()
+                .flat_map(|indices| indices.iter())
                 .chain(gathered.infected.loose.iter())
                 .collect::<BTreeSet<&u32>>()
                 .len(),
-        ),
+        )?,
     });
-    drop(
-        touched
-            .targets
-            .insert(recording.target.to_owned(), gathered),
-    );
-}
-
-/// A count as the wire carries it.
-fn counted(many: usize) -> u32 {
-    u32::try_from(many).unwrap_or(u32::MAX)
+    if touched
+        .targets
+        .insert(recording.target.to_owned(), gathered)
+        .is_some()
+    {
+        return Err(SessionError::DuplicateBaselineTarget {
+            target: recording.target.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// What each test of the target reached, with everything else folded into `loose`.
@@ -1022,7 +1378,7 @@ fn attributed(recorded: crate::touch::Seen, ran: &[String]) -> crate::touch::See
     };
     for (thread, reported) in recorded.tests {
         if ran.iter().any(|test| test == &thread) {
-            drop(held.tests.insert(thread, reported));
+            held.tests.extend([(thread, reported)]);
         } else {
             held.loose.extend(reported);
         }
@@ -1043,5 +1399,5 @@ fn slug(target: &str) -> String {
         })
         .collect();
     let digest = crate::id::digest(target.as_bytes());
-    format!("{readable}-{}", digest.get(..16).unwrap_or(&digest))
+    format!("{readable}-{digest}")
 }

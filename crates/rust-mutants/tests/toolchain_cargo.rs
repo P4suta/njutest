@@ -42,14 +42,20 @@ fn scratch_target(name: &str) -> tempfile::TempDir {
 fn under(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .expect("under the root")
-        .to_string_lossy()
+        .to_str()
+        .expect("fixture paths are exact UTF-8")
         .replace('\\', "/")
 }
 
 #[test]
 fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_path() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let missing = resolve_executable(Path::new("/definitely/not/cargo"), None).unwrap_err();
+    let missing = resolve_executable(Path::new("/definitely/not/cargo"), None);
+    assert!(
+        missing.is_err(),
+        "the absent absolute path is refused: {missing:?}"
+    );
+    let Err(missing) = missing else { return };
     assert_eq!(missing.kind(), CargoErrorKind::ToolchainNotFound);
     assert!(missing.to_string().contains("RM1012"), "{missing}");
 
@@ -65,10 +71,21 @@ fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_pa
         resolve_executable(Path::new("cargo"), Some(search.as_os_str())).expect("found"),
         fake
     );
-    let none =
-        resolve_executable(Path::new("cargo"), Some(OsString::from("").as_os_str())).unwrap_err();
+    let none = resolve_executable(Path::new("cargo"), Some(OsString::from("").as_os_str()));
+    assert!(
+        none.is_err(),
+        "an empty search path finds no cargo: {none:?}"
+    );
+    let Err(none) = none else { return };
     assert_eq!(none.kind(), CargoErrorKind::ToolchainNotFound);
-    let bare_without_path = resolve_executable(Path::new("no-such-tool-xyz"), None).unwrap_err();
+    let bare_without_path = resolve_executable(Path::new("no-such-tool-xyz"), None);
+    assert!(
+        bare_without_path.is_err(),
+        "a missing bare tool is refused: {bare_without_path:?}"
+    );
+    let Err(bare_without_path) = bare_without_path else {
+        return;
+    };
     assert_eq!(bare_without_path.kind(), CargoErrorKind::ToolchainNotFound);
 }
 #[test]
@@ -146,8 +163,9 @@ fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
             trace: &trace,
         },
         options,
-    )
-    .unwrap_err();
+    );
+    assert!(error.is_err(), "a non-workspace has no metadata: {error:?}");
+    let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::CommandFailed);
     assert!(error.to_string().contains("RM1014"), "{error}");
     assert!(
@@ -175,7 +193,11 @@ fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     spec.argv.push(target.path().into());
     spec.structured_stdout = Some(64 << 20);
     let result = run(&spec, &Cancel::new());
-    assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
+    );
     let messages = parse_messages(&result.stdout).expect("messages");
     let units = units_of(&messages, &dir).expect("units");
     let mut described: Vec<(String, Vec<String>, bool, Vec<String>)> = units
@@ -214,7 +236,10 @@ fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
         ]
     );
     for unit in &units {
-        assert!(unit.sources.iter().all(|p| p.is_absolute() && p.is_file()));
+        assert!(unit.sources.iter().all(|path| {
+            path.is_absolute()
+                && matches!(std::fs::metadata(path), Ok(metadata) if metadata.is_file())
+        }));
     }
 }
 #[test]
@@ -237,7 +262,11 @@ fn units_of_a_nested_member_resolve_against_the_workspace_root() {
     spec.argv.push(target.path().into());
     spec.structured_stdout = Some(64 << 20);
     let result = run(&spec, &Cancel::new());
-    assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
+    );
     let units = units_of(&parse_messages(&result.stdout).expect("messages"), &dir).expect("units");
     let core: BTreeSet<String> = units
         .iter()
@@ -280,7 +309,7 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
     spec.argv.push(target.path().into());
     spec.structured_stdout = Some(64 << 20);
     let result = run(&spec, &Cancel::new());
-    assert!(!result.ok());
+    assert!(!result.succeeded());
     let messages = parse_messages(&result.stdout).expect("messages");
     let errors: Vec<&Diagnostic> = messages
         .iter()

@@ -3,7 +3,20 @@
 
 //! The audit's own re-derivation of what a seam recording licenses.
 
+use njutest_devkit::result::{ResultState, result_state};
 use xtask::wire::{Exchange, identity, licensed, read};
+
+fn returned<T: std::fmt::Debug, E: std::fmt::Debug>(result: Result<T, E>) -> Option<T> {
+    assert_eq!(
+        result_state(&result),
+        ResultState::Returned,
+        "the closed fixture was refused: {result:?}"
+    );
+    match result {
+        Ok(value) => Some(value),
+        Err(_already_reported) => None,
+    }
+}
 
 /// One `GET /orders` that was answered 200 on the `api` seam.
 fn exchange() -> Exchange {
@@ -17,11 +30,22 @@ fn exchange() -> Exchange {
     }
 }
 
+fn event(payload: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "seq": 1,
+        "timestamp": "2026-09-20T00:00:00Z",
+        "elapsed_ms": 0,
+        "payload": payload
+    })
+}
+
 #[test]
 fn the_identity_of_a_question_is_the_one_the_recipe_states_and_not_this_implementation() {
+    let Some(identity) = returned(identity(&exchange(), "status-server-error")) else {
+        return;
+    };
     assert_eq!(
-        identity(&exchange(), "status-server-error"),
-        "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed",
+        identity, "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed",
         "a fault identity is minted from the exchange and the rule alone, by a recipe \
          two implementations follow separately. Pinning it here is what makes the \
          runner and this audit agreeing mean something: if only one of them changed, \
@@ -38,7 +62,10 @@ fn an_exchange_nobody_read_licenses_only_the_questions_that_need_no_reading() {
         status: None,
         ..exchange()
     };
-    let rules: Vec<String> = licensed(&raw).into_iter().map(|(_, rule)| rule).collect();
+    let Some(licensed) = returned(licensed(&raw)) else {
+        return;
+    };
+    let rules: Vec<String> = licensed.into_iter().map(|(_, rule)| rule).collect();
     assert_eq!(
         rules,
         vec![
@@ -55,8 +82,11 @@ fn an_exchange_nobody_read_licenses_only_the_questions_that_need_no_reading() {
 
 #[test]
 fn an_exchange_the_run_read_licenses_the_questions_about_what_it_said_as_well() {
+    let Some(licensed) = returned(licensed(&exchange())) else {
+        return;
+    };
     assert_eq!(
-        licensed(&exchange()).len(),
+        licensed.len(),
         6,
         "four that need no reading and two about the status it answered"
     );
@@ -64,13 +94,17 @@ fn an_exchange_the_run_read_licenses_the_questions_about_what_it_said_as_well() 
 
 #[test]
 fn a_recording_of_something_else_entirely_holds_no_seam_and_says_so_by_being_empty() {
-    let watched = read(&serde_json::json!({"type": "note"}).to_string());
+    let Some(watched) = returned(read(
+        &event(&serde_json::json!({"type": "note"})).to_string(),
+    )) else {
+        return;
+    };
     assert!(watched.exchanges.is_empty() && watched.execs.is_empty());
 }
 
 #[test]
 fn what_the_recording_says_went_past_a_seam_is_read_back_field_for_field() {
-    let line = serde_json::json!({
+    let line = event(&serde_json::json!({
         "type": "wire-exchange",
         "exchange": {
             "capability": "api",
@@ -80,16 +114,19 @@ fn what_the_recording_says_went_past_a_seam_is_read_back_field_for_field() {
             "path": "/orders",
             "status": 200
         }
-    });
-    assert_eq!(read(&line.to_string()).exchanges, vec![exchange()]);
+    }));
+    let Some(watched) = returned(read(&line.to_string())) else {
+        return;
+    };
+    assert_eq!(watched.exchanges, vec![exchange()]);
 }
 
 #[test]
 fn the_first_exchange_on_a_seam_licenses_no_question_about_what_came_before_it() {
-    let rules: Vec<String> = licensed(&exchange())
-        .into_iter()
-        .map(|(_, rule)| rule)
-        .collect();
+    let Some(first_questions) = returned(licensed(&exchange())) else {
+        return;
+    };
+    let rules: Vec<String> = first_questions.into_iter().map(|(_, rule)| rule).collect();
     assert!(
         !rules.contains(&"stale-response".to_owned()),
         "answering with what the one before it got needs one to have come before, \
@@ -99,7 +136,10 @@ fn the_first_exchange_on_a_seam_licenses_no_question_about_what_came_before_it()
         seq: 1,
         ..exchange()
     };
-    let rules: Vec<String> = licensed(&later).into_iter().map(|(_, rule)| rule).collect();
+    let Some(later_questions) = returned(licensed(&later)) else {
+        return;
+    };
+    let rules: Vec<String> = later_questions.into_iter().map(|(_, rule)| rule).collect();
     assert!(
         rules.contains(&"stale-response".to_owned()),
         "and the second does: {rules:?}"

@@ -161,9 +161,9 @@ fn prepare(fixture: &str) -> Tree {
     spec.structured_stdout = Some(64 << 20);
     let built = run(&spec, &cancel);
     assert!(
-        built.ok(),
+        built.succeeded(),
         "the instrumented tree builds: {}",
-        String::from_utf8_lossy(&built.output)
+        std::str::from_utf8(&built.output).expect("the fixture writes exact UTF-8")
     );
     let binaries = rust_mutants::cargo::parse_messages(&built.stdout)
         .expect("messages")
@@ -197,7 +197,7 @@ impl Tree {
             })
             .collect();
         assert_eq!(matching.len(), 1, "{rule} over {original}: {matching:?}");
-        matching[0].id.clone()
+        matching[0].id.to_string()
     }
 
     /// Runs one test binary with the given activation.
@@ -236,36 +236,50 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
     for binary in tree.binaries.keys() {
         let result = tree.exec(binary, None, None);
         assert!(
-            result.ok(),
+            result.succeeded(),
             "{binary} passes with no mutant active: {}",
-            String::from_utf8_lossy(&result.output)
+            std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
         );
     }
 
     let killed = tree.mutant("return-default", "if a > b { a } else { b }");
     let result = tree.exec("fixture_simple", Some(&killed), None);
     assert_eq!(
-        result.exit_code,
+        result.conventional_exit_code(),
         101,
         "{}",
-        String::from_utf8_lossy(&result.output)
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
     );
     assert!(
-        String::from_utf8_lossy(&result.output).contains("max_picks_the_larger"),
+        std::str::from_utf8(&result.output)
+            .expect("the fixture writes exact UTF-8")
+            .contains("max_picks_the_larger"),
         "{}",
-        String::from_utf8_lossy(&result.output)
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
     );
 
     let result = tree.exec("parity", Some(&killed), None);
-    assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
+    );
 
     let survivor = tree.mutant("gt-to-ge", ">");
     let result = tree.exec("fixture_simple", Some(&survivor), None);
-    assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
+    );
 
     let elsewhere = "0".repeat(64);
     let result = tree.exec("fixture_simple", Some(&elsewhere), None);
-    assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
+    );
 }
 
 #[test]
@@ -275,12 +289,12 @@ fn a_stale_catalog_ends_the_test_process_rather_than_reporting_a_survivor() {
     let stale = "f".repeat(64);
     let result = tree.exec("fixture_simple", Some(&mutant), Some(&stale));
     assert_eq!(
-        result.exit_code,
+        result.conventional_exit_code(),
         STALE_CATALOG_EXIT,
         "{}",
-        String::from_utf8_lossy(&result.output)
+        std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
     );
-    let said = String::from_utf8_lossy(&result.output);
+    let said = std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8");
     assert!(said.contains("rust-mutants"), "{said}");
     assert!(
         said.contains(tree.catalog.digest()),

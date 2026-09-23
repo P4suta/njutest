@@ -272,7 +272,6 @@ proptest! {
                     prop_assert!(!conflict.against.contains(conflict.item.span));
                     prop_assert!(!conflict.item.span.contains(conflict.against));
                 }
-                _ => prop_assert!(false, "unexpected reason"),
             }
         }
         let mut reversed = items;

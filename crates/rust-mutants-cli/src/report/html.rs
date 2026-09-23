@@ -4,7 +4,8 @@
 //! The run as one self-contained page: no font, no stylesheet, nothing to fetch, and one script of its own.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
+
+use rust_mutants::outcome::Outcome;
 
 use super::run::{RunDocument, RunMutantDocument};
 use super::sources::Held;
@@ -13,15 +14,20 @@ use super::sources::Held;
 #[must_use]
 pub fn document(document: &RunDocument, sources: &BTreeMap<String, Held>) -> String {
     let mut out = String::new();
-    let _written = write!(
-        out,
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+    crate::text::append(
+        &mut out,
+        format_args!(
+            "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n\
          <title>rust-mutants {run}</title>\n<style>{STYLE}</style>\n</head>\n<body>\n\
          <h1>{root}</h1>\n<p class=\"identity\">{run} · catalog {catalog}</p>\n",
-        run = escape(&document.run.id),
-        root = escape(&document.workspace.root_name),
-        catalog = escape(document.workspace.catalog_digest.get(..12).unwrap_or("")),
+            run = escape(&document.run.id),
+            root = escape(&document.workspace.root_name),
+            catalog = escape(match document.workspace.catalog_digest.get(..12) {
+                Some(prefix) => prefix,
+                None => &document.workspace.catalog_digest,
+            }),
+        ),
     );
     section(&mut out, "Score", &score(document));
     section(&mut out, "Accounting", &accounting(document));
@@ -31,7 +37,10 @@ pub fn document(document: &RunDocument, sources: &BTreeMap<String, Held>) -> Str
     section(&mut out, "Source", &files(document, sources));
     section(&mut out, "Refused", &rejections(document));
     section(&mut out, "Skipped", &skips(document));
-    let _written = write!(out, "<script>{SCRIPT}</script>\n</body>\n</html>\n");
+    crate::text::append(
+        &mut out,
+        format_args!("<script>{SCRIPT}</script>\n</body>\n</html>\n"),
+    );
     out
 }
 
@@ -39,8 +48,8 @@ const STYLE: &str = "body{font-family:system-ui,sans-serif;margin:2rem auto;max-
 line-height:1.5;padding:0 1rem}h1{margin:0}.identity{color:#666;margin-top:0}\
 table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.25rem .5rem;\
 border-bottom:1px solid #ddd;vertical-align:top}code{font-family:ui-monospace,monospace}\
-td.survived,td.errored,td.inconclusive,td.not_run{color:#a30}\
-td.killed,td.timed_out{color:#0a6}p.none{color:#666}\
+td.survived,td.step_limit_reached,td.waited,td.errored,td.inconclusive,td.not_run{color:#a30}\
+td.killed{color:#0a6}p.none{color:#666}\
 .score{font-size:2rem;font-weight:600}\
 .controls{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.5rem 0}\
 .controls input,.controls select{font:inherit;padding:.2rem .4rem}\
@@ -68,7 +77,7 @@ q.addEventListener('input',apply);f.addEventListener('change',apply);\
 s.addEventListener('change',apply);apply();})();";
 
 fn section(out: &mut String, title: &str, body: &str) {
-    let _written = write!(out, "<h2>{}</h2>\n{body}\n", escape(title));
+    crate::text::append(out, format_args!("<h2>{}</h2>\n{body}\n", escape(title)));
 }
 
 fn controls() -> String {
@@ -76,7 +85,9 @@ fn controls() -> String {
      <label>search <input id=\"q\" type=\"search\" placeholder=\"path, rule, id\"></label>\
      <label>outcome <select id=\"outcome\">\
      <option value=\"all\">all</option><option value=\"survived\">survived</option>\
-     <option value=\"killed\">killed</option><option value=\"timed_out\">timed out</option>\
+     <option value=\"killed\">killed</option>\
+     <option value=\"step_limit_reached\">step limit reached</option>\
+     <option value=\"waited\">waited</option>\
      <option value=\"inconclusive\">inconclusive</option><option value=\"errored\">errored</option>\
      <option value=\"not_run\">not run</option></select></label>\
      <label>order <select id=\"sort\">\
@@ -106,9 +117,15 @@ fn accounting(document: &RunDocument) -> String {
     let tally = super::tally::Tally::of(document);
     let mut out = format!("<p>{}</p>\n<table>\n", escape(&tally.said()));
     for (name, count) in &tally.parts {
-        let _written = writeln!(out, "<tr><th>{name}</th><td>{count}</td></tr>");
+        crate::text::line(
+            &mut out,
+            format_args!("<tr><th>{name}</th><td>{count}</td></tr>"),
+        );
     }
-    let _written = write!(out, "</table>\n<p>{}</p>", escape(&tally.within_said()));
+    crate::text::append(
+        &mut out,
+        format_args!("</table>\n<p>{}</p>", escape(&tally.within_said())),
+    );
     out
 }
 
@@ -118,11 +135,13 @@ fn findings(document: &RunDocument) -> String {
     }
     let mut out = String::from("<table>\n<tr><th>kind</th><th>detail</th></tr>\n");
     for finding in &document.findings {
-        let _written = writeln!(
-            out,
-            "<tr><td>{}</td><td>{}</td></tr>",
-            escape(&finding.kind),
-            escape(&finding.detail)
+        crate::text::line(
+            &mut out,
+            format_args!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                escape(finding.kind.as_str()),
+                escape(&finding.detail)
+            ),
         );
     }
     out.push_str("</table>");
@@ -144,28 +163,30 @@ fn mutants(mutants: &[RunMutantDocument]) -> String {
             mutant.path, mutant.rule, mutant.family, mutant.display_id, mutant.id, mutant.outcome
         )
         .to_lowercase();
-        let _written = writeln!(
-            out,
-            "<tr data-outcome=\"{outcome}\" data-rank=\"{rank}\" data-index=\"{index}\" \
+        crate::text::line(
+            &mut out,
+            format_args!(
+                "<tr data-outcome=\"{outcome}\" data-rank=\"{rank}\" data-index=\"{index}\" \
              data-where=\"{sortable}\" data-rule=\"{rule}\" data-hay=\"{hay}\">\
              <td><code>{id}</code></td><td class=\"{outcome}\">{shown}</td>\
              <td><code>{path}:{line}:{column}</code></td><td>{rule}</td>\
              <td><code>{original}</code> → <code>{replacement}</code></td>\
              <td>{noticed}</td></tr>",
-            outcome = escape(&mutant.outcome),
-            rank = rank(mutant),
-            index = mutant.index,
-            sortable = escape(&where_),
-            hay = escape(&hay),
-            id = escape(&mutant.display_id),
-            shown = escape(&mutant.outcome),
-            path = escape(&mutant.path),
-            line = mutant.line,
-            column = mutant.column,
-            rule = escape(&mutant.rule),
-            original = escape(&mutant.original),
-            replacement = escape(&mutant.replacement),
-            noticed = escape(&mutant.killed_by.join(", ")),
+                outcome = escape(mutant.outcome.as_str()),
+                rank = rank(mutant),
+                index = mutant.index,
+                sortable = escape(&where_),
+                hay = escape(&hay),
+                id = escape(&mutant.display_id),
+                shown = escape(mutant.outcome.as_str()),
+                path = escape(&mutant.path),
+                line = mutant.line,
+                column = mutant.column,
+                rule = escape(&mutant.rule),
+                original = escape(&mutant.original),
+                replacement = escape(&mutant.replacement),
+                noticed = escape(&mutant.killed_by.join(", ")),
+            ),
         );
     }
     out.push_str("</tbody>\n</table>");
@@ -174,12 +195,12 @@ fn mutants(mutants: &[RunMutantDocument]) -> String {
 
 /// Where one row sorts when the reader asks for findings first.
 const fn rank(mutant: &RunMutantDocument) -> u8 {
-    match mutant.outcome.as_bytes() {
-        b"survived" if !mutant.expected => 0,
-        b"errored" | b"inconclusive" => 1,
-        b"not_run" => 2,
-        b"survived" => 3,
-        _ => 4,
+    match mutant.outcome {
+        Outcome::Survived if !mutant.expected => 0,
+        Outcome::StepLimitReached | Outcome::Waited | Outcome::Errored | Outcome::Inconclusive => 1,
+        Outcome::NotRun => 2,
+        Outcome::Survived => 3,
+        Outcome::Killed => 4,
     }
 }
 
@@ -192,29 +213,37 @@ fn files(document: &RunDocument, sources: &BTreeMap<String, Held>) -> String {
         return "<p class=\"none\">Nothing was cataloged.</p>".to_owned();
     }
     let mut out = String::new();
-    let mut clean: usize = 0;
+    let mut clean = Vec::new();
     for (path, mutants) in by_file {
         if mutants.iter().all(|mutant| noticed(mutant)) {
-            clean = clean.saturating_add(1);
+            clean.push(path);
             continue;
         }
-        let _written = writeln!(out, "<h3><code>{}</code></h3>", escape(path));
+        crate::text::line(
+            &mut out,
+            format_args!("<h3><code>{}</code></h3>", escape(path)),
+        );
         match sources.get(path).and_then(Held::measured) {
             Some(text) => out.push_str(&listing(text, &mutants)),
             None => {
-                let _written = writeln!(
-                    out,
-                    "<p class=\"changed\">This file changed since the run, so what it holds now \
+                crate::text::line(
+                    &mut out,
+                    format_args!(
+                        "<p class=\"changed\">This file changed since the run, so what it holds now \
                      is not what was measured.</p>"
+                    ),
                 );
             }
         }
     }
-    if clean > 0 {
-        let _written = writeln!(
-            out,
-            "<p class=\"none\">{clean} more file(s) the tests noticed every mutation in; the \
-             table above lists them.</p>"
+    if !clean.is_empty() {
+        crate::text::line(
+            &mut out,
+            format_args!(
+                "<p class=\"none\">{} more file(s) the tests noticed every mutation in; the \
+             table above lists them.</p>",
+                clean.len()
+            ),
         );
     }
     if out.is_empty() {
@@ -229,9 +258,11 @@ fn listing(text: &str, mutants: &[&RunMutantDocument]) -> String {
         on_line.entry(mutant.line).or_default().push(mutant);
     }
     let mut out = String::from("<pre class=\"source\">");
-    for (index, line) in text.lines().enumerate() {
-        let number = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
-        let here = on_line.get(&number);
+    for (line, number) in text.lines().zip(1usize..) {
+        let here = match u32::try_from(number) {
+            Ok(representable) => on_line.get(&representable),
+            Err(_) => None,
+        };
         let class = here.map_or("l", |rows| {
             if rows.iter().any(|one| noticed(one)) && rows.iter().all(|one| noticed(one)) {
                 "l has killed"
@@ -239,22 +270,28 @@ fn listing(text: &str, mutants: &[&RunMutantDocument]) -> String {
                 "l has"
             }
         });
-        let _written = write!(
-            out,
-            "<span class=\"{class}\"><span class=\"n\">{number}</span>{}</span>",
-            escape(line)
+        crate::text::append(
+            &mut out,
+            format_args!(
+                "<span class=\"{class}\"><span class=\"n\">{number}</span>{}</span>",
+                escape(line)
+            ),
         );
-        for mutant in here.into_iter().flatten() {
-            let _written = write!(
-                out,
-                "<span class=\"mark{}\">{} {} <code>{}</code> → <code>{}</code> [{}]</span>",
-                if noticed(mutant) { " killed" } else { "" },
-                escape(&mutant.outcome),
-                escape(&mutant.rule),
-                escape(&mutant.original),
-                escape(&mutant.replacement),
-                escape(&mutant.display_id),
-            );
+        if let Some(here) = here {
+            for mutant in here {
+                crate::text::append(
+                    &mut out,
+                    format_args!(
+                        "<span class=\"mark{}\">{} {} <code>{}</code> → <code>{}</code> [{}]</span>",
+                        if noticed(mutant) { " killed" } else { "" },
+                        escape(mutant.outcome.as_str()),
+                        escape(&mutant.rule),
+                        escape(&mutant.original),
+                        escape(&mutant.replacement),
+                        escape(&mutant.display_id),
+                    ),
+                );
+            }
         }
     }
     out.push_str("</pre>\n");
@@ -262,8 +299,8 @@ fn listing(text: &str, mutants: &[&RunMutantDocument]) -> String {
 }
 
 /// Whether the tests said anything about this mutant.
-fn noticed(mutant: &RunMutantDocument) -> bool {
-    matches!(mutant.outcome.as_str(), "killed" | "timed_out")
+const fn noticed(mutant: &RunMutantDocument) -> bool {
+    mutant.outcome.detected()
 }
 
 fn rejections(document: &RunDocument) -> String {
@@ -275,15 +312,20 @@ fn rejections(document: &RunDocument) -> String {
          <th>what the compiler said</th></tr>\n",
     );
     for rejection in &document.rejections {
-        let _written = writeln!(
-            out,
-            "<tr><td><code>{path}</code></td><td>{rule}</td><td>{code}</td><td>{alone}</td>\
+        crate::text::line(
+            &mut out,
+            format_args!(
+                "<tr><td><code>{path}</code></td><td>{rule}</td><td>{code}</td><td>{alone}</td>\
              <td>{diagnostic}</td></tr>",
-            path = escape(&rejection.path),
-            rule = escape(&rejection.rule),
-            code = escape(rejection.code.as_deref().unwrap_or("—")),
-            alone = if rejection.isolated { "yes" } else { "no" },
-            diagnostic = escape(&rejection.diagnostic),
+                path = escape(&rejection.path),
+                rule = escape(&rejection.rule),
+                code = escape(match rejection.code.as_deref() {
+                    Some(code) => code,
+                    None => "—",
+                }),
+                alone = if rejection.isolated { "yes" } else { "no" },
+                diagnostic = escape(&rejection.diagnostic),
+            ),
         );
     }
     out.push_str("</table>");
@@ -298,13 +340,15 @@ fn skips(document: &RunDocument) -> String {
         "<table>\n<tr><th>where</th><th>reason</th><th>how many</th><th>why</th></tr>\n",
     );
     for skip in &document.skips {
-        let _written = writeln!(
-            out,
-            "<tr><td><code>{path}</code></td><td>{reason}</td><td>{count}</td><td>{why}</td></tr>",
-            path = escape(&skip.path),
-            reason = escape(&skip.reason),
-            count = skip.count,
-            why = escape(&skip.explanation),
+        crate::text::line(
+            &mut out,
+            format_args!(
+                "<tr><td><code>{path}</code></td><td>{reason}</td><td>{count}</td><td>{why}</td></tr>",
+                path = escape(&skip.path),
+                reason = escape(&skip.reason),
+                count = skip.count,
+                why = escape(&skip.explanation),
+            ),
         );
     }
     out.push_str("</table>");

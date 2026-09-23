@@ -32,17 +32,21 @@ pub use crate::limitation::COVERAGE_TOOLS_MISSING as TOOLS_MISSING;
 
 /// What each target reached, and what the measurement could not establish.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Reached {
-    /// Every target that ran, by identity, with the blocks its run covered. Empty when nothing was measured.
+    /// Every target that ran, by identity, with the blocks its run covered.
+    /// Empty when nothing was measured.
     pub targets: BTreeMap<String, BTreeSet<Block>>,
-    /// Every block the coverage build instrumented at all, whether or not it ran. A place outside this is a place the measurement says nothing about — code in another binary, code the instrumented build did not compile — and nothing about it may be concluded.
+    /// Every block the coverage build instrumented at all, whether or not it ran.
+    /// A place outside this is a place the measurement says nothing about — code in another binary, code the instrumented build did not compile — and nothing about it may be concluded.
     pub instrumented: BTreeSet<Block>,
     /// Why the measurement is not what it could be, in the order it was found out.
     pub limitations: Vec<String>,
 }
 
 impl Reached {
-    /// Whether anything was measured at all. Nothing measured routes every mutant to every target.
+    /// Whether anything was measured at all.
+    /// Nothing measured routes every mutant to every target.
     #[must_use]
     pub fn measured(&self) -> bool {
         !self.targets.is_empty()
@@ -88,8 +92,7 @@ pub struct Asking<'a> {
 /// Measures which target reached what, on the tree as it stands.
 ///
 /// # Errors
-/// Only a failure to make the directory the profiles are written to, which
-/// no later phase could work around.
+/// Only a failure to make the directory the profiles are written to, which no later phase could work around.
 pub fn establish(
     asking: &Asking<'_>,
     cancel: &Cancel,
@@ -138,7 +141,7 @@ fn measure(
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
-            env: instrumenting(&workspace.base_env, &flags),
+            env: instrumenting(&workspace.base_env, &flags)?,
             build: options.build.clone(),
         },
     );
@@ -148,10 +151,13 @@ fn measure(
     if !built.success {
         return Ok(refused(UNBUILDABLE, trace));
     }
-    let targets = execute::targets_of(
-        &built.messages,
-        &workspace.metadata.packages,
-        Some(&target_dir),
+    let targets = execute::startable(
+        &execute::targets_of(
+            &built.messages,
+            &workspace.metadata.packages,
+            Some(&target_dir),
+        )?,
+        &options.skip_targets,
     );
     if targets.is_empty() {
         return Ok(refused(UNMEASURED, trace));
@@ -220,6 +226,7 @@ fn run_targets(
             sysroot: workspace.toolchain.sysroot(),
             active: None,
             touch: None,
+            steps: None,
             profile: Some(&pattern),
         };
         let request = ExecRequest::new(target)
@@ -246,7 +253,10 @@ fn executables(messages: &[crate::cargo::Message]) -> Vec<PathBuf> {
         .iter()
         .filter_map(|message| match message {
             crate::cargo::Message::CompilerArtifact(artifact) => artifact.executable.clone(),
-            _ => None,
+            crate::cargo::Message::CompilerMessage(_)
+            | crate::cargo::Message::BuildScriptExecuted(_)
+            | crate::cargo::Message::BuildFinished { .. }
+            | crate::cargo::Message::Other { .. } => None,
         })
         .collect();
     found.into_iter().collect()
@@ -282,13 +292,21 @@ fn blocks_of(reading: &Reading<'_>, target: &execute::TestTarget) -> Option<Meas
         watch,
         ..
     } = *reading;
-    let raw = written_profiles(profiles, &key(target)).ok()?;
+    let raw = match written_profiles(profiles, &key(target)) {
+        Ok(raw) => raw,
+        Err(_) => return None,
+    };
     if raw.is_empty() {
         return None;
     }
     let merged = profiles.join(format!("{}.profdata", key(target)));
-    tools.merge(&raw, &merged, watch).ok()?;
-    let files = relative(tools.export(&merged, reading.binaries, watch).ok()?, root);
+    if tools.merge(&raw, &merged, watch).is_err() {
+        return None;
+    }
+    let files = match tools.export(&merged, reading.binaries, watch) {
+        Ok(files) => relative(files, root),
+        Err(_) => return None,
+    };
     Some(Measured {
         covered: covered(&files),
         instrumented: instrumented(&files),
@@ -303,8 +321,9 @@ fn relative(
     files
         .into_iter()
         .map(|mut file| {
-            if let Ok(stripped) = file.path.strip_prefix(root) {
-                file.path = stripped.to_path_buf();
+            match file.path.strip_prefix(root) {
+                Ok(stripped) => file.path = stripped.to_path_buf(),
+                Err(_coverage_path_is_outside_the_workspace) => {}
             }
             file
         })
@@ -322,12 +341,18 @@ fn refused(limitation: &str, trace: &Recorder) -> Reached {
 }
 
 /// The environment a coverage build adds: whatever the tree already compiles with, then the instrumentation.
-fn instrumenting(base: &[(OsString, OsString)], flags: &Configured) -> Vec<(OsString, OsString)> {
-    let encoded = config::encoded(base, flags, &[INSTRUMENT]).unwrap_or_default();
-    vec![
+fn instrumenting(
+    base: &[(OsString, OsString)],
+    flags: &Configured,
+) -> Result<Vec<(OsString, OsString)>, config::ConfigError> {
+    let encoded = match config::encoded(base, flags, &[INSTRUMENT])? {
+        Some(encoded) => encoded,
+        None => OsString::new(),
+    };
+    Ok(vec![
         (OsString::from(ENCODED_RUSTFLAGS), encoded),
         (OsString::from(RUSTFLAGS), OsString::new()),
-    ]
+    ])
 }
 
 /// The flag that instruments every region, spelled without a space so it survives every form of the variable.
@@ -403,8 +428,14 @@ pub mod remembered {
         /// What an earlier run of this exact tree measured, when one did and it still reads.
         #[must_use]
         pub fn read(&self) -> Option<Reached> {
-            let text = std::fs::read_to_string(self.path()).ok()?;
-            serde_json::from_str(&text).ok()
+            let text = match std::fs::read_to_string(self.path()) {
+                Ok(text) => text,
+                Err(_) => return None,
+            };
+            match crate::strictjson::decode_str(&text) {
+                Ok(reached) => Some(reached),
+                Err(_) => None,
+            }
         }
 
         /// Remembers a measurement for the next run of this tree, and says nothing when it cannot.
@@ -417,11 +448,15 @@ pub mod remembered {
             }
             let temporary = self.directory.join(format!("{}.writing", self.key));
             if std::fs::write(&temporary, text.as_bytes()).is_err() {
-                let _removed = std::fs::remove_file(&temporary);
+                if let Err(cleanup_error) = std::fs::remove_file(&temporary) {
+                    drop(cleanup_error);
+                }
                 return;
             }
-            if std::fs::rename(&temporary, self.path()).is_err() {
-                let _removed = std::fs::remove_file(&temporary);
+            if std::fs::rename(&temporary, self.path()).is_err()
+                && let Err(cleanup_error) = std::fs::remove_file(&temporary)
+            {
+                drop(cleanup_error);
             }
         }
     }

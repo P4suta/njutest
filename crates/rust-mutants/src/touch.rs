@@ -63,6 +63,7 @@ pub enum TouchError {
 /// One kind of thing the guards report, by the thread that reported it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct Seen {
     /// What each named thread reported.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -115,8 +116,8 @@ pub struct Touches {
 /// Every touch the log records, gathered by the thread that made it.
 ///
 /// # Errors
-/// See [`TouchError`]. Every failure yields no facts at all, never the prefix
-/// that parsed.
+/// See [`TouchError`].
+/// Every failure yields no facts at all, never the prefix that parsed.
 pub fn read(text: &str, catalog: &str, count: u32) -> Result<Touches, TouchError> {
     let mut touches = Touches::default();
     let mut seen_header = false;
@@ -193,10 +194,12 @@ fn record(line: &str, count: u32, number: usize, touches: &mut Touches) -> Resul
 fn sites(indices: &str, count: u32, line: usize) -> Result<BTreeSet<u32>, TouchError> {
     let mut reached = BTreeSet::new();
     for field in indices.split(',') {
-        let index: u32 = field.parse().map_err(|_error| TouchError::Malformed {
-            line,
-            what: format!("{field:?} is not a site"),
-        })?;
+        let index = field
+            .parse::<u32>()
+            .map_err(|_error| TouchError::Malformed {
+                line,
+                what: format!("{field:?} is not a site"),
+            })?;
         if index >= count {
             return Err(TouchError::BeyondCatalog { line, index, count });
         }
@@ -220,6 +223,7 @@ pub use crate::limitation::TOUCH_LOG_UNREADABLE as UNREADABLE;
 /// What the guards of a whole run said, target by target.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct Touched {
     /// What each target's guards recorded, by target identity.
     pub targets: BTreeMap<String, TargetTouches>,
@@ -233,6 +237,7 @@ pub struct Touched {
 /// What a reader has to know before this record narrows anything: which mutants the tree that made it could say something about.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct Narrowing {
     /// Every mutant whose guard in the tree that ran compares its two branches, so `infected` is a fact about it.
     pub compared: BTreeSet<u32>,
@@ -243,6 +248,7 @@ pub struct Narrowing {
 /// What one target's guards recorded, and which of its tests ran to record it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct TargetTouches {
     /// The mutant sites each test of this target reached.
     #[serde(default)]

@@ -6,6 +6,12 @@
 # who wants the speedup locally can put the per-target stanza in
 # ~/.cargo/config.toml.
 
+[build]
+# Set by `mise run` and by CI, never here: a wrapper named in this file is one
+# every `cargo` in every checkout must have, and a developer without it gets a
+# build that will not start rather than one that is merely slower. The same
+# reasoning as the linker above.
+
 [alias]
 xtask = "run --quiet --locked --package xtask --"
 

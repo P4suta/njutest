@@ -21,6 +21,9 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/metadata.rs");
+include!("support/missing.rs");
+
 /// What one command said, driven in this process.
 struct Said {
     code: u8,
@@ -56,8 +59,8 @@ fn asked(environment: &Environment, args: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
@@ -73,7 +76,9 @@ fn owned(
     let marker = rust_mutants::tempowner::Marker {
         schema: rust_mutants::tempowner::SCHEMA.to_owned(),
         pid: std::process::id(),
-        started: "2026-01-01T00:00:00Z".parse().expect("an instant"),
+        started: "2026-01-01T00:00:00Z"
+            .parse::<jiff::Timestamp>()
+            .expect("an instant"),
         kept,
         role,
         keyed_to: keyed_to.map(|tree| tree.display().to_string()),
@@ -112,7 +117,10 @@ fn bytes(line: &str) -> u64 {
     line.split(" bytes")
         .next()
         .and_then(|before| before.split_whitespace().last())
-        .and_then(|number| number.parse().ok())
+        .and_then(|number| match number.parse::<u64>() {
+            Ok(bytes) => Some(bytes),
+            Err(_) => None,
+        })
         .unwrap_or_else(|| panic!("a sweep says how many bytes went: {line}"))
 }
 
@@ -132,7 +140,7 @@ fn saying_what_is_there_removes_nothing() {
     let said = asked(&environment, &["cache"]);
     assert_eq!(said.code, 0, "{}{}", said.out, said.err);
     assert!(
-        snapshot.is_dir() && cache.is_dir(),
+        test_metadata(&snapshot).is_dir() && test_metadata(&cache).is_dir(),
         "a person asks what is there before deciding, and an answer that removed it \
          first is an answer to a question nobody asked: {}",
         said.out
@@ -160,13 +168,13 @@ fn collecting_takes_the_snapshots_and_spares_the_build_caches() {
     let said = asked(&environment, &["cache", "--gc"]);
     assert_eq!(said.code, 0, "{}{}", said.out, said.err);
     assert!(
-        !snapshot.exists(),
+        test_missing(&snapshot),
         "a snapshot nothing owns is a copy of a tree that was measured and will not be \
          again: {}",
         said.out
     );
     assert!(
-        cache.is_dir(),
+        test_metadata(&cache).is_dir(),
         "and a build cache keyed to a tree that is still there is spared, because \
          sparing it is what makes the next run fast and it is the whole reason `--all` \
          is a separate word: {}",
@@ -195,7 +203,7 @@ fn collecting_everything_takes_the_build_caches_too() {
     let said = asked(&environment, &["cache", "--gc", "--all"]);
     assert_eq!(said.code, 0, "{}{}", said.out, said.err);
     assert!(
-        !snapshot.exists() && !cache.exists(),
+        test_missing(&snapshot) && test_missing(&cache),
         "which is what a person means when the disk is full: {}",
         said.out
     );
@@ -211,7 +219,15 @@ fn collecting_everything_takes_the_build_caches_too() {
 fn everything_is_counted_in_bytes_as_well_as_in_directories() {
     let fixture = Fixture::copy("fixture-simple");
     let environment = environment(&fixture);
-    let _left = abandoned(fixture.temp(), fixture.root());
+    let (snapshot, cache) = abandoned(fixture.temp(), fixture.root());
+    assert!(
+        test_metadata(&snapshot).is_dir(),
+        "the snapshot is present before the sweep"
+    );
+    assert!(
+        test_metadata(&cache).is_dir(),
+        "the cache is present before the sweep"
+    );
 
     let said = asked(&environment, &["cache", "--gc", "--all"]);
     for name in ["snapshots", "caches"] {
@@ -258,7 +274,7 @@ fn what_a_run_was_asked_to_keep_is_listed_and_never_swept() {
 
     let said = asked(&environment, &["cache", "--gc", "--all"]);
     assert!(
-        preserved.is_dir(),
+        test_metadata(&preserved).is_dir(),
         "a directory somebody asked for has the name a sweep looks at and is the one \
          thing it never takes: they asked for it in order to look at it: {}",
         said.out
@@ -307,7 +323,7 @@ fn collecting_what_was_kept_removes_it_and_says_how_many() {
     let said = asked(&environment, &["cache", "--gc", "--kept"]);
     assert_eq!(said.code, 0, "{}{}", said.out, said.err);
     assert!(
-        !preserved.exists(),
+        test_missing(&preserved),
         "--kept is the word that takes them, and it is a separate word because nothing \
          else does: {}",
         said.out
@@ -319,7 +335,10 @@ fn collecting_what_was_kept_removes_it_and_says_how_many() {
         said.out
     );
     assert_eq!(
-        rust_mutants_cli::kept::Ledger::read(&reports).kept.len(),
+        rust_mutants_cli::kept::Ledger::read(&reports)
+            .expect("the cleared ledger reads")
+            .kept
+            .len(),
         0,
         "and the ledger is empty afterwards, or the next sweep reports directories \
          that are gone"
@@ -331,18 +350,22 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
     let fixture = Fixture::copy("fixture-simple");
     let environment = environment(&fixture);
     let store = rust_mutants::outcomes::Store::new(fixture.cache());
-    store.put(
-        &"a".repeat(64),
-        &rust_mutants::outcomes::Record {
-            schema: "rust-mutants/outcome-v1".to_owned(),
-            mutant: "b".repeat(64),
-            outcome: "killed".to_owned(),
-            target: "fixture-simple/lib".to_owned(),
-            tests_run: Some(3),
-            failed_tests: vec!["adds".to_owned()],
-            run_id: "20260101T000000000Z".to_owned(),
-        },
-    );
+    let key = rust_mutants::id::HexDigest::try_from("a".repeat(64)).expect("canonical key");
+    let mutant = rust_mutants::id::HexDigest::try_from("b".repeat(64)).expect("canonical mutant");
+    store
+        .put(
+            &key,
+            &rust_mutants::outcomes::Record {
+                schema: rust_mutants::outcomes::SCHEMA.to_owned(),
+                mutant,
+                outcome: rust_mutants::outcomes::CacheOutcome::Killed,
+                target: "fixture-simple/lib".to_owned(),
+                tests_run: Some(3),
+                failed_tests: vec!["adds".to_owned()],
+                run_id: "20260101T000000000Z".to_owned(),
+            },
+        )
+        .expect("the cache record is stored");
 
     let listed = asked(&environment, &["cache"]);
     assert!(
@@ -361,7 +384,7 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
         cleared.out
     );
     assert_eq!(
-        store.size().0,
+        store.size().expect("the outcome cache is readable").0,
         0,
         "and it is empty afterwards, or the next run reuses what was supposed to be gone"
     );
@@ -376,7 +399,7 @@ fn emptying_the_store_touches_nothing_on_the_disk_a_run_would_reuse() {
     let said = asked(&environment, &["cache", "--clear-outcomes"]);
     assert_eq!(said.code, 0, "{}{}", said.out, said.err);
     assert!(
-        snapshot.is_dir() && cache.is_dir(),
+        test_metadata(&snapshot).is_dir() && test_metadata(&cache).is_dir(),
         "the store and the temporary directory are two things, and a person emptying \
          one has not asked about the other: {}",
         said.out
@@ -454,7 +477,7 @@ fn a_build_cache_keyed_to_a_tree_that_is_gone_is_swept_without_asking_for_everyt
 
     let said = asked(&environment, &["cache", "--gc"]);
     assert!(
-        !orphan.exists(),
+        test_missing(&orphan),
         "a cache is spared however old it is because a later run will look it up, and \
          one keyed to a tree nobody can name again is one no run will ever look up: \
          sparing it is how a temporary directory grows without bound: {}",
@@ -478,7 +501,7 @@ fn a_directory_a_run_holds_is_counted_as_in_use_rather_than_removed() {
 
     let said = asked(&environment, &["cache", "--gc", "--all"]);
     assert!(
-        preserved.is_dir(),
+        test_metadata(&preserved).is_dir(),
         "a marker that says the directory was preserved on purpose is the run saying \
          somebody is going to look at it: {}",
         said.out
@@ -513,7 +536,10 @@ fn a_directory_that_would_not_go_is_still_in_the_ledger_afterwards() {
          which dropped it, and not the person, who was told the clearing was done"
     );
     assert_eq!(
-        rust_mutants_cli::kept::Ledger::read(&reports).kept.len(),
+        rust_mutants_cli::kept::Ledger::read(&reports)
+            .expect("the retained ledger reads")
+            .kept
+            .len(),
         1,
         "and what it kept is what the next clearing reads"
     );

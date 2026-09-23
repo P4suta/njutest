@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# The release train.
+# Conventional Commits land on `main`, release-plz keeps one release pull request open that bumps `[workspace.package].version` and writes CHANGELOG.md, and merging it cuts one `vX.Y.Z` tag.
+# The tag starts release.yml, which builds the binaries, the SBOM, and the GitHub Release.
+#
+# The App token is not decoration: GitHub suppresses workflow triggers from a ref pushed with GITHUB_TOKEN, so a tag pushed that way would start nothing,
+# and Actions may not open a pull request in this repository at all.
+# The credentials live on the `release-plz` environment rather than on the repository, so a workflow on any other branch cannot read them.
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: cut the tag
+    if: ${{ github.repository_owner == 'P4suta' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release-plz
+    permissions:
+      contents: write
+    steps:
+      - name: Mint the App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-rust
+
+      - name: release-plz release
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  release-pr:
+    name: keep the release pull request
+    # After `release`, so a release pull request is never opened for a version being tagged in the same run.
+    needs: release
+    if: ${{ always() && github.repository_owner == 'P4suta' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release-plz
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-pr-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Mint the App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-rust
+
+      - name: release-plz release-pr
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

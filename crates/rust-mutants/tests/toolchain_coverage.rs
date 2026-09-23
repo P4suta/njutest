@@ -69,7 +69,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
         cancel: &cancel,
         trace: &engine_trace,
     };
-    let _metadata = Metadata::load(
+    let metadata = Metadata::load(
         &driver,
         MetadataOptions {
             locked: true,
@@ -77,6 +77,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
         },
     )
     .expect("metadata");
+    drop(metadata);
     let built = compile(
         &driver,
         &CompileOptions {
@@ -119,7 +120,11 @@ fn measure(fixture: &str, test: &str) -> Measured {
     ));
     spec.env = Some(run_env);
     let ran = run(&spec, &cancel);
-    assert!(ran.ok(), "{}", String::from_utf8_lossy(&ran.output));
+    assert!(
+        ran.succeeded(),
+        "{}",
+        std::str::from_utf8(&ran.output).expect("the fixture writes exact UTF-8")
+    );
 
     let tools =
         Tools::locate(&toolchain, &root, &Watched::new(&cancel, &trace)).expect("the llvm tools");

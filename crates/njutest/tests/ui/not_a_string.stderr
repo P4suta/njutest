@@ -1,5 +1,0 @@
-error: njutest::integration takes string literals: the capability names
- --> tests/ui/not_a_string.rs:1:24
-  |
-1 | #[njutest::integration(postgres)]
-  |                        ^^^^^^^^

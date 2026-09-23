@@ -14,11 +14,15 @@ use crate::runner::{Bound, Cancel, PROBE, PROBE_OUTPUT_LIMIT, Spec, run};
 /// Configures [`Toolchain::locate`].
 #[derive(Debug, Clone, Default)]
 pub struct LocateOptions {
-    /// The cargo to use: a path, or a bare name to find on `search_path`. `None` means the bare name `cargo`.
+    /// The cargo to use: a path, or a bare name to find on `search_path`.
+    /// `None` means the bare name `cargo`.
     pub cargo: Option<PathBuf>,
-    /// The `PATH` a bare name is searched on. The composition root reads the process environment; this module never does. `None` refuses every bare name.
+    /// The `PATH` a bare name is searched on.
+    /// The composition root reads the process environment; this module never does.
+    /// `None` refuses every bare name.
     pub search_path: Option<OsString>,
-    /// The complete environment every cargo command runs with. `None` inherits this process's environment.
+    /// The complete environment every cargo command runs with.
+    /// `None` inherits this process's environment.
     pub env: Option<Vec<(OsString, OsString)>>,
 }
 
@@ -38,22 +42,21 @@ impl Toolchain {
     ///
     /// # Errors
     /// [`CargoErrorKind::ToolchainNotFound`] when an executable is missing,
-    /// [`CargoErrorKind::CommandFailed`] when a banner could not be read, and
-    /// [`CargoErrorKind::VersionUnreadable`] when it could not be parsed.
+    /// [`CargoErrorKind::CommandFailed`] when a banner could not be read, and [`CargoErrorKind::VersionUnreadable`] when it could not be parsed.
     pub fn locate(
         options: &LocateOptions,
         dir: &Path,
         cancel: &Cancel,
     ) -> Result<Self, CargoError> {
-        let name = options
-            .cargo
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("cargo"));
+        let name = match &options.cargo {
+            Some(cargo) => cargo.clone(),
+            None => PathBuf::from("cargo"),
+        };
         let cargo = resolve_executable(&name, options.search_path.as_deref())?;
-        let rustc = sibling(&cargo, "rustc").map_or_else(
-            || resolve_executable(Path::new("rustc"), options.search_path.as_deref()),
-            Ok,
-        )?;
+        let rustc = match sibling(&cargo, "rustc")? {
+            Some(rustc) => rustc,
+            None => resolve_executable(Path::new("rustc"), options.search_path.as_deref())?,
+        };
         let banner = |program: &Path| -> Result<VersionInfo, CargoError> {
             let mut spec = Spec::new(
                 [program.as_os_str(), OsStr::new("-vV")],
@@ -63,14 +66,21 @@ impl Toolchain {
             spec.env.clone_from(&options.env);
             spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
             let result = run(&spec, cancel);
-            if !result.ok() {
+            if !result.succeeded() {
                 return Err(command_failed(&spec, &result));
             }
-            parse_version(&String::from_utf8_lossy(&result.stdout))
+            let banner = std::str::from_utf8(&result.stdout).map_err(|source| {
+                CargoError::new(
+                    CargoErrorKind::VersionUnreadable,
+                    format!("{} printed a non-UTF-8 version banner", program.display()),
+                )
+                .with_source(source)
+            })?;
+            parse_version(banner)
         };
         let cargo_version = banner(&cargo)?;
         let rustc_version = banner(&rustc)?;
-        let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel);
+        let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel)?;
         Ok(Self {
             cargo,
             rustc,
@@ -123,7 +133,8 @@ impl Toolchain {
         self.env.as_deref()
     }
 
-    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise. The length of a build or a test run is the project's, so the caller assigns [`Spec::timeout`] with the number that applies to it; the caller adds an output limit or a structured stdout as the command warrants.
+    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise.
+    /// The length of a build or a test run is the project's, so the caller assigns [`Spec::timeout`] with the number that applies to it; the caller adds an output limit or a structured stdout as the command warrants.
     pub fn command<I, S>(&self, dir: &Path, args: I) -> Spec
     where
         I: IntoIterator<Item = S>,
@@ -151,31 +162,61 @@ impl fmt::Display for Toolchain {
 /// The failure of a cargo command, with the tail of what it said.
 #[must_use]
 pub fn command_failed(spec: &Spec, result: &crate::runner::RunResult) -> CargoError {
-    let argv: Vec<String> = spec
-        .argv
-        .iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect();
-    let said = String::from_utf8_lossy(&result.output);
-    let said = said.trim();
-    let mut message = match &result.error {
-        Some(error) => format!("{} could not run: {error}", argv.join(" ")),
-        None if result.timed_out => format!("{} timed out", argv.join(" ")),
-        None => format!("{} exited with {}", argv.join(" "), result.exit_code),
+    let argv: Vec<String> = spec.argv.iter().map(|arg| diagnostic_os(arg)).collect();
+    let said = diagnostic_bytes(&result.output);
+    let mut message = match &result.termination {
+        crate::runner::Termination::NotStarted { error }
+        | crate::runner::Termination::WaitFailed { error } => {
+            format!("{} could not run: {error}", argv.join(" "))
+        }
+        crate::runner::Termination::MonitorFailed { failure } => {
+            format!("{} monitor failed: {failure}", argv.join(" "))
+        }
+        crate::runner::Termination::TimedOut => format!("{} timed out", argv.join(" ")),
+        crate::runner::Termination::StoppedByMonitor => {
+            format!("{} was stopped by its execution monitor", argv.join(" "))
+        }
+        crate::runner::Termination::Cancelled { .. } => {
+            format!("{} was cancelled", argv.join(" "))
+        }
+        crate::runner::Termination::Exited(exit) => {
+            let status = match exit.conventional_code() {
+                Some(code) => code.to_string(),
+                None => String::from("an unknown status"),
+            };
+            format!("{} exited with {status}", argv.join(" "))
+        }
     };
     if !said.is_empty() {
         message.push_str(": ");
-        message.push_str(said);
+        message.push_str(&said);
     }
     CargoError::new(CargoErrorKind::CommandFailed, message)
 }
 
+fn diagnostic_bytes(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.trim().to_owned(),
+        Err(_invalid_utf8) => format!("non-UTF-8 output (hex): {}", hex::encode(bytes)),
+    }
+}
+
+fn diagnostic_os(value: &OsStr) -> String {
+    match value.to_str() {
+        Some(text) => text.to_owned(),
+        None => format!(
+            "non-UTF-8 argument (hex): {}",
+            hex::encode(value.as_encoded_bytes())
+        ),
+    }
+}
+
 /// The executable `name` beside `program`, if there is one.
-fn sibling(program: &Path, name: &str) -> Option<PathBuf> {
-    let dir = program.parent()?;
-    executable_variants(dir, Path::new(name))
-        .into_iter()
-        .find(|p| p.is_file())
+fn sibling(program: &Path, name: &str) -> Result<Option<PathBuf>, CargoError> {
+    let Some(dir) = program.parent() else {
+        return Ok(None);
+    };
+    first_executable(executable_variants(dir, Path::new(name)))
 }
 
 /// Resolves an executable the way a shell would, without consulting this process's environment.
@@ -185,7 +226,7 @@ fn sibling(program: &Path, name: &str) -> Option<PathBuf> {
 pub fn resolve_executable(name: &Path, search_path: Option<&OsStr>) -> Result<PathBuf, CargoError> {
     let not_found = |detail: String| CargoError::new(CargoErrorKind::ToolchainNotFound, detail);
     if name.components().count() > 1 || name.is_absolute() {
-        return if name.is_file() {
+        return if executable_file(name)? {
             Ok(name.to_path_buf())
         } else {
             Err(not_found(format!("{} is not a file", name.display())))
@@ -201,10 +242,7 @@ pub fn resolve_executable(name: &Path, search_path: Option<&OsStr>) -> Result<Pa
         if dir.as_os_str().is_empty() {
             continue;
         }
-        if let Some(found) = executable_variants(&dir, name)
-            .into_iter()
-            .find(|p| p.is_file())
-        {
+        if let Some(found) = first_executable(executable_variants(&dir, name))? {
             return Ok(found);
         }
     }
@@ -212,6 +250,33 @@ pub fn resolve_executable(name: &Path, search_path: Option<&OsStr>) -> Result<Pa
         "{} was not found on the search path",
         name.display()
     )))
+}
+
+fn first_executable(
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> Result<Option<PathBuf>, CargoError> {
+    for candidate in candidates {
+        if executable_file(&candidate)? {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether the shell-compatible candidate resolves to a regular file.
+/// Metadata failures other than absence remain failures rather than becoming an apparently clean search miss.
+/// Following a tool symlink is deliberate:
+/// that is the executable the shell would run too.
+fn executable_file(path: &Path) -> Result<bool, CargoError> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.file_type().is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(CargoError::new(
+            CargoErrorKind::ToolchainNotFound,
+            format!("cannot inspect executable candidate {}", path.display()),
+        )
+        .with_source(source)),
+    }
 }
 
 /// The spellings an executable named `name` may have in `dir`.
@@ -237,7 +302,7 @@ fn sysroot_of(
     dir: &Path,
     env: Option<&[(OsString, OsString)]>,
     cancel: &Cancel,
-) -> Option<PathBuf> {
+) -> Result<Option<PathBuf>, CargoError> {
     let mut spec = Spec::new(
         [
             rustc.as_os_str(),
@@ -250,10 +315,23 @@ fn sysroot_of(
     spec.env = env.map(<[(OsString, OsString)]>::to_vec);
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
     let result = run(&spec, cancel);
-    if !result.ok() {
-        return None;
+    if !result.succeeded() {
+        return Ok(None);
     }
-    let said = String::from_utf8_lossy(&result.stdout);
-    let line = said.lines().next()?.trim();
-    (!line.is_empty()).then(|| PathBuf::from(line))
+    let said = std::str::from_utf8(&result.stdout).map_err(|source| {
+        CargoError::new(
+            CargoErrorKind::VersionUnreadable,
+            format!("{} printed a non-UTF-8 sysroot", rustc.display()),
+        )
+        .with_source(source)
+    })?;
+    let Some(line) = said.lines().next() else {
+        return Ok(None);
+    };
+    let line = line.trim();
+    if line.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(PathBuf::from(line)))
+    }
 }

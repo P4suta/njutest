@@ -154,7 +154,10 @@ impl Prover {
     /// # Errors
     /// Whatever stopped the removal.
     pub fn close(self) -> Result<(), EngineError> {
-        drop(self.workspace.close()?);
+        let preserved_directories = self.workspace.close()?;
+        for preserved_directory in preserved_directories {
+            drop(preserved_directory);
+        }
         Ok(())
     }
 
@@ -174,11 +177,11 @@ impl Prover {
         if !built.success {
             return Ok(None);
         }
-        let targets = targets_of(&built.messages, &self.workspace.metadata().packages, None);
+        let targets = targets_of(&built.messages, &self.workspace.metadata().packages, None)?;
         let executables: Vec<(&str, &Path)> = targets
             .iter()
             .map(|target| (target.id.as_str(), target.executable.as_path()))
             .collect();
-        Ok(Some(artifacts::digests(executables).unwrap_or_default()))
+        Ok(Some(artifacts::digests(executables)?))
     }
 }

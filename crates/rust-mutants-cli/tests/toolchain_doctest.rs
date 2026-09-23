@@ -17,7 +17,7 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -50,7 +50,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+    njutest_devkit::strictjson::decode_str(&njutest_devkit::fixture::stored_report(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     ))
     .expect("the report is a document")
@@ -67,15 +67,18 @@ fn doctests_can_be_switched_off() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
     let build = text
         .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|event| event["type"].as_str() == Some("build"))
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a trace event")
+        })
+        .find(|event| event["payload"]["type"].as_str() == Some("build"))
         .expect("the build event");
-    let targets: Vec<&str> = build["build"]["targets"]
+    let targets: Vec<&str> = build["payload"]["build"]["targets"]
         .as_array()
         .expect("the targets")
         .iter()
@@ -99,17 +102,20 @@ fn a_documentation_target_reaches_every_mutation_of_its_own_library_under_covera
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
     let routes: Vec<serde_json::Value> = text
         .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|event| event["type"].as_str() == Some("route"))
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("a trace event")
+        })
+        .filter(|event| event["payload"]["type"].as_str() == Some("route"))
         .collect();
     assert!(!routes.is_empty(), "the fixture judges something");
     let reaching_doc = routes.iter().filter(|route| {
-        route["route"]["reaching"]
+        route["payload"]["route"]["reaching"]
             .as_array()
             .is_some_and(|reaching| {
                 reaching
@@ -132,18 +138,18 @@ fn a_library_without_examples_costs_no_run() {
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let text = std::fs::read_to_string(directory.join("trace.jsonl")).expect("the recording");
     let events: Vec<serde_json::Value> = text
         .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
+        .map(|line| njutest_devkit::strictjson::decode_str(line).expect("a trace event"))
         .collect();
     let build = events
         .iter()
-        .find(|event| event["type"].as_str() == Some("build"))
+        .find(|event| event["payload"]["type"].as_str() == Some("build"))
         .expect("the build event");
-    let doc = build["build"]["details"]
+    let doc = build["payload"]["build"]["details"]
         .as_array()
         .expect("the details")
         .iter()
@@ -159,8 +165,8 @@ fn a_library_without_examples_costs_no_run() {
     );
     let ran: Vec<&str> = events
         .iter()
-        .filter(|event| event["type"].as_str() == Some("mutant-exec"))
-        .filter_map(|event| event["mutant"]["target"].as_str())
+        .filter(|event| event["payload"]["type"].as_str() == Some("mutant-exec"))
+        .filter_map(|event| event["payload"]["mutant"]["target"].as_str())
         .collect();
     assert!(
         !ran.iter().any(|target| target.contains("/doc/")),

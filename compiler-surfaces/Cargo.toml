@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "compiler-surfaces"
+description = "Private compiler views of incidental njutest APIs"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[package.metadata.njutest]
+surface = "test-support"
+
+[[bin]]
+name = "surface-njutest"
+path = "src/bin/njutest.rs"
+test = false
+bench = false
+doc = false
+
+[[bin]]
+name = "surface-rust-mutants-cli"
+path = "src/bin/rust_mutants_cli.rs"
+test = false
+bench = false
+doc = false
+
+[[bin]]
+name = "surface-xtask"
+path = "src/bin/xtask.rs"
+test = false
+bench = false
+doc = false
+
+[dependencies]
+cargo_metadata = { workspace = true }
+clap = { workspace = true }
+hex = { workspace = true }
+getrandom = { workspace = true }
+jiff = { workspace = true, features = ["serde"] }
+njutest-macros = { workspace = true }
+proc-macro2 = { workspace = true }
+proptest = { workspace = true }
+ratatui = { workspace = true }
+rust-mutants = { workspace = true, features = ["testkit"] }
+rustix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+signal-hook = { workspace = true }
+syn = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+toml_edit = { workspace = true }
+unicode-width = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+njutest-devkit = { workspace = true }
+
+[lints]
+workspace = true

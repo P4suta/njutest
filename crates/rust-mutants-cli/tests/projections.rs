@@ -12,15 +12,17 @@
 
 use std::collections::BTreeMap;
 
+use rust_mutants::outcome::Outcome;
+use rust_mutants::report::catalog::{
+    PlatformDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument,
+};
+use rust_mutants::run::{FindingKind, NotRunReason};
 use rust_mutants_cli::report::run::{
     Accounting, FindingDocument, RunDocument, RunMeta, RunMutantDocument, ScoreDocument,
 };
 use rust_mutants_cli::report::sources::Held;
 use rust_mutants_cli::report::stryker::Thresholds;
-use rust_mutants_cli::report::{
-    PlatformDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument, html,
-    markdown, sarif, stryker, tally,
-};
+use rust_mutants_cli::report::{html, markdown, sarif, stryker, tally};
 
 /// The source every mutation in the fixture is in.
 const SOURCE: &str = "pub fn wide(n: i32) -> bool {\n    n > 1\n}\n";
@@ -28,7 +30,7 @@ const SOURCE: &str = "pub fn wide(n: i32) -> bool {\n    n > 1\n}\n";
 /// A name a reader must not be able to close a tag with.
 const MARKUP: &str = "<script>alert('x')</script>";
 
-fn mutant(index: u32, outcome: &str, replacement: &str) -> RunMutantDocument {
+fn mutant(index: u32, outcome: Outcome, replacement: &str) -> RunMutantDocument {
     RunMutantDocument {
         index,
         id: format!("{index:064x}"),
@@ -46,7 +48,7 @@ fn mutant(index: u32, outcome: &str, replacement: &str) -> RunMutantDocument {
         source_digest: format!("{index:064x}"),
         original: ">".to_owned(),
         replacement: replacement.to_owned(),
-        outcome: outcome.to_owned(),
+        outcome,
         target: "demo/lib/demo".to_owned(),
         exit_code: 0,
         duration_ms: 41,
@@ -55,18 +57,19 @@ fn mutant(index: u32, outcome: &str, replacement: &str) -> RunMutantDocument {
         signal: None,
         not_run_reason: None,
         route: None,
-        identical: None,
+        identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
         expected: false,
         unreached: false,
         source_run_id: None,
+        step_notice: None,
     }
 }
 
 fn document() -> RunDocument {
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 1,
+        schema_version: 2,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T120000000Z".to_owned(),
@@ -95,6 +98,7 @@ fn document() -> RunDocument {
             include: Vec::new(),
             exclude: Vec::new(),
             packages: Vec::new(),
+            mutant_steps: None,
         },
         targets: Vec::new(),
         established_tests: 0,
@@ -105,7 +109,8 @@ fn document() -> RunDocument {
             executed: 2_u32.into(),
             killed: 1_u32.into(),
             survived: 1_u32.into(),
-            timed_out: 0_u32.into(),
+            step_limit_reached: 0_u32.into(),
+            waited: 0_u32.into(),
             inconclusive: 0_u32.into(),
             errored: 0_u32.into(),
             unreached: 0_u32.into(),
@@ -118,12 +123,15 @@ fn document() -> RunDocument {
             decided: 2,
             value: 0.5,
         }),
-        mutants: vec![mutant(0, "killed", ">="), mutant(1, "survived", "<")],
+        mutants: vec![
+            mutant(0, Outcome::Killed, ">="),
+            mutant(1, Outcome::Survived, "<"),
+        ],
         rejections: Vec::new(),
         skips: Vec::new(),
         expectations: Vec::new(),
         findings: vec![FindingDocument {
-            kind: "surviving-mutant".to_owned(),
+            kind: FindingKind::SurvivingMutant,
             mutant: Some(format!("{:064x}", 1)),
             detail: "no test noticed this".to_owned(),
         }],
@@ -205,11 +213,11 @@ fn the_stryker_projection_is_the_shape_that_reader_accepts() {
 }
 
 /// One finding, about `mutant` or about nothing.
-fn found(kind: &str, mutant: Option<&str>) -> FindingDocument {
+fn found(kind: FindingKind, mutant: Option<&str>) -> FindingDocument {
     FindingDocument {
-        kind: kind.to_owned(),
+        kind,
         mutant: mutant.map(ToOwned::to_owned),
-        detail: format!("what {kind} means here"),
+        detail: format!("what {} means here", kind.as_str()),
     }
 }
 
@@ -217,10 +225,13 @@ fn found(kind: &str, mutant: Option<&str>) -> FindingDocument {
 fn a_sarif_alert_carries_the_level_its_kind_earns_and_the_place_it_is_about() {
     let mut document = document();
     document.findings = vec![
-        found("surviving-mutant", Some(&format!("{:064x}", 1))),
-        found("unreached-mutant", Some(&format!("{:064x}", 0))),
-        found("build-failure", None),
-        found("surviving-mutant", Some("a mutation this run never judged")),
+        found(FindingKind::SurvivingMutant, Some(&format!("{:064x}", 1))),
+        found(FindingKind::UnreachedMutant, Some(&format!("{:064x}", 0))),
+        found(FindingKind::ErroredMutant, None),
+        found(
+            FindingKind::SurvivingMutant,
+            Some("a mutation this run never judged"),
+        ),
     ];
     let json = serde_json::to_value(sarif::log(&document)).expect("the log is a document");
     let results = json["runs"][0]["results"]
@@ -256,7 +267,7 @@ fn a_sarif_alert_carries_the_level_its_kind_earns_and_the_place_it_is_about() {
          open: {json}"
     );
     assert_eq!(
-        results[0]["partialFingerprints"]["rustMutantsMutation/v2"].as_str(),
+        results[0]["partialFingerprints"]["rustMutantsMutation/v1"].as_str(),
         Some("src/lib.rs:demo:gt-to-ge:>"),
         "an alert about a mutation carries the place it is in under the name the reader \
          groups by — not the file's bytes, which the next commit re-mints, closing every \
@@ -277,7 +288,10 @@ fn a_sarif_alert_carries_the_level_its_kind_earns_and_the_place_it_is_about() {
 fn a_region_ends_where_the_original_does_when_the_original_is_one_line() {
     let mut document = document();
     document.mutants[0].original = ">".to_owned();
-    document.findings = vec![found("surviving-mutant", Some(&format!("{:064x}", 0)))];
+    document.findings = vec![found(
+        FindingKind::SurvivingMutant,
+        Some(&format!("{:064x}", 0)),
+    )];
     let json = serde_json::to_value(sarif::log(&document)).expect("the log is a document");
     let region =
         json["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"].clone();
@@ -329,10 +343,10 @@ fn the_sarif_log_carries_every_finding_where_a_reader_can_open_it() {
 }
 
 /// One mutant with the outcome and the reach a run gave it.
-fn outcome(index: u32, outcome: &str, unreached: bool) -> RunMutantDocument {
+fn outcome(index: u32, outcome: Outcome, unreached: bool) -> RunMutantDocument {
     RunMutantDocument {
-        outcome: outcome.to_owned(),
         unreached,
+        not_run_reason: unreached.then_some(NotRunReason::Unreached),
         ..mutant(index, outcome, ">=")
     }
 }
@@ -354,14 +368,14 @@ fn projected(mutants: Vec<RunMutantDocument>) -> serde_json::Value {
 #[test]
 fn every_outcome_is_said_in_the_word_that_reader_knows() {
     let json = projected(vec![
-        outcome(0, "killed", false),
-        outcome(1, "survived", false),
-        outcome(2, "timed_out", false),
-        outcome(3, "inconclusive", false),
-        outcome(4, "errored", false),
-        outcome(5, "not_run", true),
-        outcome(6, "not_run", false),
-        outcome(7, "a word from a later release", false),
+        outcome(0, Outcome::Killed, false),
+        outcome(1, Outcome::Survived, false),
+        outcome(2, Outcome::StepLimitReached, false),
+        outcome(3, Outcome::Waited, false),
+        outcome(4, Outcome::Inconclusive, false),
+        outcome(5, Outcome::Errored, false),
+        outcome(6, Outcome::NotRun, true),
+        outcome(7, Outcome::NotRun, false),
     ]);
     let mutants = json["files"]["src/lib.rs"]["mutants"]
         .as_array()
@@ -375,11 +389,11 @@ fn every_outcome_is_said_in_the_word_that_reader_knows() {
         vec![
             "Killed",
             "Survived",
-            "Timeout",
+            "Pending",
+            "Pending",
             "RuntimeError",
             "RuntimeError",
             "NoCoverage",
-            "Pending",
             "Pending",
         ],
         "this run's words and that reader's are two vocabularies, and every one of ours \
@@ -388,10 +402,10 @@ fn every_outcome_is_said_in_the_word_that_reader_knows() {
          `Survived`, because the two are different things to do about: {json}"
     );
     assert!(
-        mutants[3]["statusReason"]
+        mutants[4]["statusReason"]
             .as_str()
             .is_some_and(|it| it.contains("did not reproduce"))
-            && mutants[4]["statusReason"]
+            && mutants[5]["statusReason"]
                 .as_str()
                 .is_some_and(|it| it.contains("exit")),
         "and the two that arrive as one word carry the sentence that parts them: a \
@@ -405,14 +419,14 @@ fn every_outcome_is_said_in_the_word_that_reader_knows() {
 
 #[test]
 fn only_a_mutation_something_noticed_names_what_noticed_it() {
-    let mut named = outcome(0, "killed", false);
+    let mut named = outcome(0, Outcome::Killed, false);
     named.killed_by = vec!["demo::works".to_owned()];
-    let mut unnamed = outcome(1, "killed", false);
+    let mut unnamed = outcome(1, Outcome::Killed, false);
     unnamed.killed_by = Vec::new();
-    let mut nowhere = outcome(2, "killed", false);
+    let mut nowhere = outcome(2, Outcome::Killed, false);
     nowhere.killed_by = Vec::new();
     nowhere.target = String::new();
-    let alive = outcome(3, "survived", false);
+    let alive = outcome(3, Outcome::Survived, false);
 
     let json = projected(vec![named, unnamed, nowhere, alive]);
     let mutants = json["files"]["src/lib.rs"]["mutants"]
@@ -440,7 +454,7 @@ fn only_a_mutation_something_noticed_names_what_noticed_it() {
 #[test]
 fn a_column_is_counted_the_way_that_reader_counts_it() {
     let mut document = document();
-    document.mutants = vec![mutant(0, "killed", ">=")];
+    document.mutants = vec![mutant(0, Outcome::Killed, ">=")];
     let wide = "pub fn wide(n: i32) -> bool {\n    // ★★★ n > 1\n}\n";
     document.mutants[0].line = 2;
     document.mutants[0].column = 20;
@@ -474,7 +488,7 @@ fn a_column_is_counted_the_way_that_reader_counts_it() {
 #[test]
 fn a_mutation_over_several_lines_ends_on_the_last_of_them() {
     let mut document = document();
-    document.mutants = vec![mutant(0, "killed", "")];
+    document.mutants = vec![mutant(0, Outcome::Killed, "")];
     document.mutants[0].line = 1;
     document.mutants[0].column = 1;
     document.mutants[0].original = "if a {\n    b\n}".to_owned();
@@ -563,13 +577,13 @@ fn the_page_says_what_the_run_decided_and_what_it_decided_nothing_about() {
 #[test]
 fn every_row_carries_the_place_it_takes_when_a_reader_asks_for_findings_first() {
     let mut document = document();
-    let mut accepted = outcome(4, "survived", false);
+    let mut accepted = outcome(4, Outcome::Survived, false);
     accepted.expected = true;
     document.mutants = vec![
-        outcome(0, "killed", false),
-        outcome(1, "survived", false),
-        outcome(2, "not_run", true),
-        outcome(3, "errored", false),
+        outcome(0, Outcome::Killed, false),
+        outcome(1, Outcome::Survived, false),
+        outcome(2, Outcome::NotRun, true),
+        outcome(3, Outcome::Errored, false),
         accepted,
     ];
     let page = html::document(&document, &sources());
@@ -635,11 +649,11 @@ fn the_sarif_log_is_the_document_that_was_reviewed() {
 /// A run whose report carries every side of itself: what nothing reached, what was refused, what discovery passed over, a file the tests noticed every mutation in, and text with the characters a page has to escape.
 fn everything() -> RunDocument {
     let mut document = document();
-    let mut unreached = outcome(2, "not_run", true);
+    let mut unreached = outcome(2, Outcome::NotRun, true);
     "src/other.rs".clone_into(&mut unreached.path);
-    let mut not_run = outcome(3, "not_run", false);
+    let mut not_run = outcome(3, Outcome::NotRun, false);
     "src/other.rs".clone_into(&mut not_run.path);
-    let mut clean = outcome(4, "killed", false);
+    let mut clean = outcome(4, Outcome::Killed, false);
     "src/clean.rs".clone_into(&mut clean.path);
     document.mutants.extend([unreached, not_run, clean]);
     document.rejections = vec![RejectionDocument {
@@ -713,18 +727,15 @@ fn the_stryker_projection_of_a_run_with_every_side_to_it_is_the_one_reviewed() {
 
 /// Every projection of one run lays the accounting out from the same arrangement.
 ///
-/// Four of them used to lay it out each for itself, and all four made the same
-/// mistake — a subset printed beside the count it is part of — while two also
-/// disagreed about which columns exist. The arrangement is one value now, and
-/// this holds them to it: a projection that reaches past `Tally` to the raw
-/// counts is one that can drift again.
+/// Four of them used to lay it out each for itself, and all four made the same mistake — a subset printed beside the count it is part of — while two also disagreed about which columns exist.
+/// The arrangement is one value now, and this holds them to it: a projection that reaches past `Tally` to the raw counts is one that can drift again.
 #[test]
 fn every_projection_lays_the_accounting_out_from_the_one_arrangement() {
     let document = document();
     let tally = tally::Tally::of(&document);
     let page = html::document(&document, &sources());
     let paged = markdown::document(&document);
-    let said = rust_mutants_cli::report::lines(&document);
+    let said = rust_mutants_cli::report::lines(&document).expect("valid work ledger");
 
     for (name, count) in &tally.parts {
         for (projection, text) in [("html", &page), ("markdown", &paged)] {

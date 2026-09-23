@@ -14,20 +14,21 @@
 )]
 
 use std::io::{BufRead as _, Read as _, Write as _};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use njutest_devkit::thread::JoinedThread;
 
 /// The exit code a role nobody wrote leaves.
 const UNKNOWN_ROLE_EXIT: u8 = 99;
 
 /// What the orders service calls the order it was asked to place.
 ///
-/// The same every time on purpose. A caller cannot tell a replayed request
-/// from one delivery when the answer does not move, which is the whole of
-/// what `replay-request` asks of a suite, and an identifier that counted up
-/// would answer that question with an artifact of this program instead.
+/// The same every time on purpose.
+/// A caller cannot tell a replayed request from one delivery when the answer does not move, which is the whole of what `replay-request` asks of a suite, and an identifier that counted up would answer that question with an artifact of this program instead.
 const PLACED: &str = "order-1";
 
 fn main() -> ExitCode {
@@ -65,41 +66,75 @@ impl Answer {
 fn serve(answer: Answer, names: &str) -> ExitCode {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
     let address = listener.local_addr().expect("the address");
+    listener
+        .set_nonblocking(true)
+        .expect("the provider listener becomes stoppable");
     let stopping = Arc::new(AtomicBool::new(false));
     let told = Arc::clone(&stopping);
-    let answering = std::thread::spawn(move || {
+    let answering = JoinedThread::launch(move || -> std::io::Result<()> {
         loop {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            if told.load(Ordering::Relaxed) {
-                return;
+            if told.load(Ordering::SeqCst) {
+                return Ok(());
             }
-            let mut heard = [0_u8; 4096];
-            let _read = stream.read(&mut heard);
-            let _written = stream.write_all(&answer.bytes());
-            let _flushed = stream.flush();
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut heard = [0_u8; 4096];
+                    let bytes_read = stream.read(&mut heard)?;
+                    if bytes_read == 0 {
+                        continue;
+                    }
+                    stream.write_all(&answer.bytes())?;
+                    stream.flush()?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error),
+            }
         }
     });
 
-    for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+    let mut exit = ExitCode::SUCCESS;
+    let mut stopped_reply = false;
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else {
+            exit = ExitCode::FAILURE;
+            break;
+        };
         if line.contains(r#""action":"start""#) {
-            say(&format!(
+            if say(&format!(
                 r#"{{"version":1,"status":"ready","instance":"one","environment":{{"{names}":"http://{address}"}}}}"#
-            ));
+            ))
+            .is_err()
+            {
+                exit = ExitCode::FAILURE;
+                break;
+            }
         } else if line.contains(r#""action":"stop""#) {
-            stopping.store(true, Ordering::Relaxed);
-            let _woken = TcpStream::connect(address);
-            let _joined = answering.join();
-            say(r#"{"version":1,"status":"stopped","instance":"one"}"#);
-            return ExitCode::SUCCESS;
+            stopped_reply = true;
+            break;
         }
     }
-    ExitCode::SUCCESS
+    stopping.store(true, Ordering::SeqCst);
+    match answering.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("fake-upstream: service failed: {error}");
+            exit = ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!("fake-upstream: service thread failed: {error}");
+            exit = ExitCode::FAILURE;
+        }
+    }
+    if stopped_reply && say(r#"{"version":1,"status":"stopped","instance":"one"}"#).is_err() {
+        exit = ExitCode::FAILURE;
+    }
+    exit
 }
 
 /// Says one line and lets the run read it now: a provider a run waits on says nothing while its output sits in a buffer.
-fn say(line: &str) {
+fn say(line: &str) -> std::io::Result<()> {
     println!("{line}");
-    let _flushed = std::io::stdout().flush();
+    std::io::stdout().flush()
 }

@@ -3,6 +3,8 @@
 
 //! What a marker hides, wherever an author puts one.
 
+use std::fmt::Write as _;
+
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::syntax::{FileDiscovery, Selection, SkipReason, discover_file};
 
@@ -10,7 +12,6 @@ static REGISTRY: Registry = Registry::canonical();
 
 /// A file of `functions` functions, each one line of body, with a marker on `at`.
 fn generated(functions: usize, at: usize, inside_a_literal: bool) -> String {
-    use std::fmt::Write as _;
     let marker = if inside_a_literal {
         "let _said = \"rust-mutants: skip nothing\";"
     } else {
@@ -18,10 +19,14 @@ fn generated(functions: usize, at: usize, inside_a_literal: bool) -> String {
     };
     let mut text = String::from("//! A generated module.\n");
     for index in 0..functions {
-        let _written = writeln!(
+        let written = write!(
             text,
             "pub fn f{index}(a: i32, b: i32) -> i32 {{\n    {}\n    a + b\n}}",
             if index == at { marker } else { "let _n = 1;" }
+        );
+        assert!(
+            matches!(written, Ok(())),
+            "writing to a String is infallible"
         );
     }
     text
@@ -29,7 +34,10 @@ fn generated(functions: usize, at: usize, inside_a_literal: bool) -> String {
 
 fn discovered(source: &str) -> Option<FileDiscovery> {
     let selection = Selection::tier(&REGISTRY, Tier::All);
-    discover_file("src/lib.rs", source.as_bytes(), &selection).ok()
+    match discover_file("src/lib.rs", source.as_bytes(), &selection) {
+        Ok(discovery) => Some(discovery),
+        Err(_) => None,
+    }
 }
 
 proptest::proptest! {
@@ -40,11 +48,16 @@ proptest::proptest! {
         at in 0usize..6,
         inside_a_literal in proptest::bool::ANY
     ) {
-        let at = at.min(functions.saturating_sub(1));
+        let Some(last) = functions.checked_sub(1) else { return Ok(()) };
+        let at = at.min(last);
         let source = generated(functions, at, inside_a_literal);
         let plain = generated(functions, functions, false);
-        let marked = discovered(&source).expect("the generated file walks");
-        let unmarked = discovered(&plain).expect("the generated file walks");
+        let marked = discovered(&source);
+        proptest::prop_assert!(marked.is_some(), "the generated file walks");
+        let Some(marked) = marked else { return Ok(()) };
+        let unmarked = discovered(&plain);
+        proptest::prop_assert!(unmarked.is_some(), "the generated file walks");
+        let Some(unmarked) = unmarked else { return Ok(()) };
         if inside_a_literal {
             proptest::prop_assert!(marked.annotations.is_empty());
             proptest::prop_assert_eq!(

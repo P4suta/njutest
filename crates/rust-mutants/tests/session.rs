@@ -1,16 +1,43 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a session is asked, in the words a caller says it in. Nothing here starts a toolchain.
+//! What a session is asked, in the words a caller says it in.
+//! Nothing here starts a toolchain.
+
+#![expect(
+    clippy::expect_used,
+    reason = "bounded fixture counters turn an impossible exhaustion into the test failure"
+)]
 
 use std::time::Duration;
 
 use std::sync::atomic::Ordering;
 
+use njutest_devkit::thread::ScopedThread;
 use rust_mutants::run::Quiet;
 use rust_mutants::session::{
     DEFAULT_MUTANT_TIMEOUT, Request, Timeout, TimeoutSource, derived, rewrite_needed,
 };
+
+fn increment(counter: &std::sync::atomic::AtomicU32) -> u32 {
+    let previous = counter
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+            value.checked_add(1)
+        })
+        .expect("the bounded fixture counter has room");
+    previous
+        .checked_add(1)
+        .expect("fetch_update established this successor")
+}
+
+fn decrement(counter: &std::sync::atomic::AtomicU32) {
+    let previous = counter
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+            value.checked_sub(1)
+        })
+        .expect("a fixture worker only leaves after entering");
+    assert!(previous > 0, "a fixture worker only leaves after entering");
+}
 
 #[test]
 fn a_request_built_step_by_step_equals_the_literal_it_replaces() {
@@ -67,13 +94,13 @@ fn a_file_whose_kept_set_did_not_change_is_not_rewritten_between_rounds() {
 #[test]
 fn the_default_timeout_is_five_times_the_baseline_of_the_target_and_never_below_thirty_seconds() {
     assert_eq!(
-        derived(Duration::from_secs(20)),
+        derived(Duration::from_secs(20)).expect("twenty seconds times five fits"),
         Duration::from_secs(100),
         "a mutation that takes five times what the whole target took is one nothing is waiting \
          for, and the multiple is of what this target measured rather than of a number"
     );
     assert_eq!(
-        derived(Duration::from_millis(40)),
+        derived(Duration::from_millis(40)).expect("forty milliseconds times five fits"),
         Duration::from_secs(30),
         "a fast target would derive a budget shorter than a machine's own noise, and a timeout \
          a slow machine trips is a finding about the machine"
@@ -83,18 +110,28 @@ fn the_default_timeout_is_five_times_the_baseline_of_the_target_and_never_below_
 #[test]
 fn a_configured_timeout_wins_over_auto() {
     assert_eq!(
-        Timeout::Fixed(Duration::from_secs(7)).of(Some(Duration::from_secs(20))),
+        Timeout::Fixed(Duration::from_secs(7))
+            .of(Some(Duration::from_secs(20)))
+            .expect("a configured duration is already bounded"),
         (Duration::from_secs(7), TimeoutSource::Configured)
     );
     assert_eq!(
-        Timeout::Auto.of(Some(Duration::from_secs(20))),
+        Timeout::Auto
+            .of(Some(Duration::from_secs(20)))
+            .expect("the measured duration fits its multiplier"),
         (Duration::from_secs(100), TimeoutSource::Derived)
     );
     assert_eq!(
-        Timeout::Auto.of(None),
+        Timeout::Auto
+            .of(None)
+            .expect("the default duration is bounded"),
         (DEFAULT_MUTANT_TIMEOUT, TimeoutSource::Derived),
         "a target nothing verified has no baseline to be a multiple of, and the run says what \
          it fell back to rather than waiting for ever"
+    );
+    assert!(
+        derived(Duration::MAX).is_err(),
+        "an overflowing derived timeout is a refusal, not an infinite-looking fabricated budget"
     );
 }
 
@@ -104,26 +141,35 @@ fn a_confirming_retry_takes_the_quiet_lock_alone() {
     let running = std::sync::atomic::AtomicU32::new(0);
     let most = std::sync::atomic::AtomicU32::new(0);
     std::thread::scope(|scope| {
+        let mut workers = Vec::new();
         for _worker in 0..4 {
-            let _handle = scope.spawn(|| {
+            let worker = ScopedThread::launch(scope, || {
                 for _turn in 0..8 {
-                    quiet.shared(|| {
-                        let now = running.fetch_add(1, Ordering::SeqCst).saturating_add(1);
-                        most.fetch_max(now, Ordering::SeqCst);
-                        std::thread::sleep(Duration::from_millis(1));
-                        running.fetch_sub(1, Ordering::SeqCst);
-                    });
-                    quiet.alone(|| {
-                        assert_eq!(
-                            running.load(Ordering::SeqCst),
-                            0,
-                            "a run that has to decide whether a budget really expired measures \
+                    quiet
+                        .shared(|| {
+                            let now = increment(&running);
+                            most.fetch_max(now, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_millis(1));
+                            decrement(&running);
+                        })
+                        .expect("shared coordination remains healthy");
+                    quiet
+                        .alone(|| {
+                            assert_eq!(
+                                running.load(Ordering::SeqCst),
+                                0,
+                                "a run that has to decide whether a budget really expired measures \
                              with the machine to itself"
-                        );
-                        std::thread::sleep(Duration::from_millis(1));
-                    });
+                            );
+                            std::thread::sleep(Duration::from_millis(1));
+                        })
+                        .expect("exclusive coordination remains healthy");
                 }
             });
+            workers.push(worker);
+        }
+        for worker in workers {
+            worker.join().expect("fixture worker joins");
         }
     });
     assert!(

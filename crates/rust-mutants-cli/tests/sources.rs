@@ -9,11 +9,12 @@
               cannot be written is a setup failure to report by panicking"
 )]
 
+use rust_mutants::outcome::Outcome;
+use rust_mutants::report::catalog::{PlatformDocument, SelectionDocument, WorkspaceDocument};
 use rust_mutants_cli::report::run::{
     Accounting, RunDocument, RunMeta, RunMutantDocument, ScoreDocument,
 };
 use rust_mutants_cli::report::sources::{Held, read};
-use rust_mutants_cli::report::{PlatformDocument, SelectionDocument, WorkspaceDocument};
 
 const SOURCE: &str = "pub fn wide(n: i32) -> bool {\n    n > 1\n}\n";
 
@@ -35,7 +36,7 @@ fn mutant(path: &str, digest: &str) -> RunMutantDocument {
         source_digest: digest.to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: "killed".to_owned(),
+        outcome: Outcome::Killed,
         target: "demo/lib/demo".to_owned(),
         exit_code: 0,
         duration_ms: 1,
@@ -44,18 +45,19 @@ fn mutant(path: &str, digest: &str) -> RunMutantDocument {
         signal: None,
         not_run_reason: None,
         route: None,
-        identical: None,
+        identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
         expected: false,
         unreached: false,
         source_run_id: None,
+        step_notice: None,
     }
 }
 
 fn document(mutants: Vec<RunMutantDocument>) -> RunDocument {
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 1,
+        schema_version: 2,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T120000000Z".to_owned(),
@@ -84,6 +86,7 @@ fn document(mutants: Vec<RunMutantDocument>) -> RunDocument {
             include: Vec::new(),
             exclude: Vec::new(),
             packages: Vec::new(),
+            mutant_steps: None,
         },
         targets: Vec::new(),
         established_tests: 0,
@@ -94,7 +97,8 @@ fn document(mutants: Vec<RunMutantDocument>) -> RunDocument {
             executed: 1_u32.into(),
             killed: 1_u32.into(),
             survived: 0_u32.into(),
-            timed_out: 0_u32.into(),
+            step_limit_reached: 0_u32.into(),
+            waited: 0_u32.into(),
             inconclusive: 0_u32.into(),
             errored: 0_u32.into(),
             unreached: 0_u32.into(),

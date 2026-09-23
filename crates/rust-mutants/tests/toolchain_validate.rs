@@ -86,7 +86,10 @@ impl Compile for CargoScripted {
             },
         )
         .map_err(ValidateError::from)?;
-        let written = u32::try_from(files.len()).unwrap_or(u32::MAX);
+        let written =
+            u32::try_from(files.len()).map_err(|_overflow| ValidateError::AccountingOverflow {
+                what: "attempt written file count",
+            })?;
         Ok(Attempt {
             files,
             messages: checked.messages,
@@ -103,12 +106,17 @@ fn options() -> ValidateOptions {
 }
 
 fn prepare_fixture(name: &str) -> CargoScripted {
+    prepare_fixture_with(name, |_| {})
+}
+
+fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> CargoScripted {
     let dir = tempfile::Builder::new()
         .prefix("rust-mutants-validate-")
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join(name);
     copy_tree(&njutest_devkit::paths::fixtures_dir().join(name), &root);
+    arrange(&root);
     let target = tempfile::Builder::new()
         .prefix("rust-mutants-validate-target-")
         .tempdir()
@@ -199,6 +207,157 @@ fn prepare_fixture(name: &str) -> CargoScripted {
         _target: target,
     }
 }
+
+#[test]
+fn generated_guards_preserve_user_lints_coercions_temporaries_and_control_flow() {
+    let source = r#"#![deny(warnings)]
+
+trait Named {
+    fn name(&self) -> &'static str;
+}
+struct A;
+struct B;
+impl Named for A {
+    fn name(&self) -> &'static str { "a" }
+}
+impl Named for B {
+    fn name(&self) -> &'static str { "b" }
+}
+
+pub fn positive(value: u32) -> bool {
+    value > 0
+}
+
+pub fn signed(value: i32) -> bool {
+    value > 0
+}
+
+fn coerced(flag: bool) -> &'static dyn Named {
+    if flag { &A } else { &B }
+}
+
+pub fn temporary() -> usize {
+    let held: &str = &(String::from("a") + "b");
+    held.len()
+}
+
+pub fn questioned(value: Option<i32>) -> Option<i32> {
+    Some(value? + 1)
+}
+
+pub fn broken(value: i32) -> i32 {
+    loop {
+        break value + 1;
+    }
+}
+
+pub async fn awaited(value: i32) -> i32 {
+    async { value + 1 }.await + 1
+}
+
+pub fn name(flag: bool) -> &'static str {
+    coerced(flag).name()
+}
+"#;
+    let mut fixture = prepare_fixture_with("fixture-rejectable", |root| {
+        std::fs::write(root.join("src/lib.rs"), source).expect("write strict source");
+    });
+    let catalog = fixture.catalog.clone();
+    let positive_at =
+        u32::try_from(source.find("value > 0").expect("positive comparison") + "value ".len())
+            .expect("small source");
+    let signed_at =
+        u32::try_from(source.rfind("value > 0").expect("signed comparison") + "value ".len())
+            .expect("small source");
+    let positive = catalog
+        .mutants()
+        .iter()
+        .find(|mutant| {
+            mutant.candidate.rule.name == "gt-to-ge" && mutant.candidate.span.start == positive_at
+        })
+        .expect("the unsigned comparison mutation");
+    let signed = catalog
+        .mutants()
+        .iter()
+        .find(|mutant| {
+            mutant.candidate.rule.name == "gt-to-ge" && mutant.candidate.span.start == signed_at
+        })
+        .expect("the signed comparison mutation");
+
+    let validated = validate(
+        &catalog,
+        &mut fixture,
+        &rust_mutants::validate::Validating {
+            options: options(),
+            cancel: &Cancel::new(),
+            trace: &Recorder::disabled(),
+        },
+    )
+    .expect("validate strict source");
+    let rejection = validated
+        .rejections
+        .iter()
+        .find(|rejection| rejection.index == positive.index)
+        .expect("u32 >= 0 is refused by the crate's warning policy");
+    assert_eq!(rejection.code.as_deref(), Some("unused_comparisons"));
+    assert!(rejection.isolated, "{rejection:?}");
+    assert!(
+        validated.accepted.contains(&signed.index),
+        "the same mutation over a signed value remains legal: {validated:?}"
+    );
+
+    let standalone = source.replacen("value > 0", "value >= 0", 1);
+    std::fs::write(fixture.root.join("src/lib.rs"), standalone)
+        .expect("write the standalone mutant");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let standalone = compile(
+        &Driver {
+            toolchain: &fixture.toolchain,
+            dir: &fixture.root,
+            cancel: &cancel,
+            trace: &trace,
+        },
+        &CompileOptions {
+            kind: CompileKind::Tests,
+            packages: Vec::new(),
+            target_dir: Some(fixture.target.clone()),
+            locked: true,
+            offline: true,
+            timeout: None,
+            env: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
+        },
+    )
+    .expect("compile the standalone mutant");
+    assert!(!standalone.success, "{standalone:?}");
+    let standalone_code = standalone
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            rust_mutants::cargo::Message::CompilerMessage(message)
+                if message.message.is_error() =>
+            {
+                message.message.code.as_deref()
+            }
+            _ => None,
+        });
+    assert_eq!(
+        standalone_code,
+        rejection.code.as_deref(),
+        "the instrumented branch is refused exactly as the standalone edit is"
+    );
+
+    let final_attempt = fixture
+        .attempt(&validated.rejections.iter().map(|one| one.index).collect())
+        .expect("final strict attempt");
+    assert!(
+        final_attempt.success,
+        "the identity macro preserves coercions, temporary extension, ?, break, and async: {:?}",
+        final_attempt.messages
+    );
+}
+
 #[test]
 fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
     let mut fixture = prepare_fixture("fixture-rejectable");

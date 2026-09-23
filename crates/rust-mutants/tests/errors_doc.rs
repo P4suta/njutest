@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Every error code the engine can report is documented, and every documented code exists. The table in `docs/errors.md` is the reader-facing ledger; this test keeps it from drifting from the code in either direction.
+//! Every error code the engine can report is documented, and every documented code exists.
+//! The table in `docs/errors.md` is the reader-facing ledger; this test keeps it from drifting from the code in either direction.
 
 #![expect(
     clippy::expect_used,
@@ -85,6 +86,11 @@ fn every_variant_reports_a_declared_code() {
         .candidates,
     )
     .expect_err("an empty catalog holds nothing");
+    let artifact = rust_mutants::equivalence::artifacts::digests([(
+        "missing",
+        std::path::Path::new("this-artifact-does-not-exist"),
+    )])
+    .expect_err("the artifact does not exist");
     let samples = [
         rust_mutants::EngineError::Interrupted,
         rust_mutants::EngineError::from(snapshot),
@@ -94,6 +100,7 @@ fn every_variant_reports_a_declared_code() {
         rust_mutants::EngineError::from(rust_mutants::validate::ValidateError::NotIsolated {
             suspects: 2,
         }),
+        rust_mutants::EngineError::from(artifact),
     ];
     for sample in &samples {
         assert!(

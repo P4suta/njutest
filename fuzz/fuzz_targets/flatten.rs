@@ -8,7 +8,8 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|source: &str| {
-    if let Ok(flat) = rust_mutants::flatten::flatten(source) {
-        assert!(!flat.contains('\n') && !flat.contains('\r'), "{flat:?}");
+    match rust_mutants::flatten::flatten(source) {
+        Ok(flat) => assert!(!flat.contains('\n') && !flat.contains('\r'), "{flat:?}"),
+        Err(_rejected_rust_tokens) => {}
     }
 });

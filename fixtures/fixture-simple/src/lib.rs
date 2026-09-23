@@ -19,6 +19,11 @@ pub fn is_even(n: i32) -> bool {
 #[cfg(test)]
 mod tests {
     fn pause() {
+        if std::env::var_os("RUST_MUTANTS_ACTIVE").is_some()
+            && let Some(marker) = std::env::var_os("FIXTURE_SIMPLE_MUTANT_STARTED")
+        {
+            std::fs::write(marker, b"started").expect("record that a mutant test started");
+        }
         let Ok(text) = std::env::var("FIXTURE_SIMPLE_PAUSE_MS") else {
             return;
         };

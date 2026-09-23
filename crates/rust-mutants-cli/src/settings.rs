@@ -10,7 +10,7 @@ use rust_mutants::glob::Pattern;
 use rust_mutants::session::PrepareOptions;
 use rust_mutants::workspace::OpenOptions;
 
-use crate::config::{Config, ConfigError, FILE_NAME};
+use crate::config::{Config, ConfigError};
 use crate::error::CliError;
 use crate::{Environment, cli};
 
@@ -19,20 +19,19 @@ use crate::{Environment, cli};
 pub struct Settings {
     /// The workspace root.
     pub root: PathBuf,
-    /// The configuration file that was read, when one was.
-    pub source: Option<PathBuf>,
     /// The configuration, with every flag already folded in.
     pub config: Config,
 }
 
 impl Settings {
-    /// Reads the configuration a scope names and folds the flags into it. A flag given on the command line wins over the file; a list given on the command line replaces the file's list rather than adding to it.
+    /// Reads the configuration a scope names and folds the flags into it.
+    /// A flag given on the command line wins over the file; a list given on the command line replaces the file's list rather than adding to it.
     ///
     /// # Errors
     /// Returns what is wrong with the configuration, or with a duration a flag spells.
     pub fn resolve(scope: &cli::Scope, environment: &Environment) -> Result<Self, CliError> {
         let root = environment.rooted(scope.root.as_deref());
-        let (source, mut config) = read(scope, &root)?;
+        let mut config = read(scope, &root)?;
         if let Some(tier) = scope.tier {
             config.mutation.tier = tier.tier();
         }
@@ -41,17 +40,27 @@ impl Settings {
         replace(&mut config.project.exclude, &scope.exclude);
         replace(&mut config.snapshot.omit, &scope.omit);
         replace(&mut config.project.packages, &scope.packages);
-        config
-            .execution
-            .skip_targets
-            .extend(scope.skip_targets.iter().cloned());
+        replace(&mut config.execution.skip_targets, &scope.skip_targets);
         if let Some(text) = &scope.timeout {
             config.mutation.timeout =
                 crate::config::parse_timeout(text).map_err(EngineError::from)?;
         }
         replace(&mut config.build.features, &scope.features);
-        config.build.all_features |= scope.switches.all_features;
-        config.build.no_default_features |= scope.switches.no_default_features;
+        let cli::Switches {
+            offline,
+            locked,
+            keep_temp: _read_when_the_workspace_is_opened,
+            no_verify,
+            coverage,
+            no_coverage,
+            no_touch,
+            equivalence,
+            no_doctests,
+            all_features,
+            no_default_features,
+        } = scope.switches;
+        config.build.all_features |= all_features;
+        config.build.no_default_features |= no_default_features;
         if let Some(target) = &scope.build_target {
             config.build.target.clone_from(target);
         }
@@ -64,19 +73,15 @@ impl Settings {
         if let Some(jobs) = scope.jobs {
             config.execution.jobs = jobs;
         }
-        config.execution.offline |= scope.switches.offline;
-        config.execution.locked |= scope.switches.locked;
-        config.mutation.verify &= !scope.switches.no_verify;
-        config.mutation.coverage |= scope.switches.coverage;
-        config.mutation.coverage &= !scope.switches.no_coverage;
-        config.mutation.touch &= !scope.switches.no_touch;
-        config.mutation.equivalence |= scope.switches.equivalence;
-        config.execution.doctests &= !scope.switches.no_doctests;
-        Ok(Self {
-            root,
-            source,
-            config,
-        })
+        config.execution.offline |= offline;
+        config.execution.locked |= locked;
+        config.mutation.verify &= !no_verify;
+        config.mutation.coverage |= coverage;
+        config.mutation.coverage &= !no_coverage;
+        config.mutation.touch &= !no_touch;
+        config.mutation.equivalence |= equivalence;
+        config.execution.doctests &= !no_doctests;
+        Ok(Self { root, config })
     }
 
     /// How the workspace is opened.
@@ -89,12 +94,14 @@ impl Settings {
         environment: &Environment,
         trace: rust_mutants::trace::Recorder,
     ) -> Result<OpenOptions, EngineError> {
+        let report_directory = rust_mutants::id::slashed(&self.config.reports.directory)
+            .map_err(rust_mutants::workspace::SessionError::from)?;
         Ok(OpenOptions {
             cargo: None,
             search_path: rust_mutants::vars::search_path(&environment.vars),
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
-            report_directory: Some(self.config.reports.directory.to_string_lossy().into_owned()),
+            report_directory: Some(report_directory),
             exclude: compile(&self.config.snapshot.omit)?,
             allow_outside: self
                 .config
@@ -130,6 +137,7 @@ impl Settings {
             branch_proofs: self.config.mutation.coverage || self.config.mutation.touch,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: self.config.mutation.timeout,
+            mutant_steps: (self.config.mutation.steps > 0).then_some(self.config.mutation.steps),
             doctests: self.config.execution.doctests,
             build: self.config.build.config(),
             skip_targets: self.config.execution.skip_targets.clone(),
@@ -140,7 +148,10 @@ impl Settings {
                 .iter()
                 .map(crate::config::Skip::rule)
                 .collect::<Result<Vec<_>, _>>()?,
-            ..PrepareOptions::default()
+            measurements: None,
+            failing: rust_mutants::session::Failing::Refuse,
+            max_rounds: rust_mutants::validate::DEFAULT_MAX_ROUNDS,
+            validation_filter: None,
         })
     }
 
@@ -151,18 +162,16 @@ impl Settings {
     }
 }
 
-fn read(scope: &cli::Scope, root: &Path) -> Result<(Option<PathBuf>, Config), ConfigError> {
+fn read(scope: &cli::Scope, root: &Path) -> Result<Config, ConfigError> {
     if scope.no_config {
-        return Ok((None, Config::default()));
+        return Ok(Config::default());
     }
     if let Some(path) = &scope.config {
         let text = std::fs::read_to_string(path)
             .map_err(|error| ConfigError::unreadable(path, error.to_string()))?;
-        return Ok((Some(path.clone()), Config::parse(&text, path)?));
+        return Config::parse(&text, path);
     }
-    let path = root.join(FILE_NAME);
-    let config = Config::load(root)?;
-    Ok((path.is_file().then_some(path), config))
+    Config::load(root)
 }
 
 fn replace(field: &mut Vec<String>, given: &[String]) {

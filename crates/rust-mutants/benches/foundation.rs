@@ -6,6 +6,7 @@
 use std::fmt::Write as _;
 
 use criterion::Criterion;
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::flatten::flatten;
 use rust_mutants::id::{Identity, digest};
 use rust_mutants::span::Span;
@@ -15,9 +16,13 @@ use rust_mutants::splice::{Splice, apply};
 fn source() -> String {
     let mut text = String::from("//! A module.\n\n");
     for index in 0..200 {
-        let _written = writeln!(
+        let appended = write!(
             text,
             "pub fn f{index}(a: i32, b: i32) -> i32 {{\n    if a > b {{ a + b }} else {{ a - b }}\n}}\n"
+        );
+        assert!(
+            matches!(appended, Ok(())),
+            "writing to a String is infallible"
         );
     }
     text
@@ -27,17 +32,27 @@ fn benchmarks(criterion: &mut Criterion) {
     let text = source();
 
     criterion.bench_function("splice/200 edits", |bencher| {
-        let splices: Vec<Splice> = text
-            .match_indices("> ")
-            .map(|(at, _)| Splice {
-                span: Span {
-                    start: u32::try_from(at).unwrap_or(u32::MAX),
-                    end: u32::try_from(at.saturating_add(1)).unwrap_or(u32::MAX),
-                },
+        let mut splices = Vec::new();
+        for (at, _) in text.match_indices("> ") {
+            let start = u32::try_from(at);
+            assert_eq!(
+                result_state(&start),
+                Returned,
+                "the generated input fits u32"
+            );
+            let Ok(start) = start else { return };
+            let Some(after) = at.checked_add(1) else {
+                return;
+            };
+            let end = u32::try_from(after);
+            assert_eq!(result_state(&end), Returned, "the generated input fits u32");
+            let Ok(end) = end else { return };
+            splices.push(Splice {
+                span: Span { start, end },
                 original: b">".to_vec(),
                 replacement: b">=".to_vec(),
-            })
-            .collect();
+            });
+        }
         let bytes = text.as_bytes();
         bencher.iter(|| apply(std::hint::black_box(bytes), std::hint::black_box(&splices)));
     });

@@ -12,10 +12,14 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use njutest_devkit::result::{
+    ResultState::{Refused, Returned},
+    result_state,
+};
 use proptest::prelude::*;
 use rust_mutants::id::{
-    DISPLAY_ID_LENGTH, ID_DOMAIN, Identity, IdentityError, PathError, digest, display_id_of,
-    is_digest, is_id, normalize_path,
+    DISPLAY_ID_LENGTH, DisplayId, HexDigest, ID_DOMAIN, Identity, IdentityError, MutantId,
+    PathError, RunId, StoredRunId, digest, display_id_of, is_digest, is_id, normalize_path,
 };
 use rust_mutants::span::{Span, SpanError};
 
@@ -117,8 +121,8 @@ fn the_domain_separator_names_the_recipe_version() {
 fn golden_id_vectors() {
     for vector in &VECTORS {
         let got = vector.identity().id().expect("valid identity");
-        assert_eq!(got, vector.want_id, "vector {:?}", vector.name);
-        assert!(is_id(&got), "{got:?} is not a well-formed id");
+        assert_eq!(got.as_str(), vector.want_id, "vector {:?}", vector.name);
+        assert!(is_id(got.as_str()), "{got:?} is not a well-formed id");
     }
 }
 
@@ -322,9 +326,11 @@ fn an_identity_that_does_not_validate_never_produces_an_id() {
         mutate(&mut id);
         let error = id.validate().expect_err(name);
         assert!(expected(&error), "{name}: unexpected error {error:?}");
-        assert!(
-            id.id().is_err(),
-            "{name}: an invalid identity produced an id"
+        let generated = id.id();
+        assert_eq!(
+            result_state(&generated),
+            Refused,
+            "{name}: an invalid identity produced an id: {generated:?}"
         );
     }
 }
@@ -342,7 +348,9 @@ fn normalize_path_canonicalizes_and_refuses_paths_outside_the_workspace() {
         ("1:/repo/score.rs", "1:/repo/score.rs"),
     ];
     for (input, want) in ok {
-        let got = normalize_path(input).unwrap_or_else(|e| panic!("{input:?}: {e}"));
+        let got = normalize_path(input);
+        assert_eq!(result_state(&got), Returned, "{input:?}: {got:?}");
+        let Ok(got) = got else { continue };
         assert_eq!(got, want, "{input:?}");
         assert_eq!(
             normalize_path(&got).expect("idempotent"),
@@ -412,6 +420,32 @@ fn display_id_is_the_first_twenty_hex_digits_of_a_full_id() {
 }
 
 #[test]
+fn mutation_identity_types_preserve_domain_and_prefix_invariants() {
+    let full = MutantId::try_from(VECTORS[0].want_id).expect("canonical mutant identity");
+    let display = full.display();
+    assert_eq!(display.as_str(), "566154251b7671b0d674");
+    assert!(display.belongs_to(&full));
+
+    let other = MutantId::try_from(VECTORS[1].want_id).expect("other canonical identity");
+    assert!(!display.belongs_to(&other));
+    let invalid = "a";
+    let parsed = MutantId::try_from(invalid);
+    assert_eq!(result_state(&parsed), Refused, "{invalid:?}: {parsed:?}");
+    for invalid in [
+        "566154251b7671b0d67",
+        "566154251b7671b0d6740",
+        "566154251B7671B0D674",
+    ] {
+        let parsed = DisplayId::try_from(invalid);
+        assert_eq!(result_state(&parsed), Refused, "{invalid:?}: {parsed:?}");
+    }
+
+    let text = serde_json::to_string(&full).expect("serialize typed identity");
+    let decoded: MutantId = njutest_devkit::strictjson::decode_str(&text).expect("typed identity");
+    assert_eq!(decoded, full);
+}
+
+#[test]
 fn is_id_and_is_digest_accept_exactly_64_lowercase_hex_characters() {
     let full = VECTORS[0].want_id;
     assert!(is_id(full));
@@ -426,6 +460,87 @@ fn is_id_and_is_digest_accept_exactly_64_lowercase_hex_characters() {
         assert!(!is_id(bad), "{bad:?}");
         assert!(!is_digest(bad), "{bad:?}");
     }
+}
+
+#[test]
+fn a_filesystem_digest_is_one_exact_path_component_by_construction() {
+    let valid = "a".repeat(64);
+    let parsed = HexDigest::try_from(valid.as_str()).expect("one canonical digest");
+    assert_eq!(parsed.as_str(), valid);
+    for invalid in [
+        "../outside".to_owned(),
+        "/absolute".to_owned(),
+        "a/b".to_owned(),
+        "A".repeat(64),
+        "a".repeat(63),
+        "a".repeat(65),
+    ] {
+        let parsed = HexDigest::try_from(invalid.as_str());
+        assert_eq!(result_state(&parsed), Refused, "{invalid:?}: {parsed:?}");
+    }
+}
+
+#[test]
+fn a_run_id_is_one_cross_platform_component_by_construction() {
+    for valid in ["run", "run-20260920t010203z", "one_2"] {
+        assert_eq!(RunId::try_from(valid).expect("canonical").as_str(), valid);
+    }
+    for invalid in [
+        "",
+        ".",
+        "..",
+        "a.",
+        "../outside",
+        "/absolute",
+        "a/b",
+        "a\\b",
+        "con",
+        "CON",
+        "prn",
+        "aux",
+        "nul",
+        "com1",
+        "com9",
+        "lpt1",
+        "lpt9",
+        "20260920T010203Z-ABCDEF",
+    ] {
+        let parsed = RunId::try_from(invalid);
+        assert_eq!(result_state(&parsed), Refused, "{invalid:?}: {parsed:?}");
+    }
+    let too_long = RunId::try_from("a".repeat(65));
+    assert_eq!(result_state(&too_long), Refused, "{too_long:?}");
+}
+
+#[test]
+fn a_historical_run_id_is_read_only_and_path_safe() {
+    for valid in [
+        "run",
+        "run-20260920t010203z",
+        "20260920T010203Z-ABCDEF",
+        "one_2",
+    ] {
+        assert_eq!(
+            StoredRunId::try_from(valid)
+                .expect("path-safe historical id")
+                .as_str(),
+            valid
+        );
+    }
+    for invalid in ["", ".", "..", "a.", "../outside", "CON", "com1"] {
+        let parsed = StoredRunId::try_from(invalid);
+        assert_eq!(result_state(&parsed), Refused, "{invalid:?}: {parsed:?}");
+    }
+    let writable = RunId::try_from("new-run").expect("canonical writable id");
+    assert_eq!(StoredRunId::from(&writable).as_str(), "new-run");
+    assert_eq!(
+        StoredRunId::try_from("ABC")
+            .expect("historical uppercase")
+            .case_folded(),
+        StoredRunId::try_from("abc")
+            .expect("lowercase")
+            .case_folded()
+    );
 }
 
 proptest! {
@@ -450,7 +565,7 @@ proptest! {
             replacement_digest: digest(&replacement),
         };
         let first = identity.id().expect("valid");
-        prop_assert!(is_id(&first));
+        prop_assert!(is_id(first.as_str()));
         prop_assert_eq!(identity.id().expect("valid"), first);
     }
 }

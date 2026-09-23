@@ -14,8 +14,7 @@ type Built = BTreeMap<String, String>;
 /// Whether a tree built, changed, and built back comes out as the bytes it came out as.
 ///
 /// # Panics
-/// When the fixture cannot be copied, which is a setup failure rather than an
-/// answer.
+/// When the fixture cannot be copied, which is a setup failure rather than an answer.
 #[must_use]
 pub fn builds_the_same_twice() -> bool {
     let fixture = crate::fixture::Fixture::copy("fixture-equivalent");
@@ -31,7 +30,10 @@ pub fn builds_the_same_twice() -> bool {
     if std::fs::write(&source, &changed).is_err() {
         return false;
     }
-    let _between = built(fixture.root(), &target);
+    let between = built(fixture.root(), &target);
+    if between.is_empty() {
+        return false;
+    }
     if std::fs::write(&source, &original).is_err() {
         return false;
     }
@@ -43,24 +45,19 @@ pub fn builds_the_same_twice() -> bool {
 /// One build of the tree at `root`, or nothing at all when it did not build.
 fn built(root: &Path, target: &Path) -> Built {
     let mut command = std::process::Command::new(crate::paths::cargo_binary());
-    let _cleared = command.env_clear();
-    let _given = command.envs(crate::paths::environment_for_a_toolchain_run(&[]));
-    let _configured = command
-        .env("CARGO_INCREMENTAL", "0")
-        .args(["test", "--no-run", "--message-format=json", "--offline"])
-        .arg("--locked")
-        .arg("--target-dir")
-        .arg(target)
-        .current_dir(root);
+    configure_build_command(&mut command, root, target);
     let Ok(said) = command.output() else {
         return Built::new();
     };
     if !said.status.success() {
         return Built::new();
     }
+    let Ok(stdout) = String::from_utf8(said.stdout) else {
+        return Built::new();
+    };
     let mut found = Built::new();
-    for line in String::from_utf8_lossy(&said.stdout).lines() {
-        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
+    for line in stdout.lines() {
+        let Ok(message) = crate::strictjson::decode_str::<serde_json::Value>(line) else {
             continue;
         };
         if message.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
@@ -80,7 +77,28 @@ fn built(root: &Path, target: &Path) -> Built {
         let Ok(bytes) = std::fs::read(executable) else {
             return Built::new();
         };
-        let _replaced = found.insert(name.to_owned(), hex::encode(Sha256::digest(&bytes)));
+        if found
+            .insert(name.to_owned(), hex::encode(Sha256::digest(&bytes)))
+            .is_some()
+        {
+            return Built::new();
+        }
     }
     found
+}
+
+#[expect(
+    unused_results,
+    reason = "Command's infallible builder API returns self; this unit helper is the explicit boundary"
+)]
+fn configure_build_command(command: &mut std::process::Command, root: &Path, target: &Path) {
+    command
+        .env_clear()
+        .envs(crate::paths::environment_for_a_toolchain_run(&[]))
+        .env("CARGO_INCREMENTAL", "0")
+        .args(["test", "--no-run", "--message-format=json", "--offline"])
+        .arg("--locked")
+        .arg("--target-dir")
+        .arg(target)
+        .current_dir(root);
 }

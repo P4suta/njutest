@@ -143,7 +143,16 @@
             "excluded",
             "test-only-file",
             "no-std-crate",
-            "included-expression"
+            "included-expression",
+            "generated-outside-workspace",
+            "forbidden-lints",
+            "const-fn-body",
+            "let-condition",
+            "open-range",
+            "unstated-return-type",
+            "loop-value",
+            "annotated",
+            "configured"
           ]
         },
         "path": { "type": "string", "minLength": 1 },

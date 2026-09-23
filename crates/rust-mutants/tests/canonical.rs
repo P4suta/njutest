@@ -9,15 +9,24 @@ use rust_mutants::canonical::{canonical, plainly};
 
 #[test]
 fn a_resolved_directory_is_spelled_the_way_the_rest_of_a_run_spells_one() {
-    let temp = tempfile::tempdir().expect("a temporary directory");
-    let resolved = canonical(temp.path()).expect("the directory resolves");
+    let temp = tempfile::tempdir();
+    assert!(temp.is_ok(), "a temporary directory: {temp:?}");
+    let Ok(temp) = temp else { return };
+    let resolved = canonical(temp.path());
+    assert!(resolved.is_ok(), "the directory resolves: {resolved:?}");
+    let Ok(resolved) = resolved else { return };
+    let exact = resolved.to_str();
+    assert!(exact.is_some(), "the temporary path is exact UTF-8");
+    let Some(exact) = exact else { return };
     assert!(
-        !resolved.to_string_lossy().starts_with(r"\\?\"),
+        !exact.starts_with(r"\\?\"),
         "cargo prints a manifest path plainly and a person types one plainly, so a run \
-         that kept the extended-length form would hold two spellings of one place: {}",
-        resolved.display()
+         that kept the extended-length form would hold two spellings of one place: {resolved:?}",
     );
-    assert!(resolved.is_dir(), "{}", resolved.display());
+    let metadata = std::fs::metadata(&resolved);
+    assert!(metadata.is_ok(), "{resolved:?}: {metadata:?}");
+    let Ok(metadata) = metadata else { return };
+    assert!(metadata.is_dir(), "{resolved:?}");
 }
 
 #[test]

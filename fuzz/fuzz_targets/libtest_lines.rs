@@ -12,12 +12,15 @@ fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
-    let lines = parse_lines(data);
+    let Ok(lines) = parse_lines(data) else {
+        return;
+    };
     let counted = lines
         .passed
         .len()
-        .saturating_add(lines.failed.len())
-        .saturating_add(lines.ignored.len());
+        .checked_add(lines.failed.len())
+        .and_then(|count| count.checked_add(lines.ignored.len()))
+        .unwrap_or(usize::MAX);
     assert!(
         counted <= text.lines().count(),
         "{counted} verdicts from {} lines",
@@ -32,5 +35,8 @@ fuzz_target!(|data: &[u8]| {
         assert!(!name.is_empty(), "a test with no name");
         assert!(text.contains(name.as_str()), "{name:?} is in no line");
     }
-    assert_eq!(parse_lines(data), lines, "reading is a function of the bytes");
+    assert!(
+        matches!(parse_lines(data), Ok(again) if again == lines),
+        "reading is a function of the bytes"
+    );
 });

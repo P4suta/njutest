@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use rust_mutants::outcome::Outcome;
 use serde::Serialize;
 
 use super::run::RunDocument;
@@ -15,12 +16,6 @@ pub const SCHEMA_VERSION: &str = "2.0";
 
 /// The language every file of this projection is in.
 pub const LANGUAGE: &str = "rust";
-
-/// The file a projection is written to.
-pub const FILE_NAME: &str = "mutation.json";
-
-/// The thresholds the projection declares when the configuration says nothing, which the schema requires and this engine does not use: a verdict is a claim a reader can check, and a percentage is not.
-pub const THRESHOLDS: Thresholds = Thresholds { high: 80, low: 60 };
 
 /// One mutation testing report.
 #[derive(Debug, Clone, Serialize)]
@@ -102,14 +97,18 @@ pub struct Position {
 /// Projects one run report from the sources it names, with the thresholds a reader colours by.
 ///
 /// # Errors
-/// [`crate::error::CliError::SourceUnreadable`] when a file the report names is not under
-/// `root`.
+/// [`crate::error::CliError::SourceUnreadable`] when a file the report names is not under `root`.
 pub fn project(
     document: &RunDocument,
     root: &Path,
     thresholds: Thresholds,
     sources: &BTreeMap<String, super::sources::Held>,
 ) -> Result<Projection, crate::error::CliError> {
+    let project_root =
+        rust_mutants::id::slashed(root).map_err(|source| crate::error::CliError::PathNotUtf8 {
+            context: "the Stryker project root has no exact UTF-8 spelling",
+            source,
+        })?;
     let mut files: BTreeMap<String, FileResult> = BTreeMap::new();
     for mutant in &document.mutants {
         if !files.contains_key(&mutant.path) {
@@ -132,7 +131,7 @@ pub fn project(
         let Some(file) = files.get_mut(&mutant.path) else {
             continue;
         };
-        let location = located(&file.source, mutant.line, mutant.column, &mutant.original);
+        let location = located(&file.source, mutant.line, mutant.column, &mutant.original)?;
         file.mutants.push(MutantResult {
             id: format!(
                 "{}:{}:{}:{}",
@@ -150,43 +149,49 @@ pub fn project(
     Ok(Projection {
         schema_version: SCHEMA_VERSION.to_owned(),
         thresholds,
-        project_root: root.to_string_lossy().into_owned(),
+        project_root,
         files,
     })
 }
 
 /// What this run's outcome is called in the other vocabulary.
-fn status_of(mutant: &super::run::RunMutantDocument) -> &'static str {
-    match mutant.outcome.as_str() {
-        "killed" => "Killed",
-        "survived" => "Survived",
-        "timed_out" => "Timeout",
-        "inconclusive" | "errored" => "RuntimeError",
-        "not_run" if mutant.unreached => "NoCoverage",
-        _ => "Pending",
+const fn status_of(mutant: &super::run::RunMutantDocument) -> &'static str {
+    match mutant.outcome {
+        Outcome::Killed => "Killed",
+        Outcome::Survived => "Survived",
+        Outcome::Inconclusive | Outcome::Errored => "RuntimeError",
+        Outcome::NotRun if mutant.unreached => "NoCoverage",
+        Outcome::NotRun | Outcome::StepLimitReached | Outcome::Waited => "Pending",
     }
 }
 
 /// What a reader is told about the status.
 fn reason_of(mutant: &super::run::RunMutantDocument) -> Option<String> {
-    match mutant.outcome.as_str() {
-        "inconclusive" => Some(
+    match mutant.outcome {
+        Outcome::StepLimitReached => Some(
+            "the execution reached its configured guard-take limit without deciding the mutation"
+                .to_owned(),
+        ),
+        Outcome::Waited => Some(
+            "this machine stopped waiting twice, so the run did not decide the mutation".to_owned(),
+        ),
+        Outcome::Inconclusive => Some(
             "one timeout that did not reproduce, so the run cannot say what the tests noticed"
                 .to_owned(),
         ),
-        "errored" => Some(format!(
+        Outcome::Errored => Some(format!(
             "the harness itself failed with exit {}",
             mutant.exit_code
         )),
-        "not_run" if mutant.unreached => Some("no measured test reaches it".to_owned()),
-        "not_run" => Some("this run did not execute it".to_owned()),
-        _ => None,
+        Outcome::NotRun if mutant.unreached => Some("no measured test reaches it".to_owned()),
+        Outcome::NotRun => Some("this run did not execute it".to_owned()),
+        Outcome::Killed | Outcome::Survived => None,
     }
 }
 
 /// The tests that noticed it, and the target that held them when the harness did not name one.
 fn killed_by(mutant: &super::run::RunMutantDocument) -> Vec<String> {
-    if mutant.outcome != "killed" {
+    if mutant.outcome != Outcome::Killed {
         return Vec::new();
     }
     if !mutant.killed_by.is_empty() {
@@ -200,48 +205,122 @@ fn killed_by(mutant: &super::run::RunMutantDocument) -> Vec<String> {
 }
 
 /// Where one mutation is, counted in UTF-16 as this schema requires.
-fn located(source: &str, line: u32, column: u32, original: &str) -> Location {
+fn located(
+    source: &str,
+    line: u32,
+    column: u32,
+    original: &str,
+) -> Result<Location, crate::error::CliError> {
     let start = Position {
         line,
-        column: utf16_column(source, line, column),
+        column: utf16_column(source, line, column)?,
     };
-    let end = end_of(source, line, column, original);
-    Location { start, end }
+    let end = end_of(source, line, column, original)?;
+    Ok(Location { start, end })
 }
 
 /// The 1-based UTF-16 column of a 1-based byte column on `line`.
-fn utf16_column(source: &str, line: u32, byte_column: u32) -> u32 {
+fn utf16_column(source: &str, line: u32, byte_column: u32) -> Result<u32, crate::error::CliError> {
     let Some(text) = line_of(source, line) else {
-        return 1;
+        return Ok(1);
     };
-    let bytes = usize::try_from(byte_column.saturating_sub(1)).unwrap_or(0);
-    let prefix = text.get(..bytes.min(text.len())).unwrap_or(text);
+    let zero_based =
+        byte_column
+            .checked_sub(1)
+            .ok_or(crate::error::CliError::ProjectionOverflow {
+                projection: "Stryker",
+                field: "a zero byte column",
+            })?;
+    let bytes = usize::try_from(zero_based).map_err(|_overflow| {
+        crate::error::CliError::ProjectionOverflow {
+            projection: "Stryker",
+            field: "a byte column",
+        }
+    })?;
+    let prefix = match text.get(..bytes.min(text.len())) {
+        Some(prefix) => prefix,
+        None => text,
+    };
     let units: usize = prefix.chars().map(char::len_utf16).sum();
-    u32::try_from(units.saturating_add(1)).unwrap_or(u32::MAX)
+    let one_based = units
+        .checked_add(1)
+        .ok_or(crate::error::CliError::ProjectionOverflow {
+            projection: "Stryker",
+            field: "a UTF-16 column",
+        })?;
+    u32::try_from(one_based).map_err(|_overflow| crate::error::CliError::ProjectionOverflow {
+        projection: "Stryker",
+        field: "a UTF-16 column",
+    })
 }
 
 /// Where a mutation ends: one past its last byte, on whichever line that is.
-fn end_of(source: &str, line: u32, column: u32, original: &str) -> Position {
+fn end_of(
+    source: &str,
+    line: u32,
+    column: u32,
+    original: &str,
+) -> Result<Position, crate::error::CliError> {
     let lines = original.lines().count().max(1);
-    let last = line.saturating_add(u32::try_from(lines.saturating_sub(1)).unwrap_or(0));
+    let additional = lines
+        .checked_sub(1)
+        .ok_or(crate::error::CliError::ProjectionOverflow {
+            projection: "Stryker",
+            field: "a mutation's empty line span",
+        })?;
+    let additional = u32::try_from(additional).map_err(|_overflow| {
+        crate::error::CliError::ProjectionOverflow {
+            projection: "Stryker",
+            field: "a mutation's line span",
+        }
+    })?;
+    let last = line
+        .checked_add(additional)
+        .ok_or(crate::error::CliError::ProjectionOverflow {
+            projection: "Stryker",
+            field: "a mutation's ending line",
+        })?;
     if lines == 1 {
-        return Position {
-            line: last,
-            column: utf16_column(source, line, column).saturating_add(
-                u32::try_from(original.chars().map(char::len_utf16).sum::<usize>()).unwrap_or(0),
-            ),
-        };
+        let width = original.chars().map(char::len_utf16).sum::<usize>();
+        let width = u32::try_from(width).map_err(|_overflow| {
+            crate::error::CliError::ProjectionOverflow {
+                projection: "Stryker",
+                field: "a mutation's UTF-16 width",
+            }
+        })?;
+        let column = utf16_column(source, line, column)?
+            .checked_add(width)
+            .ok_or(crate::error::CliError::ProjectionOverflow {
+                projection: "Stryker",
+                field: "a mutation's ending column",
+            })?;
+        return Ok(Position { line: last, column });
     }
-    let tail = original.rsplit('\n').next().unwrap_or("");
+    let tail = match original.rsplit('\n').next() {
+        Some(tail) => tail,
+        None => "",
+    };
     let units: usize = tail.chars().map(char::len_utf16).sum();
-    Position {
-        line: last,
-        column: u32::try_from(units.saturating_add(1)).unwrap_or(u32::MAX),
-    }
+    let one_based = units
+        .checked_add(1)
+        .ok_or(crate::error::CliError::ProjectionOverflow {
+            projection: "Stryker",
+            field: "a mutation's ending UTF-16 column",
+        })?;
+    let column = u32::try_from(one_based).map_err(|_overflow| {
+        crate::error::CliError::ProjectionOverflow {
+            projection: "Stryker",
+            field: "a mutation's ending UTF-16 column",
+        }
+    })?;
+    Ok(Position { line: last, column })
 }
 
 /// The text of one 1-based line, without its ending.
 fn line_of(source: &str, line: u32) -> Option<&str> {
-    let index = usize::try_from(line.saturating_sub(1)).ok()?;
+    let zero_based = line.checked_sub(1)?;
+    let Ok(index) = usize::try_from(zero_based) else {
+        return None;
+    };
     source.lines().nth(index)
 }

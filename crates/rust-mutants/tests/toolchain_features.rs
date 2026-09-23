@@ -10,10 +10,11 @@
 
 use njutest_devkit::fixture::Fixture;
 use rust_mutants::cargo::BuildConfig;
+use rust_mutants::id::DisplayId;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{PrepareOptions, Request, Session};
+use rust_mutants::session::{PrepareOptions, Reachability, Request, Session};
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::Workspace;
 
@@ -37,7 +38,7 @@ fn prepared(fixture: &Fixture, build: BuildConfig) -> Session {
 }
 
 /// The mutation of `feet`, which only a run that turned `imperial` on ever tests.
-fn imperial(session: &Session) -> String {
+fn imperial(session: &Session) -> DisplayId {
     session
         .catalog()
         .mutants()
@@ -66,13 +67,13 @@ fn a_test_behind_a_feature_is_measured_only_when_the_feature_is_on() {
         .clone();
     let reaches = session.reaches(&mutant);
     let outcome = session
-        .exec(&Request::new(mutant.display_id), &cancel)
+        .exec(&Request::new(mutant.display_id.to_string()), &cancel)
         .expect("exec")
-        .outcome;
+        .outcome();
     session.close().expect("close");
     assert_eq!(
         reaches,
-        Some(false),
+        Reachability::Unreached,
         "the feature is off, so the only test that calls the function is not compiled, and the \
          measurement says as much"
     );
@@ -90,8 +91,8 @@ fn a_test_behind_a_feature_is_measured_only_when_the_feature_is_on() {
             ..BuildConfig::default()
         },
     );
-    let request = Request::new(imperial(&session));
-    let outcome = session.exec(&request, &cancel).expect("exec").outcome;
+    let request = Request::new(imperial(&session).to_string());
+    let outcome = session.exec(&request, &cancel).expect("exec").outcome();
     session.close().expect("close");
     assert_eq!(
         outcome,

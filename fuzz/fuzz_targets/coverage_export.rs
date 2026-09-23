@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use njutest_cli::coverage::{covered, instrumented, parse_export};
+use njutest::coverage::{covered, instrumented, parse_export};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(files) = parse_export(data) else {

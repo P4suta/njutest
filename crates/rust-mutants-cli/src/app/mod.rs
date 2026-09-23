@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use rust_mutants::EngineError;
+use rust_mutants::id::RunId;
 use rust_mutants::report::explain;
 use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
@@ -19,6 +20,7 @@ use rust_mutants::session::{self, Request, Session};
 use rust_mutants::workspace::{self, Workspace};
 
 use crate::error::CliError;
+use crate::filesystem::{EntryKind, entry_kind};
 use crate::report::html;
 use crate::report::run as run_report;
 use crate::report::stryker;
@@ -33,15 +35,7 @@ mod sweep;
 
 use bundle::{Gathering, bundle};
 use doctor::{Asked, doctor};
-pub use stored::run_id;
 use stored::{named, newest, prune, store};
-
-/// The variables a run composes for itself and normally refuses to inherit.
-pub const RESERVED_ENV: [&str; 3] = [
-    "RUST_MUTANTS_ACTIVE",
-    "RUST_MUTANTS_CATALOG",
-    "RUST_MUTANTS_TOUCH",
-];
 
 /// Does what the command asks and returns the exit code it earns.
 ///
@@ -67,7 +61,7 @@ pub fn dispatch(
             root,
             packages,
             json,
-        } => Ok(doctor(
+        } => doctor(
             &Asked {
                 root: root.as_deref(),
                 packages,
@@ -76,7 +70,7 @@ pub fn dispatch(
             environment,
             stdout,
             cancel,
-        )),
+        ),
         cli::Command::Explain {
             scope,
             mutant,
@@ -200,7 +194,9 @@ fn kept_command(
     }
 }
 
-/// A run composes its own activation. An inherited one would silently decide what every test process measures. Whether the command is one whose whole job is to say what is wrong here.
+/// A run composes its own activation.
+/// An inherited one would silently decide what every test process measures.
+/// Whether the command is one whose whole job is to say what is wrong here.
 const fn diagnoses(command: &cli::Command) -> bool {
     matches!(
         command,
@@ -215,8 +211,12 @@ pub fn reserved_names(environment: &Environment) -> Vec<String> {
         .vars
         .iter()
         .filter(|(_, value)| !value.is_empty())
-        .map(|(name, _)| name.to_string_lossy().into_owned())
-        .filter(|name| RESERVED_ENV.contains(&name.as_str()))
+        .filter_map(|(name, _)| {
+            rust_mutants::execute::RESERVED_ENV
+                .iter()
+                .find(|reserved| name.as_os_str() == std::ffi::OsStr::new(reserved))
+                .map(|reserved| (*reserved).to_owned())
+        })
         .collect()
 }
 
@@ -238,7 +238,7 @@ pub fn is_self_measurement(environment: &Environment, compiled_catalog: Option<&
             .vars
             .iter()
             .find(|(candidate, value)| candidate == name && !value.is_empty())
-            .map(|(_, value)| value.to_string_lossy())
+            .map(|(_, value)| value.as_os_str())
     };
     let Some(compiled) = compiled_catalog.filter(|catalog| !catalog.is_empty()) else {
         return false;
@@ -246,7 +246,7 @@ pub fn is_self_measurement(environment: &Environment, compiled_catalog: Option<&
     let Some(catalog) = value(rust_mutants::instrument::CATALOG_ENV) else {
         return false;
     };
-    if compiled != catalog {
+    if catalog != std::ffi::OsStr::new(compiled) {
         return false;
     }
     let active = value(rust_mutants::instrument::ACTIVE_ENV).is_some();
@@ -260,9 +260,11 @@ fn workspace_command(
     streams: crate::Streams<'_>,
     cancel: &Cancel,
 ) -> Result<u8, CliError> {
+    const PROGRESS_EVENT_CAPACITY: usize = 4096;
+
     let crate::Streams {
         out: stdout,
-        err: stderr,
+        err: _stderr,
     } = streams;
     let Some(scope) = command.scope() else {
         return Ok(0);
@@ -270,7 +272,7 @@ fn workspace_command(
     let settings = Settings::resolve(scope, environment)?;
     let started = Timestamp::now();
     let id = named(command, started)?;
-    let (sender, phases) = std::sync::mpsc::channel();
+    let (sender, phases) = std::sync::mpsc::sync_channel(PROGRESS_EVENT_CAPACITY);
     let recorder = trace::recorder(
         &trace::Recording {
             scope,
@@ -279,8 +281,7 @@ fn workspace_command(
             command,
         },
         watching(command).then_some(sender),
-        stderr,
-    );
+    )?;
     let outcome = measured(
         command,
         &Running {
@@ -295,11 +296,16 @@ fn workspace_command(
         stdout,
         cancel,
     );
-    trace::ended(&recorder, &outcome, cancel);
-    if scope.trace.is_some() {
-        prune(&settings.report_directory(), settings.config.reports.keep);
+    trace::ended(&recorder, &outcome, cancel)?;
+    let pruned = if scope.trace.is_some() && !whole_run(command) {
+        prune(&settings.report_directory(), settings.config.reports.keep)
+    } else {
+        Ok(())
+    };
+    match outcome {
+        Err(error) => Err(error),
+        Ok(code) => pruned.map(|()| code),
     }
-    outcome
 }
 
 /// Where a run may remember what measuring this tree established.
@@ -338,6 +344,36 @@ impl Displayed {
     }
 }
 
+/// The sole owner of the scoped preparation worker.
+struct PreparationThread<'scope>(
+    std::thread::ScopedJoinHandle<'scope, Result<Session, EngineError>>,
+);
+
+impl<'scope> PreparationThread<'scope> {
+    fn launch(
+        scope: &'scope std::thread::Scope<'scope, '_>,
+        work: impl FnOnce() -> Result<Session, EngineError> + Send + 'scope,
+    ) -> Result<Self, CliError> {
+        std::thread::Builder::new()
+            .name("rust-mutants-prepare".to_owned())
+            .spawn_scoped(scope, work)
+            .map(Self)
+            .map_err(|source| CliError::PreparationStartFailed { source })
+    }
+
+    fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+
+    fn join(self) -> Result<Session, CliError> {
+        let prepared = self
+            .0
+            .join()
+            .map_err(|_panic| CliError::PreparationPanicked)?;
+        prepared.map_err(CliError::from)
+    }
+}
+
 /// Prepares the tree, saying what it is doing while it does it.
 fn preparing(
     workspace: Workspace,
@@ -353,22 +389,18 @@ fn preparing(
     if displayed == Displayed::Nothing {
         return Ok(workspace.prepare(options, cancel)?);
     }
-    let prepared = std::thread::scope(|scope| {
-        let working = scope.spawn(|| workspace.prepare(options, cancel));
+    std::thread::scope(|scope| {
+        let working = PreparationThread::launch(scope, move || workspace.prepare(options, cancel))?;
         let alive = || !working.is_finished();
-        match displayed {
+        let watched = match displayed {
             Displayed::Lines => crate::ui::watch(phases, stdout, &alive),
             Displayed::Stream => crate::stream::watch(phases, stdout, &alive),
-            Displayed::Nothing => {}
-        }
-        working.join()
-    });
-    match prepared {
-        Ok(session) => Ok(session?),
-        Err(_panicked) => Err(CliError::ReportMissing {
-            message: "preparing the tree stopped without saying why".to_owned(),
-        }),
-    }
+            Displayed::Nothing => Ok(()),
+        };
+        let prepared = working.join();
+        watched?;
+        prepared
+    })
 }
 
 /// Whether this command writes the run as a stream, which opens before anything is prepared.
@@ -377,6 +409,18 @@ const fn streaming(command: &cli::Command) -> bool {
         command,
         cli::Command::Run {
             json: true,
+            dry_run: false,
+            mutant: None,
+            ..
+        }
+    )
+}
+
+/// Whether the command's successful result is a whole-run document whose pending terminal state already closes, prunes, and then publishes itself.
+const fn whole_run(command: &cli::Command) -> bool {
+    matches!(
+        command,
+        cli::Command::Run {
             dry_run: false,
             mutant: None,
             ..
@@ -409,7 +453,7 @@ struct Running<'a> {
     scope: &'a cli::Scope,
     settings: &'a Settings,
     environment: &'a Environment,
-    id: &'a str,
+    id: &'a RunId,
     started: Timestamp,
     recorder: &'a rust_mutants::trace::Recorder,
     /// What the recorder has said about the phases it has finished, for a display to write.
@@ -473,14 +517,14 @@ fn measured(
                 },
                 cancel,
             )?;
-            write(stdout, &rendered(&said, cataloged));
+            write(stdout, &rendered(&said, cataloged)?)?;
             Ok(0)
         }
         cli::Command::List { .. }
         | cli::Command::WhySkipped { .. }
         | cli::Command::Instrument { .. } => {
             let discovery = session::preview(&workspace, &options, cancel)?;
-            write(stdout, &previewed(command, &workspace, &discovery)?);
+            write(stdout, &previewed(command, &workspace, &discovery)?)?;
             workspace.close()?;
             Ok(0)
         }
@@ -496,21 +540,30 @@ fn measured(
         | cli::Command::Rules { .. }
         | cli::Command::Diagnostics { .. }
         | cli::Command::Cache { .. } => {
-            if streaming(command) {
+            let streams = streaming(command);
+            if streams {
                 crate::stream::started(
                     stdout,
-                    id,
-                    &root_name(settings),
+                    id.as_str(),
+                    &root_name(settings)?,
                     report::selection_document(&options),
-                );
+                )?;
             }
-            let session = preparing(
+            let session = match preparing(
                 workspace,
                 &options,
                 Displayed::of(command),
                 (phases, stdout, cancel),
-            )?;
-            let code = prepared(
+            ) {
+                Ok(session) => session,
+                Err(error) => {
+                    if streams {
+                        crate::stream::failed(stdout, &error)?;
+                    }
+                    return Err(error);
+                }
+            };
+            let prepared = prepared(
                 command,
                 &Prepared {
                     session: &session,
@@ -525,9 +578,15 @@ fn measured(
                 cancel,
                 stdout,
             );
-            let kept = session.close()?;
-            remember(settings, id, &kept, recorder);
-            code
+            let outcome = match session.close() {
+                Ok(kept) => remember(settings, id, &kept, recorder).and(prepared),
+                Err(error) => Err(error.into()),
+            };
+            let outcome = outcome.and_then(|prepared| prepared.finish(settings, stdout));
+            if streams && let Err(error) = &outcome {
+                crate::stream::failed(stdout, error)?;
+            }
+            outcome
         }
     }
 }
@@ -535,20 +594,22 @@ fn measured(
 /// Writes down what a run kept, so a later command can find it and a later sweep can leave it alone.
 fn remember(
     settings: &Settings,
-    run_id: &str,
+    run_id: &RunId,
     kept: &[PathBuf],
     recorder: &rust_mutants::trace::Recorder,
-) {
+) -> Result<(), CliError> {
     if kept.is_empty() {
-        return;
+        return Ok(());
     }
     for path in kept {
         recorder.kept(rust_mutants::trace::KeptRecord {
             path: path.display().to_string(),
-            run_id: run_id.to_owned(),
+            run_id: run_id.to_string(),
         });
     }
-    let _written = crate::kept::Ledger::record(&settings.report_directory(), run_id, kept);
+    crate::kept::Ledger::record(&settings.report_directory(), run_id.as_str(), kept)
+        .map(|_ledger| ())
+        .map_err(|source| CliError::writing(&settings.report_directory(), source))
 }
 
 /// The revision a change set is computed against, when the command line asked for one at all.
@@ -571,12 +632,10 @@ fn selected(
         recorder,
         ..
     } = *running;
-    let report_directory = settings
-        .config
-        .reports
-        .directory
-        .to_string_lossy()
-        .into_owned();
+    let report_directory = path_text(
+        &settings.config.reports.directory,
+        "the report directory has no exact UTF-8 spelling for change selection",
+    )?;
     let excluded = [report_directory.as_str(), "target"];
     let watch = rust_mutants::runner::Watched::new(cancel, recorder);
     let asking = rust_mutants::git::Asking {
@@ -591,13 +650,14 @@ fn selected(
             base: base.to_owned(),
         }
     })?;
-    Ok(rust_mutants::git::within(
-        &change,
-        &settings.prepare_options()?.include,
-    ))
+    Ok(
+        rust_mutants::git::within(&change, &settings.prepare_options()?.include)
+            .map_err(EngineError::from)?,
+    )
 }
 
-/// What a command that only needs discovery prints. Refuses a `--file` that names no file the walk considered.
+/// What a command that only needs discovery prints.
+/// Refuses a `--file` that names no file the walk considered.
 ///
 /// # Errors
 /// [`CliError::InvalidValue`] naming the path and how many files there are.
@@ -614,6 +674,7 @@ fn narrowed(considered: &[String], named: &[String]) -> Result<(), CliError> {
     let Some(first) = missing.first() else {
         return Ok(());
     };
+    let suggested = nearest(first, considered)?;
     Err(CliError::InvalidValue {
         flag: "--file".to_owned(),
         value: missing
@@ -625,40 +686,56 @@ fn narrowed(considered: &[String], named: &[String]) -> Result<(), CliError> {
             "a workspace-relative path of one of the {} files this run reads. Nearest to \
              {first:?}: {}",
             considered.len(),
-            nearest(first, considered)
+            suggested
         ),
     })
 }
 
 /// The three names most like `named`, so a typo is answered with what was meant.
 ///
-/// A refusal that says "not one of the four hundred files this run reads" and
-/// stops has told somebody they are wrong and left them to find out how. The
-/// names are in hand.
-fn nearest(named: &str, considered: &[String]) -> String {
-    let mut ranked: Vec<(usize, &String)> = considered
-        .iter()
-        .map(|held| (distance(named, held), held))
-        .collect();
+/// A refusal that says "not one of the four hundred files this run reads" and stops has told somebody they are wrong and left them to find out how.
+/// The names are in hand.
+fn nearest(named: &str, considered: &[String]) -> Result<String, CliError> {
+    let mut ranked = Vec::with_capacity(considered.len());
+    for held in considered {
+        ranked.push((distance(named, held)?, held));
+    }
     ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
-    ranked
+    Ok(ranked
         .into_iter()
         .take(3)
         .map(|(_at, held)| held.as_str())
         .collect::<Vec<&str>>()
-        .join(", ")
+        .join(", "))
 }
 
 /// How far apart two names are, counting the characters they do not share.
-fn distance(left: &str, right: &str) -> usize {
+fn distance(left: &str, right: &str) -> Result<usize, CliError> {
     let shared = left
         .chars()
         .zip(right.chars())
         .take_while(|(a, b)| a == b)
         .count();
-    left.len()
-        .saturating_add(right.len())
-        .saturating_sub(shared.saturating_mul(2))
+    let left = left
+        .chars()
+        .count()
+        .checked_sub(shared)
+        .ok_or(CliError::ProjectionOverflow {
+            projection: "file suggestion",
+            field: "the unmatched character count",
+        })?;
+    let right = right
+        .chars()
+        .count()
+        .checked_sub(shared)
+        .ok_or(CliError::ProjectionOverflow {
+            projection: "file suggestion",
+            field: "the unmatched character count",
+        })?;
+    left.checked_add(right).ok_or(CliError::ProjectionOverflow {
+        projection: "file suggestion",
+        field: "the total unmatched character count",
+    })
 }
 
 fn previewed(
@@ -674,22 +751,18 @@ fn previewed(
     match command {
         cli::Command::List { file, json, .. } => {
             narrowed(&considered, file.as_slice())?;
-            let sources = read_sources(workspace.snapshot_root(), discovery);
+            let sources = read_sources(workspace.snapshot_root(), discovery)?;
             if *json {
-                return Ok(json_line(&report::candidates(
-                    discovery,
-                    &sources,
-                    file.as_deref(),
-                )));
+                return json_line(&report::candidates(discovery, &sources, file.as_deref())?);
             }
-            Ok(report::list(discovery, &sources, file.as_deref()))
+            Ok(report::list(discovery, &sources, file.as_deref())?)
         }
         cli::Command::WhySkipped { file, line, .. } => {
             narrowed(&considered, file.as_slice())?;
-            Ok(file.as_ref().map_or_else(
-                || report::why_skipped(&discovery.skips),
-                |path| report::decisions(discovery, path, *line),
-            ))
+            match file {
+                Some(path) => Ok(report::decisions(discovery, path, *line)),
+                None => report::why_skipped(&discovery.skips),
+            }
         }
         cli::Command::Instrument { file, mutant, .. } => {
             narrowed(&considered, std::slice::from_ref(file))?;
@@ -718,12 +791,54 @@ struct Prepared<'a> {
     /// How the workspace was opened, so a layer that opens a tree of its own does it the same way.
     open: &'a workspace::OpenOptions,
     environment: &'a Environment,
-    id: &'a str,
+    id: &'a RunId,
     started: Timestamp,
     /// What the recorder has said about the phases it has finished, for a display to write.
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     /// The run selection compiled into the instrumented tree, evaluated once before preparation so `--from-report` cannot move underneath it.
     filter: Option<&'a run::Filter>,
+}
+
+/// What remains after a prepared command has stopped using its session.
+///
+/// A whole run cannot publish its terminal line until closing the session and pruning its store have both succeeded.
+/// Keeping that terminal document in a distinct state makes publishing it early impossible at the call site.
+#[derive(Debug)]
+enum PreparedOutcome {
+    /// No terminal run document remains to be published.
+    Complete(Box<CompletedCommand>),
+    /// A whole run measured everything, but has not yet published its terminal line.
+    RunPending(Box<PendingRun>),
+}
+
+#[derive(Debug)]
+struct CompletedCommand {
+    code: u8,
+}
+
+#[derive(Debug)]
+struct PendingRun {
+    document: run_report::RunDocument,
+    written: Option<PathBuf>,
+    json: bool,
+}
+
+impl PreparedOutcome {
+    fn complete(code: u8) -> Self {
+        Self::Complete(Box::new(CompletedCommand { code }))
+    }
+
+    /// Performs the work that must follow a successfully closed session, then publishes the one terminal answer.
+    fn finish(self, settings: &Settings, stdout: &mut dyn Write) -> Result<u8, CliError> {
+        match self {
+            Self::Complete(command) => Ok(command.code),
+            Self::RunPending(run) => {
+                prune(&settings.report_directory(), settings.config.reports.keep)?;
+                concluded(&run.document, (run.json, run.written.as_deref()), stdout)?;
+                Ok(run.document.run.exit_code)
+            }
+        }
+    }
 }
 
 fn request(
@@ -753,7 +868,7 @@ fn prepared(
     prepared: &Prepared<'_>,
     cancel: &Cancel,
     stdout: &mut dyn Write,
-) -> Result<u8, CliError> {
+) -> Result<PreparedOutcome, CliError> {
     let Prepared {
         session,
         settings,
@@ -765,20 +880,21 @@ fn prepared(
             json, rejections, ..
         } => {
             let text = if *json {
-                json_line(&report::document(session, &settings.prepare_options()?))
+                json_line(&report::document(session, &settings.prepare_options()?)?)?
             } else if *rejections {
                 report::rejections(session)
             } else {
                 report::catalog(session)
             };
-            write(stdout, &text);
-            Ok(0)
+            write(stdout, &text)?;
+            Ok(PreparedOutcome::complete(0))
         }
         cli::Command::Explain { mutant, json, .. } => {
-            fresh_explain(prepared, mutant, *json, stdout)
+            fresh_explain(prepared, mutant, *json, stdout).map(PreparedOutcome::complete)
         }
         cli::Command::Replay { mutant, run, .. } => {
             replay(prepared, (mutant, run.as_deref()), cancel, stdout)
+                .map(PreparedOutcome::complete)
         }
         cli::Command::Run {
             mutant,
@@ -799,7 +915,8 @@ fn prepared(
                 &request(prefix, target.as_ref(), test.as_ref(), args),
                 cancel,
                 stdout,
-            ),
+            )
+            .map(PreparedOutcome::complete),
             None => whole(
                 session,
                 &Whole {
@@ -841,7 +958,7 @@ fn prepared(
         | cli::Command::Report { .. }
         | cli::Command::Rules { .. }
         | cli::Command::Diagnostics { .. }
-        | cli::Command::Cache { .. } => Ok(0),
+        | cli::Command::Cache { .. } => Ok(PreparedOutcome::complete(0)),
     }
 }
 
@@ -854,11 +971,12 @@ fn one(
 ) -> Result<u8, CliError> {
     let found = session.resolve(&request.mutant)?.clone();
     let result = session.exec(request, cancel)?;
-    write(stdout, &report::outcome(&result, &found));
-    Ok(report::exit_code(result.outcome))
+    write(stdout, &report::outcome(&result, &found))?;
+    Ok(report::exit_code(result.outcome()))
 }
 
-/// Every accepted mutant, with the expectations verified and a report written. Everything a whole run needs beyond the session.
+/// Every accepted mutant, with the expectations verified and a report written.
+/// Everything a whole run needs beyond the session.
 struct Whole<'a> {
     settings: &'a Settings,
     /// How the workspace was opened, so the equivalence layer can open a tree of its own the same way.
@@ -872,7 +990,7 @@ struct Whole<'a> {
     /// What the recorder has said about the phases it has finished, for a display to write.
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     environment: &'a Environment,
-    id: &'a str,
+    id: &'a RunId,
     started: Timestamp,
 }
 
@@ -903,7 +1021,7 @@ fn whole(
     whole: &Whole<'_>,
     cancel: &Cancel,
     stdout: &mut dyn Write,
-) -> Result<u8, CliError> {
+) -> Result<PreparedOutcome, CliError> {
     let Whole {
         settings,
         open,
@@ -927,8 +1045,7 @@ fn whole(
     let shard = shard.map(run::Shard::parse).transpose()?;
     let asking = asking_equivalence(settings, open);
     let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
-    let keyed = keyed(session, settings, args);
-    let expectations = expectations(settings);
+    let (keyed, expectations) = (keyed(session, settings, args), expectations(settings));
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
         quiet: &run::Quiet::default(),
@@ -940,15 +1057,15 @@ fn whole(
         outcomes: (!no_cache).then_some(run::Reusing {
             store: &outcomes,
             keyed: &keyed,
-            run_id: id,
+            run_id: id.as_str(),
         }),
         filter: Some(filter),
         fail_fast,
     };
     if dry_run {
-        write(stdout, &crate::ui::phases(phases));
-        write(stdout, &estimate::estimate(session, filter));
-        return Ok(0);
+        write(stdout, &crate::ui::phases(phases))?;
+        write(stdout, &estimate::estimate(session, filter)?)?;
+        return Ok(PreparedOutcome::complete(0));
     }
     let mut result = measured_run(
         session,
@@ -963,61 +1080,64 @@ fn whole(
         cancel,
         stdout,
     )?;
-    result.expectations = run::verify(session, &expectations, &mut result.judged);
+    result.expectations =
+        run::verify(session, &expectations, &mut result.judged).map_err(EngineError::from)?;
     let document = run_report::document(
         session,
         &result,
         selection,
         &run_report::Meta {
-            id,
+            id: id.as_str(),
             started_at: started,
             finished_at: Timestamp::now(),
         },
-    );
+    )?;
     let written = if no_report {
         None
     } else {
         Some(stored_with_evidence(session, settings, id, &document)?)
     };
-    concluded(session, &document, (json, written.as_deref()), stdout);
-    prune(&settings.report_directory(), settings.config.reports.keep);
-    Ok(document.run.exit_code)
+    Ok(PreparedOutcome::RunPending(Box::new(PendingRun {
+        document,
+        written,
+        json,
+    })))
 }
 
 /// What a finished run says: the stream's last lines, or the summary a person reads.
 fn concluded(
-    session: &Session,
     document: &run_report::RunDocument,
     (json, written): (bool, Option<&Path>),
     stdout: &mut dyn Write,
-) {
+) -> Result<(), CliError> {
     if json {
-        crate::stream::Writer::new(stdout, session)
-            .ended(document, written.map(rust_mutants::id::slashed));
-        return;
+        let report = written
+            .map(|path| path_text(path, "the stored report path has no exact UTF-8 spelling"))
+            .transpose()?;
+        return crate::stream::ended(stdout, document, report);
     }
-    write(stdout, "\n");
-    write(stdout, &report::lines(document));
+    write(stdout, "\n")?;
+    write(stdout, &report::lines(document)?)?;
     if let Some(path) = written {
         let mut line = String::new();
-        let ok = writeln!(line, "REPORT    {}", rust_mutants::id::slashed(path));
+        let spelling = path_text(path, "the stored report path has no exact UTF-8 spelling")?;
+        let ok = writeln!(line, "REPORT    {spelling}");
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");
-        write(stdout, &line);
+        write(stdout, &line)?;
     }
-    write(stdout, &onward(document));
+    write(stdout, &onward(document))?;
+    Ok(())
 }
 
 /// Where a reader goes from a wall of findings, which is the next thing they want and the one thing the run does not say.
 ///
-/// A survivor is a decision to make, not a fact to file: either the tests have
-/// a gap or the code has a claim in it somebody should write down. `explain`
-/// is where both are answered — it prints what reached the mutation, and the
-/// block that records a reason — and nothing on the way there named it.
+/// A survivor is a decision to make, not a fact to file: either the tests have a gap or the code has a claim in it somebody should write down.
+/// `explain` is where both are answered — it prints what reached the mutation, and the block that records a reason — and nothing on the way there named it.
 fn onward(document: &run_report::RunDocument) -> String {
     let Some(first) = document
         .mutants
         .iter()
-        .find(|one| one.outcome == "survived" && !one.expected)
+        .find(|one| one.outcome == rust_mutants::outcome::Outcome::Survived && !one.expected)
     else {
         return String::new();
     };
@@ -1048,20 +1168,20 @@ fn measured_run(
     if watched.json {
         let mut writer = crate::stream::Writer::new(stdout, session);
         writer.phases(watched.phases);
-        return Ok(run::run(session, watched.options, cancel, &mut writer)?);
+        let result = run::run(session, watched.options, cancel, &mut writer);
+        writer.finish()?;
+        return Ok(result?);
     }
-    write(stdout, &crate::ui::phases(watched.phases));
-    Ok(run::run(
-        session,
-        watched.options,
-        cancel,
-        &mut crate::ui::Display::new(
-            stdout,
-            resolved(watched.ui),
-            watched.paints,
-            run::jobs(watched.settings.config.execution.jobs),
-        ),
-    )?)
+    write(stdout, &crate::ui::phases(watched.phases))?;
+    let mut display = crate::ui::Display::new(
+        stdout,
+        resolved(watched.ui),
+        watched.paints,
+        run::jobs(watched.settings.config.execution.jobs),
+    );
+    let result = run::run(session, watched.options, cancel, &mut display);
+    display.finish()?;
+    Ok(result?)
 }
 
 /// Everything beyond a mutant's own identity that a stored outcome is keyed on.
@@ -1077,6 +1197,7 @@ fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outc
         ),
         args: args.to_vec(),
         timeout: crate::config::render_timeout(settings.config.mutation.timeout),
+        steps: settings.config.mutation.steps,
         build: settings.config.build.config().arguments(),
     }
 }
@@ -1087,15 +1208,11 @@ fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outc
 /// A `--file` whose lines are not a range.
 /// Refuses a rule or family name this release does not know.
 ///
-/// A name that names nothing narrows a run to nothing and the run reports that
-/// nothing was missed, or widens a skip to nothing and the rule a person meant
-/// to pass over runs anyway. Both are answers they cannot tell from the ones
-/// they asked for, and the set of names is compiled into the release, so
-/// nothing has to be built to say which it is.
+/// A name that names nothing narrows a run to nothing and the run reports that nothing was missed, or widens a skip to nothing and the rule a person meant to pass over runs anyway.
+/// Both are answers they cannot tell from the ones they asked for, and the set of names is compiled into the release, so nothing has to be built to say which it is.
 ///
 /// # Errors
-/// [`CliError::InvalidValue`] naming the flag, the value, and where the names
-/// are.
+/// [`CliError::InvalidValue`] naming the flag, the value, and where the names are.
 fn known(flag: &str, named: &[String], rules: bool) -> Result<(), CliError> {
     let registry = rust_mutants::rule::Registry::canonical();
     for one in named {
@@ -1147,12 +1264,9 @@ fn filter(
         });
     }
     for prefix in ids {
-        if !session
-            .catalog()
-            .mutants()
-            .iter()
-            .any(|mutant| mutant.id.starts_with(prefix) || mutant.display_id.starts_with(prefix))
-        {
+        if !session.catalog().mutants().iter().any(|mutant| {
+            mutant.id.as_str().starts_with(prefix) || mutant.display_id.as_str().starts_with(prefix)
+        }) {
             return Err(CliError::InvalidValue {
                 flag: "--id".to_owned(),
                 value: prefix.clone(),
@@ -1174,7 +1288,8 @@ fn filter(
     Ok(filter)
 }
 
-/// Compiles the run's syntactic selection before the expensive compiler validation begins. Existence checks still happen against the complete session catalog afterwards; this step only gives preparation the same predicate the run will use.
+/// Compiles the run's syntactic selection before the expensive compiler validation begins.
+/// Existence checks still happen against the complete session catalog afterwards; this step only gives preparation the same predicate the run will use.
 fn filter_before_preparation(
     command: &cli::Command,
     settings: &Settings,
@@ -1216,7 +1331,8 @@ fn filter_before_preparation(
     })
 }
 
-/// Which candidates a run already knows it can leave out before it compiles the instrumented tree. Shards deliberately stay out of this predicate: each shard report currently carries the shared validation result, so that result must remain identical across all parts until merge records a partitioned validation proof of its own.
+/// Which candidates a run already knows it can leave out before it compiles the instrumented tree.
+/// Shards deliberately stay out of this predicate: each shard report currently carries the shared validation result, so that result must remain identical across all parts until merge records a partitioned validation proof of its own.
 fn validation_filter(
     command: &cli::Command,
     settings: &Settings,
@@ -1265,17 +1381,11 @@ fn stored_outcomes(
     } else {
         directory.join(named).join(run_report::FILE_NAME)
     };
-    let text = std::fs::read_to_string(&path).map_err(|_error| CliError::ReportMissing {
-        message: format!("{} is not a stored run", path.display()),
-    })?;
-    let document: run_report::RunDocument =
-        serde_json::from_str(&text).map_err(|_error| CliError::ReportMissing {
-            message: format!("{} is not a run report", path.display()),
-        })?;
+    let document = read_run_document(&path)?;
     Ok(document
         .mutants
         .into_iter()
-        .filter(|one| one.outcome == outcome)
+        .filter(|one| one.outcome.as_str() == outcome)
         .map(|one| one.id)
         .collect())
 }
@@ -1294,8 +1404,8 @@ pub fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
         expected: "PATH, PATH:LINE, or PATH:FROM-TO".to_owned(),
     };
     let (from, to) = lines.split_once('-').unwrap_or((lines, lines));
-    let from: u32 = from.parse().map_err(|_error| refuse())?;
-    let to: u32 = to.parse().map_err(|_error| refuse())?;
+    let from: u32 = from.parse::<u32>().map_err(|_error| refuse())?;
+    let to: u32 = to.parse::<u32>().map_err(|_error| refuse())?;
     if from == 0 || to < from {
         return Err(refuse());
     }
@@ -1313,7 +1423,7 @@ fn replay(
     let session = prepared.session;
     let found = session.resolve(prefix)?.clone();
     let stored = recorded(prepared.settings, run, &found)?;
-    let mut request = Request::new(found.display_id.clone());
+    let mut request = Request::new(found.display_id.to_string());
     if let Some(row) = &stored {
         if !row.target.is_empty() {
             request = request.with_target(row.target.clone());
@@ -1328,11 +1438,11 @@ fn replay(
         &format!(
             "REPLAY    {} {}\n",
             found.display_id,
-            verdict(stored.as_ref(), result.outcome.name())
+            verdict(stored.as_ref(), result.outcome().name())
         ),
-    );
-    write(stdout, &report::outcome(&result, &found));
-    Ok(report::exit_code(result.outcome))
+    )?;
+    write(stdout, &report::outcome(&result, &found))?;
+    Ok(report::exit_code(result.outcome()))
 }
 
 /// What the replay establishes about the stored answer.
@@ -1340,16 +1450,15 @@ fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String 
     let Some(row) = stored else {
         return format!("was nothing, now {now}");
     };
-    let discharged = run::NotRunReason::Discharged.name();
     let survived = rust_mutants::outcome::Outcome::Survived.name();
-    if row.not_run_reason.as_deref() == Some(discharged) {
+    if row.not_run_reason == Some(run::NotRunReason::Discharged) {
         return if now == survived {
             format!("{now}, which is the proof that discharged it holding")
         } else {
             format!("{now}, and a proof discharged it: the proof is wrong")
         };
     }
-    if row.outcome == now {
+    if row.outcome.as_str() == now {
         format!("still {now}")
     } else {
         format!("was {}, now {now}", row.outcome)
@@ -1359,8 +1468,7 @@ fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String 
 /// What a stored run said about one mutant, when a stored run said anything.
 ///
 /// # Errors
-/// [`CliError::ReportMissing`] when `run` names no stored run, or when the
-/// report a name resolves to cannot be read as one.
+/// [`CliError::ReportMissing`] when `run` names no stored run, or when the report a name resolves to cannot be read as one.
 fn recorded(
     settings: &Settings,
     run: Option<&str>,
@@ -1372,27 +1480,19 @@ fn recorded(
         Err(refusal) if run.is_some() => return Err(refusal),
         Err(_nothing_stored) => return Ok(None),
     };
-    let unreadable = |why: &str| CliError::ReportMissing {
-        message: format!("{} is not a run report: {why}", path.display()),
-    };
-    let text = std::fs::read_to_string(&path).map_err(|error| unreadable(&error.to_string()))?;
-    let document: run_report::RunDocument =
-        serde_json::from_str(&text).map_err(|error| unreadable(&error.to_string()))?;
-    Ok(document
-        .mutants
-        .into_iter()
-        .find(|one| one.id == found.id)
-        .or_else(|| same_place(document_mutants(&text), found)))
+    let document = read_run_document(&path)?;
+    let mut rows = document.mutants;
+    if let Some(at) = rows.iter().position(|one| one.id == found.id.as_str()) {
+        return Ok(Some(rows.remove(at)));
+    }
+    Ok(same_place(rows, found))
 }
 
 /// The stored row for the same mutation, when the identity no longer matches.
 ///
-/// An identity is a function of the file's bytes, so the edit a reader makes
-/// before replaying — adding the test that kills the survivor — re-mints it.
-/// Matching on the identity alone then finds nothing, and the replay says "was
-/// nothing, now killed" about a mutation the run had measured and called
-/// survived. Where the identity has moved, the place has not: one file, one
-/// rule, one original text and one replacement is the same mutation.
+/// An identity is a function of the file's bytes, so the edit a reader makes before replaying — adding the test that kills the survivor — re-mints it.
+/// Matching on the identity alone then finds nothing, and the replay says "was nothing, now killed" about a mutation the run had measured and called survived.
+/// Where the identity has moved, the place has not: one file, one rule, one original text and one replacement is the same mutation.
 fn same_place(
     stored: Vec<run_report::RunMutantDocument>,
     found: &rust_mutants::catalog::Mutant,
@@ -1407,13 +1507,6 @@ fn same_place(
     matching.next().is_none().then_some(first)
 }
 
-/// Every mutant row of a stored report, for a second look by place.
-fn document_mutants(text: &str) -> Vec<run_report::RunMutantDocument> {
-    serde_json::from_str::<run_report::RunDocument>(text)
-        .map(|document| document.mutants)
-        .unwrap_or_default()
-}
-
 /// One mutant, explained from a tree prepared for the purpose.
 fn fresh_explain(
     prepared: &Prepared<'_>,
@@ -1423,13 +1516,14 @@ fn fresh_explain(
 ) -> Result<u8, CliError> {
     let session = prepared.session;
     let catalog =
-        rust_mutants::report::catalog::document(session, &prepared.settings.prepare_options()?);
+        rust_mutants::report::catalog::document(session, &prepared.settings.prepare_options()?)?;
     let source = session
         .catalog()
         .mutants()
         .iter()
-        .find(|one| one.id.starts_with(prefix))
-        .and_then(|one| read_source(session, &one.candidate.path));
+        .find(|one| one.id.as_str().starts_with(prefix))
+        .map(|one| read_source(session, &one.candidate.path))
+        .transpose()?;
     said(
         &explain::Asked {
             catalog: &catalog,
@@ -1455,12 +1549,13 @@ fn stored_explain(
     let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
-    let stored: run_report::RunDocument = read_document(&report)?;
+    let stored = read_run_document(&report)?;
     let source = catalog
         .mutants
         .iter()
         .find(|one| one.id.starts_with(prefix))
-        .and_then(|one| std::fs::read_to_string(settings.root.join(&one.path)).ok());
+        .map(|one| read_source_at(&settings.root, &one.path))
+        .transpose()?;
     said(
         &explain::Asked {
             catalog: &catalog,
@@ -1478,12 +1573,23 @@ fn read_document<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, CliEr
     let text = std::fs::read_to_string(path).map_err(|_error| CliError::ReportMissing {
         message: format!("{} is not there to read", path.display()),
     })?;
-    serde_json::from_str(&text).map_err(|error| CliError::ReportMissing {
+    crate::strictjson::decode_str(&text).map_err(|error| CliError::ReportMissing {
         message: format!(
             "{} is not a document this release reads: {error}",
             path.display()
         ),
     })
+}
+
+/// One run report whose own verdicts, evidence, and findings agree.
+fn read_run_document(path: &Path) -> Result<run_report::RunDocument, CliError> {
+    let document: run_report::RunDocument = read_document(path)?;
+    document
+        .validate()
+        .map_err(|error| CliError::ReportMissing {
+            message: format!("{} is a contradictory run report: {error}", path.display()),
+        })?;
+    Ok(document)
 }
 
 /// What an explanation says, as a document or as the lines a person reads.
@@ -1492,41 +1598,56 @@ fn said(asked: &explain::Asked<'_>, json: bool, stdout: &mut dyn Write) -> Resul
         message: error.to_string(),
     })?;
     if json {
-        let text =
-            serde_json::to_string_pretty(&document).unwrap_or_else(|_error| String::from("{}"));
-        write(stdout, &text);
-        write(stdout, "\n");
+        let text = json_line(&document)?;
+        write(stdout, &text)?;
     } else {
-        write(stdout, &report::explained(&document));
+        write(stdout, &report::explained(&document))?;
     }
     Ok(0)
 }
 
 /// The workspace root's own name, which is what a stream calls the tree it measured.
-fn root_name(settings: &Settings) -> String {
-    let root = settings
-        .root
-        .canonicalize()
-        .unwrap_or_else(|_error| settings.root.clone());
-    root.file_name().map_or_else(
-        || root.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
+fn root_name(settings: &Settings) -> Result<String, CliError> {
+    let root = &settings.root;
+    match root.file_name() {
+        Some(name) => path_text(
+            Path::new(name),
+            "the workspace name has no exact UTF-8 spelling for the run stream",
+        ),
+        None => path_text(
+            root,
+            "the workspace root has no exact UTF-8 spelling for the run stream",
+        ),
+    }
+}
+
+fn path_text(path: &Path, context: &'static str) -> Result<String, CliError> {
+    rust_mutants::id::slashed(path).map_err(|source| CliError::PathNotUtf8 { context, source })
+}
+
+fn stored_spelling(path: &Path) -> Result<String, CliError> {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CliError::StoredRunCorrupt {
+            path: path.to_path_buf(),
+            message: "the stored entry name has no exact UTF-8 spelling".to_owned(),
+        })
 }
 
 /// Writes the report and everything an audit re-derives its proofs from, and names the report.
 fn stored_with_evidence(
     session: &Session,
     settings: &Settings,
-    id: &str,
+    id: &RunId,
     document: &run_report::RunDocument,
 ) -> Result<PathBuf, CliError> {
     let written = store(&settings.report_directory(), id, document)?;
     for one in rust_mutants::report::evidence::write(
         session,
-        &settings.report_directory().join(id),
+        &settings.report_directory().join(id.as_str()),
         &settings.prepare_options()?,
-    ) {
+    )? {
         session
             .trace()
             .evidence(rust_mutants::trace::EvidenceRecord {
@@ -1568,8 +1689,18 @@ fn init(
 ) -> Result<u8, CliError> {
     let root = environment.rooted(root);
     let path = root.join(crate::config::FILE_NAME);
-    if path.exists() && !force {
+    let destination = entry_kind(&path).map_err(|source| CliError::writing(&path, source))?;
+    if destination != EntryKind::Missing && !force {
         return Err(CliError::FileExists { path });
+    }
+    if matches!(destination, EntryKind::Directory | EntryKind::Other) {
+        return Err(CliError::writing(
+            &path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the destination is not a regular file",
+            ),
+        ));
     }
     std::fs::write(&path, crate::config::skeleton())
         .map_err(|source| CliError::writing(&path, source))?;
@@ -1583,7 +1714,7 @@ fn init(
         path.display()
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    write(stdout, &line);
+    write(stdout, &line)?;
     Ok(0)
 }
 
@@ -1621,16 +1752,16 @@ fn rules(tier: Option<&str>, json: bool, stdout: &mut dyn Write) -> Result<u8, C
                     })
                 })
                 .collect::<Vec<_>>(),
-        }))
+        }))?
     } else {
-        listed(&selected)
+        listed(&selected)?
     };
-    write(stdout, &text);
+    write(stdout, &text)?;
     Ok(0)
 }
 
 /// The rules as the lines a person reads, in canonical table order.
-fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
+fn listed(selected: &[rust_mutants::rule::Rule]) -> Result<String, CliError> {
     let mut text = format!(
         "{:<20} {:<30} {:<9} {}\n",
         "FAMILY", "RULE", "TIER", "VERSION"
@@ -1639,7 +1770,12 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
     let mut last = None;
     for rule in selected {
         if last != Some(rule.family) {
-            families = families.saturating_add(1);
+            families = families
+                .checked_add(1)
+                .ok_or(CliError::ProjectionOverflow {
+                    projection: "rules",
+                    field: "the rule-family count",
+                })?;
             last = Some(rule.family);
         }
         let written = writeln!(
@@ -1659,7 +1795,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
         selected.len()
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    text
+    Ok(text)
 }
 
 /// How every command here looks for a toolchain.
@@ -1696,34 +1832,25 @@ fn report_back(
     let root = environment.rooted(root);
     let config = crate::config::Config::load(&root)?;
     let directory = stored::Store::of(&root, &config.reports.directory).root();
-    let path = match run {
-        Some(id) => directory.join(id).join(run_report::FILE_NAME),
-        None => newest(&directory)?,
-    };
-    let text = std::fs::read_to_string(&path).map_err(|error| CliError::ReportMissing {
-        message: format!("{}: {error}", path.display()),
-    })?;
+    let path = stored::report_of(&directory, run)?;
+    let document = read_run_document(&path)?;
     if format == cli::Format::Json {
-        return written(&text, output, stdout).map(|()| 0);
+        return written(&json_line(&document)?, output, stdout).map(|()| 0);
     }
-    let document: run_report::RunDocument =
-        serde_json::from_str(&text).map_err(|error| CliError::ReportMissing {
-            message: format!("{} is not a run report: {error}", path.display()),
-        })?;
     if tui {
         let code = document.run.exit_code;
-        let sources = report::sources::read(&document, &root).unwrap_or_default();
+        let sources = report::sources::read(&document, &root)?;
         let taken = crate::tui::browse(document, sources)
             .map_err(|error| CliError::writing(&path, error))?;
         if let Some(id) = taken {
-            write(stdout, &format!("{id}\n"));
+            write(stdout, &format!("{id}\n"))?;
         }
         return Ok(code);
     }
     let projected = match format {
-        cli::Format::Lines | cli::Format::Json => report::lines(&document),
+        cli::Format::Lines | cli::Format::Json => report::lines(&document)?,
         cli::Format::Junit => report::junit::document(&document),
-        cli::Format::Sarif => json_line(&report::sarif::log(&document)),
+        cli::Format::Sarif => json_line(&report::sarif::log(&document))?,
         cli::Format::Markdown => report::markdown::document(&document),
         cli::Format::Html => html::document(&document, &report::sources::read(&document, &root)?),
         cli::Format::Stryker => {
@@ -1732,7 +1859,7 @@ fn report_back(
                 high: config.reports.stryker.high,
                 low: config.reports.stryker.low,
             };
-            json_line(&stryker::project(&document, &root, thresholds, &sources)?)
+            json_line(&stryker::project(&document, &root, thresholds, &sources)?)?
         }
     };
     written(&projected, output, stdout)?;
@@ -1744,9 +1871,9 @@ fn written(text: &str, output: Option<&Path>, stdout: &mut dyn Write) -> Result<
     match output {
         Some(path) => {
             std::fs::write(path, text).map_err(|error| CliError::writing(path, error))?;
-            write(stdout, &format!("{}\n", path.display()));
+            write(stdout, &format!("{}\n", path.display()))?;
         }
-        None => write(stdout, text),
+        None => write(stdout, text)?,
     }
     Ok(())
 }
@@ -1809,25 +1936,31 @@ fn instrumented(
 /// The whole line of `text` that `offset` sits on, which is what a reader of one guard wants.
 #[must_use]
 pub fn line_around(text: &str, offset: u32) -> Option<String> {
-    let at = usize::try_from(offset).ok()?;
+    let Ok(at) = usize::try_from(offset) else {
+        return None;
+    };
     let before = text.get(..at)?;
-    let from = before
-        .rfind('\n')
-        .map_or(0, |newline| newline.saturating_add(1));
+    let from = match before.rfind('\n') {
+        Some(newline) => newline.checked_add(1)?,
+        None => 0,
+    };
     let rest = text.get(at..)?;
-    let to = at.saturating_add(rest.find('\n').unwrap_or(rest.len()));
+    let width = rest.find('\n').unwrap_or(rest.len());
+    let to = at.checked_add(width)?;
     text.get(from..to)
         .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
 }
 
-fn json_line<T: serde::Serialize>(value: &T) -> String {
-    let mut text = serde_json::to_string_pretty(value)
-        .unwrap_or_else(|error| format!("{{\"error\":{error:?}}}"));
+fn json_line<T: serde::Serialize>(value: &T) -> Result<String, CliError> {
+    let mut text = serde_json::to_string_pretty(value).map_err(|source| {
+        CliError::writing(Path::new("<stdout>"), std::io::Error::other(source))
+    })?;
     text.push('\n');
-    text
+    Ok(text)
 }
 
-/// Puts the reports of the parts of one catalog back together. The reports of the parts of one catalog, named directly or found under a report directory.
+/// Puts the reports of the parts of one catalog back together.
+/// The reports of the parts of one catalog, named directly or found under a report directory.
 ///
 /// # Errors
 /// [`CliError::ReportMissing`] when a name or a glob matches no stored run.
@@ -1852,16 +1985,25 @@ fn parts(
             }
         })?;
         let mut matched = Vec::new();
-        for entry in std::fs::read_dir(&directory)
-            .map_err(|_error| CliError::ReportMissing {
-                message: format!("no run is stored under {}", directory.display()),
-            })?
-            .flatten()
-        {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let report = entry.path().join(run_report::FILE_NAME);
-            if pattern.matches(&name) && report.is_file() {
-                matched.push(report);
+        let entries = std::fs::read_dir(&directory).map_err(|_error| CliError::ReportMissing {
+            message: format!("no run is stored under {}", directory.display()),
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| CliError::StoredRunsUnreadable {
+                path: directory.clone(),
+                source,
+            })?;
+            let entry_path = entry.path();
+            let name = stored_spelling(&entry_path)?;
+            let report = entry_path.join(run_report::FILE_NAME);
+            if pattern.matches(&name) {
+                match entry_kind(&report).map_err(|source| CliError::StoredRunsUnreadable {
+                    path: report.clone(),
+                    source,
+                })? {
+                    EntryKind::File => matched.push(report),
+                    EntryKind::Missing | EntryKind::Directory | EntryKind::Other => {}
+                }
             }
         }
         if matched.is_empty() {
@@ -1885,32 +2027,24 @@ fn merge(
 ) -> Result<u8, CliError> {
     let mut parts = Vec::with_capacity(reports.len());
     for path in reports {
-        let text = std::fs::read_to_string(path).map_err(|error| CliError::ReportMissing {
-            message: format!("{}: {error}", path.display()),
-        })?;
-        parts.push(
-            serde_json::from_str::<run_report::RunDocument>(&text).map_err(|error| {
-                CliError::ReportMissing {
-                    message: format!("{} is not a run report: {error}", path.display()),
-                }
-            })?,
-        );
+        parts.push(read_run_document(path)?);
     }
     let merged = run_report::merge(&parts).map_err(|error| CliError::ReportMissing {
         message: error.to_string(),
     })?;
-    let text = json_line(&merged);
+    let text = json_line(&merged)?;
     match output {
         Some(path) => {
             std::fs::write(path, &text).map_err(|source| CliError::writing(path, source))?;
-            write(stdout, &report::lines(&merged));
+            write(stdout, &report::lines(&merged)?)?;
         }
-        None => write(stdout, &text),
+        None => write(stdout, &text)?,
     }
     Ok(merged.run.exit_code)
 }
 
-/// A closed stream is the reader's choice, not a failure of ours. The claims the file wrote, as the engine reads them.
+/// A closed stream is the reader's choice, not a failure of ours.
+/// The claims the file wrote, as the engine reads them.
 fn expectations(settings: &Settings) -> Vec<Expectation> {
     settings
         .config
@@ -1921,32 +2055,38 @@ fn expectations(settings: &Settings) -> Vec<Expectation> {
         .collect()
 }
 
-pub(super) fn write(stream: &mut dyn Write, text: &str) {
-    let _written = stream
+pub(crate) fn write(stream: &mut dyn Write, text: &str) -> Result<(), CliError> {
+    match stream
         .write_all(text.as_bytes())
-        .and_then(|()| stream.flush());
+        .and_then(|()| stream.flush())
+    {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(source) => Err(CliError::OutputFailed { source }),
+    }
 }
 
 /// The pristine text of every file that yielded a candidate, so a position can be counted in the file a person would open.
 fn read_sources(
     root: &Path,
     discovery: &rust_mutants::discover::Discovery,
-) -> BTreeMap<String, String> {
-    discovery
-        .files
-        .iter()
-        .filter(|file| file.candidates > 0)
-        .filter_map(|file| {
-            std::fs::read_to_string(root.join(&file.path))
-                .ok()
-                .map(|text| (file.path.clone(), text))
-        })
-        .collect()
+) -> Result<BTreeMap<String, String>, CliError> {
+    let mut sources = BTreeMap::new();
+    for file in discovery.files.iter().filter(|file| file.candidates > 0) {
+        let text = read_source_at(root, &file.path)?;
+        sources.insert(file.path.clone(), text);
+    }
+    Ok(sources)
 }
 
 /// The text of one file of a prepared session.
-fn read_source(session: &Session, path: &str) -> Option<String> {
-    std::fs::read_to_string(session.snapshot_root().join(path)).ok()
+fn read_source(session: &Session, path: &str) -> Result<String, CliError> {
+    read_source_at(session.snapshot_root(), path)
+}
+
+/// The text of one selected source file, with absence and permissions kept as failures.
+fn read_source_at(root: &Path, path: &str) -> Result<String, CliError> {
+    std::fs::read_to_string(root.join(path)).map_err(|source| CliError::unreadable(path, &source))
 }
 
 /// What one equivalence pass is asked about.
@@ -1988,7 +2128,7 @@ fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, Cl
     for mutant in mutants.iter().take(wanted) {
         let answer = prover.identical(&mutant.candidate, cancel)?;
         said.push(Rendered {
-            display_id: mutant.display_id.clone(),
+            display_id: mutant.display_id.to_string(),
             path: mutant.candidate.path.clone(),
             rule: mutant.candidate.rule.to_string(),
             answer: answer.name().to_owned(),
@@ -1999,12 +2139,17 @@ fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, Cl
 }
 
 /// One line per mutant, and a count of each answer against the catalog it was taken from.
-fn rendered(said: &[Rendered], cataloged: usize) -> String {
+fn rendered(said: &[Rendered], cataloged: usize) -> Result<String, CliError> {
     let mut text = String::new();
     let mut identical = 0usize;
     for one in said {
         if one.answer == rust_mutants::equivalence::Identity::Identical.name() {
-            identical = identical.saturating_add(1);
+            identical = identical
+                .checked_add(1)
+                .ok_or(CliError::ProjectionOverflow {
+                    projection: "equivalence",
+                    field: "the identical-mutant count",
+                })?;
         }
         let written = writeln!(
             text,
@@ -2021,16 +2166,21 @@ fn rendered(said: &[Rendered], cataloged: usize) -> String {
         identical
     );
     if said.len() < cataloged {
+        let unasked = cataloged
+            .checked_sub(said.len())
+            .ok_or(CliError::ProjectionOverflow {
+                projection: "equivalence",
+                field: "the unasked-mutant count",
+            })?;
         let written = writeln!(
             text,
-            "             the other {} were never asked, so nothing here is a rate over the \
-             catalog",
-            cataloged.saturating_sub(said.len())
+            "             the other {unasked} were never asked, so nothing here is a rate over \
+             the catalog"
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    text
+    Ok(text)
 }
 
 /// What `--ui auto` means in this environment.

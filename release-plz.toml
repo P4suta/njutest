@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# release-plz keeps one release pull request open against `main`: it bumps `[workspace.package].version` and writes CHANGELOG.md from the Conventional Commits since the last tag.
+# Merging that pull request cuts one `vX.Y.Z` tag,
+# and the tag is what starts release.yml, which builds the binaries, the SBOM,
+# and the GitHub Release.
+# Nothing here publishes to crates.io.
+
+[workspace]
+# A tag is cut once and cannot be taken back, so cutting one has to be a thing somebody did rather than a side effect of landing a change.
+# At the default, `release-plz release` tries to release on every push to `main`, so the first merge after this workflow exists would spend `v0.1.0` on whatever happened to land -- a version named after nobody's decision, and unavailable afterwards for the release somebody meant.
+# `false` releases only from a commit release-plz authored, which is the release pull request being merged, and is what the documentation recommends for exactly this.
+release_always = false
+changelog_update = false
+git_release_enable = false
+git_tag_enable = false
+publish = false
+dependencies_update = false
+# The cost of `release_always = false` is that a version bumped by hand is never tagged, because no release pull request proposed it.
+# That is a version somebody has to tag by hand, once, which is a smaller thing than every merge being a release.
+
+# Every crate shares `[workspace.package].version`, so they share one group and one tag.
+# `njutest` owns both because the tag names the product a person installs.
+[[package]]
+name = "njutest"
+changelog_include = ["njutest-macros", "rust-mutants", "rust-mutants-cli"]
+changelog_path = "./CHANGELOG.md"
+changelog_update = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+version_group = "njutest"
+
+[[package]]
+name = "njutest-macros"
+version_group = "njutest"
+
+[[package]]
+name = "rust-mutants"
+version_group = "njutest"
+
+[[package]]
+name = "rust-mutants-cli"
+version_group = "njutest"
+
+[[package]]
+name = "njutest-devkit"
+release = false
+
+[changelog]
+tag_pattern = "v[0-9].*"

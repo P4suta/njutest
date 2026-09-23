@@ -21,8 +21,8 @@ fuzz_target!(|data: &[u8]| {
         );
         assert!(
             package.manifest_dir().as_os_str().len() < package.manifest_path.as_os_str().len(),
-            "the directory of a manifest is shorter than the manifest: {:?}",
-            package.manifest_path
+            "the directory of a manifest is shorter than the manifest: {}",
+            package.manifest_path.display()
         );
         for target in &package.targets {
             assert!(

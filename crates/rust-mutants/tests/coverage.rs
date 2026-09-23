@@ -45,7 +45,9 @@ const EXPORT: &str = r#"{
 
 #[test]
 fn an_export_is_read_into_regions_per_file() {
-    let files = parse_export(EXPORT.as_bytes()).expect("an export");
+    let files = parse_export(EXPORT.as_bytes());
+    assert!(files.is_ok(), "an export: {files:?}");
+    let Ok(files) = files else { return };
     let paths: Vec<&Path> = files.iter().map(|file| file.path.as_path()).collect();
     assert_eq!(
         paths,
@@ -56,11 +58,14 @@ fn an_export_is_read_into_regions_per_file() {
 
 #[test]
 fn every_region_keeps_its_place_its_count_and_its_kind() {
-    let files = parse_export(EXPORT.as_bytes()).expect("an export");
+    let files = parse_export(EXPORT.as_bytes());
+    assert!(files.is_ok(), "an export: {files:?}");
+    let Ok(files) = files else { return };
     let lib = files
         .iter()
-        .find(|file| file.path == Path::new("/w/src/lib.rs"))
-        .expect("the library");
+        .find(|file| file.path == Path::new("/w/src/lib.rs"));
+    assert!(lib.is_some(), "the library is present");
+    let Some(lib) = lib else { return };
     assert_eq!(
         lib.regions,
         [
@@ -104,15 +109,18 @@ fn every_region_keeps_its_place_its_count_and_its_kind() {
     );
     let other = files
         .iter()
-        .find(|file| file.path == Path::new("/w/src/other.rs"))
-        .expect("the other file");
+        .find(|file| file.path == Path::new("/w/src/other.rs"));
+    assert!(other.is_some(), "the other file is present");
+    let Some(other) = other else { return };
     assert_eq!(other.regions.len(), 1);
     assert_eq!(other.regions[0].count, 0);
 }
 
 #[test]
 fn only_a_code_region_that_ran_is_a_covered_block() {
-    let files = parse_export(EXPORT.as_bytes()).expect("an export");
+    let files = parse_export(EXPORT.as_bytes());
+    assert!(files.is_ok(), "an export: {files:?}");
+    let Ok(files) = files else { return };
     let blocks = rust_mutants::coverage::covered(&files);
     assert_eq!(
         blocks,
@@ -175,7 +183,9 @@ fn an_export_that_is_not_one_is_refused_rather_than_read_in_part() {
         r#"{"type":"llvm.coverage.json.export","version":"3.1.0","data":[{"functions":[{"name":"f","count":0,"filenames":[],"regions":[[1,1,1,2,0,0,0,0]]}]}]}"#,
         r#"{"type":"llvm.coverage.json.export","version":"3.1.0","data":[{"functions":[{"name":"f","count":0,"filenames":["/w/a.rs"],"regions":[[1,1,1]]}]}]}"#,
     ] {
-        let error = parse_export(bad.as_bytes()).expect_err("refused");
+        let error = parse_export(bad.as_bytes());
+        assert!(error.is_err(), "refused: {error:?}");
+        let Err(error) = error else { return };
         assert_eq!(error.kind(), CoverageErrorKind::Unreadable, "{bad}");
         assert!(error.to_string().contains("RM6001"), "{error}");
     }
@@ -211,7 +221,9 @@ fn a_region_that_ends_before_it_starts_is_refused() {
             "a region that ends before it starts on the same line",
         ),
     ] {
-        let error = parse_export(export(start, end).as_bytes()).expect_err(why);
+        let error = parse_export(export(start, end).as_bytes());
+        assert!(error.is_err(), "{why}: {error:?}");
+        let Err(error) = error else { return };
         assert_eq!(
             error.kind(),
             CoverageErrorKind::Unreadable,
@@ -228,6 +240,8 @@ fn a_region_that_ends_before_it_starts_is_refused() {
 fn a_region_that_starts_and_ends_at_the_same_place_is_read() {
     let export = br#"{"type":"llvm.coverage.json.export","version":"2.0.1","data":[{"functions":[
         {"filenames":["src/lib.rs"],"regions":[[4,7,4,7,1,0,0,0]]}]}]}"#;
-    let read = parse_export(export).expect("an empty region is a region");
+    let read = parse_export(export);
+    assert!(read.is_ok(), "an empty region is a region: {read:?}");
+    let Ok(read) = read else { return };
     assert_eq!(read.len(), 1, "{read:?}");
 }

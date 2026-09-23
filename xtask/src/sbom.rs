@@ -19,6 +19,7 @@ pub const PURL_PREFIX: &str = "pkg:cargo/";
 /// One bill of materials.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Bom {
     /// The document's kind.
     #[serde(rename = "bomFormat")]
@@ -36,6 +37,7 @@ pub struct Bom {
 /// What the document is about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Metadata {
     /// What wrote it.
     pub tools: Vec<Tool>,
@@ -45,6 +47,7 @@ pub struct Metadata {
 
 /// What wrote the document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tool {
     /// Who publishes it.
     pub vendor: String,
@@ -57,6 +60,7 @@ pub struct Tool {
 /// One package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Component {
     /// Always `library` here: what a release ships is built from libraries.
     #[serde(rename = "type")]
@@ -74,6 +78,7 @@ pub struct Component {
 
 /// One licence a package names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct License {
     /// The expression, verbatim from the manifest.
     pub expression: String,
@@ -85,6 +90,12 @@ struct CargoMetadata {
     packages: Vec<CargoPackage>,
     #[serde(default)]
     workspace_members: Vec<String>,
+    #[serde(flatten)]
+    #[expect(
+        dead_code,
+        reason = "foreign protocol additions are retained for inspection"
+    )]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,16 +105,31 @@ struct CargoPackage {
     version: String,
     #[serde(default)]
     license: Option<String>,
+    #[serde(flatten)]
+    #[expect(
+        dead_code,
+        reason = "foreign protocol additions are retained for inspection"
+    )]
+    external_fields: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// Why Cargo's metadata cannot be turned into a bill of materials.
+#[derive(Debug, thiserror::Error)]
+#[error("cargo metadata: {source}")]
+pub struct SbomError {
+    /// The metadata document was not the shape Cargo promises.
+    #[source]
+    source: serde_json::Error,
 }
 
 /// The bill of materials of the tree `metadata` describes, for the release named `about`.
 ///
 /// # Errors
 /// Returns what is wrong with the metadata document.
-pub fn of(metadata: &str, about: (&str, &str)) -> Result<Bom, String> {
+pub fn of(metadata: &str, about: (&str, &str)) -> Result<Bom, SbomError> {
     let (name, version) = about;
     let read: CargoMetadata =
-        serde_json::from_str(metadata).map_err(|error| format!("cargo metadata: {error}"))?;
+        crate::strictjson::decode_str(metadata).map_err(|source| SbomError { source })?;
     let members: BTreeSet<&str> = read.workspace_members.iter().map(String::as_str).collect();
     let mut components: Vec<Component> = read
         .packages

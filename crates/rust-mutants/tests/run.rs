@@ -10,8 +10,9 @@
 
 use std::time::Duration;
 
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::outcome::Outcome;
-use rust_mutants::run::{Finding, FindingKind, Judged, Run, Standing, Verified};
+use rust_mutants::run::{CodegenIdentity, Finding, FindingKind, Judged, Run, Standing, Verified};
 
 fn judged(index: u32, outcome: Outcome) -> Judged {
     Judged {
@@ -30,8 +31,9 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         retried: false,
         expected: false,
         measured: true,
-        identical: None,
+        identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
+        step_notice: None,
     }
 }
 
@@ -54,25 +56,38 @@ fn the_tally_is_the_outcomes_folded_and_nothing_else() {
         judged(0, Outcome::Killed),
         judged(1, Outcome::Killed),
         judged(2, Outcome::Survived),
-        judged(3, Outcome::TimedOut),
+        judged(3, Outcome::StepLimitReached),
         judged(4, Outcome::Inconclusive),
         judged(5, Outcome::Errored),
         judged(6, Outcome::NotRun),
+        judged(7, Outcome::Waited),
     ]);
     let tally = run.tally();
-    assert_eq!(tally.cataloged, 7);
+    assert_eq!(
+        result_state(&tally),
+        Returned,
+        "the small tally is representable"
+    );
+    let Ok(tally) = tally else { return };
+    assert_eq!(tally.cataloged, 8);
     assert_eq!(tally.killed, 2);
     assert_eq!(tally.survived, 1);
-    assert_eq!(tally.timed_out, 1);
+    assert_eq!(tally.step_limit_reached, 1);
+    assert_eq!(tally.waited, 1);
     assert_eq!(tally.inconclusive, 1);
     assert_eq!(tally.errored, 1);
     assert_eq!(tally.not_run, 1);
     assert_eq!(
-        tally.executed, 6,
+        tally.executed, 7,
         "everything but what never ran was executed"
     );
     assert_eq!(
-        tally.killed + tally.survived + tally.timed_out + tally.inconclusive + tally.errored,
+        tally.killed
+            + tally.survived
+            + tally.step_limit_reached
+            + tally.waited
+            + tally.inconclusive
+            + tally.errored,
         tally.executed,
         "the executed mutants are exactly the ones with an outcome"
     );
@@ -82,23 +97,49 @@ fn the_tally_is_the_outcomes_folded_and_nothing_else() {
 fn the_score_is_what_was_detected_over_what_was_decided() {
     let run = of(vec![
         judged(0, Outcome::Killed),
-        judged(1, Outcome::TimedOut),
+        judged(1, Outcome::StepLimitReached),
         judged(2, Outcome::Survived),
         judged(3, Outcome::Inconclusive),
+        judged(4, Outcome::Waited),
     ]);
-    let score = run.score().expect("three decided mutants");
-    assert_eq!(score.detected, 2);
+    let score = run.score();
     assert_eq!(
-        score.decided, 3,
-        "an inconclusive mutant is not evidence either way"
+        result_state(&score),
+        Returned,
+        "the small tally is representable"
     );
-    assert!((score.value - 2.0 / 3.0).abs() < 1e-12, "{score:?}");
+    let Ok(score) = score else { return };
+    assert!(score.is_some(), "two decided mutants");
+    let Some(score) = score else { return };
+    assert_eq!(score.detected, 1);
+    assert_eq!(
+        score.decided, 2,
+        "an inconclusive mutant is not evidence either way, and neither are a finite step \
+         limit or a clock bound this machine reached"
+    );
+    assert!((score.value - 0.5).abs() < 1e-12, "{score:?}");
 
+    let inconclusive = of(vec![judged(0, Outcome::Inconclusive)]).score();
+    assert_eq!(
+        result_state(&inconclusive),
+        Returned,
+        "the small tally is representable"
+    );
+    let Ok(inconclusive) = inconclusive else {
+        return;
+    };
     assert!(
-        of(vec![judged(0, Outcome::Inconclusive)]).score().is_none(),
+        inconclusive.is_none(),
         "a run that decided nothing has no score to report"
     );
-    assert!(of(Vec::new()).score().is_none());
+    let empty = of(Vec::new()).score();
+    assert_eq!(
+        result_state(&empty),
+        Returned,
+        "the empty tally is representable"
+    );
+    let Ok(empty) = empty else { return };
+    assert!(empty.is_none());
 }
 
 #[test]
@@ -183,7 +224,14 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
         ],
         "an expected survivor is accounted for, not reported as a hole"
     );
-    assert_eq!(run.tally().expected, 1);
+    let tally = run.tally();
+    assert_eq!(
+        result_state(&tally),
+        Returned,
+        "the small tally is representable"
+    );
+    let Ok(tally) = tally else { return };
+    assert_eq!(tally.expected, 1);
     assert_eq!(run.exit_code(), 1);
 }
 
@@ -192,11 +240,11 @@ fn the_exit_code_says_what_the_run_established_and_nothing_more() {
     assert_eq!(
         of(vec![
             judged(0, Outcome::Killed),
-            judged(1, Outcome::TimedOut)
+            judged(1, Outcome::StepLimitReached)
         ])
         .exit_code(),
-        0,
-        "every mutant was noticed"
+        2,
+        "the finite step limit is an infrastructure finding, not a detection"
     );
     assert_eq!(of(Vec::new()).exit_code(), 0, "nothing to notice");
     assert_eq!(
@@ -265,26 +313,30 @@ fn an_inconclusive_mutant_says_which_of_the_two_things_left_it_undecided() {
         findings
             .iter()
             .find(|finding| finding.mutant.as_deref() == Some(&format!("{index:064x}")))
-            .map_or_else(
-                || panic!("a finding for {index}"),
-                |finding| finding.detail.clone(),
-            )
+            .map(|finding| finding.detail.clone())
     };
+    let detail0 = detail(0);
+    assert!(detail0.is_some(), "a finding for 0");
+    let Some(detail0) = detail0 else { return };
     assert!(
-        detail(0).contains("no test ran"),
-        "a target that ran nothing is not a timeout: {}",
-        detail(0)
+        detail0.contains("no test ran"),
+        "a target that ran nothing is not a timeout: {detail0}"
     );
+    let detail1 = detail(1);
+    assert!(detail1.is_some(), "a finding for 1");
+    let Some(detail1) = detail1 else { return };
     assert!(
-        detail(1).contains("timed out"),
-        "a timeout that did not repeat says so: {}",
-        detail(1)
+        detail1.contains("timed out"),
+        "a timeout that did not repeat says so: {detail1}"
     );
 }
 
 #[test]
 fn jobs_defaults_to_the_machine_capped_at_four_and_a_number_wins() {
-    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let cores = match std::thread::available_parallelism() {
+        Ok(cores) => cores.get(),
+        Err(_unavailable) => 1,
+    };
     assert_eq!(rust_mutants::run::jobs(0), cores.min(4));
     assert_eq!(rust_mutants::run::jobs(1), 1);
     assert_eq!(
@@ -342,6 +394,12 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_counted_and_named_apa
     ]);
 
     let tally = run.tally();
+    assert_eq!(
+        result_state(&tally),
+        Returned,
+        "the small tally is representable"
+    );
+    let Ok(tally) = tally else { return };
     assert_eq!(
         (tally.unreached, tally.discharged, tally.not_run),
         (1, 1, 2),
@@ -440,7 +498,7 @@ fn the_outcomes_a_clean_run_says_nothing_about_are_each_left_out_for_their_own_r
     let rows = vec![
         accounted,
         judged(2, Outcome::Killed),
-        judged(3, Outcome::TimedOut),
+        judged(3, Outcome::StepLimitReached),
         unrun(4, NotRunReason::Unselected),
         unrun(5, NotRunReason::StoppedEarly),
         judged(6, Outcome::Survived),
@@ -450,20 +508,53 @@ fn the_outcomes_a_clean_run_says_nothing_about_are_each_left_out_for_their_own_r
     let kinds: Vec<FindingKind> = run.findings().iter().map(|one| one.kind).collect();
     assert_eq!(
         kinds,
-        [FindingKind::SurvivingMutant],
-        "a survivor a reviewer accounted for, a mutation the tests noticed, one they noticed by \
-         running out of time, and two a run was never about are each left out for a reason of \
-         their own, and the one nobody accounted for is the finding"
+        [
+            FindingKind::StepLimitReachedMutant,
+            FindingKind::SurvivingMutant
+        ],
+        "a finite step ceiling is an unanswered infrastructure finding, while the survivor \
+         nobody accounted for is a test finding"
     );
     let tally = run.tally();
+    assert_eq!(
+        result_state(&tally),
+        Returned,
+        "the small tally is representable"
+    );
+    let Ok(tally) = tally else { return };
     assert_eq!(
         (
             tally.expected,
             tally.killed,
-            tally.timed_out,
+            tally.step_limit_reached,
             tally.survived
         ),
         (1, 1, 1, 2),
         "and the columns count them where a reader looks: {tally:?}"
+    );
+}
+
+#[test]
+fn a_mutation_this_machine_stopped_waiting_for_is_a_finding_that_says_so() {
+    let run = of(vec![judged(0, Outcome::Waited)]);
+    let findings = run.findings();
+    assert_eq!(
+        findings.iter().map(|one| one.kind).collect::<Vec<_>>(),
+        [FindingKind::WaitedMutant],
+        "a bound expiring establishes nothing about the mutation, so the run raises it as \
+         a hole rather than passing over it: a reader who is shown nothing concludes the \
+         mutation was answered"
+    );
+    let detail = &findings[0].detail;
+    assert!(
+        detail.contains("stopped waiting") && detail.contains("step allowance"),
+        "and it names both ways out, because a person told only that a bound expired \
+         reaches for the bound, which is the knob that made the answer depend on their \
+         machine in the first place: {detail:?}"
+    );
+    assert!(
+        FindingKind::WaitedMutant.is_infrastructure(),
+        "it is a gap in what the run established rather than a fault in the code, and the \
+         two are counted in different columns"
     );
 }

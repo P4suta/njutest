@@ -144,7 +144,7 @@ fn compare_under((group, field): (&str, &str), pair: Pair<'_>, changes: &mut Vec
 }
 
 fn parse((path, text): (&str, &str)) -> Result<serde_json::Value, DiffError> {
-    serde_json::from_str(text).map_err(|source| DiffError::Unreadable {
+    crate::strictjson::decode_str(text).map_err(|source| DiffError::Unreadable {
         path: path.to_owned(),
         source,
     })

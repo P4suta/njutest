@@ -9,7 +9,8 @@ type Reached<'a> = &'a [(&'a str, &'a [u32])];
 /// Every target of a record, each with what its tests reached.
 type Records<'a> = &'a [(&'a str, Reached<'a>)];
 
-use rust_mutants::session::{Fallback, Granularity, Route, Routing};
+use rust_mutants::count::{Count, Tests};
+use rust_mutants::session::{Fallback, Granularity, Route, RouteAccountingError, Routing};
 use rust_mutants::touch::{Seen, TargetTouches, Touched};
 
 /// A record in which each named target's tests reached exactly the mutations given.
@@ -19,16 +20,15 @@ fn touched(targets: Records<'_>, compared: &[u32]) -> Touched {
     for (target, tests) in targets {
         let mut reached = Seen::default();
         for (test, indices) in *tests {
-            drop(
-                reached
-                    .tests
-                    .insert((*test).to_owned(), indices.iter().copied().collect()),
-            );
+            reached
+                .tests
+                .entry((*test).to_owned())
+                .or_insert_with(|| indices.iter().copied().collect());
         }
         let mut touches = TargetTouches::default();
         touches.reached = reached;
         touches.ran = tests.iter().map(|(test, _)| (*test).to_owned()).collect();
-        drop(held.targets.insert((*target).to_owned(), touches));
+        held.targets.entry((*target).to_owned()).or_insert(touches);
     }
     held
 }
@@ -270,9 +270,36 @@ fn a_route_narrowed_to_some_tests_says_test_rather_than_block() {
 fn what_a_route_starts_is_the_tests_it_named_and_every_test_of_what_it_did_not_narrow() {
     assert_eq!(
         narrowed().started(|_target| 100),
-        101,
+        Ok(Count::<Tests>::new(101)),
         "one named test of the first target, and all hundred of the second, which is the work \
          the route asks for rather than the work a whole run would"
+    );
+}
+
+#[test]
+fn a_narrowed_route_refuses_an_empty_or_impossible_test_set() {
+    let empty = Route::Block {
+        reaching: vec![rust_mutants::session::Reaches {
+            target: "demo/lib/demo".to_owned(),
+            tests: rust_mutants::session::Asked::These(Vec::new()),
+        }],
+        discharged: Vec::new(),
+        fallback: None,
+    };
+    assert_eq!(
+        empty.started(|_target| 2),
+        Err(RouteAccountingError::EmptyNamedTestSet),
+        "retaining a target while naming no test is not zero work; it is an invalid route"
+    );
+
+    let too_many = narrowed().started(|_target| 0);
+    assert_eq!(
+        too_many,
+        Err(RouteAccountingError::NamedTestsExceedBaseline {
+            named: 1,
+            measured: 0,
+        }),
+        "a named test cannot be charged against a target said to contain no tests"
     );
 }
 
@@ -283,7 +310,7 @@ fn what_a_route_costs_is_the_share_of_each_baseline_its_tests_come_to() {
         .costing(|_target| rust_mutants::session::Timing::new(Duration::from_millis(100), 10));
     assert_eq!(
         cost,
-        Duration::from_millis(110),
+        Ok(Duration::from_millis(110)),
         "a target narrowed to one of ten tests costs a tenth of its baseline, and one that was \
          not narrowed costs the whole of it; pricing every target at its whole baseline is what \
          an estimate that knows one number reaches for"
@@ -291,15 +318,33 @@ fn what_a_route_costs_is_the_share_of_each_baseline_its_tests_come_to() {
 }
 
 #[test]
-fn a_target_the_caller_cannot_time_is_priced_at_what_it_handed_back() {
+fn a_narrowed_target_cannot_name_tests_a_baseline_says_never_ran() {
     use std::time::Duration;
     let cost = narrowed()
         .costing(|_target| rust_mutants::session::Timing::new(Duration::from_millis(60), 0));
     assert_eq!(
         cost,
-        Duration::from_millis(120),
-        "a target that reports no tests is priced at its whole baseline for each of them, which \
-         is the guess that errs toward too long"
+        Err(RouteAccountingError::NamedTestsExceedBaseline {
+            named: 1,
+            measured: 0,
+        }),
+        "a route cannot silently price a named test against a baseline that says no test ran"
+    );
+}
+
+#[test]
+fn an_unnarrowed_zero_test_target_still_costs_its_process_baseline() {
+    use std::time::Duration;
+    let route = Route::All {
+        reaching: vec!["demo/lib/demo".to_owned()],
+        fallback: Fallback::NotMeasured,
+    };
+    assert_eq!(
+        route.costing(|_target| {
+            rust_mutants::session::Timing::new(Duration::from_millis(60), 0)
+        }),
+        Ok(Duration::from_millis(60)),
+        "an unmeasured target still starts one process even when that process reports no tests"
     );
 }
 

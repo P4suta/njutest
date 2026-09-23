@@ -10,6 +10,7 @@ pub mod cli;
 pub mod config;
 pub mod diagnostics;
 pub mod error;
+pub(crate) mod filesystem;
 pub mod kept;
 pub mod report;
 
@@ -19,6 +20,8 @@ pub use rust_mutants::outcomes;
 pub use rust_mutants::run;
 pub mod settings;
 pub mod stream;
+pub(crate) mod strictjson;
+pub(crate) mod text;
 pub mod tui;
 pub mod ui;
 
@@ -41,11 +44,8 @@ pub struct Environment {
     pub temp_directory: PathBuf,
     /// This program's own path, which `doctor` copies to measure what running a newly written file costs.
     ///
-    /// An argument for the same reason the temporary directory is: the
-    /// composition root is where the operating system is asked. It has to be a
-    /// program somebody may copy and run — a system binary is signed in place
-    /// and is killed when it is run from anywhere else — and this one is both
-    /// to hand and known to run.
+    /// An argument for the same reason the temporary directory is: the composition root is where the operating system is asked.
+    /// It has to be a program somebody may copy and run — a system binary is signed in place and is killed when it is run from anywhere else — and this one is both to hand and known to run.
     pub program: PathBuf,
     /// The user's cache directory, which what earlier runs established is kept under.
     pub cache_directory: PathBuf,
@@ -121,15 +121,17 @@ pub fn exit_codes() -> String {
 }
 
 /// The two streams a command writes to.
-#[expect(
-    missing_debug_implementations,
-    reason = "a stream is a handle to the outside; there is nothing to print about one"
-)]
 pub struct Streams<'a> {
     /// What the command established.
     pub out: &'a mut dyn Write,
     /// What went wrong.
     pub err: &'a mut dyn Write,
+}
+
+impl std::fmt::Debug for Streams<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Streams").finish_non_exhaustive()
+    }
 }
 
 impl Environment {
@@ -147,20 +149,83 @@ impl Environment {
     }
 }
 
-/// A cancellation flag the process raises on `SIGINT` and `SIGTERM`, and the number of the signal that raised it.
-#[must_use]
-pub fn interruptible() -> (Cancel, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+/// The process's installed cancellation handlers and the state they own.
+#[derive(Debug)]
+pub struct Interrupt {
+    cancel: Cancel,
+    signalled: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    handlers: SignalHandlers,
+}
+
+#[derive(Debug, Default)]
+struct SignalHandlers(Vec<signal_hook::SigId>);
+
+impl SignalHandlers {
+    fn unregister(&mut self) {
+        for handler in self.0.drain(..) {
+            let removed = signal_hook::low_level::unregister(handler);
+            if !removed {
+                std::process::abort();
+            }
+        }
+    }
+}
+
+impl Drop for SignalHandlers {
+    fn drop(&mut self) {
+        self.unregister();
+    }
+}
+
+impl Interrupt {
+    /// The cancellation flag every fallible operation observes.
+    #[must_use]
+    pub const fn cancel(&self) -> &Cancel {
+        &self.cancel
+    }
+
+    /// The signal number captured by the handlers, or zero before interruption.
+    #[must_use]
+    pub fn signalled(&self) -> &std::sync::atomic::AtomicUsize {
+        &self.signalled
+    }
+}
+
+impl Drop for Interrupt {
+    fn drop(&mut self) {
+        self.handlers.unregister();
+    }
+}
+
+/// Installs owned cancellation handlers for `SIGINT` and `SIGTERM`.
+///
+/// # Errors
+/// Returns the registration failure without leaving a signal handler unowned.
+pub fn interruptible() -> std::io::Result<Interrupt> {
     let cancel = Cancel::new();
     let signalled = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut handlers = SignalHandlers::default();
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
-        drop(signal_hook::flag::register(signal, cancel.flag()));
-        drop(signal_hook::flag::register_usize(
+        handlers
+            .0
+            .push(signal_hook::flag::register(signal, cancel.flag())?);
+        let number = usize::try_from(signal).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("signal number {signal} cannot be recorded: {error}"),
+            )
+        })?;
+        handlers.0.push(signal_hook::flag::register_usize(
             signal,
             std::sync::Arc::clone(&signalled),
-            usize::try_from(signal).unwrap_or(0),
-        ));
+            number,
+        )?);
     }
-    (cancel, signalled)
+    Ok(Interrupt {
+        cancel,
+        signalled,
+        handlers,
+    })
 }
 
 /// The status a process ends with: what the run concluded, unless a signal ended it first.
@@ -168,13 +233,20 @@ pub fn interruptible() -> (Cancel, std::sync::Arc<std::sync::atomic::AtomicUsize
 pub fn ended(code: u8, signalled: &std::sync::atomic::AtomicUsize) -> std::process::ExitCode {
     std::process::ExitCode::from(match signalled.load(std::sync::atomic::Ordering::SeqCst) {
         0 => code,
-        signal => u8::try_from(signal)
-            .ok()
-            .map_or(code, |number| 128u8.saturating_add(number)),
+        signal => match u8::try_from(signal) {
+            Ok(number) => match 128u8.checked_add(number) {
+                Some(interrupted) => interrupted,
+                None => code,
+            },
+            Err(_signal_does_not_fit_an_exit_code) => code,
+        },
     })
 }
 
-/// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given. `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
+/// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given.
+///
+/// `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
+#[cfg(feature = "testkit")]
 pub fn run_from<I>(args: I, environment: &Environment, cancel: &Cancel, streams: Streams<'_>) -> u8
 where
     I: IntoIterator<Item = OsString>,
@@ -201,9 +273,9 @@ where
         Ok(command) => command,
         Err(usage) => {
             let stream: &mut dyn Write = if usage.to_stderr { stderr } else { stdout };
-            let _written = stream
-                .write_all(usage.text.as_bytes())
-                .and_then(|()| stream.flush());
+            if app::write(stream, &usage.text).is_err() {
+                return EXIT_USAGE;
+            }
             return usage.exit_code;
         }
     };
@@ -226,20 +298,25 @@ where
     match dispatched {
         Ok(code) => code,
         Err(error) if cancel.is_cancelled() => {
-            complain(stderr, &error);
-            EXIT_INTERRUPTED
+            complaint_code(complain(stderr, &error), EXIT_INTERRUPTED)
         }
-        Err(error) => {
-            complain(stderr, &error);
-            EXIT_USAGE
-        }
+        Err(error) => complaint_code(complain(stderr, &error), EXIT_USAGE),
     }
 }
 
 /// What went wrong, and what to do about it when the code carries one.
-fn complain(stderr: &mut dyn Write, error: &error::CliError) {
-    let _written = writeln!(stderr, "rust-mutants: {error}");
+fn complain(stderr: &mut dyn Write, error: &error::CliError) -> std::io::Result<()> {
+    writeln!(stderr, "rust-mutants: {error}")?;
     if let Some(remedy) = error.code().remedy {
-        let _written = writeln!(stderr, "          try: {remedy}");
+        writeln!(stderr, "          try: {remedy}")?;
+    }
+    stderr.flush()
+}
+
+fn complaint_code(written: std::io::Result<()>, intended: u8) -> u8 {
+    match written {
+        Ok(()) => intended,
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => intended,
+        Err(_) => EXIT_USAGE,
     }
 }

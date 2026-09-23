@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use njutest_devkit::result::{ResultState::Returned, result_state};
 use rust_mutants::duration::{DurationError, parse, render};
 
 #[test]
@@ -108,7 +109,9 @@ proptest::proptest! {
     ) {
         let value = Duration::from_millis(millis);
         let rendered = render(value);
-        let again = parse(&rendered).expect("what render writes, parse reads");
+        let again = parse(&rendered);
+        proptest::prop_assert_eq!(result_state(&again), Returned, "rendered duration: {:?}", again);
+        let Ok(again) = again else { return Ok(()) };
         proptest::prop_assert_eq!(again, value, "{} rendered as {}", millis, rendered);
     }
 
@@ -121,7 +124,9 @@ proptest::proptest! {
             return Ok(());
         };
         let rendered = render(value);
-        let again = parse(&rendered).expect("what render writes, parse reads");
+        let again = parse(&rendered);
+        proptest::prop_assert_eq!(result_state(&again), Returned, "rendered duration: {:?}", again);
+        let Ok(again) = again else { return Ok(()) };
         proptest::prop_assert_eq!(again, value, "{:?} rendered as {}", text, rendered);
     }
 }

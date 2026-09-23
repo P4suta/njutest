@@ -7,17 +7,15 @@ use rust_mutants::report::run::{Accounting, RunDocument};
 
 /// What a run counted, arranged so that a reader can add the right things together.
 ///
-/// Every projection used to lay this out for itself, and all four laid it out
-/// wrong in the same way: the counts that partition the catalog and the counts
-/// that are subsets of one of those went into one list, so a reader adding a
-/// column got more than there are. Two of them also disagreed about which
-/// columns exist. The arrangement is made here, once, and each projection
-/// renders what it is given.
+/// Every projection used to lay this out for itself, and all four laid it out wrong in the same way: the counts that partition the catalog and the counts that are subsets of one of those went into one list, so a reader adding a column got more than there are.
+/// Two of them also disagreed about which columns exist.
+/// The arrangement is made here, once, and each projection renders what it is given.
 #[derive(Debug)]
 pub struct Tally {
     /// What the parts add up to, and the word for it.
     pub whole: (&'static str, u32),
-    /// The counts that partition the whole. These add to it and to nothing else.
+    /// The counts that partition the whole.
+    /// These add to it and to nothing else.
     pub parts: Vec<(&'static str, u32)>,
     /// A count of some of one of the parts: the part's name, this one's name, and how many.
     pub within: Vec<(&'static str, &'static str, u32)>,
@@ -35,7 +33,8 @@ impl Tally {
             parts: vec![
                 ("killed", counted.killed.count()),
                 ("survived", counted.survived.count()),
-                ("timed out", counted.timed_out.count()),
+                ("step_limit_reached", counted.step_limit_reached.count()),
+                ("waited", counted.waited.count()),
                 ("inconclusive", counted.inconclusive.count()),
                 ("errored", counted.errored.count()),
                 ("not run", counted.not_run.count()),

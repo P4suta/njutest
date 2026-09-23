@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 name: setup-rust
-description: Pinned Rust toolchain (from rust-toolchain.toml) + mold + cargo cache (+ optional tools), shared by every CI job.
+description: Pinned Rust toolchain (from rust-toolchain.toml) + mold + mise + cargo cache (+ optional tools), shared by every CI job.
 
 inputs:
   components:
@@ -16,18 +16,47 @@ inputs:
     description: 'Comma-separated cargo tools for taiki-e/install-action, e.g. "cargo-nextest@0.9.140". Pin to mise.toml.'
     required: false
     default: ""
+  mise-tools:
+    description: 'Space-separated tools mise installs, named without a version, e.g. "actionlint typos". The version is mise.toml''s, which is what makes this runner and a developer''s machine resolve the same one.'
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
-    # No `toolchain` input: the action reads rust-toolchain.toml, which is the
-    # one place the version is pinned.
+    # No `toolchain` input: the action reads rust-toolchain.toml, which is the one place the version is pinned.
     - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # stable branch, toolchain from rust-toolchain.toml
       with:
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
     - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+    # Three jobs call `mise run …` so that the pipeline and a developer's
+    # machine run the same task rather than two spellings of one; none of them
+    # installed mise, and `soundness` failed with `mise: command not found`.
+    # It goes here rather than in those jobs so a job added later cannot forget.
+    - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      with:
+        version: 2026.9.12
+        install: false
+        cache: true
+    # Activating mise brings `mise.toml`'s `[env]` with it, and that names `sccache` as the compiler wrapper.
+    # A runner holding the variable but not the program fails every cargo invocation it has — `could not execute process sccache … (never executed)` — including the ones that only read metadata, which is how a single missing binary took nine jobs down at a step that does no compiling.
+    # Installing it answers that and buys nothing: sccache is a compilation cache, and the one a job would hit is what `Swatinem/rust-cache` restores below. It also left the shim unable to resolve a version at compile time — `No version is set for shim: sccache` — which is a second failure held open for no gain.
+    # So the variable is cleared rather than satisfied, which is the decision `mise.toml` already records by keeping sccache out of what CI installs. Activating mise is what quietly reversed it.
+    # `mise run` installs every tool `mise.toml` pins before it runs a task, which in CI means `cargo install` for each `cargo:` pin — offline, against a registry index that is not there, for tools the task does not use. One job wanted `cargo build` and was told `could not find cargo-nextest in registry crates-io with version =0.9.140`.
+    # Here the job decides what is installed and mise runs the task. That is the same split the two inputs above make: install-action for crates, mise for what it fetches, and a job that names neither gets neither.
+    - shell: bash
+      run: |
+        echo "RUSTC_WRAPPER=" >> "${GITHUB_ENV}"
+        echo "MISE_TASK_RUN_AUTO_INSTALL=false" >> "${GITHUB_ENV}"
     - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+    # `mise.toml` pins two kinds of tool and the key says which: a `cargo:` prefix is a crate, and a bare name is a tool mise fetches itself.
+    # install-action only knows the first kind, and it knows a crate by its crates.io name rather than the tool's own, which is why translating the bare ones into its vocabulary needed a rename table.
+    # It also carries its own list of versions, so a pin bumped here failed the pipeline until install-action shipped a release that had heard of it — and for `actionlint`, a Go program that is on no registry it reads, the fallback could never succeed at any version.
+    # So each kind is installed by the thing that owns it. No version is written below: mise reads the same `mise.toml` a developer's machine does, which is the whole point of pinning them in one file.
+    - if: ${{ inputs.mise-tools != '' }}
+      shell: bash
+      run: mise install ${{ inputs.mise-tools }}
     - if: ${{ inputs.tools != '' }}
       uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
       with:

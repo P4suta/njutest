@@ -22,10 +22,28 @@ fn read(relative: &str) -> String {
         .unwrap_or_else(|error| panic!("{relative}: {error}"))
 }
 
+/// Every crate of the workspace a person can install, as the path to it from the root.
+fn shipped() -> Vec<String> {
+    let found: Vec<String> = njutest_devkit::census::members(&root())
+        .into_iter()
+        .filter(|member| member.published && !member.binaries.is_empty())
+        .map(|member| match member.directory.strip_prefix(root()) {
+            Ok(at) => at.display().to_string(),
+            Err(error) => panic!("{} is not under the workspace: {error}", member.name),
+        })
+        .collect();
+    assert!(
+        !found.is_empty(),
+        "a release publishes what the workspace declares, and reading that from cargo is \
+         what makes the crate somebody adds next arrive in these checks on its own"
+    );
+    found
+}
+
 /// Every crate of the workspace that declares one, and the binaries it declares.
 fn declared() -> Vec<(String, BTreeSet<String>)> {
     let mut found = Vec::new();
-    for member in ["crates/njutest-cli", "crates/rust-mutants-cli"] {
+    for member in shipped() {
         let manifest = read(&format!("{member}/Cargo.toml"));
         let names: BTreeSet<String> = manifest
             .split("[[bin]]")
@@ -41,7 +59,7 @@ fn declared() -> Vec<(String, BTreeSet<String>)> {
                 )
             })
             .collect();
-        found.push((member.to_owned(), names));
+        found.push((member, names));
     }
     found
 }
@@ -120,7 +138,7 @@ fn what_binstall_looks_in_is_the_archive_the_release_builds() {
             .map(|_found| "njutest-{ version }-{ target }");
         at.unwrap_or_else(|| panic!("release.yml no longer names the archive it builds"))
     };
-    for member in ["crates/njutest-cli", "crates/rust-mutants-cli"] {
+    for member in shipped() {
         let manifest = read(&format!("{member}/Cargo.toml"));
         let stanza = manifest
             .split("[package.metadata.binstall]")
@@ -151,16 +169,10 @@ fn what_binstall_looks_in_is_the_archive_the_release_builds() {
 #[test]
 fn every_benchmark_the_workspace_declares_is_one_the_task_runs() {
     let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
-    for member in [
-        "crates/njutest-cli",
-        "crates/rust-mutants",
-        "crates/njutest",
-    ] {
-        let manifest = read(&format!("{member}/Cargo.toml"));
-        let package = member
-            .rsplit('/')
-            .next()
-            .unwrap_or_else(|| panic!("{member} names a package"));
+    for member in njutest_devkit::census::members(&root()) {
+        let manifest = std::fs::read_to_string(member.directory.join("Cargo.toml"))
+            .unwrap_or_else(|error| panic!("{}: {error}", member.name));
+        let package = member.name.as_str();
         for stanza in manifest.split("[[bench]]").skip(1) {
             let Some(name) = stanza
                 .lines()
@@ -169,7 +181,10 @@ fn every_benchmark_the_workspace_declares_is_one_the_task_runs() {
             else {
                 continue;
             };
-            let _added = declared.insert((package.to_owned(), name.to_owned()));
+            assert!(
+                declared.insert((package.to_owned(), name.to_owned())),
+                "{package}/{name} is declared only once"
+            );
         }
     }
     assert!(

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::id::{
-    DISPLAY_ID_LENGTH, ID_HEX_LENGTH, Identity, IdentityError, MIN_PREFIX_LENGTH, digest,
-    is_lower_hex, write_length_prefixed,
+    DISPLAY_ID_LENGTH, DisplayId, ID_HEX_LENGTH, Identity, IdentityError, MIN_PREFIX_LENGTH,
+    MutantId, digest, is_lower_hex, write_length_prefixed,
 };
 use crate::rule::{Registry, Rule, RuleError};
 use crate::span::Span;
@@ -23,6 +23,7 @@ mod named_rule {
     use super::Rule;
 
     #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct Named {
         name: String,
         version: u32,
@@ -57,8 +58,10 @@ mod named_rule {
 /// The domain separator of the catalog digest.
 pub const CATALOG_DOMAIN: &str = "rust-mutants-catalog-v1";
 
-/// One proposed edit: replace the bytes of `span` in `path` with `replacement`. The unit discovery produces and the catalog consumes.
+/// One proposed edit: replace the bytes of `span` in `path` with `replacement`.
+/// The unit discovery produces and the catalog consumes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Candidate {
     /// The workspace-relative source path with forward slashes.
     pub path: String,
@@ -69,7 +72,8 @@ pub struct Candidate {
     pub span: Span,
     /// Exactly the bytes `span` covers in the source file.
     pub original: Vec<u8>,
-    /// What those bytes become. Empty for a deletion, and never equal to `original`: replacing bytes with themselves is not a mutation.
+    /// What those bytes become.
+    /// Empty for a deletion, and never equal to `original`: replacing bytes with themselves is not a mutation.
     pub replacement: Vec<u8>,
     /// The lowercase hex SHA-256 of the whole source file.
     pub source_digest: String,
@@ -129,11 +133,10 @@ impl Candidate {
     /// Whether the candidate is internally coherent.
     ///
     /// # Errors
-    /// Returns the first incoherence: an invalid identity, an original text
-    /// that is not the span's length, or a replacement identical to it.
+    /// Returns the first incoherence: an invalid identity, an original text that is not the span's length, or a replacement identical to it.
     pub fn validate(&self) -> Result<(), CandidateError> {
         self.identity().validate()?;
-        if u64::from(self.span.len()) != u64::try_from(self.original.len()).unwrap_or(u64::MAX) {
+        if u32::try_from(self.original.len()) != Ok(self.span.len()) {
             return Err(CandidateError::OriginalLengthMismatch {
                 path: self.path.clone(),
                 span: self.span,
@@ -168,29 +171,59 @@ impl Candidate {
     ///
     /// # Errors
     /// Returns the validation failure; an incoherent candidate never mints an ID.
-    pub fn id(&self) -> Result<String, CandidateError> {
+    pub fn id(&self) -> Result<MutantId, CandidateError> {
         self.validate()?;
         Ok(self.identity().id()?)
     }
 }
 
 /// A cataloged candidate: identified, deduplicated, and assigned its dense runtime index.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Mutant {
     /// The position in the generated runtime's activation array: the catalog's own order, densely assigned from zero.
     pub index: u32,
     /// The full 64 hex character stable identity.
-    pub id: String,
+    pub id: MutantId,
     /// The short form, proven unique within this catalog.
-    pub display_id: String,
+    pub display_id: DisplayId,
     /// The edit itself.
     pub candidate: Candidate,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MutantWire {
+    index: u32,
+    id: MutantId,
+    display_id: DisplayId,
+    candidate: Candidate,
+}
+
+impl<'de> Deserialize<'de> for Mutant {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = MutantWire::deserialize(deserializer)?;
+        if !wire.display_id.belongs_to(&wire.id) {
+            return Err(serde::de::Error::custom(format!(
+                "display identity {} is not the canonical prefix of {}",
+                wire.display_id, wire.id
+            )));
+        }
+        Ok(Self {
+            index: wire.index,
+            id: wire.id,
+            display_id: wire.display_id,
+            candidate: wire.candidate,
+        })
+    }
 }
 
 /// Why a candidate lost deduplication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum DuplicateReason {
     /// The same rule proposed the same edit twice; both carry one mutant ID.
     Identical,
@@ -207,17 +240,20 @@ impl fmt::Display for DuplicateReason {
     }
 }
 
-/// A candidate the catalog dropped. Kept rather than discarded so `explain` can answer "why is there no mutant for this rule here?".
+/// A candidate the catalog dropped.
+/// Kept rather than discarded so `explain` can answer "why is there no mutant for this rule here?".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Duplicate {
     /// Why the candidate lost.
     pub reason: DuplicateReason,
     /// The losing candidate.
     pub dropped: Candidate,
-    /// The losing candidate's mutant ID. Equal to `winner_id` for an identical duplicate.
-    pub dropped_id: String,
+    /// The losing candidate's mutant ID.
+    /// Equal to `winner_id` for an identical duplicate.
+    pub dropped_id: MutantId,
     /// The ID of the mutant that was kept.
-    pub winner_id: String,
+    pub winner_id: MutantId,
     /// The rule that won.
     #[serde(with = "named_rule")]
     pub winner_rule: Rule,
@@ -314,7 +350,6 @@ pub enum PrefixError {
 pub struct Builder {
     registry: Registry,
     candidates: Vec<Candidate>,
-    display_len: usize,
     /// One source digest per path, so a contradiction is caught where it is introduced instead of surfacing as an unexplainable ID.
     digests: BTreeMap<String, String>,
     /// One original text per (path, span), for the same reason.
@@ -340,17 +375,9 @@ impl Builder {
         Self {
             registry,
             candidates: Vec::new(),
-            display_len: DISPLAY_ID_LENGTH,
             digests: BTreeMap::new(),
             originals: BTreeMap::new(),
         }
-    }
-
-    /// Overrides the display ID length. It exists so tests can force the collision path real SHA-256 output will not produce; no production caller changes it. An out-of-range value falls back to the default.
-    #[must_use]
-    pub const fn with_display_length(mut self, length: usize) -> Self {
-        self.display_len = length;
-        self
     }
 
     /// The number of candidates added so far, before deduplication.
@@ -365,11 +392,11 @@ impl Builder {
         self.candidates.is_empty()
     }
 
-    /// Validates a candidate and queues it. Insertion order does not affect the resulting catalog.
+    /// Validates a candidate and queues it.
+    /// Insertion order does not affect the resulting catalog.
     ///
     /// # Errors
-    /// Returns the refusal: an incoherent candidate, an unregistered rule, or
-    /// a contradiction with a candidate already queued.
+    /// Returns the refusal: an incoherent candidate, an unregistered rule, or a contradiction with a candidate already queued.
     pub fn add(&mut self, candidate: Candidate) -> Result<(), CandidateError> {
         candidate.validate()?;
         self.registry.verify(candidate.rule)?;
@@ -415,8 +442,7 @@ impl Builder {
     /// Produces the catalog.
     ///
     /// # Errors
-    /// Returns the first candidate that cannot be identified, a display ID
-    /// collision, or a candidate count the runtime index cannot address.
+    /// Returns the first candidate that cannot be identified, a display ID collision, or a candidate count the runtime index cannot address.
     pub fn build(self) -> Result<Catalog, BuildError> {
         let count = self.candidates.len();
         if u32::try_from(count).is_err() {
@@ -450,12 +476,11 @@ impl Builder {
         });
         let (kept, duplicates) = dedup(entries);
 
-        let display_len = effective_display_length(self.display_len);
         let mut mutants = Vec::with_capacity(kept.len());
         for (position, entry) in kept.into_iter().enumerate() {
             let index =
                 u32::try_from(position).map_err(|_overflow| BuildError::TooLarge { count })?;
-            let display_id = entry.id.get(..display_len).unwrap_or(&entry.id).to_owned();
+            let display_id = entry.id.display();
             mutants.push(Mutant {
                 index,
                 id: entry.id,
@@ -463,12 +488,11 @@ impl Builder {
                 candidate: entry.candidate,
             });
         }
-        check_display_ids(&mutants, display_len)?;
+        check_display_ids(&mutants)?;
         let digest = catalog_digest(&mutants)?;
         Ok(Catalog {
             mutants,
             duplicates,
-            display_len,
             digest,
         })
     }
@@ -477,13 +501,13 @@ impl Builder {
 /// A candidate with everything `build` needs to order it.
 struct Entry {
     candidate: Candidate,
-    id: String,
+    id: MutantId,
     position: usize,
 }
 
 /// Keeps one candidate per distinct edit — the same bytes replaced by the same bytes in the same file; the rule is deliberately not part of the key — and records the rest.
 fn dedup(sorted: Vec<Entry>) -> (Vec<Entry>, Vec<Duplicate>) {
-    let mut winners: BTreeMap<(String, Span, Vec<u8>), (String, Rule)> = BTreeMap::new();
+    let mut winners: BTreeMap<(String, Span, Vec<u8>), (MutantId, Rule)> = BTreeMap::new();
     let mut kept = Vec::with_capacity(sorted.len());
     let mut duplicates = Vec::new();
     for entry in sorted {
@@ -516,22 +540,13 @@ fn dedup(sorted: Vec<Entry>) -> (Vec<Entry>, Vec<Duplicate>) {
     (kept, duplicates)
 }
 
-/// An out-of-range display length falls back to the default, and the catalog records the length it really proved unique rather than the one asked for.
-const fn effective_display_length(requested: usize) -> usize {
-    if requested == 0 || requested > ID_HEX_LENGTH {
-        DISPLAY_ID_LENGTH
-    } else {
-        requested
-    }
-}
-
-fn check_display_ids(mutants: &[Mutant], length: usize) -> Result<(), DisplayCollisionError> {
+fn check_display_ids(mutants: &[Mutant]) -> Result<(), DisplayCollisionError> {
     let mut by_prefix: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for mutant in mutants {
         by_prefix
             .entry(mutant.display_id.as_str())
             .or_default()
-            .push(mutant.id.clone());
+            .push(mutant.id.to_string());
     }
     let collisions: Vec<DisplayCollision> = by_prefix
         .into_iter()
@@ -547,7 +562,10 @@ fn check_display_ids(mutants: &[Mutant], length: usize) -> Result<(), DisplayCol
     if collisions.is_empty() {
         Ok(())
     } else {
-        Err(DisplayCollisionError { length, collisions })
+        Err(DisplayCollisionError {
+            length: DISPLAY_ID_LENGTH,
+            collisions,
+        })
     }
 }
 
@@ -557,17 +575,17 @@ fn catalog_digest(mutants: &[Mutant]) -> Result<String, CandidateError> {
     write_length_prefixed(&mut hasher, CATALOG_DOMAIN)?;
     write_length_prefixed(&mut hasher, &mutants.len().to_string())?;
     for mutant in mutants {
-        write_length_prefixed(&mut hasher, &mutant.id)?;
+        write_length_prefixed(&mut hasher, mutant.id.as_str())?;
     }
     Ok(hex::encode(hasher.finalize()))
 }
 
 /// The immutable, ordered set of mutants for one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Catalog {
     mutants: Vec<Mutant>,
     duplicates: Vec<Duplicate>,
-    display_len: usize,
     digest: String,
 }
 
@@ -598,8 +616,8 @@ impl Catalog {
 
     /// The display ID length this catalog proved unique.
     #[must_use]
-    pub const fn display_length(&self) -> usize {
-        self.display_len
+    pub const fn display_length() -> usize {
+        DISPLAY_ID_LENGTH
     }
 
     /// The catalog digest: SHA-256 over the domain separator, the mutant count, and every mutant ID in order, all length-prefixed exactly as in the mutant ID recipe.
@@ -617,15 +635,16 @@ impl Catalog {
     /// The mutant with the given dense runtime index.
     #[must_use]
     pub fn by_index(&self, index: u32) -> Option<&Mutant> {
-        usize::try_from(index)
-            .ok()
-            .and_then(|position| self.mutants.get(position))
+        match usize::try_from(index) {
+            Ok(position) => self.mutants.get(position),
+            Err(_) => None,
+        }
     }
 
     /// The mutant with the given full ID.
     #[must_use]
     pub fn by_id(&self, id: &str) -> Option<&Mutant> {
-        self.mutants.iter().find(|mutant| mutant.id == id)
+        self.mutants.iter().find(|mutant| mutant.id.as_str() == id)
     }
 
     /// The mutant with the given short ID.
@@ -633,10 +652,11 @@ impl Catalog {
     pub fn by_display_id(&self, display_id: &str) -> Option<&Mutant> {
         self.mutants
             .iter()
-            .find(|mutant| mutant.display_id == display_id)
+            .find(|mutant| mutant.display_id.as_str() == display_id)
     }
 
-    /// Resolves a user-supplied ID prefix, as `--mutant` accepts. It refuses to guess: a prefix matching two mutants is an error naming both.
+    /// Resolves a user-supplied ID prefix, as `--mutant` accepts.
+    /// It refuses to guess: a prefix matching two mutants is an error naming both.
     ///
     /// # Errors
     /// Returns an invalid, unmatched, or ambiguous prefix.
@@ -652,7 +672,7 @@ impl Catalog {
         let matches: Vec<&Mutant> = self
             .mutants
             .iter()
-            .filter(|mutant| mutant.id.starts_with(prefix))
+            .filter(|mutant| mutant.id.as_str().starts_with(prefix))
             .collect();
         match matches.as_slice() {
             [] => Err(PrefixError::NotFound {
@@ -663,9 +683,63 @@ impl Catalog {
                 prefix: prefix.to_owned(),
                 matches: several
                     .iter()
-                    .map(|mutant| mutant.display_id.clone())
+                    .map(|mutant| mutant.display_id.to_string())
                     .collect(),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "a unit-test setup failure is reported by panicking"
+    )]
+
+    use njutest_devkit::result::{ResultState::Refused, result_state};
+    use serde_json::Value;
+
+    use super::{Builder, Candidate};
+    use crate::id::digest;
+    use crate::rule::Registry;
+    use crate::span::Span;
+
+    fn one() -> super::Mutant {
+        let mut builder = Builder::new();
+        builder
+            .add(Candidate {
+                path: "src/lib.rs".to_owned(),
+                rule: Registry::canonical()
+                    .lookup("true-to-false")
+                    .expect("registered rule"),
+                span: Span::new(0, 4).expect("span"),
+                original: b"true".to_vec(),
+                replacement: b"false".to_vec(),
+                source_digest: digest(b"true"),
+            })
+            .expect("candidate");
+        builder.build().expect("catalog").mutants[0].clone()
+    }
+
+    #[test]
+    fn mutant_deserialization_rejects_a_display_id_from_another_full_id() {
+        let original = one();
+        let mut value = serde_json::to_value(&original).expect("serialize mutant");
+        assert!(matches!(value, Value::Object(_)), "mutant: {value:?}");
+        let Value::Object(object) = &mut value else {
+            return;
+        };
+        object.insert(
+            "display_id".to_owned(),
+            Value::String("00000000000000000000".to_owned()),
+        );
+        let text = serde_json::to_string(&value).expect("serialize changed mutant");
+        let decoded = crate::strictjson::decode_str::<super::Mutant>(&text);
+        assert_eq!(
+            result_state(&decoded),
+            Refused,
+            "forged mutant: {decoded:?}"
+        );
     }
 }

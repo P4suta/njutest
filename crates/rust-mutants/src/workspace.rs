@@ -31,15 +31,37 @@ const SCRATCH_ATTEMPTS: u32 = 1024;
 /// The schema a scratch directory's owner marker names, so a reader can tell a run's working area from a build cache.
 pub const SCRATCH_OWNER_SCHEMA: &str = "rust-mutants-scratch-owner-v1";
 
+/// One physical spelling of the existing directory that owns every disposable artifact of a workspace.
+///
+/// Cargo canonicalizes paths in compiler and metadata messages.
+/// Resolving the temporary root once at the input boundary keeps the snapshot, build cache,
+/// scratch directory, and those emitted paths in the same identity domain.
+#[derive(Debug)]
+struct TemporaryRoot {
+    path: PathBuf,
+}
+
+impl TemporaryRoot {
+    fn open(path: &Path) -> Result<Self, SessionError> {
+        crate::canonical::canonical(path)
+            .map(|path| Self { path })
+            .map_err(|source| SessionError::TemporaryRootUnavailable {
+                path: path.to_path_buf(),
+                source,
+            })
+    }
+
+    fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+}
+
 /// Every prefix the engine names a temporary directory with, which is what a sweep collects.
 pub const SWEPT_PREFIXES: [&str; 3] = [DIR_PREFIX, TARGET_DIR_PREFIX, SCRATCH_DIR_PREFIX];
 
 /// The part of a stable name that identifies the source root.
 fn keyed(root: &Path) -> String {
-    snapshot::stable_name(root)
-        .strip_prefix(DIR_PREFIX)
-        .unwrap_or_default()
-        .to_owned()
+    snapshot::stable_key(root)
 }
 
 /// Where cargo builds a run against `root`, under `parent`.
@@ -55,21 +77,36 @@ pub fn scratch_of(parent: &Path, at: u32) -> PathBuf {
 }
 
 /// Takes the lowest-numbered scratch directory no other run holds, so the name stays short however many runs share a temporary root.
-fn claim_scratch(parent: &Path, now: jiff::Timestamp) -> (PathBuf, Option<tempowner::Owner>) {
+///
+/// A claim is what keeps the next run's sweep off this one's working directory, so a run that could not take one is refused rather than started: the sweep would remove the directory the test processes are working in, every mutation in flight would come back killed, and the run would report that as what the tests establish.
+///
+/// # Errors
+/// The scratch directory could not be created or claimed under any of its names.
+fn claim_scratch(
+    parent: &Path,
+    now: jiff::Timestamp,
+) -> Result<(PathBuf, tempowner::Owner), SessionError> {
     for at in 0..SCRATCH_ATTEMPTS {
         let dir = scratch_of(parent, at);
         if std::fs::create_dir_all(&dir).is_err() {
             continue;
         }
-        if let Ok(owner) = tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
-            return (dir, Some(owner));
+        match tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
+            Ok(owner) => return Ok((dir, owner)),
+            Err(_already_claimed_or_unusable) => {}
         }
     }
     let dir = parent.join(format!("{SCRATCH_DIR_PREFIX}p{}", std::process::id()));
-    let owner = std::fs::create_dir_all(&dir)
-        .ok()
-        .and_then(|()| tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA).ok());
-    (dir, owner)
+    std::fs::create_dir_all(&dir).map_err(|source| SessionError::ScratchCreateFailed {
+        path: dir.clone(),
+        source,
+    })?;
+    tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA)
+        .map(|owner| (dir.clone(), owner))
+        .map_err(|source| SessionError::ScratchUnclaimed {
+            path: dir,
+            source: std::io::Error::other(source),
+        })
 }
 
 /// Configures [`Workspace::open`].
@@ -77,11 +114,13 @@ fn claim_scratch(parent: &Path, now: jiff::Timestamp) -> (PathBuf, Option<tempow
 pub struct OpenOptions {
     /// The cargo to use: a path, or a bare name to find on `search_path`.
     pub cargo: Option<PathBuf>,
-    /// The `PATH` a bare cargo name is searched on. The composition root reads the process environment; the engine never does.
+    /// The `PATH` a bare cargo name is searched on.
+    /// The composition root reads the process environment; the engine never does.
     pub search_path: Option<OsString>,
     /// The complete environment every command and test process runs with.
     pub env: Vec<(OsString, OsString)>,
-    /// The absolute directory snapshots and target directories are created in. An argument for the same reason `env` is; the composition root is where the operating system's temporary directory is named.
+    /// The existing absolute directory snapshots and target directories are created in.
+    /// An argument for the same reason `env` is; the composition root creates and names the operating system's temporary directory, and this layer binds its physical identity before minting any child path.
     pub temp_directory: PathBuf,
     /// The configured report directory as a source-root-relative path, so the snapshot excludes it.
     pub report_directory: Option<String>,
@@ -93,24 +132,36 @@ pub struct OpenOptions {
     pub offline: bool,
     /// Pass `--locked` to every cargo command.
     pub locked: bool,
-    /// Directories outside the root the workspace may read code from, each copied beside the tree.
+    /// Directories outside the root the workspace may read code from, each copied into the snapshot at the position it has relative to the root.
     pub allow_outside: Vec<PathBuf>,
-    /// Where the run records what it did. [`Recorder::disabled`] by default.
+    /// Where the run records what it did.
+    /// [`Recorder::disabled`] by default.
     pub trace: Recorder,
 }
 
 /// `path` as a `/`-separated path under `root`, or nothing when it is not under it.
-fn within(root: &Path, path: &Path) -> Option<String> {
-    let resolved = crate::canonical::canonical(path).unwrap_or_else(|_error| path.to_path_buf());
-    let relative = resolved.strip_prefix(root).ok()?;
-    let named = crate::id::slashed(relative);
-    (!named.is_empty()).then_some(named)
+fn within(root: &Path, path: &Path) -> Result<Option<String>, crate::id::SlashedPathError> {
+    let resolved = match crate::canonical::canonical(path) {
+        Ok(resolved) => resolved,
+        Err(_target_directory_does_not_exist_yet) => path.to_path_buf(),
+    };
+    let Ok(relative) = resolved.strip_prefix(root) else {
+        return Ok(None);
+    };
+    let named = crate::id::slashed(relative)?;
+    Ok((!named.is_empty()).then_some(named))
 }
 
-/// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it. A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
+/// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it.
+/// A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
 fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempowner::Owner> {
-    std::fs::create_dir_all(dir).ok()?;
-    tempowner::claim_cache_of(dir, now, TARGET_OWNER_SCHEMA, root).ok()
+    if std::fs::create_dir_all(dir).is_err() {
+        return None;
+    }
+    match tempowner::claim_cache_of(dir, now, TARGET_OWNER_SCHEMA, root) {
+        Ok(owner) => Some(owner),
+        Err(_) => None,
+    }
 }
 
 /// A read-only source tree and the disposable copy of it this run works in.
@@ -125,6 +176,7 @@ pub struct Workspace {
     /// Where this run's test processes work: a sibling of the target directory, not a child, because its name has to stay inside `sun_path`.
     pub(crate) scratch_dir: PathBuf,
     /// The claim on that directory, held and released exactly as [`Workspace::target_owner`] is.
+    /// The claim on the scratch directory, taken when the run opened and `None` only once it has been released or kept.
     pub(crate) scratch_owner: Option<tempowner::Owner>,
     pub(crate) base_env: Vec<(OsString, OsString)>,
     pub(crate) swept: SweepResult,
@@ -248,6 +300,321 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
+    /// The temporary root could not be bound to one physical directory spelling before snapshot paths were minted.
+    #[error(
+        "{}: cannot resolve temporary root {} to one physical directory: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    TemporaryRootUnavailable {
+        /// The configured temporary root.
+        path: PathBuf,
+        /// Why its physical identity could not be established.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A source selected from the catalog was absent from the immutable plan.
+    #[error(
+        "{}: {path} is in the catalog but absent from the source plan",
+        error::INSTRUMENT_SOURCE_MISMATCH.code
+    )]
+    SelectionSourceMissing {
+        /// The workspace-relative source path.
+        path: String,
+    },
+    /// A source changed from valid Rust text into non-UTF-8 bytes before planning.
+    #[error(
+        "{}: {path} is not valid UTF-8 while selecting catalog entries: {source}",
+        error::INSTRUMENT_SOURCE_MISMATCH.code
+    )]
+    SelectionSourceNotUtf8 {
+        /// The workspace-relative source path.
+        path: String,
+        /// The encoding failure.
+        #[source]
+        source: std::str::Utf8Error,
+    },
+    /// A selected source could not carry an exact line or column.
+    #[error(
+        "{}: {path} cannot be indexed exactly while selecting catalog entries: {source}",
+        error::INSTRUMENT_SOURCE_MISMATCH.code
+    )]
+    SelectionPositionInvalid {
+        /// The workspace-relative source path.
+        path: String,
+        /// The exact position invariant that failed.
+        #[source]
+        source: crate::syntax::PositionError,
+    },
+    /// A file used to bind retained build evidence was outside the copied tree.
+    #[error(
+        "{}: evidence path {} is outside copied tree {}",
+        error::INSTRUMENT_SOURCE_MISMATCH.code,
+        path.display(),
+        root.display()
+    )]
+    EvidencePathOutside {
+        /// The path emitted by the compiler or metadata.
+        path: PathBuf,
+        /// The copied tree it was required to belong to.
+        root: PathBuf,
+    },
+    /// A file used to bind retained build evidence had no exact UTF-8 relative spelling.
+    #[error(
+        "{}: evidence path {} has no exact UTF-8 spelling",
+        error::INSTRUMENT_SOURCE_MISMATCH.code,
+        path.display()
+    )]
+    EvidencePathNotUtf8 {
+        /// The unrepresentable path.
+        path: PathBuf,
+    },
+    /// A file used to bind retained build evidence had a noncanonical relative path.
+    #[error(
+        "{}: evidence path {} is not canonical: {source}",
+        error::INSTRUMENT_SOURCE_MISMATCH.code,
+        path.display()
+    )]
+    EvidencePathInvalid {
+        /// The rejected path.
+        path: PathBuf,
+        /// Why it is not canonical.
+        #[source]
+        source: crate::id::PathError,
+    },
+    /// A file used to bind retained build evidence could not be read exactly.
+    #[error(
+        "{}: cannot read evidence file {}: {source}",
+        error::INSTRUMENT_SOURCE_MISMATCH.code,
+        path.display()
+    )]
+    EvidenceReadFailed {
+        /// The file that could not be retained in the evidence digest.
+        path: PathBuf,
+        /// The filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The session's execution-scratch allocator was poisoned by a panic while holding its state.
+    #[error(
+        "{}: the execution scratch allocator is poisoned, so no fresh process directory can be proved",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ScratchStatePoisoned,
+    /// The filtered-test routing cache was poisoned by a panic while holding its state.
+    #[error(
+        "{}: the filtered-test routing state is poisoned, so cached routing facts cannot be trusted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    RoutingStatePoisoned,
+    /// A filtered-test establishment named more tests than the durable counter can represent.
+    #[error(
+        "{}: one filtered-test establishment named {count} tests, which exceeds the routing counter",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    RoutingCountTooLarge {
+        /// The unrepresentable test count.
+        count: usize,
+    },
+    /// One expectation resolved to more mutants than its durable counter can represent.
+    #[error(
+        "{}: one expectation resolved to {count} mutants, which exceeds its durable counter",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ExpectationCoverageTooLarge {
+        /// The unrepresentable number of resolved mutants.
+        count: usize,
+    },
+    /// A run collection contains more rows than its durable counter can represent.
+    #[error(
+        "{}: a run collection contains {count} rows, which exceeds its durable counter",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    RunCountTooLarge {
+        /// The exact unrepresentable host count.
+        count: usize,
+    },
+    /// Folding one run's rows exhausted a durable counter.
+    #[error(
+        "{}: a run accounting counter overflowed",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    RunCountOverflow,
+    /// The exact count of filtered tests started no longer fits its durable counter.
+    #[error(
+        "{}: the filtered-test routing counter is exhausted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    RoutingCountExhausted,
+    /// A filtered-test answer was replaced even though its state lock was held from lookup through insertion.
+    #[error(
+        "{}: a filtered-test routing answer changed during one locked establishment",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    RoutingAnswerAlreadyEstablished,
+    /// A baseline duration cannot be multiplied into a finite derived mutation timeout.
+    #[error(
+        "{}: baseline duration {baseline:?} is too large to derive a mutation timeout",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    DerivedTimeoutOverflow {
+        /// The measured baseline that could not be multiplied exactly.
+        baseline: Duration,
+    },
+    /// The total duration of all executions cannot be represented exactly.
+    #[error(
+        "{}: the combined mutation execution duration overflowed",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ExecutionDurationOverflow,
+    /// A duration does not fit the millisecond field used by the trace wire.
+    #[error(
+        "{}: duration {duration:?} does not fit the trace millisecond field",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    DurationMillisOverflow {
+        /// The duration that could not be represented exactly.
+        duration: Duration,
+    },
+    /// A collection count does not fit the trace wire's integer field.
+    #[error(
+        "{}: {subject} count {count} does not fit the trace wire",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    TraceCountTooLarge {
+        /// What was being counted.
+        subject: &'static str,
+        /// The exact unrepresentable count.
+        count: usize,
+    },
+    /// Two baseline rows claimed the same target identity.
+    #[error(
+        "{}: baseline target {target:?} was recorded more than once",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    DuplicateBaselineTarget {
+        /// The duplicated stable target identity.
+        target: String,
+    },
+    /// The exact byte total of a snapshot cannot be represented.
+    #[error(
+        "{}: snapshot byte accounting overflowed",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    SnapshotBytesOverflow,
+    /// A workspace-owned resource could not be released or removed.
+    #[error(
+        "{}: cannot {operation} {}: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    CleanupFailed {
+        /// The cleanup transition that refused.
+        operation: &'static str,
+        /// The resource that remained.
+        path: PathBuf,
+        /// The operating-system or ownership failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A mutation execution panicked while holding the run's shared/exclusive coordination lock.
+    #[error(
+        "{}: mutation execution coordination is poisoned, so isolation can no longer be proved",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CoordinationPoisoned,
+    /// The worker allocator was poisoned by a panic while a work item was being claimed.
+    #[error(
+        "{}: the mutation worker state is poisoned, so ownership of the remaining work is unknown",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    WorkerStatePoisoned,
+    /// The finite worker delivery queue could not be sized without overflow.
+    #[error(
+        "{}: {workers} mutation workers require an unrepresentable delivery queue",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    WorkerQueueTooLarge {
+        /// How many workers were requested.
+        workers: usize,
+    },
+    /// A mutation worker thread could not be started.
+    #[error(
+        "{}: cannot start mutation worker {worker}: {source}",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    WorkerStartFailed {
+        /// The stable zero-based worker ordinal.
+        worker: usize,
+        /// The operating-system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A mutation worker panicked before its owner joined it.
+    #[error(
+        "{}: a mutation worker panicked before it could be joined",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    WorkerPanicked,
+    /// More completed work was delivered than the progress counter can represent.
+    #[error(
+        "{}: the completed-mutation progress counter is exhausted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CompletedCountExhausted,
+    /// The session has exhausted the names available for fresh execution scratch directories.
+    #[error(
+        "{}: the execution scratch sequence is exhausted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ScratchSequenceExhausted,
+    /// A fresh execution scratch directory could not be claimed, so the next run's sweep would remove the one this run is working in.
+    #[error(
+        "{}: cannot claim the execution scratch directory {}: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    ScratchUnclaimed {
+        /// The directory no claim could be taken on.
+        path: PathBuf,
+        /// Why the claim failed.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A fresh execution scratch directory could not be created exclusively.
+    #[error(
+        "{}: cannot reserve the fresh execution scratch directory {}: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    ScratchCreateFailed {
+        /// The exact directory whose exclusive creation failed.
+        path: PathBuf,
+        /// The filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A workspace-relative path cannot be recorded exactly in the UTF-8 catalog representation.
+    #[error("{}: {source}", error::SESSION_WRITE_FAILED.code)]
+    WorkspacePathNotUtf8 {
+        /// The exact platform path that cannot cross the UTF-8 boundary.
+        #[from]
+        source: crate::id::SlashedPathError,
+    },
+    /// Mutation source bytes cannot cross the catalog's UTF-8 wire boundary without changing their value.
+    #[error(
+        "{}: mutation {mutant} has non-UTF-8 {field} bytes and cannot be written to the catalog: {source}",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CatalogTextNotUtf8 {
+        /// The stable mutation identity whose bytes were not text.
+        mutant: String,
+        /// Which catalog field was not UTF-8.
+        field: &'static str,
+        /// The exact UTF-8 validation failure.
+        #[source]
+        source: std::str::Utf8Error,
+    },
 }
 
 impl SessionError {
@@ -262,10 +629,63 @@ impl SessionError {
                 error::SESSION_UNKNOWN_TARGET
             }
             Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
-            Self::WriteFailed { .. } => error::SESSION_WRITE_FAILED,
+            Self::WriteFailed { .. }
+            | Self::TemporaryRootUnavailable { .. }
+            | Self::ScratchStatePoisoned
+            | Self::RoutingStatePoisoned
+            | Self::RoutingCountTooLarge { .. }
+            | Self::ExpectationCoverageTooLarge { .. }
+            | Self::RunCountTooLarge { .. }
+            | Self::RunCountOverflow
+            | Self::RoutingCountExhausted
+            | Self::RoutingAnswerAlreadyEstablished
+            | Self::DerivedTimeoutOverflow { .. }
+            | Self::ExecutionDurationOverflow
+            | Self::DurationMillisOverflow { .. }
+            | Self::TraceCountTooLarge { .. }
+            | Self::DuplicateBaselineTarget { .. }
+            | Self::SnapshotBytesOverflow
+            | Self::CleanupFailed { .. }
+            | Self::CoordinationPoisoned
+            | Self::WorkerStatePoisoned
+            | Self::WorkerQueueTooLarge { .. }
+            | Self::WorkerStartFailed { .. }
+            | Self::WorkerPanicked
+            | Self::CompletedCountExhausted
+            | Self::ScratchSequenceExhausted
+            | Self::ScratchUnclaimed { .. }
+            | Self::ScratchCreateFailed { .. }
+            | Self::WorkspacePathNotUtf8 { .. }
+            | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
+            Self::SelectionSourceMissing { .. }
+            | Self::SelectionSourceNotUtf8 { .. }
+            | Self::SelectionPositionInvalid { .. }
+            | Self::EvidencePathOutside { .. }
+            | Self::EvidencePathNotUtf8 { .. }
+            | Self::EvidencePathInvalid { .. }
+            | Self::EvidenceReadFailed { .. } => error::INSTRUMENT_SOURCE_MISMATCH,
             Self::ReachesOutside { .. } => error::WORKSPACE_REACHES_OUTSIDE,
             Self::RootIsNotTheWorkspace { .. } => error::ROOT_IS_NOT_THE_WORKSPACE,
         }
+    }
+}
+
+fn trace_count(subject: &'static str, count: usize) -> Result<u64, SessionError> {
+    u64::try_from(count).map_err(|_overflow| SessionError::TraceCountTooLarge { subject, count })
+}
+
+fn record_cleanup_failure(
+    first: &mut Option<SessionError>,
+    operation: &'static str,
+    path: &Path,
+    source: std::io::Error,
+) {
+    if first.is_none() {
+        *first = Some(SessionError::CleanupFailed {
+            operation,
+            path: path.to_path_buf(),
+            source,
+        });
     }
 }
 
@@ -289,8 +709,10 @@ impl Workspace {
                 offline: options.offline,
             },
         )?;
-        let workspace_root = crate::canonical::canonical(&metadata.workspace_root)
-            .unwrap_or_else(|_error| metadata.workspace_root.clone());
+        let workspace_root = match crate::canonical::canonical(&metadata.workspace_root) {
+            Ok(workspace_root) => workspace_root,
+            Err(_metadata_root_has_no_physical_spelling) => metadata.workspace_root.clone(),
+        };
         if workspace_root != root {
             return Err(SessionError::RootIsNotTheWorkspace {
                 root: root.to_path_buf(),
@@ -301,9 +723,12 @@ impl Workspace {
         let allowed: Vec<PathBuf> = options
             .allow_outside
             .iter()
-            .map(|path| crate::canonical::canonical(path).unwrap_or_else(|_error| path.clone()))
+            .map(|path| match crate::canonical::canonical(path) {
+                Ok(path) => path,
+                Err(_allowed_path_does_not_exist_yet) => path.clone(),
+            })
             .collect();
-        let patches = crate::cargo::manifest::patches(root);
+        let patches = crate::cargo::manifest::patches(root)?;
         for outside in crate::cargo::reaching_outside(&metadata, root, &patches) {
             if allowed.iter().any(|allow| outside.path.starts_with(allow)) {
                 continue;
@@ -316,24 +741,35 @@ impl Workspace {
             }
             .into());
         }
-        Ok(within(root, &metadata.target_directory))
+        Ok(within(root, &metadata.target_directory).map_err(SessionError::from)?)
     }
 
     /// Sweeps the temporary area, copies `root` into a snapshot, and locates the toolchain inside the copy.
     ///
     /// # Errors
-    /// The snapshot's refusals, and whatever stopped the toolchain from
-    /// being located or `cargo metadata` from being read.
+    /// The snapshot's refusals, and whatever stopped the toolchain from being located or `cargo metadata` from being read.
     pub fn open(
         root: &Path,
         options: OpenOptions,
         cancel: &Cancel,
     ) -> Result<Self, crate::EngineError> {
         let phase = options.trace.phase("open");
-        let root = crate::canonical::canonical(root).unwrap_or_else(|_error| root.to_path_buf());
-        let parent = options.temp_directory.clone();
+        let root = match crate::canonical::canonical(root) {
+            Ok(root) => root,
+            Err(_root_has_no_physical_spelling) => root.to_path_buf(),
+        };
+        let parent = TemporaryRoot::open(&options.temp_directory)?;
         let now = jiff::Timestamp::now();
-        let swept = tempowner::sweep(&parent, &SWEPT_PREFIXES, now).unwrap_or_default();
+        let swept = match tempowner::sweep(parent.path(), &SWEPT_PREFIXES, now) {
+            Ok(swept) => swept,
+            Err(source) => SweepResult {
+                failures: vec![tempowner::SweepFailure {
+                    dir: parent.path().to_path_buf(),
+                    source,
+                }],
+                ..SweepResult::default()
+            },
+        };
 
         let toolchain = Toolchain::locate(
             &LocateOptions {
@@ -346,18 +782,18 @@ impl Workspace {
         )?;
         let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
-        let snapshot = Self::copy(&root, (&parent, build_dir), &options, now)?;
+        let snapshot = Self::copy(&root, (parent.path(), build_dir), &options, now)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
             stable_dir: snapshot.stable_dir(),
             sweep: Some(SweepRecord {
-                parent: parent.display().to_string(),
-                removed: u64::try_from(swept.removed.len()).unwrap_or(u64::MAX),
+                parent: parent.path().display().to_string(),
+                removed: trace_count("removed temporary directories", swept.removed.len())?,
                 removed_bytes: swept.removed_bytes,
-                live: u64::try_from(swept.live).unwrap_or(u64::MAX),
-                kept: u64::try_from(swept.kept).unwrap_or(u64::MAX),
-                failures: u64::try_from(swept.failures.len()).unwrap_or(u64::MAX),
+                live: trace_count("live temporary directories", swept.live)?,
+                kept: trace_count("kept temporary directories", swept.kept)?,
+                failures: trace_count("temporary cleanup failures", swept.failures.len())?,
             }),
         });
         let base_env = options.env.clone();
@@ -373,9 +809,10 @@ impl Workspace {
                 offline: options.offline,
             },
         )?;
-        let target_dir = target_of(&parent, &root);
+        let target_dir = target_of(parent.path(), &root);
         let target_owner = claim_target(&target_dir, now, &root);
-        let (scratch_dir, scratch_owner) = claim_scratch(&parent, now);
+        let (scratch_dir, scratch_owner) = claim_scratch(parent.path(), now)?;
+        let scratch_owner = Some(scratch_owner);
         phase.end();
         Ok(Self {
             snapshot,
@@ -403,23 +840,31 @@ impl Workspace {
     ) -> Result<Snapshot, crate::EngineError> {
         let started = std::time::Instant::now();
         let snapshot = snapshot::create(
-            root,
             &SnapshotOptions {
                 exclude: options.exclude.clone(),
-                beside: options.allow_outside.clone(),
+                layout: snapshot::Layout::plan(root, &options.allow_outside)?,
                 report_dir: options.report_directory.clone(),
                 build_dir,
                 dest_parent: parent.to_path_buf(),
             },
             now,
         )?;
+        let files = trace_count("snapshot files", snapshot.manifest().len())?;
+        let bytes = snapshot
+            .manifest()
+            .iter()
+            .try_fold(0u64, |total, entry| total.checked_add(entry.size));
+        let bytes = bytes.ok_or(SessionError::SnapshotBytesOverflow)?;
+        let duration = started.elapsed();
+        let duration_ms = u64::try_from(duration.as_millis())
+            .map_err(|_overflow| SessionError::DurationMillisOverflow { duration })?;
         options.trace.snapshot(SnapshotRecord {
             source_root: root.display().to_string(),
             dir: snapshot.dir().display().to_string(),
-            files: u64::try_from(snapshot.manifest().len()).unwrap_or(u64::MAX),
-            bytes: snapshot.manifest().iter().map(|entry| entry.size).sum(),
+            files,
+            bytes,
             workspace_digest: Some(snapshot.workspace_digest().to_owned()),
-            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            duration_ms,
             error: None,
         });
         Ok(snapshot)
@@ -453,6 +898,26 @@ impl Workspace {
     #[must_use]
     pub fn workspace_digest(&self) -> &str {
         self.snapshot.workspace_digest()
+    }
+
+    /// Re-hashes the private source tree against the manifest captured while it was copied.
+    /// Proof layers use this after restoring a temporary edit so a build script or verifier cannot silently write proof context for a later question.
+    ///
+    /// # Errors
+    /// Returns a snapshot walk or read failure rather than treating an unreadable tree as unchanged.
+    pub fn changes(&self) -> Result<Vec<snapshot::Drift>, snapshot::SnapshotError> {
+        self.snapshot.redigest()
+    }
+
+    /// Makes the private tree as it stands now the baseline for later [`Self::changes`] checks.
+    ///
+    /// Proof layers use this only after independently checking the copied tree's digest and restoring every mutable source to its pristine bytes.
+    /// That gives each proof attempt a baseline which contains neither instrumentation nor output written by an earlier process.
+    ///
+    /// # Errors
+    /// Returns a snapshot walk or read failure instead of accepting a tree that could not be completely observed.
+    pub fn reseal(&mut self) -> Result<Vec<snapshot::Drift>, snapshot::SnapshotError> {
+        self.snapshot.reseal()
     }
 
     /// What the sweep on the way in collected.
@@ -502,23 +967,63 @@ impl Workspace {
     /// # Errors
     /// A snapshot directory that could not be removed.
     pub fn close(mut self) -> Result<Vec<PathBuf>, crate::EngineError> {
+        let mut failure = None;
         if let Some(mut owner) = self.target_owner.take() {
-            drop(owner.release());
+            match owner.release() {
+                Ok(()) => {}
+                Err(source) => record_cleanup_failure(
+                    &mut failure,
+                    "release build-cache ownership of",
+                    &self.target_dir,
+                    source,
+                ),
+            }
         }
         if self.keep_temp {
             let dir = self.snapshot.dir().to_path_buf();
             if let Some(mut owner) = self.scratch_owner.take() {
-                drop(owner.keep());
+                match owner.keep() {
+                    Ok(()) => {}
+                    Err(source) => record_cleanup_failure(
+                        &mut failure,
+                        "mark execution scratch kept at",
+                        &self.scratch_dir,
+                        std::io::Error::other(source),
+                    ),
+                }
             }
             self.snapshot.keep()?;
+            if let Some(failure) = failure {
+                return Err(failure.into());
+            }
             return Ok(vec![dir, self.target_dir, self.scratch_dir]);
         }
         if let Some(mut owner) = self.scratch_owner.take() {
-            drop(owner.release());
+            match owner.release() {
+                Ok(()) => {}
+                Err(source) => record_cleanup_failure(
+                    &mut failure,
+                    "release execution-scratch ownership of",
+                    &self.scratch_dir,
+                    source,
+                ),
+            }
         }
-        drop(std::fs::remove_dir_all(&self.scratch_dir));
-        self.snapshot.cleanup()?;
-        Ok(Vec::new())
+        match std::fs::remove_dir_all(&self.scratch_dir) {
+            Ok(()) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => record_cleanup_failure(
+                &mut failure,
+                "remove execution scratch at",
+                &self.scratch_dir,
+                source,
+            ),
+        }
+        match (failure, self.snapshot.cleanup()) {
+            (_, Err(source)) => Err(source.into()),
+            (Some(failure), Ok(())) => Err(failure.into()),
+            (None, Ok(())) => Ok(Vec::new()),
+        }
     }
 
     /// A driver for a cargo command in the snapshot.

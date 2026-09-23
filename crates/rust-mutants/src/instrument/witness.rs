@@ -32,7 +32,6 @@ pub struct Site {
 
 /// What one rewrite in a witnessed file is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Placed {
     /// The statements a condition's witnesses became.
     Witnesses,
@@ -51,7 +50,8 @@ pub struct WitnessFile {
     pub text: String,
     /// Where each condition's witnesses landed.
     pub sites: Vec<Site>,
-    /// Whether anything was rewritten. A file with no claim comes back byte for byte.
+    /// Whether anything was rewritten.
+    /// A file with no claim comes back byte for byte.
     pub witnessed: bool,
 }
 
@@ -118,15 +118,22 @@ const BINDING: &str = "__rmw_value";
 /// Writes every claim's witnesses into `source`.
 ///
 /// # Errors
-/// [`InstrumentErrorKind::LinesMoved`] when a rewrite would move a line, which
-/// no witness may do, and the splice's own refusals.
+/// [`InstrumentErrorKind::LinesMoved`] when a rewrite would move a line, which no witness may do, and the splice's own refusals.
 pub fn witness_file(
     path: &str,
     source: &[u8],
     asking: &Asking<'_>,
 ) -> Result<WitnessFile, InstrumentError> {
     let claims = asking.conditions;
-    let text = String::from_utf8_lossy(source).into_owned();
+    let text = std::str::from_utf8(source)
+        .map_err(|error| {
+            InstrumentError::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("the source is not valid UTF-8: {error}"),
+            )
+        })?
+        .to_owned();
     if asking.is_empty() {
         return Ok(WitnessFile {
             path: path.to_owned(),
@@ -135,7 +142,13 @@ pub fn witness_file(
             witnessed: false,
         });
     }
-    let module = module_named(&text, MODULE_STEM);
+    let module = module_named(&text, MODULE_STEM).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("the source token stream is invalid: {error}"),
+        )
+    })?;
     let mut conditions: BTreeMap<Span, Condition> = BTreeMap::new();
     for claimed in claims {
         let entry = conditions
@@ -152,7 +165,7 @@ pub fn witness_file(
         }
     }
 
-    let (splices, owners) = plan(
+    let plan = plan(
         Reading {
             path,
             source,
@@ -162,7 +175,17 @@ pub fn witness_file(
         asking.probes,
         &module,
     )?;
-    let placed = owners;
+    apply_plan(path, source, &module, plan)
+}
+
+/// Applies one validated witness plan and records the exact output spans.
+fn apply_plan(
+    path: &str,
+    source: &[u8],
+    module: &str,
+    plan: Plan,
+) -> Result<WitnessFile, InstrumentError> {
+    let Plan { splices, placed } = plan;
     let (bytes, map) = apply(source, &splices).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SpliceFailed,
@@ -170,7 +193,6 @@ pub fn witness_file(
             error.to_string(),
         )
     })?;
-    let mut rewritten = String::from_utf8_lossy(&bytes).into_owned();
     if crate::splice::count_lines(&bytes) != crate::splice::count_lines(source) {
         return Err(InstrumentError::new(
             InstrumentErrorKind::LinesMoved,
@@ -180,19 +202,25 @@ pub fn witness_file(
                 .to_owned(),
         ));
     }
-    let sites = splices
-        .iter()
-        .zip(placed)
-        .map(|(one, (claims, placed))| Site {
-            span: landed(&map, one),
+    let mut rewritten = String::from_utf8(bytes).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path,
+            format!("the witnessed source is not valid UTF-8: {error}"),
+        )
+    })?;
+    let mut sites = Vec::with_capacity(splices.len());
+    for (one, (claims, placed)) in splices.iter().zip(placed) {
+        sites.push(Site {
+            span: landed(path, &map, one)?,
             claims,
             placed,
-        })
-        .collect();
+        });
+    }
     if !rewritten.ends_with('\n') {
         rewritten.push('\n');
     }
-    rewritten.push_str(&runtime(&module));
+    rewritten.push_str(&runtime(module));
     Ok(WitnessFile {
         path: path.to_owned(),
         text: rewritten,
@@ -202,32 +230,35 @@ pub fn witness_file(
 }
 
 /// The statements one condition's witnesses become, in one line.
-fn statements(witnesses: &[Witness], text: &str, module: &str, depth: u32) -> String {
+fn statements(
+    file: &Reading<'_>,
+    witnesses: &[Witness],
+    module: &str,
+    depth: u32,
+) -> Result<String, InstrumentError> {
     let mut out = String::new();
     for witness in witnesses {
-        let arguments: Vec<String> = witness
-            .operands
-            .iter()
-            .filter_map(|span| text.get(at(span.start)..at(span.end)))
-            .map(|operand| format!("&({})", one_line(operand)))
-            .collect();
-        if arguments.len() != witness.operands.len() {
-            continue;
+        let mut arguments = Vec::with_capacity(witness.operands.len());
+        for span in &witness.operands {
+            let operand = source_text(file.path, file.text, *span, "witness operand")?;
+            arguments.push(format!("&({})", one_line(operand)));
         }
-        let written = write!(
-            out,
-            "{}{module}::{}({}); ",
-            "super::".repeat(usize::try_from(depth).unwrap_or(0)),
-            witness.kind.function(),
-            arguments.join(", ")
-        );
+        let function = qualified(module, depth, witness.kind.function());
+        let written = write!(out, "{function}({}); ", arguments.join(", "));
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    out
+    Ok(out)
 }
 
 /// What one rewrite carries: the mutants whose claims rest on it, and what it is.
 type Owned = (Vec<u32>, Placed);
+
+/// One complete witness rewrite plan.
+/// Ownership stays paired with the splice whose output span it describes.
+struct Plan {
+    splices: Vec<Splice>,
+    placed: Vec<Owned>,
+}
 
 /// One condition to witness, with every mutant that rests on it and every body they name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,7 +287,7 @@ fn plan(
     conditions: &BTreeMap<Span, Condition>,
     probes: &[Probing],
     module: &str,
-) -> Result<(Vec<Splice>, Vec<Owned>), InstrumentError> {
+) -> Result<Plan, InstrumentError> {
     let Reading { path, source, text } = file;
     let mut splices = Vec::new();
     let mut owners = Vec::new();
@@ -273,9 +304,28 @@ fn plan(
         let Some(index) = indices.iter().copied().min() else {
             continue;
         };
-        let after = body.start.saturating_add(1);
-        if source.get(at(body.start)..at(after)) != Some(b"{".as_slice()) {
-            continue;
+        let after = body.start.checked_add(1).ok_or_else(|| {
+            InstrumentError::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("the body at {body} has no representable first byte"),
+            )
+        })?;
+        let opening = source_bytes(
+            path,
+            source,
+            Span {
+                start: body.start,
+                end: after,
+            },
+            "body opening",
+        )?;
+        if opening != b"{" {
+            return Err(InstrumentError::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("the body at {body} does not begin with `{{`"),
+            ));
         }
         splices.push(Splice {
             span: Span {
@@ -289,16 +339,8 @@ fn plan(
     }
     for (condition, held) in conditions {
         let (indices, depth) = (&held.indices, &held.depth);
-        let original = source
-            .get(at(condition.start)..at(condition.end))
-            .ok_or_else(|| {
-                InstrumentError::new(
-                    InstrumentErrorKind::SourceMismatch,
-                    path.to_owned(),
-                    format!("the condition at {condition} is not inside the source"),
-                )
-            })?;
-        let statements = statements(&held.witnesses, text, module, *depth);
+        let original = source_bytes(path, source, *condition, "condition")?;
+        let statements = statements(&file, &held.witnesses, module, *depth)?;
         let mut replacement = format!("({{ {statements}").into_bytes();
         replacement.extend_from_slice(original);
         replacement.extend_from_slice(b" })");
@@ -315,7 +357,10 @@ fn plan(
         module,
         (&mut splices, &mut owners),
     )?;
-    Ok((splices, owners))
+    Ok(Plan {
+        splices,
+        placed: owners,
+    })
 }
 
 /// Binds each probed value so that the compiler is asked what type it is, in the shape the guard will hold.
@@ -331,21 +376,11 @@ fn probed(
         values.entry(probe.value).or_default().push(probe);
     }
     for (value, asked) in values {
-        let original = source.get(at(value.start)..at(value.end)).ok_or_else(|| {
-            InstrumentError::new(
-                InstrumentErrorKind::SourceMismatch,
-                path.to_owned(),
-                format!("the value at {value} is not inside the source"),
-            )
-        })?;
+        let original = source_bytes(path, source, value, "probed value")?;
         let mut questions = String::new();
         for probe in &asked {
-            let written = write!(
-                questions,
-                "; {}{module}::{}(&{BINDING})",
-                "super::".repeat(usize::try_from(probe.super_depth).unwrap_or(0)),
-                probe.question.witness(),
-            );
+            let function = qualified(module, probe.super_depth, probe.question.witness());
+            let written = write!(questions, "; {function}(&{BINDING})");
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
         let mut replacement = format!("({{ let {BINDING} = ").into_bytes();
@@ -365,32 +400,114 @@ fn probed(
 }
 
 /// Where one rewrite ended up in the rewritten text.
-fn landed(map: &crate::splice::OffsetMap, splice: &Splice) -> Span {
-    let written = u32::try_from(splice.replacement.len()).unwrap_or(u32::MAX);
-    let at = map.to_output(splice.span.start).0;
+fn landed(
+    path: &str,
+    map: &crate::splice::OffsetMap,
+    splice: &Splice,
+) -> Result<Span, InstrumentError> {
+    let written = u32::try_from(splice.replacement.len()).map_err(|_overflow| {
+        InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path,
+            "a witness replacement exceeds the u32 source boundary",
+        )
+    })?;
+    let (at, exact) = map.to_output(splice.span.start);
+    if !exact {
+        return Err(InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path,
+            format!(
+                "the witness at byte {} has no exact output offset",
+                splice.span.start
+            ),
+        ));
+    }
     let start = if splice.span.start == splice.span.end {
-        at.saturating_sub(written)
+        at.checked_sub(written).ok_or_else(|| {
+            InstrumentError::new(
+                InstrumentErrorKind::SpliceFailed,
+                path,
+                "an inserted witness begins before the rewritten source",
+            )
+        })?
     } else {
         at
     };
-    Span {
-        start,
-        end: start.saturating_add(written),
-    }
+    let end = start.checked_add(written).ok_or_else(|| {
+        InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path,
+            "a witnessed span exceeds the u32 source boundary",
+        )
+    })?;
+    Ok(Span { start, end })
 }
 
 /// The call written at a body's first statement, in one line.
 #[must_use]
 pub fn marker(module: &str, depth: u32, index: u32) -> String {
-    format!(
-        "{}{module}::body({index}); ",
-        "super::".repeat(usize::try_from(depth).unwrap_or(0))
-    )
+    let function = qualified(module, depth, "body");
+    format!("{function}({index}); ")
 }
 
-/// One offset as an index. Every offset here came from a `u32` span of a file this process read, and a file larger than a `usize` cannot have been read at all.
-fn at(offset: u32) -> usize {
-    usize::try_from(offset).unwrap_or(usize::MAX)
+/// One runtime function path from an inline-module depth.
+fn qualified(module: &str, depth: u32, function: &str) -> String {
+    let mut path = String::new();
+    for _ in 0..depth {
+        path.push_str("super::");
+    }
+    path.push_str(module);
+    path.push_str("::");
+    path.push_str(function);
+    path
+}
+
+/// Reads an exact byte span, refusing platforms on which the catalog offset cannot index memory and refusing stale spans.
+fn source_bytes<'a>(
+    path: &str,
+    source: &'a [u8],
+    span: Span,
+    about: &str,
+) -> Result<&'a [u8], InstrumentError> {
+    let start = usize::try_from(span.start).map_err(|_overflow| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("{about} start {} does not fit this platform", span.start),
+        )
+    })?;
+    let end = usize::try_from(span.end).map_err(|_overflow| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("{about} end {} does not fit this platform", span.end),
+        )
+    })?;
+    source.get(start..end).ok_or_else(|| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("{about} at {span} is not inside the source"),
+        )
+    })
+}
+
+/// Reads an exact UTF-8 source span.
+fn source_text<'a>(
+    path: &str,
+    text: &'a str,
+    span: Span,
+    about: &str,
+) -> Result<&'a str, InstrumentError> {
+    let bytes = source_bytes(path, text.as_bytes(), span, about)?;
+    std::str::from_utf8(bytes).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("{about} at {span} is not a UTF-8 boundary: {error}"),
+        )
+    })
 }
 
 /// The operand with its newlines turned to spaces, so a witness never moves a line.
@@ -410,14 +527,15 @@ fn runtime(module: &str) -> String {
             &super::observable::bound(OBSERVABLE, "__rmw_std"),
         );
     format!(
-        "#[doc(hidden)] {allow}mod {module} {{ // {MARKER} — generated; DO NOT EDIT\n\
+        "#[doc(hidden)] {allow} mod {module} {{ // {MARKER} — generated; DO NOT EDIT\n\
          {impls}\n\
          }}\n",
-        allow = super::ALLOW_ATTRIBUTE,
+        allow = super::GENERATED_MODULE_ALLOW_ATTRIBUTE,
     )
 }
 
-/// The sealed traits and the two functions. `W` names the types whose comparison the standard library defines, and nothing else, which is exactly the question the syntax could not answer.
+/// The sealed traits and the two functions.
+/// `W` names the types whose comparison the standard library defines, and nothing else, which is exactly the question the syntax could not answer.
 const IMPLS: &str = "\
     extern crate std as __rmw_std;
     pub(crate) trait W {}

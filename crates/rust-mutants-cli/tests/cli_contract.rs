@@ -5,7 +5,9 @@
 
 #![expect(
     clippy::indexing_slicing,
-    reason = "a test reads a document as a table"
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
 use std::ffi::OsString;
@@ -32,13 +34,21 @@ fn rust_mutants(args: &[&str]) -> Output {
 }
 
 /// The environment a command that reads no tree is answered in.
+#[expect(
+    clippy::panic,
+    reason = "the command-line contract cannot run without a working directory"
+)]
 fn environment() -> Environment {
+    let working_directory = match std::env::current_dir() {
+        Ok(working_directory) => working_directory,
+        Err(error) => panic!("the test process has no working directory: {error}"),
+    };
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: std::env::temp_dir(),
         program: PathBuf::from("this test never runs it"),
         cache_directory: std::env::temp_dir(),
-        working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
+        working_directory,
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
@@ -50,7 +60,7 @@ fn version_flag_prints_the_binary_name_and_its_version() {
     let output = rust_mutants(&["--version"]);
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stdout),
         format!("rust-mutants {}\n", rust_mutants::VERSION)
     );
     assert!(output.stderr.is_empty());
@@ -66,7 +76,7 @@ fn help_flag_matches_the_recorded_help_text() {
 
 /// Every command the top-level help lists, which is every command there is.
 fn subcommands() -> Vec<String> {
-    let help = String::from_utf8_lossy(&rust_mutants(&["--help"]).stdout).into_owned();
+    let help = njutest_devkit::process::strict_utf8(&rust_mutants(&["--help"]).stdout).into_owned();
     let listing = help
         .split_once("Commands:\n")
         .map_or(String::new(), |(_before, rest)| {
@@ -97,7 +107,7 @@ fn every_subcommand_has_its_own_recorded_help() {
             output.status.code(),
             Some(0),
             "the help offers {name} and the program does not take it: {}",
-            String::from_utf8_lossy(&output.stderr)
+            njutest_devkit::process::strict_utf8(&output.stderr)
         );
         let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/testdata/help-{name}.golden"));
@@ -111,14 +121,14 @@ fn no_arguments_prints_the_usage_to_stderr_and_exits_2() {
     let output = rust_mutants(&[]);
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Usage:"));
+    assert!(njutest_devkit::process::strict_utf8(&output.stderr).contains("Usage:"));
 }
 
 #[test]
 fn an_unknown_subcommand_is_a_usage_error() {
     let output = rust_mutants(&["frobnicate"]);
     assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         stderr.contains("frobnicate"),
         "names the offending argument: {stderr}"
@@ -154,7 +164,7 @@ fn every_subcommand_has_the_recorded_help_text() {
         recorded.push_str("$ rust-mutants ");
         recorded.push_str(name);
         recorded.push_str(" --help\n");
-        recorded.push_str(&String::from_utf8_lossy(&output.stdout));
+        recorded.push_str(&njutest_devkit::process::strict_utf8(&output.stdout));
         recorded.push('\n');
     }
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/subcommands.golden");
@@ -174,7 +184,7 @@ fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
         } else {
             rust_mutants(&[name, "--help"])
         };
-        helped.extend(flags(&String::from_utf8_lossy(&output.stdout)));
+        helped.extend(flags(&njutest_devkit::process::strict_utf8(&output.stdout)));
     }
     let missing: Vec<&String> = helped
         .iter()
@@ -208,7 +218,7 @@ fn the_flags_the_page_lists_beside_a_command_are_that_command_s_own() {
     );
     let mut wrong: Vec<String> = Vec::new();
     for (command, listed) in rows {
-        let helped = flags(&String::from_utf8_lossy(
+        let helped = flags(&njutest_devkit::process::strict_utf8(
             &rust_mutants(&[command.as_str(), "--help"]).stdout,
         ));
         wrong.extend(
@@ -282,7 +292,7 @@ fn flags(text: &str) -> std::collections::BTreeSet<String> {
 fn rules_lists_every_rule_with_its_tier_and_version_so_a_team_can_pin_operators() {
     let output = rust_mutants(&["rules"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let text = njutest_devkit::process::strict_utf8(&output.stdout).into_owned();
     for rule in rust_mutants::rule::CANONICAL_TABLE {
         assert!(
             text.contains(rule.name),
@@ -300,7 +310,7 @@ fn rules_answers_as_a_document_when_it_is_asked_to() {
     let output = rust_mutants(&["rules", "--json"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+        njutest_devkit::strictjson::decode_slice(&output.stdout).expect("the answer is JSON");
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden.json");
     njutest_devkit::golden::golden(&golden, &output.stdout)
         .expect("the document form of the operator table is the recorded one");
@@ -318,7 +328,7 @@ fn rules_answers_as_a_document_when_it_is_asked_to() {
 fn rules_narrowed_to_a_tier_is_what_that_tier_selects() {
     let output = rust_mutants(&["rules", "--tier", "balanced", "--json"]);
     let document: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+        njutest_devkit::strictjson::decode_slice(&output.stdout).expect("the answer is JSON");
     let named: Vec<String> = document["rules"]
         .as_array()
         .expect("the rules")
@@ -353,4 +363,95 @@ fn the_trace_flag_never_eats_the_argument_after_it() {
         "the word after --trace is the mutant the caller named; reading it as the trace \
          directory made the command refuse for want of an argument it had been given"
     );
+}
+
+/// Every switch the command line declares, as clap itself reports them.
+fn switch_names() -> Vec<String> {
+    use clap::Args as _;
+    rust_mutants_cli::cli::Switches::augment_args(clap::Command::new("probe"))
+        .get_arguments()
+        .filter_map(clap::Arg::get_long)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// What a run does differently because one switch was given, under the configuration in `root`.
+fn with(switch: Option<&str>, root: &Path) -> (rust_mutants_cli::config::Config, bool) {
+    use rust_mutants_cli::cli;
+    use rust_mutants_cli::settings::Settings;
+
+    let words = ["rust-mutants", "list"]
+        .into_iter()
+        .map(OsString::from)
+        .chain(switch.map(|name| OsString::from(format!("--{name}"))));
+    let parsed = cli::parse(words).expect("a `list` with one switch on it parses");
+    let cli::Command::List { scope, .. } = parsed.command else {
+        panic!("`list` parses as List")
+    };
+    let environment = Environment {
+        vars: Vec::new(),
+        temp_directory: PathBuf::from("/tmp"),
+        program: PathBuf::from("this test never runs it"),
+        cache_directory: PathBuf::from("/tmp/cache"),
+        working_directory: root.to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    };
+    let settings = Settings::resolve(&scope, &environment).expect("a scope with nothing wrong");
+    let opened = settings
+        .open_options(
+            &scope,
+            &environment,
+            rust_mutants::trace::Recorder::disabled(),
+        )
+        .expect("options with no pattern wrong in them");
+    (settings.config, opened.keep_temp)
+}
+
+/// Every boolean of `value`, set the other way.
+fn flipped(value: toml::Value) -> toml::Value {
+    match value {
+        toml::Value::Boolean(held) => toml::Value::Boolean(!held),
+        toml::Value::Table(table) => toml::Value::Table(
+            table
+                .into_iter()
+                .map(|(key, held)| (key, flipped(held)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// A directory holding a configuration with every boolean set the other way from the default.
+fn contrary() -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("a directory");
+    let default = toml::Value::try_from(rust_mutants_cli::config::Config::default())
+        .expect("the default configuration serializes");
+    let text = toml::to_string(&flipped(default)).expect("a configuration serializes");
+    std::fs::write(
+        root.path().join(rust_mutants_cli::config::FILE_NAME),
+        text.as_bytes(),
+    )
+    .expect("write");
+    root
+}
+
+#[test]
+fn every_switch_the_command_line_declares_changes_what_a_run_does() {
+    let plain = tempfile::tempdir().expect("a directory");
+    let contrary = contrary();
+    let baselines = [plain.path(), contrary.path()];
+    let names = switch_names();
+    assert!(!names.is_empty(), "clap reports the switches it declares");
+    for name in names {
+        assert!(
+            baselines
+                .iter()
+                .any(|root| with(Some(&name), root) != with(None, root)),
+            "--{name} changes neither the configuration a run resolves nor how the \
+             workspace is opened, against a default configuration or against one with \
+             every boolean set the other way: giving it does nothing and nothing says so"
+        );
+    }
 }

@@ -16,6 +16,8 @@ use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
+include!("support/metadata.rs");
+
 /// What one command said, driven in this process.
 struct Said {
     code: u8,
@@ -37,7 +39,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn asked(fixture: &Fixture, args: &[&str]) -> Said {
-    let root = fixture.root().to_string_lossy().into_owned();
+    let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
@@ -53,23 +55,19 @@ fn asked(fixture: &Fixture, args: &[&str]) -> Said {
     );
     Said {
         code,
-        out: String::from_utf8_lossy(&out).into_owned(),
-        err: String::from_utf8_lossy(&err).into_owned(),
+        out: njutest_devkit::process::strict_utf8(&out).into_owned(),
+        err: njutest_devkit::process::strict_utf8(&err).into_owned(),
     }
 }
 
 /// One event of a recording, as it goes on the wire.
 fn event(seq: u64, elapsed: u64, rest: &serde_json::Value) -> String {
-    let mut one = serde_json::json!({
+    let one = serde_json::json!({
         "seq": seq,
         "timestamp": "2026-01-01T00:00:00Z",
         "elapsed_ms": elapsed,
+        "payload": rest,
     });
-    if let (Some(into), Some(from)) = (one.as_object_mut(), rest.as_object()) {
-        for (name, value) in from {
-            let _replaced = into.insert(name.clone(), value.clone());
-        }
-    }
     serde_json::to_string(&one).expect("an event is a document")
 }
 
@@ -79,12 +77,21 @@ fn whole(phase_ms: u64, dropped: u64) -> Vec<String> {
         event(
             1,
             0,
-            &serde_json::json!({"type": "run-start", "schema": "rust-mutants-trace-v1", "engine": "0.1.0"}),
+            &serde_json::json!({
+                "type": "run-start",
+                "schema": "rust-mutants-trace-v1",
+                "engine": "0.1.0",
+                "context": {
+                    "kind": "standalone",
+                    "run_id": "fixture",
+                    "build_selection": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                }
+            }),
         ),
         event(
             2,
             0,
-            &serde_json::json!({"type": "phase-start", "phase": {"name": "discover"}}),
+            &serde_json::json!({"type": "phase-start", "phase": {"name": "discover", "duration_ms": null}}),
         ),
         event(
             3,
@@ -101,6 +108,7 @@ fn whole(phase_ms: u64, dropped: u64) -> Vec<String> {
                 "type": "run-end",
                 "run": {
                     "outcome": "completed",
+                    "error": null,
                     "events_emitted": 3,
                     "events_dropped": dropped,
                 },
@@ -139,7 +147,11 @@ fn write_at(directory: &Path, lines: &[String]) {
 #[test]
 fn a_recording_that_begins_ends_and_loses_nothing_is_said_to_be_whole() {
     let fixture = Fixture::copy("fixture-simple");
-    let _at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    let at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    assert!(
+        test_metadata(&at.join("trace.jsonl")).is_file(),
+        "the recording was arranged"
+    );
 
     let checked = asked(&fixture, &["trace", "check"]);
     assert_eq!(checked.code, 0, "{}{}", checked.out, checked.err);
@@ -169,7 +181,11 @@ fn each_way_a_recording_can_be_broken_is_said_in_its_own_words() {
             "an end that was lost",
             {
                 let mut events = whole(5, 0);
-                let _end = events.pop();
+                let end = events.pop().expect("the complete fixture has a run-end");
+                assert!(
+                    end.contains("run-end"),
+                    "the removed event is the ending: {end}"
+                );
                 events
             },
             "does not end with run-end",
@@ -178,7 +194,11 @@ fn each_way_a_recording_can_be_broken_is_said_in_its_own_words() {
             "events the sink lost between two it kept",
             {
                 let mut events = whole(5, 0);
-                let _second = events.remove(1);
+                let second = events.remove(1);
+                assert!(
+                    second.contains("phase-start"),
+                    "the removed event opens the phase: {second}"
+                );
                 events
             },
             "is missing",
@@ -192,7 +212,11 @@ fn each_way_a_recording_can_be_broken_is_said_in_its_own_words() {
 
     for (what, events, said) in cases {
         let fixture = Fixture::copy("fixture-simple");
-        let _at = recorded(&fixture, "20260101T000000000Z", &events);
+        let at = recorded(&fixture, "20260101T000000000Z", &events);
+        assert!(
+            test_metadata(&at.join("trace.jsonl")).is_file(),
+            "the broken recording was arranged"
+        );
         let checked = asked(&fixture, &["trace", "check"]);
         assert_eq!(
             checked.code, 1,
@@ -212,8 +236,16 @@ fn each_way_a_recording_can_be_broken_is_said_in_its_own_words() {
 fn a_phase_that_began_and_did_not_end_is_named() {
     let fixture = Fixture::copy("fixture-simple");
     let mut events = whole(5, 0);
-    let _ended = events.remove(2);
-    let _at = recorded(&fixture, "20260101T000000000Z", &events);
+    let ended = events.remove(2);
+    assert!(
+        ended.contains("phase-end"),
+        "the removed event closes the phase: {ended}"
+    );
+    let at = recorded(&fixture, "20260101T000000000Z", &events);
+    assert!(
+        test_metadata(&at.join("trace.jsonl")).is_file(),
+        "the open-phase recording was arranged"
+    );
 
     let checked = asked(&fixture, &["trace", "check"]);
     assert_eq!(checked.code, 1, "{}{}", checked.out, checked.err);
@@ -228,8 +260,12 @@ fn a_phase_that_began_and_did_not_end_is_named() {
 #[test]
 fn the_recording_read_with_nothing_named_is_the_newest_one() {
     let fixture = Fixture::copy("fixture-simple");
-    let _older = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
-    let _newer = recorded(&fixture, "20260102T000000000Z", &whole(9, 0));
+    let older = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    let newer = recorded(&fixture, "20260102T000000000Z", &whole(9, 0));
+    assert!(
+        test_metadata(&older).is_dir() && test_metadata(&newer).is_dir(),
+        "both recordings were arranged"
+    );
 
     let summarised = asked(&fixture, &["trace", "summary"]);
     assert_eq!(summarised.code, 0, "{}{}", summarised.out, summarised.err);
@@ -244,8 +280,12 @@ fn the_recording_read_with_nothing_named_is_the_newest_one() {
 #[test]
 fn a_run_named_is_the_one_read_and_a_prefix_names_it_too() {
     let fixture = Fixture::copy("fixture-simple");
-    let _older = recorded(&fixture, "20260101T000000000Z-aaaaaa", &whole(5, 0));
-    let _newer = recorded(&fixture, "20260102T000000000Z-bbbbbb", &whole(9, 0));
+    let older = recorded(&fixture, "20260101T000000000Z-aaaaaa", &whole(5, 0));
+    let newer = recorded(&fixture, "20260102T000000000Z-bbbbbb", &whole(9, 0));
+    assert!(
+        test_metadata(&older).is_dir() && test_metadata(&newer).is_dir(),
+        "both named recordings were arranged"
+    );
 
     let exact = asked(
         &fixture,
@@ -279,7 +319,12 @@ fn a_recording_in_a_directory_given_outright_is_read_without_a_report_directory_
 
     let checked = asked(
         &fixture,
-        &["trace", "check", "--dir", &elsewhere.to_string_lossy()],
+        &[
+            "trace",
+            "check",
+            "--dir",
+            njutest_devkit::paths::utf8(&elsewhere),
+        ],
     );
     assert_eq!(checked.code, 0, "{}{}", checked.out, checked.err);
     assert!(
@@ -306,7 +351,8 @@ fn a_recording_that_is_not_there_is_named_rather_than_read_as_an_empty_one() {
         empty.err
     );
 
-    let _at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    let at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    assert!(test_metadata(&at).is_dir(), "the recording was arranged");
     let named = asked(&fixture, &["trace", "summary", "--run", "20260305"]);
     assert_ne!(named.code, 0, "{}{}", named.out, named.err);
     assert!(
@@ -343,7 +389,8 @@ fn a_directory_beside_the_runs_with_no_recording_in_it_is_not_one() {
     let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     std::fs::create_dir_all(reports.join("20260109T000000000Z").join("trace"))
         .expect("a run whose recording was removed");
-    let _at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    let at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    assert!(test_metadata(&at).is_dir(), "the recording was arranged");
 
     let summarised = asked(&fixture, &["trace", "summary"]);
     assert!(
@@ -358,8 +405,12 @@ fn a_directory_beside_the_runs_with_no_recording_in_it_is_not_one() {
 #[test]
 fn a_command_that_wrote_no_report_keeps_its_recording_where_a_reader_finds_it() {
     let fixture = Fixture::copy("fixture-simple");
-    let _run = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
-    let _other = beside(&fixture, "20260103T000000000Z", &whole(7, 0));
+    let run = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    let other = beside(&fixture, "20260103T000000000Z", &whole(7, 0));
+    assert!(
+        test_metadata(&run).is_dir() && test_metadata(&other).is_dir(),
+        "both recording namespaces were arranged"
+    );
 
     let summarised = asked(&fixture, &["trace", "summary"]);
     assert!(
@@ -374,13 +425,17 @@ fn a_command_that_wrote_no_report_keeps_its_recording_where_a_reader_finds_it() 
 #[test]
 fn what_moved_between_two_recordings_is_said_column_by_column() {
     let fixture = Fixture::copy("fixture-simple");
-    let _before = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    let before = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    assert!(
+        test_metadata(&before).is_dir(),
+        "the baseline recording was arranged"
+    );
     let mut busier = whole(5, 0);
     let last = busier.pop().expect("the run ends");
     busier.push(event(
         4,
         6,
-        &serde_json::json!({"type": "phase-start", "phase": {"name": "validate"}}),
+        &serde_json::json!({"type": "phase-start", "phase": {"name": "validate", "duration_ms": null}}),
     ));
     busier.push(event(
         5,
@@ -391,7 +446,11 @@ fn what_moved_between_two_recordings_is_said_column_by_column() {
         }),
     ));
     busier.push(last.replace("\"seq\":4", "\"seq\":6"));
-    let _after = recorded(&fixture, "20260102T000000000Z", &busier);
+    let after = recorded(&fixture, "20260102T000000000Z", &busier);
+    assert!(
+        test_metadata(&after).is_dir(),
+        "the comparison recording was arranged"
+    );
 
     let moved = asked(
         &fixture,
@@ -442,7 +501,11 @@ fn what_moved_between_two_recordings_is_said_column_by_column() {
 #[test]
 fn a_diff_against_a_recording_that_is_not_there_names_it_rather_than_showing_nothing() {
     let fixture = Fixture::copy("fixture-simple");
-    let _before = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    let before = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));
+    assert!(
+        test_metadata(&before).is_dir(),
+        "the baseline recording was arranged"
+    );
 
     let moved = asked(
         &fixture,

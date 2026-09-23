@@ -7,7 +7,8 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
 
-/// An exclusive advisory lock held on one open file. Dropping it releases the lock; [`Lock::release`] does so explicitly and reports failures.
+/// An exclusive advisory lock held on one open file.
+/// Dropping it releases the lock; [`Lock::release`] does so explicitly and reports failures.
 #[derive(Debug)]
 pub struct Lock {
     file: Option<File>,
@@ -34,7 +35,8 @@ pub fn acquire(path: &Path) -> io::Result<Option<Lock>> {
 }
 
 impl Lock {
-    /// Unlocks and closes the file. Idempotent.
+    /// Unlocks and closes the file.
+    /// Idempotent.
     ///
     /// # Errors
     /// Returns the unlock or close failure.
@@ -49,7 +51,9 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _released = self.release();
+        if let Err(release) = self.release() {
+            drop(release);
+        }
     }
 }
 
@@ -61,7 +65,8 @@ mod sys {
     use rustix::fs::{FlockOperation, flock};
     use rustix::io::Errno;
 
-    /// The BSD `flock` on the open file description, which is what makes the lock disappear when the process dies however it died — the property the whole sweep rests on. `EWOULDBLOCK` and `EAGAIN` are the same errno on Linux and different ones on some other systems, so both read as "somebody else holds it".
+    /// The BSD `flock` on the open file description, which is what makes the lock disappear when the process dies however it died — the property the whole sweep rests on.
+    /// `EWOULDBLOCK` and `EAGAIN` are the same errno on Linux and different ones on some other systems, so both read as "somebody else holds it".
     pub(super) fn try_lock(file: &File) -> io::Result<bool> {
         match flock(file, FlockOperation::NonBlockingLockExclusive) {
             Ok(()) => Ok(true),
@@ -76,10 +81,6 @@ mod sys {
 }
 
 #[cfg(windows)]
-#[expect(
-    unsafe_code,
-    reason = "LockFileEx and UnlockFileEx are the platform's advisory lock and have no safe binding"
-)]
 mod sys {
     use std::fs::File;
     use std::io;
@@ -92,7 +93,12 @@ mod sys {
     use windows_sys::Win32::System::IO::OVERLAPPED;
 
     pub(super) fn try_lock(file: &File) -> io::Result<bool> {
+        #[expect(
+            unsafe_code,
+            reason = "OVERLAPPED is initialized through its documented zero state"
+        )]
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        #[expect(unsafe_code, reason = "LockFileEx has no safe binding")]
         let ok = unsafe {
             LockFileEx(
                 file.as_raw_handle(),
@@ -100,22 +106,41 @@ mod sys {
                 0,
                 1,
                 0,
-                &mut overlapped,
+                std::ptr::addr_of_mut!(overlapped),
             )
         };
         if ok != 0 {
             return Ok(true);
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(i32::try_from(ERROR_LOCK_VIOLATION).unwrap_or(33)) {
+        let Some(raw) = error.raw_os_error() else {
+            return Err(error);
+        };
+        let Ok(unsigned) = u32::try_from(raw) else {
+            return Err(error);
+        };
+        if unsigned == ERROR_LOCK_VIOLATION {
             return Ok(false);
         }
         Err(error)
     }
 
     pub(super) fn unlock(file: &File) -> io::Result<()> {
+        #[expect(
+            unsafe_code,
+            reason = "OVERLAPPED is initialized through its documented zero state"
+        )]
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
-        let ok = unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut overlapped) };
+        #[expect(unsafe_code, reason = "UnlockFileEx has no safe binding")]
+        let ok = unsafe {
+            UnlockFileEx(
+                file.as_raw_handle(),
+                0,
+                1,
+                0,
+                std::ptr::addr_of_mut!(overlapped),
+            )
+        };
         if ok != 0 {
             Ok(())
         } else {

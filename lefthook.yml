@@ -5,6 +5,16 @@
 #
 # Strictness policy:
 # - pre-commit is the gentle pass: format-and-restage, deny obvious mistakes.
+#   `ocomment` was a second, weaker, unpinned opinion about the rule `cargo xtask lints` already holds, and the only step here without the `|| true` its neighbours have: a fresh clone that ran bootstrap.sh had every commit fail, with no diagnosis, on a tool nothing told them to install.
+#   Nothing here analyses the whole workspace, and a clippy run is the thing
+#   that was taken out to make that true. `glob` decides whether a command
+#   runs, not what it runs over, and clippy is a whole-crate analysis with no
+#   way to be pointed at the files being committed — so it read the working
+#   tree and refused commits for edits that were not in them. A red that is
+#   not about your change teaches people to re-run rather than to read.
+#   pre-push renders the exact object the push names into a fresh detached
+#   worktree and runs the long check there. A different ref is refused, and
+#   neither adjacent edits nor ignored local files can become check inputs.
 # - pre-push runs `mise run check`, which is every gate this machine can
 #   answer: formatting, the build, clippy, rustdoc, the repository gates, the
 #   fuzz crate's type check, spelling, TOML, the workflows, the whole suite
@@ -29,13 +39,8 @@ pre-commit:
       glob: "*.rs"
       run: cargo fmt --all
       stage_fixed: true
-    rust-clippy:
-      glob: "*.{rs,toml}"
-      run: cargo clippy --workspace --all-targets -- -D warnings
     typos:
       run: typos
-    ocomment:
-      run: command -v ocomment >/dev/null 2>&1 \&\& ocomment check
     taplo:
       glob: "*.toml"
       run: command -v taplo >/dev/null 2>&1 && taplo fmt {staged_files} || true
@@ -54,7 +59,8 @@ pre-push:
     - rebase
   commands:
     check:
-      run: mise run check
+      run: scripts/pre-push-check.sh
+      use_stdin: true
 
 post-merge:
   commands:

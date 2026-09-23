@@ -3,15 +3,30 @@
 
 //! Reading how a run routed, from either recording that writes it down.
 
+use serde::de::Error as _;
 use serde_json::Value;
 
+/// A line in a recording that is not JSON.
+#[derive(Debug, thiserror::Error)]
+#[error("recording line {line} is not JSON: {source}")]
+pub struct ReadError {
+    /// The one-based non-empty line number in the recording.
+    pub line: usize,
+    /// What the JSON reader found there.
+    #[source]
+    pub source: serde_json::Error,
+}
+
 /// Every granularity a route can be decided at.
+#[cfg(feature = "testkit")]
 pub const GRANULARITIES: [&str; 5] = ["all", "block", "test", "discharged", "unreached"];
 
 /// The granularities the engine writes, which are [`GRANULARITIES`].
+#[cfg(feature = "testkit")]
 pub const ENGINE_GRANULARITIES: [&str; 5] = GRANULARITIES;
 
 /// The granularities the runner writes, which are [`GRANULARITIES`].
+#[cfg(feature = "testkit")]
 pub const RUNNER_GRANULARITIES: [&str; 5] = GRANULARITIES;
 
 /// One target a proof removed, and the proof that removed it.
@@ -65,7 +80,7 @@ impl Route {
 }
 
 /// One mutant execution, as either producer records it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Exec {
     /// The mutant, as a person types it, or its full identity when that is all the producer wrote.
     pub mutant: String,
@@ -75,12 +90,35 @@ pub struct Exec {
     pub target: String,
     /// What the execution established.
     pub outcome: String,
+    /// The verified runtime step notice, only for a step-limit outcome.
+    pub step_notice: Option<Value>,
     /// How many tests ran, when the harness said.
     pub tests_run: Option<u64>,
     /// How long it took.
     pub duration_ms: Option<u64>,
-    /// Whether the machine was given to this execution alone.
-    pub alone: Option<bool>,
+    /// Whether the recording says the machine was given to this execution alone.
+    pub alone: Isolation,
+}
+
+/// What a recording establishes about whether an execution had the machine to itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Isolation {
+    /// This producer did not record isolation at all.
+    Unrecorded,
+    /// Other work was allowed to run beside this execution.
+    Shared,
+    /// The scheduler gave the machine to this execution alone.
+    Alone,
+}
+
+impl Isolation {
+    const fn recorded(value: Option<&Value>) -> Self {
+        match value {
+            Some(Value::Bool(false)) => Self::Shared,
+            Some(Value::Bool(true)) => Self::Alone,
+            None | Some(_) => Self::Unrecorded,
+        }
+    }
 }
 
 impl Exec {
@@ -103,6 +141,7 @@ pub struct Routing {
 impl Routing {
     /// The route of one mutant, by the name either producer wrote.
     #[must_use]
+    #[cfg(feature = "testkit")]
     pub fn route(&self, mutant: &str) -> Option<&Route> {
         self.route_of(mutant, mutant)
     }
@@ -114,6 +153,7 @@ impl Routing {
     }
 
     /// Every execution of one mutant, in the order they ran.
+    #[cfg(feature = "testkit")]
     pub fn execs_of<'a>(&'a self, mutant: &'a str) -> impl Iterator<Item = &'a Exec> {
         self.execs_for(mutant, mutant)
     }
@@ -130,15 +170,20 @@ impl Routing {
     }
 }
 
-/// Reads the routes and executions out of a recording, ignoring every line that is neither.
-#[must_use]
-pub fn read(recorded: &str) -> Routing {
+/// Reads the routes and executions out of a recording, ignoring every valid event that is neither.
+///
+/// # Errors
+/// A non-empty line that is not JSON is rejected.
+/// An audit must never turn a corrupt evidence stream into an apparently empty one.
+pub fn read(recorded: &str) -> Result<Routing, ReadError> {
+    Ok(from_events(&events(recorded)?))
+}
+
+/// Reads routing records from events that have already passed the JSONL boundary.
+pub(crate) fn from_events(events: &[Value]) -> Routing {
     let mut routing = Routing::default();
-    for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(event) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        match text(&event, "type").as_deref() {
+    for event in events {
+        match text(event, "type").as_deref() {
             Some("route") => {
                 if let Some(record) = event.get("route") {
                     routing.routes.push(route(record));
@@ -153,6 +198,53 @@ pub fn read(recorded: &str) -> Routing {
         }
     }
     routing
+}
+
+/// Parses every non-empty event in a recording without discarding a corrupt line.
+pub(crate) fn events(recorded: &str) -> Result<Vec<Value>, ReadError> {
+    recorded
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            let line_number = index.saturating_add(1);
+            let parsed = crate::strictjson::from_str(line).map_err(|source| ReadError {
+                line: line_number,
+                source,
+            })?;
+            nested_event(parsed).map_err(|source| ReadError {
+                line: line_number,
+                source,
+            })
+        })
+        .collect()
+}
+
+/// Checks the current-v1 envelope, then gives the independent auditors a collision-free view with payload fields beside the envelope fields.
+fn nested_event(event: Value) -> Result<Value, serde_json::Error> {
+    let Value::Object(mut envelope) = event else {
+        return Err(serde_json::Error::custom("a trace event must be an object"));
+    };
+    let expected = ["elapsed_ms", "payload", "seq", "timestamp"];
+    let actual: Vec<&str> = envelope.keys().map(String::as_str).collect();
+    if actual != expected {
+        return Err(serde_json::Error::custom(format_args!(
+            "a current trace event has exactly seq, timestamp, elapsed_ms, and payload; found {actual:?}"
+        )));
+    }
+    let Some(Value::Object(payload)) = envelope.remove("payload") else {
+        return Err(serde_json::Error::custom(
+            "a current trace event payload must be an object",
+        ));
+    };
+    for (name, value) in payload {
+        if envelope.insert(name.clone(), value).is_some() {
+            return Err(serde_json::Error::custom(format_args!(
+                "trace payload field {name:?} collides with the envelope"
+            )));
+        }
+    }
+    Ok(Value::Object(envelope))
 }
 
 /// One route record, from whichever producer wrote it.
@@ -178,9 +270,10 @@ fn exec(record: &Value) -> Exec {
         index: number(record, "index"),
         target: text(record, "target").unwrap_or_default(),
         outcome: text(record, "outcome").unwrap_or_default(),
+        step_notice: record.get("step_notice").cloned(),
         tests_run: number(record, "tests_run"),
         duration_ms: number(record, "duration_ms"),
-        alone: record.get("alone").and_then(Value::as_bool),
+        alone: Isolation::recorded(record.get("alone")),
     }
 }
 

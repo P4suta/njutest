@@ -5,427 +5,156 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance report v1
 
-**Status: implemented** (`njutest_cli::report`) — the model, its audit, and
-all five projections.
+**Status: implemented.** Current runs write `njutest-assurance-report-v1`; the v1 page and schema describe historical artifacts only.
+The canonical JSON Schema is `schema/njutest-assurance-report-v1.json`, and every object it declares is closed.
+Rust deserialization additionally enforces relationships that JSON Schema cannot express, including the exact `limit + 1 == observed` step boundary.
 
-The first public report contract is `njutest-assurance-report-v1`. The
-schema value names the toolchain so a reader never confuses it with goatest's
-`assurance-report-v1`, whose shape it shares.
+Every closed set the schema declares is held to the names this release produces, in both directions.
+The store boundary already refused a report carrying a name the schema does not admit, so that direction failed in every run that produced one; the other failed in no run at all, and a name the schema admitted that nothing emits is a branch a consumer writes and never reaches.
+`docs_ledger::every_closed_set_the_schema_declares_is_one_this_release_produces` reads the schema's thirty-five `enum` and `const` sets and compares each against the Rust set that produces it — `Outcome`, `FindingKind`, `Blind`, `Fallback`, `Granularity`, `Proof`, `Contract`, the nine `Model*` sets, and the rest — so a set the schema gains and nothing on this side answers is a refusal rather than a row nobody reads.
 
-## Durable layout
+Each completed run owns an immutable directory under `[reports].directory`.
+The canonical document is `njutest-assurance-report-v1.json`; HTML, SARIF,
+JUnit and line output are projections of that document.
+`latest-any.json` names the latest completed run, and `latest-full.json` advances only for a full run.
 
-Each completed verification owns a directory that is immutable for as long as it
-exists:
+Authoritative report publication and reading currently require the Unix handle-relative filesystem backend.
+That backend holds the workspace,
+configured report root, selected run, and each file open while it validates and uses them; it never turns a checked path spelling back into authority.
+On Windows and other non-Unix hosts, commands that would publish, select,
+read, retain, or delete durable reports refuse with the typed `REPORT_NOT_KEPT` error.
+They do not fall back to pathname checks whose object could change between validation and use.
 
-```text
-reports/runs/<run-id>/
-  njutest-assurance-report-v1.json
-  njutest-assurance-report-v1.html
-  njutest-assurance-report-v1.sarif
-  njutest-assurance-report-v1.junit.xml
-  njutest-assurance-report-v1.schema.json
-```
+## Mutation records
 
-The directory is `[reports] directory`, `reports` unless the configuration
-says otherwise, and an index names a run the way somebody standing in the
-project would: `jq -r .directory reports/latest-any.json` is a path to follow
-from the project's own root.
+`outcome`, `killed_by`, and `step_boundary` are one typed value in Rust and one closed schema arm on the wire.
+A kill names its target.
+A `step-limit-reached` record names the target and carries a nonzero allowance plus exactly its first excluded count.
+`waited`, `unconfirmed`, and `errored` name the target on which no verdict was established.
+Outcomes that did not occur on a target name none.
+A boundary on any other outcome, or a step-limit outcome without one, is not a v1 document.
 
-`reports/latest-any.json` and `.njutest/latest-any.json` track the latest
-completed run of any scope. `latest-full.json` exists in both locations and
-advances only when `run_kind` is `full`. The history is bounded by
-`[reports] keep`, twenty by default, plus the runs the `latest-*` indexes
-point at. Nothing ever rewrites a run directory.
+`step-limit-reached` is an execution fact, not a detection.
+It is a hole in the verification, contributes to neither side of a score, is never cached or checkpointed, and cannot be answered by an acceptance.
+Historical v1 `runaway` records have no matched control and are never reinterpreted as v1.
 
-## Required audit identity
+Every mutation row also carries an explicit `accepted` boolean.
+This makes the durable `accounting.mutants.accepted` column independently derivable;
+`true` is valid only for `survived`, `unreached`, or `equivalent` rows.
 
-A durable report must include:
+`blind_in` names each build in which a mutation remains a hole, using exactly `unnoticed`, `unreached`, `step-limit-reached`, `waited`, or `errored`.
+Answered builds cannot be represented in that field.
 
-- schema, run ID, run kind, verdict, contract, and snapshot identity;
-- requested and resolved workspace/package/file scope;
-- repository package inventory and explicit Git availability, commit, dirty
-  state, merge base, and changed files;
-- an effective configuration SHA-256;
-- `rustc -vV` (version, commit hash, host), the cargo version, the njutest and
-  rust-mutants versions, OS, architecture, and target triple;
-- RFC3339 start/finish times and duration;
-- cache-derived state and source run ID when applicable;
-- target, soundness, and mutant accounting;
-- every selected baseline target with its terminal status and measured
-  `duration_ms`;
-- every ID-level mutant disposition;
-- acceptance metadata, evidence, findings, repair candidates, and structured
-  limitations.
+## Findings
 
-If Git is unavailable, the report uses the explicit `available=false` state
-and `unavailable` sentinels together with `git-metadata-unavailable`; an empty
-value is invalid. The six fields are one value in the model, so a document
-that says git could not be asked and nonetheless names a commit, a branch,
-uncommitted changes or a base is refused when it is read rather than when it
-is written; the same goes for a list of changed files that names no base to
-have changed from. `provenance` and a mutation's `reused`/`source_run_id` are
-the same story: read back from nobody, and established here and also
-somewhere else, are both unreadable. The schema states each pairing too, so a
-document is held to it by the reader and by the published contract
-separately.
-
-The JSON Schema is published at `schema/njutest-assurance-report-v1.json`
-and copied into each run directory. Every object is closed with
-`additionalProperties: false` and requires everything it declares, which is
-what holds it to the model in both directions: a field the model gained and
-the schema never heard of fails validation of a populated document, and a
-field the schema declares and the model never writes fails because it is
-required and absent. Rust validation
-additionally enforces arithmetic, scope/verdict, acceptance, and cache
-invariants that JSON Schema alone cannot express
-(`report::audit::validate_for_persistence`). What it no longer enforces is
-anything a type now carries: a run still may not name itself as the run it
-read its answer back from, because telling that apart needs the run's own
-identity and the value holds only the source's.
-
-A **finding** is an actionable problem in the project or its verification
-configuration. There are ten kinds, and a report carries the name rather
-than a number, because the name is what a person greps for and what a
-projection shows:
+A **finding** is an actionable defect or an explicit gap in what the run established.
+There are twelve kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
 | `build-failure` | the workspace does not compile | yes |
-| `failing-test` | a test of the workspace fails with nothing active | yes |
-| `undefined-behaviour` | the interpreter found unsoundness where the compiler stops vouching | yes |
-| `surviving-mutant` | every test that could notice a mutation passed with it active | no |
-| `target-missing` | a test target could not be found, so nothing was observed about it | no |
-| `timeout` | a target, or a mutation of one, ran out of the time it was given | no |
-| `not-measured` | something a run could not measure, so it claims nothing about it | no |
-| `unmatched-acceptance` | an unexpired acceptance does not name exactly one mutant in this catalog | no |
-| `hollow-target` | a test target was put to mutations and noticed none of them | no |
-| `wire-unnoticed` | the suite carried on through a question a seam licensed: a fault nothing noticed | no |
+| `failing-test` | a test fails with nothing active | yes |
+| `undefined-behaviour` | the interpreter found unsoundness | yes |
+| `surviving-mutant` | every reaching test passed with the mutation active | no |
+| `target-missing` | a selected target could not be measured | no |
+| `timeout` | a non-mutation phase exhausted its time bound | no |
+| `waited-mutant` | a mutation execution exhausted its wall-clock bound | no |
+| `step-limit-reached-mutant` | a verified finite step boundary was crossed without a matched control verdict | no |
+| `not-measured` | the run could not make the stated measurement | no |
+| `unmatched-acceptance` | an active acceptance names other than exactly one catalog entry | no |
+| `hollow-target` | a target was put to mutations and noticed none | no |
+| `wire-unnoticed` | a seam fault was put and nothing noticed | no |
 
-The last column is the one a reader acts on first: a defect is a fault in the
-code under test, and the rest are gaps in what was established. Both are
-findings, and a report that carries either is not an assurance.
-
-Before mutation execution, every unexpired `[[acceptance]]` ID or prefix is
-resolved against the session's complete catalog. Only a prefix that names
-exactly one mutant is normalized to that mutant's full ID and may answer for a
-survivor. An invalid, absent, or ambiguous prefix suppresses nothing and raises
-one `unmatched-acceptance` finding whose `subject` is the configuration value.
-An expired acceptance is ignored. A shard cannot independently audit this
-relationship because it does not carry the complete catalog; the merged report
-does, and its audit rechecks that every such finding still fails to resolve
-uniquely.
-
-A **limitation** is the opposite: a claim the run declines to make about
-itself. The audit holds the verdict and the findings to each other,
-because a report must not say two things at once: an assurance is the claim
-that nothing was found, so it carries no findings, and a `DEFECT` a reader
-cannot see named is not one they can act on, so it carries at least one.
-
-A target is a test binary, and its identity is the digest of the package, the
-kind, the binary's name, and — for the shape a later release may take — the
-libtest path within it. The binary is part of it because two integration tests
-of one package can each hold a test called `works`, and an identity that left
-the binary out made those two rows one. The domain separator carries the
-recipe, so a recipe that changes says so: it reads `njutest-target-v2`.
-
-A target's `duration_ms` is the cost of running every test it holds, once,
-with nothing active. It is not divisible by the number of tests: a target that
-takes a second for one test and a second for a hundred is two facts about
-process starts and one fact about the tests. An estimate built from it may
-decide an order and never a budget.
-
-`outcome` and `killed_by` travel together and are one thing in the model. A
-kill names the target that noticed; a timeout, a pair that did not agree and a
-harness that would not start name the target they happened on; and the four
-that happen to no target — `compile-rejected`, `survived`, `unreached`,
-`equivalent` — name none. The schema is one closed shape per outcome, so a
-document that says a mutation survived and then names a killer is not one this
-release reads, and neither is one that says a test noticed and names nobody.
-
-The field keeps its name for the documents already written, and it is the wrong
-name three times out of four: the target a timeout expired on killed nothing.
-Reading it as *the target this was established against* is what it has always
-meant.
-
-`targets` is canonically ordered by descending duration, then ascending target
-ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
-accounting carries `reused_killed` and `reused_survived`, each part of
-`killed` and `survived`.
-
-## Which build a hole is in
-
-`blind_in` names every build a mutation is a hole in, and what that build
-established about it:
-
-```json
-"blind_in": [
-  { "build": "default",  "decision": "unnoticed" },
-  { "build": "release",  "decision": "errored" }
-]
-```
-
-The names alone would make a reader believe the same thing happened in both. It
-did not. `unnoticed` is a build whose tests ran and noticed nothing, and wants a
-test written. `errored` is a build that established nothing — a harness that
-would not start, a pair that did not agree — and wants somebody to find out why
-first; telling them to write a test sends them looking for an assertion where
-what is missing is an answer. `waited` is a build where a bound expired before
-anything finished, which asks why nothing finished rather than why nothing
-could be measured. `unreached` is a build where nothing ran it at all.
-
-Only those three ever appear. A build that answered for a mutation is not one
-anybody is blind in, and the audit refuses to persist a report that lists one.
-
-Across builds the quantifiers invert: a mutation stands on the *weakest* thing
-any build established, because two builds are two programs and a run that took
-the strongest would report a release-only gap as closed. Builds that catalogued
-different mutations are not builds of one catalog and the run refuses to
-reconcile them, rather than reading one build's silence as agreement — a
-project whose features change what exists cannot be measured across builds by
-this design, and that is a refusal rather than a defect.
-
-## What a seam was asked
-
-`seams` holds every question a watched seam's recording licensed and what
-became of it: the question's `id`, the `capability` and the `seq` of the
-exchange it is about, what was `asked` and what the upstream `answered` where
-the wire says how to read one, the `rule` it applies, and the `decision`.
-
-Who decided a question and who that was travel together. A question the tests
-noticed carries `noticed_by`, the target that did; one a proof discharged
-carries `proof`; and one nothing decided carries neither. The schema is four
-closed shapes rather than one with optional fields, so a document that says
-nothing noticed and then names a noticer is not a document it accepts, and
-neither is one that says the tests noticed and names nobody.
-
-A `wire-unnoticed` finding names a question by its `id` and nothing else. A
-reader handed a sixty-four character name with nothing to look it up in has
-been told nothing they can act on, and [ADR 0002](adr/0002-trace-is-not-evidence.md)
-keeps the thing it stands for off the recording, so it is here. The audit
-refuses to persist a report whose seam finding names a question the report does
-not hold.
-
-`decision` is the same six-way partition the mutations use. `proved` is a
-question no observer could have answered — cutting an answer with no body short,
-or asking for the status the upstream already gave, hands the caller the bytes
-it had — and `unreached` is a question the run could
-not put, which is stated as a `not-measured` finding and never as a survivor.
-
-## What the run observed the system doing
-
-`njutest report --format spec` reads `seams` back as one sentence per exchange
-and says who is holding each one up:
-
-```text
-POST /orders on payments answers 201 — held up by pkg/test/orders
-GET /orders/1 on payments answers 200 — nobody holds this up; 5 question(s) nothing noticed
-```
-
-The sentences are made of what went past and nothing else, so they are always
-true of the system as it ran. That is what makes the annotation the useful half:
-the question is never whether the behaviour is real, only whether anybody would
-notice it changing. A reviewer can be told, about a change to the second line,
-that nobody was holding it up.
-
-A question a proof discharged holds nothing up and leaves nothing wanting —
-nobody could have noticed it, so counting it against the tests would ask them
-for something no test can give. A question the run could not put is counted
-apart from one nothing noticed, because writing a test is what closes the first
-and there is nothing to write for the second.
+The last column is derived from the same closed `FindingKind` that decides the verdict.
+A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.
 
 ## Who decided each mutation
 
-The counts beside each other overlap — `executed` holds `killed` and
-`survived` both, and `reused_killed` is part of `killed` — so they answer how
-much of each kind of work a run did. `accounting.mutants.observers` answers a
-different question, and its six columns **partition the catalog**: every
-catalogued mutation is in exactly one of them, and
-`report::audit::validate_for_persistence` refuses a report where they do not
-add up to `cataloged`.
+`accounting.mutants.observers` partitions the catalog.
+There are ten columns,
+in the same closed order as `Decision::ALL`:
 
 | column | what decided it | the outcome it comes from |
 | --- | --- | --- |
 | `types` | the compiler refused the program | `compile-rejected` |
 | `tests` | a test noticed | `killed` |
-| `proved` | no test of any kind could have noticed | `equivalent` |
-| `unnoticed` | it ran and nothing noticed | `survived` |
-| `unreached` | nothing ran at all | `unreached` |
-| `waited` | a bound expired before anything finished | `timed_out` |
-| `errored` | nothing could be measured | `unconfirmed`, `errored` |
+| `model-noticed` | the model checker produced a distinguishing input | `model-noticed` |
+| `model-proved` | the model checker proved equality throughout the closed domain | `model-proved` |
+| `proved` | no observer could distinguish the programs | `equivalent` |
+| `unnoticed` | every reaching test ran and none noticed | `survived` |
+| `unreached` | no measured target reached the mutation | `unreached` |
+| `step-limit-reached` | a verified execution boundary was crossed, without a verdict | `step-limit-reached` |
+| `waited` | the wall-clock bound expired before completion | `waited` |
+| `errored` | no verdict could be established | `unconfirmed`, `errored` |
 
-`types` is the same number as `rejected`, said as what it is. A mutation the
-compiler refuses is a program the type system would not let anybody have,
-which is the same kind of event a failing test is: something noticed. Counted
-only as work the run did not do, it is the one measurement nothing else in
-the toolchain makes and this report used to discard. It changes no
-denominator: `rejected` keeps its place in
-`cataloged = rejected + executed + unreached + equivalent`.
+The accounting is re-derived exactly from the ID-level records.
+Mutation and target identities are unique, target rows are in canonical order, every target status column is reproduced from the rows, and every mutation outcome,
+reuse, and acceptance column equals the row-derived count.
+In particular:
 
-`waited` and `errored` are gaps in the verification rather than in the
-project, and neither is ever silent: a run that could not decide a mutation
-says so here and carries the finding that explains it.
+```text
+cataloged = rejected + executed + unreached + equivalent
+executed >= killed + survived + step_limit_reached + waited
+accepted <= survived + unreached + equivalent
+reused_killed <= killed
+reused_survived <= survived
+observers.total() = cataloged
+```
 
-A timeout is `waited` and not `tests`. The engine is right to call it a
-detection — the process hung with the mutant active — but njutest measures
-something else. A bound is a budget, [ADR 0004](adr/0004-proof-layers-not-budgets.md)
-says a result resting on a budget is not a proof, and this report already gave
-a timeout its own column and a finding reading *an expired budget establishes
-nothing about the mutation*. Calling it a detection here contradicted both, and
-hid a build that timed out from `blind_in` entirely. The mapping from an
-outcome to who decided it now exists once, on `Outcome::decision`, because the
-reason it could disagree at all was that it existed three times.
+Only killed and survived mutation evidence is reusable.
+Model answers retain their generated source, raw export, process termination, hashes, pinned tool and backend identity so an independent audit can re-derive the affirmative answer rather than trusting a summary.
 
-## Who could have noticed
+Every model identity also carries one closed `crate_input` object.
+Its package is `njutest-verified-model`, edition is `2024`, source is `src/lib.rs`, network policy is offline, and `dependency_resolution` is exactly `empty-lock-offline-v1`: the dependency-free manifest, exact empty lockfile,
+offline execution, and pre/post whole-crate byte check replace a Cargo flag which Kani 0.68 does not accept.
+Its `environment` is `minimal-v1`: the verifier receives a newly constructed environment containing only the fixed Cargo and Kani homes, checker path, private target/temp paths,
+explicit target, offline mode, and empty compiler-wrapper/flag slots.
+Caller Python, toolchain, compiler, wrapper, Nix, and dynamic-loader variables are not inherited.
+Its SHA-256 is a domain-separated digest over that policy, the exact fixed `Cargo.toml`, fixed `Cargo.lock`, and retained generated source.
+Rust deserialization checks that digest against the rendered-source digest; `modelaudit` independently reads the source and recomputes the same crate input from its own constants.
+Kani therefore cannot earn an affirmative row from an unreported subject manifest, dependency,
+build script, target, or stale lock resolution.
 
-`mutants[].routing` is what a survivor is a claim about. The assurance
-contract's predicate — a mutation goes to the targets that reached it, less
-the ones a proof discharged — decided every execution, and until now it was
-visible only in the trace. [ADR 0002](adr/0002-trace-is-not-evidence.md) says
-a trace is never evidence, so a reader holding a survivor to that predicate
-was holding it to something the run does not answer for. The record answers
-for it now.
+This evidence pins and rechecks observable verifier identities; it is not a software-supply-chain attestation for the host.
+A local actor able to replace the checked `cargo-kani`, Cargo/rustup proxy, Kani bundle, operating system, or files between validation and execution remains inside the documented machine trust boundary.
+
+## Model records
+
+Every `models[]` entry has exactly two outer fields: the full `mutant` identity and a nested `answer`.
+The nested value is one closed arm:
+`ineligible { decision, reason }`, `undecided { decision, attempt: { reason,
+evidence } }`, or affirmative `noticed`/`proved { decision, evidence }`. Keeping the answer behind an explicit field prevents a decision arm from merging its namespace with the record identity, and both the schema and `proofaudit` reject unknown fields at either level.
+
+Under `verified-v1`, every `survived`, `model-noticed`, and `model-proved` mutation row has exactly one model record.
+Conversely, every model record names exactly one mutation row, and its answer agrees with that row;
+duplicates and missing counterparts are rejected.
+`standard-v1` and `deep-v1` do not run this model phase, so both retained model records and model-decided mutation outcomes are invalid under those contracts.
+
+## Routing
+
+`mutants[].routing` carries the premise of every target-level conclusion:
 
 | field | what it says |
 | --- | --- |
-| `granularity` | how narrowly the run chose: `all`, `block`, `test`, `discharged`, `unreached` |
-| `reaching` | the targets that could have noticed it |
-| `discharged` | the targets a proof removed, each with the proof that removed it |
-| `fallback` | what widened the question, when the run could not narrow it: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, `touch-incomplete` |
-| `answered` | the targets the run actually asked, in order, each with what it said |
+| `granularity` | `all`, `block`, `test`, `discharged`, or `unreached` |
+| `reaching` | targets that could notice the mutation |
+| `discharged` | targets removed by `branch-never-taken` or `never-infected` |
+| `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete` |
+| `answered` | targets actually asked, in order, with their outcomes |
 
-`routing` is `null` where the run never asked, which is a mutation the
-compiler refused: a program that does not exist is not one any test could
-have noticed.
+Evidence consultation records either the source run it reused or one closed refusal: `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`,
+`key-changed`, `not-passing`, `target-entered`, or `nothing-routed`.
 
-The difference between an empty `reaching` with a `discharged` list and an
-empty one without is the difference a reader acts on. The first is a proof —
-nothing could have noticed. The second is a hole — nothing looked.
+## Shards and projections
 
-`answered` is who was actually asked, in the order they were asked, and what
-each said. `reaching` is who *could* have noticed; the two differ because a
-run stops at the first detection and asks the cheapest targets first. A
-target in `reaching` and absent from `answered` reached the mutation and was
-never given the chance.
+A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.
+A part concludes `PARTIAL`; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
+The merge re-derives accounting,
+findings and verdict from the union instead of adding claims from the parts.
 
-That distinction is the whole of why `answered` is recorded, and it is what
-makes `hollow-target` sound. A target is executed against a mutation only
-when every target earlier in the route already survived it — so every
-execution that happened is one where that target had its chance and did not
-take it. The early return is not an obstacle the finding works around; it is
-the reason the finding is true.
-
-A target absent from every `killed_by` is a different thing entirely and
-proves nothing: a run records the first detection, so a target that is
-outranked every time never appears there however sharp it is. A reader
-settling "was this target put to mutations and did it notice none" from
-`killed_by` would get it wrong; from `answered` they get it right.
-
-## More than one build
-
-`[[configuration]]` names further builds beyond the one `[execution]`
-describes, which a report calls `default`. Two builds of a project are two
-programs, so [ADR 0007](adr/0007-survived-evidence-is-universal.md)'s rule
-that a kill is existential does not carry across them — that rule is about
-one program measured twice. Across builds the quantifiers turn over: a
-mutation nothing noticed in the release build is one nothing noticed,
-whatever the debug build said, because the release build is a program
-somebody ships.
-
-So each mutation stands on **the weakest thing any build established**, in
-the order `errored`, `waited`, `unnoticed`, `unreached`, `types`, `tests`,
-`proved` — the first four being holes and the last three not. A run cannot come
-out better for having looked at more.
-
-`mutants[].blind_in` names the builds that are blind to a mutation: the ones
-where nothing noticed it, nothing ran it, a bound expired, or nothing could be
-measured. A gap under
-one build and a gap everywhere are different things to act on. A run that
-measured one build names none, because which build is not a question it has.
-
-Builds that catalogued different mutations are refused rather than
-reconciled. Taking the answers there are would report one build's silence as
-agreement.
-
-## What a finding is about
-
-A finding names its `subject` — a mutant, a target, a package — and an
-identity is not somewhere anybody can open. So a finding that is about a
-place in the tree also carries `path`, relative to the workspace root, beside
-its `position`. Both are `null` for a finding that is about a target or a
-package rather than a line.
-
-Every consumer that puts a finding on a line needs the file as well: SARIF
-shows an alert against the path in the log, and a log that gave the identity
-instead put every alert on a file nobody had.
-
-## Positions
-
-Every position in a report — a mutant's, a coverage region's, a finding's —
-is a 1-based `line` with **two** 1-based columns: `column`, counted in UTF-8
-bytes, and `character_column`, counted in Unicode scalars.
-
-Two are carried because one toolchain uses both and neither is a safe
-default. Measured on `fixtures/fixture-unicode`: an `llvm-cov` coverage
-region's columns are **bytes**, and a rustc diagnostic's columns are
-**characters**. A report that carried one unit would make every consumer
-guess which, and a consumer that guessed wrong would point at the wrong
-place in exactly the files where it matters. Both are derived from the same
-byte offset, so they cannot disagree.
-
-## Projections
-
-JSON is the canonical complete model. HTML is self-contained and provides
-scope/accounting/audit tables, a slowest-first target table, and client-side
-search and section filtering. SARIF carries findings and the audit model in
-run properties. JUnit represents evidence as passing cases, findings as
-failures, and embeds core identity as properties.
-
-Terminal and pipe output is one record per line, tab-separated, the kind
-first and the verdict last, so `tail -1` is the answer and a filter on the
-first field is a projection. Every value the run did not write itself — a
-test's failure message, a provider's diagnostic, a limitation's detail — is
-escaped: a newline, a tab, a carriage return, and a terminal escape are
-spelled out rather than emitted. Without that, output from the code under
-test could forge a `FINDING`, `REPAIR`, `ACCEPTANCE`, or `LIMITATION`
-record, and a reader filtering for one would read a claim the run never
-made.
-
-A run that kept a report writes a `REPORT` record naming the document it
-wrote, so a script that took the verdict from the tail reads the rest beside
-it without knowing where `[reports] directory` points. The composite action
-does exactly that.
-
-## Parts of one catalog
-
-`njutest verify --shard K/N` judges one part of the catalog and measures the
-whole baseline, because a mutation cannot be judged against tests that were
-not run. The engine's rule decides which part holds which mutant — the dense
-catalog index modulo N, counting K from one — so two runs of the same tree
-divide it the same way without talking to each other, and every mutant belongs
-to exactly one part. Nothing is sampled and nothing is skipped, which is what
-keeps this out of [ADR 0004](adr/0004-proof-layers-not-budgets.md)'s way: it
-divides the work rather than reducing it.
-
-A part concludes `PARTIAL` and records its `scope.shard`. It assures nothing on
-its own: the mutations it did not judge are not mutations nothing noticed, they
-are mutations nobody put to a test. A finding in a part is still a finding, so
-a part that found a defect says `DEFECT`.
-
-`njutest merge <REPORT>...` writes the report the whole would have written. It
-passes one already unsharded report through, or requires exactly one report for
-every label `1/N` through `N/N`. It refuses a missing, repeated, malformed,
-mixed unsharded, or differently divided part. It also
-refuses parts that disagree about the tree, configuration, contract, effective
-scope, or runner and engine versions, and parts that both judged one mutant.
-Only that complete union is allowed to lose `scope.shard`: otherwise a missing
-part could be mistaken for a catalog with no mutants in it. The mutant rows are
-the union, the accounting is derived from that union rather than added up from
-what each part claimed, and the verdict is decided again from the whole. A
-score is a ratio and never survives a merge: two ratios over different
-denominators average into a number no run observed.
-
-Every run's identity carries its shard, so a part never reads back the whole's
-stored answer and a whole never reads back a part's.
+JSON is canonical.
+Terminal output is tab-separated with the record kind first and verdict last; untrusted text is escaped.
+HTML, SARIF and JUnit carry the same audit identity and findings.
 
 ## Exit codes
 
@@ -433,11 +162,9 @@ stored answer and a whole never reads back a part's.
 | ---: | --- |
 | 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED` |
 | 1 | `DEFECT`, `REPRODUCED` |
-| 2 | `INSUFFICIENT` |
+| 2 | `INSUFFICIENT`, `INCONCLUSIVE` |
 | 3 | `ERROR`, invalid input, or an infrastructure failure |
 | 130 | interrupted |
 | 143 | terminated |
 
-`njutest --help` prints this table, and it prints it from the verdicts
-themselves rather than from a copy: a run that has no verdict for a code has
-no line for it. This page is held to what that prints.
+`njutest --help` renders the same table from the verdict types; the ledger test holds this page to that output.

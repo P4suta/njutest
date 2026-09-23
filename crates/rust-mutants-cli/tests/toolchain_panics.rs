@@ -21,24 +21,19 @@ fn rows(fixture: &Fixture) -> serde_json::Value {
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());
     command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
+    command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
     command.args(["--tier", "all", "--offline", "--locked"]);
     let output = command.output().expect("rust-mutants runs");
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
-        String::from_utf8_lossy(&output.stderr)
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
-    let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(&directory)
-        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
-        .flatten()
-        .map(|entry| entry.path().join("run-report-v1.json"))
-        .filter(|path| path.is_file())
-        .collect();
-    runs.sort();
-    let newest = runs.pop().expect("one stored run");
-    serde_json::from_str(&std::fs::read_to_string(newest).expect("the report"))
+    let newest = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    )
+    .join("run-report-v1.json");
+    njutest_devkit::strictjson::decode_str(&std::fs::read_to_string(newest).expect("the report"))
         .expect("the report is a document")
 }
 

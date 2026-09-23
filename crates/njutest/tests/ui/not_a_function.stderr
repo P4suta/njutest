@@ -1,7 +1,0 @@
-error: #[njutest::integration] applies to a function
- --> tests/ui/not_a_function.rs:1:1
-  |
-1 | #[njutest::integration("postgres")]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `njutest::integration` (in Nightly builds, run with -Z macro-backtrace for more info)

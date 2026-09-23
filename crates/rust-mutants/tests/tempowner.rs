@@ -32,6 +32,24 @@ fn make(parent: &Path, name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// Says whether a path exists without turning an inspection failure into absence.
+fn exists(path: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Says whether a path is a directory without turning an inspection failure into `false`.
+fn is_directory(path: &Path) -> std::io::Result<bool> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 #[test]
 fn claim_writes_the_marker_and_holds_the_lock_until_release() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -39,8 +57,18 @@ fn claim_writes_the_marker_and_holds_the_lock_until_release() {
     let at = now();
     let mut owner = claim(&dir, at).expect("claims");
     assert_eq!(owner.dir(), dir);
-    assert!(lock_path(&dir).ends_with(LOCK_NAME) && lock_path(&dir).is_file());
-    assert!(marker_path(&dir).ends_with(MARKER_NAME) && marker_path(&dir).is_file());
+    assert!(
+        lock_path(&dir).ends_with(LOCK_NAME)
+            && fs::metadata(lock_path(&dir))
+                .expect("lock metadata")
+                .is_file()
+    );
+    assert!(
+        marker_path(&dir).ends_with(MARKER_NAME)
+            && fs::metadata(marker_path(&dir))
+                .expect("marker metadata")
+                .is_file()
+    );
 
     let marker = read_marker(&dir).expect("readable");
     assert_eq!(marker.schema, SCHEMA);
@@ -115,8 +143,9 @@ fn dropping_a_lock_releases_it() {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("owner.lock");
     {
-        let _held = acquire(&path).expect("opens").expect("free");
+        let held = acquire(&path).expect("opens").expect("free");
         assert!(acquire(&path).expect("opens").is_none());
+        drop(held);
     }
     assert!(acquire(&path).expect("opens").is_some());
 }
@@ -163,7 +192,10 @@ fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
     let temp = tempfile::tempdir().expect("tempdir");
     let parent = temp.path();
     let abandoned = make(parent, "rust-mutants-snap-dead");
-    drop(claim(&abandoned, now()).expect("claims").release());
+    claim(&abandoned, now())
+        .expect("claims")
+        .release()
+        .expect("releases abandoned owner");
     let live = make(parent, "rust-mutants-snap-live");
     let mut live_owner = claim(&live, now()).expect("claims");
     let kept = make(parent, "rust-mutants-snap-kept");
@@ -177,7 +209,10 @@ fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
     let file_with_prefix = parent.join("rust-mutants-snap-file");
     fs::write(&file_with_prefix, b"not a directory").expect("write");
     let other_prefix = make(parent, "rust-mutants-api-dead");
-    drop(claim(&other_prefix, now()).expect("claims").release());
+    claim(&other_prefix, now())
+        .expect("claims")
+        .release()
+        .expect("releases other-prefix owner");
 
     let result = sweep(parent, &["rust-mutants-snap-", "rust-mutants-api-"], now()).expect("ok");
 
@@ -195,15 +230,19 @@ fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
     assert_eq!(result.live, 1);
     assert_eq!(result.kept, 1);
     assert!(result.failures.is_empty(), "{:?}", result.failures);
-    assert!(!abandoned.exists() && !old.exists() && !other_prefix.exists());
     assert!(
-        live.exists()
-            && kept.exists()
-            && young.exists()
-            && unrelated.exists()
-            && unrelated_old.exists()
+        !exists(&abandoned).expect("inspect abandoned")
+            && !exists(&old).expect("inspect old")
+            && !exists(&other_prefix).expect("inspect other prefix")
     );
-    assert!(file_with_prefix.exists());
+    assert!(
+        exists(&live).expect("inspect live")
+            && exists(&kept).expect("inspect kept")
+            && exists(&young).expect("inspect young")
+            && exists(&unrelated).expect("inspect unrelated")
+            && exists(&unrelated_old).expect("inspect unrelated old")
+    );
+    assert!(exists(&file_with_prefix).expect("inspect prefixed file"));
     live_owner.release().expect("releases");
 }
 
@@ -212,9 +251,15 @@ fn a_directory_that_refuses_to_go_does_not_stop_the_sweep_of_the_others() {
     let temp = tempfile::tempdir().expect("tempdir");
     let parent = temp.path();
     let stubborn = make(parent, "rust-mutants-snap-stubborn");
-    drop(claim(&stubborn, now()).expect("claims").release());
+    claim(&stubborn, now())
+        .expect("claims")
+        .release()
+        .expect("releases stubborn owner");
     let willing = make(parent, "rust-mutants-snap-willing");
-    drop(claim(&willing, now()).expect("claims").release());
+    claim(&willing, now())
+        .expect("claims")
+        .release()
+        .expect("releases willing owner");
     let remove = |dir: &Path| -> std::io::Result<()> {
         if dir.ends_with("rust-mutants-snap-stubborn") {
             Err(std::io::Error::other("stuck"))
@@ -226,7 +271,9 @@ fn a_directory_that_refuses_to_go_does_not_stop_the_sweep_of_the_others() {
     assert_eq!(result.removed, std::slice::from_ref(&willing));
     assert_eq!(result.failures.len(), 1);
     assert_eq!(result.failures[0].dir, stubborn);
-    assert!(stubborn.exists() && !willing.exists());
+    assert!(
+        exists(&stubborn).expect("inspect stubborn") && !exists(&willing).expect("inspect willing")
+    );
 }
 
 #[test]
@@ -269,13 +316,16 @@ fn a_cache_survives_a_sweep_and_is_reclaimed_only_when_asked() {
         "a routine sweep reclaims the scratch and spares the cache: {swept:?}"
     );
     assert_eq!(swept.cached, 1);
-    assert!(cache.is_dir(), "the cache is what makes a second run fast");
-    assert!(!scratch.is_dir());
+    assert!(
+        is_directory(&cache).expect("inspect cache"),
+        "the cache is what makes a second run fast"
+    );
+    assert!(!is_directory(&scratch).expect("inspect scratch"));
 
     let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"], now).expect("reclaim");
     assert_eq!(reclaimed.removed.len(), 1, "{reclaimed:?}");
     assert!(
-        !cache.is_dir(),
+        !is_directory(&cache).expect("inspect reclaimed cache"),
         "asking for the caches to go is what gc means"
     );
 }
@@ -292,7 +342,7 @@ fn a_cache_a_run_is_using_is_not_reclaimed() {
     let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"], now).expect("reclaim");
     assert!(reclaimed.removed.is_empty(), "{reclaimed:?}");
     assert_eq!(reclaimed.live, 1);
-    assert!(cache.is_dir());
+    assert!(is_directory(&cache).expect("inspect live cache"));
     owner.release().expect("release");
 }
 
@@ -320,24 +370,22 @@ fn a_cache_whose_tree_is_gone_is_collected_rather_than_kept_for_a_run_that_canno
     let orphan = parent.join("rust-mutants-target-orphan");
     fs::create_dir(&living).expect("the living cache");
     fs::create_dir(&orphan).expect("the orphaned cache");
-    drop(
-        claim_cache_of(&living, now(), SCHEMA, &tree)
-            .expect("claim")
-            .release(),
-    );
-    drop(
-        claim_cache_of(&orphan, now(), SCHEMA, &parent.join("gone"))
-            .expect("claim")
-            .release(),
-    );
+    claim_cache_of(&living, now(), SCHEMA, &tree)
+        .expect("claim")
+        .release()
+        .expect("release living cache");
+    claim_cache_of(&orphan, now(), SCHEMA, &parent.join("gone"))
+        .expect("claim")
+        .release()
+        .expect("release orphan cache");
 
     let swept = sweep(parent, &["rust-mutants-target-"], now()).expect("sweep");
     assert!(
-        living.exists(),
+        exists(&living).expect("inspect living cache"),
         "a cache the next run of that tree can still hit is what a cache is for"
     );
     assert!(
-        !orphan.exists(),
+        !exists(&orphan).expect("inspect orphan cache"),
         "a cache keyed to a tree nobody can name again is one no run will ever look up, and \
          sparing it is how a temporary directory grows without bound: {:?}",
         swept.removed
@@ -354,11 +402,14 @@ fn a_cache_that_names_no_tree_is_spared_as_it_always_was() {
     let parent = temp.path();
     let dir = parent.join("rust-mutants-target-unkeyed");
     fs::create_dir(&dir).expect("the cache");
-    drop(claim_cache(&dir, now(), SCHEMA).expect("claim").release());
+    claim_cache(&dir, now(), SCHEMA)
+        .expect("claim")
+        .release()
+        .expect("release cache");
 
     let swept = sweep(parent, &["rust-mutants-target-"], now()).expect("sweep");
     assert!(
-        dir.exists(),
+        exists(&dir).expect("inspect unkeyed cache"),
         "a marker written before caches said what they are keyed to says nothing about whether \
          a run can hit it, and a sweep that guessed would delete a cache somebody is about to use"
     );
@@ -376,13 +427,13 @@ fn the_size_of_a_directory_is_every_regular_file_below_it() {
     fs::write(nested.join("deep"), b"12345").expect("a file two levels down");
 
     assert_eq!(
-        directory_size(root.path()),
+        directory_size(root.path()).expect("the directory is readable"),
         15,
         "a sweep says how much room it gave back, and a directory it walked only the top \
          of says a number smaller than the room"
     );
     assert_eq!(
-        directory_size(&nested),
+        directory_size(&nested).expect("the nested directory is readable"),
         5,
         "and the same question about a directory below it is about that one"
     );
@@ -394,12 +445,13 @@ fn a_directory_with_nothing_in_it_and_one_that_is_not_there_are_both_nothing() {
 
     let root = tempfile::tempdir().expect("a directory");
     assert_eq!(
-        directory_size(root.path()),
+        directory_size(root.path()).expect("the directory is readable"),
         0,
         "a directory with nothing in it gave back nothing"
     );
     assert_eq!(
-        directory_size(&root.path().join("was-never-made")),
+        directory_size(&root.path().join("was-never-made"))
+            .expect("an absent directory has size zero"),
         0,
         "and a directory that is not there is the same answer rather than a failure: \
          both a sweep and a cache ask this while something else is removing what they \

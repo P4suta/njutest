@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The engine trace: diagnostic exhaust under the rules of ADR 0002. Never a claim, never a failure, honest about drops.
+//! The engine trace: diagnostic exhaust under the rules of ADR 0002.
+//! Never a claim, never a failure, honest about drops.
 
 #![expect(
     clippy::expect_used,
@@ -13,29 +14,87 @@
 use std::fs;
 use std::io;
 
-use rust_mutants::testkit::trace::{memory_recorder, stepping_clock, type_names};
+use njutest_devkit::result::{
+    ResultState::{Refused, Returned},
+    result_state,
+};
+use rust_mutants::testkit::trace::{
+    memory_recorder, standalone_context, stepping_clock, type_names,
+};
 use rust_mutants::trace::summary::{diff, render, summarize};
 use rust_mutants::trace::{
-    DirSink, EVERY_TYPE, ExecRecord, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME,
+    DirSink, EVERY_TYPE, ExecRecord, FILE_NAME, MemorySink, NjutestBuild, OUTPUT_DIRECTORY_NAME,
     OUTPUT_FILE_LIMIT, OpenRecord, Payload, Problem, Recorder, RouteRecord, SCHEMA, Sink,
-    SnapshotRecord, SweepRecord, TRUNCATION_MARKER, VerifyRecord, WitnessRecord, check,
-    read_events,
+    SnapshotRecord, SweepRecord, TRUNCATION_MARKER, TraceContext, VerifyRecord, WitnessRecord,
+    check, read_events,
 };
 use std::collections::BTreeSet;
 
 use sha2::{Digest as _, Sha256};
 
+enum RelevantPayload<'a> {
+    PhaseStart(&'a rust_mutants::trace::PhaseRecord),
+    PhaseEnd(&'a rust_mutants::trace::PhaseRecord),
+    Exec(&'a ExecRecord),
+    Other,
+}
+
+const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
+    match payload {
+        Payload::PhaseStart { phase } => RelevantPayload::PhaseStart(phase),
+        Payload::PhaseEnd { phase } => RelevantPayload::PhaseEnd(phase),
+        Payload::Exec { exec } => RelevantPayload::Exec(exec),
+        Payload::RunStart { .. }
+        | Payload::Open { .. }
+        | Payload::Snapshot { .. }
+        | Payload::DiscoverFile { .. }
+        | Payload::Instrument { .. }
+        | Payload::ValidateRound { .. }
+        | Payload::Bisect { .. }
+        | Payload::Build { .. }
+        | Payload::Verify { .. }
+        | Payload::Touch { .. }
+        | Payload::Witness { .. }
+        | Payload::SkipClaim { .. }
+        | Payload::Kept { .. }
+        | Payload::Route { .. }
+        | Payload::Cache { .. }
+        | Payload::Select { .. }
+        | Payload::Identical { .. }
+        | Payload::Evidence { .. }
+        | Payload::MutantExec { .. }
+        | Payload::Note { .. }
+        | Payload::RunEnd { .. } => RelevantPayload::Other,
+    }
+}
+
 /// A directory sink that has been closed, so everything written to it fails: the reachable form of "the disk is gone".
 fn broken(dir: &std::path::Path) -> Sink {
     let sink = DirSink::create(&dir.join("recording")).expect("the sink");
     sink.close().expect("closed");
-    Sink::Dir(sink)
+    Sink::required(sink)
 }
 
+/// One recorded execution of a process that ran and exited zero.
+///
+/// Written out rather than filled from a `Default`.
+/// A process ends exactly one way, so the record has no value meaning nobody said which — and a builder that took one would put "could not be started" on a process that ran (ADR 0023).
 fn exec(argv: &[&str]) -> ExecRecord {
     ExecRecord {
         argv: argv.iter().map(|s| (*s).to_owned()).collect(),
-        ..ExecRecord::default()
+        dir: None,
+        env_names: Vec::new(),
+        timeout_ms: None,
+        stopped: rust_mutants::execute::Stopped::Exited {
+            exit: rust_mutants::runner::ProcessExit::Code(0),
+        },
+        duration_ms: 0,
+        output_bytes: 0,
+        output_sha256: None,
+        output_truncated: false,
+        output_path: None,
+        error: None,
+        output: Vec::new(),
     }
 }
 
@@ -47,7 +106,7 @@ fn a_disabled_recorder_records_nothing_and_every_call_is_a_no_op() {
     recorder.exec(exec(&["cargo", "metadata"]));
     recorder.note("progress", "nothing to see");
     phase.end();
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     assert!(!Recorder::clone(&recorder).is_enabled());
 }
 
@@ -61,12 +120,146 @@ fn the_schema_is_frozen() {
 }
 
 #[test]
+fn nested_trace_context_is_a_closed_self_consistent_build_binding() {
+    let final_run_id =
+        rust_mutants::id::RunId::try_from("run").expect("the fixed final run id is canonical");
+    let build = rust_mutants::cargo::BuildConfig::default().selection();
+    let context = TraceContext::Njutest {
+        build: NjutestBuild::new(final_run_id, 2, "release".to_owned(), &build)
+            .expect("the nested binding derives its internal run id from its ordinal"),
+    };
+    let value = serde_json::to_value(&context).expect("the context serializes");
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "kind": "njutest",
+            "build": {
+                "final_run_id": "run",
+                "internal_run_id": "run-b0000000002",
+                "ordinal": 2,
+                "name": "release",
+                "build_selection": build.digest(),
+            }
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<TraceContext>(value).expect("the exact binding reads back"),
+        context
+    );
+}
+
+#[test]
+fn every_nested_build_has_a_namespace_distinct_from_the_final_run() {
+    let final_run_id =
+        rust_mutants::id::RunId::try_from("run").expect("the fixed final run id is canonical");
+    let selection = rust_mutants::cargo::BuildConfig::default().selection();
+
+    for (ordinal, expected) in [(0, "run-b0000000000"), (1, "run-b0000000001")] {
+        let build = NjutestBuild::new(
+            final_run_id.clone(),
+            ordinal,
+            format!("build-{ordinal}"),
+            &selection,
+        )
+        .expect("the short final id can own either nested namespace");
+        assert_eq!(build.internal_run_id().as_str(), expected);
+        assert_ne!(build.internal_run_id(), build.final_run_id());
+    }
+}
+
+#[test]
+fn a_final_run_id_that_cannot_own_the_derived_build_namespace_is_refused() {
+    let final_run_id = rust_mutants::id::RunId::try_from("a".repeat(64))
+        .expect("the maximum-length final run id is canonical by itself");
+    let selection = rust_mutants::cargo::BuildConfig::default().selection();
+    let error = NjutestBuild::new(final_run_id, 0, "default".to_owned(), &selection)
+        .expect_err("a nested namespace must not be silently truncated or aliased");
+    assert!(matches!(
+        error,
+        rust_mutants::trace::NjutestBuildError::RunId { .. }
+    ));
+}
+
+#[test]
+fn nested_trace_context_rejects_partial_extra_and_cross_ordinal_bindings() {
+    let exact = serde_json::json!({
+        "kind": "njutest",
+        "build": {
+            "final_run_id": "run",
+            "internal_run_id": "run-b0000000001",
+            "ordinal": 1,
+            "name": "release",
+            "build_selection": "8ab0bfdf63e67552f235202347a8bd67247a83027fa8a321b61b759d3f35ab85",
+        }
+    });
+    let parsed = serde_json::from_value::<TraceContext>(exact.clone());
+    assert_eq!(result_state(&parsed), Returned, "{parsed:?}");
+
+    let mut missing = exact.clone();
+    missing["build"]
+        .as_object_mut()
+        .expect("the fixture build is an object")
+        .remove("build_selection");
+    let parsed = serde_json::from_value::<TraceContext>(missing);
+    assert_eq!(result_state(&parsed), Refused, "{parsed:?}");
+
+    let mut extra = exact.clone();
+    extra["build"]["unbound"] = serde_json::json!(true);
+    let parsed = serde_json::from_value::<TraceContext>(extra);
+    assert_eq!(result_state(&parsed), Refused, "{parsed:?}");
+
+    let mut swapped = exact;
+    swapped["build"]["internal_run_id"] = serde_json::json!("run-b0000000002");
+    let parsed = serde_json::from_value::<TraceContext>(swapped);
+    assert_eq!(result_state(&parsed), Refused, "{parsed:?}");
+}
+
+#[test]
+fn run_start_schema_requires_the_closed_trace_context() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &fs::read_to_string(
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
+        )
+        .expect("the schema file"),
+    )
+    .expect("the schema parses");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    let event = serde_json::json!({
+        "seq": 1,
+        "timestamp": "2027-01-15T08:00:00Z",
+        "elapsed_ms": 0,
+        "payload": {
+            "type": "run-start",
+            "schema": "rust-mutants-trace-v1",
+            "engine": "0.1.0",
+            "context": {
+                "kind": "standalone",
+                "run_id": "test",
+                "build_selection": "8ab0bfdf63e67552f235202347a8bd67247a83027fa8a321b61b759d3f35ab85",
+            }
+        }
+    });
+    assert!(validator.is_valid(&event));
+
+    let mut missing = event.clone();
+    missing["payload"]
+        .as_object_mut()
+        .expect("the fixture payload is an object")
+        .remove("context");
+    assert!(!validator.is_valid(&missing));
+
+    let mut malformed = event;
+    malformed["payload"]["context"]["build_selection"] = serde_json::json!("not-a-digest");
+    assert!(!validator.is_valid(&malformed));
+}
+
+#[test]
 fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounting() {
     let recorder = memory_recorder();
     assert!(recorder.is_enabled());
     recorder.note("progress", "one");
     recorder.note("progress", "two");
-    recorder.run_end("prepared", None);
+    recorder.run_end("prepared", None).expect("trace closes");
 
     let events = recorder.events();
     assert_eq!(
@@ -79,13 +272,21 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
     assert_eq!(events[3].timestamp, "2027-01-15T08:00:03Z");
     let elapsed: Vec<u64> = events.iter().map(|e| e.elapsed_ms).collect();
     assert_eq!(elapsed, [0, 1000, 2000, 3000]);
-    let Payload::RunStart { schema, engine } = &events[0].payload else {
-        panic!("{:?}", events[0].payload);
+    assert!(matches!(&events[0].payload, Payload::RunStart { .. }));
+    let Payload::RunStart {
+        schema,
+        engine,
+        context,
+    } = &events[0].payload
+    else {
+        return;
     };
     assert_eq!(schema, SCHEMA);
     assert_eq!(engine, rust_mutants::VERSION);
+    assert_eq!(context, &standalone_context());
+    assert!(matches!(&events[3].payload, Payload::RunEnd { .. }));
     let Payload::RunEnd { run } = &events[3].payload else {
-        panic!("{:?}", events[3].payload);
+        return;
     };
     assert_eq!(run.outcome, "prepared");
     assert_eq!(run.error, None);
@@ -96,13 +297,16 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
 #[test]
 fn run_end_happens_once_and_nothing_is_recorded_afterwards() {
     let recorder = memory_recorder();
-    recorder.run_end("errored", Some("boom".to_owned()));
+    recorder
+        .run_end("errored", Some("boom".to_owned()))
+        .expect("trace closes");
     recorder.note("progress", "too late");
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     let events = recorder.events();
     assert_eq!(type_names(&events), ["run-start", "run-end"]);
+    assert!(matches!(&events[1].payload, Payload::RunEnd { .. }));
     let Payload::RunEnd { run } = &events[1].payload else {
-        panic!("{:?}", events[1].payload);
+        return;
     };
     assert_eq!(run.error.as_deref(), Some("boom"));
     assert!(
@@ -118,10 +322,11 @@ fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
     let inner = recorder.phase("discover");
     inner.end();
     {
-        let _dropped = recorder.phase("validate");
+        let dropped_phase = recorder.phase("validate");
+        drop(dropped_phase);
     }
     drop(outer);
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     let events = recorder.events();
     assert_eq!(
         type_names(&events),
@@ -138,11 +343,11 @@ fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
     );
     let phases: Vec<(String, Option<u64>)> = events
         .iter()
-        .filter_map(|e| match &e.payload {
-            Payload::PhaseStart { phase } | Payload::PhaseEnd { phase } => {
+        .filter_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::PhaseStart(phase) | RelevantPayload::PhaseEnd(phase) => {
                 Some((phase.name.clone(), phase.duration_ms))
             }
-            _ => None,
+            RelevantPayload::Exec(_) | RelevantPayload::Other => None,
         })
         .collect();
     assert_eq!(
@@ -160,18 +365,23 @@ fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
 
 #[test]
 fn events_are_sequenced_in_delivery_order_across_threads() {
-    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()), standalone_context());
     std::thread::scope(|scope| {
+        let mut workers = Vec::new();
         for thread in 0..8 {
             let recorder = recorder.clone();
-            scope.spawn(move || {
+            let worker = njutest_devkit::thread::ScopedThread::launch(scope, move || {
                 for i in 0..50 {
                     recorder.note("thread", &format!("{thread}/{i}"));
                 }
             });
+            workers.push(worker);
+        }
+        for worker in workers {
+            worker.join().expect("trace fixture worker joins");
         }
     });
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     let events = recorder.events();
     assert_eq!(events.len(), 1 + 400 + 1);
     for (index, event) in events.iter().enumerate() {
@@ -196,15 +406,22 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
         output: b"the captured output".to_vec(),
         dir: Some("/snap/tree".to_owned()),
         timeout_ms: Some(30_000),
-        exit_code: 101,
+        stopped: rust_mutants::execute::Stopped::Exited {
+            exit: rust_mutants::runner::ProcessExit::Code(101),
+        },
         duration_ms: 12,
         ..exec(&["cargo", "test", "--", "--exact", "t::x"])
     };
     recorder.exec(record);
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     let events = recorder.events();
+    assert!(
+        matches!(&events[1].payload, Payload::Exec { .. }),
+        "{:?}",
+        events[1]
+    );
     let Payload::Exec { exec } = &events[1].payload else {
-        panic!("{:?}", events[1]);
+        return;
     };
     assert_eq!(exec.env_names, ["A", "RUST_MUTANTS_ACTIVE", "TOKEN"]);
     assert_eq!(exec.output_bytes, 19);
@@ -216,56 +433,178 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
     assert!(!line.contains("hunter2"), "{line}");
     assert!(!line.contains("deadbeef"), "{line}");
     assert!(!line.contains("captured output"), "{line}");
-    assert!(line.contains("\"exit_code\":101"), "{line}");
+    assert!(
+        line.contains(
+            "\"stopped\":{\"kind\":\"exited\",\"exit\":{\"kind\":\"code\",\"value\":101}}"
+        ),
+        "how a process ended is one field on the wire as in the type, so a reader cannot \
+         be handed a status beside a flag that disagrees with it: {line}"
+    );
 }
 
 #[test]
-fn a_sink_that_cannot_write_is_counted_never_returned() {
+fn a_directory_sink_that_lost_events_fails_finalization() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let recorder = Recorder::new(broken(temp.path()), stepping_clock());
+    let recorder = Recorder::new(broken(temp.path()), stepping_clock(), standalone_context());
     for i in 0..5 {
         recorder.note("n", &i.to_string());
     }
-    recorder.run_end("ok", None);
+    let error = recorder
+        .run_end("ok", None)
+        .expect_err("a durable trace cannot hide lost events");
+    assert!(error.to_string().contains("lost 7 event"), "{error}");
     assert!(recorder.events().is_empty());
 }
 
 #[test]
-fn one_sink_failing_costs_that_sink_the_event_and_not_the_others() {
+fn a_required_directory_failure_after_start_fails_finalization() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let recorder = Recorder::new(
-        Sink::Tee(vec![
-            broken(temp.path()),
-            Sink::Memory(MemorySink::unbounded()),
-        ]),
-        stepping_clock(),
+    let directory = temp.path().join("required");
+    let sink = DirSink::create(&directory).expect("the durable sink");
+    let recorder = Recorder::new(Sink::required(sink), stepping_clock(), standalone_context());
+    recorder.fail_durable_writes_for_test();
+    recorder.note("after-start", "must be durable");
+    let error = recorder
+        .run_end("ok", None)
+        .expect_err("an observer cannot turn a lost durable event into success");
+    assert!(
+        error
+            .to_string()
+            .contains("injected durable trace write failure"),
+        "{error}"
     );
-    recorder.note("a", "1");
-    recorder.run_end("ok", None);
+}
 
-    let events = recorder.events();
-    assert_eq!(type_names(&events), ["run-start", "note", "run-end"]);
-    let Payload::RunEnd { run } = &events[2].payload else {
-        panic!("{:?}", events[2].payload);
-    };
+#[test]
+fn a_required_directory_remains_authoritative_when_progress_disconnects() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let directory = temp.path().join("required");
+    let sink = DirSink::create(&directory).expect("the durable sink");
+    let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+    drop(receiver);
+    let recorder = Recorder::new(
+        Sink::required_with_channel(sink, rust_mutants::trace::ChannelSink::new(sender)),
+        stepping_clock(),
+        standalone_context(),
+    );
+    recorder.note("durable", "the channel is only an observer");
+    recorder
+        .run_end("ok", None)
+        .expect("the durable authority kept every event");
+    let text = fs::read_to_string(directory.join(FILE_NAME)).expect("the durable stream");
+    assert_eq!(text.lines().count(), 3, "{text}");
+}
+
+#[test]
+fn a_full_bounded_progress_observer_cannot_block_or_replace_durable_authority() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let directory = temp.path().join("required");
+    let sink = DirSink::create(&directory).expect("the durable sink");
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let recorder = Recorder::new(
+        Sink::required_with_channel(sink, rust_mutants::trace::ChannelSink::new(sender)),
+        stepping_clock(),
+        standalone_context(),
+    );
+    recorder.note("durable", "the bounded observer is already full");
+    recorder
+        .run_end("ok", None)
+        .expect("only the durable authority decides completion");
+
     assert_eq!(
-        run.events_dropped, 0,
-        "the recording lost nothing: one sink kept every event"
+        receiver.try_iter().count(),
+        1,
+        "the observer stayed bounded"
+    );
+    let text = fs::read_to_string(directory.join(FILE_NAME)).expect("the durable stream");
+    assert_eq!(text.lines().count(), 3, "{text}");
+}
+
+#[test]
+fn output_preservation_failure_keeps_the_event_and_the_observers_original_capture() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let directory = temp.path().join("required");
+    let sink = DirSink::create(&directory).expect("the durable sink");
+    let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+    let recorder = Recorder::new(
+        Sink::required_with_channel(sink, rust_mutants::trace::ChannelSink::new(sender)),
+        stepping_clock(),
+        standalone_context(),
+    );
+    fs::write(
+        directory.join(OUTPUT_DIRECTORY_NAME),
+        b"blocks the output directory",
+    )
+    .expect("the path-blocking file");
+    recorder.exec(ExecRecord {
+        output: b"full diagnostic capture".to_vec(),
+        ..exec(&["cargo", "check"])
+    });
+    recorder
+        .run_end("ok", None)
+        .expect("the event itself remained durable");
+
+    let observed: Vec<_> = receiver.try_iter().collect();
+    let observed_exec = observed
+        .iter()
+        .find_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::Exec(exec) => Some(exec),
+            RelevantPayload::PhaseStart(_)
+            | RelevantPayload::PhaseEnd(_)
+            | RelevantPayload::Other => None,
+        })
+        .expect("the observer received the execution");
+    assert_eq!(observed_exec.output, b"full diagnostic capture");
+    assert_eq!(observed_exec.output_path, None);
+
+    let durable = fs::read_to_string(directory.join(FILE_NAME)).expect("the durable stream");
+    let exec = durable
+        .lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("each durable event is strict JSON")
+        })
+        .find(|event| {
+            event
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("exec")
+        })
+        .expect("the durable stream kept the execution event");
+    assert_eq!(
+        exec.pointer("/payload/exec/output_path"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        exec.pointer("/payload/exec/output_bytes")
+            .and_then(serde_json::Value::as_u64),
+        Some(23)
+    );
+    assert!(
+        exec.pointer("/payload/exec/output_sha256")
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
+        "the event still binds the whole capture even when its optional side file cannot be kept"
     );
 }
 
 #[test]
 fn a_sink_that_counts_its_own_drops_is_the_authority() {
-    let recorder = Recorder::new(Sink::Memory(MemorySink::bounded(4)), stepping_clock());
+    let recorder = Recorder::new(
+        Sink::Memory(MemorySink::bounded(4)),
+        stepping_clock(),
+        standalone_context(),
+    );
     for i in 0..5 {
         recorder.note("n", &i.to_string());
     }
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     let events = recorder.events();
     assert_eq!(events.len(), 4, "the ring keeps the newest four");
     assert_eq!(type_names(&events), ["note", "note", "note", "run-end"]);
+    assert!(matches!(&events[3].payload, Payload::RunEnd { .. }));
     let Payload::RunEnd { run } = &events[3].payload else {
-        panic!("{:?}", events[3].payload);
+        return;
     };
     assert_eq!(run.events_dropped, 2);
     assert_eq!(run.events_emitted, 4);
@@ -276,8 +615,9 @@ fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
     let temp = tempfile::tempdir().expect("tempdir");
     let stream = temp.path().join("recording");
     let recorder = Recorder::new(
-        Sink::Dir(DirSink::create(&stream).expect("the sink")),
+        Sink::required(DirSink::create(&stream).expect("the sink")),
         stepping_clock(),
+        standalone_context(),
     );
     let phase = recorder.phase("open");
     recorder.open(OpenRecord {
@@ -307,15 +647,20 @@ fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
         output: b"ok\n".to_vec(),
         ..exec(&["cargo", "metadata"])
     });
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
 
     let text = fs::read_to_string(stream.join(FILE_NAME)).expect("the stream");
     assert_eq!(text.lines().count(), 7);
     assert!(text.ends_with('\n'));
     for line in text.lines() {
-        let value: serde_json::Value = serde_json::from_str(line).expect("each line is one object");
+        let value: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("each line is one object");
         assert!(
-            value.get("seq").is_some() && value.get("type").is_some(),
+            value.get("seq").is_some()
+                && value
+                    .get("payload")
+                    .and_then(|payload| payload.get("type"))
+                    .is_some(),
             "{line}"
         );
     }
@@ -345,10 +690,10 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
     let dir = temp.path().join("run-1");
     let sink = DirSink::create(&dir).expect("create");
     assert_eq!(sink.directory(), dir);
-    let refused = DirSink::create(&dir).unwrap_err();
+    let refused = DirSink::create(&dir).expect_err("the directory is already claimed");
     assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
 
-    let recorder = Recorder::new(Sink::Dir(sink), stepping_clock());
+    let recorder = Recorder::new(Sink::required(sink), stepping_clock(), standalone_context());
     let big = vec![b'x'; OUTPUT_FILE_LIMIT + 10];
     recorder.exec(ExecRecord {
         output: big.clone(),
@@ -359,7 +704,7 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
         ..exec(&["small"])
     });
     recorder.exec(exec(&["silent"]));
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
 
     let stream = fs::read_to_string(dir.join(FILE_NAME)).expect("stream");
     let events = read_events(stream.as_bytes()).expect("read");
@@ -369,9 +714,11 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
     );
     let execs: Vec<&ExecRecord> = events
         .iter()
-        .filter_map(|e| match &e.payload {
-            Payload::Exec { exec } => Some(exec),
-            _ => None,
+        .filter_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::Exec(exec) => Some(exec),
+            RelevantPayload::PhaseStart(_)
+            | RelevantPayload::PhaseEnd(_)
+            | RelevantPayload::Other => None,
         })
         .collect();
     assert_eq!(execs[0].output_path.as_deref(), Some("output/2.txt"));
@@ -401,10 +748,53 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
 
 #[test]
 fn the_reader_refuses_a_malformed_line_and_names_it() {
-    let text = "{\"seq\":1,\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\",\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0}\nnot json\n";
-    let error = read_events(text.as_bytes()).unwrap_err();
+    let text = "{\"seq\":1,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\",\"context\":{\"kind\":\"standalone\",\"run_id\":\"test\",\"build_selection\":\"8ab0bfdf63e67552f235202347a8bd67247a83027fa8a321b61b759d3f35ab85\"}}}\nnot json\n";
+    let error = read_events(text.as_bytes()).expect_err("the malformed line is refused");
     assert_eq!(error.line(), 2);
     assert!(error.to_string().contains("line 2"), "{error}");
+}
+
+#[test]
+fn the_reader_rejects_duplicate_keys_at_every_owned_depth() {
+    for text in [
+        "{\"seq\":1,\"seq\":2,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\"}}\n",
+        "{\"seq\":1,\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0,\"payload\":{\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\"}}\n",
+    ] {
+        let error = read_events(text.as_bytes()).expect_err("duplicate names are ambiguous");
+        assert_eq!(error.line(), 1);
+        assert!(
+            error.to_string().contains("duplicate JSON object key"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn the_v1_reader_distinguishes_an_explicit_null_from_a_missing_field() {
+    let event = rust_mutants::trace::Event {
+        seq: 1,
+        timestamp: "2027-01-15T08:00:00Z".to_owned(),
+        elapsed_ms: 0,
+        payload: Payload::Exec {
+            exec: exec(&["cargo", "check"]),
+        },
+    };
+    let exact = serde_json::to_string(&event).expect("an exact event");
+    assert!(
+        read_events(exact.as_bytes()).is_ok(),
+        "the explicitly null fields are part of the v1 shape"
+    );
+
+    let mut missing = serde_json::to_value(event).expect("an event value");
+    missing["payload"]["exec"]
+        .as_object_mut()
+        .expect("the exec record")
+        .remove("error");
+    let text = serde_json::to_string(&missing).expect("the malformed event");
+    assert!(
+        read_events(text.as_bytes()).is_err(),
+        "missing and explicitly null are different v1 documents"
+    );
 }
 
 #[test]
@@ -430,10 +820,14 @@ fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
         ]
     );
 
-    let recorder = Recorder::new(Sink::Memory(MemorySink::bounded(2)), stepping_clock());
+    let recorder = Recorder::new(
+        Sink::Memory(MemorySink::bounded(2)),
+        stepping_clock(),
+        standalone_context(),
+    );
     recorder.note("a", "1");
     recorder.note("b", "2");
-    recorder.run_end("ok", None);
+    recorder.run_end("ok", None).expect("trace closes");
     let problems = check(&recorder.events());
     assert!(problems.contains(&Problem::MissingRunStart), "{problems:?}");
     assert!(problems.contains(&Problem::Dropped(1)), "{problems:?}");
@@ -567,6 +961,7 @@ fn one_of_each_execution(recorder: &Recorder) {
         timeout_ms: 90_000,
         timeout_source: "derived".to_owned(),
         alone: true,
+        step_notice: None,
     });
     recorder.cache(rust_mutants::trace::CacheRecord {
         mutant: "b".repeat(20),
@@ -607,12 +1002,12 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
     let temp = tempfile::tempdir().expect("tempdir");
     let dir = temp.path().join("recording");
     let sink = DirSink::create(&dir).expect("the sink");
-    let recorder = Recorder::new(Sink::Dir(sink), stepping_clock());
+    let recorder = Recorder::new(Sink::required(sink), stepping_clock(), standalone_context());
     let phase = recorder.phase("prepare");
     one_of_each_preparation(&recorder);
     one_of_each_measurement(&recorder);
     phase.end();
-    recorder.run_end("detected", None);
+    recorder.run_end("detected", None).expect("trace closes");
 
     let text = fs::read_to_string(dir.join(FILE_NAME)).expect("the stream");
     let events = read_events(text.as_bytes()).expect("read");
@@ -623,7 +1018,7 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
         "the golden holds one line of every type the vocabulary knows, and no other"
     );
 
-    let schema: serde_json::Value = serde_json::from_str(
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
             njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
@@ -632,10 +1027,10 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
     .expect("the schema parses");
     let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
     for line in text.lines() {
-        let value: serde_json::Value = serde_json::from_str(line).expect("a line is one object");
-        if let Err(error) = validator.validate(&value) {
-            panic!("{line}\n{error}");
-        }
+        let value: serde_json::Value =
+            njutest_devkit::strictjson::decode_str(line).expect("a line is one object");
+        let valid = validator.validate(&value);
+        assert_eq!(result_state(&valid), Returned, "{line}\n{valid:?}");
     }
 
     let golden = njutest_devkit::paths::workspace_root()
@@ -646,14 +1041,14 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
 
 #[test]
 fn the_schema_and_the_vocabulary_name_the_same_types() {
-    let schema: serde_json::Value = serde_json::from_str(
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
             njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
     .expect("the schema parses");
-    let named: BTreeSet<String> = schema["oneOf"]
+    let named: BTreeSet<String> = schema["properties"]["payload"]["oneOf"]
         .as_array()
         .expect("one branch per type")
         .iter()
@@ -665,6 +1060,65 @@ fn the_schema_and_the_vocabulary_name_the_same_types() {
 }
 
 #[test]
+fn the_trace_schema_ties_step_evidence_to_exactly_the_step_outcome() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &fs::read_to_string(
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
+        )
+        .expect("the schema file"),
+    )
+    .expect("the schema parses");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    let mut event = serde_json::json!({
+        "seq": 1,
+        "timestamp": "2027-01-15T08:00:00Z",
+        "elapsed_ms": 0,
+        "payload": {
+            "type": "mutant-exec",
+            "mutant": {
+                "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "index": 0,
+                "target": "demo/lib/demo",
+                "outcome": "survived",
+                "step_notice": null,
+                "exit_code": 0,
+                "duration_ms": 1,
+                "tests_run": null,
+                "signal": null,
+                "failed_tests": [],
+                "timeout_ms": 1000,
+                "timeout_source": "configured",
+                "alone": true
+            }
+        }
+    });
+    assert!(validator.is_valid(&event));
+
+    event["payload"]["mutant"]["outcome"] = serde_json::json!("step_limit_reached");
+    assert!(!validator.is_valid(&event), "a step fact needs its notice");
+    event["payload"]["mutant"]["step_notice"] = serde_json::json!({
+        "nonce": "00000000000000000000000000000001",
+        "catalog": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mutant": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "limit": 10,
+        "observed": 11
+    });
+    assert!(validator.is_valid(&event));
+
+    event["payload"]["mutant"]["outcome"] = serde_json::json!("survived");
+    assert!(
+        !validator.is_valid(&event),
+        "a non-step outcome cannot carry step evidence"
+    );
+    event["payload"]["mutant"]["step_notice"] = serde_json::Value::Null;
+    event["payload"]["mutant"]["outcome"] = serde_json::json!("future-outcome");
+    assert!(
+        !validator.is_valid(&event),
+        "an unknown outcome requires a new trace schema"
+    );
+}
+
+#[test]
 fn a_phase_that_never_ended_is_a_problem_a_reader_is_told_about() {
     let events = vec![
         event(
@@ -672,6 +1126,7 @@ fn a_phase_that_never_ended_is_a_problem_a_reader_is_told_about() {
             Payload::RunStart {
                 schema: SCHEMA.to_owned(),
                 engine: "0.1.0".to_owned(),
+                context: standalone_context(),
             },
         ),
         event(
@@ -727,6 +1182,7 @@ fn a_phase_that_began_and_ended_is_no_problem() {
             Payload::RunStart {
                 schema: SCHEMA.to_owned(),
                 engine: "0.1.0".to_owned(),
+                context: standalone_context(),
             },
         ),
         phase("prepare", 2, false),
@@ -769,9 +1225,15 @@ fn a_summary_counts_the_types_times_every_phase_and_names_the_slowest_commands()
     recorder.exec(exec(&["cargo", "test", "--no-run"]));
     one_of_each_measurement(&recorder);
     outer.end();
-    recorder.run_end("detected", None);
+    recorder.run_end("detected", None).expect("trace closes");
 
     let summary = summarize(&recorder.events(), 2);
+    assert_eq!(
+        result_state(&summary),
+        Returned,
+        "the fixture trace must summarize exactly: {summary:?}"
+    );
+    let Ok(summary) = summary else { return };
     assert_eq!(summary.events, recorder.events().len() as u64);
     assert_eq!(summary.dropped, 0);
     assert_eq!(
@@ -823,8 +1285,14 @@ fn a_summary_renders_as_lines_a_person_reads_and_a_diff_says_what_moved() {
     let phase = recorder.phase("prepare");
     recorder.exec(exec(&["cargo", "check"]));
     phase.end();
-    recorder.run_end("detected", None);
+    recorder.run_end("detected", None).expect("trace closes");
     let before = summarize(&recorder.events(), 3);
+    assert_eq!(
+        result_state(&before),
+        Returned,
+        "the fixture trace must summarize exactly: {before:?}"
+    );
+    let Ok(before) = before else { return };
 
     let rendered = render(&before);
     assert!(rendered.contains("EVENTS\t"), "{rendered}");
@@ -836,8 +1304,14 @@ fn a_summary_renders_as_lines_a_person_reads_and_a_diff_says_what_moved() {
     second.exec(exec(&["cargo", "check"]));
     second.exec(exec(&["cargo", "test"]));
     phase.end();
-    second.run_end("detected", None);
+    second.run_end("detected", None).expect("trace closes");
     let after = summarize(&second.events(), 3);
+    assert_eq!(
+        result_state(&after),
+        Returned,
+        "the fixture trace must summarize exactly: {after:?}"
+    );
+    let Ok(after) = after else { return };
 
     let moved = diff(&before, &after);
     assert!(
@@ -865,9 +1339,15 @@ fn a_summary_counts_how_many_times_each_program_was_started() {
     recorder.exec(exec(&["cargo", "test", "--no-run"]));
     recorder.exec(exec(&["cargo", "test", "--no-run"]));
     recorder.exec(exec(&["rustc", "--print", "sysroot"]));
-    recorder.run_end("detected", None);
+    recorder.run_end("detected", None).expect("trace closes");
 
     let summary = summarize(&recorder.events(), 2);
+    assert_eq!(
+        result_state(&summary),
+        Returned,
+        "the fixture trace must summarize exactly: {summary:?}"
+    );
+    let Ok(summary) = summary else { return };
     assert_eq!(
         summary.invocations.get("cargo").copied(),
         Some(3),
@@ -885,14 +1365,14 @@ fn a_summary_counts_how_many_times_each_program_was_started() {
 
 #[test]
 fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
-    let schema: serde_json::Value = serde_json::from_str(
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
         &fs::read_to_string(
             njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
     .expect("the schema parses");
-    let route = schema["oneOf"]
+    let route = schema["properties"]["payload"]["oneOf"]
         .as_array()
         .expect("one branch per type")
         .iter()
@@ -901,7 +1381,7 @@ fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
     let named = |field: &str| -> BTreeSet<String> {
         route["properties"]["route"]["properties"][field]["enum"]
             .as_array()
-            .unwrap_or_else(|| panic!("route.{field} is an enum"))
+            .expect("a route field is an enum")
             .iter()
             .filter_map(|one| one.as_str())
             .map(str::to_owned)
@@ -909,9 +1389,9 @@ fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
     };
     assert_eq!(
         named("granularity"),
-        rust_mutants::session::Route::GRANULARITIES
+        rust_mutants::session::Granularity::ALL
             .iter()
-            .map(|one| (*one).to_owned())
+            .map(|one| one.name().to_owned())
             .collect::<BTreeSet<String>>(),
         "a route the engine can record is one the schema accepts"
     );
