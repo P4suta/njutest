@@ -5,10 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # fixture-unreached
 
-A mutation no measured test reaches. Coverage says the position was
-instrumented and that no target executed it, so the run resolves the mutation
-without starting a single process and reports it as surviving: nothing reached
-it is a gap in the tests exactly as nothing noticed it is.
+A mutation no measured test reaches.
+The guards say the position was instrumented and that no target reached it, so the run resolves the mutation without starting a single process and reports it as surviving: nothing reached it is a gap in the tests exactly as nothing noticed it is.
+The run below also builds with `--coverage`, the second opinion [ADR 0014](../../docs/adr/0014-the-guards-are-the-measurement.md) keeps, and coverage says the same; its fates are the same without it.
 
 | Function | Reached | Fate |
 | --- | --- | --- |
