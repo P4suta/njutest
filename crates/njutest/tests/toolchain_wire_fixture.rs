@@ -92,16 +92,24 @@ fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
         rewrite(&drawn);
         return;
     }
+    let could_not_attribute = finding(&report, njutest::assure::wire::ALREADY_FAILING);
     panic!(
         "what a run of {FIXTURE} established is not what its README states. A seam fate that \
          moved is either a defect or a decision, and the README is where the decision is \
          recorded, so {UPDATE}=1 rewrites the block and the diff is the review.\n\n\
-         stated:\n{}\n\nfound:\n{drawn}\n",
+         stated:\n{}\n\nfound:\n{drawn}\n\n\
+         Before reading this as a fate that moved: where the rows say `unreached` and the \
+         run reports it could not attribute, the suite on this machine was already failing \
+         without a fault, so what moved is the machine. Rewriting the block would then \
+         write that machine into the oracle.\ncould not attribute: {}\n\n\
+         what the run said it could not do:\n{}\n",
         stated
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<String>>()
-            .join("\n")
+            .join("\n"),
+        could_not_attribute.unwrap_or_else(|| "(nothing said so)".to_owned()),
+        every_absence(&report).join("\n")
     );
 }
 
@@ -166,6 +174,37 @@ fn document(fixture: &Fixture) -> serde_json::Value {
     )
     .expect("the report is a document");
     whole["report"]["builds"][0]["parts"][0].clone()
+}
+
+/// The detail of the one finding whose subject is `named`, when the report carries it.
+fn finding(report: &serde_json::Value, named: &str) -> Option<String> {
+    report["findings"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|one| one["subject"].as_str() == Some(named))
+        .find_map(|one| one["detail"].as_str().map(str::to_owned))
+}
+
+/// Every limitation and every not-measured finding the report carries, so a failure names what the run could not do rather than only what it did.
+fn every_absence(report: &serde_json::Value) -> Vec<String> {
+    let named = |key: &str, label: &str| -> Vec<String> {
+        report[key]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|one| {
+                let name = one["name"].as_str().or_else(|| one["subject"].as_str())?;
+                let detail = one["detail"].as_str()?;
+                Some(format!("{label}\t{name}\t{detail}"))
+            })
+            .collect()
+    };
+    let mut all = named("limitations", "limitation");
+    all.extend(named("findings", "finding"));
+    all
 }
 
 /// The detail of the one limitation `named`, when the report carries it.
