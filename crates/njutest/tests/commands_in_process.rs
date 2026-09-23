@@ -1224,6 +1224,56 @@ fn the_command_a_run_tells_a_reader_to_type_is_one_that_works() {
 
 #[cfg(unix)]
 #[test]
+fn a_file_is_drawn_as_the_run_measured_it_with_each_changed_line_marked_until_it_changes() {
+    let it = verified();
+    let drawn = ask(&it.root, &["guard", "src/lib.rs"]);
+    assert_eq!(
+        drawn.code, 0,
+        "a guard describes and does not judge, so a file with gaps in it is still drawn: {}",
+        drawn.err
+    );
+    njutest_devkit::golden::golden(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/guard-baseline.golden"),
+        drawn.out.replace(&it.run, "<run>").as_bytes(),
+    )
+    .unwrap_or_else(|error| panic!("the guard of fixture-baseline's library: {error}"));
+    let again = ask(&it.root, &["guard", "./src/lib.rs"]);
+    assert_eq!(
+        again.out, drawn.out,
+        "a path is the file it names however it is spelled: {}",
+        again.err
+    );
+
+    let library = it.root.join("src/lib.rs");
+    let measured = std::fs::read_to_string(&library).expect("the fixture's library");
+    std::fs::write(&library, format!("{measured}\n")).expect("an edit");
+    let edited = ask(&it.root, &["guard", "src/lib.rs"]);
+    assert_eq!(edited.code, 0, "{}", edited.err);
+    let first = measured
+        .lines()
+        .find(|line| !line.trim().is_empty() && !line.starts_with("//"))
+        .expect("a line of code");
+    assert!(
+        edited
+            .out
+            .contains("src/lib.rs is not yet asked: the file has changed since the run read it")
+            && !edited.out.contains(first),
+        "a file edited since the run is one note and none of its code, since a mark beside a \
+         line the run did not measure says something about a program nobody asked about: {}",
+        edited.out
+    );
+
+    let nowhere = ask(&it.root, &["guard", "src/nowhere.rs"]);
+    assert_eq!(nowhere.code, 3, "{}", nowhere.out);
+    assert!(
+        nowhere.err.contains("NJ6006") && nowhere.err.contains(&it.run),
+        "a file the run changed nothing in is refused by its code and names the run: {}",
+        nowhere.err
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_run_is_specified_item_by_item_and_a_subject_it_never_changed_is_refused() {
     let it = verified();
     let whole = ask(&it.root, &["spec"]);

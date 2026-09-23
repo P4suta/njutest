@@ -36,12 +36,17 @@ pub fn page(specification: &Specification, terminal: Terminal) -> String {
     page
 }
 
-/// The line that says what was read, from which run, and how much of the workspace that run asked about.
-fn headline(specification: &Specification) -> String {
-    let builds = match specification.builds() {
+/// How many builds the run measured, and which.
+pub(super) fn builds(specification: &Specification) -> String {
+    match specification.builds() {
         [one] => format!("1 build, {one}"),
         several => format!("{} builds, {}", several.len(), several.join(", ")),
-    };
+    }
+}
+
+/// The line that says what was read, from which run, and how much of the workspace that run asked about.
+fn headline(specification: &Specification) -> String {
+    let builds = builds(specification);
     let items = match specification.items().len() {
         1 => "1 item".to_owned(),
         count => format!("{count} items"),
@@ -90,8 +95,19 @@ pub const fn heading(section: Section) -> &'static str {
     }
 }
 
+/// What a section is called where it is named in a word or two.
+#[must_use]
+pub const fn named(section: Section) -> &'static str {
+    match section {
+        Section::Pinned => "pinned",
+        Section::Free => "left free",
+        Section::Same => "the same program",
+        Section::Unsettled => "could not tell",
+    }
+}
+
 /// How a section's heading is painted, which is what it is worth to a reader.
-const fn painted(section: Section) -> Style {
+pub(super) const fn painted(section: Section) -> Style {
     match section {
         Section::Pinned => Style::Well,
         Section::Free => Style::Gap,

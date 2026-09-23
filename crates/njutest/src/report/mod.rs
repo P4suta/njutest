@@ -819,6 +819,16 @@ impl Decision {
         }
     }
 
+    /// Whichever of the two a mutation stands less on, which is what the two together stand on.
+    #[must_use]
+    pub const fn weaker(self, other: Self) -> Self {
+        if other.standing() < self.standing() {
+            other
+        } else {
+            self
+        }
+    }
+
     /// Which way this is a hole, or nothing where somebody answered.
     ///
     /// Matched without a catch-all, so a decision added later is one the compiler makes somebody place on one side of the line rather than one that quietly falls on the answered side.
@@ -6413,10 +6423,7 @@ fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
                 .map(move |row| (part.run_id.clone(), part.part, row))
         });
         for (projection, (run_id, part, row)) in projected.iter_mut().zip(rows) {
-            let candidate = row.outcome.decision();
-            if candidate.standing() < projection.decision.standing() {
-                projection.decision = candidate;
-            }
+            projection.decision = projection.decision.weaker(row.outcome.decision());
             projection.by_build.push(BuildMutationDecision {
                 build: build.name.clone(),
                 run_id,

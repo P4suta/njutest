@@ -4,6 +4,7 @@
 //! What a person is told about a run, as a value every surface is a projection of.
 
 pub mod agent;
+pub mod guard;
 pub mod human;
 pub mod moved;
 pub mod review;
@@ -527,6 +528,12 @@ impl Missing {
     }
 }
 
+/// What brings back the findings of run `run` in a file it is not showing them in.
+#[must_use]
+pub fn until_measured(run: &str) -> String {
+    format!("nothing run {run} found in this file is shown until a run measures it again")
+}
+
 /// Something a reader can do about a diagnostic.
 #[derive(Debug, Clone)]
 pub struct Action {
@@ -563,6 +570,16 @@ pub struct Strokes {
     pub well: &'static str,
     /// What a verdict that found something is marked with.
     pub unwell: &'static str,
+    /// What a line the tests pin is marked with.
+    pub pinned: &'static str,
+    /// What a line the tests leave free is marked with.
+    pub free: &'static str,
+    /// What a line whose every change is the same program is marked with.
+    pub same: &'static str,
+    /// What a line the run could not tell about is marked with.
+    pub unsettled: &'static str,
+    /// What a file no run has asked about as it is now is marked with.
+    pub unasked: &'static str,
 }
 
 /// The box-drawing set, for a terminal whose font has it.
@@ -578,6 +595,11 @@ const DRAWN: Strokes = Strokes {
     after: "]",
     well: "\u{2713} ",
     unwell: "\u{2717} ",
+    pinned: "\u{25cf}",
+    free: "\u{25cb}",
+    same: "\u{25ce}",
+    unsettled: "\u{25c7}",
+    unasked: "\u{25cc}",
 };
 
 /// The set `rustc` uses, which every terminal has.
@@ -593,6 +615,11 @@ const PLAIN: Strokes = Strokes {
     after: "",
     well: "",
     unwell: "",
+    pinned: "*",
+    free: "o",
+    same: "=",
+    unsettled: "?",
+    unasked: ".",
 };
 
 /// What the composition root learned about where the output is going.

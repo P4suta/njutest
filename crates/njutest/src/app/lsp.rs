@@ -144,8 +144,9 @@ pub fn diagnostics(
 /// What a reader of a file the run's findings are not shown in is told: why, which run, and what shows them again.
 fn unshown_note(run: &str, missing: crate::presentation::Missing) -> String {
     format!(
-        "{}; nothing run {run} found in this file is shown until a run measures it again",
-        missing.told()
+        "{}; {}",
+        missing.told(),
+        crate::presentation::until_measured(run)
     )
 }
 
