@@ -9,6 +9,17 @@
 
 set -euo pipefail
 
+# None of the `GIT_*` variables Git exports into a hook survive past this point.
+#
+# Git runs this script with `GIT_DIR` naming the repository being pushed, and a variable wins over `git -C`.
+# With it, the gate's own `checkout --detach` in its isolated tree moved the pusher's `HEAD`, and a test in the check that ran `git init` and `git config` in a temporary directory made the pushed repository bare and gave it the fixture's author.
+# The hook starts in the pusher's worktree, so discovery finds the same repository without them, and every command below names the tree it means with `-C`.
+while IFS= read -r name; do
+  if [[ "${name}" == GIT_* ]]; then
+    unset "${name}"
+  fi
+done < <(compgen -e)
+
 # Two numbers, because one cannot be both the detector and the backstop.
 #
 # A gate that quietly takes an hour is not a slow gate, it is a broken one, and the way that breaks is always the same: something stopped being cached and nobody noticed, because waiting looks exactly like working.
@@ -49,21 +60,6 @@ within_budget() {
     echo "pre-push: the gate passed in ${elapsed}s, over the ${expected_seconds}s a warm run should beat" >&2
     echo "pre-push: that is the reading to act on while it is still cheap. A first run after a merge is expected here; a second one that is still slow means something stopped being cached" >&2
   fi
-}
-
-# Runs a command with none of the `GIT_*` variables Git exports into a hook.
-#
-# Git runs this script with `GIT_DIR` naming the repository being pushed, and everything the check starts inherits it.
-# A test that runs `git init` or `git config` in a temporary directory then writes to that repository instead: a push made the shared repository bare and committed a fixture onto the branch being pushed.
-# The check reads the detached tree it runs in, so it needs none of them.
-unhooked() {
-  local removed=() name
-  while IFS= read -r name; do
-    if [[ "${name}" == GIT_* ]]; then
-      removed+=(-u "${name}")
-    fi
-  done < <(compgen -e)
-  env ${removed[@]+"${removed[@]}"} "$@"
 }
 
 zero=0000000000000000000000000000000000000000
@@ -143,13 +139,16 @@ trap 'exit 143' TERM
 # `git worktree add` writes every file afresh, and cargo fingerprints on mtime, so a tree with identical content still rebuilds the workspace from nothing.
 # That is the last thing that made a push cost twenty minutes with a cache that was already warm: measured in this very worktree, `build` is 1s and `clippy` is 0s once the mtimes stop moving.
 # A checkout in place touches only the files that differ, which is exactly the set that should be recompiled.
+# Only a clean tree is moved, and without `--force`: the exit trap leaves it clean, and one that is not is made again rather than overwritten, which costs a rebuild and never an answer about something other than the pushed object.
 mkdir -p "$(dirname "${checkout}")"
 git -C "${repository}" worktree prune
-if [[ -e "${checkout}/.git" ]]; then
-  git -C "${checkout}" checkout --quiet --force --detach "${head}"
-  git -C "${checkout}" clean --quiet -fd -e /target
+if [[ -e "${checkout}/.git" ]] \
+  && [[ -z "$(git -C "${checkout}" status --porcelain=v1 --untracked-files=all)" ]] \
+  && git -C "${checkout}" checkout --quiet --detach "${head}"; then
+  :
 else
   rm -rf "${checkout}"
+  git -C "${repository}" worktree prune
   git -C "${repository}" worktree add --quiet --detach "${checkout}" "${head}"
 fi
 mkdir -p "${repository}/target/pre-push/debug" "${repository}/target/pre-push/release" "${checkout}/target"
@@ -169,10 +168,10 @@ require_exact_tree
 # `build` and `clippy` are not all of them: `lint` also runs `doc` and `fuzz:clippy`, each with fingerprints of its own, and those two left 600s of compiling inside a budget that was supposed to see none.
 # One pass that compiles and one that measures needs no list and cannot fall behind one.
 warming=$(date +%s)
-( cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" unhooked mise run check >/dev/null 2>&1 ) || true
+( cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check >/dev/null 2>&1 ) || true
 echo "pre-push: compiled in $(( $(date +%s) - warming ))s, which the budget does not count" >&2
 
-within_budget unhooked bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
+within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
 # The tree is isolated and so is the cache, which is now warm because the path above no longer changes: the developer's own `target/debug` stays out of the answer, and the gate still does not recompile what the previous push compiled.
 # What a warm cache cannot answer is whether a green came from an artifact older than the field it is meant to prove, so that question is asked separately and coldly below.
 require_exact_tree
