@@ -516,3 +516,49 @@ fn a_catalog_naming_a_rule_this_release_does_not_know_is_one_it_cannot_read() {
         "every identity in it was minted from the version it names: {error}"
     );
 }
+
+#[test]
+fn the_catalog_names_each_file_it_was_read_from_by_the_one_digest_its_mutants_carry() {
+    let mut builder = Builder::new();
+    builder
+        .add_all([
+            a(),
+            b(),
+            candidate(("crates/a/src/a.rs", "eq-to-neq", (46, 48), b"==", b"!=")),
+        ])
+        .expect("valid");
+    let catalog = builder.build().expect("a catalog");
+    let sources = catalog.sources().expect("one digest per file");
+    let named: Vec<(&str, &str)> = sources
+        .iter()
+        .map(|(path, digest)| (path.as_str(), digest.as_str()))
+        .collect();
+    let read = digest(SOURCE);
+    assert_eq!(
+        named,
+        [
+            ("crates/a/src/a.rs", read.as_str()),
+            ("crates/a/src/b.rs", read.as_str())
+        ],
+        "a file is named once however many mutants it holds"
+    );
+
+    let mut document = serde_json::to_value(&catalog).expect("a catalog is a document");
+    let mutants = document["mutants"].as_array_mut().expect("the mutants");
+    let second_in_a = mutants
+        .iter_mut()
+        .filter(|one| one["candidate"]["path"] == "crates/a/src/a.rs")
+        .nth(1)
+        .expect("two mutants in a.rs");
+    second_in_a["candidate"]["source_digest"] =
+        serde_json::Value::String(digest(b"a different file"));
+    let tampered: Catalog = serde_json::from_value(document).expect("the tampered catalog reads");
+    assert!(
+        matches!(
+            tampered.sources(),
+            Err(CandidateError::SourceDigestConflict { .. })
+        ),
+        "a catalog whose mutants give one file two digests contradicts itself, and naming \
+         either as the file it was read from would be a guess"
+    );
+}

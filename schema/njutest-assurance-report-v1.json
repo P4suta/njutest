@@ -1674,6 +1674,26 @@
         }
       }
     },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One file a source's mutants were read from, and its SHA-256 as the source read it.",
+      "required": [
+        "path",
+        "digest"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The file, from the workspace root."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The SHA-256 of the file's bytes."
+        }
+      }
+    },
     "buildPartEvidence": {
       "type": "object",
       "additionalProperties": false,
@@ -1688,6 +1708,7 @@
         "candidates",
         "seams",
         "targets",
+        "sources",
         "mutants",
         "findings",
         "limitations",
@@ -1725,6 +1746,13 @@
             "$ref": "#/$defs/target"
           },
           "description": "The baseline target facts, in canonical target order."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          },
+          "description": "The SHA-256 of each file this source's mutants were read from, as it read them, one entry per file in path order; a reader holds a file to it before drawing any line of it as the code the run measured."
         },
         "mutants": {
           "type": "array",
