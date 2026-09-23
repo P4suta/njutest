@@ -71,6 +71,7 @@ pub struct Interposer {
     seq: Arc<std::sync::atomic::AtomicU64>,
     applied: Arc<AtomicBool>,
     previous: Arc<Mutex<Option<Vec<u8>>>>,
+    incomplete: Arc<std::sync::atomic::AtomicU64>,
     serving: ServingThread,
 }
 
@@ -105,6 +106,7 @@ impl Interposer {
         let putting = Arc::new(Mutex::new(interposing.injecting.clone()));
         let seq = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let applied = Arc::new(AtomicBool::new(false));
+        let incomplete = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let previous = Arc::new(Mutex::new(None));
         let stopping = Arc::new(AtomicBool::new(false));
         let serving = ServingThread::launch(
@@ -118,6 +120,7 @@ impl Interposer {
                 putting: Arc::clone(&putting),
                 seq: Arc::clone(&seq),
                 applied: Arc::clone(&applied),
+                incomplete: Arc::clone(&incomplete),
                 previous: Arc::clone(&previous),
                 stopping: Arc::clone(&stopping),
             },
@@ -133,6 +136,7 @@ impl Interposer {
             seq,
             applied,
             previous,
+            incomplete,
             serving,
         })
     }
@@ -167,6 +171,15 @@ impl Interposer {
     pub fn was_put(&self) -> bool {
         self.settled();
         self.applied.load(Ordering::Relaxed)
+    }
+
+    /// How many callers reached this seam and did not complete an exchange while no fault was in place.
+    ///
+    /// The interposer is the only thing that can tell those apart: a fault it applied is a question somebody asked, and an exchange that ended with nothing applied is the transport failing under whatever else the machine was doing.
+    /// Reading the second as a test failing makes a busy runner into a verdict.
+    #[must_use]
+    pub fn did_not_complete(&self) -> u64 {
+        self.incomplete.load(Ordering::Relaxed)
     }
 
     /// Hands back everything that has gone past so far and forgets it, without stopping.
@@ -315,6 +328,7 @@ struct Serving {
     applied: Arc<AtomicBool>,
     previous: Arc<Mutex<Option<Vec<u8>>>>,
     stopping: Arc<AtomicBool>,
+    incomplete: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Accepts one connection at a time until asked to stop.
@@ -350,6 +364,16 @@ fn serve(listener: &TcpListener, serving: &Serving) -> std::io::Result<()> {
         if carried.applied {
             serving.applied.store(true, Ordering::Relaxed);
             *locked(&serving.putting) = None;
+        }
+        if carried.exchange.is_none() && !carried.applied {
+            match serving
+                .incomplete
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |seen| {
+                    seen.checked_add(1)
+                }) {
+                Ok(_seen) => {}
+                Err(_more_callers_than_can_be_counted) => std::process::abort(),
+            }
         }
         if let Some(exchange) = carried.exchange {
             if !serving.sealed.load(Ordering::Relaxed) {

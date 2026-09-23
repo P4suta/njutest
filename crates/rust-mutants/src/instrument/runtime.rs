@@ -146,6 +146,7 @@ macro_rules! step_machine {
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             enum StepPhase {
                 Dormant,
+                Counting(usize),
                 Active(usize),
                 Stopping(usize),
             }
@@ -174,6 +175,15 @@ macro_rules! step_machine {
                     }
                     (StepPhase::Dormant, StepAction::Checkpoint) => {
                         Ok((StepPhase::Dormant, StepAdvance::Continue))
+                    }
+                    (StepPhase::Counting(seen), StepAction::Checkpoint) => {
+                        match seen.checked_add(1) {
+                            Some(next) => Ok((StepPhase::Counting(next), StepAdvance::Continue)),
+                            None => Err(StepMachineError::Count),
+                        }
+                    }
+                    (StepPhase::Counting(seen), StepAction::Activate) => {
+                        Ok((StepPhase::Counting(seen), StepAdvance::Continue))
                     }
                     (StepPhase::Active(spent), StepAction::Activate)
                         if spent > 0 && spent <= allowed =>
@@ -333,10 +343,20 @@ mod {{MODULE}} {
         Applied,
         AlreadyBorrowed,
     }
+    // The three names the durable step protocol is addressed by. A process
+    // cannot change its own environment under itself, so reading them once is
+    // reading them as often as they can differ; doing it per take charged three
+    // environment lookups for an answer that was already known.
+    struct StepIdentity {
+        path: __rm_std::option::Option<__rm_std::string::String>,
+        nonce: __rm_std::option::Option<__rm_std::string::String>,
+        mutant: __rm_std::option::Option<__rm_std::string::String>,
+    }
     static ACTIVE: __rm_std::sync::OnceLock<Selection> = __rm_std::sync::OnceLock::new();
     static BUDGET: __rm_std::sync::OnceLock<Budget> = __rm_std::sync::OnceLock::new();
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
+    static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
 
 {{VALUE_MACRO}}
     #[inline(always)]
@@ -411,20 +431,33 @@ mod {{MODULE}} {
         action: StepAction,
         limit: StepLimit,
     ) -> __rm_std::result::Result<StepAdvance, StepStateError> {
-        let path = __rm_std::env::var("{{STEP_STATE_ENV}}")
-            .map_err(|_| StepStateError::MissingPath)?;
-        let nonce = __rm_std::env::var("{{STEP_NONCE_ENV}}")
-            .map_err(|_| StepStateError::MissingNonce)?;
-        let mutant = __rm_std::env::var("{{ACTIVE_ENV}}")
-            .map_err(|_| StepStateError::MissingMutant)?;
-        let mut file = open_step_state(&path)?;
+        let identity = STEP_IDENTITY.get_or_init(read_step_identity);
+        let path = match identity.path.as_deref() {
+            __rm_std::option::Option::Some(path) => path,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::MissingPath);
+            }
+        };
+        let nonce = match identity.nonce.as_deref() {
+            __rm_std::option::Option::Some(nonce) => nonce,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::MissingNonce);
+            }
+        };
+        let mutant = match identity.mutant.as_deref() {
+            __rm_std::option::Option::Some(mutant) => mutant,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::MissingMutant);
+            }
+        };
+        let mut file = open_step_state(path)?;
         file.lock().map_err(|_| StepStateError::Lock)?;
         let transitioned = (|| {
             let metadata = file.metadata().map_err(|_| StepStateError::Metadata)?;
             if !metadata.file_type().is_file() {
                 return __rm_std::result::Result::Err(StepStateError::NotRegular);
             }
-            let phase = read_step_state(&mut file, &nonce, &mutant, limit)?;
+            let phase = read_step_state(&mut file, nonce, mutant, limit)?;
             let (next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
             if let StepAdvance::Reached { allowed, observed } = advanced {
@@ -437,7 +470,7 @@ mod {{MODULE}} {
                 publish_step_notice(allowed, observed).map_err(|_| StepStateError::Publish)?;
             }
             if next != phase {
-                write_step_state(&mut file, &nonce, &mutant, limit, next)?;
+                write_step_state(&mut file, nonce, mutant, limit, next)?;
             }
             __rm_std::result::Result::Ok(advanced)
         })();
@@ -673,6 +706,7 @@ mod {{MODULE}} {
         }
         let phase = match phase_field {
             __rm_std::option::Option::Some("dormant") if spent == 0 => StepPhase::Dormant,
+            __rm_std::option::Option::Some("counting") => StepPhase::Counting(spent),
             __rm_std::option::Option::Some("active")
                 if spent > 0 && spent <= expected_limit.value() => StepPhase::Active(spent),
             __rm_std::option::Option::Some("stopping")
@@ -684,6 +718,14 @@ mod {{MODULE}} {
         __rm_std::result::Result::Ok(phase)
     }
 
+    fn read_step_identity() -> StepIdentity {
+        StepIdentity {
+            path: __rm_std::result::Result::ok(__rm_std::env::var("{{STEP_STATE_ENV}}")),
+            nonce: __rm_std::result::Result::ok(__rm_std::env::var("{{STEP_NONCE_ENV}}")),
+            mutant: __rm_std::result::Result::ok(__rm_std::env::var("{{ACTIVE_ENV}}")),
+        }
+    }
+
     fn write_step_state(
         file: &mut __rm_std::fs::File,
         nonce: &str,
@@ -691,10 +733,18 @@ mod {{MODULE}} {
         limit: StepLimit,
         phase: StepPhase,
     ) -> __rm_std::result::Result<(), StepStateError> {
-        let (name, spent) = match phase {
-            StepPhase::Dormant => ("dormant", 0),
-            StepPhase::Active(spent) => ("active", spent),
-            StepPhase::Stopping(spent) => ("stopping", spent),
+        // A persisted Stopping state is the proof that the notice was published,
+        // so that write is the one that has to survive losing the machine. A
+        // count on its way up is progress: losing it costs a process its place
+        // and costs no verdict its exactness, because the count still passes
+        // through this locked file every time and the boundary is still read
+        // from it. Paying for durability per take is what made a take cost
+        // 7.3ms on Windows, which is a clock the count then had to race.
+        let (name, spent, durable) = match phase {
+            StepPhase::Dormant => ("dormant", 0, false),
+            StepPhase::Counting(seen) => ("counting", seen, false),
+            StepPhase::Active(spent) => ("active", spent, false),
+            StepPhase::Stopping(spent) => ("stopping", spent, true),
         };
         let state = __rm_std::format!(
             "{{STEP_STATE_SCHEMA}}\t{}\t{}\t{}\t{}\t{}\t{}\n",
@@ -710,7 +760,9 @@ mod {{MODULE}} {
         file.set_len(0).map_err(|_| StepStateError::Truncate)?;
         __rm_std::io::Write::write_all(file, state.as_bytes())
             .map_err(|_| StepStateError::Write)?;
-        file.sync_data().map_err(|_| StepStateError::Sync)?;
+        if durable {
+            file.sync_data().map_err(|_| StepStateError::Sync)?;
+        }
         __rm_std::result::Result::Ok(())
     }
 
@@ -1236,6 +1288,46 @@ mod tests {
     }
 
     #[test]
+    fn counting_counts_every_boundary_and_stops_at_none_of_them() {
+        for allowed in 1..=8 {
+            for seen in 0..12 {
+                assert_eq!(
+                    step_transition(StepPhase::Counting(seen), StepAction::Checkpoint, allowed),
+                    Ok((StepPhase::Counting(seen + 1), StepAdvance::Continue)),
+                    "a baseline is measured, not bounded: the allowance is what a mutation is \
+                     held to, and holding the original to it would make the number a run \
+                     derives depend on the number it started from"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_but_the_state_file_can_put_a_run_into_counting() {
+        for allowed in 1..=4 {
+            for spent in 0..6 {
+                for action in [StepAction::Activate, StepAction::Checkpoint] {
+                    for phase in [
+                        StepPhase::Dormant,
+                        StepPhase::Active(spent.max(1)),
+                        StepPhase::Stopping(allowed + 1),
+                    ] {
+                        assert!(
+                            !matches!(
+                                step_transition(phase, action, allowed),
+                                Ok((StepPhase::Counting(_), _))
+                            ),
+                            "counting is a mode the engine asks for by writing the initial \
+                             state, so no sequence of actions can enter it and a mutation \
+                             run cannot become an unbounded one"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_first_boundary_past_the_allowance_is_unique_and_stopping_is_absorbing() {
         for allowed in 1..=8 {
             for spent in 1..allowed {
@@ -1301,6 +1393,55 @@ mod kani_laws {
                 == Ok((StepPhase::Dormant, StepAdvance::Continue)),
             "njutest-law-assertion:dormant-inert",
         );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    fn a_counting_checkpoint_counts() {
+        let allowed = valid_limit();
+        let seen = kani::any::<usize>();
+        kani::assume(seen < usize::MAX);
+        kani::assert(
+            step_transition(StepPhase::Counting(seen), StepAction::Checkpoint, allowed)
+                == Ok((StepPhase::Counting(seen + 1), StepAdvance::Continue)),
+            "njutest-law-assertion:counting-counts",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    fn a_counting_checkpoint_never_stops() {
+        let allowed = valid_limit();
+        let seen = kani::any::<usize>();
+        kani::assume(seen < usize::MAX);
+        kani::assert(
+            !matches!(
+                step_transition(StepPhase::Counting(seen), StepAction::Checkpoint, allowed),
+                Ok((_, StepAdvance::Park)) | Ok((_, StepAdvance::Reached { .. }))
+            ),
+            "njutest-law-assertion:counting-never-stops",
+        );
+        kani::cover!(true, "njutest-law-reached");
+    }
+
+    #[kani::proof]
+    fn counting_is_not_reachable_from_dormant_or_active() {
+        let allowed = valid_limit();
+        let spent = kani::any::<usize>();
+        let action = if kani::any::<bool>() {
+            StepAction::Activate
+        } else {
+            StepAction::Checkpoint
+        };
+        for phase in [StepPhase::Dormant, StepPhase::Active(spent)] {
+            kani::assert(
+                !matches!(
+                    step_transition(phase, action, allowed),
+                    Ok((StepPhase::Counting(_), _))
+                ),
+                "njutest-law-assertion:counting-only-from-the-state-file",
+            );
+        }
         kani::cover!(true, "njutest-law-reached");
     }
 

@@ -38,6 +38,15 @@
 # The engine's default of fifty million is sized for the in-memory counter this
 # protocol replaced and is unreachable at durable cost.
 #
+# The 7.3ms above is what a take cost when every one of them ended in `fsync`.
+# Only the write that publishes the final notice is durable now, so a take is
+# cheaper than this by a wide margin and the race is less close than these
+# numbers describe. They are left as written because they are what the allowance
+# was chosen against, and because a number nobody has re-measured on the machine
+# that produced it is not a number to quietly replace: the floor of five is a
+# count and has not moved, so the allowance of ten is still right whichever way
+# the cost went.
+#
 # `clamp_positive` is merely slow, under FIXTURE_HANG_PAUSE_MS, and the clock is
 # what has to answer for it. That wants a bound a four-second sleep can beat,
 # which is the other reason the bound stays where it is. A sleep only gets
