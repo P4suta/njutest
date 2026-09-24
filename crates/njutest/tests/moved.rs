@@ -19,6 +19,7 @@ fn spot(line: u32, was: &str, standing: Standing) -> Spot {
         standing,
         blind_in: Vec::new(),
         locator: format!("src/lib.rs:sign:gt-to-ge@{line}"),
+        mutant: String::new(),
     }
 }
 

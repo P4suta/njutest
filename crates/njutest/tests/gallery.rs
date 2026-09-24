@@ -146,6 +146,7 @@ fn spot(at: (u32, u32), change: (&str, &str), standing: Standing, locator: &str)
         standing,
         blind_in: Vec::new(),
         locator: locator.to_owned(),
+        mutant: String::new(),
     }
 }
 

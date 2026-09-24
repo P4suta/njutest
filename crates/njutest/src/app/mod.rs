@@ -12,6 +12,7 @@ pub mod fix;
 pub mod init;
 pub mod lsp;
 pub mod merge;
+pub mod next;
 pub mod plan;
 pub mod replay;
 pub mod reports;
@@ -55,6 +56,7 @@ pub fn run(
         Command::Spec(arguments) => spec::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
         Command::Review(arguments) => review::run(arguments, environment, stdout, stderr),
+        Command::Next(arguments) => next::run(arguments, environment, stdout, stderr),
         Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),
         Command::Replay(arguments) => replay::run(arguments, environment, stdout, stderr),
         Command::Trace { command } => trace::run(command, environment, stdout, stderr),

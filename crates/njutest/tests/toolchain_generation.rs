@@ -341,3 +341,31 @@ fn a_digest_that_names_no_candidate_is_not_a_run_that_was_offered_none() {
          whether to look again or to stop looking: {refusal}"
     );
 }
+
+#[test]
+fn next_offers_the_checked_test_first_and_takes_it_only_once_it_holds_up_again() {
+    let fixture = fixture();
+    declaring(&fixture);
+    let offers = offering("tests/zero.rs", OFFERED);
+    let verified = njutest(&fixture, &["verify", "--offline", "--locked"], &offers);
+    assert_eq!(verified.status.code(), Some(2), "{verified:?}");
+
+    let taken = njutest(
+        &fixture,
+        &["next", "--take", "--offline", "--locked"],
+        &offers,
+    );
+    let said = njutest_devkit::process::strict_utf8(&taken.stdout).into_owned();
+    assert_eq!(taken.status.code(), Some(0), "{taken:?}");
+    assert!(
+        said.contains("the cheapest thing you can do closes"),
+        "the gap a checked test closes is the one offered first: {said}"
+    );
+    assert!(said.contains("tests/zero.rs"), "{said}");
+    assert!(
+        said.contains("wrote tests/zero.rs"),
+        "a test somebody took is written once it holds up again against the tree as it is: {said}"
+    );
+    let written = std::fs::read_to_string(fixture.root.join("tests/zero.rs")).expect("the test");
+    assert!(written.contains("zero_has_a_sign_of_its_own"), "{written}");
+}

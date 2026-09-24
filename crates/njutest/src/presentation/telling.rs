@@ -149,6 +149,7 @@ fn spot(mutant: &ProjectedMutant, _finding: &Finding) -> Spot {
         standing,
         blind_in: across,
         locator: locator(mutant),
+        mutant: mutant.display_id().to_owned(),
     }
 }
 
