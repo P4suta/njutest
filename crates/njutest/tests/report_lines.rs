@@ -89,6 +89,7 @@ fn report_varying(vary: &dyn Fn(&mut BuildReport)) -> Report {
         "git-metadata-unavailable",
         "the stream fixture is not a git repository",
     ));
+    njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
     vary(&mut source);
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(

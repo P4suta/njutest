@@ -20,6 +20,7 @@ pub mod review;
 pub mod runs;
 pub mod select;
 pub mod show;
+pub mod spec;
 pub mod trace;
 pub mod verify;
 pub mod watch;
@@ -53,6 +54,7 @@ pub fn run(
         Command::Report(arguments) => show::run(arguments, environment, stdout, stderr),
         Command::Explain(arguments) => explain::run(arguments, environment, stdout, stderr),
         Command::Why(arguments) => why::run(arguments, environment, stdout, stderr),
+        Command::Spec(arguments) => spec::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
         Command::Review(arguments) => review::run(arguments, environment, stdout, stderr),
         Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),

@@ -107,6 +107,10 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
             .collect(),
         skips: BTreeMap::new(),
         drift: Vec::new(),
+        sources: BTreeMap::from([(
+            "src/lib.rs".to_owned(),
+            rust_mutants::id::HexDigest::finish(<sha2::Sha256 as sha2::Digest>::new()),
+        )]),
     }
 }
 
@@ -441,6 +445,7 @@ fn reported(findings: Vec<njutest::report::Finding>) -> njutest::report::Report 
         "this synthetic fixture has no repository process",
     ));
     source.findings = findings;
+    njutest::testkit::read_every_named_file(&mut source);
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),
         rust_mutants::cargo::BuildConfig::default().selection(),

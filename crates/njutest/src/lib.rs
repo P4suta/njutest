@@ -29,6 +29,7 @@ pub mod run_id;
 pub mod rustflags;
 pub mod scratch;
 pub mod soundness;
+pub mod spec;
 pub(crate) mod strictjson;
 pub mod targets;
 pub(crate) mod text;

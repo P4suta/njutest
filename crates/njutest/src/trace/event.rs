@@ -88,6 +88,11 @@ pub enum Payload {
         /// The record.
         wire: WireExecRecord,
     },
+    /// One mutant planted for a routing layer, and how the engine routed it before the baseline.
+    Sentinel {
+        /// The record.
+        sentinel: SentinelRecord,
+    },
     /// One closed model-checking question and its typed answer.
     Model {
         /// The same independently auditable record retained in the report.
@@ -126,6 +131,7 @@ impl Payload {
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
             Self::WireExec { .. } => "wire-exec",
+            Self::Sentinel { .. } => "sentinel",
             Self::Model { .. } => "model",
             Self::Drift { .. } => "drift",
             Self::Note { .. } => "note",
@@ -537,6 +543,36 @@ pub struct WireExecRecord {
     /// Who decided it, and — where somebody did — who that was.
     #[serde(rename = "answer")]
     pub decision: crate::report::SeamDecision,
+}
+
+/// One mutant planted for a routing layer, what that layer had to do with it, and what the engine did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SentinelRecord {
+    /// The layer it was planted for.
+    pub layer: rust_mutants::sentinel::Planted,
+    /// The planted mutant, by its locator.
+    pub mutant: String,
+    /// How the layer must route it.
+    pub expected: rust_mutants::sentinel::Expected,
+    /// How the engine routed it.
+    pub routed: String,
+    /// Whether the route was the one expected.
+    pub sighted: bool,
+}
+
+impl SentinelRecord {
+    /// The record of one sighting.
+    #[must_use]
+    pub fn of(sighting: &rust_mutants::sentinel::Sighting) -> Self {
+        Self {
+            layer: sighting.expectation.planted,
+            mutant: sighting.expectation.mutant.to_string(),
+            expected: sighting.expectation.expected,
+            routed: sighting.routed(),
+            sighted: sighting.sighted(),
+        }
+    }
 }
 
 /// A free-form note, for what has no shape of its own yet.

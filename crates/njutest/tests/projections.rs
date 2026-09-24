@@ -108,6 +108,7 @@ fn report_with(findings: Vec<Finding>) -> Report {
             "the fixture is not a git repository",
         ),
     ];
+    njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),

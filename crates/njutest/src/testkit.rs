@@ -186,6 +186,12 @@ pub fn every_failure() -> Vec<RunnerError> {
                 display_id: "abcdef".to_owned(),
             },
         },
+        RunnerError::Blind {
+            layer: rust_mutants::sentinel::Planted::Reach,
+            mutant: "src/lib.rs:one:return-default".to_owned(),
+            expected: "unreached".to_owned(),
+            routed: "test".to_owned(),
+        },
         RunnerError::Output {
             source: std::io::Error::other("output closed"),
         },
@@ -235,6 +241,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::Build(_)
             | RunnerError::Measure(_)
             | RunnerError::Reach(_)
+            | RunnerError::Blind { .. }
             | RunnerError::Engine(_) => {}
         }
     }
@@ -324,6 +331,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
+        Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
         Payload::Note { .. } => "note",
@@ -365,6 +373,8 @@ pub mod payload {
         WireExchange,
         /// A wire decision.
         WireExec,
+        /// A routing layer's sentinel.
+        Sentinel(&'a crate::trace::SentinelRecord),
         /// A model decision.
         Model,
         /// A control's drift observation.
@@ -391,6 +401,7 @@ pub mod payload {
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
+            Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
             Payload::Note { note } => Ref::Note(note),
@@ -426,6 +437,15 @@ pub mod payload {
                 return None;
             };
             Some(note)
+        }
+
+        /// The sentinel record, where this is one.
+        #[must_use]
+        pub const fn sentinel(self) -> Option<&'a crate::trace::SentinelRecord> {
+            let Self::Sentinel(sentinel) = self else {
+                return None;
+            };
+            Some(sentinel)
         }
 
         /// The route record, where this is one.
@@ -656,6 +676,20 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 },
             }),
     );
+    payloads.extend(
+        rust_mutants::sentinel::Planted::every()
+            .into_iter()
+            .flat_map(rust_mutants::sentinel::Planted::expectations)
+            .map(|expectation| Payload::Sentinel {
+                sentinel: crate::trace::SentinelRecord {
+                    layer: expectation.planted,
+                    mutant: expectation.mutant.to_string(),
+                    expected: expectation.expected,
+                    routed: "test".to_owned(),
+                    sighted: false,
+                },
+            }),
+    );
     for payload in &payloads {
         assert!(
             !payload_record_key(payload).is_empty(),
@@ -858,4 +892,255 @@ pub fn every_model_uncertainty() -> Vec<crate::report::ModelUncertainty> {
         }
     }
     every
+}
+
+/// Complete reports assembled from mutation rows, for suites that read a report rather than write one, counted by the model's own counter.
+#[cfg(feature = "testkit")]
+pub mod reports {
+    use crate::report::{
+        Answered, BuildReport, CatalogIndex, CountError, Decided, Discharged, Established, Finding,
+        Limitation, MutantRecord, Outcome, Position, Report, Reuse, Routing, RunKind, TargetRecord,
+        TargetStatus,
+    };
+
+    /// Why the rows a fixture gave did not make one complete report.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
+    pub enum UnmadeReport {
+        /// The rows do not fit the report's counters.
+        #[error("the rows do not fit the report's counters: {source}")]
+        Counted {
+            /// What did not fit.
+            #[from]
+            source: CountError,
+        },
+        /// The builds are not one checked measurement.
+        #[error("the builds are not one checked measurement: {source}")]
+        Measured {
+            /// Why.
+            #[from]
+            source: crate::report::across::BuildMeasurementsError,
+        },
+        /// The builds are not builds of one catalog.
+        #[error("the builds are not builds of one catalog: {source}")]
+        Configured {
+            /// Why.
+            #[from]
+            source: crate::report::across::ConfiguredError,
+        },
+        /// The run identity is not a canonical one.
+        #[error("the run identity is not canonical: {source}")]
+        Named {
+            /// Why.
+            #[from]
+            source: rust_mutants::id::RunIdError,
+        },
+        /// The lattice made one part of a catalog rather than a whole.
+        #[error("the rows made one part of a catalog rather than a whole")]
+        Part,
+        /// A row names a rule the engine does not have, which no run could have written.
+        #[error(
+            "no rule of the engine's table is named {name:?}, so no run could have written the row"
+        )]
+        Rule {
+            /// The name the row gave.
+            name: String,
+        },
+        /// The whole was refused as a completed report.
+        #[error("the whole was refused as a completed report: {source}")]
+        Completed {
+            /// Why.
+            #[from]
+            source: crate::report::CompletionError,
+        },
+    }
+
+    /// One mutation at `line` of `item` in `path`, where the rule named `rule` made `was` into `now`, decided as `outcome`, with no route, and established by this run.
+    #[must_use]
+    pub fn row(
+        index: u32,
+        (path, item, line): (&str, &str, u32),
+        (rule, was, now): (&str, &str, &str),
+        outcome: Decided,
+    ) -> MutantRecord {
+        let id = format!("{index:08x}{}", "a".repeat(56));
+        MutantRecord {
+            catalog_index: CatalogIndex::new(index),
+            display_id: id.chars().take(20).collect(),
+            id,
+            path: path.to_owned(),
+            position: Position {
+                line,
+                column: 5,
+                character_column: 5,
+            },
+            rule: rule.to_owned(),
+            item: item.to_owned(),
+            original: was.to_owned(),
+            replacement: now.to_owned(),
+            outcome,
+            accepted: false,
+            blind_in: Vec::new(),
+            routing: None,
+            reuse: Reuse(Established::Here),
+        }
+    }
+
+    /// A route this run decided and asked by: reaching `reaching`, removing `removed` by never-infected, and asking `answered` in order.
+    #[must_use]
+    pub fn routed(reaching: &[&str], removed: &[&str], answered: &[(&str, Outcome)]) -> Routing {
+        Routing {
+            granularity: if reaching.is_empty() {
+                rust_mutants::session::Granularity::Discharged
+            } else {
+                rust_mutants::session::Granularity::Block
+            },
+            reaching: reaching.iter().map(|one| (*one).to_owned()).collect(),
+            discharged: removed
+                .iter()
+                .map(|one| Discharged {
+                    target: (*one).to_owned(),
+                    proof: rust_mutants::session::NEVER_INFECTED,
+                })
+                .collect(),
+            fallback: None,
+            answered: answered
+                .iter()
+                .map(|(target, outcome)| Answered {
+                    target: (*target).to_owned(),
+                    outcome: *outcome,
+                })
+                .collect(),
+        }
+    }
+
+    /// One build's report holding `rows`, with the counts the model counts from them and the findings and verdict they require.
+    fn measured(
+        run: &str,
+        kind: RunKind,
+        rows: Vec<MutantRecord>,
+        builds: &[String],
+    ) -> Result<BuildReport, UnmadeReport> {
+        let mut report = BuildReport::new(run, kind, crate::config::Contract::StandardV1);
+        "2026-09-24T00:00:00Z".clone_into(&mut report.timing.started);
+        "2026-09-24T00:00:00Z".clone_into(&mut report.timing.finished);
+        report.timing.duration_ms = 1;
+        report.scope.configured_builds = builds.to_vec();
+        report.limitations.push(Limitation::new(
+            "git-metadata-unavailable",
+            "a report assembled from rows has no repository process",
+        ));
+        report.targets.push(TargetRecord {
+            id: "target".to_owned(),
+            name: "pkg/lib/pkg".to_owned(),
+            package: "pkg".to_owned(),
+            status: TargetStatus::Passed,
+            duration_ms: 1,
+            message: None,
+        });
+        report.count_targets()?;
+        report.accounting.mutants = crate::report::count_mutants(&rows)?;
+        report.findings = rows
+            .iter()
+            .filter_map(|row| {
+                row.outcome
+                    .outcome()
+                    .required_finding(row.accepted)
+                    .map(|kind| Finding::new(kind, &row.display_id, "a finding its row requires"))
+            })
+            .collect();
+        report.mutants = rows;
+        super::read_every_named_file(&mut report);
+        report.verdict = report.concluded();
+        Ok(report)
+    }
+
+    /// The complete report of run `run`, of `kind`, that measured one build per entry of `builds`, each holding its rows.
+    ///
+    /// # Errors
+    /// [`UnmadeReport`] when the rows do not make a report the model accepts, or name a rule the engine does not have, which is the fixture's mistake to fix.
+    pub fn completed(
+        run: &str,
+        kind: RunKind,
+        builds: Vec<(&str, Vec<MutantRecord>)>,
+    ) -> Result<Report, UnmadeReport> {
+        completed_with_drift(
+            run,
+            kind,
+            builds
+                .into_iter()
+                .map(|(name, rows)| (name, rows, Vec::new()))
+                .collect(),
+        )
+    }
+
+    /// The report [`completed`] makes, with each build also recording what its controls established about each target's baseline reach.
+    ///
+    /// # Errors
+    /// [`UnmadeReport`] as [`completed`] refuses.
+    pub fn completed_with_drift(
+        run: &str,
+        kind: RunKind,
+        builds: Vec<(&str, Vec<MutantRecord>, Vec<crate::report::drift::Drift>)>,
+    ) -> Result<Report, UnmadeReport> {
+        let rules = rust_mutants::rule::Registry::canonical();
+        if let Some(unknown) = builds
+            .iter()
+            .flat_map(|(_, rows, _)| rows)
+            .find(|row| rules.lookup(&row.rule).is_none())
+        {
+            return Err(UnmadeReport::Rule {
+                name: unknown.rule.clone(),
+            });
+        }
+        let order: Vec<String> = builds
+            .iter()
+            .map(|(name, _, _)| (*name).to_owned())
+            .collect();
+        let mut measured_builds = Vec::with_capacity(builds.len());
+        for (at, (name, rows, drift)) in builds.into_iter().enumerate() {
+            let mut report = measured(&format!("{run}-{at}"), kind, rows, &order)?;
+            report.drift = drift;
+            report.verdict = report.concluded();
+            measured_builds.push((
+                name.to_owned(),
+                rust_mutants::cargo::BuildConfig::default().selection(),
+                report,
+            ));
+        }
+        let measurements = crate::report::across::BuildMeasurements::checked(measured_builds)?;
+        let final_run = rust_mutants::id::RunId::try_from(run)?;
+        match crate::report::across::configured(&final_run, &measurements)? {
+            crate::report::LatticedDocument::Complete(whole) => {
+                Ok(whole.complete_without_models()?)
+            }
+            crate::report::LatticedDocument::Shard(_) => Err(UnmadeReport::Part),
+        }
+    }
+}
+
+/// Records, for every file the rows and findings of `report` name, a digest as a run that read the file would have, which a report assembled by hand needs before the audit accepts it.
+///
+/// The digest is the SHA-256 of the path, not of any file's bytes, so a test that reads a real file records that file's own digest instead.
+#[cfg(feature = "testkit")]
+pub fn read_every_named_file(report: &mut crate::report::BuildReport) {
+    let named: Vec<String> = report
+        .mutants
+        .iter()
+        .map(|row| row.path.clone())
+        .chain(
+            report
+                .findings
+                .iter()
+                .filter_map(|finding| finding.path.clone()),
+        )
+        .collect();
+    for path in named {
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, path.as_bytes());
+        report
+            .sources
+            .entry(path)
+            .or_insert_with(|| rust_mutants::id::HexDigest::finish(hasher));
+    }
 }

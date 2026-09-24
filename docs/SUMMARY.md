@@ -66,6 +66,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0023 A run may not conclude from how it measured](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)
 - [0024 A copy is one prefix substitution](adr/0024-a-copy-is-one-prefix-substitution.md)
 - [0025 A reach that moves is not a measurement](adr/0025-a-reach-that-moves-is-not-a-measurement.md)
+- [0026 A bound measures quiet, not duration](adr/0026-a-bound-measures-quiet-not-duration.md)
 - [0027 An item is entered where its body starts](adr/0027-an-item-is-entered-where-its-body-starts.md)
 - [0028 A change is placed by reading both versions](adr/0028-a-change-is-placed-by-reading-both-versions.md)
 - [0029 A process that loses the environment says so](adr/0029-a-process-that-loses-the-environment-says-so.md)

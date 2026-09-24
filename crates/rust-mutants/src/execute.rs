@@ -20,7 +20,7 @@ use crate::instrument::{
 };
 use crate::outcome::Outcome;
 use crate::runner::{
-    Bound, Cancel, EXIT_CODE_UNAVAILABLE, ProcessExit, RunResult, Spec, Termination, run,
+    Bound, Cancel, EXIT_CODE_UNAVAILABLE, ProcessExit, Progress, RunResult, Spec, Termination, run,
 };
 use crate::trace::{ExecRecord, Recorder};
 
@@ -47,6 +47,9 @@ pub const COMPOSED_ENV: [&str; 8] = [
     STEP_STATE_ENV,
     crate::coverage::PROFILE_ENV,
 ];
+
+/// How many quiet windows a step-counted execution may run for in all before the clock ends it anyway.
+pub const QUIET_WINDOWS_PER_CEILING: u32 = 10;
 
 /// The name a test process writes its coverage profile under, when the run is not the one measuring.
 pub const SPILLED_PROFILE: &str = "spilled-coverage-%p-%m.profraw";
@@ -375,13 +378,18 @@ pub enum Stopped {
         /// The one way it exited.
         exit: ProcessExit,
     },
-    /// This machine's wall-clock bound expired.
+    /// This machine's wall-clock bound expired, which for a process counting its steps is the ceiling over one that never went quiet.
     TimedOut {
         /// How many step boundaries the process had raised, where the run could read its state.
         ///
         /// Above zero says the clock ended a computation the allowance would have ended, which is a race this machine won and another would not: the number to change is the allowance, not the bound.
         /// Zero says the computation was raising no boundary at all, so no allowance could have ended it and the clock is the only instrument there is (ADR 0023).
         /// `None` says the state could not be read, which is not a count of zero.
+        raised: Option<u64>,
+    },
+    /// The process raised no step boundary for a whole quiet window, so nothing was moving through the mutated source.
+    Stalled {
+        /// How many step boundaries the process had raised before it went quiet, or `None` where its state could not be read.
         raised: Option<u64>,
     },
     /// The caller asked it to stop.
@@ -490,6 +498,7 @@ enum StoppedWire {
     NotStarted {},
     Exited { exit: ProcessExit },
     TimedOut { raised: Option<u64> },
+    Stalled { raised: Option<u64> },
     Cancelled { started: bool },
     WaitFailed {},
     StepLimitReached { notice: StepLimitNotice },
@@ -506,6 +515,7 @@ impl<'de> serde::Deserialize<'de> for Stopped {
                 StoppedWire::NotStarted {} => Self::NotStarted,
                 StoppedWire::Exited { exit } => Self::Exited { exit },
                 StoppedWire::TimedOut { raised } => Self::TimedOut { raised },
+                StoppedWire::Stalled { raised } => Self::Stalled { raised },
                 StoppedWire::Cancelled { started } => Self::Cancelled { started },
                 StoppedWire::WaitFailed {} => Self::WaitFailed,
                 StoppedWire::StepLimitReached { notice } => Self::StepLimitReached { notice },
@@ -673,6 +683,7 @@ impl Stopped {
             Termination::NotStarted { .. } => Self::NotStarted,
             Termination::Exited(exit) => Self::Exited { exit: *exit },
             Termination::TimedOut => Self::TimedOut { raised: None },
+            Termination::Stalled => Self::Stalled { raised: None },
             Termination::StoppedByMonitor => Self::StepProtocolFailed {
                 reason: StepProtocolFailure::NoticeMissing {},
             },
@@ -949,9 +960,13 @@ impl ExpectedStep {
     /// A clock that ends one raising nothing ended a computation that was not passing through instrumented source at all, and there the clock is the only instrument there is (ADR 0023).
     /// `None` says the state could not be read, which is not the same as a count of zero.
     fn raised(&self) -> Option<u64> {
-        let text = match std::fs::read_to_string(&self.state_path) {
-            Ok(text) => text,
+        let bytes = match crate::runner::read_side_channel(&self.state_path) {
+            Ok(bytes) => bytes,
             Err(_the_state_is_not_readable) => return None,
+        };
+        let text = match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_the_state_is_not_text) => return None,
         };
         let mut fields = text.trim_end().split('\t');
         let spent = fields.next_back()?;
@@ -1122,6 +1137,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
         return Stopped::of(result);
     };
     let notice = expected.read();
+    let raised = expected.raised();
     if let Err(reason) = expected.clear() {
         return Stopped::StepProtocolFailed {
             reason: reason.failure(),
@@ -1144,9 +1160,12 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
                 reason: StepProtocolFailure::NoticeMissing {},
             }
         }
-        Ok(None) if matches!(result.termination, Termination::TimedOut) => Stopped::TimedOut {
-            raised: expected.raised(),
-        },
+        Ok(None) if matches!(result.termination, Termination::TimedOut) => {
+            Stopped::TimedOut { raised }
+        }
+        Ok(None) if matches!(result.termination, Termination::Stalled) => {
+            Stopped::Stalled { raised }
+        }
         Ok(None) => Stopped::of(result),
         Err(reason) => Stopped::StepProtocolFailed {
             reason: reason.failure(),
@@ -1166,7 +1185,7 @@ pub const fn outcome_of(
         Stopped::NotStarted | Stopped::WaitFailed | Stopped::StepProtocolFailed { .. } => {
             return Outcome::Errored;
         }
-        Stopped::TimedOut { .. } => return Outcome::Waited,
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. } => return Outcome::Waited,
         Stopped::Cancelled { .. } => return Outcome::NotRun,
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
@@ -1713,6 +1732,21 @@ pub const fn answered(outcome: Outcome) -> bool {
     !matches!(outcome, Outcome::Inconclusive | Outcome::StepLimitReached)
 }
 
+/// The bound one execution runs under: a quiet window under a ceiling where it counts its steps, and the bound it was given where it does not.
+fn watched(timeout: Option<Duration>, step: Option<&ExpectedStep>) -> (Bound, Option<Progress>) {
+    match (timeout, step) {
+        (Some(quiet), Some(step)) => (
+            Bound::After(quiet.saturating_mul(QUIET_WINDOWS_PER_CEILING)),
+            Some(Progress {
+                path: step.state_path.clone(),
+                quiet,
+            }),
+        ),
+        (Some(bound), None) => (Bound::After(bound), None),
+        (None, _) => (Bound::Unbounded, None),
+    }
+}
+
 /// Runs one test process and reads what it means.
 #[must_use]
 pub fn exec(
@@ -1730,10 +1764,9 @@ pub fn exec(
             return MutantResult::apparatus_error(&target.id, message);
         }
     };
-    let mut spec = Spec::new(
-        request.argv(),
-        request.timeout.map_or(Bound::Unbounded, Bound::After),
-    );
+    let (bound, progress) = watched(request.timeout, step.as_ref());
+    let mut spec = Spec::new(request.argv(), bound);
+    spec.progress = progress;
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),
@@ -2113,12 +2146,12 @@ mod tests {
     };
 
     use super::{
-        Context, ExpectedStep, NoticeError, Observation, STEP_STATE_ENV, STEP_STATE_SCHEMA,
-        StepBoundaryScope, StepLimitNotice, StepProtocolFailure, StepSetupError, Stopped,
-        observed_stop, outcome_of, rustlib_targets,
+        Context, ExpectedStep, NoticeError, Observation, QUIET_WINDOWS_PER_CEILING, STEP_STATE_ENV,
+        STEP_STATE_SCHEMA, StepBoundaryScope, StepLimitNotice, StepProtocolFailure, StepSetupError,
+        Stopped, observed_stop, outcome_of, rustlib_targets, watched,
     };
     use crate::outcome::Outcome;
-    use crate::runner::{ProcessExit, RunResult, Termination};
+    use crate::runner::{Bound, ProcessExit, RunResult, Termination};
 
     const CATALOG_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const CATALOG_B: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -2143,11 +2176,14 @@ mod tests {
         }};
     }
 
-    fn expected(directory: &Path, nonce: &str) -> ExpectedStep {
+    fn expected(directory: &Path) -> ExpectedStep {
+        let mut bytes = [0u8; 16];
+        let filled = getrandom::fill(&mut bytes);
+        assert_eq!(result_state(&filled), Returned, "a fresh nonce: {filled:?}");
         ExpectedStep {
             path: directory.join("step.notice"),
             state_path: directory.join("step.state"),
-            nonce: nonce.to_owned(),
+            nonce: hex::encode(bytes),
             catalog: CATALOG_A.to_owned(),
             mutant: MUTANT_A.to_owned(),
             limit: 10,
@@ -2313,14 +2349,11 @@ mod tests {
     #[test]
     fn a_notice_is_accepted_only_for_the_exact_execution_and_boundary() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000001");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000001",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2337,8 +2370,8 @@ mod tests {
     #[test]
     fn stale_malformed_or_mismatched_notices_fail_closed() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000002");
-        for record in invalid_notice_records() {
+        let step = expected(directory.path());
+        for record in invalid_notice_records(&step.nonce) {
             publish(&step, &record);
             let read = step.read();
             assert_eq!(
@@ -2349,12 +2382,9 @@ mod tests {
         }
     }
 
-    fn invalid_notice_records() -> Vec<String> {
+    fn invalid_notice_records(nonce: &str) -> Vec<String> {
         let canonical = notice_record(
-            (
-                "rust-mutants-step-notice-v1",
-                "00000000000000000000000000000002",
-            ),
+            ("rust-mutants-step-notice-v1", nonce),
             (CATALOG_A, MUTANT_A),
             (10, 11),
         );
@@ -2366,10 +2396,7 @@ mod tests {
             canonical.replace("\t10\t11\n", "\t10\t+11\n"),
             canonical.replace("\t10\t11\n", "\t10\t 11\n"),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v0",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v0", nonce),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2382,34 +2409,22 @@ mod tests {
                 (10, 11),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_B, MUTANT_A),
                 (10, 11),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_A, MUTANT_B),
                 (10, 11),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_A, MUTANT_A),
                 (9, 10),
             ),
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000002",
-                ),
+                ("rust-mutants-step-notice-v1", nonce),
                 (CATALOG_A, MUTANT_A),
                 (10, 12),
             ),
@@ -2420,7 +2435,7 @@ mod tests {
     #[test]
     fn a_notice_must_be_a_small_regular_file() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000005");
+        let step = expected(directory.path());
         let created = std::fs::create_dir_all(&step.path);
         assert_eq!(
             result_state(&created),
@@ -2453,15 +2468,12 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000006");
+        let step = expected(directory.path());
         let elsewhere = directory.path().join("elsewhere");
         let written = std::fs::write(
             &elsewhere,
             notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000006",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2487,14 +2499,11 @@ mod tests {
     #[test]
     fn cleanup_failure_is_a_protocol_failure_not_a_silent_success() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000007");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000007",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2528,7 +2537,7 @@ mod tests {
     #[test]
     fn only_a_verified_notice_can_turn_a_monitor_stop_into_a_step_fact() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000003");
+        let step = expected(directory.path());
         let stopped = result(Termination::StoppedByMonitor);
 
         assert!(matches!(
@@ -2547,10 +2556,7 @@ mod tests {
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000003",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2566,14 +2572,11 @@ mod tests {
     #[test]
     fn a_complete_notice_wins_over_a_simultaneous_wall_clock_deadline() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000008");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000008",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2590,7 +2593,7 @@ mod tests {
     #[test]
     fn an_unaccompanied_wall_clock_deadline_remains_waited() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000009");
+        let step = expected(directory.path());
 
         assert_eq!(
             observed_stop(&result(Termination::TimedOut), Some(&step)),
@@ -2599,16 +2602,83 @@ mod tests {
     }
 
     #[test]
+    fn a_wall_clock_deadline_says_how_far_the_count_had_got() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let step = expected(directory.path());
+        let written = std::fs::write(
+            &step.state_path,
+            format!(
+                "{STEP_STATE_SCHEMA}\t0000000000000000000000000000000a\t{CATALOG_A}\t{MUTANT_A}\t10\tactive\t7\n"
+            ),
+        );
+        assert_eq!(result_state(&written), Returned, "state: {written:?}");
+
+        assert_eq!(
+            observed_stop(&result(Termination::TimedOut), Some(&step)),
+            Stopped::TimedOut { raised: Some(7) },
+            "the count is read before the state it lives in is cleared away"
+        );
+        assert_absent(&step.state_path);
+    }
+
+    #[test]
+    fn a_quiet_window_says_how_far_the_count_had_got_before_it_went_quiet() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let step = expected(directory.path());
+        let written = std::fs::write(
+            &step.state_path,
+            format!(
+                "{STEP_STATE_SCHEMA}\t0000000000000000000000000000000b\t{CATALOG_A}\t{MUTANT_A}\t10\tactive\t4\n"
+            ),
+        );
+        assert_eq!(result_state(&written), Returned, "state: {written:?}");
+
+        assert_eq!(
+            observed_stop(&result(Termination::Stalled), Some(&step)),
+            Stopped::Stalled { raised: Some(4) }
+        );
+        assert_absent(&step.state_path);
+    }
+
+    #[test]
+    fn only_an_execution_counting_its_steps_is_watched_for_progress() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let step = expected(directory.path());
+        let second = Duration::from_secs(1);
+
+        let (bound, progress) = watched(Some(second), None);
+        assert_eq!(
+            bound,
+            Bound::After(second),
+            "a baseline keeps its bound exactly"
+        );
+        assert!(progress.is_none(), "and nothing watches it for progress");
+
+        let (bound, progress) = watched(Some(second), Some(&step));
+        assert_eq!(bound, Bound::After(second * QUIET_WINDOWS_PER_CEILING));
+        assert_eq!(
+            progress.map(|progress| (progress.path, progress.quiet)),
+            Some((step.state_path.clone(), second)),
+            "a counted execution is watched through its step state for a window of its bound"
+        );
+
+        let (bound, progress) = watched(None, Some(&step));
+        assert_eq!(
+            bound,
+            Bound::Unbounded,
+            "an unbounded execution stays unbounded"
+        );
+        assert!(progress.is_none());
+    }
+
+    #[test]
     fn cancellation_dominates_and_clears_even_a_valid_notice() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000004");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000004",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2625,14 +2695,11 @@ mod tests {
     #[test]
     fn a_notice_cannot_claim_that_a_process_which_never_started_reached_a_step() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000006");
+        let step = expected(directory.path());
         publish(
             &step,
             &notice_record(
-                (
-                    "rust-mutants-step-notice-v1",
-                    "00000000000000000000000000000006",
-                ),
+                ("rust-mutants-step-notice-v1", step.nonce.as_str()),
                 (CATALOG_A, MUTANT_A),
                 (10, 11),
             ),
@@ -2650,7 +2717,7 @@ mod tests {
     #[test]
     fn an_unaccompanied_reserved_status_is_an_ordinary_nonzero_exit() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "00000000000000000000000000000005");
+        let step = expected(directory.path());
         let exited = result(Termination::Exited(ProcessExit::Code(95)));
         let observed = Observation {
             stopped: observed_stop(&exited, Some(&step)),
@@ -2669,7 +2736,7 @@ mod tests {
     #[test]
     fn the_runtime_protocol_status_is_special_only_for_a_step_bounded_execution() {
         let directory = returned!(tempfile::tempdir(), "tempdir");
-        let step = expected(directory.path(), "0000000000000000000000000000000a");
+        let step = expected(directory.path());
         let exited = result(Termination::Exited(ProcessExit::Code(
             crate::instrument::STEP_PROTOCOL_EXIT,
         )));

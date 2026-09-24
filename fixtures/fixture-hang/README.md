@@ -29,22 +29,14 @@ at the allowance and is never asked twice. The fates below
 are the ones without the marker set, so the fixture's ordinary run stays
 ordinary; `crates/rust-mutants-cli/tests/toolchain_hang.rs` sets it.
 
-The two halves want `.rust-mutants.toml`'s bound pulled in opposite
-directions. `clamp_positive` needs it low enough that a sleep of a few
-seconds outlasts it, or nothing times out and there is no `inconclusive` to
-observe. `count_to` needs it high enough that the count gets there first, or
-the clock stops a mutation the allowance was about to catch and the fate
-table becomes a fact about the machine that generated it — measured here at
-two seconds under load, where fifty million takes cost 1501 ms and one of the
-two non-terminating mutations came back `waited` while the other came back
-`step_limit_reached`. Neither is a verdict; only the observed boundary differs.
+The two halves used to want `.rust-mutants.toml`'s bound pulled in opposite directions, and no longer do.
+`clamp_positive` needs the bound low enough that a sleep of a few seconds outlasts it, or nothing times out and there is no `inconclusive` to observe.
+`count_to` once needed it high enough that the count got there first, because the bound was on the whole execution and a slow enough machine let the clock stop a mutation the allowance was about to catch.
+For an execution that counts, the bound is now how long it may go without raising the count, so a loop that keeps taking its guard is never stopped by it; only the ceiling of ten bounds could still race the allowance.
+A sleep raises nothing, so it meets the bound exactly as it did.
 
-That pull is the reason the allowance is a separate setting from the bound,
-and the reason to give this fixture a small one rather than a generous
-bound: a sleep only grows under load, so the clock half is safe with a low
-bound, and a count is the same number under any load, so the count half is
-safe with a small allowance. Raising the bound to buy the count room takes it
-away from the sleep.
+`FIXTURE_HANG_STRIDE_MS` makes the clamping test slow and moving: while a mutation is active it passes through `clamp_positive` forty times, that many milliseconds apart.
+With a stride of fifty and a bound of one second the test is slower than the bound and never quiet for one, and `toolchain_hang.rs` sets it to show the run waiting for it.
 
 ## Fates
 

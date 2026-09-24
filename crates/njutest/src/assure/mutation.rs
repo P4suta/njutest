@@ -234,6 +234,8 @@ pub struct Mutation {
     pub skips: BTreeMap<String, u64>,
     /// Whether each target the baseline measured held its reach on a control, one record each.
     pub drift: Vec<Drift>,
+    /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
+    pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
 }
 
 impl Mutation {
@@ -388,8 +390,9 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
             FindingKind::WaitedMutant,
             format!(
                 "this machine stopped waiting for {on} with {} at {} active: an expired bound \
-                 establishes nothing about the mutation. Give the run a step allowance and a \
-                 mutation that cannot terminate is stopped by a count instead",
+                 establishes nothing about the mutation. With a step allowance, the bound ends \
+                 only a process that raised no step for a whole window, which is a wait rather \
+                 than a loop; a mutation that spins is stopped by the count instead",
                 judged.rule, judged.path
             ),
         ),
@@ -579,6 +582,9 @@ pub fn run_resuming(
         (resume.record)(&judged)?;
         mutation.judged.push(judged);
     }
+    mutation.sources = session.catalog().sources().map_err(|refused| {
+        rust_mutants::EngineError::from(rust_mutants::discover::DiscoverError::from(refused))
+    })?;
     let confirmed: Vec<Drift> = mutation
         .judged
         .iter()
