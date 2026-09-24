@@ -82,3 +82,34 @@ pub fn left(watched: &Path) -> std::io::Result<Vec<Orphan>> {
     orphans.sort_unstable();
     Ok(orphans)
 }
+
+/// Whether `orphan` was left by the execution `leader` led, rather than by another running beside it.
+///
+/// A child names its parent, and a child the execution's own process started names that process; a parent that another execution led, or that is still running, belongs to someone else.
+/// Anything else — a parent the platform does not name, or one that has already gone — cannot be told apart and counts as this execution's, so a survival is never read past a child that may have been its own.
+#[must_use]
+pub fn ours(
+    orphan: &Orphan,
+    leader: Option<u32>,
+    others: &std::collections::BTreeSet<u32>,
+) -> bool {
+    if orphan.parent == 0 || leader == Some(orphan.parent) {
+        return true;
+    }
+    !(others.contains(&orphan.parent) || running(orphan.parent))
+}
+
+/// Whether the process `pid` is still running.
+#[cfg(unix)]
+fn running(pid: u32) -> bool {
+    match i32::try_from(pid).map(rustix::process::Pid::from_raw) {
+        Ok(Some(pid)) => rustix::process::test_kill_process(pid).is_ok(),
+        Ok(None) | Err(_) => false,
+    }
+}
+
+/// Whether the process `pid` is still running, which this platform is not asked.
+#[cfg(not(unix))]
+const fn running(_pid: u32) -> bool {
+    false
+}

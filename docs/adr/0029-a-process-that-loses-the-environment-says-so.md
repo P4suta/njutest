@@ -34,8 +34,10 @@ The select layer inherits the same hole: a target whose child entered an item it
    Such a target is `uncontrolled-child`: its touch record is not gathered, so it stays in every route, and a selection finds nothing measured about it and runs it.
    A directory that cannot be read counts as one that holds an orphan.
 
-4. **Under a mutant, it is attributed by when.** Mutant executions run side by side, so an orphan left during the mutation phase cannot be told apart by directory; the directory is cleared when the baseline ends, and an execution records when it started and ended.
-   An orphan whose file was written within that span, give or take two seconds of filesystem clock, is attributed to the execution — and to every other execution it overlaps, since nothing finer separates them — and one whose time cannot be read is attributed to all.
+4. **Under a mutant, it is attributed by when and by whom.** Mutant executions run side by side, so an orphan left during the mutation phase cannot be told apart by directory; the directory is cleared when the baseline ends, and an execution records when it started and ended.
+   An orphan written within that span, give or take two seconds of filesystem clock, and not already there when the execution started, is a candidate.
+   What separates executions that overlap is the parent the orphan names: every execution is one process leading a group of its own, and a child it starts names that process as its parent.
+   A candidate whose parent led this execution is its; one whose parent led another execution, or is still running, is someone else's; and one whose parent the platform does not name, or that has gone without leading any execution the session knows, cannot be told apart and is attributed to this execution, so a survival is never read past a child that may have been its own.
 
 5. **A survival from it is not one.** An execution against an `uncontrolled-child` target that comes back `survived` is recorded `inconclusive`: every test of it passing says nothing about a mutant that may have lived only in a process it could not reach.
    The same holds for a survival of any execution an orphan was attributed to under point 4.

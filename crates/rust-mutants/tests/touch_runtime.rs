@@ -994,3 +994,32 @@ fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
          {said:?}"
     );
 }
+
+#[test]
+fn a_child_that_lost_the_environment_belongs_to_the_execution_that_started_it() {
+    use rust_mutants::orphan::{Orphan, ours};
+    let child = |parent: u32| Orphan {
+        pid: 4_000_000,
+        parent,
+        at: None,
+    };
+    let others = BTreeSet::from([4_100_000_u32]);
+    assert!(
+        ours(&child(4_200_000), Some(4_200_000), &others),
+        "a child whose parent led this execution is this execution's"
+    );
+    assert!(
+        !ours(&child(4_100_000), Some(4_200_000), &others),
+        "a child whose parent led another execution is that one's, however close in time"
+    );
+    assert!(
+        !ours(&child(std::process::id()), Some(4_200_000), &others),
+        "a child whose parent is still running belongs to whatever is running"
+    );
+    assert!(
+        ours(&child(0), Some(4_200_000), &others)
+            && ours(&child(4_300_000), Some(4_200_000), &others),
+        "a parent the platform does not name, or one that has gone and led nothing known, cannot \
+         be told apart, so the survival is not read past it"
+    );
+}

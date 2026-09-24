@@ -1642,6 +1642,8 @@ pub struct MutantResult {
     pub passed_tests: Vec<String>,
     /// Every test the harness was told to skip.
     pub ignored_tests: Vec<String>,
+    /// The id of the process the execution started, which is the parent of whatever it starts, or nothing where none started.
+    pub leader: Option<u32>,
 }
 
 /// The protocol a test process answered in.
@@ -1705,6 +1707,7 @@ impl MutantResult {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 
@@ -1818,6 +1821,7 @@ pub fn exec(
         failed_tests: lines.failed,
         passed_tests: lines.passed,
         ignored_tests: lines.ignored,
+        leader: result.leader,
     }
 }
 
@@ -2197,6 +2201,7 @@ mod tests {
             output: Vec::new(),
             stdout: Vec::new(),
             stdout_truncated: false,
+            leader: None,
         }
     }
 

@@ -524,6 +524,8 @@ pub struct RunResult {
     pub stdout: Vec<u8>,
     /// Whether `stdout` was cut at the cap.
     pub stdout_truncated: bool,
+    /// The id of the process the run started, which leads its group and is the parent of whatever it starts, or nothing where none started.
+    pub leader: Option<u32>,
 }
 
 impl RunResult {
@@ -656,6 +658,7 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
         head,
         mut child,
     } = running;
+    let leader = Some(child.handle().id());
     force_signal_or_abort(&supervisor, LeaderObservation::ExitedWaitable);
     let status = child.reap_observed();
     let released = release_supervisor(&mut supervisor);
@@ -699,6 +702,7 @@ fn complete(started: Instant, running: Started, outcome: Exit) -> RunResult {
         output,
         stdout,
         stdout_truncated,
+        leader,
     }
 }
 
@@ -766,6 +770,7 @@ fn preflight<'a>(spec: &'a Spec, cancel: &Cancel, started: Instant) -> Preflight
             output: Vec::new(),
             stdout: Vec::new(),
             stdout_truncated: false,
+            leader: None,
         });
     }
     Preflight::Ready(program)
@@ -778,6 +783,7 @@ fn not_started(started: Instant, error: RunnerError, output: Vec<u8>) -> RunResu
         output,
         stdout: Vec::new(),
         stdout_truncated: false,
+        leader: None,
     }
 }
 

@@ -364,6 +364,8 @@ pub struct Session {
     scratch_working_directory: bool,
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::Mutex<u64>,
+    /// The process that led each execution this session has finished, whose children are that execution's rather than any other's.
+    leaders: std::sync::Mutex<BTreeSet<u32>>,
     mutant_timeout: Timeout,
     mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
@@ -450,10 +452,48 @@ impl Session {
     }
 
     /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
-    fn orphaned(&self, (started, ended): (std::time::SystemTime, std::time::SystemTime)) -> bool {
+    fn orphaned(
+        &self,
+        before: Option<&BTreeSet<crate::orphan::Orphan>>,
+        (started, ended): (std::time::SystemTime, std::time::SystemTime),
+        leader: Option<u32>,
+    ) -> Result<bool, EngineError> {
+        let others = self
+            .leaders
+            .lock()
+            .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?
+            .clone();
+        Ok(
+            match (
+                before,
+                crate::orphan::left(std::path::Path::new(self.workspace.watched())),
+            ) {
+                (Some(before), Ok(orphans)) => orphans.iter().any(|orphan| {
+                    !before.contains(orphan)
+                        && orphan.during(started, ended)
+                        && crate::orphan::ours(orphan, leader, &others)
+                }),
+                (None, Ok(_)) | (_, Err(_)) => true,
+            },
+        )
+    }
+
+    /// Remembers that `leader` led an execution that has finished, so a child it left is never read as another's.
+    fn finished(&self, leader: Option<u32>) -> Result<(), EngineError> {
+        if let Some(leader) = leader {
+            self.leaders
+                .lock()
+                .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?
+                .insert(leader);
+        }
+        Ok(())
+    }
+
+    /// Every process that has said so far that it lost the run's environment, or nothing where the directory cannot be read, which an execution compares against to find the ones left while it ran.
+    fn orphans(&self) -> Option<BTreeSet<crate::orphan::Orphan>> {
         match crate::orphan::left(std::path::Path::new(self.workspace.watched())) {
-            Ok(orphans) => orphans.iter().any(|orphan| orphan.during(started, ended)),
-            Err(_unreadable) => true,
+            Ok(orphans) => Some(orphans.into_iter().collect()),
+            Err(_unreadable) => None,
         }
     }
 
@@ -1250,11 +1290,14 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
+            let before = self.orphans();
             let started = std::time::SystemTime::now();
             let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
             let ended = std::time::SystemTime::now();
+            self.finished(result.leader)?;
             if result.conclusion == MutantConclusion::Survived
-                && (self.uncontrolled(&target.id) || self.orphaned((started, ended)))
+                && (self.uncontrolled(&target.id)
+                    || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
             {
                 result.conclusion = MutantConclusion::Inconclusive;
             }
@@ -1861,6 +1904,16 @@ struct EstablishmentState {
     tests_started: u64,
 }
 
+impl EstablishmentState {
+    /// Nothing established and no test started yet.
+    const fn fresh() -> Self {
+        Self {
+            answers: BTreeMap::new(),
+            tests_started: 0,
+        }
+    }
+}
+
 /// A non-empty ledger of one mutant's executions.
 ///
 /// The first execution is structurally mandatory.
@@ -2189,6 +2242,7 @@ mod kani_laws {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 
@@ -2574,6 +2628,7 @@ const fn unreached() -> MutantResult {
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
+        leader: None,
     }
 }
 
@@ -2605,6 +2660,7 @@ mod tests {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 
