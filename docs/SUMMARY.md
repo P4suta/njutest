@@ -68,3 +68,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0031 A knob is one control started differently](adr/0031-a-knob-is-one-control-started-differently.md)
 - [0032 A fault is a failed call the suite is asked about](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)
 - [0033 Every dimension, or a hole](adr/0033-every-dimension-or-a-hole.md)
+- [0035 A crash is a stop the next run has to survive](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)
