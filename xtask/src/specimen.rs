@@ -110,7 +110,7 @@ impl NeutralValue {
 }
 
 /// Completes a specimen `payload` of `producer` with the neutral value of every required field it leaves out that the neutral table names, so a specimen says only what its test is about and is still on its schema.
-pub(crate) fn completed(producer: Producer, payload: &mut serde_json::Map<String, Value>) {
+pub fn completed(producer: Producer, payload: &mut serde_json::Map<String, Value>) {
     let Some(kind) = payload
         .get("type")
         .and_then(Value::as_str)
