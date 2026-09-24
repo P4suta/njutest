@@ -549,6 +549,22 @@ fn failing_under_the_interpreter() -> Value {
     }))
 }
 
+/// A recorded run of the interpreter that ran out of time, whose kept output is at `output/1.txt`.
+fn interpreted_until_the_clock(said: &str) -> Value {
+    use sha2::Digest as _;
+    json!({
+        "type": "exec",
+        "exec": {
+            "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
+            "dir": null, "env_names": [], "timeout_ms": 1,
+            "stopped": { "kind": "timed-out", "raised": null },
+            "duration_ms": 1, "output_bytes": said.len(),
+            "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
+            "output_truncated": false, "output_path": "output/1.txt", "error": null
+        }
+    })
+}
+
 /// The lies about soundness the soundness layer must refuse.
 fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
     let with_run = |code: i64, said: &str| {
@@ -582,6 +598,17 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             })),
             events: with_run(101, QUOTED_UNDEFINED),
             outputs: vec![("output/1.txt", QUOTED_UNDEFINED)],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an interpreter that ran out of time with no limitation stated",
+            document: with(json!({ "accounting": { "soundness": { "executed": false } } })),
+            events: Some({
+                let mut events = routes();
+                events.push(interpreted_until_the_clock("running 1 test\n"));
+                events
+            }),
+            outputs: vec![("output/1.txt", "running 1 test\n")],
             ..clean.clone()
         },
         Perturbation {

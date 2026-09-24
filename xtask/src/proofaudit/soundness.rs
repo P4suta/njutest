@@ -100,6 +100,17 @@ impl Came {
             Self::TimedOut | Self::Passed => BTreeSet::new(),
         }
     }
+
+    /// The names of the limitations about the interpreter it earns, which is how a run states what it could not interpret.
+    fn limitations(self) -> BTreeSet<&'static str> {
+        match self {
+            Self::Absent => BTreeSet::from(["miri-unavailable"]),
+            Self::TimedOut => BTreeSet::from(["miri-timed-out"]),
+            Self::Unsupported => BTreeSet::from(["miri-unsupported"]),
+            Self::RanNoTest => BTreeSet::from(["miri-ran-no-test"]),
+            Self::Undefined | Self::Failed | Self::Passed => BTreeSet::new(),
+        }
+    }
 }
 
 /// Whether `exec` is the interpreter run over the suite.
@@ -212,14 +223,15 @@ impl Heard {
     fn of(said: &str) -> Self {
         let mut heard = Self::default();
         let mut place = Place::Open;
-        for line in said.lines().map(str::trim_end) {
+        let lines: Vec<&str> = said.lines().map(str::trim_end).collect();
+        for (at, line) in lines.iter().copied().enumerate() {
             let (open, endings) = CAPTURE_OPEN;
             if line.starts_with(open) && endings.iter().any(|end| line.ends_with(end)) {
                 place = Place::Captured;
                 continue;
             }
             if place == Place::Captured {
-                if line == CAPTURE_CLOSE {
+                if libtest_closes(&lines, at) {
                     place = Place::Open;
                 }
                 continue;
@@ -278,6 +290,29 @@ impl Heard {
             Some(_) | None => Came::RanNoTest,
         }
     }
+}
+
+/// Whether libtest, and not a test's own output, wrote the `failures:` at `at`: it lists the failed names indented, leaves a blank line, and gives the binary's summary.
+fn libtest_closes(lines: &[&str], at: usize) -> bool {
+    if lines.get(at).copied() != Some(CAPTURE_CLOSE) {
+        return false;
+    }
+    let mut next = at.saturating_add(1);
+    let mut names = 0_usize;
+    while let Some(line) = lines.get(next)
+        && line.starts_with("    ")
+        && !line.trim().is_empty()
+    {
+        names = names.saturating_add(1);
+        next = next.saturating_add(1);
+    }
+    names > 0
+        && lines.get(next).is_some_and(|line| line.is_empty())
+        && lines
+            .get(next.saturating_add(1))
+            .and_then(|line| line.trim_start().strip_prefix(RESULT))
+            .and_then(summarised)
+            .is_some()
 }
 
 /// How a binary came out where `rest` is exactly libtest's summary after [`RESULT`], and nothing otherwise.
@@ -367,10 +402,11 @@ pub(super) fn audited(
                 ),
             }
         }
-        several => notes.unaudited(
+        several => notes.violated(
             "soundness",
             format!(
-                "the recording holds {} runs of the interpreter and the report is one build's",
+                "the recording holds {} runs of the interpreter for one build, which interprets \
+                 its suite once, so the report rests on more than one answer",
                 several.len()
             ),
         ),
@@ -410,6 +446,8 @@ struct Reported {
     executed: Interpreted,
     /// The kinds of its findings about soundness.
     claimed: BTreeSet<String>,
+    /// The names of its limitations about the interpreter.
+    stated: BTreeSet<String>,
 }
 
 impl Reported {
@@ -421,6 +459,11 @@ impl Reported {
                 .iter()
                 .filter(|finding| field(finding, "subject").as_deref() == Some("soundness"))
                 .filter_map(|finding| field(finding, "kind"))
+                .collect(),
+            stated: rows(recording.document, "limitations")
+                .iter()
+                .filter_map(|limitation| field(limitation, "name"))
+                .filter(|name| name.starts_with("miri-"))
                 .collect(),
         }
     }
@@ -448,6 +491,21 @@ fn never_ran(reported: &Reported, notes: &mut Notes<'_>) {
 
 /// Holds the report to what the one recorded interpretation came to.
 fn compared(reported: &Reported, derived: Came, notes: &mut Notes<'_>) {
+    let owed_limits: BTreeSet<String> = derived
+        .limitations()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if reported.stated != owed_limits {
+        notes.violated(
+            "soundness",
+            format!(
+                "the report's limitations about the interpreter are {:?}, and what it said comes \
+                 to {derived:?}, which states {owed_limits:?}",
+                reported.stated
+            ),
+        );
+    }
     if reported.executed != Interpreted::owed(derived.executed()) {
         notes.violated(
             "soundness",

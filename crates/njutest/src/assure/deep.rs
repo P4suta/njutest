@@ -260,14 +260,14 @@ struct Reading {
 fn reading(said: &str) -> Reading {
     let mut read = Reading::default();
     let mut captured = false;
-    for line in said.lines() {
-        let line = line.trim_end();
+    let lines: Vec<&str> = said.lines().map(str::trim_end).collect();
+    for (at, line) in lines.iter().copied().enumerate() {
         if line.starts_with(CAPTURE_OPEN) && CAPTURED.iter().any(|end| line.ends_with(end)) {
             captured = true;
             continue;
         }
         if captured {
-            captured = line != CAPTURE_CLOSE;
+            captured = !closes_capture(&lines, at);
             continue;
         }
         let spoken = line.trim_start();
@@ -301,6 +301,26 @@ fn reading(said: &str) -> Reading {
         read.absent |= ABSENT.iter().any(|marker| diagnostic.contains(marker));
     }
     read
+}
+
+/// Whether the line at `at` is the `failures:` libtest closes a binary's captured output with: one or more names indented four spaces, a blank line, and the binary's exact summary; a `failures:` a test printed is followed by anything else.
+fn closes_capture(lines: &[&str], at: usize) -> bool {
+    if lines.get(at) != Some(&CAPTURE_CLOSE) {
+        return false;
+    }
+    let names = lines
+        .iter()
+        .skip(at.saturating_add(1))
+        .take_while(|line| line.starts_with("    ") && !line.trim().is_empty())
+        .count();
+    let after = at.saturating_add(1).saturating_add(names);
+    names > 0
+        && lines.get(after).is_some_and(|line| line.is_empty())
+        && lines
+            .get(after.saturating_add(1))
+            .and_then(|line| line.trim_start().strip_prefix(RESULT))
+            .and_then(summary)
+            .is_some()
 }
 
 /// How a binary ended where `rest` is exactly libtest's summary after its [`RESULT`], and nothing where it is not.
