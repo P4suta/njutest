@@ -185,6 +185,10 @@ fn fault(id: &str, events: &[Event]) -> Why {
                 }
             }
             Payload::RunStart { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
             | Payload::PhaseStart { .. }
             | Payload::PhaseEnd { .. }
             | Payload::Exec { .. }
@@ -265,6 +269,10 @@ fn mutation(id: &str, events: &[Event]) -> Why {
                 };
             }
             Payload::RunStart { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
             | Payload::PhaseStart { .. }
             | Payload::PhaseEnd { .. }
             | Payload::Exec { .. }
@@ -357,6 +365,10 @@ fn mutations(events: &[Event]) -> usize {
                 seen.extend(std::iter::once(mutant.mutant.as_str()));
             }
             Payload::RunStart { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
             | Payload::PhaseStart { .. }
             | Payload::PhaseEnd { .. }
             | Payload::Exec { .. }

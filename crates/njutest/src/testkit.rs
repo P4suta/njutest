@@ -307,13 +307,16 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Exec { .. } => "exec",
         Payload::Progress { .. } => "progress",
         Payload::Artifact { .. } => "artifact",
-        Payload::Route { .. } => "route",
+        Payload::Route { .. } | Payload::FaultRoute { .. } => "route",
         Payload::MutantExec { .. } => "mutant",
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
         Payload::Beside { .. } => "beside",
         Payload::BesideRun { .. } => "pair",
         Payload::CrashExec { .. } | Payload::Crash { .. } => "crash",
         Payload::CrashStep { .. } => "step",
+        Payload::FaultControl { .. } => "control",
+        Payload::FaultAttribution { .. } => "attribution",
+        Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -356,6 +359,14 @@ pub mod payload {
         MutantExec(&'a crate::trace::MutantExecRecord),
         /// A fault execution.
         FaultExec(&'a crate::trace::FaultExecRecord),
+        /// A fault confirmation's control.
+        FaultControl(&'a crate::trace::FaultControlRecord),
+        /// A fault's write attribution.
+        FaultAttribution(&'a crate::trace::FaultAttributionRecord),
+        /// A fault's route.
+        FaultRoute(&'a crate::trace::FaultRouteRecord),
+        /// A fault the compiler refused.
+        FaultRejected(&'a crate::trace::FaultRejectedRecord),
         /// A fault site's decision.
         Fault(&'a crate::report::faults::FaultRecord),
         /// A survivor told apart only under a fault.
@@ -402,6 +413,10 @@ pub mod payload {
             Payload::Route { route } => Ref::Route(route),
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
             Payload::FaultExec { fault } => Ref::FaultExec(fault),
+            Payload::FaultControl { control } => Ref::FaultControl(control),
+            Payload::FaultRoute { route } => Ref::FaultRoute(route),
+            Payload::FaultAttribution { attribution } => Ref::FaultAttribution(attribution),
+            Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
             Payload::Fault { fault } => Ref::Fault(fault),
             Payload::Beside { beside } => Ref::Beside(beside),
             Payload::BesideRun { pair } => Ref::BesideRun(pair),
@@ -594,11 +609,41 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         Payload::FaultExec {
             fault: crate::trace::FaultExecRecord {
                 fault: "abcdef".to_owned(),
+                role: crate::trace::FaultRole::First,
                 target: "demo/test/calls".to_owned(),
                 args: vec!["--exact".to_owned(), "tests::one".to_owned()],
                 outcome: "killed".to_owned(),
                 duration_ms: 5,
                 alone: false,
+            },
+        },
+        Payload::FaultAttribution {
+            attribution: crate::trace::FaultAttributionRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                path: "failed-read.log".to_owned(),
+                faulted: true,
+                passed: true,
+                unfaulted: crate::trace::Unfaulted::DidNotWrite,
+            },
+        },
+        Payload::FaultRoute {
+            route: crate::trace::FaultRouteRecord {
+                fault: "abcdef".to_owned(),
+                reaching: vec!["demo/test/calls".to_owned()],
+            },
+        },
+        Payload::FaultRejected {
+            rejected: crate::trace::FaultRejectedRecord {
+                fault: "abcdef".to_owned(),
+                diagnostic: "error[E0308]: mismatched types".to_owned(),
+            },
+        },
+        Payload::FaultControl {
+            control: crate::trace::FaultControlRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                passed: true,
             },
         },
         Payload::Fault {

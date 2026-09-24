@@ -136,6 +136,10 @@ pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
             | Payload::Crash { .. }
             | Payload::CrashExec { .. }
             | Payload::CrashStep { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
