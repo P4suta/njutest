@@ -7,13 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-/// Which of the two runs of a whole target one touch record was measured on.
+/// Which run of a whole target one touch record was measured on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Measured {
     /// The one run of every target with nothing active, which routing rests on.
     Baseline,
     /// An original-code control of the whole target, run to confirm a kill.
     Control,
+    /// A mutant run again against a target whose reach moved (ADR 0036).
+    Repair,
 }
 
 impl Measured {
@@ -23,6 +25,7 @@ impl Measured {
         match self {
             Self::Baseline => "baseline",
             Self::Control => "control",
+            Self::Repair => "repair",
         }
     }
 

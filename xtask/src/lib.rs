@@ -19,6 +19,7 @@ pub mod milestones;
 pub mod modelaudit;
 pub mod proofaudit;
 pub mod release;
+pub mod repair;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;

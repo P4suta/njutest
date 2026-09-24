@@ -411,6 +411,23 @@ fn discharged_then_killed() -> Vec<Value> {
     ]
 }
 
+/// The defect planted for the repair layer: a disposition said to be run again against a target whose reach never moved.
+fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
+    let mut events = routes();
+    events.push(json!({
+        "type": "repair",
+        "repair": {
+            "mutant": SURVIVED, "target": "t1",
+            "was": "survived", "now": "survived", "reached": "reached"
+        }
+    }));
+    Perturbation {
+        name: "a disposition run again against a target whose reach never moved",
+        events: Some(events),
+        ..clean
+    }
+}
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -477,6 +494,7 @@ impl Layer {
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
                 ..clean
             }],
+            Self::Repair => vec![repaired_where_nothing_moved(clean)],
             Self::Executions => [
                 "killed",
                 "unconfirmed",
