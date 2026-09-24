@@ -307,6 +307,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::WireExec { .. } => "wire",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
+        Payload::Knob { .. } => "knob",
         Payload::Note { .. } => "note",
         Payload::RunEnd { .. } => "run",
     }
@@ -350,6 +351,8 @@ pub mod payload {
         Model,
         /// A control's drift observation.
         Drift(&'a crate::trace::DriftRecord),
+        /// A knob record.
+        Knob(&'a crate::report::knobs::KnobRecord),
         /// A note.
         Note(&'a crate::trace::NoteRecord),
         /// A run-end record.
@@ -374,6 +377,7 @@ pub mod payload {
             Payload::WireExec { .. } => Ref::WireExec,
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
+            Payload::Knob { knob } => Ref::Knob(knob),
             Payload::Note { note } => Ref::Note(note),
             Payload::RunEnd { .. } => Ref::RunEnd,
         }
@@ -552,6 +556,15 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             model: Box::new(crate::report::ModelRecord::specimen_ineligible(
                 crate::report::ModelIneligibility::Effect,
             )),
+        },
+        Payload::Knob {
+            knob: crate::report::knobs::KnobRecord {
+                target: "demo/lib/demo".to_owned(),
+                knob: crate::report::knobs::Knob::Timezone,
+                standing: crate::report::knobs::Standing::Broke {
+                    failed: vec!["the_zone_is_utc".to_owned()],
+                },
+            },
         },
         Payload::Drift {
             drift: crate::trace::DriftRecord {

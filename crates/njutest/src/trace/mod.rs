@@ -401,6 +401,11 @@ impl Recorder {
         self.emit(Payload::Drift { drift: record });
     }
 
+    /// Records what one control under one knob established about one target.
+    pub fn knob(&self, record: crate::report::knobs::KnobRecord) {
+        self.emit(Payload::Knob { knob: record });
+    }
+
     /// Records one closed model-checking question and its typed answer.
     pub fn model(&self, record: crate::report::ModelRecord) {
         self.emit(Payload::Model {

@@ -37,6 +37,7 @@ A test serializes closed specimens and compares this table in both directions.
 | `wire-exec` | `fault`, `capability`, `seq`, `rule`, `answer` | one licensed seam fault and its nested closed decision |
 | `model` | `mutant`, `answer` | one retained closed model question; `answer` is a nested closed decision and affirmative arms carry their full typed evidence |
 | `drift` | `mutant`, `observed` | what the original-code control confirming `mutant`'s kill established about one target's baseline reach; `observed` is the report's closed drift record ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)) |
+| `knob` | `target`, `knob`, `standing` | what one control started with one knob put established about one target, the report's closed knob record: `stable`, `passed`, `broke` with the tests that failed, `moved` with the three unions, `uncompared`, `unsettled`, or `not-put` with why |
 | `note` | `kind`, `detail` | a named diagnostic with no richer event type |
 | `run-end` | `verdict`, `accounting`, `error`, `events_emitted`, `events_dropped` | the sole terminal event, emitted only after report persistence and cleanup succeed |
 

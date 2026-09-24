@@ -257,11 +257,13 @@ pub fn measured(
                     standing(&controlled, &target.id)
                 }
             };
-            records.push(KnobRecord {
+            let record = KnobRecord {
                 target: target.id.clone(),
                 knob,
                 standing,
-            });
+            };
+            watch.trace.knob(record.clone());
+            records.push(record);
         }
     }
     Ok(records)
