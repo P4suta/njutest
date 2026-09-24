@@ -40,14 +40,14 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, `soundness`, `action-smoke`, and `ci-success` which gathers them | every push, pull request, and merge group |
+| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, `soundness`, `action-smoke`, and `ci-success` which gathers them | every push and pull request |
 | `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
 | `dogfood.yml` | `shard` runs the engine over its own catalog in four parts, and `audit` puts the parts back together, checks each recording, and re-decides every part against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
 | `dependabot-auto-merge.yml` | asks for the merge of a dependency bump, which GitHub performs once `ci-success` passes; the label `no-auto-merge` says not to | on a dependabot pull request |
 | `release-plz.yml`, `release.yml` | the release train | every push to `main`, and on a tag |
-| `codeql.yml` | CodeQL over Rust and over the workflows, with the `security-extended` queries; `CodeQL required` is the one name a protection rule asks for | every push, pull request, and merge group, and weekly |
-| `dependency-review.yml` | what a pull request adds to the dependency graph, refused at moderate severity in any scope | on a pull request and a merge group |
+| `codeql.yml` | CodeQL over Rust and over the workflows, with the `security-extended` queries; `CodeQL required` is the one name a protection rule asks for | every push and pull request, and weekly |
+| `dependency-review.yml` | what a pull request adds to the dependency graph, refused at moderate severity in any scope | on a pull request |
 | `scorecard.yml` | the OpenSSF Scorecard of this repository, published | every push to `main`, and weekly |
 
 The `book` job builds `docs/` with mdbook, which refuses a summary that names a page the repository does not hold; `cargo test -p xtask --test docs` refuses the other direction, a page the summary does not name.
