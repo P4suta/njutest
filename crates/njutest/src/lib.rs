@@ -20,6 +20,7 @@ pub mod git;
 pub mod kept;
 pub mod limitation;
 pub mod naming;
+pub mod observe;
 pub mod presentation;
 pub mod provider;
 pub mod repair;

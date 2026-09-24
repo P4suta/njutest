@@ -346,7 +346,7 @@ pub enum RunnerError {
     Schedule(#[from] crate::assure::schedule::ScheduleError),
     /// The sources a proof rests on could not be read just now.
     #[error(transparent)]
-    Sources(#[from] crate::concurrency::read::SourceReadError),
+    Sources(#[from] crate::observe::SourceReadError),
     /// Equivalence answers could not be correlated without ambiguity.
     #[error("{}: {source}", REPORT_UNSOUND.code)]
     Equivalence {
