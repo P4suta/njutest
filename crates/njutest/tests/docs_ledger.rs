@@ -645,6 +645,19 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
         "/$defs/beside/properties/failed",
         names(&njutest::report::faults::Failed::ALL),
     ));
+    rows.push(("/$defs/knob", names(&njutest::report::knobs::Knob::ALL)));
+    rows.push((
+        "/$defs/knobStanding/oneOf/4/properties/why",
+        names(&njutest::report::drift::Unmeasured::ALL),
+    ));
+    rows.push((
+        "/$defs/knobStanding/oneOf/5/properties/why",
+        names(&njutest::report::knobs::Unsettled::ALL),
+    ));
+    rows.push((
+        "/$defs/knobStanding/oneOf/6/properties/why",
+        names(&njutest::report::knobs::NotPut::ALL),
+    ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
         .map(|(pointer, names)| {

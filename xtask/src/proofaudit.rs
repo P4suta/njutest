@@ -5,6 +5,7 @@
 //!
 //! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
+mod knobs;
 pub mod sentinel;
 
 use std::collections::BTreeMap;
@@ -35,11 +36,12 @@ const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
-pub const DEFECT_KINDS: [&str; 4] = [
+pub const DEFECT_KINDS: [&str; 5] = [
     "build-failure",
     "failing-test",
     "undefined-behaviour",
     "broken-under-fault",
+    "environment-dependent",
 ];
 const WAITED_MUTANT: &str = "waited-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
@@ -167,6 +169,8 @@ pub enum Layer {
     Drift,
     /// What each fault site came to, re-derived from the fault executions alone and held to the report's records, counts and findings.
     Faults,
+    /// What each control started under a knob established, re-derived from the engine's perturbed-control records and held to what the report says of each.
+    Knobs,
 }
 
 impl Layer {
@@ -185,6 +189,7 @@ impl Layer {
             Self::Model => "model",
             Self::Drift => "drift",
             Self::Faults => "faults",
+            Self::Knobs => "knobs",
         }
     }
 }
@@ -396,6 +401,21 @@ pub struct Recorded<'a> {
     pub engines: &'a [(String, String)],
 }
 
+/// What `read` makes of the runner's recording, where the run kept one.
+fn read_runner<T>(
+    runner: Option<(&str, &str)>,
+    read: fn(&str) -> Result<T, crate::route::ReadError>,
+) -> Result<Option<T>, AuditError> {
+    runner
+        .map(|(recording_path, text)| {
+            read(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()
+}
+
 /// Re-decides a report against what the run recorded beside it and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
 ///
 /// # Errors
@@ -444,24 +464,21 @@ pub fn audit_with(
             })
         })
         .transpose()?;
-    let faulted = recorded_runner
-        .map(|(recording_path, text)| {
-            crate::faults::read(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
-                source,
-            })
-        })
-        .transpose()?;
+    let faulted = read_runner(recorded_runner, crate::faults::read)?;
     let engines = recorded
         .engines
         .iter()
         .map(|(recording_path, text)| {
-            crate::drift::read(text).map_err(|source| AuditError::MalformedRecording {
+            let malformed = |source| AuditError::MalformedRecording {
                 path: recording_path.clone(),
                 source,
+            };
+            Ok(Engine {
+                touched: crate::drift::read(text).map_err(malformed)?,
+                perturbed: crate::knobs::read(text).map_err(malformed)?,
             })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, AuditError>>()?;
     let mut audit = Audit {
         run_id: recording.run_id.clone(),
         mutants: recording.mutants.len(),
@@ -482,6 +499,7 @@ pub fn audit_with(
     models(&recording, run, &mut audit);
     drift(&recording, &engines, &mut audit);
     faults(&recording, faulted.as_ref(), &mut audit);
+    knobs::audited(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -530,6 +548,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "drift",
         "faults",
         "beside",
+        "knobs",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -557,7 +576,16 @@ const UNSTABLE_BASELINE: &str = "unstable-baseline";
 const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
 /// Which targets moved between their baseline and a control, re-derived from the engine's touch records and held to the report's records, findings, and limitation.
-fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &mut Audit) {
+/// What one engine recording holds, as the layers that re-derive from it read it.
+#[derive(Debug)]
+struct Engine {
+    /// Every touch record.
+    touched: crate::drift::Touched,
+    /// Every perturbed control.
+    perturbed: crate::knobs::Perturbations,
+}
+
+fn drift(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Drift);
     let recorded = recording.document.get("drift").map(|rows| {
         rows.as_array()
@@ -583,7 +611,7 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
             );
             return;
         }
-        ([one], _) => one,
+        ([one], _) => &one.touched,
         (several, _) => {
             notes.unaudited(
                 "drift",
@@ -769,12 +797,18 @@ fn held_to_limitation(
     }
 }
 
-/// Whether a limitation's detail names `target` in its closing list, which is how a report names the targets a limitation is about.
+/// Whether a limitation's detail names `target` in its closing list.
 fn listed(detail: &str, target: &str) -> bool {
+    named(detail).contains(&target)
+}
+
+/// The targets a limitation's detail names in its closing list, which is how a report names the targets a limitation is about.
+fn named(detail: &str) -> Vec<&str> {
     detail
         .rsplit_once(" (")
         .and_then(|(_, list)| list.strip_suffix(')'))
-        .is_some_and(|list| list.split(", ").any(|one| one == target))
+        .map(|list| list.split(", ").collect())
+        .unwrap_or_default()
 }
 
 #[derive(Debug)]

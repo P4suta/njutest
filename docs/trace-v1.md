@@ -41,6 +41,7 @@ A test serializes closed specimens and compares this table in both directions.
 | `sentinel` | `layer`, `mutant`, `expected`, `routed`, `sighted` | one mutant planted for a routing layer before the baseline: `layer` is `reach`, `branch-never-taken`, or `never-infected:` followed by the form of evidence (`is-default`, `is-ok-default`, `is-some-default`, `is-true`, `inert-comparison`); `expected` is `unreached`, the proof that must discharge it, or `kept-for-library` / `kept-for-tests`; `routed` is what the engine decided, as a reader is told; a run ends in `ERROR` (`NJ5009`) after the first one not `sighted` |
 | `model` | `mutant`, `answer` | one retained closed model question; `answer` is a nested closed decision and affirmative arms carry their full typed evidence |
 | `drift` | `mutant`, `observed` | what the original-code control confirming `mutant`'s kill established about one target's baseline reach; `observed` is the report's closed drift record ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)) |
+| `knob` | `target`, `knob`, `standing` | what one control started with one knob put established about one target, the report's closed knob record: `stable`, `passed`, `broke` with the tests that failed, `moved` with the three unions, `uncompared`, `unsettled`, or `not-put` with why |
 | `note` | `kind`, `detail` | a named diagnostic with no richer event type |
 | `run-end` | `verdict`, `accounting`, `error`, `events_emitted`, `events_dropped` | the sole terminal event, emitted only after report persistence and cleanup succeed |
 

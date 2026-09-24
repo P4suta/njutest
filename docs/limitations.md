@@ -259,6 +259,16 @@ And a caller that swallows the injected error reads as `unnoticed`, which is wha
 A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
 Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.
 A tree whose faulted build or baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and puts nothing.
+## What a run asks of a suite that depends on where it runs
+
+A suite can pass on one machine and fail on the next because of something the contract lets differ between them: the time zone, the locale, the temporary directory, the home directory, the umask, the terminal width, or how many tests the harness runs at once.
+Asked for with `[repeatable] knobs`, a run starts one more control of each measured target per knob, with that one thing set to a value chosen to differ, and compares its verdict and its reach with the baseline's as drift compares a control's.
+A target the knob broke is `environment-dependent`, a defect; one whose reach moved over the same passing tests is `environment-dependent-reach`, and every proof read off its baseline is unfounded where that differs.
+
+Three things follow and are not hidden.
+A knob asked for and not put — no such zone in the time zone database, no such locale installed, no shell to set the mask through, a target that runs through cargo, a target that does not run under libtest, a platform with no way to put it — is `knob-not-put`, naming the knob, the targets, and why, because a pass under a knob that was never put says nothing.
+A knob whose controls established nothing to compare — a record that did not read back, other tests passing, a baseline that passed only on retry, a control that errored or ran out of time — is `knob-not-compared`, one per knob and reason, naming the targets.
+And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
 
 ## What a run asks of a suite that talks about time
 

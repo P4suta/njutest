@@ -67,9 +67,15 @@ pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 /// A run asked for faults could not put some, because the compiler refused them: their sites propagate an error type the engine does not make.
 pub const FAULT_NOT_PUT: &str = "fault-not-put";
 
+/// A knob was asked for and not put on a target, so nothing is claimed about whether the target depends on what it sets.
+pub const KNOB_NOT_PUT: &str = "knob-not-put";
+
+/// A control under a knob established nothing to compare, so whether a target's verdict and reach hold there is not known.
+pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 21] = [
+pub const ALL: [&str; 23] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -91,4 +97,6 @@ pub const ALL: [&str; 21] = [
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
     FAULT_NOT_PUT,
+    KNOB_NOT_PUT,
+    KNOB_NOT_COMPARED,
 ];

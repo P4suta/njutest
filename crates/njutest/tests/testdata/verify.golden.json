@@ -156,6 +156,7 @@
               "subject": "b6d893a120ece7625630"
             }
           ],
+          "knobs": [],
           "limitations": [
             {
               "detail": "git could not be asked, so the run cannot name the commit it verified",

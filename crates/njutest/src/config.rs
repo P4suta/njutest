@@ -193,6 +193,8 @@ pub struct Config {
     pub fuzz: Fuzz,
     /// Whether a run fails the calls a `?` asks about.
     pub faults: Faults,
+    /// What a run sets differently for one more control of each target, to ask whether the target's verdict and reach hold where it differs.
+    pub repeatable: Repeatable,
     /// The integration resources a run may start, by name.
     pub resources: BTreeMap<String, Resource>,
     /// The provider that writes candidate tests.
@@ -217,6 +219,7 @@ impl Default for Config {
             soundness: Soundness::default(),
             fuzz: Fuzz::default(),
             faults: Faults::default(),
+            repeatable: Repeatable::default(),
             resources: BTreeMap::new(),
             generation: None,
             acceptance: Vec::new(),
@@ -512,6 +515,14 @@ pub struct Soundness {
     pub miri_flags: Vec<String>,
     /// Sanitizers to run under, on a toolchain that has them.
     pub sanitizers: Vec<String>,
+}
+
+/// What a run sets differently for one more control of each target: nothing unless asked, since each knob is one more run of every target.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Repeatable {
+    /// The knobs to put, by name.
+    pub knobs: Vec<crate::report::knobs::Knob>,
 }
 
 /// The fuzz targets a run may drive.

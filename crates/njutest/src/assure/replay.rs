@@ -162,7 +162,9 @@ fn replayed(kind: FindingKind) -> Replayable {
         | FindingKind::UndefinedBehaviour
         | FindingKind::HollowTarget
         | FindingKind::WireUnnoticed
-        | FindingKind::UnstableBaseline => Replayable::Site(Vec::new()),
+        | FindingKind::UnstableBaseline
+        | FindingKind::EnvironmentDependent
+        | FindingKind::EnvironmentDependentReach => Replayable::Site(Vec::new()),
     }
 }
 
@@ -200,6 +202,8 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
         | FindingKind::HollowTarget
         | FindingKind::WireUnnoticed
         | FindingKind::UnstableBaseline
+        | FindingKind::EnvironmentDependent
+        | FindingKind::EnvironmentDependentReach
         | FindingKind::UnnoticedFault => match outcome {
             Measured::Survived => Outcome::Reproduced,
             Measured::Killed => Outcome::Resolved,

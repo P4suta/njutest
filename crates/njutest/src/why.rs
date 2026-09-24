@@ -194,6 +194,7 @@ fn fault(id: &str, events: &[Event]) -> Why {
             | Payload::MutantExec { .. }
             | Payload::FaultExec { .. }
             | Payload::Beside { .. }
+            | Payload::Knob { .. }
             | Payload::ProbeExec { .. }
             | Payload::WireExchange { .. }
             | Payload::WireExec { .. }
@@ -276,6 +277,7 @@ fn mutation(id: &str, events: &[Event]) -> Why {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Knob { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }
@@ -361,6 +363,7 @@ fn mutations(events: &[Event]) -> usize {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Knob { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }

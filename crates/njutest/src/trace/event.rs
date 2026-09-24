@@ -118,6 +118,11 @@ pub enum Payload {
         /// The record.
         drift: DriftRecord,
     },
+    /// What one control under one knob established about one target, as the report keeps it.
+    Knob {
+        /// The record.
+        knob: crate::report::knobs::KnobRecord,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -152,6 +157,7 @@ impl Payload {
             Self::Sentinel { .. } => "sentinel",
             Self::Model { .. } => "model",
             Self::Drift { .. } => "drift",
+            Self::Knob { .. } => "knob",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
