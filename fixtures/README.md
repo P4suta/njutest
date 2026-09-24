@@ -31,3 +31,6 @@ enforced by `cargo xtask fixtures`:
   again and refuses a difference, and `UPDATE_FATES=1` rewrites the block.
 - Every fixture is named by at least one test. A fixture nothing drives is one
   nothing keeps honest, and the same suite refuses it.
+- A fixture that exists to hold a selection to account (`fixture-edits`) carries its edits under `edits/`, one directory per edit holding each file as the edit leaves it, or a `FEATURES` file where the edit is to how the fixture is built.
+  It states what each one breaks in an ```` ```edits ```` block: one line per edit, as `<edit> breaks <package>/<kind>/<name>, …` or `<edit> breaks nothing`.
+  `cargo test -p njutest --test toolchain_edits` applies each edit to a copy, builds and runs every target, and refuses a difference, without asking any selection anything: the block is what an edit breaks, established apart from whatever is later asked to predict it.
