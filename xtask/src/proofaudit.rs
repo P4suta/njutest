@@ -95,12 +95,6 @@ pub enum AuditError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Unprojectable {
-    /// The document is one part of a catalog rather than a complete answer.
-    #[error("a {kind} document is one part of a catalog")]
-    Part {
-        /// What the document calls itself.
-        kind: String,
-    },
     /// The report measured more than one configured build, or none.
     #[error("a report of {count} configured builds")]
     Builds {
@@ -478,11 +472,7 @@ fn read_report(path: &str, text: &str) -> Result<serde_json::Value, AuditError> 
             path: path.to_owned(),
             source,
         })?;
-    if read
-        .get("document_type")
-        .and_then(serde_json::Value::as_str)
-        == Some("complete")
-    {
+    if read.get("document_type").is_some() {
         crate::schemas::Checker::assurance_report()?
             .check(&read)
             .map_err(|source| AuditError::OffSchema {
@@ -511,27 +501,43 @@ fn concluded(text: &str) -> Result<Option<String>, crate::route::ReadError> {
     )
 }
 
-/// The flat view of one configured build measured whole that every layer re-decides, taken from a complete report or as it is.
+/// The flat view of the one part of one configured build that every layer re-decides: a complete report's one build measured whole, or a shard's one build with the shard it is written into its scope.
 fn projected(document: &serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
     let Some(kind) = document.get("document_type") else {
         return Err(Unprojectable::Flat);
     };
-    if kind.as_str() != Some("complete") {
-        return Err(Unprojectable::Part {
-            kind: kind.to_string(),
-        });
-    }
-    let report = document.get("report").cloned().unwrap_or_default();
+    let mut report = document.get("report").cloned().unwrap_or_default();
     let builds = rows(&report, "builds");
     let [build] = builds else {
         return Err(Unprojectable::Builds {
             count: builds.len(),
         });
     };
-    let parts = rows(build, "parts");
-    let [part] = parts else {
-        return Err(Unprojectable::Parts { count: parts.len() });
+    let part = if kind.as_str() == Some("shard") {
+        build.get("source").cloned().unwrap_or_default()
+    } else {
+        let parts = rows(build, "parts");
+        let [part] = parts else {
+            return Err(Unprojectable::Parts { count: parts.len() });
+        };
+        part.clone()
     };
+    let owned = report.get("shard").and_then(|shard| {
+        Some(format!(
+            "{}/{}",
+            shard.get("index")?.as_u64()?,
+            shard.get("of")?.as_u64()?
+        ))
+    });
+    if let (Some(owned), Some(scope)) = (
+        owned,
+        report
+            .get_mut("scope")
+            .and_then(serde_json::Value::as_object_mut),
+    ) {
+        scope.insert("shard".to_owned(), serde_json::Value::String(owned));
+    }
+    let part = &part;
     let mut flat = serde_json::Map::new();
     for key in [
         "schema",
