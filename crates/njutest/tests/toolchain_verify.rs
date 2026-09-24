@@ -1918,3 +1918,41 @@ fn a_mutant_only_a_child_that_lost_the_runs_environment_runs_is_not_a_survivor()
         "and the run says which target started a process it could not reach: {limitations:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_survival_under_which_a_child_lost_the_runs_environment_is_not_one() {
+    let fixture = fixture("fixture-cleared-under-mutant");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let decided: BTreeSet<(String, String)> = document["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists mutations: {document}\n{stderr}"))
+        .iter()
+        .filter(|row| row["item"] == "delegated")
+        .map(|row| {
+            (
+                row["rule"].as_str().unwrap_or_default().to_owned(),
+                row["decision"]["outcome"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    for (rule, outcome) in &decided {
+        let starts_a_child = rule == "return-true";
+        assert!(
+            !starts_a_child || outcome != "survived",
+            "{rule} makes the test start a child with a cleared environment, a process no \
+             mutant can be active in, so its passing is not a survival: {decided:?}"
+        );
+    }
+    assert!(
+        decided
+            .iter()
+            .any(|(rule, outcome)| rule == "gt-to-ge" && outcome == "survived"),
+        "a mutant under which no child starts survives as it always did: {decided:?}"
+    );
+}

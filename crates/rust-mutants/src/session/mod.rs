@@ -449,6 +449,14 @@ impl Session {
         &self.targets
     }
 
+    /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
+    fn orphaned(&self, (started, ended): (std::time::SystemTime, std::time::SystemTime)) -> bool {
+        match crate::orphan::left(std::path::Path::new(self.workspace.watched())) {
+            Ok(orphans) => orphans.iter().any(|orphan| orphan.during(started, ended)),
+            Err(_unreadable) => true,
+        }
+    }
+
     /// Whether a process of `target`'s tree ran without the environment the run gave it, so a survival it reports is not one.
     #[must_use]
     pub fn uncontrolled(&self, target: &str) -> bool {
@@ -1242,8 +1250,12 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
+            let started = std::time::SystemTime::now();
             let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
-            if result.conclusion == MutantConclusion::Survived && self.uncontrolled(&target.id) {
+            let ended = std::time::SystemTime::now();
+            if result.conclusion == MutantConclusion::Survived
+                && (self.uncontrolled(&target.id) || self.orphaned((started, ended)))
+            {
                 result.conclusion = MutantConclusion::Inconclusive;
             }
             self.record_mutant_exec(Executed {

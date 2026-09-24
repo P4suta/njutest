@@ -76,6 +76,11 @@ pub(super) fn verify(
         return Ok(recalled.verified);
     }
     let measured = verify_targets(targets, scratch, building);
+    let watched = Path::new(workspace.watched());
+    crate::orphan::clear(watched).map_err(|source| SessionError::WriteFailed {
+        path: watched.display().to_string(),
+        source,
+    })?;
     phase.end();
     let (verified, tests_run) = measured?;
     refused(&verified, building.options.failing)?;

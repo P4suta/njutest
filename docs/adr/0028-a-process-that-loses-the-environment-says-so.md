@@ -34,12 +34,15 @@ The select layer inherits the same hole: a target whose child entered an item it
    Such a target is `uncontrolled-child`: its touch record is not gathered, so it stays in every route, and a selection finds nothing measured about it and runs it.
    A directory that cannot be read counts as one that holds an orphan.
 
-4. **A survival from it is not one.** An execution against an `uncontrolled-child` target that comes back `survived` is recorded `inconclusive`: every test of it passing says nothing about a mutant that may have lived only in a process it could not reach.
+4. **Under a mutant, it is attributed by when.** Mutant executions run side by side, so an orphan left during the mutation phase cannot be told apart by directory; the directory is cleared when the baseline ends, and an execution records when it started and ended.
+   An orphan whose file was written within that span, give or take two seconds of filesystem clock, is attributed to the execution — and to every other execution it overlaps, since nothing finer separates them — and one whose time cannot be read is attributed to all.
+
+5. **A survival from it is not one.** An execution against an `uncontrolled-child` target that comes back `survived` is recorded `inconclusive`: every test of it passing says nothing about a mutant that may have lived only in a process it could not reach.
+   The same holds for a survival of any execution an orphan was attributed to under point 4.
    A kill stays a kill, since the confirming control ran in the parent.
 
 ## Consequences
 
 - A suite that clears its children's environment loses precision on the targets that do, and no longer loses soundness.
-- Only the baseline is watched.
-  A process that loses the environment under one mutant and not on the baseline — a mutant that makes a test take a path that spawns — is not yet attributed; mapping an orphan found during the mutation phase back to its execution by its parent's id, and to every execution in flight where that fails, is the next change.
+- An orphan under one mutant makes every overlapping execution's survival inconclusive, which costs a run that spawns such children under many mutants a good share of its survivors; mapping each orphan to its execution by its parent's id would narrow that, and is not needed for soundness.
 - Reaching such a child at all, rather than only noticing it, needs a channel `env_clear()` does not remove: an inherited descriptor opened before the test starts, which the engine can pass without `unsafe` only once it has a way to mark one inheritable.

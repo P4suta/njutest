@@ -8,13 +8,31 @@ use std::str::FromStr as _;
 
 use crate::instrument::ORPHAN_PREFIX;
 
-/// One process that lost the run's environment: its own id and its parent's.
+/// One process that lost the run's environment: its own id, its parent's, and when it said so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Orphan {
     /// Its process id.
     pub pid: u32,
     /// Its parent's, or zero where the platform does not say.
     pub parent: u32,
+    /// When it said so, or nothing where the filesystem could not say, which could be any time at all.
+    pub at: Option<std::time::SystemTime>,
+}
+
+/// How far either side of an execution an orphan's time still counts as during it: a filesystem's clock is coarser than a process's.
+pub const SLACK: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl Orphan {
+    /// Whether this orphan may have been left while something ran from `started` to `ended`.
+    #[must_use]
+    pub fn during(&self, started: std::time::SystemTime, ended: std::time::SystemTime) -> bool {
+        let Some(at) = self.at else {
+            return true;
+        };
+        let from = started.checked_sub(SLACK).unwrap_or(std::time::UNIX_EPOCH);
+        let to = ended.checked_add(SLACK).unwrap_or(ended);
+        from <= at && at <= to
+    }
 }
 
 /// Forgets every orphan `watched` holds, so what it holds next was left by what runs next.
@@ -40,15 +58,24 @@ pub fn left(watched: &Path) -> std::io::Result<Vec<Orphan>> {
     };
     let mut orphans = Vec::new();
     for entry in listing {
-        let name = entry?.file_name();
+        let entry = entry?;
+        let at = match entry.metadata().and_then(|meta| meta.modified()) {
+            Ok(at) => Some(at),
+            Err(_unknown) => None,
+        };
+        let name = entry.file_name();
         let ids = name
             .to_str()
             .and_then(|name| name.strip_prefix(ORPHAN_PREFIX))
             .and_then(|ids| ids.split_once('-'));
         orphans.push(
             match ids.map(|(pid, parent)| (u32::from_str(pid), u32::from_str(parent))) {
-                Some((Ok(pid), Ok(parent))) => Orphan { pid, parent },
-                Some(_) | None => Orphan { pid: 0, parent: 0 },
+                Some((Ok(pid), Ok(parent))) => Orphan { pid, parent, at },
+                Some(_) | None => Orphan {
+                    pid: 0,
+                    parent: 0,
+                    at,
+                },
             },
         );
     }
