@@ -94,10 +94,12 @@ A name no directory answers to is refused (`RM0007`) rather than answered from a
 | Code | What it means |
 | --- | --- |
 | 0 | every mutant the run decided, the tests noticed |
-| 1 | there is a finding: a survivor, a stale claim, something the run could not decide |
-| 2 | the run itself failed, or the command was used wrongly |
+| 1 | there is a finding about the tests: a survivor, a mutation no test reached or a proof removed, a mutation the run could not decide either way, or a stale or unmatched claim |
+| 2 | the run could not measure a mutation it ran — it waited, reached its step limit, errored or was not run — or the run itself failed, or the command was used wrongly |
 | 130 | it was interrupted |
 | 143 | it was terminated, which is what a cancelled job sends |
+
+The table is `rust_mutants::run::Exit`, which is also what a run decides its code with and what `--help` prints, so the three cannot say different things; a test holds this page to it.
 
 An exit code is about what was established, never about a percentage.
 There is no threshold flag; see [ADR 0004](../adr/0004-proof-layers-not-budgets.md).

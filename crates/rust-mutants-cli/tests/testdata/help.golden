@@ -52,7 +52,9 @@ Options:
 
 Exit codes:
   0    every mutant the run decided, the tests noticed
-  1    there is a finding: a survivor, a stale claim, something the run could not decide
-  2    the run itself failed, or the command was used wrongly
-  130  interrupted
-  143  terminated
+  1    there is a finding about the tests: a survivor, a mutation no test reached or a proof
+  removed, a mutation the run could not decide either way, or a stale or unmatched claim
+  2    the run could not measure a mutation it ran — it waited, reached its step limit, errored or
+  was not run — or the run itself failed, or the command was used wrongly
+  130  it was interrupted
+  143  it was terminated, which is what a cancelled job sends

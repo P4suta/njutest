@@ -558,3 +558,27 @@ fn a_mutation_this_machine_stopped_waiting_for_is_a_finding_that_says_so() {
          two are counted in different columns"
     );
 }
+
+#[test]
+fn a_run_ends_on_the_gravest_thing_it_holds_and_an_interruption_outranks_all_of_it() {
+    use rust_mutants::run::Exit;
+    assert_eq!(Exit::of(false, []), Exit::Detected);
+    assert_eq!(
+        Exit::of(false, [FindingKind::SurvivingMutant]),
+        Exit::Undetected
+    );
+    assert_eq!(
+        Exit::of(
+            false,
+            [FindingKind::SurvivingMutant, FindingKind::WaitedMutant]
+        ),
+        Exit::Unestablished,
+        "a run that could not measure something it ran says so before what it found"
+    );
+    assert_eq!(
+        Exit::of(true, [FindingKind::WaitedMutant]),
+        Exit::Interrupted
+    );
+    let codes: Vec<u8> = Exit::ALL.iter().map(|exit| exit.code()).collect();
+    assert_eq!(codes, vec![0, 1, 2, 130, 143]);
+}

@@ -78,16 +78,16 @@ impl Expectation {
 }
 
 /// The exit code of a run that established detection for everything it executed.
-pub const EXIT_DETECTED: u8 = 0;
+pub const EXIT_DETECTED: u8 = Exit::Detected.code();
 
 /// The exit code of a run that left something the tests did not notice.
-pub const EXIT_UNDETECTED: u8 = 1;
+pub const EXIT_UNDETECTED: u8 = Exit::Undetected.code();
 
 /// The exit code of a run that was interrupted.
-pub const EXIT_INTERRUPTED: u8 = 130;
+pub const EXIT_INTERRUPTED: u8 = Exit::Interrupted.code();
 
 /// The exit code of a run that established nothing: it failed rather than answered.
-pub const EXIT_FAILED: u8 = 2;
+pub const EXIT_FAILED: u8 = Exit::Unestablished.code();
 
 /// What the optional compiler-artifact comparison established.
 ///
@@ -271,16 +271,89 @@ impl FindingKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
+    /// How a run holding this finding ends: a finding about the tests, or one about what the run could not measure.
+    #[must_use]
+    pub const fn exit(self) -> Exit {
+        match self {
+            Self::SurvivingMutant
+            | Self::InconclusiveMutant
+            | Self::UnreachedMutant
+            | Self::DischargedMutant
+            | Self::StaleExpectation
+            | Self::UnmatchedExpectation
+            | Self::UnmatchedSkip => Exit::Undetected,
+            Self::StepLimitReachedMutant
+            | Self::WaitedMutant
+            | Self::ErroredMutant
+            | Self::NotRunMutant => Exit::Unestablished,
+        }
+    }
+
     /// Whether the finding is about the run itself rather than about the tests.
     #[must_use]
     pub const fn is_infrastructure(self) -> bool {
-        matches!(
-            self,
-            Self::ErroredMutant
-                | Self::NotRunMutant
-                | Self::StepLimitReachedMutant
-                | Self::WaitedMutant
-        )
+        matches!(self.exit(), Exit::Unestablished)
+    }
+}
+
+/// How a run ends, which is the one table its exit code, its `--help` and its documentation are read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
+pub enum Exit {
+    /// Every mutant the run decided, the tests noticed.
+    Detected,
+    /// There is a finding about the tests.
+    Undetected,
+    /// The run could not measure something it ran, or failed, or was used wrongly.
+    Unestablished,
+    /// The run was interrupted.
+    Interrupted,
+    /// The run was terminated.
+    Terminated,
+}
+
+impl Exit {
+    /// The code the process ends with.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Detected => 0,
+            Self::Undetected => 1,
+            Self::Unestablished => 2,
+            Self::Interrupted => 130,
+            Self::Terminated => 143,
+        }
+    }
+
+    /// What it means, as `--help` and the documentation say it.
+    #[must_use]
+    pub const fn meaning(self) -> &'static str {
+        match self {
+            Self::Detected => "every mutant the run decided, the tests noticed",
+            Self::Undetected => {
+                "there is a finding about the tests: a survivor, a mutation no test reached or a \
+                 proof removed, a mutation the run could not decide either way, or a stale or \
+                 unmatched claim"
+            }
+            Self::Unestablished => {
+                "the run could not measure a mutation it ran — it waited, reached its step limit, \
+                 errored or was not run — or the run itself failed, or the command was used wrongly"
+            }
+            Self::Interrupted => "it was interrupted",
+            Self::Terminated => "it was terminated, which is what a cancelled job sends",
+        }
+    }
+
+    /// How a run whose findings are of `kinds` ends, `interrupted` or not: the one decision every report of a run makes.
+    #[must_use]
+    pub fn of(interrupted: bool, kinds: impl IntoIterator<Item = FindingKind>) -> Self {
+        if interrupted {
+            return Self::Interrupted;
+        }
+        kinds
+            .into_iter()
+            .map(FindingKind::exit)
+            .max()
+            .unwrap_or(Self::Detected)
     }
 }
 
@@ -502,21 +575,11 @@ impl Run {
     /// The exit code the run earns.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
-        if self.interrupted {
-            return EXIT_INTERRUPTED;
-        }
-        let findings = self.findings();
-        if findings
-            .iter()
-            .any(|finding| finding.kind.is_infrastructure())
-        {
-            return EXIT_FAILED;
-        }
-        if findings.is_empty() {
-            EXIT_DETECTED
-        } else {
-            EXIT_UNDETECTED
-        }
+        Exit::of(
+            self.interrupted,
+            self.findings().iter().map(|finding| finding.kind),
+        )
+        .code()
     }
 }
 
