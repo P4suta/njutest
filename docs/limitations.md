@@ -334,7 +334,7 @@ while i < n { i += step; } // and this never ends — the loop body is a checkpo
 
 Run against a workspace of that shape, the mutation of the literal reports `step_limit_reached` at `N + 1` and never `waited`, and it does so with the loop in a second file the run is not mutating.
 This paragraph said the opposite until that was measured; what it described was the instrumenter before it placed checkpoints across a whole workspace.
-No fixture in this tree pins it yet, which is the next thing this claim wants.
+`fixtures/fixture-hang` pins it: `walked` hands its stride to a loop in `src/walk.rs`, a file a `rust-mutants: skip` marker keeps the run from mutating, and `crates/rust-mutants-cli/tests/toolchain_hang.rs` holds the stride's decrement to `step_limit_reached` at exactly `N + 1`, not retried, with no mutant of the loop's own file.
 
 How long the allowance takes to reach belongs to the platform, not to the count.
 The durable step protocol pays one locked state-file round trip per take, and that round trip is measured here at about 7.4ms on Windows: a hundred takes cost 789ms, where the machines this figure was first chosen on spend a fraction of that.
