@@ -11,6 +11,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue holds a pull request until `CodeQL required` reports on the merge group it builds.
+  merge_group:
   schedule:
     - cron: "31 3 * * 2"
   workflow_dispatch:

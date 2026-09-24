@@ -166,6 +166,10 @@ It reads the engine recording under `builds/*/engine/` beside the runner's, and 
 Each measured target is held to the report's drift record about it (`held`, `moved`, or `not-measured`), a moved one to an `unstable-baseline` finding and every such finding to a moved target, and a target no comparable control recorded to the `drift-not-measured` limitation.
 Its planted defect is a control that reached a site its baseline never did, recorded as `held`.
 
+The `executions` layer holds every mutation's reported outcome to the executions of it the recording holds: a `killed` or `unconfirmed` row needs a recorded execution that was killed, a `waited` or step-limited one a recorded execution that ended that way, a `survived` row no recorded execution that did anything but survive, an `unreached` or `compile-rejected` row no execution at all, an `equivalent` one the equivalence layer's `identical` answer, and none of the three that claim the programs agree a killed execution.
+Before it, a report that called its survivor killed, and made its columns, findings, and verdict agree, drew no violation from any layer.
+Its planted defects are that kind of lie, told consistently, and a law in `xtask/tests/sentinel.rs` reads every outcome the report schema allows and requires a planted lie for each (`proofaudit::sentinel::lie`) that some layer refuses, so an outcome added to the schema is audited against its executions the day it arrives.
+
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's own runs.
 It reads that run's `run-report-v1.json` and re-decides it in nine layers, none of which calls the engine's code:
 
