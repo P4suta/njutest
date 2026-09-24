@@ -64,7 +64,7 @@ jobs:
       # Building it plainly is what makes those tests able to run.
       - name: Build the scripted toolchain the suite drives
         shell: bash
-        run: cargo build --locked --examples -p rust-mutants
+        run: cargo build --locked --examples --workspace --all-features --profile test
       # `shell: bash` rather than the default, which is PowerShell on Windows:
       # a native command that fails there does not stop the script, so the suite below ran on after the first half had already failed and the step's status became the second half's.
       # A failing test took the job's forty-five minute timeout to be reported, and would have been reported as a pass had the second half succeeded.
@@ -78,7 +78,7 @@ jobs:
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Doctests
         shell: bash
-        run: cargo test --locked --workspace --doc
+        run: cargo test --locked --workspace --all-features --doc
 
   lint:
     name: lint
@@ -209,7 +209,7 @@ jobs:
           # `not found *.profraw files in .../target/llvm-cov-target`, with the
           # profiles sitting in `target` all along. The steps are told where.
           echo "CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR" >> "$GITHUB_ENV"
-          cargo build --locked --examples -p rust-mutants
+          cargo build --locked --examples --workspace --all-features --profile test
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast -E 'not binary(/^toolchain_/)'
           # Coverage makes every nested build heavier. Bound only the suites
           # that start those builds, preserving full parallelism everywhere else.
