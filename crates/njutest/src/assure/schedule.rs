@@ -9,6 +9,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// The most workers a run gives itself when the configuration does not say.
 pub const CAP: usize = 4;
 
+/// The stack every worker gets, the size a process's first thread has, so what a worker can measure does not depend on how many workers there are.
+pub const WORKER_STACK: usize = 8 << 20;
+
 /// How many mutations to measure at once, given what the configuration asked for, what the machine offers, and whether a resource forces the run to be alone.
 /// # Errors
 /// The requested count does not fit this target's address space.
@@ -50,8 +53,15 @@ pub enum ScheduleError {
         source: std::io::Error,
     },
     /// A worker panicked before returning its answers.
-    #[error("a measurement worker panicked before returning its answers")]
+    #[error("a worker panicked before returning its answers")]
     WorkerPanicked,
+    /// The operating system would not start a worker.
+    #[error("the operating system would not start a worker: {source}")]
+    WorkerUnstarted {
+        /// The operating-system failure.
+        #[source]
+        source: std::io::Error,
+    },
     /// A prior panic may have interrupted a shared measurement.
     #[error("a prior panic may have corrupted shared measurement state")]
     SharedStatePoisoned,
@@ -79,11 +89,14 @@ impl<'scope, T: Send + 'scope> ScopedWorker<'scope, T> {
     fn launch(
         scope: &'scope std::thread::Scope<'scope, '_>,
         work: impl FnOnce() -> T + Send + 'scope,
-    ) -> Self {
-        let handle = scope.spawn(work);
-        Self {
+    ) -> Result<Self, ScheduleError> {
+        let handle = std::thread::Builder::new()
+            .stack_size(WORKER_STACK)
+            .spawn_scoped(scope, work)
+            .map_err(|source| ScheduleError::WorkerUnstarted { source })?;
+        Ok(Self {
             handle: Some(handle),
-        }
+        })
     }
 
     fn join(mut self) -> Result<T, ScheduleError> {
@@ -100,7 +113,7 @@ impl<'scope, T: Send + 'scope> ScopedWorker<'scope, T> {
     }
 }
 
-/// Measures every item, at most `workers` at a time, and answers in the order the items came in.
+/// Measures every item on workers of [`WORKER_STACK`], at most `workers` and never more than there are items, and answers in the order the items came in.
 ///
 /// # Errors
 /// Returns [`ScheduleError`] if a worker panics or shared scheduling state can no longer be trusted.
@@ -110,19 +123,17 @@ where
     R: Send,
     F: Fn(usize, &T) -> R + Sync,
 {
-    if workers <= 1 || items.len() <= 1 {
-        return Ok(items
-            .iter()
-            .enumerate()
-            .map(|(at, item)| work(at, item))
-            .collect());
+    let workers = workers.clamp(1, items.len().max(1));
+    if items.is_empty() {
+        return Ok(Vec::new());
     }
     let next = AtomicUsize::new(0);
     let mut kept = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(workers);
+        let mut unstarted = None;
         for _ in 0..workers {
             let (next, work) = (&next, &work);
-            handles.push(ScopedWorker::launch(scope, move || {
+            let launched = ScopedWorker::launch(scope, move || {
                 let mut answered = Vec::new();
                 loop {
                     let at =
@@ -139,9 +150,19 @@ where
                     answered.push((at, answer));
                 }
                 Ok(answered)
-            }));
+            });
+            match launched {
+                Ok(worker) => handles.push(worker),
+                Err(error) => {
+                    unstarted = Some(error);
+                    break;
+                }
+            }
         }
         let joined: Vec<_> = handles.into_iter().map(ScopedWorker::join).collect();
+        if let Some(error) = unstarted {
+            return Err(error);
+        }
         let mut answered = Vec::with_capacity(items.len());
         for worker in joined {
             let mut from_worker = worker??;

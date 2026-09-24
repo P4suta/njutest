@@ -65,20 +65,74 @@ fn a_run_that_says_how_many_workers_it_wants_gets_them() {
 }
 
 #[test]
-fn one_worker_or_one_item_stays_on_the_calling_thread() {
+fn every_measurement_runs_on_a_worker_and_never_on_the_calling_thread() {
     let caller = std::thread::current().id();
     let two =
         measure(&["a", "b"], 1, |_at, _item| std::thread::current().id()).expect("workers finish");
     let one =
         measure(&["a"], 4, |_at, _item| std::thread::current().id()).expect("worker finishes");
 
-    assert_eq!(two, [caller, caller]);
-    assert_eq!(one, [caller]);
+    assert!(
+        !two.contains(&caller) && !one.contains(&caller),
+        "one worker runs on a stack of the size many do, so what it can measure does not depend on \
+         how many measure"
+    );
     assert!(
         measure::<u8, u8, _>(&[], 4, |_at, item| *item)
             .expect("empty work finishes")
             .is_empty()
     );
+}
+
+/// The deepest stack address `frames` nested calls reach, each holding a kilobyte.
+fn deep(frames: usize) -> usize {
+    let frame = std::hint::black_box([0_u8; 1024]);
+    let here = std::ptr::from_ref(&frame).addr();
+    if frames == 0 {
+        return here;
+    }
+    deep(frames.saturating_sub(1)).min(here)
+}
+
+/// How many nested calls of [`deep`] use `bytes` of stack, on this build.
+fn frames_for(bytes: usize) -> usize {
+    let (one, two) = (deep(1), deep(2));
+    bytes
+        .checked_div(one.abs_diff(two))
+        .expect("two nested calls sit at different stack addresses")
+}
+
+#[test]
+fn a_worker_has_the_stack_the_calling_thread_would_have_had_however_many_workers_there_are() {
+    let frames = frames_for(4 << 20);
+    let items = vec![frames; 4];
+    for workers in [1, 2, 4] {
+        let answers = measure(&items, workers, |_at, frames| deep(*frames))
+            .expect("every worker has the stack its work needs");
+        assert_eq!(answers.len(), 4, "{workers} workers");
+    }
+}
+
+#[test]
+fn one_worker_that_panicked_is_the_typed_refusal_as_many_are() {
+    for (items, workers) in [(vec![1_u32], 4), (vec![1, 2], 1)] {
+        let answered = std::panic::catch_unwind(|| {
+            measure(&items, workers, |_at, item| {
+                assert!(*item > 100, "every item panics its worker");
+                *item
+            })
+        });
+        assert!(
+            matches!(
+                answered,
+                Ok(Err(
+                    njutest::assure::schedule::ScheduleError::WorkerPanicked
+                ))
+            ),
+            "{} items on {workers} workers: a panic is the typed refusal however many workers ran",
+            items.len()
+        );
+    }
 }
 
 #[test]
