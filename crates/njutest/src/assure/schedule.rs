@@ -141,9 +141,10 @@ where
                 Ok(answered)
             }));
         }
+        let joined: Vec<_> = handles.into_iter().map(ScopedWorker::join).collect();
         let mut answered = Vec::with_capacity(items.len());
-        for worker in handles {
-            let mut from_worker = worker.join()??;
+        for worker in joined {
+            let mut from_worker = worker??;
             answered.append(&mut from_worker);
         }
         Ok(answered)

@@ -225,3 +225,23 @@ fn only_an_expired_budget_buys_a_quiet_measurement_and_a_stopped_run_buys_nothin
         );
     }
 }
+
+#[test]
+fn every_worker_that_panicked_is_joined_and_the_answer_is_the_typed_refusal() {
+    let items: Vec<u32> = (0..8).collect();
+    let answered = std::panic::catch_unwind(|| {
+        measure(&items, 4, |_at, item| {
+            assert!(*item > 100, "every item panics its worker");
+            *item
+        })
+    });
+    assert!(
+        matches!(
+            answered,
+            Ok(Err(
+                njutest::assure::schedule::ScheduleError::WorkerPanicked
+            ))
+        ),
+        "the scope itself must not panic because a second worker did"
+    );
+}
