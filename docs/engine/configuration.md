@@ -247,6 +247,9 @@ A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
 `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process it starts.
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
 
+`RUST_MUTANTS_DELAY` is `<index>@<ms>`, set only on a control with nothing active: each operating-system thread of the test process sleeps `<ms>` the first time it reaches the guard of `<index>`, and never again.
+The flag is per thread, so a thread a pool or the harness reuses across tests pauses only for the first test that reaches the guard on it, and a thread spawned after another paused gets its own pause.
+
 `RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken.
 At the first take past it, the runtime atomically publishes a notice carrying the fresh nonce, catalog, mutant, allowance and exact `N + 1` count, then parks.
 The supervisor stops its declared platform process set and accepts `step_limit_reached` only when every field matches this execution.

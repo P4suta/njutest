@@ -5,9 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::concurrency::explore::{Delayed, Ended, chosen, delayed};
+use crate::concurrency::explore::{CONFIRMING_ROUNDS, Ended, chosen, clean, repeats};
 use crate::concurrency::proof::{
-    Evidence, Harness, PackageScan, Reach, Standing, standing, threads_of,
+    Evidence, Harness, PackageScan, Reach, Standing, Threads, standing, threads_of,
 };
 use crate::report::concurrency::{ConcurrencyRecord, Exploration, Unexplored};
 use rust_mutants::execute::TargetKind;
@@ -25,25 +25,7 @@ pub fn recorded(
     let threads = threads_of(harness_args);
     let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
-        let harness = match (target.kind, target.harness) {
-            (TargetKind::Doc, _) => Harness::Doctest,
-            (
-                TargetKind::Lib
-                | TargetKind::Bin
-                | TargetKind::Test
-                | TargetKind::Example
-                | TargetKind::ProcMacro,
-                true,
-            ) => Harness::Libtest(threads),
-            (
-                TargetKind::Lib
-                | TargetKind::Bin
-                | TargetKind::Test
-                | TargetKind::Example
-                | TargetKind::ProcMacro,
-                false,
-            ) => Harness::Other,
-        };
+        let harness = harness_of(target, threads);
         binaries.insert(target.id.clone(), (target.package.as_str(), harness));
     }
     let metadata = session.metadata();
@@ -110,6 +92,29 @@ pub fn recorded(
         .collect()
 }
 
+/// What runs `target`'s tests, when libtest runs them on `threads`.
+const fn harness_of(target: &rust_mutants::execute::TestTarget, threads: Threads) -> Harness {
+    match (target.kind, target.harness) {
+        (TargetKind::Doc, _) => Harness::Doctest,
+        (
+            TargetKind::Lib
+            | TargetKind::Bin
+            | TargetKind::Test
+            | TargetKind::Example
+            | TargetKind::ProcMacro,
+            true,
+        ) => Harness::Libtest(threads),
+        (
+            TargetKind::Lib
+            | TargetKind::Bin
+            | TargetKind::Test
+            | TargetKind::Example
+            | TargetKind::ProcMacro,
+            false,
+        ) => Harness::Other,
+    }
+}
+
 /// Delays up to `explore` guards of every binary not proven to run one thread whose baseline passed, one schedule each, and records what that found.
 ///
 /// # Errors
@@ -133,6 +138,7 @@ pub fn explored(
                 why: Unexplored::NotNeeded | Unexplored::NotPassing | Unexplored::NoSite,
             }
             | Exploration::Sampled { .. }
+            | Exploration::Undecided { .. }
             | Exploration::Broke { .. } => continue,
         }
         if !passing.contains(&record.target) {
@@ -151,62 +157,90 @@ pub fn explored(
             };
             continue;
         }
-        record.explored = schedules(session, &record.target, &chosen(&reached, explore), cancel)?;
+        record.explored = schedules(
+            session,
+            &record.target,
+            (&chosen(&reached, explore), explore),
+            cancel,
+        )?;
     }
     Ok(())
 }
 
-/// What delaying each of `sites` of `target` found: the first site that broke it, or every site delayed.
+/// What delaying each of `sites` of `target` found: the first site that broke it, or every site delayed and which of them settled nothing.
 fn schedules(
     session: &rust_mutants::session::Session,
     target: &str,
-    sites: &[u32],
+    (sites, asked): (&[u32], u32),
     cancel: &rust_mutants::runner::Cancel,
 ) -> Result<Exploration, rust_mutants::EngineError> {
     let mut undecided = Vec::new();
     for &site in sites {
-        let first = ended(session, target, Some(site), cancel)?;
-        let (repeats, undelayed) = match first {
-            Ended::Failed(_) => (
-                vec![
-                    ended(session, target, Some(site), cancel)?,
-                    ended(session, target, Some(site), cancel)?,
-                ],
-                Some(ended(session, target, None, cancel)?),
-            ),
-            Ended::Passed | Ended::Unsettled => (Vec::new(), None),
-        };
-        match delayed(&first, &repeats, undelayed.as_ref()) {
-            Delayed::Passed => {}
-            Delayed::Undecided => undecided.push(site),
-            Delayed::Broke { failed } => {
-                let (path, line) = session
-                    .catalog()
-                    .mutants()
-                    .iter()
-                    .find(|mutant| mutant.index == site)
-                    .map_or_else(
-                        || (String::new(), 0),
-                        |mutant| {
-                            (
-                                mutant.candidate.path.clone(),
-                                session.position(mutant).map_or(0, |position| position.line),
-                            )
-                        },
-                    );
-                return Ok(Exploration::Broke {
-                    site,
-                    path,
-                    line,
-                    failed,
-                });
+        match ended(session, target, Some(site), cancel)? {
+            Ended::Passed => {}
+            Ended::Unsettled => undecided.push(site),
+            Ended::Failed(failed) => {
+                let located = if confirmed(session, (target, site), &failed, cancel)? {
+                    located(session, site)
+                } else {
+                    None
+                };
+                match located {
+                    Some((path, line)) => {
+                        return Ok(Exploration::Broke {
+                            site,
+                            path,
+                            line,
+                            failed,
+                            rounds: CONFIRMING_ROUNDS,
+                        });
+                    }
+                    None => undecided.push(site),
+                }
             }
         }
     }
-    Ok(Exploration::Sampled {
-        delayed: sites.to_vec(),
-        undecided,
+    Ok(if undecided.is_empty() {
+        Exploration::Sampled {
+            asked,
+            delayed: sites.to_vec(),
+        }
+    } else {
+        Exploration::Undecided {
+            asked,
+            delayed: sites.to_vec(),
+            undecided,
+        }
     })
+}
+
+/// Whether every confirming round fails exactly `failed` with `site` delayed and passes without it, stopping at the first that does not.
+fn confirmed(
+    session: &rust_mutants::session::Session,
+    (target, site): (&str, u32),
+    failed: &[String],
+    cancel: &rust_mutants::runner::Cancel,
+) -> Result<bool, rust_mutants::EngineError> {
+    for _ in 0..CONFIRMING_ROUNDS {
+        if !repeats(failed, &ended(session, target, Some(site), cancel)?) {
+            return Ok(false);
+        }
+        if !clean(&ended(session, target, None, cancel)?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Where the guard at `site` is, or nothing where the catalog holds no such site, which a finding cannot then name.
+fn located(session: &rust_mutants::session::Session, site: u32) -> Option<(String, u32)> {
+    let mutant = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|mutant| mutant.index == site)?;
+    let line = session.position(mutant)?.line;
+    Some((mutant.candidate.path.clone(), line))
 }
 
 /// How one control of `target` ended, with the guard at `site` delayed or with nothing delayed.
