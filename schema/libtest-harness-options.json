@@ -1,0 +1,31 @@
+{
+  "description": "The options libtest's harness reads, as both readings of a run's harness arguments must: the runner's and the audit's. Each option that takes a value takes the next word; `--` ends the options; an option not listed may take a value, so nothing past it is read.",
+  "valued": [
+    "--test-threads",
+    "--skip",
+    "--logfile",
+    "--format",
+    "--color",
+    "-Z",
+    "--shuffle-seed"
+  ],
+  "flags": [
+    "--include-ignored",
+    "--ignored",
+    "--force-run-in-process",
+    "--exclude-should-panic",
+    "--test",
+    "--bench",
+    "--list",
+    "--nocapture",
+    "--no-capture",
+    "--show-output",
+    "--exact",
+    "-q",
+    "--quiet",
+    "--shuffle",
+    "--report-time",
+    "--ensure-time",
+    "--fail-fast"
+  ]
+}
