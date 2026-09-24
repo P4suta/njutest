@@ -1934,6 +1934,129 @@ pub fn adrs(root: &Path) -> Result<String, GateFailure> {
     ))
 }
 
+/// Every variable that points git at a repository other than the one it is standing in, which a hook or a wrapper may have set.
+pub const REDIRECTING_GIT: [&str; 10] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+];
+
+/// Whether nothing a build writes is committed: no path git tracks lies under a directory named `target`.
+///
+/// # Errors
+/// The detector misses planted build output or refuses a lookalike, git cannot list what it tracks, or something under a `target` directory is tracked.
+pub fn tracked(root: &Path) -> Result<String, GateFailure> {
+    let planted: Vec<&str> = PLANTED_BUILT
+        .iter()
+        .chain(PLANTED_SOURCE.iter())
+        .copied()
+        .collect();
+    if built(&planted) != PLANTED_BUILT {
+        return Err(GateFailure(format!(
+            "tracked: the detector does not find exactly the planted build output among {}, so \
+             its silence about the tree would not be evidence",
+            planted.join(", ")
+        )));
+    }
+    let mut git = std::process::Command::new("git");
+    git.arg("-C").arg(root).args(["ls-files", "-z"]);
+    for variable in REDIRECTING_GIT {
+        git.env_remove(variable);
+    }
+    let listed = git
+        .output()
+        .map_err(|error| GateFailure(format!("tracked: git ls-files could not run: {error}")))?;
+    if !listed.status.success() {
+        let said = match String::from_utf8(listed.stderr) {
+            Ok(said) => said,
+            Err(_not_text) => "its diagnostics are not text".to_owned(),
+        };
+        return Err(GateFailure(format!(
+            "tracked: git ls-files failed, so what the repository commits is unknown: {said}"
+        )));
+    }
+    let listed = String::from_utf8(listed.stdout).map_err(|_not_text| {
+        GateFailure(
+            "tracked: git ls-files printed a path that is not UTF-8, which no path this \
+             repository commits is"
+                .to_owned(),
+        )
+    })?;
+    let paths: Vec<&str> = listed.split('\0').filter(|path| !path.is_empty()).collect();
+    let found = built(&paths);
+    if !found.is_empty() {
+        let mut directories: BTreeMap<&str, usize> = BTreeMap::new();
+        for path in &found {
+            let count = directories.entry(written_into(path)).or_default();
+            *count = count.saturating_add(1);
+        }
+        let named: Vec<String> = directories
+            .iter()
+            .map(|(directory, count)| format!("{directory}/ ({count})"))
+            .collect();
+        return Err(GateFailure(format!(
+            "tracked: {} committed path(s) lie under a `target` directory, which a build wrote \
+             and the next build writes again: {}. `git rm -r --cached` on each directory takes \
+             them out of the index, and `.gitignore` keeps every `target/` out after that",
+            found.len(),
+            named.join(", ")
+        )));
+    }
+    Ok(format!(
+        "tracked: {} planted build outputs found first and {} lookalikes passed; then {} \
+         tracked paths read, none under a `target` directory",
+        PLANTED_BUILT.len(),
+        PLANTED_SOURCE.len(),
+        paths.len()
+    ))
+}
+
+/// Build output the detector has to find before its silence about a tree is believed.
+const PLANTED_BUILT: [&str; 3] = [
+    "target/debug/build/x.o",
+    "crates/njutest-macros/target/tests/trybuild/CACHEDIR.TAG",
+    "fixtures/fixture-simple/target/.rustc_info.json",
+];
+
+/// Sources the detector has to pass, each one only looking like build output.
+const PLANTED_SOURCE: [&str; 3] = [
+    "fixtures/fixture-targets/src/lib.rs",
+    "crates/njutest/src/targets.rs",
+    "docs/target",
+];
+
+/// The paths of `paths` with a directory named `target` above them, which is where cargo and everything it runs write.
+fn built<'a>(paths: &[&'a str]) -> Vec<&'a str> {
+    paths
+        .iter()
+        .copied()
+        .filter(|path| {
+            let mut directories = path.split('/').rev().skip(1);
+            directories.any(|directory| directory == "target")
+        })
+        .collect()
+}
+
+/// The `target` directory `path` was written into: everything up to its first one.
+fn written_into(path: &str) -> &str {
+    let mut end: usize = 0;
+    for directory in path.split('/') {
+        end = end.saturating_add(directory.len());
+        if directory == "target" {
+            break;
+        }
+        end = end.saturating_add(1);
+    }
+    path.get(..end).unwrap_or(path)
+}
+
 /// Every gate, in order, stopping at the first failure.
 ///
 /// # Errors
@@ -1951,6 +2074,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         surfaces,
         reached,
         waivers,
+        tracked,
     ] {
         line(&mut report, format_args!("{}", gate(root)?));
     }
