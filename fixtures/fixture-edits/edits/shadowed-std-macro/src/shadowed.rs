@@ -8,6 +8,10 @@ pub struct Gamma;
 
 macro_rules! vec {
     (panics) => {
+        #[expect(
+            non_local_definitions,
+            reason = "the impl the macro writes into a body is the edit this class is"
+        )]
         impl Drop for Gamma {
             fn drop(&mut self) {
                 panic!("a Gamma was dropped")

@@ -8,6 +8,10 @@ pub struct Beta;
 
 /// A function nothing in the tests calls.
 pub fn alpha() {
+    #[expect(
+        non_local_definitions,
+        reason = "an impl written inside a body is the edit this class is"
+    )]
     impl Drop for Beta {
         fn drop(&mut self) {
             panic!("a Beta was dropped")
