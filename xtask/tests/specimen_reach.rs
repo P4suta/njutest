@@ -14,7 +14,10 @@ fn only_a_sentinel_completes_a_specimen() {
             continue;
         }
         let text = std::fs::read_to_string(path).expect("a source file");
-        if text.contains("specimen::completed(") {
+        if text.contains("specimen::completed(")
+            || text.contains("specimen::complete(")
+            || text.contains("specimen::concluded(")
+        {
             callers.push(
                 path.strip_prefix(&root)
                     .expect("under src")

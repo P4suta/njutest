@@ -244,7 +244,17 @@ pub fn touch(measured: &str, reached: &[u32]) -> Value {
 /// The report's drift record about [`TARGET`], in the standing `state` names.
 #[must_use]
 pub fn drifted(state: &str) -> Value {
-    json!({ "drift": [{ "target": TARGET, "state": state }] })
+    let record = match state {
+        "moved" => json!({
+            "target": TARGET, "state": state,
+            "reached": { "gained": [1], "lost": [] },
+            "bodies": { "gained": [], "lost": [] },
+            "infected": { "gained": [], "lost": [] }
+        }),
+        "not-measured" => json!({ "target": TARGET, "state": state, "why": "no-control" }),
+        other => json!({ "target": TARGET, "state": other }),
+    };
+    json!({ "drift": [record] })
 }
 
 /// A specimen could not be laid out on disk.
@@ -273,6 +283,9 @@ pub enum SpecimenError {
         /// Its position in the recording.
         at: usize,
     },
+    /// The flat report could not be completed into the document a run writes.
+    #[error(transparent)]
+    Incomplete(#[from] crate::specimen::CompletionError),
 }
 
 fn directory() -> Result<TempDir, SpecimenError> {
@@ -292,8 +305,31 @@ fn written(path: &Path, text: &str) -> Result<(), SpecimenError> {
 /// [`SpecimenError`] when the directory or the report cannot be written.
 pub fn run_directory(document: &Value) -> Result<TempDir, SpecimenError> {
     let run = directory()?;
-    written(&run.path().join(REPORT_FILE), &document.to_string())?;
+    let laid = if document.get("document_type").is_some() {
+        document.clone()
+    } else {
+        complete_report(document)?
+    };
+    written(&run.path().join(REPORT_FILE), &laid.to_string())?;
     Ok(run)
+}
+
+/// The complete document a run writes holding the flat specimen `flat`, as [`run_directory`] lays it.
+///
+/// # Errors
+/// [`SpecimenError::Incomplete`] where `flat` is not an object, or the committed report it is completed from is not that shape.
+pub fn complete_report(flat: &Value) -> Result<Value, SpecimenError> {
+    Ok(crate::specimen::complete(flat)?)
+}
+
+/// The runner recording `events` of a run whose flat report says it concluded something, ending with the `run-end` that says so, since a complete report stores no verdict.
+#[must_use]
+pub fn concluding(document: &Value, events: &[Value]) -> Vec<Value> {
+    let mut all = events.to_vec();
+    if let Some(verdict) = document.get("verdict").and_then(Value::as_str) {
+        all.push(crate::specimen::concluded(verdict, events.len()));
+    }
+    all
 }
 
 /// A recording directory holding `events` as its `trace.jsonl`, each wrapped in the envelope the runner writes, numbered by position where an event carries no envelope of its own.
@@ -390,7 +426,11 @@ impl Perturbation {
     /// [`SpecimenError`] when either cannot be written.
     pub fn lay(&self) -> Result<Laid, SpecimenError> {
         let run = run_directory(&self.document)?;
-        let trace = self.events.as_deref().map(recorded).transpose()?;
+        let trace = self
+            .events
+            .as_deref()
+            .map(|events| recorded(&concluding(&self.document, events)))
+            .transpose()?;
         if let (Some(trace), Some(engine)) = (trace.as_ref(), self.engine.as_deref()) {
             let laid = recorded_by(engine, crate::schemas::Producer::Engine)?;
             let namespace = trace.path().join("builds").join("0000000000");
@@ -444,8 +484,10 @@ impl Layer {
                 ..clean
             }],
             Self::Killers => vec![Perturbation {
-                name: "a kill that names no target at all",
-                document: with(json!({ "mutants": [{ "decision": { "killed_by": null } }] })),
+                name: "a kill by a target the run never recorded",
+                document: with(
+                    json!({ "mutants": [{ "decision": { "killed_by": "pkg/test/nowhere" } }] }),
+                ),
                 ..clean
             }],
             Self::Findings => vec![Perturbation {
@@ -466,9 +508,9 @@ impl Layer {
                 ..clean
             }],
             Self::Reuse => vec![Perturbation {
-                name: "a reused disposition that names no source run",
+                name: "a reused disposition that names this run as its source",
                 document: with(json!({
-                    "mutants": [{ "reuse": { "reused": true } }],
+                    "mutants": [{ "reuse": { "reused": true, "source_run_id": RUN } }],
                     "accounting": { "mutants": { "reused_killed": 1 } }
                 })),
                 ..clean
@@ -646,7 +688,11 @@ pub fn lie(outcome: &str) -> Option<Perturbation> {
                 "decision": {
                     "outcome": outcome,
                     "killed_by": if noticed { json!(TARGET) } else { json!(null) },
-                    "step_boundary": null
+                    "step_boundary": if outcome == "step-limit-reached" {
+                        json!({ "limit": 1, "observed": 2 })
+                    } else {
+                        json!(null)
+                    }
                 }
             }],
             "findings": []

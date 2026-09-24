@@ -17,9 +17,6 @@ use sha2::Digest as _;
 /// The document a completed run leaves in its directory.
 pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
 
-/// The schema this audit knows how to re-decide.
-pub const SCHEMA: &str = "njutest-assurance-report-v1";
-
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;
 
@@ -72,6 +69,18 @@ pub enum AuditError {
         #[source]
         source: crate::route::ReadError,
     },
+    /// The document is a complete report off its published schema, so a reader could meet an absent required field.
+    #[error("{path}: off the published report schema: {source}")]
+    OffSchema {
+        /// The document.
+        path: String,
+        /// Where and how.
+        #[source]
+        source: crate::schemas::OffSchema,
+    },
+    /// The published report schema itself does not compile.
+    #[error(transparent)]
+    Schema(#[from] crate::schemas::SchemaError),
     /// The document is a whole report of a shape this audit does not project onto the one build it re-decides.
     #[error("{path}: {shape}; this audit re-decides one configured build measured whole")]
     Unprojected {
@@ -79,14 +88,6 @@ pub enum AuditError {
         path: String,
         /// What it holds instead.
         shape: Unprojectable,
-    },
-    /// The document is JSON and calls itself something other than the assurance report.
-    #[error("{path}: {schema:?} is not the assurance report this audit re-decides")]
-    Unrecognised {
-        /// The document.
-        path: String,
-        /// What it calls itself.
-        schema: String,
     },
 }
 
@@ -112,6 +113,9 @@ pub enum Unprojectable {
         /// How many it holds.
         count: usize,
     },
+    /// The document is one part laid flat, which no run writes.
+    #[error("a flat part with no `document_type`, which no run writes")]
+    Flat,
 }
 
 /// What the re-decision was able to conclude about one thing it looked at.
@@ -391,35 +395,26 @@ pub struct Recorded<'a> {
 /// Re-decides a report against what the run recorded beside it and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
 ///
 /// # Errors
-/// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::Unprojected`] for a report this audit does not re-decide as one build,
-/// [`AuditError::Unrecognised`] for one that is not the assurance report, [`AuditError::MalformedRecording`] for a recording with a corrupt line, and the corresponding retained-artifact error when `run` cannot be re-read.
+/// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::OffSchema`] for a complete report off its published schema,
+/// [`AuditError::Unprojected`] for a report this audit does not re-decide as one build, [`AuditError::MalformedRecording`] for a recording with a corrupt line, and the corresponding retained-artifact error when `run` cannot be re-read.
 pub fn audit_with(
     path: &str,
     text: &str,
     recorded: Recorded<'_>,
     run: Option<&Path>,
 ) -> Result<Audit, AuditError> {
-    let read: serde_json::Value =
-        crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
-            path: path.to_owned(),
-            source,
-        })?;
-    let document = projected(read).map_err(|shape| AuditError::Unprojected {
-        path: path.to_owned(),
-        shape,
-    })?;
-    let schema = document
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if schema != SCHEMA {
-        return Err(AuditError::Unrecognised {
-            path: path.to_owned(),
-            schema: schema.to_owned(),
-        });
-    }
+    let document = read_report(path, text)?;
     let recorded_runner = recorded.runner;
-    let recording = Recording::of(&document);
+    let mut recording = Recording::of(&document);
+    recording.verdict = match recorded.runner {
+        Some((recording_path, text)) => {
+            concluded(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })?
+        }
+        None => None,
+    };
     let routing = recorded_runner
         .map(|(recording_path, text)| {
             crate::route::read(text, crate::schemas::Producer::Runner).map_err(|source| {
@@ -473,10 +468,53 @@ pub fn audit_with(
     Ok(audit)
 }
 
+/// The flat view of the report at `path` holding `text`, once it is JSON, on its published schema, and one build measured whole.
+///
+/// # Errors
+/// [`AuditError::Unparsable`], [`AuditError::OffSchema`], [`AuditError::Schema`] or [`AuditError::Unprojected`], in that order.
+fn read_report(path: &str, text: &str) -> Result<serde_json::Value, AuditError> {
+    let read: serde_json::Value =
+        crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
+            path: path.to_owned(),
+            source,
+        })?;
+    if read
+        .get("document_type")
+        .and_then(serde_json::Value::as_str)
+        == Some("complete")
+    {
+        crate::schemas::Checker::assurance_report()?
+            .check(&read)
+            .map_err(|source| AuditError::OffSchema {
+                path: path.to_owned(),
+                source,
+            })?;
+    }
+    projected(&read).map_err(|shape| AuditError::Unprojected {
+        path: path.to_owned(),
+        shape,
+    })
+}
+
+/// What the runner's recording says the run concluded, from its `run-end`; nothing where it holds none.
+///
+/// # Errors
+/// A line that is not JSON, or not on the runner's schema.
+fn concluded(text: &str) -> Result<Option<String>, crate::route::ReadError> {
+    Ok(
+        crate::route::events(text, crate::schemas::Producer::Runner)?
+            .iter()
+            .rev()
+            .find(|event| field(event, "type").as_deref() == Some("run-end"))
+            .and_then(|event| event.get("run"))
+            .and_then(|run| field(run, "verdict")),
+    )
+}
+
 /// The flat view of one configured build measured whole that every layer re-decides, taken from a complete report or as it is.
-fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
+fn projected(document: &serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
     let Some(kind) = document.get("document_type") else {
-        return Ok(document);
+        return Err(Unprojectable::Flat);
     };
     if kind.as_str() != Some("complete") {
         return Err(Unprojectable::Part {
@@ -775,8 +813,7 @@ struct MutantRow {
     outcome: String,
     acceptance: AcceptanceFact,
     killed_by: Option<String>,
-    reused: bool,
-    source_run_id: Option<String>,
+    read_back_from: Option<String>,
 }
 
 /// The three distinct facts a report can state about row-local review acceptance.
@@ -1914,7 +1951,11 @@ fn executions(
             .or_default()
             .push(exec.outcome.as_str());
     }
-    for mutant in recording.mutants.iter().filter(|mutant| !mutant.reused) {
+    for mutant in recording
+        .mutants
+        .iter()
+        .filter(|mutant| mutant.read_back_from.is_none())
+    {
         let mut recorded: Vec<&str> = Vec::new();
         for key in [mutant.display_id.as_str(), mutant.id.as_str()] {
             if let Some(outcomes) = ran.get(key) {
@@ -2209,6 +2250,8 @@ struct Recording<'a> {
     shard: Option<String>,
     target: String,
     models: Vec<ModelRow>,
+    /// What the run concluded, as its recording's `run-end` says; a complete report stores no verdict.
+    verdict: Option<String>,
 }
 
 impl<'a> Recording<'a> {
@@ -2232,18 +2275,15 @@ impl<'a> Recording<'a> {
                         .get("decision")
                         .cloned()
                         .unwrap_or(serde_json::Value::Null);
-                    let reuse = row.get("reuse").cloned().unwrap_or(serde_json::Value::Null);
                     MutantRow {
                         id: field(row, "id").unwrap_or_default(),
                         display_id: field(row, "display_id").unwrap_or_default(),
                         outcome: field(&decision, "outcome").unwrap_or_default(),
                         acceptance: AcceptanceFact::from_json(row.get("accepted")),
                         killed_by: field(&decision, "killed_by"),
-                        reused: reuse
-                            .get("reused")
-                            .and_then(serde_json::Value::as_bool)
-                            .unwrap_or_default(),
-                        source_run_id: field(&reuse, "source_run_id"),
+                        read_back_from: row
+                            .get("reuse")
+                            .and_then(|reuse| field(reuse, "source_run_id")),
                     }
                 })
                 .collect(),
@@ -2278,6 +2318,7 @@ impl<'a> Recording<'a> {
                     }
                 })
                 .collect(),
+            verdict: None,
         }
     }
 
@@ -2353,7 +2394,7 @@ fn mutant_columns(recording: &Recording<'_>, audit: &mut Audit) {
         let recorded = recording
             .mutants
             .iter()
-            .filter(|mutant| mutant.outcome == outcome && mutant.reused)
+            .filter(|mutant| mutant.outcome == outcome && mutant.read_back_from.is_some())
             .count();
         notes.tally(Column {
             subject: &format!("accounting.mutants.{name}"),
@@ -2488,7 +2529,7 @@ impl Relation {
 
 /// Whether the verdict is one the accounting and the findings support.
 fn verdict(recording: &Recording<'_>, audit: &mut Audit) {
-    let Some(concluded) = field(recording.document, "verdict") else {
+    let Some(concluded) = recording.verdict.clone() else {
         Notes::on(audit, Layer::Accounting).unaudited(
             "verdict",
             "the recording does not say what the run concluded, so there is nothing to hold its \
@@ -2791,20 +2832,14 @@ fn reuse(recording: &Recording<'_>, audit: &mut Audit) {
     let mut read_back = 0_usize;
     let mut notes = Notes::on(audit, Layer::Reuse);
     for mutant in &recording.mutants {
-        match (mutant.reused, mutant.source_run_id.as_deref()) {
-            (true, None) => notes.violated(
-                mutant.label(),
-                "the disposition was read back from an earlier run and does not name it; a \
-                 verdict a reader cannot trace back is one taken on trust"
-                    .to_owned(),
-            ),
-            (true, Some(run)) if run == recording.run_id => notes.violated(
+        match mutant.read_back_from.as_deref() {
+            Some(run) if run == recording.run_id => notes.violated(
                 mutant.label(),
                 "the disposition names this run itself as the run it was read back from; a run \
                  cannot have read its own answer back"
                     .to_owned(),
             ),
-            (true, Some(_)) => match read_back.checked_add(1) {
+            Some(_) => match read_back.checked_add(1) {
                 Some(count) => read_back = count,
                 None => {
                     notes.violated(
@@ -2814,14 +2849,7 @@ fn reuse(recording: &Recording<'_>, audit: &mut Audit) {
                     return;
                 }
             },
-            (false, Some(run)) => notes.violated(
-                mutant.label(),
-                format!(
-                    "this run established the disposition itself and also names {run:?} as the \
-                     run it came from; one of the two is wrong and a reader cannot tell which"
-                ),
-            ),
-            (false, None) => {}
+            None => {}
         }
     }
     if read_back > 0 {
