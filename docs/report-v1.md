@@ -143,6 +143,12 @@ duplicates and missing counterparts are rejected.
 | `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete` |
 | `answered` | targets actually asked, in order, with their outcomes |
 
+A row this run decided by a route it asked is held to that route's own answers, and a report that contradicts them is refused.
+A `killed` row's answers end with the target it names noticing, and hold no other kill: the mutation phase stops at the first target that notices.
+A `survived` row's answers hold one survival from each target in `reaching` and nothing else, in whatever order the run asked them.
+A row read back from another run, or inherited from a checkpoint without a route, was not asked here, so the rule has nothing to hold it to.
+For a kill this run established, `by` is therefore a second copy of the last answer's target; the rule keeps the two in step until a later schema stops storing both.
+
 Evidence consultation records either the source run it reused or one closed refusal: `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`,
 `key-changed`, `not-passing`, `target-entered`, or `nothing-routed`.
 
@@ -156,6 +162,18 @@ and `not-measured` with one closed `why`: `no-control` (nothing confirmed a kill
 A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
+
+## Sources
+
+Every part carries `sources`, one `{ path, digest }` per file its mutants were read from, in path order: the SHA-256 of the file's bytes as the run read them, taken from the catalog, which already refuses two digests for one file.
+It is what lets a reader of the report tell the file the run measured from the file there now.
+Every surface that quotes source code — the terminal page, the review loop, the briefing, the language server — draws a line only from a file whose SHA-256 now is the one recorded; a file edited since the run is said to have changed, never drawn as though it were the code the run measured, even when the edited line still holds the text the run replaced.
+The language server places nothing in such a file and says instead which run measured it.
+A file that cannot be drawn says why, because each why is a different thing to do: it has changed since the run, it is not there any more, it could not be read for the reason reading it gave, or it holds the bytes the run read and they are not text.
+A carriage return a Windows checkout left is the checkout's and not the line's, so no surface draws one.
+
+A row or finding naming a file with no entry is refused, and so are two parts or builds of one run that recorded different digests for one file, since then they did not read one tree.
+A document that writes a path twice, or out of path order, is not read: a file has one digest, and a document has one spelling of it.
 
 ## Shards and projections
 

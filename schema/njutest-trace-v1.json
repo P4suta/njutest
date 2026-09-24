@@ -65,6 +65,19 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "raised"],
+          "properties": {
+            "kind": { "const": "stalled" },
+            "raised": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "How many step boundaries the process had raised before it went quiet for a whole window. Null says the state could not be read, which is not a count of zero."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "started"],
           "properties": {
             "kind": { "const": "cancelled" },
@@ -448,6 +461,26 @@
                 "seq": { "type": "integer", "minimum": 0 },
                 "rule": { "enum": ["truncate-response", "delay-response", "drop-connection", "replay-request", "stale-response", "status-server-error", "status-not-found"] },
                 "answer": { "$ref": "njutest-assurance-report-v1.json#/$defs/seamAnswer" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "sentinel"],
+          "properties": {
+            "type": { "const": "sentinel" },
+            "sentinel": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["layer", "mutant", "expected", "routed", "sighted"],
+              "properties": {
+                "layer": { "enum": ["reach", "branch-never-taken", "never-infected:is-default", "never-infected:is-ok-default", "never-infected:is-some-default", "never-infected:is-true", "never-infected:inert-comparison"] },
+                "mutant": { "type": "string", "minLength": 1 },
+                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept-for-library", "kept-for-tests"] },
+                "routed": { "type": "string", "minLength": 1 },
+                "sighted": { "type": "boolean" }
               }
             }
           }

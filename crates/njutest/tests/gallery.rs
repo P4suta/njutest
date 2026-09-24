@@ -11,6 +11,7 @@
     clippy::format_push_string,
     clippy::too_many_lines,
     clippy::disallowed_methods,
+    clippy::panic,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -20,6 +21,9 @@ use njutest::presentation::{
     Across, Action, Blindness, Diagnostic, Excerpt, Headline, Missing, Place, Severity, Site, Spot,
     Standing, Stated, Terminal, Told, Unsettled, human,
 };
+use njutest::report::{Decided, Established, MutantRecord, Outcome, Reuse, RunKind};
+use njutest::spec::{Specification, Subject, specified};
+use njutest::testkit::reports::{completed, routed, row};
 
 /// The same spot, in a project whose builds did not agree about it.
 fn across(mut spot: Spot, builds: &[(&str, Standing)]) -> Spot {
@@ -122,7 +126,7 @@ fn place(item: &str, from: u32, lines: &[&str], spots: Vec<Spot>) -> Place {
             .map(|(at, text)| {
                 (
                     from.saturating_add(u32::try_from(at).unwrap_or(0)),
-                    (*text).to_owned(),
+                    njutest::presentation::MeasuredLine::specimen(text),
                 )
             })
             .collect(),
@@ -255,10 +259,10 @@ fn cases() -> Vec<(&'static str, Told)> {
             ),
         ),
         (
-            "a file that moved under the run",
+            "a file edited since the run read it",
             told(
                 vec![Place {
-                    instead: Some(Missing::Moved),
+                    instead: Some(Missing::Edited),
                     excerpt: Vec::new(),
                     ..place(
                         "sign",
@@ -329,7 +333,9 @@ fn cases() -> Vec<(&'static str, Told)> {
                         .to_owned(),
                     at: Some(site(
                         (4, 5),
-                        Excerpt::Read("    undefined_function();".to_owned()),
+                        Excerpt::Read(njutest::presentation::MeasuredLine::specimen(
+                            "    undefined_function();",
+                        )),
                         "cannot find function `undefined_function` in this scope",
                         18,
                     )),
@@ -444,6 +450,193 @@ fn cases() -> Vec<(&'static str, Told)> {
     ]
 }
 
+/// A report of `kind` whose builds hold `builds`, assembled the way a run assembles one, since a specification is only ever read off a report.
+fn reported(kind: RunKind, builds: Vec<(&str, Vec<MutantRecord>)>) -> Specification {
+    let report = completed("the-run", kind, builds).unwrap_or_else(|error| {
+        panic!("a shape the gallery draws is one a report can hold: {error}")
+    });
+    specified(&report, &Subject::Everything)
+        .unwrap_or_else(|error| panic!("a shape the gallery draws names a change: {error}"))
+}
+
+/// A survivor the route kept off a target whose reach moved between its baseline and a control.
+fn moved_reach() -> Specification {
+    let (lib, it) = ("pkg/lib/pkg", "pkg/test/it");
+    let mut kept_off = row(
+        0,
+        ("src/lib.rs", "settle", 4),
+        ("gt-to-ge", "n > 0", "n >= 0"),
+        Decided::Survived,
+    );
+    kept_off.routing = Some(routed(&[it], &[], &[(it, Outcome::Survived)]));
+    let nothing = || njutest::report::drift::Moved {
+        gained: std::collections::BTreeSet::new(),
+        lost: std::collections::BTreeSet::new(),
+    };
+    let moved = njutest::report::drift::Drift::Moved {
+        target: lib.to_owned(),
+        reached: njutest::report::drift::Moved {
+            gained: std::collections::BTreeSet::from([0]),
+            lost: std::collections::BTreeSet::new(),
+        },
+        bodies: nothing(),
+        infected: nothing(),
+    };
+    let report = njutest::testkit::reports::completed_with_drift(
+        "the-run",
+        RunKind::Full,
+        vec![("default", vec![kept_off], vec![moved])],
+    )
+    .unwrap_or_else(|error| panic!("a shape the gallery draws is one a report can hold: {error}"));
+    specified(&report, &Subject::Everything)
+        .unwrap_or_else(|error| panic!("a shape the gallery draws names a change: {error}"))
+}
+
+/// Every shape `njutest spec` draws, each read off a report a run could have written: each section, builds that disagree with one answer read back, code that does not fit, and one name in two files from a changed run that read a kill back.
+fn specifications() -> Vec<(&'static str, Specification)> {
+    let (lib, it, more) = ("pkg/lib/pkg", "pkg/test/it", "pkg/test/more");
+    let settle = |index, line, (rule, was, now), outcome| {
+        row(
+            index,
+            ("src/lib.rs", "Ledger::settle", line),
+            (rule, was, now),
+            outcome,
+        )
+    };
+    let mut noticed = settle(
+        0,
+        4,
+        ("gt-to-ge", "n > 0", "n >= 0"),
+        Decided::Killed { by: it.to_owned() },
+    );
+    noticed.routing = Some(routed(
+        &[lib, it, more],
+        &[],
+        &[(lib, Outcome::Survived), (it, Outcome::Killed)],
+    ));
+    let refused = settle(
+        1,
+        5,
+        ("int-increment", "limit - 1", "limit - 2"),
+        Decided::CompileRejected,
+    );
+    let mut partly = settle(2, 7, ("int-increment", "1", "2"), Decided::Survived);
+    partly.routing = Some(routed(&[lib], &[it], &[(lib, Outcome::Survived)]));
+    let mut removed = settle(3, 8, ("lt-to-le", "<", "<="), Decided::Survived);
+    removed.routing = Some(routed(&[], &[lib], &[]));
+    let mut accepted = settle(
+        4,
+        9,
+        ("delete-assignment", "total += fee;", ""),
+        Decided::Unreached,
+    );
+    accepted.accepted = true;
+    let same = settle(5, 11, ("mul-to-div", "x * 1", "x / 1"), Decided::Equivalent);
+    let waited = settle(
+        6,
+        12,
+        ("return-default", "retry()", "Default::default()"),
+        Decided::Waited { on: it.to_owned() },
+    );
+
+    let mut debug = row(
+        0,
+        ("src/lib.rs", "settle", 4),
+        ("gt-to-ge", "n > 0", "n >= 0"),
+        Decided::Killed { by: it.to_owned() },
+    );
+    debug.routing = Some(routed(
+        &[lib, it, more],
+        &[],
+        &[(lib, Outcome::Survived), (it, Outcome::Killed)],
+    ));
+    let mut release = row(
+        0,
+        ("src/lib.rs", "settle", 4),
+        ("gt-to-ge", "n > 0", "n >= 0"),
+        Decided::Survived,
+    );
+    release.routing = Some(routed(&[lib, it], &[], &[]));
+    release.reuse = Reuse(Established::ReadBackFrom(
+        "20260923T000000Z-000009".to_owned(),
+    ));
+
+    let mut long = row(
+        0,
+        ("src/lib.rs", "settle", 20),
+        (
+            "delete-match-arm",
+            "if total > limit {\n    return Err(Overdrawn { total, limit });\n}",
+            "",
+        ),
+        Decided::Survived,
+    );
+    long.routing = Some(routed(
+        &[lib, it, more],
+        &[],
+        &[
+            (lib, Outcome::Survived),
+            (it, Outcome::Survived),
+            (more, Outcome::Survived),
+        ],
+    ));
+
+    let lexer = row(
+        0,
+        ("src/lexer.rs", "Lexer::new", 3),
+        ("return-default", "Vec::new()", "Default::default()"),
+        Decided::Equivalent,
+    );
+    let parser = row(
+        1,
+        ("src/parser.rs", "Parser::new", 3),
+        ("return-default", "Vec::new()", "Default::default()"),
+        Decided::Equivalent,
+    );
+    let mut read_kill = row(
+        2,
+        ("src/parser.rs", "Parser::new", 6),
+        ("return-default", "tokens.len()", "Default::default()"),
+        Decided::Killed { by: it.to_owned() },
+    );
+    read_kill.routing = Some(routed(&[it], &[], &[]));
+    read_kill.reuse = Reuse(Established::ReadBackFrom(
+        "20260923T000000Z-000009".to_owned(),
+    ));
+
+    vec![
+        (
+            "the specification of one item",
+            reported(
+                RunKind::Full,
+                vec![(
+                    "default",
+                    vec![noticed, refused, partly, removed, accepted, same, waited],
+                )],
+            ),
+        ),
+        (
+            "a change two builds disagree about, one read back",
+            reported(
+                RunKind::Full,
+                vec![("default", vec![debug]), ("release", vec![release])],
+            ),
+        ),
+        ("a change that rests on a reach that moved", moved_reach()),
+        (
+            "a change whose code does not fit",
+            reported(RunKind::Full, vec![("default", vec![long])]),
+        ),
+        (
+            "one name in two files, from a changed run that read a kill back",
+            reported(
+                RunKind::Changed,
+                vec![("default", vec![lexer, parser, read_kill])],
+            ),
+        ),
+    ]
+}
+
 #[test]
 fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
     let mut out = String::from(
@@ -459,6 +652,12 @@ fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
     for (name, told) in cases() {
         out.push_str(&format!("\n=== {name} — as a briefing\n\n"));
         out.push_str(&njutest::presentation::agent::brief(&told));
+    }
+    for (name, specification) in specifications() {
+        for (shape, terminal) in SHAPES {
+            out.push_str(&format!("\n=== spec: {name} — {shape}\n\n"));
+            out.push_str(&njutest::presentation::spec::page(&specification, terminal));
+        }
     }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/gallery.golden");
     if let Err(error) = njutest_devkit::golden::golden(&path, out.as_bytes()) {
@@ -502,6 +701,16 @@ fn nothing_a_person_is_shown_runs_past_the_edge_but_the_two_things_that_must() {
                     continue;
                 }
                 over.push(format!("{name} — {shape}: {line}"));
+            }
+        }
+    }
+    for (name, specification) in specifications() {
+        for (shape, terminal) in SHAPES {
+            for line in njutest::presentation::spec::page(&specification, terminal).lines() {
+                if unbreakable(line) || njutest::presentation::wide(line) <= terminal.width {
+                    continue;
+                }
+                over.push(format!("spec: {name} — {shape}: {line}"));
             }
         }
     }
