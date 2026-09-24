@@ -450,6 +450,12 @@
       "name": "inject-error",
       "tier": "named",
       "version": 1
+    },
+    {
+      "family": "durable",
+      "name": "crash-after-write",
+      "tier": "named",
+      "version": 1
     }
   ],
   "schema_version": 1,

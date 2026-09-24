@@ -275,6 +275,12 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     pub(crate) fn injected<E: Injectable>() -> E {
         E::injected()
     }
+    // A crash lets the call that writes finish and then stops the process
+    // with nothing after it: no destructor, flush or unwinding, so what the
+    // call wrote is on disk and nothing later is.
+    pub(crate) fn crashed_after<T>(_written: T) -> T {
+        __rm_std::process::exit(93)
+    }
 
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {

@@ -205,6 +205,70 @@ pub struct Observed {
 const CONTROL_TOUCH_LOG: &str = "touch.log";
 
 /// One control process's question: which target, asked how, for how long.
+/// A scratch directory a run left, kept so a next run can start over what it holds.
+#[derive(Debug)]
+pub struct Kept(PathBuf);
+
+impl Kept {
+    /// Every file the run left in this scratch directory, relative to it and in path order, leaving out the engine's own.
+    ///
+    /// # Errors
+    /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
+    pub fn left(&self) -> Result<Vec<String>, EngineError> {
+        let mut found = Vec::new();
+        let mut pending = vec![self.0.clone()];
+        while let Some(directory) = pending.pop() {
+            let entries = std::fs::read_dir(&directory).map_err(|source| {
+                SessionError::ScratchUnreadable {
+                    path: directory.clone(),
+                    source,
+                }
+            })?;
+            for entry in entries {
+                let entry = entry.map_err(|source| SessionError::ScratchUnreadable {
+                    path: directory.clone(),
+                    source,
+                })?;
+                let path = entry.path();
+                let kind = entry
+                    .file_type()
+                    .map_err(|source| SessionError::ScratchUnreadable {
+                        path: path.clone(),
+                        source,
+                    })?;
+                if kind.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                let Ok(relative) = path.strip_prefix(&self.0) else {
+                    continue;
+                };
+                let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
+                    SessionError::ScratchUnreadable {
+                        path: path.clone(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "a path left in the scratch is not UTF-8",
+                        ),
+                    }
+                })?;
+                if !engine_owned(&relative) {
+                    found.push(relative);
+                }
+            }
+        }
+        found.sort();
+        Ok(found)
+    }
+}
+
+/// Whether a file of a scratch directory is one the engine wrote there itself rather than the test.
+fn engine_owned(relative: &str) -> bool {
+    relative.starts_with("rust-mutants-")
+        || relative == CONTROL_TOUCH_LOG
+        || relative.ends_with(".profraw")
+}
+
 struct Once<'a> {
     request: &'a Request,
     target: &'a TestTarget,
@@ -1178,6 +1242,12 @@ impl Session {
             (crate::rule::Perturbs::Program, crate::rule::Perturbs::Program) => {
                 Some("what is named beside it is a mutation, not a fault")
             }
+            (crate::rule::Perturbs::Crash, _) => {
+                Some("what runs is a crash, and nothing is put beside a crash")
+            }
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Crash) => {
+                Some("what is named beside it is a crash, not a fault")
+            }
         };
         match why {
             Some(why) => Err(EngineError::from(SessionError::NotBeside {
@@ -1228,6 +1298,78 @@ impl Session {
         *next = after;
         drop(next);
         Ok(own)
+    }
+
+    /// Runs one mutant against the one target `request` names, and keeps the scratch directory it ran in for a next run to start over (ADR 0035).
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn exec_keeping(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<(MutantResult, Kept), EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let target = self.named(request)?;
+        let timeout = self.timeout_for(request, &target.id)?.0;
+        let own = self.exec_scratch()?;
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: None,
+            touch: None,
+            steps: self.mutant_steps,
+            profile: None,
+        };
+        let mut exec = ExecRequest::new(target)
+            .with_args(self.arguments(request))
+            .with_timeout(Some(timeout))
+            .with_scratch(own.clone())
+            .in_scratch(self.scratch_working_directory);
+        if let Some(test) = &request.test {
+            exec = exec.with_test(test.clone());
+        }
+        let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+        Ok((result, Kept(own)))
+    }
+
+    /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn control_in(
+        &self,
+        request: &Request,
+        kept: &Kept,
+        cancel: &Cancel,
+    ) -> Result<MutantResult, EngineError> {
+        let target = self.named(request)?;
+        let timeout = self.timeout_for(request, &target.id)?.0;
+        let none = Perturbation::none();
+        Ok(self.control_once(
+            &Once {
+                request,
+                target,
+                timeout,
+                perturbation: &none,
+            },
+            (&kept.0, None),
+            cancel,
+        ))
+    }
+
+    /// The one target a request names.
+    fn named(&self, request: &Request) -> Result<&TestTarget, EngineError> {
+        let name = request.target.as_deref().unwrap_or_default();
+        let targets = self.selected(Some(name))?;
+        targets.into_iter().next().ok_or_else(|| {
+            EngineError::from(SessionError::UnknownTarget {
+                name: name.to_owned(),
+                available: self.targets.iter().map(|one| one.id.clone()).collect(),
+            })
+        })
     }
 
     /// Runs one mutant and reports what the tests said.

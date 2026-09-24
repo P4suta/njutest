@@ -31,10 +31,11 @@ use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, FAULT_ENV, INJECTED, INJECTED_CALL, MODULE_STEM,
-    ModuleNameError, RUNTIME_MARKER, Rendering, RuntimeRenderError, STALE_CATALOG_EXIT,
-    STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
-    STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name, render,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, CRASH_EXIT, CRASHED_CALL, FAULT_ENV, INJECTED,
+    INJECTED_CALL, MODULE_STEM, ModuleNameError, RUNTIME_MARKER, Rendering, RuntimeRenderError,
+    STALE_CATALOG_EXIT, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
+    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name,
+    render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -1020,10 +1021,15 @@ impl File<'_> {
             }
             None => replacement.to_owned(),
         };
-        let resolved = replacement.replace(
-            INJECTED_CALL,
-            &guards::named(&self.module, placement.hint.super_depth, "injected"),
-        );
+        let resolved = replacement
+            .replace(
+                INJECTED_CALL,
+                &guards::named(&self.module, placement.hint.super_depth, "injected"),
+            )
+            .replace(
+                CRASHED_CALL,
+                &guards::named(&self.module, placement.hint.super_depth, "crashed_after"),
+            );
         let replacement = resolved.as_str();
         if placement.hint.form == Form::M {
             return Ok(Written {

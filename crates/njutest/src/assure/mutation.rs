@@ -448,7 +448,8 @@ impl Perturbing {
             (Self::Mutants, rust_mutants::rule::Perturbs::Program)
             | (Self::Faults, rust_mutants::rule::Perturbs::Environment) => true,
             (Self::Mutants, rust_mutants::rule::Perturbs::Environment)
-            | (Self::Faults, rust_mutants::rule::Perturbs::Program) => false,
+            | (Self::Faults, rust_mutants::rule::Perturbs::Program)
+            | (Self::Mutants | Self::Faults, rust_mutants::rule::Perturbs::Crash) => false,
         }
     }
 }

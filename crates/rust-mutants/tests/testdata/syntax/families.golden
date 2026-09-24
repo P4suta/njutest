@@ -300,6 +300,9 @@ int-decrement@179:40 "1"=>"0" E["1"]
 saturating-mul-to-wrapping-mul@179:43 "saturating_mul"=>"wrapping_mul" E["a.saturating_add(b).saturating_sub(1).saturating_mul(2)"]
 int-increment@179:58 "2"=>"3" E["2"]
 int-decrement@179:58 "2"=>"1" E["2"]
+return-ok-default@191:5 "std::fs::write(path, \"kept\")"=>"Ok(Default::default())" E["std::fs::write(path, \"kept\")"]
+crash-after-write@191:5 "std::fs::write(path, \"kept\")"=>"rust_mutants::crashed_after(std::fs::write(path, \"kept\"))" E["std::fs::write(path, \"kept\")"]
+string-to-empty@191:26 "\"kept\""=>"\"\"" E["\"kept\""]
 skip test-code 1
 skip open-range 2
-skip unstated-return-type 2
+skip unstated-return-type 3

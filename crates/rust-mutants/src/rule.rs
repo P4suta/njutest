@@ -85,6 +85,8 @@ pub enum Family {
     SaturatingArithmetic,
     /// Failing the call a `?` asks about, so the suite is asked whether it noticed (ADR 0032); never chosen by a tier.
     Fault,
+    /// Stopping the process just after a call that writes, so the next run is asked to start over what it left (ADR 0035); never chosen by a tier.
+    Durable,
 }
 
 /// What a rule changes: the program's text, or what the program is given.
@@ -94,6 +96,8 @@ pub enum Perturbs {
     Program,
     /// What a call the program makes returns, which is what a fault is.
     Environment,
+    /// Whether the process goes on after a call, which is what a crash is.
+    Crash,
 }
 
 impl Family {
@@ -102,6 +106,7 @@ impl Family {
     pub const fn perturbs(self) -> Perturbs {
         match self {
             Self::Fault => Perturbs::Environment,
+            Self::Durable => Perturbs::Crash,
             Self::BooleanLiteral
             | Self::ConditionNegation
             | Self::BooleanConnective
@@ -162,6 +167,7 @@ impl Family {
             Self::Literal => "literal",
             Self::SaturatingArithmetic => "saturating-arithmetic",
             Self::Fault => "fault",
+            Self::Durable => "durable",
         }
     }
 
@@ -226,7 +232,7 @@ impl fmt::Display for Rule {
 /// The counts of the canonical v1 table, asserted by the registry tests.
 pub const CANONICAL_FAMILY_COUNT: usize = Family::ALL.len();
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 75;
+pub const CANONICAL_RULE_COUNT: usize = 76;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -414,6 +420,7 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         Tier::All,
     ),
     v1(Family::Fault, "inject-error", Tier::All),
+    v1(Family::Durable, "crash-after-write", Tier::All),
 ];
 
 /// Whether a rule name is well formed: non-empty, and free of whitespace and of the `@` that separates the version in the rendered form.

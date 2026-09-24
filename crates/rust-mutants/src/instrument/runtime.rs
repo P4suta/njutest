@@ -66,6 +66,12 @@ pub const INJECTED: &str = "::core::result::Result::Err(rust_mutants::injected()
 /// The call [`INJECTED`] names, which the instrumenter replaces.
 pub const INJECTED_CALL: &str = "rust_mutants::injected";
 
+/// What a crash wraps the call that writes in, naming the runtime's function the way a reader would; the instrumenter writes the path the site reaches the runtime by in its place.
+pub const CRASHED_CALL: &str = "rust_mutants::crashed_after";
+
+/// The exit status of a test process a crash stopped just after a call that writes (ADR 0035).
+pub const CRASH_EXIT: i32 = 93;
+
 /// Marks the generated module, for a person reading the snapshot and for the drift gate.
 pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v1";
 
@@ -423,6 +429,12 @@ mod {{MODULE}} {
     }
     pub(crate) fn injected<E: Injectable>() -> E {
         E::injected()
+    }
+    // A crash lets the call that writes finish and then stops the process
+    // with nothing after it: no destructor, flush or unwinding, so what the
+    // call wrote is on disk and nothing later is.
+    pub(crate) fn crashed_after<T>(_written: T) -> T {
+        __rm_std::process::exit({{CRASH_EXIT}})
     }
 
     #[inline(always)]
@@ -1272,6 +1284,7 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{BODIES}}", crate::touch::BODIES)
         .replace("{{INFECTED}}", crate::touch::INFECTED)
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
+        .replace("{{CRASH_EXIT}}", &CRASH_EXIT.to_string())
         .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
         .replace("{{STEPS_ENV}}", STEPS_ENV)
         .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)

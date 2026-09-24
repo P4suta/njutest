@@ -62,9 +62,9 @@ fn the_canonical_table_has_the_documented_shape() {
         "the canonical table satisfies every registry invariant: {valid:?}"
     );
     assert_eq!(registry.len(), CANONICAL_RULE_COUNT);
-    assert_eq!(CANONICAL_RULE_COUNT, 75);
+    assert_eq!(CANONICAL_RULE_COUNT, 76);
     assert_eq!(registry.families().len(), CANONICAL_FAMILY_COUNT);
-    assert_eq!(CANONICAL_FAMILY_COUNT, 18);
+    assert_eq!(CANONICAL_FAMILY_COUNT, 19);
     let expected: Vec<(Family, Tier, Vec<&str>)> = vec![
         (
             Family::BooleanLiteral,
@@ -218,6 +218,7 @@ fn the_canonical_table_has_the_documented_shape() {
             ],
         ),
         (Family::Fault, Tier::All, vec!["inject-error"]),
+        (Family::Durable, Tier::All, vec!["crash-after-write"]),
     ];
     let mut position = 0;
     for (index, (family, tier, names)) in expected.iter().enumerate() {
@@ -510,7 +511,7 @@ fn the_declared_order_of_a_family_is_the_order_the_table_first_names_it() {
 #[test]
 fn a_fault_is_chosen_by_name_alone_and_no_proof_removes_a_target_from_it() {
     for family in Family::ALL {
-        let fault = family == Family::Fault;
+        let fault = family == Family::Fault || family == Family::Durable;
         assert_eq!(
             family.chosen_by_tiers(),
             !fault,

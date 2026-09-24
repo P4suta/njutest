@@ -591,6 +591,18 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
+    /// A run's scratch directory could not be walked for what it left.
+    #[error(
+        "{}: cannot read what a run left in its scratch directory {}: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    ScratchUnreadable {
+        /// The directory, or the entry of it, that could not be read.
+        path: PathBuf,
+        /// What reading it said.
+        source: std::io::Error,
+    },
     /// A fresh execution scratch directory could not be created exclusively.
     #[error(
         "{}: cannot reserve the fresh execution scratch directory {}: {source}",
@@ -666,6 +678,7 @@ impl SessionError {
             | Self::ScratchSequenceExhausted
             | Self::ScratchUnclaimed { .. }
             | Self::ScratchCreateFailed { .. }
+            | Self::ScratchUnreadable { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
             Self::SelectionSourceMissing { .. }
