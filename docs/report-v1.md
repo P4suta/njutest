@@ -181,6 +181,9 @@ A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.
 A part concludes `PARTIAL`; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
 The merge re-derives accounting,
 findings and verdict from the union instead of adding claims from the parts.
+A part judges an expectation only on the mutations it holds, so a `count` spread across parts is checked by the parts together;
+the merged expectation is the harshest standing any part gave it — `stale`, then `unmatched`, then `met`.
+A `stale-expectation` or `unmatched-expectation` finding is derived from its expectation, in a part and in a merge alike, and a document whose findings of those kinds are not exactly the ones its expectations earn is not read.
 
 JSON is canonical.
 Terminal output is tab-separated with the record kind first and verdict last; untrusted text is escaped.

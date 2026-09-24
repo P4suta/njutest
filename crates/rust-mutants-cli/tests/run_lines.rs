@@ -675,34 +675,21 @@ fn a_run_that_built_no_targets_says_nothing_about_work_rather_than_dividing_by_i
 #[test]
 fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
     let stale_mutant = mutant(0, Outcome::Killed, false);
-    let stale_id = stale_mutant.id.clone();
-    let finding = |kind: FindingKind, detail: &str| FindingDocument {
-        kind,
-        mutant: (kind == FindingKind::StaleExpectation).then(|| stale_id.clone()),
-        detail: detail.to_owned(),
+    let stale = claim("a proof removed it", Some(&stale_mutant));
+    let shared = claim("the claim verifies nothing", None);
+    let parts = [
+        findings_part(
+            &stale_mutant,
+            std::slice::from_ref(&shared),
+            &["b noticed nothing", "a noticed nothing"],
+        ),
+        findings_part(&stale_mutant, &[shared, stale], &[]),
+    ];
+    let parts: Vec<RunDocument> = match parts.into_iter().collect() {
+        Ok(parts) => parts,
+        Err(error) => panic!("every claim here earns a finding: {error:?}"),
     };
-    let shared = finding(
-        FindingKind::UnmatchedExpectation,
-        "the claim verifies nothing",
-    );
-    let merged = rust_mutants_cli::report::run::merge(&[
-        findings_part(
-            &stale_mutant,
-            vec![
-                finding(FindingKind::UnmatchedSkip, "b noticed nothing"),
-                shared.clone(),
-                finding(FindingKind::UnmatchedSkip, "a noticed nothing"),
-            ],
-        ),
-        findings_part(
-            &stale_mutant,
-            vec![
-                shared,
-                finding(FindingKind::StaleExpectation, "a proof removed it"),
-            ],
-        ),
-    ]);
-    let merged = match merged {
+    let merged = match rust_mutants_cli::report::run::merge(&parts) {
         Ok(merged) => merged,
         Err(error) => panic!("coherent parts must merge: {error:?}"),
     };
@@ -715,8 +702,16 @@ fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
     assert_eq!(
         read,
         [
-            ("stale-expectation", "a proof removed it"),
-            ("unmatched-expectation", "the claim verifies nothing"),
+            (
+                "stale-expectation",
+                "\"a proof removed it\" was expected to be survived, and the run says killed; \
+                 the claim \"a proof removed it\" no longer holds"
+            ),
+            (
+                "unmatched-expectation",
+                "the expectation for \"the claim verifies nothing\" verifies nothing: \
+                 the claim names nothing"
+            ),
             ("unmatched-skip", "a noticed nothing"),
             ("unmatched-skip", "b noticed nothing"),
         ],
@@ -725,55 +720,53 @@ fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
     );
 }
 
-fn findings_part(stale_mutant: &RunMutantDocument, findings: Vec<FindingDocument>) -> RunDocument {
+fn findings_part(
+    stale_mutant: &RunMutantDocument,
+    claims: &[ExpectationDocument],
+    skips: &[&str],
+) -> Result<RunDocument, rust_mutants_cli::report::run::DocumentError> {
     let mut document = document();
-    document.mutants = if findings
-        .iter()
-        .any(|finding| finding.kind == FindingKind::StaleExpectation)
-    {
+    document.mutants = if claims.iter().any(|claim| claim.standing == "stale") {
         vec![stale_mutant.clone()]
     } else {
         Vec::new()
     };
-    document.expectations = findings.iter().filter_map(expectation_of).collect();
-    document.findings = findings;
+    document.expectations = claims.to_vec();
+    let earned: Vec<FindingDocument> = claims
+        .iter()
+        .filter_map(|claim| claim.finding().transpose())
+        .collect::<Result<_, _>>()?;
+    document.findings = skips
+        .iter()
+        .map(|detail| FindingDocument {
+            kind: FindingKind::UnmatchedSkip,
+            mutant: None,
+            detail: (*detail).to_owned(),
+        })
+        .chain(earned)
+        .collect();
     cohere(&mut document);
-    document
+    Ok(document)
 }
 
-fn expectation_of(finding: &FindingDocument) -> Option<ExpectationDocument> {
-    match finding.kind {
-        FindingKind::StaleExpectation => Some(ExpectationDocument {
-            id: finding.detail.clone(),
-            locator: None,
-            reason: finding.detail.clone(),
-            outcome: Outcome::Survived,
-            mutant: finding.mutant.clone(),
-            covered: None,
-            standing: "stale".to_owned(),
-            actual: Some(Outcome::Killed),
-            why: None,
-        }),
-        FindingKind::UnmatchedExpectation => Some(ExpectationDocument {
-            id: finding.detail.clone(),
-            locator: None,
-            reason: finding.detail.clone(),
-            outcome: Outcome::Survived,
-            mutant: None,
-            covered: None,
-            standing: "unmatched".to_owned(),
-            actual: None,
-            why: Some("the claim names nothing".to_owned()),
-        }),
-        FindingKind::SurvivingMutant
-        | FindingKind::InconclusiveMutant
-        | FindingKind::StepLimitReachedMutant
-        | FindingKind::WaitedMutant
-        | FindingKind::ErroredMutant
-        | FindingKind::NotRunMutant
-        | FindingKind::UnreachedMutant
-        | FindingKind::DischargedMutant
-        | FindingKind::UnmatchedSkip => None,
+fn claim(id: &str, stale: Option<&RunMutantDocument>) -> ExpectationDocument {
+    ExpectationDocument {
+        id: id.to_owned(),
+        locator: None,
+        reason: id.to_owned(),
+        outcome: Outcome::Survived,
+        mutant: stale.map(|mutant| mutant.id.clone()),
+        covered: None,
+        standing: if stale.is_some() {
+            "stale"
+        } else {
+            "unmatched"
+        }
+        .to_owned(),
+        actual: stale.map(|_| Outcome::Killed),
+        why: stale
+            .is_none()
+            .then(|| "the claim names nothing".to_owned()),
     }
 }
 

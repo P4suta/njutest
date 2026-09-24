@@ -1315,3 +1315,71 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         stderr(&merged)
     );
 }
+
+#[test]
+fn a_claim_on_several_mutations_split_across_shards_merges_to_what_the_whole_run_says() {
+    let fixture = Fixture::copy("fixture-families");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+         \"question-to-unwrap\"\noriginal = \"?\"\ncount = 2\noutcome = \"killed\"\nreason = \
+         \"both of them parse the same text, so one reason is written for the pair\"\n",
+    )
+    .expect("write the configuration");
+    let narrowed = [
+        "run",
+        "--offline",
+        "--locked",
+        "--include",
+        "src/lib.rs",
+        "--operator",
+        "question-to-unwrap",
+    ];
+    let whole_output = against(&fixture, &narrowed);
+    let whole = stored(&fixture);
+    let mut written = Vec::new();
+    for part in ["1/2", "2/2"] {
+        let mut arguments = narrowed.to_vec();
+        arguments.extend(["--shard", part]);
+        let output = against(&fixture, &arguments);
+        assert!(
+            output.status.code().is_some_and(|code| code < 2),
+            "{part}: {}",
+            stderr(&output)
+        );
+        let path = fixture
+            .root()
+            .join(format!("claim-part-{}.json", part.replace('/', "-")));
+        std::fs::write(
+            &path,
+            serde_json::to_string(&stored(&fixture)).expect("renders"),
+        )
+        .expect("write");
+        written.push(path);
+    }
+    let mut arguments = vec!["merge".to_owned()];
+    arguments.extend(
+        written
+            .iter()
+            .map(|path| njutest_devkit::paths::utf8(path).to_owned()),
+    );
+    let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    let merged_output = rootless(&fixture, &borrowed);
+    let merged: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(&merged_output))
+        .unwrap_or_else(|error| panic!("one document: {error}: {}", stderr(&merged_output)));
+    let claims = |document: &serde_json::Value| -> Vec<(String, String)> {
+        document["expectations"]
+            .as_array()
+            .expect("expectations")
+            .iter()
+            .map(|one| (one["id"].to_string(), one["standing"].to_string()))
+            .collect()
+    };
+    assert_eq!(
+        (claims(&merged), merged_output.status.code()),
+        (claims(&whole), whole_output.status.code()),
+        "one claim over two mutations is one claim however the catalog was divided: each part \
+         judges the mutations it holds, and the merge answers for the pair. {}",
+        stderr(&merged_output)
+    );
+}

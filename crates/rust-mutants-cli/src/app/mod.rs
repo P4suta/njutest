@@ -1080,8 +1080,8 @@ fn whole(
         cancel,
         stdout,
     )?;
-    result.expectations =
-        run::verify(session, &expectations, &mut result.judged).map_err(EngineError::from)?;
+    result.expectations = run::verify(session, &expectations, &mut result.judged, options.shard)
+        .map_err(EngineError::from)?;
     let document = run_report::document(
         session,
         &result,
