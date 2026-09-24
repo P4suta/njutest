@@ -325,7 +325,7 @@ fn dimension(row: &super::matrix::Row, out: &mut String) {
         super::matrix::Column::Unmeasured { why } | super::matrix::Column::NothingToAsk { why } => {
             append_optional(out, Some(why));
         }
-        super::matrix::Column::NotAsked | super::matrix::Column::NotInThisRelease => {
+        super::matrix::Column::NotAsked => {
             out.push('\n');
         }
     }

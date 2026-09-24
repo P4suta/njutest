@@ -2663,7 +2663,6 @@ fn a_whole_run_that_names_exactly_the_dimensions_it_left_a_hole_is_not_refused()
                 {},
                 finding("repeatable"),
                 finding("fault"),
-                finding("schedule"),
                 finding("durable")
             ]
         }),
@@ -2671,12 +2670,12 @@ fn a_whole_run_that_names_exactly_the_dimensions_it_left_a_hole_is_not_refused()
     let audit = audited(&document);
     assert!(
         !audit.violated(Layer::Dimensions),
-        "the records leave repeatable, fault, schedule and durable a hole and the findings name \
-         exactly those: {audit}"
+        "the records leave repeatable, fault and durable a hole and the findings name exactly \
+         those: {audit}"
     );
     merge(
         &mut document,
-        serde_json::json!({ "findings": [{}, {}, {}, {}, {"subject": "wire"}] }),
+        serde_json::json!({ "findings": [{}, {}, {}, {"subject": "wire"}] }),
     );
     assert!(
         audited(&document).violated(Layer::Dimensions),

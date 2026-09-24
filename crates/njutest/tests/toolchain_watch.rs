@@ -631,6 +631,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
@@ -756,6 +757,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let targets = root.join("fuzz/fuzz_targets");
     std::fs::create_dir_all(&targets).expect("a fuzz directory");
     for named in ["parses", "renders"] {
@@ -831,6 +833,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         "version = 1\n\n[mutation]\nequivalence = true\n",
     )
     .expect("a configuration that asks the compiler");
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
@@ -945,6 +948,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         ),
     )
     .expect("a configuration that names a resource");
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
@@ -1061,6 +1065,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         ),
     )
     .expect("a configuration that names a generator");
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
@@ -1200,6 +1205,7 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
     let root = from;
     let blocked = dir.join("fixture-blocked");
     copy_tree(root, &blocked);
+    njutest_devkit::fixture::pin_contract(&blocked, "standard-v1");
     for gone in [".njutest", "reports"] {
         match std::fs::remove_dir_all(blocked.join(gone)) {
             Ok(()) => {}
@@ -1292,6 +1298,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
@@ -1428,6 +1435,7 @@ fn once(
     if let Some(text) = configured {
         std::fs::write(root.join(".njutest.toml"), text).expect("a configuration");
     }
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.join(format!("{name}-scratch"));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
@@ -1567,6 +1575,7 @@ fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have
         &njutest_devkit::paths::fixtures_dir().join("fixture-assured"),
         &root,
     );
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let one = part(&root, dir.path(), "1/2");
     let two = part(&root, dir.path(), "2/2");
     assert_ne!(
@@ -1623,6 +1632,7 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
     let root = dir.join(name);
     copy_tree(&njutest_devkit::paths::fixtures_dir().join(fixture), &root);
     std::fs::write(root.join(".njutest.toml"), configured).expect("a configuration");
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.join(format!("{name}-scratch"));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let environment = Environment {
@@ -1755,6 +1765,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
         "version = 1\n\n[fuzz]\nrun = true\nmax_total_time = \"3s\"\n",
     )
     .expect("a configuration that asks for the targets to be driven");
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
 
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
@@ -1833,6 +1844,7 @@ fn verified_in_process(
             ),
         )
         .expect("a configuration this run reads");
+        njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     }
     let scratch = dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
@@ -1956,6 +1968,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 

@@ -29,7 +29,6 @@ The tree's own rule — what was not measured is not claimed as measured — sto
    - `unmeasured`, with why: the run was asked and could not measure the dimension at all, as when the tree with every fault guarded gives no baseline;
    - `not-asked`: the run could have measured it and did not;
    - `nothing-to-ask`, with why: the run looked and there was nothing to put, as in a tree with no `?` in a measured file;
-   - `not-in-this-release`: no measurement of the dimension exists yet.
    Every record is placed as answered, a hole, or a class not spoken about by one exhaustive match over its decision, so a decision added later is one somebody places; `catalogued = answered + holes` holds by construction, and a count that would not fit is `unmeasured`.
    Where a report holds several builds, a column is every build's counts added where each measured the dimension, and otherwise the column of the build that established least: a hole in any build is a hole of all of them.
 
@@ -37,16 +36,15 @@ The tree's own rule — what was not measured is not claimed as measured — sto
    A stored column would be a second copy of those records that a reader could find disagreeing with them.
    The record stream carries one `DIMENSION` record per column, and the drawing ends with the matrix.
 
-3. **`whole-v1` asks every dimension, and a hole in any of them is not assured.** `whole-v1` runs the soundness phase as `deep-v1` does, puts every fault, and sets every knob.
-   It concludes `INSUFFICIENT` whenever a column is `not-asked` or `not-in-this-release`, or is `measured` with a hole; `nothing-to-ask` and `speaks_not_about` are stated and are not holes.
-   Each such column is a `not-measured` finding naming the dimension, so the verdict is decided by findings as every other verdict is.
+3. **`whole-v1` asks every dimension, and a hole in any of them is not assured.** `whole-v1` runs the soundness phase as `deep-v1` does, puts every fault and every crash, sets every knob, and explores the schedules of every binary not proven to run one thread; the configuration layer does it, so every command reads the same configuration, and a document that says in so many words not to is refused rather than overridden.
+   It concludes `INSUFFICIENT` whenever a column is `unmeasured` or `not-asked`, or is `measured` with a hole; `nothing-to-ask` and `speaks_not_about` are stated and are not holes.
+   Each such column is a `dimension-not-measured` finding whose subject is the dimension's name, so the verdict is decided by findings as every other verdict is; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
    Every other contract reads the matrix and is decided exactly as it was.
 
 4. **Contracts are answered by what they ask, never by comparing names.** The places that asked `contract == verified-v1` or `contract != deep-v1` now ask the contract what it runs — `runs_miri`, `proves_models`, `asks_every_dimension` — each an exhaustive match, so a contract added later is one the compiler makes somebody place.
 
-5. **The default does not change yet.** The plan makes `whole-v1` the default for a run that names no contract.
-   Until schedules are measured, every `whole-v1` run is `INSUFFICIENT` by construction, and a default that nothing can satisfy is not a strict answer but a useless one; durability is measured by [ADR 0035](0035-a-crash-is-a-stop-the-next-run-has-to-survive.md).
-   The default moves to `whole-v1` in the change that ships the last `not-in-this-release` column; `standard-v1`, `deep-v1` and `verified-v1` stay what they are today.
+5. **The default moves once every dimension is measured.** The plan makes `whole-v1` the default for a run that names no contract, and a default that nothing can satisfy is not a strict answer but a useless one.
+   Every dimension is measured once schedules ([ADR 0034](0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)) and durability ([ADR 0035](0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)) are, and the default moves to `whole-v1` in the change that measures the last of them; `standard-v1`, `deep-v1` and `verified-v1` stay what they are today, and a run that names one keeps it.
 
 ## Consequences
 

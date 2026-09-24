@@ -38,13 +38,14 @@ const UNNOTICED_FAULT: &str = "unnoticed-fault";
 const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
 const CORRUPT_AFTER_CRASH: &str = "corrupt-after-crash";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
-pub const DEFECT_KINDS: [&str; 6] = [
+pub const DEFECT_KINDS: [&str; 7] = [
     "build-failure",
     "failing-test",
     "undefined-behaviour",
     "broken-under-fault",
     "environment-dependent",
     "corrupt-after-crash",
+    "schedule-dependent",
 ];
 const WAITED_MUTANT: &str = "waited-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
@@ -2251,7 +2252,23 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
             .iter()
             .any(|row| field(row, "name").is_some_and(|said| said.starts_with(name)))
     };
-    let mut holed = BTreeSet::from(["schedule"]);
+    let mut holed = BTreeSet::new();
+    let schedules_holed = rows(document, "concurrency").iter().any(|record| {
+        let explored = record.get("explored");
+        let state = explored
+            .and_then(|one| one.get("state"))
+            .and_then(serde_json::Value::as_str);
+        let why = explored
+            .and_then(|one| one.get("why"))
+            .and_then(serde_json::Value::as_str);
+        !matches!(
+            (state, why),
+            (Some("broke"), _) | (Some("unexplored"), Some("not-needed"))
+        )
+    });
+    if schedules_holed {
+        holed.insert("schedule");
+    }
     if recording.mutants.iter().any(|mutant| {
         ["waited", "step-limit-reached", "unconfirmed", "errored"]
             .contains(&mutant.outcome.as_str())

@@ -166,7 +166,7 @@ impl Default for Contract {
 }
 
 impl Contract {
-    const PROTOCOL_DEFAULT: Self = Self::StandardV1;
+    const PROTOCOL_DEFAULT: Self = Self::WholeV1;
 
     /// Whether the soundness phase runs Miri, where an inventory alone would be a limitation.
     #[must_use]
@@ -403,6 +403,9 @@ pub struct Faults {
     /// It costs a second instrumented build and baseline, and one execution for every `?` a test reaches.
     pub inject: bool,
 }
+
+/// How many guards of each binary not proven to run one thread a run that asks every dimension delays, where the document does not say (ADR 0033, ADR 0034).
+pub const WHOLE_SCHEDULES: u32 = 8;
 
 /// Whether a run stops the process just after each call that writes, and asks whether the next run can start over what it left (ADR 0035).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
@@ -947,6 +950,8 @@ impl Config {
             Some("[faults] inject = false")
         } else if said("durability", "crash") && !self.durability.crash {
             Some("[durability] crash = false")
+        } else if said("schedules", "explore") && self.schedules.explore == 0 {
+            Some("[schedules] explore = 0")
         } else if said("repeatable", "knobs") && self.repeatable.knobs != every {
             Some("[repeatable] knobs naming fewer than every knob")
         } else {
@@ -962,10 +967,29 @@ impl Config {
                 ),
             ));
         }
+        self.asking_everything();
+        Ok(())
+    }
+
+    /// The configuration of a tree with no configuration file: the defaults, with everything the default contract asks put.
+    #[must_use]
+    pub fn unwritten() -> Self {
+        let mut config = Self::default();
+        config.asking_everything();
+        config
+    }
+
+    /// Puts every fault, crash and knob and explores schedules, where the contract asks every dimension.
+    fn asking_everything(&mut self) {
+        if !self.contract.asks_every_dimension() {
+            return;
+        }
         self.faults.inject = true;
         self.durability.crash = true;
-        self.repeatable.knobs = every;
-        Ok(())
+        if self.schedules.explore == 0 {
+            self.schedules.explore = WHOLE_SCHEDULES;
+        }
+        self.repeatable.knobs = crate::report::knobs::Knob::ALL.to_vec();
     }
 
     /// Whether everything the document says can be honoured.
@@ -1118,7 +1142,7 @@ pub fn skeleton() -> String {
 # default. Unknown keys, malformed values, and any version other than 1 end
 # the run rather than being ignored.
 version = 1
-contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\" | \"verified-v1\"
+contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\" | \"verified-v1\"
 
 [project]
 # packages = []                  # cargo package names; empty = every member

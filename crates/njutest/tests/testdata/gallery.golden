@@ -487,9 +487,9 @@ gap[NJ-UNNOTICED-FAULT]: a call failed here and no test noticed
   mutation measured  13 catalogued, 13 answered, 0 holes
   repeatable measured  14 catalogued, 12 answered, 2 holes
   fault measured  3 catalogued, 3 answered, 0 holes
-  schedule not-in-this-release
+  schedule measured  2 catalogued, 1 answered, 1 holes
   wire measured  0 catalogued, 0 answered, 0 holes
-  durable not-in-this-release
+  durable measured  5 catalogued, 5 answered, 0 holes
 
   INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
@@ -502,10 +502,12 @@ gap[NJ-UNNOTICED-FAULT]: a call failed here and no test noticed
     12 answered, 2 holes
   fault measured  3 catalogued, 3
     answered, 0 holes
-  schedule not-in-this-release
+  schedule measured  2 catalogued, 1
+    answered, 1 holes
   wire measured  0 catalogued, 0
     answered, 0 holes
-  durable not-in-this-release
+  durable measured  5 catalogued, 5
+    answered, 0 holes
 
   INSUFFICIENT   4 killed  0 survived  0
     unreached  1.9s
@@ -516,9 +518,9 @@ gap[NJ-UNNOTICED-FAULT]: a call failed here and no test noticed
   [1;38;5;253mmutation[0m [38;5;176mmeasured[0m  [38;5;244m13 catalogued, 13 answered, 0 holes[0m
   [1;38;5;253mrepeatable[0m [38;5;176mmeasured[0m  [38;5;244m14 catalogued, 12 answered, 2 holes[0m
   [1;38;5;253mfault[0m [38;5;176mmeasured[0m  [38;5;244m3 catalogued, 3 answered, 0 holes[0m
-  [1;38;5;253mschedule[0m [38;5;176mnot-in-this-release[0m
+  [1;38;5;253mschedule[0m [38;5;176mmeasured[0m  [38;5;244m2 catalogued, 1 answered, 1 holes[0m
   [1;38;5;253mwire[0m [38;5;176mmeasured[0m  [38;5;244m0 catalogued, 0 answered, 0 holes[0m
-  [1;38;5;253mdurable[0m [38;5;176mnot-in-this-release[0m
+  [1;38;5;253mdurable[0m [38;5;176mmeasured[0m  [38;5;244m5 catalogued, 5 answered, 0 holes[0m
 
   [1;38;5;214mINSUFFICIENT[0m   [38;5;244m4 killed  0 survived  0 unreached  1.9s[0m
   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
@@ -528,9 +530,9 @@ gap[NJ-UNNOTICED-FAULT]: a call failed here and no test noticed
   mutation measured  13 catalogued, 13 answered, 0 holes
   repeatable measured  14 catalogued, 12 answered, 2 holes
   fault measured  3 catalogued, 3 answered, 0 holes
-  schedule not-in-this-release
+  schedule measured  2 catalogued, 1 answered, 1 holes
   wire measured  0 catalogued, 0 answered, 0 holes
-  durable not-in-this-release
+  durable measured  5 catalogued, 5 answered, 0 holes
 
   ✗ INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa

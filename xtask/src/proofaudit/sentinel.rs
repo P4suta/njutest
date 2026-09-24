@@ -175,6 +175,14 @@ fn crashes_planted(clean: Perturbation) -> Vec<Perturbation> {
     ]
 }
 
+/// The defects planted for the faults layer, and for the evidence beside a fault it also audits.
+fn faults_and_besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    faults_planted(clean)
+        .into_iter()
+        .chain(besides_planted(clean))
+        .collect()
+}
+
 /// The defect planted for the dimensions layer: a whole-v1 run that names none of the dimensions its records leave a hole.
 fn dimensions_planted(clean: Perturbation) -> Vec<Perturbation> {
     vec![Perturbation {
@@ -801,10 +809,7 @@ impl Layer {
                 document: with(json!({ "contract": "verified-v1" })),
                 ..clean
             }],
-            Self::Faults => faults_planted(&clean)
-                .into_iter()
-                .chain(besides_planted(&clean))
-                .collect(),
+            Self::Faults => faults_and_besides_planted(&clean),
             Self::Dimensions => dimensions_planted(clean),
             Self::Crashes => crashes_planted(clean),
             Self::Drift => vec![Perturbation {

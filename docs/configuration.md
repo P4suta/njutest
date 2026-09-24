@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 The defaults, the strictness, and the two rules about what a report may contain are fixed by tests; `njutest init` writes the skeleton below, and a test loads the untouched skeleton and asserts it is exactly the defaults.
 
 `.njutest.toml` is optional and strict.
-Missing configuration uses `standard-v1`, the whole workspace, a ten-minute measurement timeout, and a cache capped at 5 GiB and 30 days.
+Missing configuration uses `whole-v1`, the whole workspace, a ten-minute measurement timeout, and a cache capped at 5 GiB and 30 days.
 Unknown keys, malformed values, and any `version` other than `1` are errors.
 
 `njutest init` writes an annotated skeleton: the two active defaults, and every section below as commented guidance.
@@ -17,7 +17,7 @@ Loading the untouched skeleton yields exactly the defaults.
 
 ```toml
 version = 1
-contract = "standard-v1"        # "standard-v1" | "deep-v1" | "verified-v1" | "whole-v1"
+contract = "whole-v1"  # "whole-v1" | "standard-v1" | "deep-v1" | "verified-v1"
 
 [project]
 packages = []                   # cargo package names; empty = every workspace member
@@ -113,10 +113,10 @@ Empty by default, because each schedule is one more run of the binary.
 Empty by default, because each knob is one more run of every target.
 A knob this machine cannot put is stated as `knob-not-put` rather than skipped silently; most CI images install no Turkish locale, so there `locale` is not put.
 
-`[verification]` belongs only to `contract = "verified-v1"`.
+`contract = "whole-v1"`, the default, asks every dimension a run can measure: it puts every fault, crash and knob, explores eight schedules of every binary not proven to run one thread, runs the soundness phase as `deep-v1` does, and is not `ASSURED` while any dimension is a hole ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+A document that turns one of those off in so many words, such as `[schedules] explore = 0`, is refused rather than overridden; name `standard-v1` to ask less.
 
-`contract = "whole-v1"` asks every dimension a run can measure: it puts every fault, crash and knob, runs the soundness phase as `deep-v1` does, and is not `ASSURED` while any dimension is a hole ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
-Schedules are not measured in this release, so every `whole-v1` run concludes `INSUFFICIENT` until they are; the default stays `standard-v1` until then.
+`[verification]` belongs only to `contract = "verified-v1"`.
 Both `unwind` (the nonzero loop-unwind bound) and `timeout` (the verifier process ceiling, representable as at least one whole millisecond) are mandatory there; the other contracts reject the section instead of silently ignoring proof settings.
 
 `timeout` and `steps` can both stop a mutation that stops a program ending,

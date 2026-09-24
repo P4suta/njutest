@@ -40,10 +40,7 @@ const fn counts(column: &Column) -> Option<(usize, usize, usize)> {
             holes,
             ..
         } => Some((*catalogued, *answered, *holes)),
-        Column::Unmeasured { .. }
-        | Column::NotAsked
-        | Column::NothingToAsk { .. }
-        | Column::NotInThisRelease => None,
+        Column::Unmeasured { .. } | Column::NotAsked | Column::NothingToAsk { .. } => None,
     }
 }
 
@@ -67,9 +64,12 @@ fn each_fault_decision_is_answered_a_hole_or_a_class_the_column_does_not_speak_a
         Some((5, 4, 1))
     );
     assert_eq!(column(&evidence, Dimension::Repeatable), Column::NotAsked);
-    assert_eq!(
-        column(&evidence, Dimension::Schedule),
-        Column::NotInThisRelease
+    assert!(
+        matches!(
+            column(&evidence, Dimension::Schedule),
+            Column::NothingToAsk { .. }
+        ),
+        "with no test binary there is no schedule to ask about"
     );
 }
 

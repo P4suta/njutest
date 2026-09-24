@@ -65,8 +65,6 @@ pub enum Column {
         /// What was found to be absent.
         why: String,
     },
-    /// No measurement of the dimension exists in this release.
-    NotInThisRelease,
 }
 
 impl Column {
@@ -78,7 +76,6 @@ impl Column {
             Self::Unmeasured { .. } => "unmeasured",
             Self::NotAsked => "not-asked",
             Self::NothingToAsk { .. } => "nothing-to-ask",
-            Self::NotInThisRelease => "not-in-this-release",
         }
     }
 
@@ -98,9 +95,6 @@ impl Column {
             Self::NotAsked => Some(format!(
                 "the {name} dimension was not measured, and a run that asks every dimension \
                  establishes nothing along one it did not measure"
-            )),
-            Self::NotInThisRelease => Some(format!(
-                "{name} is not in this release; whole-v1 cannot be satisfied until it is"
             )),
         }
     }
@@ -477,9 +471,8 @@ const fn weight(column: &Column) -> u8 {
     match column {
         Column::NothingToAsk { .. } => 0,
         Column::Measured { .. } => 1,
-        Column::NotInThisRelease => 2,
-        Column::NotAsked => 3,
-        Column::Unmeasured { .. } => 4,
+        Column::NotAsked => 2,
+        Column::Unmeasured { .. } => 3,
     }
 }
 

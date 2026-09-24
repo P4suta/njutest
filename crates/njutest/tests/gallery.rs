@@ -390,7 +390,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                         },
                         Row {
                             dimension: Dimension::Schedule,
-                            column: Column::NotInThisRelease,
+                            column: measured(2, 1, 1),
                         },
                         Row {
                             dimension: Dimension::Wire,
@@ -398,7 +398,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                         },
                         Row {
                             dimension: Dimension::Durable,
-                            column: Column::NotInThisRelease,
+                            column: measured(5, 5, 0),
                         },
                     ]
                 },

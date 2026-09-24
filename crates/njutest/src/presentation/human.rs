@@ -68,8 +68,7 @@ fn dimensions(out: &mut String, told: &Told, terminal: Terminal) {
             } => format!("{catalogued} catalogued, {answered} answered, {holes} holes"),
             crate::report::matrix::Column::Unmeasured { why }
             | crate::report::matrix::Column::NothingToAsk { why } => why.clone(),
-            crate::report::matrix::Column::NotAsked
-            | crate::report::matrix::Column::NotInThisRelease => String::new(),
+            crate::report::matrix::Column::NotAsked => String::new(),
         };
         let mut said = format!(
             "{} {}",

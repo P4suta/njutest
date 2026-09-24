@@ -48,8 +48,7 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are nineteen kinds, and every report carries the stable name:
-There are sixteen kinds, and every report carries the stable name:
+There are twenty kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -253,7 +252,7 @@ A tree with no call that writes in a measured file states `crash-no-site`, and o
 
 A report is read along six dimensions, `mutation`, `repeatable`, `fault`, `schedule`, `wire` and `durable` ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
 The matrix is derived from the records above and never stored: a stored column would be a second copy of them a reader could find disagreeing.
-Each column is `measured` with `catalogued`, `answered`, `holes` (which add up) and what it `speaks_not_about`, or `unmeasured` with why, `not-asked`, `nothing-to-ask` with why, or `not-in-this-release`.
+Each column is `measured` with `catalogued`, `answered`, `holes` (which add up) and what it `speaks_not_about`, or `unmeasured` with why, `not-asked`, or `nothing-to-ask` with why.
 Mutation holes are the waited, step-limited, unconfirmed and errored mutations; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
 The record stream carries one `DIMENSION` record per column.
 Under `whole-v1`, every column that is not `measured` without a hole or `nothing-to-ask` is a `dimension-not-measured` finding whose subject is the dimension's name; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.

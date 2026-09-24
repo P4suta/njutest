@@ -88,7 +88,7 @@ fn a_whole_run_asks_every_dimension_and_is_not_assured_while_one_is_a_hole() {
             "mutation measured",
             "repeatable measured",
             "fault measured",
-            "schedule not-in-this-release",
+            "schedule measured",
             "wire measured",
             "durable nothing-to-ask",
         ],
@@ -97,7 +97,7 @@ fn a_whole_run_asks_every_dimension_and_is_not_assured_while_one_is_a_hole() {
     );
     assert!(
         said.contains("VERDICT\tINSUFFICIENT"),
-        "schedules, which this release does not measure, are a hole: {said}"
+        "one binary is not proven to run one thread and no schedule of it was established, which is a hole: {said}"
     );
     assert!(
         said.contains("FINDING\tdimension-not-measured\tschedule\t")
@@ -108,7 +108,10 @@ fn a_whole_run_asks_every_dimension_and_is_not_assured_while_one_is_a_hole() {
 
 #[test]
 fn a_standard_run_shows_the_matrix_and_is_decided_as_it_was() {
-    let fixture = fixture("fixture-faulted", "version = 1\n");
+    let fixture = fixture(
+        "fixture-faulted",
+        "version = 1\ncontract = \"standard-v1\"\n",
+    );
     let output = verify(&fixture);
     let said = njutest_devkit::process::strict_utf8(&output.stdout);
     assert_eq!(
@@ -117,7 +120,7 @@ fn a_standard_run_shows_the_matrix_and_is_decided_as_it_was() {
             "mutation measured",
             "repeatable not-asked",
             "fault not-asked",
-            "schedule not-in-this-release",
+            "schedule measured",
             "wire measured",
             "durable not-asked",
         ],
@@ -126,5 +129,22 @@ fn a_standard_run_shows_the_matrix_and_is_decided_as_it_was() {
     assert!(
         !said.contains("dimension-not-measured"),
         "a contract that does not ask every dimension raises nothing about one it did not ask: {said}"
+    );
+}
+
+#[test]
+fn a_run_that_names_no_contract_asks_every_dimension() {
+    let fixture = fixture("fixture-faulted", "version = 1\n");
+    let output = verify(&fixture);
+    let said = njutest_devkit::process::strict_utf8(&output.stdout);
+    assert!(
+        said.contains("contract=whole-v1"),
+        "a run that names no contract gets the strictest answer (ADR 0033): {said}"
+    );
+    assert!(
+        !dimensions(&output)
+            .iter()
+            .any(|row| row.ends_with("not-asked")),
+        "and every dimension is asked: {said}"
     );
 }
