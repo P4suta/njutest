@@ -1617,7 +1617,12 @@ fn read_run_document(path: &Path) -> Result<run_report::RunDocument, CliError> {
     document
         .validate()
         .map_err(|error| CliError::ReportMissing {
-            message: format!("{} is a contradictory run report: {error}", path.display()),
+            message: match error {
+                run_report::DocumentError::SchemaVersion { .. } => {
+                    format!("{}: {error}", path.display())
+                }
+                other => format!("{} is a contradictory run report: {other}", path.display()),
+            },
         })?;
     Ok(document)
 }

@@ -368,7 +368,16 @@ pub struct FindingDocument {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DocumentError {
-    /// The document names another shape or version.
+    /// The document was written to another version of this schema, which is a matter of when rather than a contradiction.
+    #[error(
+        "the run report was written as schema version {found}, and this release reads {}; run again to write one it reads",
+        SCHEMA_VERSION
+    )]
+    SchemaVersion {
+        /// The version the document says it was written to.
+        found: u32,
+    },
+    /// The document names another shape.
     #[error("the run report header has an invalid {field}")]
     Header {
         /// The invalid header field.
@@ -615,9 +624,13 @@ impl RunDocument {
     }
 
     fn validate_header(&self) -> Result<(), DocumentError> {
+        if self.schema_version != SCHEMA_VERSION {
+            return Err(DocumentError::SchemaVersion {
+                found: self.schema_version,
+            });
+        }
         for (valid, field) in [
             (self.document_type == DOCUMENT_TYPE, "document_type"),
-            (self.schema_version == SCHEMA_VERSION, "schema_version"),
             (!self.tool_version.is_empty(), "tool_version"),
             (
                 crate::id::is_digest(&self.workspace.workspace_digest),

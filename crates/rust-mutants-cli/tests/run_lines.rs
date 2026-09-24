@@ -415,8 +415,18 @@ fn every_report_summary_is_rederived_before_it_is_trusted() {
     let control = document();
     assert!(control.validate().is_ok(), "the control report is coherent");
 
+    let mut older = control.clone();
+    older.schema_version = 2;
+    assert!(
+        matches!(
+            older.validate(),
+            Err(rust_mutants_cli::report::run::DocumentError::SchemaVersion { found: 2 })
+        ),
+        "a report written to an earlier version is named as one, not called a contradiction"
+    );
+
     let mut header = control.clone();
-    header.schema_version = header.schema_version.saturating_add(1);
+    header.document_type = "rust-mutants/something-else".to_owned();
     assert!(matches!(
         header.validate(),
         Err(rust_mutants_cli::report::run::DocumentError::Header { .. })
