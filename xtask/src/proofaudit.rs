@@ -34,6 +34,7 @@ const ERRORED: &str = "errored";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
+const NOT_MEASURED_FINDING: &str = "not-measured";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
 pub const DEFECT_KINDS: [&str; 4] = [
     "build-failure",
@@ -1940,29 +1941,48 @@ fn fault_findings(
     reported: &[crate::faults::Site],
     notes: &mut Notes<'_>,
 ) {
-    let unnoticed: BTreeSet<&str> = reported
+    let owed: BTreeMap<&str, &str> = reported
         .iter()
-        .filter(|site| site.decision == "unnoticed")
-        .map(|site| site.fault.as_str())
+        .filter_map(|site| {
+            let kind = match site.decision.as_str() {
+                "unnoticed" => UNNOTICED_FAULT,
+                "waited" | "undecided" => NOT_MEASURED_FINDING,
+                _ => return None,
+            };
+            Some((site.fault.as_str(), kind))
+        })
         .collect();
-    let named: BTreeSet<&str> = recording
+    let sites: BTreeSet<&str> = reported.iter().map(|site| site.fault.as_str()).collect();
+    let named: BTreeSet<(&str, &str)> = recording
         .findings
         .iter()
-        .filter(|finding| finding.kind == UNNOTICED_FAULT)
-        .map(|finding| finding.subject.as_str())
+        .filter(|finding| {
+            finding.kind == UNNOTICED_FAULT
+                || (finding.kind == NOT_MEASURED_FINDING
+                    && sites.contains(finding.subject.as_str()))
+        })
+        .map(|finding| (finding.subject.as_str(), finding.kind.as_str()))
         .collect();
-    for fault in unnoticed.difference(&named) {
-        notes.violated(
-            fault,
-            "nothing noticed this fault, and no finding says so".to_owned(),
-        );
+    for (fault, kind) in &owed {
+        if !named.contains(&(*fault, *kind)) {
+            notes.violated(
+                fault,
+                format!(
+                    "the report's decision about this fault owes a {kind} finding, and none says so"
+                ),
+            );
+        }
     }
-    for fault in named.difference(&unnoticed) {
-        notes.violated(
-            fault,
-            "a finding says nothing noticed this fault, and the report records no such site"
-                .to_owned(),
-        );
+    for (fault, kind) in &named {
+        if owed.get(fault) != Some(kind) {
+            notes.violated(
+                fault,
+                format!(
+                    "a {kind} finding names this fault, and the report records no decision about \
+                     it that owes one"
+                ),
+            );
+        }
     }
 }
 

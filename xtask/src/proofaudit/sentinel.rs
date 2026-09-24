@@ -153,6 +153,22 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
             ..clean.clone()
         },
         Perturbation {
+            name: "an undecided fault whose not-measured finding the report dropped",
+            document: with(json!({
+                "faults": [fault_site(&json!({
+                    "decision": "undecided", "on": TARGET, "why": "the kill did not happen the second time"
+                }))],
+                "accounting": { "faults": { "sites": 1, "undecided": 1 } }
+            })),
+            events: Some(fault_recorded(
+                &json!({
+                    "decision": "undecided", "on": TARGET, "why": "the kill did not happen the second time"
+                }),
+                "killed",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
             name: "a fault site the recording holds and the report dropped",
             events: Some(fault_recorded(
                 &json!({ "decision": "unnoticed" }),
@@ -172,7 +188,7 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
                 "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
                 "type": "fault-exec",
                 "fault": {
-                    "fault": FAULTED, "target": TARGET, "args": [],
+                    "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
                     "outcome": outcome, "duration_ms": 5, "alone": false
                 }
             }),
