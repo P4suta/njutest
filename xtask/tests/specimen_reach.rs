@@ -3,11 +3,6 @@
 
 //! Nothing that reads evidence completes it: filling a field a recording left out is the one shape the schema check forbids, so only the sentinels, which lay specimens, may call the filler.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports a setup failure by panicking"
-)]
-
 #[test]
 fn only_a_sentinel_completes_a_specimen() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
