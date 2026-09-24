@@ -1583,7 +1583,7 @@ fn stored_explain(
 
 /// Every stored run, oldest first, whose catalog holds a mutant `prefix` names.
 fn runs_holding(directory: &Path, prefix: &str) -> Result<Vec<String>, CliError> {
-    let (runs, _recordings) = stored::kept(directory)?;
+    let runs = stored::kept(directory)?.0;
     let mut holding = Vec::new();
     for run in runs {
         let catalog: rust_mutants::report::catalog::CatalogDocument =
