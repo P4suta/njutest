@@ -863,7 +863,7 @@ pub struct CacheRecord {
 pub struct SelectRecord {
     /// The mutant's display identity.
     pub mutant: String,
-    /// `unreached`, `discharged`, or `interrupted`.
+    /// Why it did not run: the name of one [`crate::run::NotRunReason`].
     pub reason: String,
 }
 

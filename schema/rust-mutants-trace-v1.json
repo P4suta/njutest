@@ -1852,7 +1852,9 @@
                   "enum": [
                     "unreached",
                     "discharged",
-                    "interrupted"
+                    "interrupted",
+                    "unselected",
+                    "stopped-early"
                   ]
                 }
               }
