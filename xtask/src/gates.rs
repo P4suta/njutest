@@ -1551,9 +1551,11 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     ));
     prohibited.sort();
     prohibited.dedup();
+    built_as_tested(root, &metadata, &members)?;
     if violations.is_empty() && prohibited.is_empty() {
         return Ok(format!(
-            "deps: {} internal edges, all in the allowed direction; {census}",
+            "deps: {} internal edges, all in the allowed direction, and every shipped \
+             dependency is built as its tests build it; {census}",
             edges.len()
         ));
     }
@@ -1566,6 +1568,89 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     }
     append(&mut message, format_args!("{}", deps::RULE));
     Err(GateFailure(message))
+}
+
+/// Nothing, where every direct dependency of a shipped crate is built with the features its tests build it with.
+///
+/// # Errors
+/// A feature only a development edge turns on, or a `cargo tree` that could not be run.
+fn built_as_tested(
+    root: &Path,
+    metadata: &cargo_metadata::Metadata,
+    members: &[String],
+) -> Result<(), GateFailure> {
+    let direct: BTreeSet<String> = metadata
+        .workspace_packages()
+        .iter()
+        .filter(|package| deps::SHIPPED.contains(&package.name.as_str()))
+        .flat_map(|package| package.dependencies.iter())
+        .filter(|dependency| {
+            dependency.kind != cargo_metadata::DependencyKind::Development
+                && !members.contains(&dependency.name)
+        })
+        .map(|dependency| dependency.name.clone())
+        .collect();
+    let ships = metadata
+        .workspace_packages()
+        .iter()
+        .any(|package| deps::SHIPPED.contains(&package.name.as_str()));
+    let tested_only = if ships {
+        features_only_tests_build_with(root, &direct)?
+    } else {
+        Vec::new()
+    };
+    if !tested_only.is_empty() {
+        let mut message = String::from(
+            "deps: a shipped dependency is built with a feature only a development edge turns on, \
+             so every test reads with it and no release does:\n",
+        );
+        for (package, features) in &tested_only {
+            line(
+                &mut message,
+                format_args!("  {package}: {}", features.join(", ")),
+            );
+        }
+        append(
+            &mut message,
+            format_args!("turn the feature on where the shipped crate depends on it"),
+        );
+        return Err(GateFailure(message));
+    }
+    Ok(())
+}
+
+/// Every feature a shipped dependency is built with only because a development edge asks for it.
+///
+/// # Errors
+/// A `cargo tree` that could not be run or read.
+fn features_only_tests_build_with(
+    root: &Path,
+    direct: &BTreeSet<String>,
+) -> Result<Vec<(String, Vec<String>)>, GateFailure> {
+    let tree = |edges: &str| -> Result<String, GateFailure> {
+        let mut args = vec![
+            "tree", "--locked", "--prefix", "none", "--format", "{p}|{f}", "--edges", edges,
+        ];
+        for shipped in deps::SHIPPED {
+            args.extend(["--package", shipped]);
+        }
+        let asked = std::process::Command::new("cargo")
+            .args(&args)
+            .current_dir(root)
+            .output()
+            .map_err(|error| GateFailure(format!("cargo tree: {error}")))?;
+        if !asked.status.success() {
+            let stderr = std::str::from_utf8(&asked.stderr)
+                .map_err(|error| GateFailure(format!("cargo tree stderr is not UTF-8: {error}")))?;
+            return Err(GateFailure(format!("cargo tree: {}", stderr.trim())));
+        }
+        String::from_utf8(asked.stdout)
+            .map_err(|error| GateFailure(format!("cargo tree stdout is not UTF-8: {error}")))
+    };
+    Ok(deps::features_only_tests_build_with(
+        (&tree("normal,build")?, &tree("normal,build,dev")?),
+        direct,
+    ))
 }
 
 /// Every cargo manifest in the tree, classified, so a fourth kind cannot appear unnoticed.

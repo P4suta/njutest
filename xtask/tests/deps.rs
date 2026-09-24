@@ -201,3 +201,25 @@ fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn a_feature_only_a_development_edge_turns_on_is_named_for_a_direct_dependency_alone() {
+    let shipped = "serde_json v1.0.151|default,std\nparking_lot v0.12.5|\nnjutest v0.1.0 (/x)|\n";
+    let developed = "serde_json v1.0.151|default,float_roundtrip,std (*)\nparking_lot v0.12.5|default\nnjutest v0.1.0 (/x)|testkit\njsonschema v0.56.0|default\n";
+    let direct: std::collections::BTreeSet<String> = ["serde_json".to_owned()].into();
+    assert_eq!(
+        xtask::deps::features_only_tests_build_with((shipped, developed), &direct),
+        vec![(
+            "serde_json v1.0.151".to_owned(),
+            vec!["float_roundtrip".to_owned()]
+        )],
+        "the shipped crates' own dependency built with a feature only tests ask for is named; a \
+         transitive package, a member's own test seam and a development-only package are not \
+         held"
+    );
+    assert_eq!(
+        xtask::deps::features_only_tests_build_with((developed, developed), &direct),
+        Vec::new(),
+        "and a graph built alike with and without development edges draws nothing"
+    );
+}
