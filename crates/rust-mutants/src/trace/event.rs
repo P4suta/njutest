@@ -671,6 +671,8 @@ pub enum Measurement {
     Baseline,
     /// An original-code control of the whole target, run to confirm a kill.
     Control,
+    /// A run of one mutation against a target whose reach moved, whose record says whether it reached the mutation's site (ADR 0036).
+    Repair,
 }
 
 /// What one target's guards recorded on one whole run of it with nothing active.

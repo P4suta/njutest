@@ -386,22 +386,17 @@ fn every_place_the_sarif_log_names_is_one_a_reader_of_the_repository_can_open() 
 
 #[test]
 fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
-    use njutest::report::drift::{Drift, Moved};
-    let nothing = || Moved {
-        gained: std::collections::BTreeSet::new(),
-        lost: std::collections::BTreeSet::new(),
-    };
-    let moved = Drift::Moved {
-        target: "workspace/lib/workspace".to_owned(),
-        reached: Moved {
-            gained: std::collections::BTreeSet::from([3]),
-            lost: std::collections::BTreeSet::from([2]),
-        },
-        bodies: nothing(),
-        infected: nothing(),
-    };
     let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
-    findings.extend(njutest::report::drift::found(&[moved], &[]));
+    findings.push(Finding::new(
+        FindingKind::UnstableBaseline,
+        "workspace/lib/workspace",
+        "workspace/lib/workspace reached something on an original-code control that it did not \
+         reach on its baseline, over the same passing tests, so what it reaches is not a \
+         function of the target and every proof read off its baseline is unfounded: 0 \
+         mutations a proof removed its run of, and 1 mutation no test reached, rest on it. \
+         Make what the suite reaches independent of order, time and earlier processes, and run \
+         again",
+    ));
     let report = report_with(findings);
     let root = tempfile::tempdir().expect("a directory with no source in it");
     let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
@@ -434,7 +429,7 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
             "workspace/lib/workspace reached something on an original-code control that it \
              did not reach on its baseline, over the same passing tests, so what it reaches \
              is not a function of the target and every proof read off its baseline is \
-             unfounded: 0 mutations a proof removed its run of, and 0 mutations no test \
+             unfounded: 0 mutations a proof removed its run of, and 1 mutation no test \
              reached, rest on it. Make what the suite reaches independent of order, time and \
              earlier processes, and run again"
         ],

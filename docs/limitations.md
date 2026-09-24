@@ -244,7 +244,8 @@ A run checks it the one time it already runs a target again: the original-code c
 Three things follow and are not hidden.
 A target nothing was killed on is never confirmed, so it is never compared: `drift-not-measured` names it, and every proof read off its baseline rests on one run.
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
-And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
+And what rested on a moved target is run again against it with its reach recorded ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
+Where nothing rests on a moved target any more, `reach-moved` still names it: nothing the run concludes stands on the moved record, and the suite's reach is still not a function of the target.
 
 ## What a run asks of a suite that talks about time
 

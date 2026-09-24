@@ -353,6 +353,26 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "repair"],
+          "properties": {
+            "type": { "const": "repair" },
+            "repair": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "target", "was", "now", "reached"],
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "was": { "enum": ["survived", "unreached"] },
+                "now": { "enum": ["killed", "survived", "unreached", "waited", "step-limit-reached", "unconfirmed", "errored"] },
+                "reached": { "enum": ["reached", "not-reached", "unrecorded"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "drift"],
           "properties": {
             "type": { "const": "drift" },

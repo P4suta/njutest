@@ -133,6 +133,17 @@ pub struct Controlled {
     pub observed: Vec<Observed>,
 }
 
+/// Whether a run with one mutation active reached that mutation's own site, by its guards' own record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SiteReach {
+    /// The record shows the site reached.
+    Reached,
+    /// The record is whole and does not show the site.
+    NotReached,
+    /// The run could not record, or its record could not be read.
+    Unrecorded,
+}
+
 /// What one control established about one target's baseline reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1120,6 +1131,100 @@ impl Session {
                 cancel,
             )?
             .taken)
+    }
+
+    /// Runs one mutant against the one target `request` names, with its guards recording what the run reached, and says whether the run reached the mutant's own site (ADR 0036).
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn exec_reaching(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<(MutantResult, SiteReach), EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let name = request.target.as_deref().unwrap_or_default();
+        let target = self
+            .selected(Some(name))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                EngineError::from(SessionError::UnknownTarget {
+                    name: name.to_owned(),
+                    available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                })
+            })?;
+        let (timeout, source) = self.timeout_for(request, &target.id)?;
+        let own = self.exec_scratch()?;
+        let log = own.join(CONTROL_TOUCH_LOG);
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            touch: Some(execute::Touching {
+                log: &log,
+                catalog: self.catalog.digest(),
+            }),
+            steps: self.mutant_steps,
+            profile: None,
+        };
+        let mut exec = ExecRequest::new(target)
+            .with_args(self.arguments(request))
+            .with_timeout(Some(timeout))
+            .with_scratch(own)
+            .in_scratch(self.scratch_working_directory);
+        if let Some(test) = &request.test {
+            exec = exec.with_test(test.clone());
+        }
+        let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+        self.record_mutant_exec(Executed {
+            mutant,
+            target,
+            result: &result,
+            timeout,
+            source,
+            alone: false,
+        })?;
+        let reach = self.site_reach(target, &log, (mutant.index, &result))?;
+        Ok((result, reach))
+    }
+
+    /// Whether the run that wrote `log` reached the site at `index`, recording what it reached as a `repair` touch record.
+    fn site_reach(
+        &self,
+        target: &TestTarget,
+        log: &std::path::Path,
+        (index, result): (u32, &MutantResult),
+    ) -> Result<SiteReach, EngineError> {
+        if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
+            return Ok(SiteReach::Unrecorded);
+        }
+        let Ok(text) = crate::limitation::appended(std::fs::read_to_string(log)) else {
+            return Ok(SiteReach::Unrecorded);
+        };
+        let mutants = self.catalog.mutants().len();
+        let count =
+            u32::try_from(mutants).map_err(|_outside_range| SessionError::TraceCountTooLarge {
+                subject: "catalog mutants in a touch record",
+                count: mutants,
+            })?;
+        let Ok(recorded) = crate::touch::read(&text, self.catalog.digest(), count) else {
+            return Ok(SiteReach::Unrecorded);
+        };
+        let reached = recorded.reached.any(index);
+        let gathered = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
+        self.workspace.trace.touch(verify::touch_record(
+            &target.id,
+            crate::trace::Measurement::Repair,
+            &gathered,
+            crate::trace::SummaryRecord::of(result),
+        )?);
+        Ok(if reached {
+            SiteReach::Reached
+        } else {
+            SiteReach::NotReached
+        })
     }
 
     /// What one mutant is, decided: executed, and when a budget expired, confirmed with the machine to itself.

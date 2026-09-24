@@ -315,6 +315,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
+        Payload::Repair { .. } => "repair",
         Payload::Note { .. } => "note",
         Payload::RunEnd { .. } => "run",
     }
@@ -360,6 +361,8 @@ pub mod payload {
         Model,
         /// A control's drift observation.
         Drift(&'a crate::trace::DriftRecord),
+        /// A disposition run again against a moved target.
+        Repair(&'a crate::trace::RepairRecord),
         /// A note.
         Note(&'a crate::trace::NoteRecord),
         /// A run-end record.
@@ -385,6 +388,7 @@ pub mod payload {
             Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
+            Payload::Repair { repair } => Ref::Repair(repair),
             Payload::Note { note } => Ref::Note(note),
             Payload::RunEnd { .. } => Ref::RunEnd,
         }
@@ -572,6 +576,15 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             model: Box::new(crate::report::ModelRecord::specimen_ineligible(
                 crate::report::ModelIneligibility::Effect,
             )),
+        },
+        Payload::Repair {
+            repair: crate::trace::RepairRecord {
+                mutant: "abcdef".to_owned(),
+                target: "demo/lib/demo".to_owned(),
+                was: "unreached".to_owned(),
+                now: "survived".to_owned(),
+                reached: crate::trace::SiteReached::Reached,
+            },
         },
         Payload::Drift {
             drift: crate::trace::DriftRecord {

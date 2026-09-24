@@ -1348,10 +1348,11 @@
                   "minLength": 1
                 },
                 "measured": {
-                  "description": "Which whole run of the target with nothing active the record was measured on: the baseline routing rests on, or an original-code control run to confirm a kill.",
+                  "description": "Which whole run of the target the record was measured on: the baseline routing rests on, an original-code control run to confirm a kill, or a repair, one mutation run against a target whose reach moved (ADR 0036).",
                   "enum": [
                     "baseline",
-                    "control"
+                    "control",
+                    "repair"
                   ]
                 },
                 "passed": {

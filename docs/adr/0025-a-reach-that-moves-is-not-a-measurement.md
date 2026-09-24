@@ -58,7 +58,7 @@ It ran with its guards silent.
    A mutation every reaching target of which was discharged is `survived` in this report, not `proved`, which is kept for the compiler's equivalence proof, so there is no `proved` column to count instead.
    A kill is existential and rests on no discharge, so a killed mutation is not counted even where its route discharged the target.
    It is not a defect in the code under test, so the verdict is `INSUFFICIENT` rather than `DEFECT`.
-   Re-executing those dispositions without the proofs that rested on the moved record is the repair, and it is not done here; it is the next change, and until it lands the finding is what a reader acts on.
+   Re-executing those dispositions without the proofs that rested on the moved record is the repair, which [ADR 0036](0036-what-rested-on-a-moved-reach-is-run-again.md) makes; the finding now counts only what the repair could not decide.
 
 6. **Absence is a case.** A target whose baseline was measured and that no comparable control recorded is `not-measured`, and the `drift-not-measured` limitation counts and names them.
    It is not `held`: a target nothing killed is never confirmed, so a run in which nothing was killed has compared nothing, and says so.
