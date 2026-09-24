@@ -54,6 +54,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Build { .. }
         | Payload::Verify { .. }
         | Payload::Touch { .. }
+        | Payload::PerturbedControl { .. }
         | Payload::Witness { .. }
         | Payload::SkipClaim { .. }
         | Payload::Kept { .. }
@@ -933,6 +934,21 @@ fn one_of_each_measurement(recorder: &Recorder) {
         sites: 7,
         loose: 1,
         infected: 2,
+    });
+    recorder.perturbed(rust_mutants::trace::PerturbedRecord {
+        target: "demo/lib/demo".to_owned(),
+        perturbation: rust_mutants::trace::PerturbationRecord {
+            environment: vec![rust_mutants::trace::SetRecord {
+                name: "TZ".to_owned(),
+                value: Some("Australia/Lord_Howe".to_owned()),
+            }],
+            launcher: None,
+            arguments: Vec::new(),
+        },
+        outcome: "killed".to_owned(),
+        failed_tests: vec!["the_zone_is_utc".to_owned()],
+        duration_ms: 4,
+        reach: rust_mutants::trace::ReachRecord::NotRead,
     });
     recorder.witness(WitnessRecord {
         index: 1,
