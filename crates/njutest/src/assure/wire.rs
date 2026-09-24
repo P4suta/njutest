@@ -28,6 +28,12 @@ pub const TRANSPORT_FAILED: &str = "wire-transport-incomplete";
 /// What a finding is about when a target failed once with a question in place and did not fail again with the same one.
 pub const NOT_REPRODUCED: &str = "wire-fault-not-reproduced";
 
+/// How many times one question is put before the run says it could not put it.
+///
+/// A suite that never reached the exchange a fault names was asked nothing, and on a busy machine that is the transport rather than the code: the caller's connection was refused, or the interposer's own leg to the upstream was.
+/// Asking again costs one suite run and only where nothing was asked; concluding from it turned a machine into a verdict (the wire fixture moved a README row that way).
+pub const PUT_ATTEMPTS: usize = 3;
+
 /// What the phase is asked about.
 #[derive(Debug, Clone, Copy)]
 pub struct Measuring<'a> {
@@ -177,16 +183,7 @@ where
         let mut asked = None;
         let decision = crate::wire::prove::discharges(fault, measuring.observed).map_or_else(
             || {
-                let put = run(fault);
-                let decision = settle(fault, &put, measuring.before).decision;
-                let decision = match &decision {
-                    SeamDecision::Tests { noticed_by } => {
-                        confirmed(noticed_by, fault, &mut run, measuring.before)
-                    }
-                    SeamDecision::Proved { .. }
-                    | SeamDecision::Unnoticed
-                    | SeamDecision::Unreached => decision,
-                };
+                let (put, decision) = decided(fault, &mut run, measuring.before);
                 asked = Some(put);
                 decision
             },
@@ -206,6 +203,9 @@ where
             SeamDecision::Unreached => match asked {
                 Some(crate::wire::settle::Asked::NotMeasured(outcome)) => {
                     holes.unmeasured.push(outcome);
+                }
+                Some(crate::wire::settle::Asked::NotPut) => {
+                    holes.unput = holes.unput.saturating_add(1);
                 }
                 Some(ref answered)
                     if crate::wire::settle::nothing_could_answer(answered, measuring.before) =>
@@ -232,6 +232,30 @@ where
     Ok(done)
 }
 
+/// What putting `fault` came to, and what the run establishes from it, with a detection confirmed.
+///
+/// The question is handed back as `NotPut` where the confirming run could not reach the exchange, so the hole it leaves is named as the one it is.
+fn decided<R>(
+    fault: &Fault,
+    run: &mut R,
+    before: &crate::wire::settle::Before,
+) -> (crate::wire::settle::Asked, SeamDecision)
+where
+    R: FnMut(&Fault) -> crate::wire::settle::Asked,
+{
+    let asked = put(fault, run);
+    let decision = settle(fault, &asked, before).decision;
+    match decision {
+        SeamDecision::Tests { noticed_by } => match confirmed(&noticed_by, fault, run, before) {
+            Some(decided) => (asked, decided),
+            None => (crate::wire::settle::Asked::NotPut, SeamDecision::Unreached),
+        },
+        SeamDecision::Proved { .. } | SeamDecision::Unnoticed | SeamDecision::Unreached => {
+            (asked, decision)
+        }
+    }
+}
+
 /// Whether `noticed_by` fails again with the same question in place, and what that makes of the decision.
 ///
 /// Passing without a fault and failing with one is necessary for attribution and is not sufficient.
@@ -240,18 +264,22 @@ where
 ///
 /// So a detection has to reproduce.
 /// Where it does not, the run establishes nothing rather than claiming either answer: the target was unstable, which is neither a question answered nor a gap the tests could close.
+/// A confirming run that never reached the exchange asked nothing and so contradicts nothing; it is put again, and `None` says it could not be put at all.
 /// The cost is one more suite run per detection, paid only where a detection is claimed.
 fn confirmed<R>(
     noticed_by: &str,
     fault: &Fault,
     run: &mut R,
     before: &crate::wire::settle::Before,
-) -> SeamDecision
+) -> Option<SeamDecision>
 where
     R: FnMut(&Fault) -> crate::wire::settle::Asked,
 {
-    let again = run(fault);
-    match settle(fault, &again, before).decision {
+    let again = put(fault, run);
+    if again == crate::wire::settle::Asked::NotPut {
+        return None;
+    }
+    Some(match settle(fault, &again, before).decision {
         SeamDecision::Tests { noticed_by: twice } if twice == noticed_by => {
             SeamDecision::Tests { noticed_by: twice }
         }
@@ -259,7 +287,21 @@ where
         | SeamDecision::Proved { .. }
         | SeamDecision::Unnoticed
         | SeamDecision::Unreached => SeamDecision::Unreached,
+    })
+}
+
+/// Puts `fault` until the run reaches the exchange it names, at most [`PUT_ATTEMPTS`] times.
+fn put<R>(fault: &Fault, run: &mut R) -> crate::wire::settle::Asked
+where
+    R: FnMut(&Fault) -> crate::wire::settle::Asked,
+{
+    for _attempt in 0..PUT_ATTEMPTS {
+        let asked = run(fault);
+        if asked != crate::wire::settle::Asked::NotPut {
+            return asked;
+        }
     }
+    crate::wire::settle::Asked::NotPut
 }
 
 /// Writes down one question and what became of it, so a finding that names it can be looked up.
@@ -386,7 +428,7 @@ where
                 if at.interposer.was_put() {
                     answered
                 } else {
-                    crate::wire::settle::Asked::Answered(Vec::new())
+                    crate::wire::settle::Asked::NotPut
                 }
             },
             watch,
