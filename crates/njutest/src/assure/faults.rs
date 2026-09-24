@@ -20,6 +20,9 @@ pub const RULE: &str = "inject-error";
 /// What the finding is about when the tree it faults would not give a baseline.
 pub const NOT_MEASURED: &str = "fault-baseline-not-measured";
 
+/// What a finding is about when the tree was written while faults were put and no execution is tied to the write.
+pub const UNATTRIBUTED: &str = "fault-write-unattributed";
+
 /// Puts every fault the tree holds to the tests, and writes what became of each into `report`.
 ///
 /// The faults are asked in a session of their own, so no catalog, route, execution or control of the mutation phase ever holds one.
@@ -84,12 +87,14 @@ pub fn put(
     let broke: Vec<&String> = after.difference(&before).collect();
     if !broke.is_empty() {
         report.findings.push(Finding::new(
-            FindingKind::BrokenUnderFault,
-            RULE,
+            FindingKind::NotMeasured,
+            UNATTRIBUTED,
             &format!(
                 "a test wrote into the tree it was measured in while calls it made were \
-                 failing, where nothing had written before any failed: what the program does \
-                 when a call fails reaches past the place it was asked to work in ({})",
+                 failing, where nothing had written before any failed ({}); the faulted \
+                 executions share one tree and run at once, so which failed call wrote it, and \
+                 whether the test's own failure did, is not established, and nothing is \
+                 concluded about it",
                 broke
                     .iter()
                     .map(|path| path.as_str())

@@ -183,7 +183,7 @@ fn a_run_not_asked_for_faults_puts_none() {
 }
 
 #[test]
-fn a_test_that_writes_into_the_tree_only_when_a_call_fails_is_a_defect() {
+fn a_write_under_faults_no_execution_is_tied_to_is_not_measured() {
     let fixture = fixture("fixture-faulted-writes");
     let output = verify(&fixture, &["--faults"]);
     let part = part(&fixture);
@@ -193,26 +193,26 @@ fn a_test_that_writes_into_the_tree_only_when_a_call_fails_is_a_defect() {
         "{part}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let broke = named(&part, "findings", "kind", "broken-under-fault");
-    assert_eq!(
-        broke.len(),
-        1,
-        "the write happened only with the read failing, which is the program's doing: {part}"
+    assert!(
+        named(&part, "findings", "kind", "broken-under-fault").is_empty(),
+        "the faulted executions share one tree and run at once, so a write is not yet tied to \
+         the failed call that made it, and a DEFECT nobody can attribute is a verdict about how \
+         the run measured: {part}"
     );
-    let detail = broke[0]["detail"].as_str().unwrap_or_default();
+    let unattributed: Vec<&serde_json::Value> = named(&part, "findings", "kind", "not-measured")
+        .into_iter()
+        .filter(|finding| finding["subject"] == "fault-write-unattributed")
+        .collect();
+    assert_eq!(unattributed.len(), 1, "{part}");
+    let detail = unattributed[0]["detail"].as_str().unwrap_or_default();
     assert!(
         detail.contains("failed-read.log") && !detail.contains("always.log"),
         "the finding names what was written under a fault and not what every run writes: {detail}"
     );
-    assert_eq!(
-        named(&part, "findings", "kind", "unnoticed-fault").len(),
-        1,
-        "the test passed with the read failing: {part}"
-    );
-    assert_eq!(
+    assert_ne!(
         output.status.code(),
         Some(njutest::cli::EXIT_DEFECT.into()),
-        "a defect decides the run: {part}"
+        "and nothing the run could not attribute decides it: {part}"
     );
 }
 
