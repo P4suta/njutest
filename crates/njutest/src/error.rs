@@ -3,264 +3,423 @@
 
 //! Failure modes of the runner, each with a stable code documented in `docs/errors.md`.
 
-/// A stable, searchable identifier for one failure mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ErrorCode {
-    /// The code, e.g. `NJ0001`.
-    pub code: &'static str,
-    /// One line saying what the code means.
-    pub summary: &'static str,
-    /// What to do about it.
-    /// Every code carries one.
-    pub remedy: &'static str,
+/// The codes, and the one place an [`ErrorCode`] is made.
+mod table {
+    /// A stable, searchable identifier for one failure mode.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct ErrorCode {
+        /// The code, e.g. `NJ0001`.
+        pub code: &'static str,
+        /// One line saying what the code means.
+        pub summary: &'static str,
+        /// What to do about it.
+        /// Every code carries one.
+        pub remedy: &'static str,
+        sealed: Sealed,
+    }
+
+    /// What only this module can write, so only this module makes an [`ErrorCode`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    struct Sealed;
+
+    /// Every failure mode, one variant per code, in code order.
+    #[derive(
+        Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, njutest_macros::AllVariants,
+    )]
+    pub enum NjCode {
+        /// The caller cancelled the operation before it completed.
+        Interrupted,
+        /// The command's output stream could not be written.
+        OutputUnwritable,
+        /// The configuration file could not be read.
+        ConfigUnreadable,
+        /// The configuration file is not the document this version understands.
+        ConfigUnparsable,
+        /// The configuration says something a run cannot honour.
+        ConfigInvalid,
+        /// The configuration names a version this release does not understand.
+        ConfigUnsupportedVersion,
+        /// A configuration file is already there.
+        ConfigExists,
+        /// The tree a run is about could not be read.
+        EvidenceUnreadable,
+        /// A test binary could not be asked what tests it holds.
+        TargetListFailed,
+        /// The build could not be run.
+        BuildFailed,
+        /// The build's output could not be read.
+        BuildUnreadable,
+        /// A coverage export could not be read.
+        CoverageUnreadable,
+        /// The LLVM tools the toolchain ships are not installed.
+        CoverageToolsMissing,
+        /// Llvm-profdata or llvm-cov failed.
+        CoverageToolFailed,
+        /// A test process wrote no coverage profile at all.
+        CoverageNothingWritten,
+        /// A provider could not be started.
+        ProviderUnstartable,
+        /// A provider said nothing in the time it was given.
+        ProviderTimeout,
+        /// A provider said something this version does not understand.
+        ProviderProtocol,
+        /// A provider said it could not do what it was asked.
+        ProviderRefused,
+        /// A provider offered an environment variable a run composes itself.
+        ResourceEnvironmentRefused,
+        /// A generation provider said something this version does not understand.
+        GenerationProtocol,
+        /// A generation provider would write where it may not.
+        GenerationPathRefused,
+        /// The file a candidate patches is not the file the provider saw.
+        GenerationPreimageMoved,
+        /// A routing layer did not route the mutant planted for it.
+        SentinelBlind,
+        /// The report could not be written as JSON.
+        ReportUnserializable,
+        /// A document is not the assurance report this version understands.
+        ReportUnreadable,
+        /// The report contradicts itself and was not written.
+        ReportUnsound,
+        /// The report could not be written where a reader will look for it.
+        ReportNotKept,
+        /// There is no such run to answer about.
+        RunNotFound,
+        /// The run made no change in anything the subject names.
+        SubjectNotCataloged,
+        /// The toolchain has no miri, and this contract promises interpretation.
+        MiriMissing,
+        /// The verified model-checking phase could not preserve its own evidence.
+        ModelPhaseFailed,
+        /// The run could not schedule measurements without trusting interrupted state.
+        SchedulerUnusable,
+        /// An assurance phase printed output that is not valid UTF-8.
+        PhaseOutputUnreadable,
+        /// The run has nowhere to work.
+        ScratchUnusable,
+        /// The store of earlier answers could not be used.
+        CacheUnusable,
+        /// A stored answer is not the answer it claims to be.
+        CacheCorrupt,
+        /// No port could be listened on in front of a seam, so nothing could be recorded about it.
+        WireCannotListen,
+        /// The reports offered are not the parts of one catalog.
+        MergeRefused,
+    }
+
+    impl ErrorCode {
+        /// An engine code, carried under its own name so a person can search for what the engine said.
+        #[must_use]
+        pub const fn carried(engine: rust_mutants::error::ErrorCode) -> Self {
+            Self {
+                code: engine.code,
+                summary: engine.summary,
+                remedy: match engine.remedy {
+                    Some(said) => said,
+                    None => {
+                        "the engine reported this; `rust-mutants` on the same tree says \
+                         the same thing with more of its own context"
+                    }
+                },
+                sealed: Sealed,
+            }
+        }
+    }
+
+    impl NjCode {
+        /// The code, what it means, and what to do about it.
+        #[must_use]
+        #[expect(
+            clippy::too_many_lines,
+            reason = "one arm per code: the table is the function, and splitting it would split the one match that keeps it total"
+        )]
+        pub const fn error_code(self) -> ErrorCode {
+            match self {
+                Self::Interrupted => ErrorCode {
+                    code: "NJ0001",
+                    summary: "the caller cancelled the operation before it completed",
+                    remedy: "nothing was left half-done; run it again when you are ready",
+                    sealed: Sealed,
+                },
+                Self::OutputUnwritable => ErrorCode {
+                    code: "NJ0002",
+                    summary: "the command's output stream could not be written",
+                    remedy: "check the destination is writable and has space; a composition root may treat a deliberately closed pipe as success",
+                    sealed: Sealed,
+                },
+                Self::ConfigUnreadable => ErrorCode {
+                    code: "NJ1001",
+                    summary: "the configuration file could not be read",
+                    remedy: "check the file is readable by this user; the path names it",
+                    sealed: Sealed,
+                },
+                Self::ConfigUnparsable => ErrorCode {
+                    code: "NJ1002",
+                    summary: "the configuration file is not the document this version understands",
+                    remedy: "`njutest init` writes a file this release understands, with every key commented",
+                    sealed: Sealed,
+                },
+                Self::ConfigInvalid => ErrorCode {
+                    code: "NJ1003",
+                    summary: "the configuration says something a run cannot honour",
+                    remedy: "the message says which key and why; `njutest init` writes one that is valid",
+                    sealed: Sealed,
+                },
+                Self::ConfigUnsupportedVersion => ErrorCode {
+                    code: "NJ1004",
+                    summary: "the configuration names a version this release does not understand",
+                    remedy: "this release reads version 1; a newer file needs a newer release",
+                    sealed: Sealed,
+                },
+                Self::ConfigExists => ErrorCode {
+                    code: "NJ1005",
+                    summary: "a configuration file is already there",
+                    remedy: "remove the file first, or edit the one already there: init never writes over a configuration somebody wrote",
+                    sealed: Sealed,
+                },
+                Self::EvidenceUnreadable => ErrorCode {
+                    code: "NJ2001",
+                    summary: "the tree a run is about could not be read",
+                    remedy: "run this inside the tree you mean to verify, or pass --root at it",
+                    sealed: Sealed,
+                },
+                Self::TargetListFailed => ErrorCode {
+                    code: "NJ3001",
+                    summary: "a test binary could not be asked what tests it holds",
+                    remedy: "run `cargo test --no-run` yourself: a binary that will not list its tests is one the build did not finish",
+                    sealed: Sealed,
+                },
+                Self::BuildFailed => ErrorCode {
+                    code: "NJ3002",
+                    summary: "the build could not be run",
+                    remedy: "run the same cargo command yourself; what it says there is what it said here",
+                    sealed: Sealed,
+                },
+                Self::BuildUnreadable => ErrorCode {
+                    code: "NJ3003",
+                    summary: "the build's output could not be read",
+                    remedy: "run `cargo clean` and try again; output from an interrupted build cannot be read",
+                    sealed: Sealed,
+                },
+                Self::CoverageUnreadable => ErrorCode {
+                    code: "NJ4001",
+                    summary: "a coverage export could not be read",
+                    remedy: "run again without coverage to verify without it, or check llvm-tools-preview is installed",
+                    sealed: Sealed,
+                },
+                Self::CoverageToolsMissing => ErrorCode {
+                    code: "NJ4002",
+                    summary: "the LLVM tools the toolchain ships are not installed",
+                    remedy: "`rustup component add llvm-tools-preview`",
+                    sealed: Sealed,
+                },
+                Self::CoverageToolFailed => ErrorCode {
+                    code: "NJ4003",
+                    summary: "llvm-profdata or llvm-cov failed",
+                    remedy: "`rustup component add llvm-tools-preview`, and check the versions match the toolchain in use",
+                    sealed: Sealed,
+                },
+                Self::CoverageNothingWritten => ErrorCode {
+                    code: "NJ4004",
+                    summary: "a test process wrote no coverage profile at all",
+                    remedy: "check nothing in the suite sets LLVM_PROFILE_FILE for itself; a run composes it and an inherited one sends the profile elsewhere",
+                    sealed: Sealed,
+                },
+                Self::ProviderUnstartable => ErrorCode {
+                    code: "NJ5001",
+                    summary: "a provider could not be started",
+                    remedy: "run the provider's command yourself: it could not be started, and the message names it",
+                    sealed: Sealed,
+                },
+                Self::ProviderTimeout => ErrorCode {
+                    code: "NJ5002",
+                    summary: "a provider said nothing in the time it was given",
+                    remedy: "raise the provider's timeout, or check the command it runs answers at all",
+                    sealed: Sealed,
+                },
+                Self::ProviderProtocol => ErrorCode {
+                    code: "NJ5003",
+                    summary: "a provider said something this version does not understand",
+                    remedy: "this is a defect in the provider, not in this tool: what it printed is not the document the contract asks for",
+                    sealed: Sealed,
+                },
+                Self::ProviderRefused => ErrorCode {
+                    code: "NJ5004",
+                    summary: "a provider said it could not do what it was asked",
+                    remedy: "the provider refused and said why; nothing here can answer for it",
+                    sealed: Sealed,
+                },
+                Self::ResourceEnvironmentRefused => ErrorCode {
+                    code: "NJ5005",
+                    summary: "a provider offered an environment variable a run composes itself",
+                    remedy: "a provider may not set a variable a run composes; remove it from what the provider offers",
+                    sealed: Sealed,
+                },
+                Self::GenerationProtocol => ErrorCode {
+                    code: "NJ5006",
+                    summary: "a generation provider said something this version does not understand",
+                    remedy: "this is a defect in the provider, not in this tool: what it printed is not the document the contract asks for",
+                    sealed: Sealed,
+                },
+                Self::GenerationPathRefused => ErrorCode {
+                    code: "NJ5007",
+                    summary: "a generation provider would write where it may not",
+                    remedy: "a generated candidate is stored beside the tree and never written into it; the provider named a path outside what it may write",
+                    sealed: Sealed,
+                },
+                Self::GenerationPreimageMoved => ErrorCode {
+                    code: "NJ5008",
+                    summary: "the file a candidate patches is not the file the provider saw",
+                    remedy: "the file changed after the provider read it; run again on a tree nothing else is writing",
+                    sealed: Sealed,
+                },
+                Self::SentinelBlind => ErrorCode {
+                    code: "NJ5009",
+                    summary: "a routing layer did not route the mutant planted for it",
+                    remedy: "this is a defect in the engine, not in the code under test; no setting skips a sentinel, because a layer that fails one would be deciding which of your mutants never run",
+                    sealed: Sealed,
+                },
+                Self::ReportUnserializable => ErrorCode {
+                    code: "NJ6001",
+                    summary: "the report could not be written as JSON",
+                    remedy: "this is a defect in this tool: a report it built could not be written as JSON",
+                    sealed: Sealed,
+                },
+                Self::ReportUnreadable => ErrorCode {
+                    code: "NJ6002",
+                    summary: "a document is not the assurance report this version understands",
+                    remedy: "the document is from another release or another tool; `njutest verify` writes one this release reads",
+                    sealed: Sealed,
+                },
+                Self::ReportUnsound => ErrorCode {
+                    code: "NJ6003",
+                    summary: "the report contradicts itself and was not written",
+                    remedy: "this is a defect in this tool: it refused to write a report whose parts disagree, rather than store one a reader could not trust",
+                    sealed: Sealed,
+                },
+                Self::ReportNotKept => ErrorCode {
+                    code: "NJ6004",
+                    summary: "the report could not be written where a reader will look for it",
+                    remedy: "check the report directory exists and this user may write in it; the path names the file",
+                    sealed: Sealed,
+                },
+                Self::RunNotFound => ErrorCode {
+                    code: "NJ6005",
+                    summary: "there is no such run to answer about",
+                    remedy: "`njutest report --list` names the runs that are stored under this root",
+                    sealed: Sealed,
+                },
+                Self::SubjectNotCataloged => ErrorCode {
+                    code: "NJ6006",
+                    summary: "the run made no change in anything the subject names",
+                    remedy: "`njutest report` lists what the run changed; name a file, `PATH:ITEM`, or an item as the source names it",
+                    sealed: Sealed,
+                },
+                Self::MiriMissing => ErrorCode {
+                    code: "NJ7001",
+                    summary: "the toolchain has no miri, and this contract promises interpretation",
+                    remedy: "`rustup +nightly component add miri`, or ask for a contract that does not promise interpretation",
+                    sealed: Sealed,
+                },
+                Self::ModelPhaseFailed => ErrorCode {
+                    code: "NJ7002",
+                    summary: "the verified model-checking phase could not preserve its own evidence",
+                    remedy: "the message names the internal source or artifact boundary that failed; fix its permissions or report the invariant failure",
+                    sealed: Sealed,
+                },
+                Self::SchedulerUnusable => ErrorCode {
+                    code: "NJ7003",
+                    summary: "the run could not schedule measurements without trusting interrupted state",
+                    remedy: "run it again; a worker panic or poisoned coordination lock is never recovered as ordinary state",
+                    sealed: Sealed,
+                },
+                Self::PhaseOutputUnreadable => ErrorCode {
+                    code: "NJ7004",
+                    summary: "an assurance phase printed output that is not valid UTF-8",
+                    remedy: "the named tool violated its text-output contract; fix or replace that tool before trusting its result",
+                    sealed: Sealed,
+                },
+                Self::ScratchUnusable => ErrorCode {
+                    code: "NJ8001",
+                    summary: "the run has nowhere to work",
+                    remedy: "check TMPDIR is a directory this user may write in, and that there is room under it",
+                    sealed: Sealed,
+                },
+                Self::CacheUnusable => ErrorCode {
+                    code: "NJ8003",
+                    summary: "the store of earlier answers could not be used",
+                    remedy: "remove the store and let it be rebuilt: what is in it is read-only evidence and nothing is lost",
+                    sealed: Sealed,
+                },
+                Self::CacheCorrupt => ErrorCode {
+                    code: "NJ8004",
+                    summary: "a stored answer is not the answer it claims to be",
+                    remedy: "remove the store and let it be rebuilt: a stored answer that is not what it claims is never used",
+                    sealed: Sealed,
+                },
+                Self::WireCannotListen => ErrorCode {
+                    code: "NJ8005",
+                    summary: "no port could be listened on in front of a seam, so nothing could be recorded about it",
+                    remedy: "check this machine allows a listener on the loopback interface, and that nothing has taken every port",
+                    sealed: Sealed,
+                },
+                Self::MergeRefused => ErrorCode {
+                    code: "NJ9001",
+                    summary: "the reports offered are not the parts of one catalog",
+                    remedy: "every part of one catalog has the same catalog digest; the parts offered do not, so they are not parts of one run",
+                    sealed: Sealed,
+                },
+            }
+        }
+    }
 }
 
-const INTERRUPTED: ErrorCode = ErrorCode {
-    code: "NJ0001",
-    summary: "the caller cancelled the operation before it completed",
-    remedy: "nothing was left half-done; run it again when you are ready",
-};
+pub use table::{ErrorCode, NjCode};
 
-const OUTPUT_UNWRITABLE: ErrorCode = ErrorCode {
-    code: "NJ0002",
-    summary: "the command's output stream could not be written",
-    remedy: "check the destination is writable and has space; a composition root may treat a deliberately closed pipe as success",
-};
+const INTERRUPTED: ErrorCode = NjCode::Interrupted.error_code();
 
-/// Declares one error code.
-/// There is no form without a remedy, on purpose.
-macro_rules! code {
-    ($name:ident, $code:literal, $summary:literal, $remedy:literal) => {
-        pub(crate) const $name: ErrorCode = ErrorCode {
-            code: $code,
-            summary: $summary,
-            remedy: $remedy,
-        };
-    };
-}
+const OUTPUT_UNWRITABLE: ErrorCode = NjCode::OutputUnwritable.error_code();
 
-code!(
-    CONFIG_UNREADABLE,
-    "NJ1001",
-    "the configuration file could not be read",
-    "check the file is readable by this user; the path names it"
-);
-code!(
-    CONFIG_UNPARSABLE,
-    "NJ1002",
-    "the configuration file is not the document this version understands",
-    "`njutest init` writes a file this release understands, with every key commented"
-);
-code!(
-    CONFIG_INVALID,
-    "NJ1003",
-    "the configuration says something a run cannot honour",
-    "the message says which key and why; `njutest init` writes one that is valid"
-);
-code!(
-    CONFIG_UNSUPPORTED_VERSION,
-    "NJ1004",
-    "the configuration names a version this release does not understand",
-    "this release reads version 1; a newer file needs a newer release"
-);
-code!(
-    CONFIG_EXISTS,
-    "NJ1005",
-    "a configuration file is already there",
-    "remove the file first, or edit the one already there: init never writes over a configuration somebody wrote"
-);
-code!(
-    BUILD_FAILED,
-    "NJ3002",
-    "the build could not be run",
-    "run the same cargo command yourself; what it says there is what it said here"
-);
-code!(
-    BUILD_UNREADABLE,
-    "NJ3003",
-    "the build's output could not be read",
-    "run `cargo clean` and try again; output from an interrupted build cannot be read"
-);
-code!(
-    TARGET_LIST_FAILED,
-    "NJ3001",
-    "a test binary could not be asked what tests it holds",
-    "run `cargo test --no-run` yourself: a binary that will not list its tests is one the build did not finish"
-);
-code!(
-    COVERAGE_UNREADABLE,
-    "NJ4001",
-    "a coverage export could not be read",
-    "run again without coverage to verify without it, or check llvm-tools-preview is installed"
-);
-code!(
-    COVERAGE_TOOLS_MISSING,
-    "NJ4002",
-    "the LLVM tools the toolchain ships are not installed",
-    "`rustup component add llvm-tools-preview`"
-);
-code!(
-    COVERAGE_TOOL_FAILED,
-    "NJ4003",
-    "llvm-profdata or llvm-cov failed",
-    "`rustup component add llvm-tools-preview`, and check the versions match the toolchain in use"
-);
-code!(
-    COVERAGE_NOTHING_WRITTEN,
-    "NJ4004",
-    "a test process wrote no coverage profile at all",
-    "check nothing in the suite sets LLVM_PROFILE_FILE for itself; a run composes it and an inherited one sends the profile elsewhere"
-);
-code!(
-    REPORT_UNSERIALIZABLE,
-    "NJ6001",
-    "the report could not be written as JSON",
-    "this is a defect in this tool: a report it built could not be written as JSON"
-);
-code!(
-    REPORT_UNREADABLE,
-    "NJ6002",
-    "a document is not the assurance report this version understands",
-    "the document is from another release or another tool; `njutest verify` writes one this release reads"
-);
-code!(
-    RUN_NOT_FOUND,
-    "NJ6005",
-    "there is no such run to answer about",
-    "`njutest report --list` names the runs that are stored under this root"
-);
-code!(
-    SUBJECT_NOT_CATALOGED,
-    "NJ6006",
-    "the run made no change in anything the subject names",
-    "`njutest report` lists what the run changed; name a file, `PATH:ITEM`, or an item as the source names it"
-);
-code!(
-    REPORT_NOT_KEPT,
-    "NJ6004",
-    "the report could not be written where a reader will look for it",
-    "check the report directory exists and this user may write in it; the path names the file"
-);
-code!(
-    EVIDENCE_UNREADABLE,
-    "NJ2001",
-    "the tree a run is about could not be read",
-    "run this inside the tree you mean to verify, or pass --root at it"
-);
-code!(
-    CACHE_UNUSABLE,
-    "NJ8003",
-    "the store of earlier answers could not be used",
-    "remove the store and let it be rebuilt: what is in it is read-only evidence and nothing is lost"
-);
-code!(
-    CACHE_CORRUPT,
-    "NJ8004",
-    "a stored answer is not the answer it claims to be",
-    "remove the store and let it be rebuilt: a stored answer that is not what it claims is never used"
-);
-code!(
-    WIRE_CANNOT_LISTEN,
-    "NJ8005",
-    "no port could be listened on in front of a seam, so nothing could be recorded about it",
-    "check this machine allows a listener on the loopback interface, and that nothing has taken every port"
-);
-code!(
-    SCRATCH_UNUSABLE,
-    "NJ8001",
-    "the run has nowhere to work",
-    "check TMPDIR is a directory this user may write in, and that there is room under it"
-);
-code!(
-    MERGE_REFUSED,
-    "NJ9001",
-    "the reports offered are not the parts of one catalog",
-    "every part of one catalog has the same catalog digest; the parts offered do not, so they are not parts of one run"
-);
-code!(
-    PROVIDER_UNSTARTABLE,
-    "NJ5001",
-    "a provider could not be started",
-    "run the provider's command yourself: it could not be started, and the message names it"
-);
-code!(
-    PROVIDER_TIMEOUT,
-    "NJ5002",
-    "a provider said nothing in the time it was given",
-    "raise the provider's timeout, or check the command it runs answers at all"
-);
-code!(
-    PROVIDER_PROTOCOL,
-    "NJ5003",
-    "a provider said something this version does not understand",
-    "this is a defect in the provider, not in this tool: what it printed is not the document the contract asks for"
-);
-code!(
-    PROVIDER_REFUSED,
-    "NJ5004",
-    "a provider said it could not do what it was asked",
-    "the provider refused and said why; nothing here can answer for it"
-);
-code!(
-    RESOURCE_ENVIRONMENT_REFUSED,
-    "NJ5005",
-    "a provider offered an environment variable a run composes itself",
-    "a provider may not set a variable a run composes; remove it from what the provider offers"
-);
-code!(
-    MIRI_MISSING,
-    "NJ7001",
-    "the toolchain has no miri, and this contract promises interpretation",
-    "`rustup +nightly component add miri`, or ask for a contract that does not promise interpretation"
-);
-code!(
-    MODEL_PHASE_FAILED,
-    "NJ7002",
-    "the verified model-checking phase could not preserve its own evidence",
-    "the message names the internal source or artifact boundary that failed; fix its permissions or report the invariant failure"
-);
-code!(
-    SCHEDULER_UNUSABLE,
-    "NJ7003",
-    "the run could not schedule measurements without trusting interrupted state",
-    "run it again; a worker panic or poisoned coordination lock is never recovered as ordinary state"
-);
-code!(
-    PHASE_OUTPUT_UNREADABLE,
-    "NJ7004",
-    "an assurance phase printed output that is not valid UTF-8",
-    "the named tool violated its text-output contract; fix or replace that tool before trusting its result"
-);
-code!(
-    GENERATION_PROTOCOL,
-    "NJ5006",
-    "a generation provider said something this version does not understand",
-    "this is a defect in the provider, not in this tool: what it printed is not the document the contract asks for"
-);
-code!(
-    GENERATION_PATH_REFUSED,
-    "NJ5007",
-    "a generation provider would write where it may not",
-    "a generated candidate is stored beside the tree and never written into it; the provider named a path outside what it may write"
-);
-code!(
-    GENERATION_PREIMAGE_MOVED,
-    "NJ5008",
-    "the file a candidate patches is not the file the provider saw",
-    "the file changed after the provider read it; run again on a tree nothing else is writing"
-);
-code!(
-    SENTINEL_BLIND,
-    "NJ5009",
-    "a routing layer did not route the mutant planted for it",
-    "this is a defect in the engine, not in the code under test; no setting skips a sentinel, because a layer that fails one would be deciding which of your mutants never run"
-);
-code!(
-    REPORT_UNSOUND,
-    "NJ6003",
-    "the report contradicts itself and was not written",
-    "this is a defect in this tool: it refused to write a report whose parts disagree, rather than store one a reader could not trust"
-);
+pub(crate) const CONFIG_UNREADABLE: ErrorCode = NjCode::ConfigUnreadable.error_code();
+pub(crate) const CONFIG_UNPARSABLE: ErrorCode = NjCode::ConfigUnparsable.error_code();
+pub(crate) const CONFIG_INVALID: ErrorCode = NjCode::ConfigInvalid.error_code();
+pub(crate) const CONFIG_UNSUPPORTED_VERSION: ErrorCode =
+    NjCode::ConfigUnsupportedVersion.error_code();
+pub(crate) const CONFIG_EXISTS: ErrorCode = NjCode::ConfigExists.error_code();
+pub(crate) const BUILD_FAILED: ErrorCode = NjCode::BuildFailed.error_code();
+pub(crate) const BUILD_UNREADABLE: ErrorCode = NjCode::BuildUnreadable.error_code();
+pub(crate) const TARGET_LIST_FAILED: ErrorCode = NjCode::TargetListFailed.error_code();
+pub(crate) const COVERAGE_UNREADABLE: ErrorCode = NjCode::CoverageUnreadable.error_code();
+pub(crate) const COVERAGE_TOOLS_MISSING: ErrorCode = NjCode::CoverageToolsMissing.error_code();
+pub(crate) const COVERAGE_TOOL_FAILED: ErrorCode = NjCode::CoverageToolFailed.error_code();
+pub(crate) const COVERAGE_NOTHING_WRITTEN: ErrorCode = NjCode::CoverageNothingWritten.error_code();
+pub(crate) const REPORT_UNSERIALIZABLE: ErrorCode = NjCode::ReportUnserializable.error_code();
+pub(crate) const REPORT_UNREADABLE: ErrorCode = NjCode::ReportUnreadable.error_code();
+pub(crate) const RUN_NOT_FOUND: ErrorCode = NjCode::RunNotFound.error_code();
+pub(crate) const SUBJECT_NOT_CATALOGED: ErrorCode = NjCode::SubjectNotCataloged.error_code();
+pub(crate) const REPORT_NOT_KEPT: ErrorCode = NjCode::ReportNotKept.error_code();
+pub(crate) const EVIDENCE_UNREADABLE: ErrorCode = NjCode::EvidenceUnreadable.error_code();
+pub(crate) const CACHE_UNUSABLE: ErrorCode = NjCode::CacheUnusable.error_code();
+pub(crate) const CACHE_CORRUPT: ErrorCode = NjCode::CacheCorrupt.error_code();
+pub(crate) const WIRE_CANNOT_LISTEN: ErrorCode = NjCode::WireCannotListen.error_code();
+pub(crate) const SCRATCH_UNUSABLE: ErrorCode = NjCode::ScratchUnusable.error_code();
+pub(crate) const MERGE_REFUSED: ErrorCode = NjCode::MergeRefused.error_code();
+pub(crate) const PROVIDER_UNSTARTABLE: ErrorCode = NjCode::ProviderUnstartable.error_code();
+pub(crate) const PROVIDER_TIMEOUT: ErrorCode = NjCode::ProviderTimeout.error_code();
+pub(crate) const PROVIDER_PROTOCOL: ErrorCode = NjCode::ProviderProtocol.error_code();
+pub(crate) const PROVIDER_REFUSED: ErrorCode = NjCode::ProviderRefused.error_code();
+pub(crate) const RESOURCE_ENVIRONMENT_REFUSED: ErrorCode =
+    NjCode::ResourceEnvironmentRefused.error_code();
+pub(crate) const MIRI_MISSING: ErrorCode = NjCode::MiriMissing.error_code();
+pub(crate) const MODEL_PHASE_FAILED: ErrorCode = NjCode::ModelPhaseFailed.error_code();
+pub(crate) const SCHEDULER_UNUSABLE: ErrorCode = NjCode::SchedulerUnusable.error_code();
+pub(crate) const PHASE_OUTPUT_UNREADABLE: ErrorCode = NjCode::PhaseOutputUnreadable.error_code();
+pub(crate) const GENERATION_PROTOCOL: ErrorCode = NjCode::GenerationProtocol.error_code();
+pub(crate) const GENERATION_PATH_REFUSED: ErrorCode = NjCode::GenerationPathRefused.error_code();
+pub(crate) const GENERATION_PREIMAGE_MOVED: ErrorCode =
+    NjCode::GenerationPreimageMoved.error_code();
+pub(crate) const SENTINEL_BLIND: ErrorCode = NjCode::SentinelBlind.error_code();
+pub(crate) const REPORT_UNSOUND: ErrorCode = NjCode::ReportUnsound.error_code();
 
 /// Every failure the runner reports.
 #[derive(Debug, thiserror::Error)]
@@ -431,20 +590,7 @@ impl RunnerError {
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
             Self::Build(error) => error.code(),
-            Self::Engine(error) => {
-                let engine = error.code();
-                ErrorCode {
-                    code: engine.code,
-                    summary: engine.summary,
-                    remedy: match engine.remedy {
-                        Some(said) => said,
-                        None => {
-                            "the engine reported this; `rust-mutants` on the same tree says \
-                             the same thing with more of its own context"
-                        }
-                    },
-                }
-            }
+            Self::Engine(error) => ErrorCode::carried(error.code()),
         }
     }
 }
@@ -453,48 +599,24 @@ impl RunnerError {
 #[must_use]
 #[cfg(feature = "testkit")]
 pub const fn error_codes() -> &'static [ErrorCode] {
-    &[
-        INTERRUPTED,
-        OUTPUT_UNWRITABLE,
-        CONFIG_UNREADABLE,
-        CONFIG_UNPARSABLE,
-        CONFIG_INVALID,
-        CONFIG_UNSUPPORTED_VERSION,
-        CONFIG_EXISTS,
-        EVIDENCE_UNREADABLE,
-        TARGET_LIST_FAILED,
-        BUILD_FAILED,
-        BUILD_UNREADABLE,
-        COVERAGE_UNREADABLE,
-        COVERAGE_TOOLS_MISSING,
-        COVERAGE_TOOL_FAILED,
-        COVERAGE_NOTHING_WRITTEN,
-        PROVIDER_UNSTARTABLE,
-        PROVIDER_TIMEOUT,
-        PROVIDER_PROTOCOL,
-        PROVIDER_REFUSED,
-        RESOURCE_ENVIRONMENT_REFUSED,
-        GENERATION_PROTOCOL,
-        GENERATION_PATH_REFUSED,
-        GENERATION_PREIMAGE_MOVED,
-        SENTINEL_BLIND,
-        REPORT_UNSERIALIZABLE,
-        REPORT_UNREADABLE,
-        REPORT_UNSOUND,
-        REPORT_NOT_KEPT,
-        RUN_NOT_FOUND,
-        SUBJECT_NOT_CATALOGED,
-        MIRI_MISSING,
-        MODEL_PHASE_FAILED,
-        SCHEDULER_UNUSABLE,
-        PHASE_OUTPUT_UNREADABLE,
-        SCRATCH_UNUSABLE,
-        CACHE_UNUSABLE,
-        CACHE_CORRUPT,
-        WIRE_CANNOT_LISTEN,
-        MERGE_REFUSED,
-    ]
+    &ERROR_CODES
 }
+
+/// Every code, made once from [`NjCode::ALL`].
+#[cfg(feature = "testkit")]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "a const loop cannot iterate, and the bound is the length of the array it indexes"
+)]
+const ERROR_CODES: [ErrorCode; NjCode::ALL.len()] = {
+    let mut codes = [NjCode::ALL[0].error_code(); NjCode::ALL.len()];
+    let mut at = 0;
+    while at < codes.len() {
+        codes[at] = NjCode::ALL[at].error_code();
+        at += 1;
+    }
+    codes
+};
 
 impl From<crate::assure::model::ModelError> for RunnerError {
     fn from(source: crate::assure::model::ModelError) -> Self {

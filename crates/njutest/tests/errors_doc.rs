@@ -103,16 +103,30 @@ fn every_code_the_runner_declares_is_one_some_place_reports() {
 
 /// The constant each code is declared under, as the ledger names it.
 fn constants() -> BTreeMap<String, String> {
-    ledger()
-        .split("code!(")
+    let text = unwrapped(&ledger());
+    let variants: BTreeMap<String, String> = text
+        .split("Self::")
         .skip(1)
-        .filter_map(|block| {
-            let (name, rest) = block.split_once(',')?;
-            let (_, quoted) = rest.split_once('"')?;
+        .filter_map(|arm| {
+            let (variant, rest) = arm.split_once(" => ErrorCode {")?;
+            let (_, quoted) = rest.split_once("code: \"")?;
             let (code, _) = quoted.split_once('"')?;
-            Some((code.to_owned(), name.trim().to_owned()))
+            Some((variant.trim().to_owned(), code.to_owned()))
+        })
+        .collect();
+    text.lines()
+        .filter_map(|line| {
+            let (name, rest) = line.split_once(": ErrorCode = NjCode::")?;
+            let (variant, _) = rest.split_once('.')?;
+            let name = name.rsplit(' ').next()?;
+            Some((variants.get(variant)?.clone(), name.to_owned()))
         })
         .collect()
+}
+
+/// `text` with each declaration a formatter wrapped after its `=` put back on one line.
+fn unwrapped(text: &str) -> String {
+    text.replace("ErrorCode =\n    NjCode::", "ErrorCode = NjCode::")
 }
 
 /// The ledger's own text.
@@ -151,8 +165,15 @@ fn sources() -> Vec<String> {
 
 /// The ledger with everything that declares a code taken out, so a declaration is not a report.
 fn declarations_removed(text: &str) -> String {
-    let text = text.split_once("pub const fn error_codes()").map_or_else(
+    let text = text.split_once("mod table {").map_or_else(
         || text.to_owned(),
+        |(before, table)| {
+            let after = table.split_once("\n}\n").map_or("", |(_table, rest)| rest);
+            format!("{before}{after}")
+        },
+    );
+    let text = text.split_once("pub const fn error_codes()").map_or_else(
+        || text.clone(),
         |(before, listing)| {
             let after = listing
                 .split_once("\n}\n")
@@ -160,18 +181,11 @@ fn declarations_removed(text: &str) -> String {
             format!("{before}{after}")
         },
     );
-    text.split("code!(")
-        .enumerate()
-        .map(|(at, block)| {
-            if at == 0 {
-                block.to_owned()
-            } else {
-                block
-                    .split_once(");")
-                    .map_or_else(String::new, |(_declared, rest)| rest.to_owned())
-            }
-        })
-        .collect()
+    unwrapped(&text)
+        .lines()
+        .filter(|line| !line.contains(": ErrorCode = NjCode::"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
