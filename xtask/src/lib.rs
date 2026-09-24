@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod adrs;
 pub mod deps;
 pub mod devgates;
 pub mod drift;
@@ -66,6 +67,8 @@ enum Gate {
     },
     /// Every milestone named in the documentation resolves to one roadmap row.
     Milestones,
+    /// Every decision record has one number, carries it in its heading, is listed once in the book under it, and is named only as it is.
+    Adrs,
     /// Every public function of an incidental surface is reached by something that ships.
     Reached,
     /// Every crate declares what its visibility means; incidental APIs are compiled privately.
@@ -154,6 +157,7 @@ where
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
             .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::Milestones => gates::milestones(&root),
+        Gate::Adrs => gates::adrs(&root),
         Gate::Reached => gates::reached(&root),
         Gate::Surfaces => gates::surfaces(&root),
         Gate::Proofaudit { run, trace } => {
