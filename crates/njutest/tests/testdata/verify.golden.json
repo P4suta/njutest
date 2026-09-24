@@ -57,6 +57,31 @@
             }
           },
           "candidates": [],
+          "concurrency": [
+            {
+              "standing": {
+                "state": "not-proven",
+                "why": [
+                  {
+                    "kind": "no-touch"
+                  }
+                ]
+              },
+              "target": "<volatile>"
+            },
+            {
+              "standing": {
+                "state": "single-threaded"
+              },
+              "target": "<volatile>"
+            },
+            {
+              "standing": {
+                "state": "single-threaded"
+              },
+              "target": "<volatile>"
+            }
+          ],
           "drift": [
             {
               "state": "held",
@@ -157,6 +182,10 @@
             {
               "detail": "1 place was not mutated: test-code",
               "name": "skipped-test-code"
+            },
+            {
+              "detail": "1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-baseline/doc/fixture_baseline)",
+              "name": "schedule-not-explored"
             }
           ],
           "mutants": [
