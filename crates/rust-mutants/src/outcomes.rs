@@ -257,7 +257,7 @@ impl Store {
     /// Returns the operating-system error when the store cannot be enumerated or removed wholly.
     pub fn clear(&self) -> io::Result<(u32, u64)> {
         let (held, bytes) = self.size()?;
-        match std::fs::remove_dir_all(&self.root) {
+        match crate::tempowner::remove_tree(&self.root) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),

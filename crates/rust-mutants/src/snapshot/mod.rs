@@ -1071,7 +1071,7 @@ fn claim_destination(dir: &Path, now: Timestamp) -> Result<Owner, SnapshotError>
         Ok(owner) => Ok(owner),
         Err(error) => {
             if !matches!(error, ClaimError::Owned { .. })
-                && let Err(source) = fs::remove_dir_all(dir)
+                && let Err(source) = tempowner::remove_tree(dir)
             {
                 return Err(SnapshotError::new(
                     SnapshotErrorKind::CleanupFailed,
@@ -1259,7 +1259,10 @@ impl Snapshot {
     /// # Errors
     /// [`SnapshotErrorKind::CleanupRefused`] when the guard fires, and [`SnapshotErrorKind::CleanupFailed`] when the directory survived every attempt or its lock could not be released.
     pub fn cleanup(self) -> Result<(), SnapshotError> {
-        self.cleanup_with(&|dir: &Path| fs::remove_dir_all(dir), &std::thread::sleep)
+        self.cleanup_with(
+            &|dir: &Path| tempowner::remove_tree(dir),
+            &std::thread::sleep,
+        )
     }
 
     /// [`Snapshot::cleanup`] with the removal and the pause as arguments, so the retry ladder can be tested without a filesystem persuaded into failing.
@@ -1323,9 +1326,10 @@ impl Drop for Snapshot {
     fn drop(&mut self) {
         if self.state == State::Live {
             self.state = State::Released;
-            if let Err(cleanup_failure) =
-                self.remove(&|dir: &Path| fs::remove_dir_all(dir), &std::thread::sleep)
-            {
+            if let Err(cleanup_failure) = self.remove(
+                &|dir: &Path| tempowner::remove_tree(dir),
+                &std::thread::sleep,
+            ) {
                 drop(cleanup_failure);
                 std::process::abort();
             }

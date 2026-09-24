@@ -263,6 +263,26 @@ impl Owner {
         }
     }
 
+    /// Removes everything in the directory but its lock and marker, while the lock is held.
+    ///
+    /// # Errors
+    /// An entry could not be removed.
+    pub fn empty(&self) -> io::Result<()> {
+        for entry in fs::read_dir(&self.dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == LOCK_NAME || name == MARKER_NAME {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                remove_tree(&entry.path())?;
+            } else {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(())
+    }
+
     /// Records that the directory was preserved on purpose and releases the lock, so that a later [`sweep`] reads the marker rather than finding a lock nobody holds and concluding the directory was abandoned.
     ///
     /// # Errors
@@ -312,6 +332,49 @@ pub enum MarkerError {
         #[source]
         source: serde_json::Error,
     },
+}
+
+/// Removes a tree this process's user owns, giving the owner back the access a test took away from a directory of it before giving up on it.
+///
+/// A mutation makes tests panic, and a panicking test is the one that leaves a directory it made read-only; the run's own cleanup must not stop there.
+/// Links are removed as links and never followed, so nothing outside the tree is touched.
+///
+/// # Errors
+/// The tree could not be removed even with its owner's access restored.
+pub fn remove_tree(dir: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            restore_owner_access(dir)?;
+            fs::remove_dir_all(dir)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Gives the owner back full access to every directory in a tree, without following a link.
+fn restore_owner_access(dir: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(dir)?;
+    if !metadata.file_type().is_dir() {
+        return Ok(());
+    }
+    let mut permissions = metadata.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        permissions.set_mode(permissions.mode() | 0o700);
+    }
+    #[cfg(not(unix))]
+    permissions.set_readonly(false);
+    fs::set_permissions(dir, permissions)?;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            restore_owner_access(&entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 /// Decodes the marker in `dir`.
@@ -377,7 +440,7 @@ pub const SWEEP_BUDGET: Duration = Duration::from_secs(10);
 /// # Errors
 /// Returns the failure to read `parent` itself.
 pub fn sweep(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<SweepResult> {
-    sweep_with(parent, prefixes, now, &|dir: &Path| fs::remove_dir_all(dir))
+    sweep_with(parent, prefixes, now, &|dir: &Path| remove_tree(dir))
 }
 
 /// Removes every unlocked directory under `parent` whose name is prefixed, caches included.
@@ -385,7 +448,7 @@ pub fn sweep(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<Swe
 /// # Errors
 /// Returns the failure to read `parent` itself.
 pub fn reclaim(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<SweepResult> {
-    reclaim_with(parent, prefixes, now, &|dir: &Path| fs::remove_dir_all(dir))
+    reclaim_with(parent, prefixes, now, &|dir: &Path| remove_tree(dir))
 }
 
 /// [`reclaim`] with its removal operation as an argument.
