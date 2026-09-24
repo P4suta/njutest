@@ -61,7 +61,7 @@
             {
               "explored": {
                 "state": "unexplored",
-                "why": "not-asked"
+                "why": "not-passing"
               },
               "standing": {
                 "state": "not-proven",
