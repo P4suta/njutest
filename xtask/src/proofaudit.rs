@@ -2182,6 +2182,17 @@ fn crashes(
     for (crash, why) in crate::crashes::disagreements(&reported, crashed) {
         notes.violated(&crash, why);
     }
+    if crashed.steps.iter().any(
+        |(_crash, step)| matches!(step, crate::crashes::Step::Ran(run) if run.stage == "crash"),
+    ) {
+        notes.unaudited(
+            "crashes",
+            "whether each crash run stopped at the call is held by the engine's `Stop` type, which \
+             only the engine makes true after verifying the runtime's notice, and is not re-derived \
+             here: the crash session keeps no engine recording to read it from"
+                .to_owned(),
+        );
+    }
 }
 
 /// Each corrupt crash held to its `corrupt-after-crash` finding, and each unshared or undecided one to a `not-measured` finding, both ways.
