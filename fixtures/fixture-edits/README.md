@@ -11,6 +11,7 @@ It is the ground truth a selection is held to: a selection that skips a target a
 Every edit is a directory under `edits/` holding each file as the edit leaves it, or a `FEATURES` file where the edit is to how the library is built rather than to what it says.
 `cargo test -p njutest --test toolchain_edits` applies each edit to a copy, runs every target, and refuses a difference from the block below.
 Nothing in it asks a selection anything: it establishes what an edit breaks, independently of whatever will later be asked to predict it.
+The build script names only itself in `rerun-if-changed`, cargo's own contract for when it runs again, so a selection has more to reason from than that something in the package changed.
 
 | Edit | What it changes | Why what ran the edited code is not what notices |
 | --- | --- | --- |
