@@ -136,7 +136,114 @@ fn inputs_of(
         })?;
         inputs.compile_time.insert(name);
     }
+    scripts_of(workspace, checked, &mut inputs)?;
     Ok(inputs)
+}
+
+/// What every build script of the build set in the compiler's environment, and what each said, through `rerun-if-changed` and `rerun-if-env-changed`, its output depends on.
+fn scripts_of(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+    inputs: &mut crate::select::Inputs,
+) -> Result<(), SessionError> {
+    let root = workspace.snapshot_root();
+    for message in &checked.messages {
+        let crate::cargo::Message::BuildScriptExecuted(script) = message else {
+            continue;
+        };
+        inputs
+            .scripted
+            .extend(script.env.iter().map(|(name, _)| name.clone()));
+        let package = workspace
+            .metadata
+            .packages
+            .iter()
+            .find(|package| package.id == script.package_id);
+        let directory = package.map(|package| package.manifest_dir().to_path_buf());
+        let named = match directory
+            .as_deref()
+            .map(|directory| directory.strip_prefix(root))
+        {
+            Some(Ok(relative)) => relative
+                .to_str()
+                .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
+                    path: relative.to_path_buf(),
+                })?
+                .replace('\\', "/"),
+            Some(Err(_)) | None => format!("<outside>:{}", script.package_id),
+        };
+        let said = script
+            .out_dir
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .map(|build| std::fs::read_to_string(build.join("output")));
+        let text = match said {
+            Some(Ok(text)) => text,
+            Some(Err(_)) | None => String::new(),
+        };
+        let (changed, env) = said_by(&text, &workspace.base_env);
+        let watched = watched_of(changed, directory.as_deref(), root)?;
+        inputs
+            .scripts
+            .insert(named, crate::select::Script { watched, env });
+    }
+    Ok(())
+}
+
+/// The paths and the variables one build script's output named as what it depends on.
+fn said_by(
+    text: &str,
+    env: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> (Vec<String>, BTreeMap<String, Option<String>>) {
+    let mut changed = Vec::new();
+    let mut watched = BTreeMap::new();
+    for line in text.lines() {
+        let line = line
+            .strip_prefix("cargo::")
+            .or_else(|| line.strip_prefix("cargo:"))
+            .unwrap_or_default();
+        if let Some(path) = line.strip_prefix("rerun-if-changed=") {
+            changed.push(path.to_owned());
+        } else if let Some(name) = line.strip_prefix("rerun-if-env-changed=") {
+            let value = crate::vars::var(env, name)
+                .and_then(std::ffi::OsStr::to_str)
+                .map(ToOwned::to_owned);
+            watched.insert(name.to_owned(), value);
+        }
+    }
+    (changed, watched)
+}
+
+/// What one build script watches: its whole package where it named no path, and otherwise each path it named, inside the tree by place and outside it by what is there.
+fn watched_of(
+    changed: Vec<String>,
+    directory: Option<&std::path::Path>,
+    root: &std::path::Path,
+) -> Result<crate::select::Watched, SessionError> {
+    if changed.is_empty() {
+        return Ok(crate::select::Watched::Package);
+    }
+    let mut inside = BTreeSet::new();
+    let mut outside = BTreeMap::new();
+    for path in changed {
+        let full =
+            directory.map_or_else(|| PathBuf::from(&path), |directory| directory.join(&path));
+        let text = full
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: full.clone() })?;
+        match full.strip_prefix(root) {
+            Ok(relative) => {
+                let relative = relative
+                    .to_str()
+                    .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: full.clone() })?;
+                inside.insert(relative.replace('\\', "/"));
+            }
+            Err(_) => {
+                outside.insert(text.to_owned(), crate::select::fingerprint(&full));
+            }
+        }
+    }
+    Ok(crate::select::Watched::Paths { inside, outside })
 }
 
 fn closure_of(

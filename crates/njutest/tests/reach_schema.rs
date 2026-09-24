@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use njutest::reach::{Document, Schema};
 use rust_mutants::id::HexDigest;
-use rust_mutants::select::{Inputs, Measurement, Shadows, Standing, Target};
+use rust_mutants::select::{Inputs, Measurement, Script, Shadows, Standing, Target, Watched};
 use rust_mutants::snapshot::{Survey, Surveyed};
 use rust_mutants::touch::Unmeasured;
 
@@ -47,6 +47,29 @@ fn document(standing: Standing) -> Document {
                 outside: BTreeMap::from([("/registry/dep.rs".to_owned(), HexDigest::of(b"b"))]),
                 env: BTreeMap::from([("UNSET".to_owned(), None)]),
                 compile_time: BTreeSet::from(["crates/derive/src/lib.rs".to_owned()]),
+                scripted: BTreeSet::from(["FIXTURE_ANSWER".to_owned()]),
+                scripts: BTreeMap::from([
+                    (
+                        String::new(),
+                        Script {
+                            watched: Watched::Paths {
+                                inside: BTreeSet::from(["answer.txt".to_owned()]),
+                                outside: BTreeMap::from([(
+                                    "/etc/answer".to_owned(),
+                                    HexDigest::of(b"c"),
+                                )]),
+                            },
+                            env: BTreeMap::from([("WANTED".to_owned(), None)]),
+                        },
+                    ),
+                    (
+                        "<outside>:dep".to_owned(),
+                        Script {
+                            watched: Watched::Package,
+                            env: BTreeMap::new(),
+                        },
+                    ),
+                ]),
             },
             environment: BTreeMap::from([("LANG".to_owned(), "C".to_owned())]),
             settings: BTreeMap::from([("build".to_owned(), "default".to_owned())]),

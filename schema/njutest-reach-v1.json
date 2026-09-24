@@ -86,7 +86,9 @@
           "required": [
             "outside",
             "env",
-            "compile_time"
+            "compile_time",
+            "scripted",
+            "scripts"
           ],
           "properties": {
             "outside": {
@@ -112,6 +114,20 @@
               "items": {
                 "type": "string",
                 "minLength": 1
+              }
+            },
+            "scripted": {
+              "description": "Every variable a build script put in the compiler's environment.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "scripts": {
+              "description": "What each package's build script said it depends on, by the package's directory in the tree, or `<outside>:<package id>` for a package outside it.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/script"
               }
             }
           }
@@ -336,6 +352,67 @@
           }
         }
       ]
+    },
+    "script": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "watched",
+        "env"
+      ],
+      "properties": {
+        "watched": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "package"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "inside",
+                "outside"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "paths"
+                },
+                "inside": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "outside": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "$ref": "#/$defs/sha256"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
     }
   }
 }

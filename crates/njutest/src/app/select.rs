@@ -243,6 +243,9 @@ fn everything_because(everything: &Everything) -> String {
         }
         Everything::Rules => "the tree is read by other rules than it was measured by".to_owned(),
         Everything::Setting { name } => format!("the {name} setting changed"),
+        Everything::BuildScript { package } => {
+            format!("the build script of {package} watches something that changed")
+        }
         Everything::Environment { name } => format!("the selected variable {name} changed"),
         Everything::Compiled { name } => format!("the compiler read {name}, which changed"),
         Everything::Outside { path } => format!("{path}, read from outside the tree, changed"),

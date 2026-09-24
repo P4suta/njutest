@@ -55,7 +55,8 @@ Every target runs when any of these differs from the measurement, and `select` s
 
 - the toolchain, the build selection, the harness arguments, or the targets left out;
 - any cargo configuration file in an ancestor of the tree or in cargo's home, or a variable that points cargo elsewhere (`CARGO_BUILD_*`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN`);
-- a variable the run selects for its test processes, or one the compiler read through `env!`;
+- a variable the run selects for its test processes, or one the compiler read through `env!` that no build script set;
+- anything a build script watches: a path it named with `rerun-if-changed`, a variable it named with `rerun-if-env-changed`, or, where it named no path, any file of its package — cargo's own rule for when to run it again, so a variable it put in the compiler's environment is held to what decided it rather than to an environment that never holds it;
 - the rules the tree is read by;
 - a file the build read outside the tree;
 - a manifest, lock file, build script, toolchain file, or cargo or njutest configuration;

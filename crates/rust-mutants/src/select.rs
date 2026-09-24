@@ -88,6 +88,11 @@ pub enum Everything {
         /// What differs.
         name: String,
     },
+    /// A build script watches something that changed: a file it named, a variable it named, or, where it named none, any file of its package.
+    BuildScript {
+        /// The package's directory in the tree.
+        package: String,
+    },
     /// A variable of the environment the run selects has another value, or is set on one side only.
     Environment {
         /// The variable.
@@ -171,6 +176,75 @@ pub struct Inputs {
     pub env: BTreeMap<String, Option<String>>,
     /// Every file of the tree compiled into code that runs while the build does — a procedural macro, a build script — by its `/`-normalized path: no test entering it or not says what an edit to it changes.
     pub compile_time: BTreeSet<String>,
+    /// Every variable a build script put in the compiler's environment, which the script decides and no environment of a selection holds.
+    pub scripted: BTreeSet<String>,
+    /// What each package's build script said it depends on, by the package's `/`-normalized directory in the tree.
+    pub scripts: BTreeMap<String, Script>,
+}
+
+/// What one build script said, through `rerun-if-changed` and `rerun-if-env-changed`, its output depends on: cargo's own contract for when to run it again.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Script {
+    /// The files it watches.
+    pub watched: Watched,
+    /// Every variable it watches, with the value the measured build ran it under or nothing where it was unset.
+    pub env: BTreeMap<String, Option<String>>,
+}
+
+/// The files one build script watches.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Watched {
+    /// It named none, so cargo runs it again for any change to its package.
+    Package,
+    /// It named these.
+    Paths {
+        /// Every path inside the tree it named, file or directory, `/`-normalized.
+        inside: BTreeSet<String>,
+        /// Every path outside the tree it named, by absolute path, with the digest of what is there.
+        outside: BTreeMap<String, crate::id::HexDigest>,
+    },
+}
+
+/// The digest of what is at `path`: a file's bytes, every file under a directory with its place, or the fact that nothing is there.
+#[must_use]
+pub fn fingerprint(path: &std::path::Path) -> crate::id::HexDigest {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        hasher.update(next.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        match std::fs::symlink_metadata(&next) {
+            Ok(meta) if meta.is_dir() => {
+                let listing = match std::fs::read_dir(&next) {
+                    Ok(listing) => listing,
+                    Err(_unreadable) => {
+                        hasher.update(b"unreadable directory\0");
+                        continue;
+                    }
+                };
+                let mut children = Vec::new();
+                for entry in listing {
+                    match entry {
+                        Ok(entry) => children.push(entry.path()),
+                        Err(_unlistable) => hasher.update(b"unlistable entry\0"),
+                    }
+                }
+                children.sort();
+                children.reverse();
+                pending.extend(children);
+            }
+            Ok(_) => match std::fs::read(&next) {
+                Ok(bytes) => hasher.update(crate::id::HexDigest::of(&bytes).as_str().as_bytes()),
+                Err(_unreadable) => hasher.update(b"unreadable file"),
+            },
+            Err(_absent) => hasher.update(b"absent"),
+        }
+        hasher.update(b"\0");
+    }
+    crate::id::HexDigest::finish(hasher)
 }
 
 /// Whether one target's reach was shown to be a function of the target, as a measurement records it.
@@ -506,7 +580,7 @@ pub fn builds_everything(path: &str) -> bool {
             | "build.rs"
             | "rust-toolchain"
             | "rust-toolchain.toml"
-            | "njutest.toml"
+            | ".njutest.toml"
             | ".rust-mutants.toml"
     ) || path.starts_with(".cargo/")
         || path.contains("/.cargo/")
@@ -1158,7 +1232,7 @@ pub fn differences(measured: &Measurement, now: &Now<'_>) -> Result<Vec<Differen
         .inputs
         .env
         .iter()
-        .filter(|(name, _)| !set_by_cargo(name))
+        .filter(|(name, _)| !set_by_cargo(name) && !measured.inputs.scripted.contains(*name))
         .find(|(name, value)| now.vars.get(*name) != value.as_ref())
     {
         return Err(Everything::Compiled { name: name.clone() });
@@ -1190,7 +1264,7 @@ pub fn differences(measured: &Measurement, now: &Now<'_>) -> Result<Vec<Differen
         .keys()
         .chain(now.survey.files.keys())
         .collect();
-    Ok(paths
+    let found: Vec<Difference> = paths
         .into_iter()
         .filter_map(
             |path| match (measured.survey.files.get(path), now.survey.files.get(path)) {
@@ -1203,7 +1277,49 @@ pub fn differences(measured: &Measurement, now: &Now<'_>) -> Result<Vec<Differen
                 (None, _) | (_, None) => Some(Difference::Whole { path: path.clone() }),
             },
         )
-        .collect())
+        .collect();
+    for (package, script) in &measured.inputs.scripts {
+        let moved = scripted(package, script, &found, now.vars);
+        if moved {
+            return Err(Everything::BuildScript {
+                package: package.clone(),
+            });
+        }
+    }
+    Ok(found)
+}
+
+/// Whether what `script` watches moved between the measured tree and the tree whose differences are `found`.
+fn scripted(
+    package: &str,
+    script: &Script,
+    found: &[Difference],
+    vars: &BTreeMap<String, String>,
+) -> bool {
+    let within = |path: &str, directory: &str| {
+        directory.is_empty() || path == directory || path.starts_with(&format!("{directory}/"))
+    };
+    let changed = |path: &str| {
+        found.iter().any(|difference| match difference {
+            Difference::Edited { path: edited, .. } | Difference::Whole { path: edited } => {
+                within(edited, path)
+            }
+        })
+    };
+    let env_moved = script
+        .env
+        .iter()
+        .any(|(name, value)| vars.get(name) != value.as_ref());
+    env_moved
+        || match &script.watched {
+            Watched::Package => changed(package),
+            Watched::Paths { inside, outside } => {
+                inside.iter().any(|path| changed(path))
+                    || outside
+                        .iter()
+                        .any(|(path, digest)| fingerprint(std::path::Path::new(path)) != *digest)
+            }
+        }
 }
 
 /// What a change decides for every target in `now`, the targets the changed tree holds: a target whose tests entered a changed item runs, as does every target whose reach was not shown to hold or that the measurement does not name; the rest are skipped.
@@ -1829,6 +1945,86 @@ pub fn beta(x: u8) -> u8 {
             matches!(everything(&selection), Some(Everything::Unproven { .. })),
             "a file edited again after the survey read it is not the file the survey saw: \
              {selection:?}"
+        );
+    }
+
+    #[test]
+    fn a_build_script_moves_everything_when_what_it_watches_moves() {
+        use super::{Script, Watched};
+        let mut measured = measured(MEASURED);
+        measured.survey = surveyed(&[(PATH, MEASURED), ("data/answer.txt", "42")]);
+        let edited = surveyed(&[(PATH, MEASURED), ("data/answer.txt", "43")]);
+        let watching = |watched: Watched| {
+            let mut one = measured.clone();
+            one.inputs.scripts = BTreeMap::from([(
+                String::new(),
+                Script {
+                    watched,
+                    env: BTreeMap::new(),
+                },
+            )]);
+            one
+        };
+        let named = watching(Watched::Paths {
+            inside: BTreeSet::from(["data".to_owned()]),
+            outside: BTreeMap::new(),
+        });
+        assert_eq!(
+            found(&named, &edited, &[]),
+            Err(Everything::BuildScript {
+                package: String::new()
+            }),
+            "a file under a directory the script named changed"
+        );
+        let elsewhere = watching(Watched::Paths {
+            inside: BTreeSet::from(["assets".to_owned()]),
+            outside: BTreeMap::new(),
+        });
+        assert!(
+            matches!(found(&elsewhere, &edited, &[]), Ok(found) if found.len() == 1),
+            "a script that named only `assets` does not run again for `data`"
+        );
+        let package = watching(Watched::Package);
+        assert!(
+            matches!(
+                found(&package, &edited, &[]),
+                Err(Everything::BuildScript { .. })
+            ),
+            "a script that named nothing runs again for any change to its package"
+        );
+        let mut variable = watching(Watched::Paths {
+            inside: BTreeSet::new(),
+            outside: BTreeMap::new(),
+        });
+        if let Some(script) = variable.inputs.scripts.get_mut("") {
+            script.env.insert("WANTED".to_owned(), Some("a".to_owned()));
+        }
+        assert!(
+            found(&variable, &measured.survey.clone(), &[("WANTED", "a")]) == Ok(Vec::new())
+                && matches!(
+                    found(&variable, &measured.survey.clone(), &[("WANTED", "b")]),
+                    Err(Everything::BuildScript { .. })
+                ),
+            "a variable the script watches changed"
+        );
+        let directory = tempfile::tempdir().expect("tempdir");
+        let file = directory.path().join("schema.json");
+        std::fs::write(&file, "{}").expect("write");
+        let outside = watching(Watched::Paths {
+            inside: BTreeSet::new(),
+            outside: BTreeMap::from([(file.display().to_string(), super::fingerprint(&file))]),
+        });
+        assert_eq!(
+            found(&outside, &measured.survey.clone(), &[]),
+            Ok(Vec::new())
+        );
+        std::fs::write(&file, "{\"a\": 1}").expect("write");
+        assert!(
+            matches!(
+                found(&outside, &measured.survey.clone(), &[]),
+                Err(Everything::BuildScript { .. })
+            ),
+            "a file outside the tree the script watches changed"
         );
     }
 }

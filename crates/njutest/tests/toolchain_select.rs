@@ -334,3 +334,23 @@ fn cargo_configuration_outside_the_tree_that_changed_runs_every_target() {
          tree sees, and the flags it adds compile every target differently"
     );
 }
+
+#[test]
+fn what_a_build_script_decides_is_held_to_what_it_watches_not_to_the_environment() {
+    let fixture = fixture("fixture-scripted");
+    measured(&fixture);
+    edit(&fixture, "src/lib.rs", "    1\n", "    1 + 0\n");
+    let skipped = skippable(&fixture);
+    assert!(
+        skipped.contains("fixture-scripted/test/answer"),
+        "the compiler read `FIXTURE_ANSWER`, which the build script set and no environment \
+         holds; the script watches only `answer.txt`, which did not change, so `answer` never \
+         entering `other` is what decides: {skipped:?}"
+    );
+    edit(&fixture, "answer.txt", "42", "43");
+    assert!(
+        skippable(&fixture).is_empty(),
+        "the file the build script watches changed, so what it put in the compiler's \
+         environment may have"
+    );
+}
