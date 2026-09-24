@@ -890,6 +890,9 @@ impl Session {
 
     /// The same route with every target a proof removes moved out of what could notice the mutation.
     fn discharging(&self, mutant: &Mutant, route: Route) -> Route {
+        if !mutant.candidate.rule.family.proofs_apply() {
+            return route;
+        }
         let Route::Block {
             reaching,
             mut discharged,

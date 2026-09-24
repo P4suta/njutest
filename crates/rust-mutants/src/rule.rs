@@ -119,6 +119,31 @@ impl Family {
         Self::ALL.into_iter().find(|family| family.name() == name)
     }
 
+    /// Whether a proof read off the unperturbed program may remove a target from what could notice one of the family's rules: not for a fault, which changes where control goes past its site and so leaves such a proof without its premise (ADR 0032).
+    #[must_use]
+    pub const fn proofs_apply(self) -> bool {
+        match self {
+            Self::Fault => false,
+            Self::BooleanLiteral
+            | Self::ConditionNegation
+            | Self::BooleanConnective
+            | Self::Comparison
+            | Self::Range
+            | Self::Arithmetic
+            | Self::ReturnReplacement
+            | Self::ErrorPropagation
+            | Self::MatchArm
+            | Self::ControlFlow
+            | Self::ConditionRemoval
+            | Self::Bitwise
+            | Self::CompoundAssignment
+            | Self::MethodSwap
+            | Self::StatementDeletion
+            | Self::Literal
+            | Self::SaturatingArithmetic => true,
+        }
+    }
+
     /// Whether a tier chooses the family's rules, which a fault's never are: it perturbs the program's environment rather than its text, and asks another question of the suite.
     #[must_use]
     pub const fn chosen_by_tiers(self) -> bool {

@@ -42,6 +42,12 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
             .item_of(mutant.index)
             .expect("every fault site is inside an item")
             .to_owned();
+        assert!(
+            session.route(mutant).discharged().is_empty(),
+            "a proof read off the run without the fault says nothing past the site the fault \
+             changes, so nothing discharges a fault: {:?}",
+            session.route(mutant)
+        );
         let answer = if rejected.contains(&mutant.id.as_str()) {
             "not-put".to_owned()
         } else {

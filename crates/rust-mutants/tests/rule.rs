@@ -506,3 +506,23 @@ fn the_declared_order_of_a_family_is_the_order_the_table_first_names_it() {
          declarations of one fact are cheapest to bring together"
     );
 }
+
+#[test]
+fn a_fault_is_chosen_by_name_alone_and_no_proof_removes_a_target_from_it() {
+    for family in Family::ALL {
+        let fault = family == Family::Fault;
+        assert_eq!(
+            family.chosen_by_tiers(),
+            !fault,
+            "{}: a tier chooses every mutation family and no fault",
+            family.name()
+        );
+        assert_eq!(
+            family.proofs_apply(),
+            !fault,
+            "{}: a proof read off the unperturbed program speaks past a mutant's site and not \
+             past a fault's",
+            family.name()
+        );
+    }
+}
