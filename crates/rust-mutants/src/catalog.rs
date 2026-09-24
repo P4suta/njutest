@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::id::{
-    DISPLAY_ID_LENGTH, DisplayId, ID_HEX_LENGTH, Identity, IdentityError, MIN_PREFIX_LENGTH,
-    MutantId, digest, is_lower_hex, write_length_prefixed,
+    DISPLAY_ID_LENGTH, DisplayId, HexDigest, ID_HEX_LENGTH, Identity, IdentityError,
+    MIN_PREFIX_LENGTH, MutantId, digest, is_lower_hex, write_length_prefixed,
 };
 use crate::rule::{Registry, Rule, RuleError};
 use crate::span::Span;
@@ -624,6 +624,39 @@ impl Catalog {
     #[must_use]
     pub fn digest(&self) -> &str {
         &self.digest
+    }
+
+    /// The SHA-256 of each file the catalog's mutants were read from, by workspace-relative path, which is what says whether a file is still the one this catalog describes.
+    ///
+    /// # Errors
+    /// [`CandidateError::SourceDigestConflict`] when two mutants of one file carry different digests, and [`CandidateError::Identity`] when a digest is not canonical: a catalog that says either has contradicted itself.
+    pub fn sources(&self) -> Result<BTreeMap<String, HexDigest>, CandidateError> {
+        let mut sources: BTreeMap<String, HexDigest> = BTreeMap::new();
+        for mutant in &self.mutants {
+            let candidate = &mutant.candidate;
+            let digest = HexDigest::try_from(candidate.source_digest.as_str()).map_err(
+                |_not_canonical| {
+                    CandidateError::from(IdentityError::InvalidDigest {
+                        field: "source",
+                        value: candidate.source_digest.clone(),
+                    })
+                },
+            )?;
+            match sources.entry(candidate.path.clone()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(digest);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) if *entry.get() == digest => {}
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    return Err(CandidateError::SourceDigestConflict {
+                        path: candidate.path.clone(),
+                        first: entry.get().as_str().to_owned(),
+                        second: digest.into_inner(),
+                    });
+                }
+            }
+        }
+        Ok(sources)
     }
 
     /// The mutant at a catalog position.

@@ -84,7 +84,7 @@ fn gap(out: &mut String, place: &Place, at: usize) {
     } else {
         out.push_str("```rust\n");
         for (line, text) in &place.excerpt {
-            super::line(out, format_args!("{line:>4} | {text}"));
+            super::line(out, format_args!("{line:>4} | {}", text.text()));
         }
         out.push_str("```\n");
     }

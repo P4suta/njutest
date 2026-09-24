@@ -108,6 +108,7 @@ fn sound_draft() -> BuildReport {
     source.count_targets().expect("one exact target accounting");
     source.mutants = vec![mutant(&"a".repeat(64))];
     source.accounting.mutants = counted(&source.mutants);
+    njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
     source
 }

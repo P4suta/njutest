@@ -18,10 +18,9 @@ of this fixture is that the licence is granted exactly where it is earned.
 | `items.len() <= 2` | no | no | the condition runs the program's code, so the syntax claims nothing |
 
 `tests/upper.rs` runs the condition of `clamp` and never the branch it gates,
-so the branch proof the compiler vouches for and the coverage the run measures
-together say that target cannot have noticed a mutation of the condition: it
-is discharged rather than executed. The library's own tests run both branches
-and are not.
+so the branch proof the compiler vouches for and the guards' record of which bodies each target entered together say that target cannot have noticed a mutation of the condition: it is discharged rather than executed.
+The library's own tests run both branches and are not.
+The run below also builds with `--coverage`, the second opinion [ADR 0014](../../docs/adr/0014-the-guards-are-the-measurement.md) keeps, and its fates are the same without it: the guards decide the discharge, and coverage agrees.
 
 ## Fates
 

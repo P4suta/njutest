@@ -78,7 +78,7 @@ const fn is_safe_operator(op: &BinOp) -> bool {
 }
 
 /// What a probe asks about one return replacement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, njutest_macros::AllVariants)]
 pub enum Question {
     /// Whether the value already equals what `Default::default()` would produce.
     Default,
@@ -94,12 +94,19 @@ impl Question {
     /// The question a probe of `rule` asks, when the rule is one a probe can be stated for.
     #[must_use]
     pub fn of(rule: &str) -> Option<Self> {
-        match rule {
-            "return-default" => Some(Self::Default),
-            "return-ok-default" => Some(Self::OkDefault),
-            "return-some-default" => Some(Self::SomeDefault),
-            "return-true" => Some(Self::True),
-            _ => None,
+        Self::ALL
+            .into_iter()
+            .find(|question| question.rule() == rule)
+    }
+
+    /// The rule whose mutations this question is asked about, the one table [`Self::of`] reads.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::Default => "return-default",
+            Self::OkDefault => "return-ok-default",
+            Self::SomeDefault => "return-some-default",
+            Self::True => "return-true",
         }
     }
 
