@@ -49,6 +49,47 @@ pub struct Faulted {
     pub sites: Vec<Site>,
     /// Every survivor told apart beside a fault, in recording order.
     pub besides: Vec<Beside>,
+    /// Every pair of runs behind that evidence, in recording order.
+    pub pairs: Vec<Pair>,
+}
+
+/// One pair of runs of a target: the fault alone, then the survivor beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Pair {
+    /// The survivor a person types.
+    pub mutant: String,
+    /// The fault a person types.
+    pub fault: String,
+    /// The target both were put to.
+    pub target: String,
+    /// What the fault alone came to.
+    pub alone: String,
+    /// What the survivor beside it came to.
+    pub with: String,
+}
+
+/// Which run of a pair failed, where exactly one did and the other passed.
+#[must_use]
+pub fn told(pair: &Pair) -> Option<&'static str> {
+    match (pair.alone.as_str(), pair.with.as_str()) {
+        ("survived", "killed") => Some("beside"),
+        ("killed", "survived") => Some("alone"),
+        _ => None,
+    }
+}
+
+/// The evidence the pairs of one survivor and fault support: the first target in name order on which every pair, and at least two, said the same one run failed.
+#[must_use]
+pub fn derived(pairs: &[&Pair]) -> Option<(String, &'static str)> {
+    let mut targets: Vec<&str> = pairs.iter().map(|pair| pair.target.as_str()).collect();
+    targets.sort_unstable();
+    targets.dedup();
+    targets.into_iter().find_map(|target| {
+        let runs: Vec<&&Pair> = pairs.iter().filter(|pair| pair.target == target).collect();
+        let first = told(runs.first()?)?;
+        (runs.len() >= 2 && runs.iter().all(|pair| told(pair) == Some(first)))
+            .then(|| (target.to_owned(), first))
+    })
 }
 
 /// Everything the recording says about the faults.
@@ -60,6 +101,15 @@ pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
     for event in crate::route::events(recorded)? {
         if let Some(record) = event.get("beside") {
             faulted.besides.push(beside(record));
+        }
+        if let Some(record) = event.get("pair") {
+            faulted.pairs.push(Pair {
+                mutant: text(record, "mutant"),
+                fault: text(record, "fault"),
+                target: text(record, "target"),
+                alone: text(record, "alone"),
+                with: text(record, "with"),
+            });
         }
         let Some(record) = event.get("fault") else {
             continue;

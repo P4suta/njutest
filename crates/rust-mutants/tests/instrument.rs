@@ -40,6 +40,14 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
 }
 
 fn instrument_selected(source: &str, selection: &Selection<'_>) -> (String, Catalog) {
+    let (file, catalog) = instrumented_file(source, selection);
+    (file.text, catalog)
+}
+
+fn instrumented_file(
+    source: &str,
+    selection: &Selection<'_>,
+) -> (rust_mutants::instrument::FileOutput, Catalog) {
     let discovery = discover_file("src/lib.rs", source.as_bytes(), selection).expect("discover");
     let mut builder = Builder::new();
     for found in &discovery.candidates {
@@ -57,7 +65,7 @@ fn instrument_selected(source: &str, selection: &Selection<'_>) -> (String, Cata
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
-    (file.text, catalog)
+    (file, catalog)
 }
 
 /// Every mutant the syntax offers a comparison for, as a run has it once the compiler has vouched for the operands.
@@ -1271,5 +1279,54 @@ fn a_fault_guard_is_carried_into_every_alternative_that_keeps_its_bytes() {
     assert!(
         original.contains("injected()"),
         "and the original branch keeps it as every nested guard is kept: {line}"
+    );
+}
+
+#[test]
+fn the_instrumenter_records_exactly_the_pairs_whose_fault_it_carried() {
+    let selection = Selection::rules(
+        &REGISTRY,
+        &[
+            "question-to-unwrap",
+            "ignore-question-statement",
+            "inject-error",
+        ],
+    )
+    .expect("the rules are known");
+    let rules =
+        |file: &rust_mutants::instrument::FileOutput, catalog: &Catalog| -> Vec<(String, String)> {
+            let rule = |index: u32| {
+                catalog
+                    .mutants()
+                    .iter()
+                    .find(|mutant| mutant.index == index)
+                    .map(|mutant| mutant.candidate.rule.name.to_owned())
+                    .expect("a catalogued index")
+            };
+            file.beside
+                .iter()
+                .map(|(mutant, fault)| (rule(*mutant), rule(*fault)))
+                .collect()
+        };
+    let (bound, catalog) = instrumented_file(
+        "pub fn f(p: &str) -> Result<u8, std::num::ParseIntError> {\n    let n = p.parse::<u8>()?;\n    Ok(n)\n}\n",
+        &selection,
+    );
+    assert_eq!(
+        rules(&bound, &catalog),
+        vec![("question-to-unwrap".to_owned(), "inject-error".to_owned())],
+        "the unwrap keeps the call's bytes, so the fault at the call is carried into it"
+    );
+    let (statement, catalog) = instrumented_file(
+        "pub fn g(p: &str) -> Result<(), std::num::ParseIntError> {\n    p.parse::<u8>()?;\n    Ok(())\n}\n",
+        &selection,
+    );
+    assert!(
+        !rules(&statement, &catalog)
+            .iter()
+            .any(|(mutant, _)| mutant == "ignore-question-statement"),
+        "a statement's rewrite sits above the `?` node, so the call's fault is not its child and \
+         is not carried; no pair is recorded that the tree does not hold: {:?}",
+        rules(&statement, &catalog)
     );
 }

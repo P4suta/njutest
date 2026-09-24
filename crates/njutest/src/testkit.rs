@@ -311,6 +311,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::MutantExec { .. } => "mutant",
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
         Payload::Beside { .. } => "beside",
+        Payload::BesideRun { .. } => "pair",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -357,6 +358,8 @@ pub mod payload {
         Fault(&'a crate::report::faults::FaultRecord),
         /// A survivor told apart only under a fault.
         Beside(&'a crate::report::faults::BesideRecord),
+        /// A pair of runs behind evidence beside a fault.
+        BesideRun(&'a crate::report::faults::BesideRun),
         /// A probe execution.
         ProbeExec(&'a crate::trace::ProbeExecRecord),
         /// A wire exchange.
@@ -393,6 +396,7 @@ pub mod payload {
             Payload::FaultExec { fault } => Ref::FaultExec(fault),
             Payload::Fault { fault } => Ref::Fault(fault),
             Payload::Beside { beside } => Ref::Beside(beside),
+            Payload::BesideRun { pair } => Ref::BesideRun(pair),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
@@ -609,6 +613,15 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 fault: "a".repeat(20),
                 target: "demo/test/calls".to_owned(),
                 failed: crate::report::faults::Failed::Beside,
+            },
+        },
+        Payload::BesideRun {
+            pair: crate::report::faults::BesideRun {
+                mutant: "b".repeat(20),
+                fault: "a".repeat(20),
+                target: "demo/test/calls".to_owned(),
+                alone: "survived".to_owned(),
+                with: "killed".to_owned(),
             },
         },
         Payload::ProbeExec {

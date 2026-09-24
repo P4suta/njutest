@@ -107,6 +107,66 @@ pub fn base() -> Value {
     })
 }
 
+/// The defects planted for the evidence beside a fault: a record the recording does not hold, and one its recorded runs do not support.
+fn besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "evidence beside a fault the recording does not hold",
+            document: beside_claimed(),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "evidence beside a fault its recorded runs do not support",
+            document: beside_claimed(),
+            events: Some(
+                fault_recorded(&json!({ "decision": "unnoticed" }), "survived")
+                    .into_iter()
+                    .chain([4, 5].map(|at| {
+                        json!({
+                            "timestamp": "2026-09-06T00:00:04Z", "elapsed_ms": at,
+                            "type": "beside-run",
+                            "pair": {
+                                "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
+                                "alone": "killed", "with": "killed"
+                            }
+                        })
+                    }))
+                    .chain([json!({
+                        "timestamp": "2026-09-06T00:00:06Z", "elapsed_ms": 6,
+                        "type": "beside",
+                        "beside": {
+                            "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
+                            "failed": "beside"
+                        }
+                    })])
+                    .collect(),
+            ),
+            ..clean.clone()
+        },
+    ]
+}
+
+/// The clean report with one unnoticed fault and a record saying the survivor failed only beside it.
+fn beside_claimed() -> Value {
+    with(json!({
+        "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+        "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+        "findings": [{}, {
+            "kind": "unnoticed-fault",
+            "subject": FAULTED,
+            "detail": "nothing noticed the call failing",
+            "position": null
+        }],
+        "beside": [{
+            "mutant": SURVIVED, "fault": FAULTED, "target": TARGET, "failed": "beside"
+        }]
+    }))
+}
+
 /// The defects planted for the faults layer: one for every way a fault's record can disagree with what the recording says ran.
 fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
     vec![
@@ -149,27 +209,6 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
             events: Some(fault_recorded(
                 &json!({ "decision": "unnoticed" }),
                 "killed",
-            )),
-            ..clean.clone()
-        },
-        Perturbation {
-            name: "evidence beside a fault the recording does not hold",
-            document: with(json!({
-                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
-                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
-                "findings": [{}, {
-                    "kind": "unnoticed-fault",
-                    "subject": FAULTED,
-                    "detail": "nothing noticed the call failing",
-                    "position": null
-                }],
-                "beside": [{
-                    "mutant": SURVIVED, "fault": FAULTED, "target": TARGET, "failed": "beside"
-                }]
-            })),
-            events: Some(fault_recorded(
-                &json!({ "decision": "unnoticed" }),
-                "survived",
             )),
             ..clean.clone()
         },
@@ -633,7 +672,10 @@ impl Layer {
                 document: with(json!({ "contract": "verified-v1" })),
                 ..clean
             }],
-            Self::Faults => faults_planted(&clean),
+            Self::Faults => faults_planted(&clean)
+                .into_iter()
+                .chain(besides_planted(&clean))
+                .collect(),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),

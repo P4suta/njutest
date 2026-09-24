@@ -970,3 +970,28 @@ fn a_part_whose_fault_counts_are_not_its_records_is_refused() {
         "{refused}"
     );
 }
+
+#[test]
+fn a_shard_holds_evidence_about_its_survivor_beside_a_fault_another_shard_holds() {
+    let survivor = row(0, &"a".repeat(64), "survived", false);
+    let named = survivor.display_id.clone();
+    let part = tried_part(
+        "one",
+        "1/2",
+        vec![survivor],
+        &|_| {},
+        &move |source: &mut BuildReport| {
+            source.beside = vec![njutest::report::faults::BesideRecord {
+                mutant: named.clone(),
+                fault: "f".repeat(20),
+                target: "pkg/lib/pkg".to_owned(),
+                failed: njutest::report::faults::Failed::Beside,
+            }];
+        },
+    );
+    if let Err(refused) = part {
+        panic!(
+            "the fault beside a survivor is owned by whichever shard its index falls in: {refused}"
+        );
+    }
+}

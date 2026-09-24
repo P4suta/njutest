@@ -115,7 +115,27 @@ struct Planted<'a> {
 struct Around<'a> {
     site: Span,
     text: &'a str,
-    carried: &'a [(Span, String)],
+    carried: &'a [Carried],
+}
+
+/// A guard carried into the alternatives of the site it nests in: where it is, its rendered text, and the faults it can activate.
+struct Carried {
+    span: Span,
+    text: String,
+    faults: Vec<u32>,
+}
+
+/// What precedes an edit in its alternative, and which carried guards it holds.
+struct Headed<'c> {
+    head: String,
+    in_head: Vec<u32>,
+    kept: Option<&'c Carried>,
+}
+
+/// One alternative's text, and the faults whose guards it carries.
+struct Written {
+    text: String,
+    carries: Vec<u32>,
 }
 
 /// A rewritten file: its text and where every alternative landed in it.
@@ -123,6 +143,7 @@ struct Rewritten {
     text: String,
     branches: Vec<Branch>,
     compared: BTreeSet<u32>,
+    beside: BTreeSet<(u32, u32)>,
 }
 
 /// A rendered site: its text, where each alternative sits in it, and which of them the guard evaluates beside what it replaces.
@@ -130,6 +151,7 @@ struct Rendered {
     text: String,
     branches: Vec<(u32, Span)>,
     compared: BTreeSet<u32>,
+    beside: BTreeSet<(u32, u32)>,
 }
 
 /// One instrumented file.
@@ -147,6 +169,8 @@ pub struct FileOutput {
     pub compared: Vec<u32>,
     /// Every marker this text holds the call for, ascending, which is not every marker it was given: a body inside a guard's own site takes none.
     pub marked: Vec<u32>,
+    /// Every mutation whose branch in this text carries a fault's guard, with that fault, ascending: the only pairs a fault can be active beside.
+    pub beside: Vec<(u32, u32)>,
     /// The name the runtime module took.
     pub module: String,
     /// Whether anything was rewritten.
@@ -443,6 +467,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         mut text,
         branches,
         compared,
+        beside,
     } = worker.rewrite(
         &checkpointed.source,
         &Planted {
@@ -470,6 +495,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         branches,
         compared: compared.into_iter().collect(),
         marked: markers.iter().map(|marker| marker.index).collect(),
+        beside: beside.into_iter().collect(),
         module: worker.module,
         instrumented: true,
     })
@@ -784,10 +810,12 @@ impl File<'_> {
         let mut splices = Vec::new();
         let mut roots = Vec::new();
         let mut compared = BTreeSet::new();
+        let mut beside = BTreeSet::new();
         for root in forest.roots() {
             let rendered = self.render(root)?;
             splices.push(self.splice(root.span, rendered.text.clone())?);
             compared.extend(rendered.compared.iter().copied());
+            beside.extend(rendered.beside.iter().copied());
             roots.push((root.span, rendered));
         }
         splices.extend(markers.iter().map(|marker| self.marker(marker)));
@@ -840,6 +868,7 @@ impl File<'_> {
             text,
             branches,
             compared,
+            beside,
         })
     }
 
@@ -849,29 +878,30 @@ impl File<'_> {
             text: original,
             branches: nested,
             mut compared,
+            mut beside,
         } = self.original_branch(node)?;
 
         let site = self.slice(node.span)?;
-        let mut carried = Vec::new();
-        for child in node
-            .children
-            .iter()
-            .filter(|child| child.alternatives.iter().all(|placement| placement.carried))
-        {
-            carried.push((child.span, self.render(child)?.text));
-        }
+        let carried = self.carried(node)?;
         let mut alternatives = Vec::with_capacity(node.alternatives.len());
         for placement in &node.alternatives {
+            let written = self.alternative(
+                &Around {
+                    site: node.span,
+                    text: site,
+                    carried: &carried,
+                },
+                placement,
+            )?;
+            beside.extend(
+                written
+                    .carries
+                    .iter()
+                    .map(|fault| (placement.index, *fault)),
+            );
             alternatives.push(guards::Alternative {
                 index: placement.index,
-                text: self.alternative(
-                    &Around {
-                        site: node.span,
-                        text: site,
-                        carried: &carried,
-                    },
-                    placement,
-                )?,
+                text: written.text,
                 comparable: self.comparable.contains(&placement.index),
                 probe: self.probed.get(&placement.index).copied(),
             });
@@ -917,6 +947,7 @@ impl File<'_> {
             text: composed.text,
             branches,
             compared,
+            beside,
         })
     }
 
@@ -929,6 +960,7 @@ impl File<'_> {
         let mut text = String::new();
         let mut branches: Vec<(u32, Span)> = Vec::new();
         let mut compared = BTreeSet::new();
+        let mut beside = BTreeSet::new();
         let mut cursor = node.span.start;
         for child in &node.children {
             text.push_str(self.slice(bounds(cursor, child.span.start)?)?);
@@ -938,6 +970,7 @@ impl File<'_> {
                 branches.push((index, self.shifted(span, at, "nested branch")?));
             }
             compared.extend(rendered.compared);
+            beside.extend(rendered.beside);
             text.push_str(&rendered.text);
             cursor = child.span.end;
         }
@@ -946,6 +979,7 @@ impl File<'_> {
             text,
             branches,
             compared,
+            beside,
         })
     }
 
@@ -954,35 +988,17 @@ impl File<'_> {
         &self,
         around: &Around<'_>,
         placement: &Placement,
-    ) -> Result<String, InstrumentError> {
+    ) -> Result<Written, InstrumentError> {
         let Around {
             site,
             text: site_text,
             carried,
         } = *around;
-        let mut head = String::new();
-        let mut cursor = site.start;
-        let mut kept = None;
-        for (span, rendered) in carried {
-            if span.end <= placement.edit.start {
-                head.push_str(self.slice(Span::new(cursor, span.start).map_err(|error| {
-                    self.error(InstrumentErrorKind::SiteConflict, error.to_string())
-                })?)?);
-                head.push_str(rendered);
-                cursor = span.end;
-            } else if span.start == placement.edit.start
-                && placement
-                    .replacement
-                    .starts_with(self.slice(*span)?.as_bytes())
-            {
-                kept = Some((span, rendered));
-            }
-        }
-        head.push_str(
-            self.slice(Span::new(cursor, placement.edit.start).map_err(|error| {
-                self.error(InstrumentErrorKind::SiteConflict, error.to_string())
-            })?)?,
-        );
+        let Headed {
+            head,
+            in_head,
+            kept,
+        } = self.headed(site, carried, placement)?;
         let tail =
             self.slice(Span::new(placement.edit.end, site.end).map_err(|error| {
                 self.error(InstrumentErrorKind::SiteConflict, error.to_string())
@@ -996,10 +1012,11 @@ impl File<'_> {
                 ),
             )
         })?;
+        let in_replacement: Vec<u32> = kept.map(|one| one.faults.clone()).unwrap_or_default();
         let replacement = match kept {
-            Some((span, rendered)) => {
-                let (_, rest) = replacement.split_at(self.slice(*span)?.len());
-                format!("{rendered}{rest}")
+            Some(one) => {
+                let (_, rest) = replacement.split_at(self.slice(one.span)?.len());
+                format!("{}{rest}", one.text)
             }
             None => replacement.to_owned(),
         };
@@ -1009,14 +1026,20 @@ impl File<'_> {
         );
         let replacement = resolved.as_str();
         if placement.hint.form == Form::M {
-            return Ok(replacement.to_owned());
+            return Ok(Written {
+                text: replacement.to_owned(),
+                carries: in_replacement,
+            });
         }
         let text = format!("{head}{replacement}{tail}");
         debug_assert!(!site_text.is_empty() || text.is_empty());
         if text.trim().is_empty() {
-            return Ok(String::new());
+            return Ok(Written {
+                text: String::new(),
+                carries: Vec::new(),
+            });
         }
-        flatten(&text).map_err(|error| {
+        let text = flatten(&text).map_err(|error| {
             self.error(
                 InstrumentErrorKind::FlattenFailed,
                 format!(
@@ -1024,6 +1047,70 @@ impl File<'_> {
                     placement.hint.form, placement.index
                 ),
             )
+        })?;
+        Ok(Written {
+            text,
+            carries: in_head.into_iter().chain(in_replacement).collect(),
+        })
+    }
+
+    /// Every child of `node` whose every alternative is a fault, rendered, which is what every alternative of `node` that keeps its bytes carries.
+    fn carried(&self, node: &Node<Placement>) -> Result<Vec<Carried>, InstrumentError> {
+        let mut carried = Vec::new();
+        for child in node
+            .children
+            .iter()
+            .filter(|child| child.alternatives.iter().all(|placement| placement.carried))
+        {
+            carried.push(Carried {
+                span: child.span,
+                text: self.render(child)?.text,
+                faults: child
+                    .alternatives
+                    .iter()
+                    .map(|placement| placement.index)
+                    .collect(),
+            });
+        }
+        Ok(carried)
+    }
+
+    /// The pristine bytes of a site before the edit, with every carried guard wholly inside them rendered in place, and the carried guard the edit's replacement begins with.
+    fn headed<'c>(
+        &self,
+        site: Span,
+        carried: &'c [Carried],
+        placement: &Placement,
+    ) -> Result<Headed<'c>, InstrumentError> {
+        let mut head = String::new();
+        let mut cursor = site.start;
+        let mut kept: Option<&Carried> = None;
+        let mut in_head: Vec<u32> = Vec::new();
+        for one in carried {
+            if one.span.end <= placement.edit.start {
+                head.push_str(self.slice(Span::new(cursor, one.span.start).map_err(
+                    |error| self.error(InstrumentErrorKind::SiteConflict, error.to_string()),
+                )?)?);
+                head.push_str(&one.text);
+                in_head.extend(one.faults.iter().copied());
+                cursor = one.span.end;
+            } else if one.span.start == placement.edit.start
+                && placement
+                    .replacement
+                    .starts_with(self.slice(one.span)?.as_bytes())
+            {
+                kept = Some(one);
+            }
+        }
+        head.push_str(
+            self.slice(Span::new(cursor, placement.edit.start).map_err(|error| {
+                self.error(InstrumentErrorKind::SiteConflict, error.to_string())
+            })?)?,
+        );
+        Ok(Headed {
+            head,
+            in_head,
+            kept,
         })
     }
 

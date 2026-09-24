@@ -157,3 +157,45 @@ fn a_survivor_is_told_apart_only_with_the_fault_at_its_own_site_beside_it() {
     );
     session.close().expect("close");
 }
+
+#[test]
+fn a_fault_the_instrumentation_did_not_carry_into_a_branch_is_refused_beside_it() {
+    let fixture = Fixture::copy("fixture-faulted");
+    let session = Workspace::open(
+        fixture.root(),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            operators: vec!["question-to-unwrap".to_owned(), "inject-error".to_owned()],
+            touch: true,
+            ..PrepareOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let in_item = |rule: &str, item: &str| {
+        session
+            .catalog()
+            .mutants()
+            .iter()
+            .find(|one| one.candidate.rule.name == rule && session.item_of(one.index) == Some(item))
+            .unwrap_or_else(|| panic!("{rule} has a site in `{item}`"))
+            .id
+            .to_string()
+    };
+    let unwrapped = in_item("question-to-unwrap", "measured");
+    let elsewhere = in_item("inject-error", "load");
+    let uncarried = session.exec(
+        &Request::new(unwrapped).with_fault(elsewhere),
+        &Cancel::new(),
+    );
+    assert!(
+        uncarried.is_err(),
+        "a fault the instrumentation did not carry into this branch would activate nothing, so \
+         asking for it is refused rather than run as the mutation alone: {uncarried:?}"
+    );
+    session.close().expect("close");
+}

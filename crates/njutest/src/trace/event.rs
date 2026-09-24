@@ -88,6 +88,11 @@ pub enum Payload {
         /// The record, as the report holds it.
         beside: crate::report::faults::BesideRecord,
     },
+    /// One pair of runs of a target behind evidence beside a fault.
+    BesideRun {
+        /// The record.
+        pair: crate::report::faults::BesideRun,
+    },
     /// What the probe pass measured for one target.
     ProbeExec {
         /// The record.
@@ -151,6 +156,7 @@ impl Payload {
             Self::FaultExec { .. } => "fault-exec",
             Self::Fault { .. } => "fault",
             Self::Beside { .. } => "beside",
+            Self::BesideRun { .. } => "beside-run",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
             Self::WireExec { .. } => "wire-exec",

@@ -535,11 +535,7 @@ pub fn prepare(
     let remembered = remembering(options, &closure, &manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
-    let Instrumented {
-        validated,
-        last_build,
-        narrowing,
-    } = validated(
+    let instrumented = validated(
         &Establishing {
             workspace: &workspace,
             discovery: &discovery,
@@ -561,18 +557,18 @@ pub fn prepare(
         cancel,
         trace: &trace,
         catalog: &discovery.catalog,
-        accepted: &validated.accepted,
-        narrowing: &narrowing,
+        accepted: &instrumented.validated.accepted,
+        narrowing: &instrumented.narrowing,
         closure: &closure,
         manifests: &manifests,
         asked: options.touch,
-        last_build: &last_build,
+        last_build: &instrumented.last_build,
         options,
     })?;
     build_phase.end();
     phase.end();
     let (packages, items) = attributed(&discovery);
-    let verified = narrowed(verified, narrowing);
+    let verified = narrowed(verified, instrumented.narrowing);
     let sources = prepared_sources(sources)?;
     Ok(Session {
         catalog: discovery.catalog,
@@ -584,7 +580,7 @@ pub fn prepare(
         items,
         proofs: established.proofs,
         reached,
-        validated,
+        validated: instrumented.validated,
         eligible,
         targets,
         scratch,
@@ -594,6 +590,7 @@ pub fn prepare(
             tests_started: 0,
         }),
         written_by_a_test,
+        beside: instrumented.beside,
         closure,
         manifests,
         executions: std::sync::Mutex::new(0),
@@ -646,6 +643,8 @@ struct Instrumented {
     last_build: Vec<crate::cargo::Message>,
     /// What the tree that was built can say about a mutant it never named, which is what narrowing by silence rests on.
     narrowing: crate::touch::Narrowing,
+    /// Every mutation whose branch in the tree that was built carries a fault's guard, with that fault.
+    beside: BTreeSet<(u32, u32)>,
 }
 
 /// What instrumenting the tree is done from: the snapshot to write into, the mutants to place, and what the proof layers established about them.
@@ -698,6 +697,7 @@ fn establish(
         probed: &established.probed,
         compared: BTreeSet::new(),
         marked: BTreeSet::new(),
+        beside: BTreeSet::new(),
     };
     let validated = validate_selected(
         &discovery.catalog,
@@ -713,6 +713,7 @@ fn establish(
     )?;
     Ok(Instrumented {
         validated,
+        beside: writer.beside,
         last_build: writer.last_build,
         narrowing: crate::touch::Narrowing {
             compared: writer.compared,
@@ -922,6 +923,8 @@ struct TreeCompiler<'a> {
     compared: BTreeSet<u32>,
     /// Every marker the tree that was last built actually holds the call for.
     marked: BTreeSet<u32>,
+    /// Every mutation whose branch in the tree that was last built carries a fault's guard, with that fault.
+    beside: BTreeSet<(u32, u32)>,
 }
 
 impl TreeCompiler<'_> {
@@ -1035,6 +1038,10 @@ impl Compile for TreeCompiler<'_> {
             self.marked = files
                 .iter()
                 .flat_map(|file| file.marked.iter().copied())
+                .collect();
+            self.beside = files
+                .iter()
+                .flat_map(|file| file.beside.iter().copied())
                 .collect();
         }
         Ok(Attempt {

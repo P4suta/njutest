@@ -1185,7 +1185,7 @@ mod {{MODULE}} {
         match __rm_std::env::var("{{FAULT_ENV}}") {
             __rm_std::result::Result::Ok(fault) if !fault.is_empty() => match indexed(&fault) {
                 __rm_std::option::Option::Some(beside) => Selection::Beside(selected, beside),
-                __rm_std::option::Option::None => Selection::Index(selected),
+                __rm_std::option::Option::None => protocol_failure(),
             },
             __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => {
                 Selection::Index(selected)

@@ -397,6 +397,11 @@ impl Recorder {
         self.emit(Payload::Beside { beside: record });
     }
 
+    /// Records one pair of runs behind evidence beside a fault.
+    pub fn beside_run(&self, record: crate::report::faults::BesideRun) {
+        self.emit(Payload::BesideRun { pair: record });
+    }
+
     /// Records what the probe pass measured for one target.
     pub fn probe_exec(&self, record: ProbeExecRecord) {
         self.emit(Payload::ProbeExec { probe: record });
