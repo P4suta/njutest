@@ -175,18 +175,21 @@ fn a_knob_asked_for_and_not_put_or_compared_is_a_limitation_that_says_why() {
         .collect();
     assert!(
         named.iter().any(|(name, detail)| *name == "knob-not-put"
-            && detail.contains("locale")
-            && detail.contains(ZONED)
-            && detail.contains("not installed")),
-        "{named:?}"
+            && detail.starts_with("locale ")
+            && detail.contains("not installed")
+            && detail.ends_with(&format!("({ZONED})"))),
+        "a knob not put says why, and closes with the targets it was not put on, the way every \
+         limitation names its targets: {named:?}"
     );
-    assert!(
-        named
-            .iter()
-            .any(|(name, detail)| *name == "knob-not-compared"
-                && detail.contains("umask")
-                && detail.contains("threads")
-                && detail.contains(OTHER)),
-        "{named:?}"
-    );
+    for knob in ["umask", "threads"] {
+        assert!(
+            named
+                .iter()
+                .any(|(name, detail)| *name == "knob-not-compared"
+                    && detail.starts_with(&format!("the controls under {knob} "))
+                    && detail.ends_with(&format!("({OTHER})"))),
+            "each knob whose controls compared nothing is one limitation, which says why and \
+             closes with its targets: {named:?}"
+        );
+    }
 }

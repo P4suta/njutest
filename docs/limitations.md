@@ -254,7 +254,7 @@ A target the knob broke is `environment-dependent`, a defect; one whose reach mo
 
 Three things follow and are not hidden.
 A knob asked for and not put — no such zone in the time zone database, no such locale installed, no shell to set the mask through, a target that runs through cargo, a target that does not run under libtest, a platform with no way to put it — is `knob-not-put`, naming the knob, the targets, and why, because a pass under a knob that was never put says nothing.
-A control under a knob that established nothing to compare is `knob-not-compared`.
+A knob whose controls established nothing to compare — a record that did not read back, other tests passing, a baseline that passed only on retry, a control that errored or ran out of time — is `knob-not-compared`, one per knob and reason, naming the targets.
 And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
 
 ## What a run asks of a suite that talks about time

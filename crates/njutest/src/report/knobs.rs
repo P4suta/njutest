@@ -262,11 +262,11 @@ fn broke(one: &KnobRecord, failed: &[String]) -> String {
     )
 }
 
-/// The limitations the records earn: each knob that was asked for and not put, and each control under a knob that compared nothing, with the targets and why.
+/// The limitations the records earn: each knob asked for and not put, and each knob whose controls compared nothing, one per reason, each closing with the targets it is about the way every limitation names them.
 #[must_use]
 pub fn limited(knobs: &[KnobRecord]) -> Vec<Limitation> {
     let mut unput: BTreeMap<(Knob, NotPut), Vec<&str>> = BTreeMap::new();
-    let mut uncompared: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut uncompared: BTreeMap<(Knob, &'static str), Vec<&str>> = BTreeMap::new();
     for one in knobs {
         match &one.standing {
             Standing::NotPut { why } => unput
@@ -274,13 +274,13 @@ pub fn limited(knobs: &[KnobRecord]) -> Vec<Limitation> {
                 .or_default()
                 .push(one.target.as_str()),
             Standing::Uncompared { why } => uncompared
-                .entry(one.target.as_str())
+                .entry((one.knob, why.said()))
                 .or_default()
-                .push(format!("{} ({})", one.knob.name(), why.said())),
+                .push(one.target.as_str()),
             Standing::Unsettled { why } => uncompared
-                .entry(one.target.as_str())
+                .entry((one.knob, why.said()))
                 .or_default()
-                .push(format!("{} ({})", one.knob.name(), why.said())),
+                .push(one.target.as_str()),
             Standing::Stable
             | Standing::Passed
             | Standing::Broke { .. }
@@ -293,27 +293,33 @@ pub fn limited(knobs: &[KnobRecord]) -> Vec<Limitation> {
             Limitation::new(
                 crate::limitation::KNOB_NOT_PUT,
                 &format!(
-                    "{} was asked for and not put on {}, because {}, so nothing is claimed about \
-                     whether {} on it",
+                    "{} was asked for and not put, because {}, so nothing is claimed about whether \
+                     {} on it ({})",
                     knob.name(),
-                    targets.join(", "),
                     why.said(),
                     if targets.len() == 1 {
                         "that target depends"
                     } else {
                         "those targets depend"
                     },
+                    targets.join(", "),
                 ),
             )
         })
         .collect();
-    limitations.extend(uncompared.into_iter().map(|(target, knobs)| {
+    limitations.extend(uncompared.into_iter().map(|((knob, why), targets)| {
         Limitation::new(
             crate::limitation::KNOB_NOT_COMPARED,
             &format!(
-                "the controls of {target} under {} established nothing to compare, so whether its \
-                 verdict and reach hold there is not known",
-                knobs.join(" and "),
+                "the controls under {} established nothing to compare, because {why}, so whether \
+                 the verdict and reach of {} under it is not known ({})",
+                knob.name(),
+                if targets.len() == 1 {
+                    "that target hold"
+                } else {
+                    "those targets hold"
+                },
+                targets.join(", "),
             ),
         )
     }));
