@@ -582,6 +582,13 @@ fn an_interpreter_that_ran_no_test_found_nothing_to_fail_and_interpreted_nothing
         Some("miri-ran-no-test".to_owned()),
         "{done:?}"
     );
+    assert!(
+        done.limitations
+            .first()
+            .is_some_and(|one| one.detail.contains("failed to run `cd")),
+        "a hole says what the interpreter said last, so a reader can see why no test ran: \
+         {done:?}"
+    );
     let said_nothing = interpreted("   Compiling demo v0.1.0\n", 0, dir.path()).expect("ran");
     assert!(
         !said_nothing.executed,

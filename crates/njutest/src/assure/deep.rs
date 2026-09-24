@@ -203,12 +203,22 @@ enum Ending {
 }
 
 /// Records that the interpreter ended without a test result, which says nothing about the suite.
-fn ran_no_test(interpreted: &mut Interpreted) {
+fn ran_no_test(interpreted: &mut Interpreted, said: &str) {
     interpreted.executed = false;
+    let last = said
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map_or_else(
+            || "it said nothing".to_owned(),
+            |line| format!("it last said: {line}"),
+        );
     interpreted.limitations.push(Limitation::new(
         crate::limitation::MIRI_RAN_NO_TEST,
-        "the interpreter ended without a test result that says a test failed or every one \
-         passed, so its status is its own trouble and not the suite's",
+        &format!(
+            "the interpreter ended without a test result that says a test failed or every one \
+             passed, so its status is its own trouble and not the suite's; {last}"
+        ),
     ));
     interpreted.findings.push(Finding {
         kind: FindingKind::NotMeasured,
@@ -385,7 +395,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             position: None,
         }),
         Ending::Passed if passed => {}
-        Ending::Failed | Ending::Passed | Ending::TimedOut => ran_no_test(&mut interpreted),
+        Ending::Failed | Ending::Passed | Ending::TimedOut => ran_no_test(&mut interpreted, said),
     }
     interpreted
 }
