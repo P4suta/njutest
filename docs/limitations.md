@@ -259,6 +259,7 @@ And a caller that swallows the injected error reads as `unnoticed`, which is wha
 A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
 Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.
 A tree whose faulted build or baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and puts nothing.
+A tree with no `?` in any measured file states `fault-no-site`: there was no call to fail, which is a finding about the tree and not a hole in the run.
 ## What a run asks of a suite that depends on where it runs
 
 A suite can pass on one machine and fail on the next because of something the contract lets differ between them: the time zone, the locale, the temporary directory, the home directory, the umask, the terminal width, or how many tests the harness runs at once.

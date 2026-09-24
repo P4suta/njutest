@@ -44,6 +44,7 @@ fn told(verdict: Verdict, spots: Vec<Spot>) -> Told {
         }],
         diagnostics: Vec::new(),
         limitations: Vec::new(),
+        matrix: Vec::new(),
     }
 }
 

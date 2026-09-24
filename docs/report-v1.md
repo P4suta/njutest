@@ -48,7 +48,7 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are seventeen kinds, and every report carries the stable name:
+There are eighteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -67,6 +67,7 @@ There are seventeen kinds, and every report carries the stable name:
 | `wire-unnoticed` | a seam fault was put and nothing noticed | no |
 | `unstable-baseline` | a target reached something on an original-code control that it did not reach on its baseline, over the same passing tests | no |
 | `unnoticed-fault` | a call a `?` asks about failed and every test that reached it passed | no |
+| `dimension-not-measured` | a `whole-v1` run did not establish the dimension its subject names | no |
 | `environment-dependent` | a target that passed on its baseline failed on a control started with a knob put | yes |
 | `environment-dependent-reach` | a target reached something else on a control started with a knob put, over the same passing tests | no |
 
@@ -212,6 +213,15 @@ A part whose records repeat a knob for a target, or put two knobs on different t
 
 A part that measured the whole catalog raises `environment-dependent`, a defect, about each target a knob broke, `environment-dependent-reach` about each whose reach a knob moved, counting what rests on its baseline by the rule `unstable-baseline` counts with, and states `knob-not-put` and `knob-not-compared`.
 A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` rather than `PARTIAL` where a knob broke or moved a target; a merge raises them from the combined records of every part, keeping of two records of one knob and target the one that says more.
+
+## The matrix
+
+A report is read along six dimensions, `mutation`, `repeatable`, `fault`, `schedule`, `wire` and `durable` ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+The matrix is derived from the records above and never stored: a stored column would be a second copy of them a reader could find disagreeing.
+Each column is `measured` with `catalogued`, `answered`, `holes` (which add up) and what it `speaks_not_about`, or `unmeasured` with why, `not-asked`, `nothing-to-ask` with why, or `not-in-this-release`.
+Mutation holes are the waited, step-limited, unconfirmed and errored mutations; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
+The record stream carries one `DIMENSION` record per column.
+Under `whole-v1`, every column that is not `measured` without a hole or `nothing-to-ask` is a `dimension-not-measured` finding whose subject is the dimension's name; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
 
 ## Sources
 

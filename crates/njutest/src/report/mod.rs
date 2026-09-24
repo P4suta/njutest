@@ -13,6 +13,7 @@ pub mod json;
 pub mod junit;
 pub mod knobs;
 pub mod lines;
+pub mod matrix;
 pub mod merge;
 pub mod sarif;
 pub mod spec;
@@ -4350,6 +4351,8 @@ pub enum FindingKind {
     UnnoticedFault,
     /// A test wrote into the tree under measurement while a fault failed a call, which it did not do while none did.
     BrokenUnderFault,
+    /// A run that asks every dimension did not establish one of them.
+    DimensionNotMeasured,
     /// A target that passed on its baseline failed on a control started with something the contract lets differ between machines set differently.
     EnvironmentDependent,
     /// A target reached something else on a control started with something the contract lets differ between machines set differently, so every proof read off its baseline is unfounded where that differs.
@@ -4393,6 +4396,7 @@ impl FindingKind {
             Self::UnstableBaseline => "unstable-baseline",
             Self::UnnoticedFault => "unnoticed-fault",
             Self::BrokenUnderFault => "broken-under-fault",
+            Self::DimensionNotMeasured => "dimension-not-measured",
             Self::EnvironmentDependent => "environment-dependent",
             Self::EnvironmentDependentReach => "environment-dependent-reach",
         }
@@ -4418,7 +4422,8 @@ impl FindingKind {
             | Self::WireUnnoticed
             | Self::UnstableBaseline
             | Self::UnnoticedFault
-            | Self::EnvironmentDependentReach => false,
+            | Self::EnvironmentDependentReach
+            | Self::DimensionNotMeasured => false,
         }
     }
 }
@@ -5416,6 +5421,8 @@ pub struct Conclusion {
     pub faults: Vec<faults::FaultRecord>,
     /// Every build's survivors told apart only under a fault, part by part.
     pub beside: Vec<faults::BesideRecord>,
+    /// What every build established along each dimension, one row per dimension.
+    pub matrix: Vec<matrix::Row>,
     /// Every build's target facts.
     pub targets: Vec<TargetRecord>,
     /// The mutation lattice projection, for presentation only.
@@ -5833,7 +5840,7 @@ impl LatticedReport {
     /// # Errors
     /// Refuses contracts that have no model phase.
     pub fn model_candidates(&self) -> Result<ModelCandidates, CompletionError> {
-        if self.contract != crate::config::Contract::VerifiedV1 {
+        if !self.contract.proves_models() {
             return Err(CompletionError::ModelForbidden {
                 contract: self.contract,
             });
@@ -5854,7 +5861,7 @@ impl LatticedReport {
     /// # Errors
     /// `verified-v1` cannot take this transition; it must call [`Self::attach_models`].
     pub fn complete_without_models(self) -> Result<Report, CompletionError> {
-        if self.contract == crate::config::Contract::VerifiedV1 {
+        if self.contract.proves_models() {
             return Err(CompletionError::ModelRequired);
         }
         self.into_report(ModelCompletion::NotRequired)
@@ -5865,7 +5872,7 @@ impl LatticedReport {
     /// # Errors
     /// Refuses another contract, another owner, or any record sequence other than the exact canonical survivor sequence.
     pub fn attach_models(self, batch: ModelBatch) -> Result<Report, CompletionError> {
-        if self.contract != crate::config::Contract::VerifiedV1 {
+        if !self.contract.proves_models() {
             return Err(CompletionError::ModelForbidden {
                 contract: self.contract,
             });
@@ -6012,11 +6019,15 @@ impl Report {
                 return Err(CompletionError::ModelRequired);
             }
             (
-                crate::config::Contract::StandardV1 | crate::config::Contract::DeepV1,
+                crate::config::Contract::StandardV1
+                | crate::config::Contract::DeepV1
+                | crate::config::Contract::WholeV1,
                 ModelCompletion::NotRequired,
             ) => {}
             (
-                crate::config::Contract::StandardV1 | crate::config::Contract::DeepV1,
+                crate::config::Contract::StandardV1
+                | crate::config::Contract::DeepV1
+                | crate::config::Contract::WholeV1,
                 ModelCompletion::Verified(_),
             ) => {
                 return Err(CompletionError::ModelForbidden {
@@ -6089,7 +6100,8 @@ impl Report {
     /// Returns [`CountError`] if the exact projection does not fit the v1 accounting counters.
     pub fn conclusion(&self) -> Result<Conclusion, CountError> {
         let mutants = projected_mutants_with_models(&self.builds, self.models());
-        let findings = projected_findings(&self.builds, &self.global_findings, &mutants);
+        let findings =
+            projected_findings(&self.builds, &self.global_findings, &mutants, self.contract);
         Ok(Conclusion {
             verdict: concluded_from_projection(ConclusionProjection {
                 run_kind: self.run_kind,
@@ -6132,6 +6144,9 @@ impl Report {
                 .flat_map(|build| build.parts.iter())
                 .flat_map(|part| part.beside.iter().cloned())
                 .collect(),
+            matrix: matrix::rows(
+                &MatrixEvidence::of(&self.builds.iter().collect::<Vec<_>>()).borrowed(),
+            ),
             targets: self
                 .builds
                 .iter()
@@ -6168,7 +6183,8 @@ impl Report {
     #[must_use]
     pub fn verdict(&self) -> Verdict {
         let mutants = projected_mutants_with_models(&self.builds, self.models());
-        let findings = projected_findings(&self.builds, &self.global_findings, &mutants);
+        let findings =
+            projected_findings(&self.builds, &self.global_findings, &mutants, self.contract);
         concluded_from_projection(ConclusionProjection {
             run_kind: self.run_kind,
             shard: self.scope.shard.as_deref(),
@@ -6667,6 +6683,7 @@ fn projected_findings(
     builds: &BuildLedger,
     global_findings: &[Finding],
     mutants: &[ProjectedMutant],
+    contract: crate::config::Contract,
 ) -> Vec<Finding> {
     let affirmative: BTreeSet<(&str, &str)> = mutants
         .iter()
@@ -6682,6 +6699,9 @@ fn projected_findings(
     for build in builds.iter() {
         projected.extend(merged_drift_findings(build));
         projected.extend(merged_knob_findings(build));
+        if contract.asks_every_dimension() {
+            projected.extend(merged_matrix_findings(build));
+        }
         for part in build.parts.iter() {
             for finding in &part.findings {
                 let answered_by_model = finding.kind == FindingKind::SurvivingMutant
@@ -6704,6 +6724,69 @@ fn sharded(build: &BuildEvidence) -> bool {
         .parts
         .iter()
         .any(|part| matches!(part.part, CatalogPart::Shard(_)))
+}
+
+/// The dimension findings of a build measured in parts, over every part's records, which no part raises on its own (ADR 0033).
+fn merged_matrix_findings(build: &BuildEvidence) -> Vec<Finding> {
+    if !sharded(build) {
+        return Vec::new();
+    }
+    let owned = MatrixEvidence::of(&[build]);
+    matrix::holes(&matrix::rows(&owned.borrowed()))
+}
+
+/// Every record of some builds a matrix is read off, gathered from every part.
+struct MatrixEvidence {
+    mutations: (usize, usize),
+    knobs: Vec<knobs::KnobRecord>,
+    faults: Vec<faults::FaultRecord>,
+    seams: Vec<SeamRecord>,
+    limitations: Vec<Limitation>,
+    findings: Vec<Finding>,
+}
+
+impl MatrixEvidence {
+    /// What every part of `builds` holds.
+    fn of(builds: &[&BuildEvidence]) -> Self {
+        let parts = || builds.iter().flat_map(|build| build.parts.iter());
+        let holes = parts()
+            .flat_map(|part| part.mutants.iter())
+            .filter(|mutant| matrix::unsettled(mutant.outcome.outcome()))
+            .count();
+        let answered = parts()
+            .flat_map(|part| part.mutants.iter())
+            .filter(|mutant| !matrix::unsettled(mutant.outcome.outcome()))
+            .count();
+        Self {
+            mutations: (answered, holes),
+            knobs: knobs::combined(parts().flat_map(|part| part.knobs.iter())),
+            faults: parts()
+                .flat_map(|part| part.faults.iter().cloned())
+                .collect(),
+            seams: builds
+                .iter()
+                .flat_map(|build| build.baseline().seams.iter().cloned())
+                .collect(),
+            limitations: parts()
+                .flat_map(|part| part.limitations.iter().cloned())
+                .collect(),
+            findings: parts()
+                .flat_map(|part| part.findings.iter().cloned())
+                .collect(),
+        }
+    }
+
+    /// The same records, as the matrix reads them.
+    fn borrowed(&self) -> matrix::Evidence<'_> {
+        matrix::Evidence {
+            mutations: self.mutations,
+            knobs: &self.knobs,
+            faults: &self.faults,
+            seams: &self.seams,
+            limitations: &self.limitations,
+            findings: &self.findings,
+        }
+    }
 }
 
 /// The `unstable-baseline` findings of a build measured in parts, over every part's records and rows, each attributed to the part that saw its target move.

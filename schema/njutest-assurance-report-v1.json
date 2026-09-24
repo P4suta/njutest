@@ -1493,7 +1493,8 @@
             "environment-dependent",
             "environment-dependent-reach",
             "unnoticed-fault",
-            "broken-under-fault"
+            "broken-under-fault",
+            "dimension-not-measured"
           ]
         },
         "subject": {
@@ -3046,7 +3047,8 @@
           "enum": [
             "standard-v1",
             "deep-v1",
-            "verified-v1"
+            "verified-v1",
+            "whole-v1"
           ]
         },
         "tool": {
@@ -3130,7 +3132,8 @@
           "enum": [
             "standard-v1",
             "deep-v1",
-            "verified-v1"
+            "verified-v1",
+            "whole-v1"
           ]
         },
         "tool": {

@@ -28,6 +28,8 @@ pub struct Told {
     pub diagnostics: Vec<Diagnostic>,
     /// What the run could not establish, which is not what it found.
     pub limitations: Vec<Stated>,
+    /// What the run established along each dimension, one row per dimension.
+    pub matrix: Vec<crate::report::matrix::Row>,
 }
 
 /// Something a run could not establish, which it says rather than passes over.

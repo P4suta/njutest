@@ -254,6 +254,11 @@ fn a_tree_every_run_writes_into_is_not_broken_by_a_fault() {
         "the tree was written with no fault in place, so no fault wrote it: {part}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
+    assert_eq!(
+        named(&part, "limitations", "name", "fault-no-site").len(),
+        1,
+        "no measured file of it has a `?`, so there was no call to fail, and the run says so: {part}"
+    );
 }
 
 #[test]

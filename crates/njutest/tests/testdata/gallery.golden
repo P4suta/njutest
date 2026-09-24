@@ -482,6 +482,59 @@ gap[NJ-UNNOTICED-FAULT]: a call failed here and no test noticed
   ✗ INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
   1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
+=== a whole run, every dimension one line — eighty columns, no colour
+
+  mutation measured  13 catalogued, 13 answered, 0 holes
+  repeatable measured  14 catalogued, 12 answered, 2 holes
+  fault measured  3 catalogued, 3 answered, 0 holes
+  schedule not-in-this-release
+  wire measured  0 catalogued, 0 answered, 0 holes
+  durable not-in-this-release
+
+  INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
+=== a whole run, every dimension one line — forty columns, no colour
+
+  mutation measured  13 catalogued, 13
+    answered, 0 holes
+  repeatable measured  14 catalogued,
+    12 answered, 2 holes
+  fault measured  3 catalogued, 3
+    answered, 0 holes
+  schedule not-in-this-release
+  wire measured  0 catalogued, 0
+    answered, 0 holes
+  durable not-in-this-release
+
+  INSUFFICIENT   4 killed  0 survived  0
+    unreached  1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
+=== a whole run, every dimension one line — eighty columns, colour
+
+  [1;38;5;253mmutation[0m [38;5;176mmeasured[0m  [38;5;244m13 catalogued, 13 answered, 0 holes[0m
+  [1;38;5;253mrepeatable[0m [38;5;176mmeasured[0m  [38;5;244m14 catalogued, 12 answered, 2 holes[0m
+  [1;38;5;253mfault[0m [38;5;176mmeasured[0m  [38;5;244m3 catalogued, 3 answered, 0 holes[0m
+  [1;38;5;253mschedule[0m [38;5;176mnot-in-this-release[0m
+  [1;38;5;253mwire[0m [38;5;176mmeasured[0m  [38;5;244m0 catalogued, 0 answered, 0 holes[0m
+  [1;38;5;253mdurable[0m [38;5;176mnot-in-this-release[0m
+
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m4 killed  0 survived  0 unreached  1.9s[0m
+  [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+
+=== a whole run, every dimension one line — eighty columns, unicode
+
+  mutation measured  13 catalogued, 13 answered, 0 holes
+  repeatable measured  14 catalogued, 12 answered, 2 holes
+  fault measured  3 catalogued, 3 answered, 0 holes
+  schedule not-in-this-release
+  wire measured  0 catalogued, 0 answered, 0 holes
+  durable not-in-this-release
+
+  ✗ INSUFFICIENT   4 killed  0 survived  0 unreached  1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
 === a run that could not proceed — eighty columns, no colour
 
 refused[NJ5001]: the workspace does not compile before anything is instrumented
@@ -1007,6 +1060,14 @@ There is nothing to do.
 - `fault-not-put` — the compiler refused 2 fault(s), because the engine makes only the standard error types it can build without guessing and these sites propagate another, so nothing is claimed about their failures: E0277 at src/lib.rs:46; E0308 at src/lib.rs:57
 
 These are not gaps in the tests. They bound what the verdict above claims.
+
+=== a whole run, every dimension one line — as a briefing
+
+# njutest: INSUFFICIENT — 0 places the tests do not see
+
+A mutation run changed the code in 4 places and ran the tests each time. 4 of those changes were noticed and 0 were not.
+
+There is nothing to do.
 
 === a run that could not proceed — as a briefing
 

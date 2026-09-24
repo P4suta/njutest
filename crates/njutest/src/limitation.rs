@@ -73,9 +73,12 @@ pub const KNOB_NOT_PUT: &str = "knob-not-put";
 /// A control under a knob established nothing to compare, so whether a target's verdict and reach hold there is not known.
 pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 
+/// A run asked for faults found no `?` in a measured file, so there was no call to fail.
+pub const FAULT_NO_SITE: &str = "fault-no-site";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 23] = [
+pub const ALL: [&str; 24] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -97,6 +100,7 @@ pub const ALL: [&str; 23] = [
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
     FAULT_NOT_PUT,
+    FAULT_NO_SITE,
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
 ];

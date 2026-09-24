@@ -17,7 +17,7 @@ Loading the untouched skeleton yields exactly the defaults.
 
 ```toml
 version = 1
-contract = "standard-v1"        # "standard-v1" | "deep-v1" | "verified-v1"
+contract = "standard-v1"        # "standard-v1" | "deep-v1" | "verified-v1" | "whole-v1"
 
 [project]
 packages = []                   # cargo package names; empty = every workspace member
@@ -105,6 +105,9 @@ Empty by default, because each knob is one more run of every target.
 A knob this machine cannot put is stated as `knob-not-put` rather than skipped silently; most CI images install no Turkish locale, so there `locale` is not put.
 
 `[verification]` belongs only to `contract = "verified-v1"`.
+
+`contract = "whole-v1"` asks every dimension a run can measure: it puts every fault and every knob whatever `[faults]` and `[repeatable]` say, runs the soundness phase as `deep-v1` does, and is not `ASSURED` while any dimension is a hole ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+Schedules and durability are not measured in this release, so every `whole-v1` run concludes `INSUFFICIENT` until they are; the default stays `standard-v1` until then.
 Both `unwind` (the nonzero loop-unwind bound) and `timeout` (the verifier process ceiling, representable as at least one whole millisecond) are mandatory there; the other contracts reject the section instead of silently ignoring proof settings.
 
 `timeout` and `steps` can both stop a mutation that stops a program ending,

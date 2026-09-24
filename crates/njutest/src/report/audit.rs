@@ -868,7 +868,7 @@ struct ModelAudit<'a> {
 }
 
 fn check_models(audit: &ModelAudit<'_>, violations: &mut Vec<Violation>) {
-    if audit.contract != crate::config::Contract::VerifiedV1 {
+    if !audit.contract.proves_models() {
         reject_models_for_contract(audit.contract, audit.models, audit.mutants, violations);
         return;
     }

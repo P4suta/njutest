@@ -47,6 +47,7 @@ impl Told {
                     detail: limitation.detail.clone(),
                 })
                 .collect(),
+            matrix: conclusion.matrix.clone(),
         })
     }
 }
@@ -285,6 +286,11 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             Severity::Refusal,
             "NJ-BROKEN-UNDER-FAULT",
             "a test wrote into the tree it was measured in once a call failed",
+        ),
+        FindingKind::DimensionNotMeasured => (
+            Severity::Limitation,
+            "NJ-DIMENSION",
+            "this run was asked to establish every dimension and did not establish this one",
         ),
         FindingKind::HollowTarget => (
             Severity::Gap,

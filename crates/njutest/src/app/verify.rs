@@ -701,7 +701,7 @@ fn complete_lattice(
             return Ok(crate::report::ReportDocument::Shard(shard));
         }
     };
-    if latticed.contract() != crate::config::Contract::VerifiedV1 {
+    if !latticed.contract().proves_models() {
         crate::assure::model::confirm_not_required(&prepared)
             .map_err(crate::error::RunnerError::from)?;
         return Ok(crate::report::ReportDocument::Complete(
@@ -1526,6 +1526,10 @@ fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
 fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<LoadedConfig, LoadError> {
     let mut loaded = configured(arguments, workspace)?;
     loaded.config.faults.inject |= arguments.faults;
+    if loaded.config.contract.asks_every_dimension() {
+        loaded.config.faults.inject = true;
+        loaded.config.repeatable.knobs = crate::report::knobs::Knob::ALL.to_vec();
+    }
     Ok(loaded)
 }
 

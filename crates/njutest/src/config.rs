@@ -154,6 +154,9 @@ pub enum Contract {
     /// The soundness phase additionally proves eligible mutations with the pinned model checker.
     #[serde(rename = "verified-v1")]
     VerifiedV1,
+    /// Every dimension is asked, soundness runs as `deep-v1`, and a dimension not established is not assured (ADR 0033).
+    #[serde(rename = "whole-v1")]
+    WholeV1,
 }
 
 impl Default for Contract {
@@ -164,6 +167,33 @@ impl Default for Contract {
 
 impl Contract {
     const PROTOCOL_DEFAULT: Self = Self::StandardV1;
+
+    /// Whether the soundness phase runs Miri, where an inventory alone would be a limitation.
+    #[must_use]
+    pub const fn runs_miri(self) -> bool {
+        match self {
+            Self::DeepV1 | Self::WholeV1 => true,
+            Self::StandardV1 | Self::VerifiedV1 => false,
+        }
+    }
+
+    /// Whether a run proves eligible survivors with the pinned model checker.
+    #[must_use]
+    pub const fn proves_models(self) -> bool {
+        match self {
+            Self::VerifiedV1 => true,
+            Self::StandardV1 | Self::DeepV1 | Self::WholeV1 => false,
+        }
+    }
+
+    /// Whether a run asks every dimension it can measure, and is not assured along any it did not (ADR 0033).
+    #[must_use]
+    pub const fn asks_every_dimension(self) -> bool {
+        match self {
+            Self::WholeV1 => true,
+            Self::StandardV1 | Self::DeepV1 | Self::VerifiedV1 => false,
+        }
+    }
 }
 
 /// Everything `.njutest.toml` can say.
@@ -828,8 +858,14 @@ impl Config {
     pub fn verified(&self) -> Result<Option<Verified>, VerificationError> {
         match self.contract {
             Contract::VerifiedV1 => self.verification.checked().map(Some),
-            Contract::StandardV1 | Contract::DeepV1 if self.verification.is_empty() => Ok(None),
-            Contract::StandardV1 | Contract::DeepV1 => Err(VerificationError::WrongContract),
+            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1
+                if self.verification.is_empty() =>
+            {
+                Ok(None)
+            }
+            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1 => {
+                Err(VerificationError::WrongContract)
+            }
         }
     }
 

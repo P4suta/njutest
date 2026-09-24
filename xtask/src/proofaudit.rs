@@ -35,6 +35,7 @@ const ERRORED: &str = "errored";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
+const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
 pub const DEFECT_KINDS: [&str; 5] = [
     "build-failure",
@@ -171,6 +172,8 @@ pub enum Layer {
     Faults,
     /// What each control started under a knob established, re-derived from the engine's perturbed-control records and held to what the report says of each.
     Knobs,
+    /// Which dimensions a run that asks every one of them did not establish, re-derived from the records and held to the findings that name them.
+    Dimensions,
 }
 
 impl Layer {
@@ -190,6 +193,7 @@ impl Layer {
             Self::Drift => "drift",
             Self::Faults => "faults",
             Self::Knobs => "knobs",
+            Self::Dimensions => "dimensions",
         }
     }
 }
@@ -499,6 +503,7 @@ pub fn audit_with(
     models(&recording, run, &mut audit);
     drift(&recording, &engines, &mut audit);
     faults(&recording, faulted.as_ref(), &mut audit);
+    dimensions(&recording, &mut audit);
     knobs::audited(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
@@ -549,6 +554,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "faults",
         "beside",
         "knobs",
+        "seams",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -1934,6 +1940,95 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
             notes.violated(&site.fault, why.to_string());
         }
     }
+}
+
+/// The dimensions a `whole-v1` run did not establish, re-derived from the flat part's records and held to its `dimension-not-measured` findings in both directions (ADR 0033).
+fn dimensions(recording: &Recording<'_>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Dimensions);
+    let named: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == DIMENSION_NOT_MEASURED)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    if recording.contract != "whole-v1" || recording.shard.is_some() {
+        for dimension in &named {
+            notes.violated(
+                dimension,
+                "a run that does not ask every dimension, or a shard, raises no finding about one"
+                    .to_owned(),
+            );
+        }
+        return;
+    }
+    let holed = holed_dimensions(recording);
+    for dimension in holed.difference(&named) {
+        notes.violated(
+            dimension,
+            "the records leave this dimension a hole and no finding says so".to_owned(),
+        );
+    }
+    for dimension in named.difference(&holed) {
+        notes.violated(
+            dimension,
+            "a finding says this dimension is a hole and the records establish it".to_owned(),
+        );
+    }
+}
+
+/// Every dimension the flat part's records leave a hole, by name, read without any of the runner's code.
+fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
+    let document = recording.document;
+    let state = |key: &str, field: &str| -> Vec<String> {
+        rows(document, key)
+            .iter()
+            .filter_map(|row| row.get(field))
+            .filter_map(|value| {
+                value
+                    .get("state")
+                    .or_else(|| value.get("decision"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .collect()
+    };
+    let limited = |name: &str| {
+        rows(document, "limitations")
+            .iter()
+            .any(|row| field(row, "name").is_some_and(|said| said.starts_with(name)))
+    };
+    let mut holed = BTreeSet::from(["schedule", "durable"]);
+    if recording.mutants.iter().any(|mutant| {
+        ["waited", "step-limit-reached", "unconfirmed", "errored"]
+            .contains(&mutant.outcome.as_str())
+    }) {
+        holed.insert("mutation");
+    }
+    let knobs = state("knobs", "standing");
+    if knobs.is_empty()
+        || knobs
+            .iter()
+            .any(|one| one == "uncompared" || one == "unsettled")
+    {
+        holed.insert("repeatable");
+    }
+    let faults = state("faults", "decision");
+    let unmeasured = recording
+        .findings
+        .iter()
+        .any(|finding| finding.subject == "fault-baseline-not-measured");
+    if (faults.is_empty() && (unmeasured || !limited("fault-no-site")))
+        || faults
+            .iter()
+            .any(|one| one == "waited" || one == "undecided")
+    {
+        holed.insert("fault");
+    }
+    let seams = state("seams", "answer");
+    if limited("seam-not-watched") || seams.iter().any(|one| one == "unreached") {
+        holed.insert("wire");
+    }
+    holed
 }
 
 /// The evidence a report holds beside faults, held to survivors and faults it holds and to what the recording says was told apart, in both directions.

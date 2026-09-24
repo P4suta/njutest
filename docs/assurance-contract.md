@@ -40,6 +40,11 @@ It advances no index and stores no verdict.
 
 `deep-v1` uses the expanded operator set and exploration limits, runs Miri on every crate with a non-empty soundness inventory and every crate that links one, and may add sanitizers.
 
+`whole-v1` asks every dimension: mutations, knobs, faults, seams, schedules and durability ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+It runs soundness as `deep-v1` does and puts every fault and every knob, and each dimension it did not establish — not asked, not in this release, unmeasured, or measured with a hole — is a `dimension-not-measured` finding, so the run is not `ASSURED`.
+A dimension with nothing to ask, and the classes a dimension says it cannot speak about, are stated and are not holes.
+No run of this release satisfies it, because schedules and durability are not measured yet.
+
 `verified-v1` keeps the `standard-v1` mutation contract and asks one additional question about every test survivor that belongs to a deliberately closed,
 pure Rust fragment.
 Its `[verification]` section requires a nonzero unwind bound and a process timeout of at least one whole millisecond.

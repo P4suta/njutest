@@ -154,7 +154,7 @@
                 "rust_mutants": { "type": "string", "minLength": 1 },
                 "run_id": { "type": "string", "minLength": 1 },
                 "run_kind": { "enum": ["full", "changed", "scoped"] },
-                "contract": { "enum": ["standard-v1", "deep-v1", "verified-v1"] }
+                "contract": { "enum": ["standard-v1", "deep-v1", "verified-v1", "whole-v1"] }
               }
             }
           }

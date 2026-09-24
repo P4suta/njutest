@@ -163,7 +163,7 @@ pub fn run(
     let seams = super::wire::watched(&resources.leases(), &request.config.resources);
     state_unwatched(&mut report, &seams);
     let mut held = with_seams(environment, &seams);
-    if request.config.contract == crate::config::Contract::VerifiedV1 {
+    if request.config.contract.proves_models() {
         set_environment(&mut held, "CARGO_BUILD_TARGET", toolchain.host());
     }
     let environment = &held;
@@ -211,7 +211,7 @@ pub fn run(
         (request, environment, &toolchain),
         (notes, watch),
     )?;
-    released(&mut resources, &mut report);
+    wound_up(&mut resources, &mut report, request);
     finish(&mut report, request.started)?;
     journal.finished(watch.cancel)?;
     let kept = if request.keep_temp {
@@ -225,6 +225,20 @@ pub fn run(
         kept,
         model,
     })
+}
+
+/// What a run does once every phase is over: stop what it started, and say what dimension it did not establish.
+fn wound_up(resources: &mut crate::resource::Manager, report: &mut BuildReport, request: &Request) {
+    released(resources, report);
+    dimensioned(report, request);
+}
+
+/// The findings of every dimension a run that asks each of them did not establish, raised by a run of the whole catalog; a shard raises none and a merge raises them over every part (ADR 0033).
+fn dimensioned(report: &mut BuildReport, request: &Request) {
+    if request.config.contract.asks_every_dimension() && request.shard.is_none() {
+        let rows = crate::report::matrix::rows(&crate::report::matrix::Evidence::of(report));
+        report.findings.extend(crate::report::matrix::holes(&rows));
+    }
 }
 
 fn prepared(
@@ -417,7 +431,7 @@ fn deepened(
     with: (&rust_mutants::cargo::Toolchain, &Environment),
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
-    if request.config.contract != crate::config::Contract::DeepV1 {
+    if !request.config.contract.runs_miri() {
         return Ok(());
     }
     let (toolchain, environment) = with;
@@ -1860,6 +1874,10 @@ pub fn first_line(text: &str) -> String {
 
 /// What a named limitation means, for the ones a phase reports by name.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one sentence for every limitation a phase names, and a table split in two is two places to add the next one to"
+)]
 pub fn limitation_detail(name: &str) -> String {
     let named = name.split_once(':').map_or(name, |(head, _target)| head);
     match named {
@@ -1880,6 +1898,10 @@ pub fn limitation_detail(name: &str) -> String {
         rust_mutants::limitation::DOCTESTS_NONE => {
             "the library documents no example, so its documentation target has nothing to \
              run and no mutation is routed to it"
+        }
+        crate::limitation::FAULT_NO_SITE => {
+            "the run was asked for faults and no measured file has a `?`, so there was no call \
+             a fault could fail"
         }
         crate::limitation::FAULT_NOT_PUT => {
             "the compiler refused a fault, because the `?` it asks about propagates an error \

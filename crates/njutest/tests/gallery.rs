@@ -168,6 +168,7 @@ fn cases() -> Vec<(&'static str, Told)> {
         places,
         diagnostics: Vec::new(),
         limitations,
+        matrix: Vec::new(),
     };
     vec![
         (
@@ -356,6 +357,51 @@ fn cases() -> Vec<(&'static str, Told)> {
                              E0277 at src/lib.rs:46; E0308 at src/lib.rs:57"
                         .to_owned(),
                 }],
+                matrix: Vec::new(),
+            },
+        ),
+        (
+            "a whole run, every dimension one line",
+            Told {
+                headline: headline(Verdict::Insufficient, 4, 0, 0),
+                places: Vec::new(),
+                diagnostics: Vec::new(),
+                limitations: Vec::new(),
+                matrix: {
+                    use njutest::report::matrix::{Column, Dimension, Row};
+                    let measured = |catalogued, answered, holes| Column::Measured {
+                        catalogued,
+                        answered,
+                        holes,
+                        speaks_not_about: Vec::new(),
+                    };
+                    vec![
+                        Row {
+                            dimension: Dimension::Mutation,
+                            column: measured(13, 13, 0),
+                        },
+                        Row {
+                            dimension: Dimension::Repeatable,
+                            column: measured(14, 12, 2),
+                        },
+                        Row {
+                            dimension: Dimension::Fault,
+                            column: measured(3, 3, 0),
+                        },
+                        Row {
+                            dimension: Dimension::Schedule,
+                            column: Column::NotInThisRelease,
+                        },
+                        Row {
+                            dimension: Dimension::Wire,
+                            column: measured(0, 0, 0),
+                        },
+                        Row {
+                            dimension: Dimension::Durable,
+                            column: Column::NotInThisRelease,
+                        },
+                    ]
+                },
             },
         ),
         (
@@ -386,6 +432,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                     }],
                 }],
                 limitations: Vec::new(),
+                matrix: Vec::new(),
             },
         ),
         (

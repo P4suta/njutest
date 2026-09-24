@@ -84,8 +84,34 @@ pub fn put(
         watch.trace.fault(record.clone());
     }
     report.beside = beside(&session, report, watch)?;
-    let after = written(&session)?;
-    let broke: Vec<&String> = after.difference(&before).collect();
+    broken(&before, &written(&session)?, report);
+    report.accounting.faults = FaultAccounting::of(&records)?;
+    report
+        .findings
+        .extend(crate::report::faults::found(&records));
+    report
+        .limitations
+        .extend(crate::report::faults::limited(&records));
+    if records.is_empty() {
+        report.limitations.push(crate::report::Limitation::new(
+            crate::limitation::FAULT_NO_SITE,
+            "no measured file has a `?`, so there was no call a fault could fail",
+        ));
+    }
+    report.faults = records;
+    for path in session.close()? {
+        notes.note("kept", &path.display().to_string())?;
+    }
+    Ok(())
+}
+
+/// The `broken-under-fault` finding, where a path of the tree was first written after the faults began.
+fn broken(
+    before: &std::collections::BTreeSet<String>,
+    after: &std::collections::BTreeSet<String>,
+    report: &mut BuildReport,
+) {
+    let broke: Vec<&String> = after.difference(before).collect();
     if !broke.is_empty() {
         report.findings.push(Finding::new(
             FindingKind::BrokenUnderFault,
@@ -102,18 +128,6 @@ pub fn put(
             ),
         ));
     }
-    report.accounting.faults = FaultAccounting::of(&records)?;
-    report
-        .findings
-        .extend(crate::report::faults::found(&records));
-    report
-        .limitations
-        .extend(crate::report::faults::limited(&records));
-    report.faults = records;
-    for path in session.close()? {
-        notes.note("kept", &path.display().to_string())?;
-    }
-    Ok(())
 }
 
 /// Every error-propagation survivor of the report a target told apart only with the call at its own site failing, put again beside that fault (ADR 0032 decision 6).

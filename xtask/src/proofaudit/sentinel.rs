@@ -107,6 +107,15 @@ pub fn base() -> Value {
     })
 }
 
+/// The defect planted for the dimensions layer: a whole-v1 run that names none of the dimensions its records leave a hole.
+fn dimensions_planted(clean: Perturbation) -> Vec<Perturbation> {
+    vec![Perturbation {
+        name: "a whole-v1 run that names none of the dimensions it left a hole",
+        document: with(json!({ "contract": "whole-v1" })),
+        ..clean
+    }]
+}
+
 /// The defects planted for the evidence beside a fault: a record the recording does not hold, and one its recorded runs do not support.
 fn besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
     vec![
@@ -676,6 +685,7 @@ impl Layer {
                 .into_iter()
                 .chain(besides_planted(&clean))
                 .collect(),
+            Self::Dimensions => dimensions_planted(clean),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),

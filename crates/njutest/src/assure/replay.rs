@@ -149,7 +149,7 @@ fn replayed(kind: FindingKind) -> Replayable {
         FindingKind::UnnoticedFault => {
             Replayable::Site(vec![crate::assure::faults::RULE.to_owned()])
         }
-        FindingKind::BrokenUnderFault => Replayable::Phase,
+        FindingKind::BrokenUnderFault | FindingKind::DimensionNotMeasured => Replayable::Phase,
         FindingKind::BuildFailure
         | FindingKind::FailingTest
         | FindingKind::TargetMissing
@@ -184,7 +184,7 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
             | Measured::Inconclusive
             | Measured::Errored => Outcome::Inconclusive,
         },
-        FindingKind::BrokenUnderFault => Outcome::Inconclusive,
+        FindingKind::BrokenUnderFault | FindingKind::DimensionNotMeasured => Outcome::Inconclusive,
         FindingKind::StepLimitReachedMutant => match outcome {
             Measured::StepLimitReached => Outcome::Reproduced,
             Measured::Killed | Measured::Survived => Outcome::Resolved,
