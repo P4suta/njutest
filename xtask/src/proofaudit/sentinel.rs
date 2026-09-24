@@ -183,15 +183,25 @@ fn crash_restarted() -> Vec<Value> {
     ]
 }
 
-/// A stop of `t`, a next run that failed `t`, a fresh run that passed, and a second stop whose next run failed `again`.
+/// A stop of `t`, a next run that failed `t`, and the rounds that confirm it, the last of whose next runs failed `again`.
 fn crash_corrupted(again: &str) -> Vec<Value> {
-    vec![
+    let mut runs = vec![
         crash_run("t", "crash", "stopped", &["count"]),
         crash_run("t", "next", "failed", &["t"]),
-        crash_run("t", "fresh", "passed", &[]),
-        crash_run("t", "crash", "stopped", &["count"]),
-        crash_run("t", "next", "failed", &[again]),
-    ]
+    ];
+    for round in 1..=crate::crashes::CONFIRMATIONS {
+        let failed = if round == crate::crashes::CONFIRMATIONS {
+            again
+        } else {
+            "t"
+        };
+        runs.extend([
+            crash_run("t", "fresh", "passed", &[]),
+            crash_run("t", "crash", "stopped", &["count"]),
+            crash_run("t", "next", "failed", &[failed]),
+        ]);
+    }
+    runs
 }
 
 /// The defects planted for the crashes layer: each a report that claims a decision, or drops one, where the recorded steps decide otherwise.

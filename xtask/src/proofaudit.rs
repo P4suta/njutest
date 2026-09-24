@@ -1965,12 +1965,21 @@ fn crashes(
     crash_findings(recording, &reported, &mut notes);
     crash_accounting(recording.document, &reported, &mut notes);
     let Some(crashed) = crashed else {
-        if !reported.is_empty() {
+        let no_site = rows(recording.document, "limitations")
+            .iter()
+            .any(|row| field(row, "name").as_deref() == Some("crash-no-site"));
+        if !reported.is_empty() || no_site {
             notes.unaudited(
                 "crashes",
                 format!(
-                    "the report holds {} crash site(s) and there is no recording to re-derive them from",
-                    reported.len()
+                    "the report holds {} crash site(s){} and there is no recording to re-derive \
+                     what it put from",
+                    reported.len(),
+                    if no_site {
+                        " and says there was none to put"
+                    } else {
+                        ""
+                    }
                 ),
             );
         }
@@ -2134,7 +2143,7 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
     let limited = |name: &str| {
         rows(document, "limitations")
             .iter()
-            .any(|row| field(row, "name").is_some_and(|said| said.starts_with(name)))
+            .any(|row| field(row, "name").as_deref() == Some(name))
     };
     let mut holed = BTreeSet::from(["schedule"]);
     if recording.mutants.iter().any(|mutant| {

@@ -334,8 +334,27 @@ impl Stopped<'_> {
         }))
     }
 
-    /// A failing next run held to a fresh run that passes, and a second stop that leaves something and fails the next run over it the same way, with this test among the failures.
+    /// A failing next run held to [`CONFIRMATIONS`] rounds, each a fresh run that passes and a second stop that leaves something and fails the next run over it the same way, with this test among the failures.
     fn confirmed(&self, on: String, failed: Vec<String>) -> Result<CrashDecision, RunnerError> {
+        if !failed.iter().any(|one| one == self.test) {
+            return Ok(CrashDecision::Undecided {
+                on,
+                why: "the next run failed other tests than this one".to_owned(),
+            });
+        }
+        for () in std::iter::repeat_n((), CONFIRMATIONS) {
+            if let Round::Not(why) = self.round(&failed)? {
+                return Ok(CrashDecision::Undecided {
+                    on,
+                    why: why.to_owned(),
+                });
+            }
+        }
+        Ok(CrashDecision::Corrupt { on, failed })
+    }
+
+    /// One round of confirming that a stop, and not the test, fails the next run.
+    fn round(&self, failed: &[String]) -> Result<Round, RunnerError> {
         let fresh = self
             .session
             .control(&self.request(""), self.watch.cancel, Observing::Nothing)?
@@ -348,23 +367,17 @@ impl Stopped<'_> {
             failed: &fresh.failed_tests,
         });
         if fresh.outcome() != Outcome::Survived {
-            return Ok(CrashDecision::Undecided {
-                on,
-                why: "the test fails in a fresh scratch too, so the failure is not the stop's"
-                    .to_owned(),
-            });
+            return Ok(Round::Not(
+                "the test fails in a fresh scratch too, so the failure is not the stop's",
+            ));
         }
         let Ran::Stopped(kept) = self.crashed()? else {
-            return Ok(CrashDecision::Undecided {
-                on,
-                why: "a second run did not stop at the call".to_owned(),
-            });
+            return Ok(Round::Not("a later run did not stop at the call"));
         };
         if kept.left()?.is_empty() {
-            return Ok(CrashDecision::Undecided {
-                on,
-                why: "a second stop at the call left nothing for the next run".to_owned(),
-            });
+            return Ok(Round::Not(
+                "a later stop at the call left nothing for the next run",
+            ));
         }
         let again = self
             .session
@@ -377,17 +390,10 @@ impl Stopped<'_> {
             failed: &again.failed_tests,
         });
         Ok(
-            if again.outcome() == Outcome::Killed
-                && again.failed_tests == failed
-                && failed.iter().any(|one| one == self.test)
-            {
-                CrashDecision::Corrupt { on, failed }
+            if again.outcome() == Outcome::Killed && again.failed_tests == failed {
+                Round::Reproduced
             } else {
-                CrashDecision::Undecided {
-                    on,
-                    why: "the next run did not fail this test the same way after a second stop"
-                        .to_owned(),
-                }
+                Round::Not("the next run did not fail the same way after a later stop")
             },
         )
     }
@@ -405,6 +411,17 @@ impl Stopped<'_> {
             failed: run.failed.to_vec(),
         });
     }
+}
+
+/// How many times a failing next run is reproduced, each after a fresh run that passes, before the stop is called corrupt: a test that fails half its runs by itself passes all of them about once in 128.
+pub const CONFIRMATIONS: usize = 3;
+
+/// What one round of confirming a corrupt stop came to.
+enum Round {
+    /// The stop failed the next run the same way again.
+    Reproduced,
+    /// It did not, and why.
+    Not(&'static str),
 }
 
 /// One execution of a test a crash was put to, as the recording is told it.
