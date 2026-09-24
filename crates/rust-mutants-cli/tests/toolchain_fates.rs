@@ -294,6 +294,11 @@ fn fixture_drifts() {
 }
 
 #[test]
+fn fixture_edits() {
+    holds("fixture-edits");
+}
+
+#[test]
 fn fixture_equivalent() {
     holds("fixture-equivalent");
 }
