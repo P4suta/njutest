@@ -269,13 +269,22 @@ run = [
 description = "Check the dependency graph against the RustSec advisory database"
 shell = "bash -c"
 run = """
-set -euo pipefail
-if [ -d "$HOME/.cargo/advisory-db/.git" ]; then
-  git -C "$HOME/.cargo/advisory-db" pull --ff-only --quiet
-else
-  git clone --depth 1 https://github.com/RustSec/advisory-db.git "$HOME/.cargo/advisory-db"
-fi
-cargo audit --no-fetch --deny warnings
+set -uo pipefail
+scratch=$(mktemp -d)
+trap 'rm -rf "${scratch}"' EXIT
+for attempt in 1 2 3 4 5; do
+  git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "${scratch}/db" && break
+  status=$?
+  echo "audit: fetching the advisory database exited ${status} on attempt ${attempt} of 5" >&2
+  rm -rf "${scratch}/db"
+  [ "${attempt}" -eq 5 ] && exit "${status}"
+  sleep $((attempt * 5))
+done
+cargo audit --no-fetch --deny warnings --db "${scratch}/db" || {
+  status=$?
+  echo "audit: cargo audit exited ${status}; its own output above says why" >&2
+  exit "${status}"
+}
 """
 
 [tasks."fuzz:clippy"]
@@ -340,15 +349,18 @@ description = "Run every local gate a push waits for, the ones that answer quick
 # `build` is not here because `test:fast` runs `--all-targets`, which builds the same thing and then runs it.
 # What a push compiles is twice over: once with clippy's fingerprints and once with the test harness's.
 # Everything else reuses one of those.
-run = [
-  "mise run fmt:check",
-  "mise run lint",
-  "mise run test:fast",
-  "mise run test:doc",
-  "mise run kani:verified",
-  "mise run deny",
-  "mise run audit",
-]
+shell = "bash -c"
+run = """
+set -uo pipefail
+step() { "$@" || { status=$?; echo "check: '$*' failed with exit ${status}" >&2; exit "${status}"; }; }
+step mise run fmt:check
+step mise run lint
+step mise run test:fast
+step mise run test:doc
+step mise run kani:verified
+step mise run deny
+step mise run audit
+"""
 
 # Every target triple this machine can read without the machine.
 #

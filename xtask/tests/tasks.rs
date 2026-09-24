@@ -1119,3 +1119,25 @@ fn an_advisory_check_reads_a_database_fetched_by_a_step_that_tries_again() {
         );
     }
 }
+
+#[test]
+fn a_gate_step_that_fails_says_which_it_was_and_how() {
+    let check = task("check");
+    let steps: Vec<&str> = check
+        .lines()
+        .filter(|line| line.contains("mise run"))
+        .collect();
+    assert!(
+        !steps.is_empty() && steps.iter().all(|line| line.starts_with("step mise run")),
+        "a push gate failed on 2026-09-25 with a bare `exit status 1` after the licence check, \
+         and nobody could tell which step had failed; every step of `check` goes through `step`, \
+         which names it and its exit status: {steps:?}"
+    );
+    let audit = task("audit");
+    assert!(
+        audit.contains("exited ${status}") && audit.contains("--db \"${scratch}/db\""),
+        "`audit` says how each attempt ended, and reads a database of its own, since gates \
+         of several sessions fetching into the one shared checkout at once is a failure \
+         nobody's change caused: {audit}"
+    );
+}
