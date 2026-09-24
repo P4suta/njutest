@@ -2465,12 +2465,6 @@ impl BuildEvidence {
         drift::combined(self.parts.iter().flat_map(|part| part.drift.iter()))
     }
 
-    /// What this build's knobs established about each target, over every part, one record per knob and target.
-    #[must_use]
-    pub fn knobs(&self) -> Vec<knobs::KnobRecord> {
-        knobs::combined(self.parts.iter().flat_map(|part| part.knobs.iter()))
-    }
-
     /// Joins already proved typed components without exposing mutable fields.
     pub(crate) const fn from_parts(
         name: BuildName,

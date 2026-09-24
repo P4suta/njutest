@@ -56,12 +56,6 @@ impl Knob {
         }
     }
 
-    /// The knob named `name`.
-    #[must_use]
-    pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|knob| knob.name() == name)
-    }
-
     /// What a control is started with when the knob is put, as a reader types it to see the same.
     #[must_use]
     pub const fn put(self) -> &'static str {
