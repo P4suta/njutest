@@ -27,6 +27,7 @@ Reach alone cannot prove a binary single-threaded.
 
 1. **Single-threaded is a conjunction, and everything else is a hole.** A test binary is `single-threaded` only when its baseline reached no code off its tests' threads, its harness is libtest run with `--test-threads=1`, no package in its dependency closure has a place that can start a thread, and none of them links native code.
    Libtest runs a binary's tests on every processor unless it is told otherwise, and two tests on two threads interleave over whatever they share, so a binary run without `--test-threads=1` is `concurrent` with `parallel-tests`, however quiet its closure.
+   The runner and the audit each read the harness arguments as libtest does, and both are held by their tests to one contract, `schema/libtest-harness-options.json`, which lists every option and whether it takes a value, so the two readings cannot drift apart.
    Where anything says it can run more than one thread it is `concurrent`, with every reason; where anything could not be looked at it is `not-proven`, with every reason.
    Both are named by `schedule-not-explored`, since nothing explores a schedule yet.
 
