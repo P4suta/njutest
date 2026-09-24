@@ -2414,7 +2414,8 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
         .findings
         .iter()
         .any(|finding| finding.subject == "fault-baseline-not-measured");
-    if (faults.is_empty() && (unmeasured || !limited("fault-no-site")))
+    if unmeasured
+        || (faults.is_empty() && !limited("fault-no-site"))
         || none_but_not_put(&faults)
         || faults
             .iter()

@@ -2773,3 +2773,47 @@ fn a_built_binary_with_no_baseline_record_is_said_to_be_unaccounted_for() {
         "a binary with no baseline record may have been skipped or dropped from the recording, and the audit says it cannot tell: {audit}"
     );
 }
+
+#[test]
+fn a_fault_baseline_that_was_not_measured_leaves_the_faults_a_hole_whatever_records_follow() {
+    let finding = |kind: &str, subject: &str| {
+        serde_json::json!({
+            "kind": kind,
+            "subject": subject,
+            "detail": "not established",
+            "position": null
+        })
+    };
+    let mut document = base();
+    merge(
+        &mut document,
+        serde_json::json!({
+            "contract": "whole-v1",
+            "faults": [{
+                "catalog_index": 0,
+                "id": "c".repeat(64),
+                "display_id": "c".repeat(20),
+                "path": "src/lib.rs",
+                "item": "load",
+                "position": { "line": 13, "column": 16, "character_column": 16 },
+                "decision": { "decision": "unreached" }
+            }],
+            "accounting": { "faults": { "sites": 1, "unreached": 1 } },
+            "findings": [
+                {},
+                finding("not-measured", "fault-baseline-not-measured"),
+                finding("dimension-not-measured", "repeatable"),
+                finding("dimension-not-measured", "fault"),
+                finding("dimension-not-measured", "durable"),
+                finding("dimension-not-measured", "schedule")
+            ]
+        }),
+    );
+    let audit = audited(&document);
+    assert!(
+        !audit.violated(Layer::Dimensions),
+        "the engine leaves the faults unmeasured on the baseline finding, records or none, and \
+         the audit holds the report to the same rule rather than calling the named hole \
+         established: {audit}"
+    );
+}
