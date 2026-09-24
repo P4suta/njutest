@@ -68,21 +68,6 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
 }
 
 #[test]
-fn a_merge_takes_back_what_nobody_has_built_in_for_a_while() {
-    let hooks = repository("lefthook.yml");
-    let merged = hooks
-        .split_once("\npost-merge:\n")
-        .map(|(_before, after)| after)
-        .and_then(|after| after.split("\n\n").next())
-        .unwrap_or_default();
-    assert!(
-        merged.contains("run: cargo xtask sweep --budget-seconds "),
-        "every session merges main often, so a merge is where idle build output and leaked \
-         temporary directories are taken back without anybody remembering to: {merged}"
-    );
-}
-
-#[test]
 fn committed_checks_the_same_unique_to_head_range_locally_in_hooks_and_ci() {
     let range = task("\"committed:range\"");
     for held in [

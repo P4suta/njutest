@@ -864,31 +864,3 @@ fn a_commit_is_checked_again_under_different_build_settings() {
         stderr(&again)
     );
 }
-
-#[test]
-fn a_push_takes_back_what_the_tests_left_in_the_temporary_directory_long_ago() {
-    let repository = Repository::new(ACCEPTS_THE_CHECK);
-    let left = repository.scratch.path().join("njutest-commands-left");
-    std::fs::create_dir_all(left.join("fixture-baseline")).expect("a leftover");
-    let then = std::time::SystemTime::now()
-        .checked_sub(Duration::from_hours(48))
-        .expect("two days ago");
-    for entry in walkdir::WalkDir::new(&left).contents_first(true) {
-        std::fs::File::open(entry.expect("an entry").path())
-            .and_then(|file| file.set_modified(then))
-            .expect("an old modification time");
-    }
-    let pushed = repository.push(&repository.head);
-    assert!(pushed.status.success(), "{}", stderr(&pushed));
-    assert!(
-        !present(&left),
-        "every push ends by taking back what nobody has written for a long time, so a machine \
-         that develops all day does not fill up: {}",
-        stderr(&pushed)
-    );
-    assert!(
-        stderr(&pushed).contains("sweep: took"),
-        "and says what it took: {}",
-        stderr(&pushed)
-    );
-}

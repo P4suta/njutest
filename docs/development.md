@@ -259,22 +259,6 @@ What is remembered is the commit, the base the commit-message check reads, and t
 Every relinked test binary, fixture build, and mutant pays it.
 Switch the applications that start the sessions on under System Settings → Privacy & Security → Developer Tools; on the development machine that is the terminal and the multiplexer running in it.
 
-### Nothing accumulates
-
-Every worktree builds into its own `target/`, and a day of sessions leaves dozens of them, each tens of gigabytes; the disk filled on 2026-09-24 and every session stopped at once.
-`cargo xtask sweep` takes back what an event says is garbage, and nothing it decides depends on how long anything has sat.
-A worktree's `target/` goes when its work has landed: the worktree has no change of its own and `origin/main` already holds its head, or every pull request for its branch is merged or closed; a branch still open keeps its build as the cache it is, and the primary checkout's is never taken.
-A directory this repository's tests and gates make in `TMPDIR` goes when its owner is gone — the process that claimed it held `owner.lock`, as the engine's `tempowner` writes it, and nobody holds that lock now, however the process ended — and one with no owner lock goes only when nothing on the machine uses it.
-A per-worktree gate tree from before the gate had one tree per repository goes when nothing uses it.
-It runs when something ends: at the end of every push, and after every merge.
-Whatever it would take is kept while `lsof` shows a process with its working directory, a running binary, or an open file under it; a worktree's git fsmonitor daemon is stopped first, since it is a cache git restarts on demand rather than somebody working there, and where nothing can say what is in use, nothing is taken.
-It moves each into a `.njutest-trash` directory on the same volume, which takes it out of use at once, and removes files until its budget runs out, a bound on the work rather than on what is garbage; what is left waits for the next sweep.
-The `TMPDIR` names it takes are only those this repository's tests, devkit and gates make (`xtask::sweep::OURS`), and a test holds that no crate the product ships makes any of them, because njutest run on somebody's own project makes directories of its own there.
-A directory that will not move is named and the rest are still taken, and the command's status says it left something.
-The trash of a worktree's `target/` is `.njutest-trash` inside that worktree, which is ignored, rather than in the directory that holds the worktrees.
-Nobody has to remember it: the push gate sweeps for thirty seconds when it ends, and every merge sweeps for five.
-Source is never taken, and neither is a directory some other program made.
-
 ## Test harness
 
 `crates/njutest-devkit` is test-only support shared by every crate: the golden-file comparison, the workspace and fixture paths, the `cargo` that built the test binary, a throwaway copy of a fixture project, and the scripted toolchain.

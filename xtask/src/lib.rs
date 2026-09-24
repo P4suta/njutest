@@ -28,7 +28,6 @@ pub mod sentinel;
 pub mod shapes;
 pub mod strictjson;
 pub mod surface;
-pub mod sweep;
 pub mod wire;
 pub mod work;
 
@@ -36,7 +35,6 @@ use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::process::{Command, ExitCode, ExitStatus};
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
@@ -62,12 +60,6 @@ enum Task {
     },
     /// The pre-push hook: the exact commit being pushed, checked in this repository's one reusable tree.
     PrePush,
-    /// Takes the build output and temporary directories nobody has written for a while, and removes them within a budget.
-    Sweep {
-        /// How many seconds removing may take before the rest is left for the next sweep.
-        #[arg(long, default_value_t = 60)]
-        budget_seconds: u64,
-    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -200,9 +192,6 @@ where
         Task::Gate(gate) => gate,
         Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
-        Task::Sweep { budget_seconds } => {
-            return sweep(process, Duration::from_secs(budget_seconds), stdout, stderr);
-        }
     };
     let root = gates::workspace_root();
     let outcome = match gate {
@@ -322,44 +311,6 @@ fn audit_run(
     }
 }
 
-/// Sweeps within `budget` and says what it did, failing where it left something it meant to take.
-fn sweep(
-    process: &Process<'_>,
-    budget: Duration,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> ExitCode {
-    match sweep_report(process, budget) {
-        Ok(done) => after_output(
-            writeln!(stdout, "{done}"),
-            if done.fell_short() {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
-            },
-        ),
-        Err(failure) => after_output(writeln!(stderr, "sweep: {failure}"), ExitCode::FAILURE),
-    }
-}
-
-/// Sweeps this repository's idle build output and temporary directories.
-fn sweep_report(
-    process: &Process<'_>,
-    budget: Duration,
-) -> Result<sweep::Swept, sweep::SweepError> {
-    let temp = lanes::variable(process.environment, "TMPDIR").map_or_else(
-        || std::path::PathBuf::from("/tmp"),
-        std::path::PathBuf::from,
-    );
-    let request = sweep::Request {
-        repository: process.directory,
-        temp: &temp,
-        environment: process.environment,
-        budget,
-    };
-    sweep::sweep(&request)
-}
-
 /// Holds `lane` while `command` runs, and answers with the command's own exit status.
 fn slot(
     lane: &str,
@@ -472,25 +423,17 @@ fn pre_push(process: &Process<'_>, input: &mut dyn BufRead, stderr: &mut dyn Wri
         environment: process.environment,
         executable: process.executable,
     };
-    let (code, interrupted) = match prepush::gate(&surroundings, input, stderr) {
-        Ok(_passed) => (ExitCode::SUCCESS, false),
+    match prepush::gate(&surroundings, input, stderr) {
+        Ok(_passed) => ExitCode::SUCCESS,
         Err(failure) => {
             let code = ExitCode::from(failure.exit_code());
             let written = failure
                 .to_string()
                 .lines()
                 .try_for_each(|line| writeln!(stderr, "pre-push: {line}"));
-            (after_output(written, code), failure.exit_code() >= 128)
+            after_output(written, code)
         }
-    };
-    if interrupted {
-        return code;
     }
-    let written = match sweep_report(process, sweep::AFTER_A_PUSH) {
-        Ok(done) => writeln!(stderr, "pre-push: {done}"),
-        Err(failure) => writeln!(stderr, "pre-push: sweep: {failure}"),
-    };
-    after_output(written, code)
 }
 
 /// Applies process policy after the composition root has attempted its only observable output.
