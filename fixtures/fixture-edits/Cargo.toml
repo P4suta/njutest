@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "edits"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "tools/generate.rs"
+
+[workspace]
+members = ["answer"]
+
+[features]
+loud = []
+
+[dependencies]
+edits-answer = { path = "answer" }
