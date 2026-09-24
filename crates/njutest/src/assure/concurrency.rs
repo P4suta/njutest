@@ -17,14 +17,14 @@ use rust_mutants::session::{Conditions, Observing, Perturbation, Request};
 /// How long a delayed guard holds each thread that reaches it, once.
 pub const PAUSE_MS: u64 = 100;
 
-/// One record per test binary the session measured, in binary order, each package of every closure read once, at most `workers` at a time; `harness_args` are what every libtest binary was run with.
+/// One record per measured test binary, each package read once and `workers` at a time, and the closure packages the build compiled nothing of.
 ///
 /// # Errors
 /// A reading worker panicked, or the process ran out of descriptors or memory while reading.
 pub fn recorded(
     session: &rust_mutants::session::Session,
     (harness_args, workers): (&[String], usize),
-) -> Result<Vec<ConcurrencyRecord>, crate::error::RunnerError> {
+) -> Result<(Vec<ConcurrencyRecord>, Vec<String>), crate::error::RunnerError> {
     let threads = threads_of(harness_args);
     let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
@@ -33,6 +33,8 @@ pub fn recorded(
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
+    let compiled = crate::concurrency::read::Compiled::of(session.compilation())?;
+    let mut uncompiled: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let closures: BTreeMap<String, Vec<String>> = binaries
         .iter()
         .map(|(binary, (package, _))| {
@@ -40,7 +42,9 @@ pub fn recorded(
                 .members()
                 .find(|member| member.name == *package)
                 .map_or_else(Vec::new, |member| metadata.closure(&member.id));
-            (binary.clone(), closure)
+            let (kept, left_out) = linked(&closure, &compiled);
+            uncompiled.extend(left_out.into_iter().cloned());
+            (binary.clone(), kept.into_iter().cloned().collect())
         })
         .collect();
     let every: std::collections::BTreeSet<&str> = closures
@@ -48,9 +52,8 @@ pub fn recorded(
         .flat_map(|closure| closure.iter().map(String::as_str))
         .collect();
     let every: Vec<&str> = every.into_iter().collect();
-    let compiled = crate::concurrency::read::Compiled::of(session.compilation())?;
     let read = scans(metadata, (&every, &compiled), workers)?;
-    Ok(binaries
+    let records = binaries
         .into_iter()
         .map(|(binary, (package, harness))| {
             let closure = closures.get(&binary).map_or(&[][..], Vec::as_slice);
@@ -91,7 +94,8 @@ pub fn recorded(
                 target: binary,
             }
         })
-        .collect())
+        .collect();
+    Ok((records, uncompiled.into_iter().collect()))
 }
 
 /// Every package named in `ids` read once, at most `workers` at a time and never more than there are packages, by id, each held to the files `compiled` says its crates were built from.
@@ -114,10 +118,14 @@ pub fn scans(
     let mut answers = read.into_iter();
     let mut scanned = BTreeMap::new();
     for id in ids {
-        let scan = match answers.next() {
+        let mut scan = match answers.next() {
             Some(answer) => answer?,
             None => unread_manifest(id),
         };
+        if compiled.inputs.is_empty() {
+            scan.unread
+                .push("the build reported no unit it compiled".to_owned());
+        }
         scanned.insert((*id).to_owned(), scan);
     }
     Ok(scanned)
@@ -339,4 +347,18 @@ fn ended(
         | rust_mutants::outcome::Outcome::Inconclusive
         | rust_mutants::outcome::Outcome::Errored => Ended::Unsettled,
     })
+}
+
+/// Which packages of `closure` the session's build compiled, and so links, and which it compiled no unit of for this target and these features, and so does not; where the build reported no unit at all nothing is left out, since that says nothing about what it compiled.
+#[must_use]
+pub fn linked<'a>(
+    closure: &'a [String],
+    compiled: &crate::concurrency::read::Compiled,
+) -> (Vec<&'a String>, Vec<&'a String>) {
+    if compiled.inputs.is_empty() {
+        return (closure.iter().collect(), Vec::new());
+    }
+    closure
+        .iter()
+        .partition(|id| compiled.inputs.contains_key(id.as_str()))
 }

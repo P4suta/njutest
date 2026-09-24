@@ -1412,8 +1412,18 @@ fn concurrency_of(
         super::schedule::available()?,
         false,
     )?;
-    let mut concurrency =
+    let (mut concurrency, uncompiled) =
         super::concurrency::recorded(session, (&mutating.request.test_args, workers))?;
+    if !uncompiled.is_empty() {
+        watch.trace.note(
+            "concurrency-uncompiled",
+            &format!(
+                "the build compiled no unit of these packages for this target and these features, \
+                 so no binary links them and none was read: {}",
+                uncompiled.join(", ")
+            ),
+        );
+    }
     let whole = mutating.report.scope.shard.is_none();
     super::concurrency::explored(
         session,
