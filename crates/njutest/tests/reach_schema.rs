@@ -46,6 +46,7 @@ fn document(standing: Standing) -> Document {
             inputs: Inputs {
                 outside: BTreeMap::from([("/registry/dep.rs".to_owned(), HexDigest::of(b"b"))]),
                 env: BTreeMap::from([("UNSET".to_owned(), None)]),
+                compile_time: BTreeSet::from(["crates/derive/src/lib.rs".to_owned()]),
             },
             environment: BTreeMap::from([("LANG".to_owned(), "C".to_owned())]),
             settings: BTreeMap::from([("build".to_owned(), "default".to_owned())]),

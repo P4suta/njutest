@@ -289,3 +289,26 @@ fn a_target_that_reads_a_source_file_as_text_runs_for_an_edit_to_it() {
         "and a target that neither enters nor reads it is still skipped: {skipped:?}"
     );
 }
+
+#[test]
+fn an_edit_to_code_that_runs_inside_the_compiler_runs_every_target() {
+    let fixture = fixture("fixture-macros");
+    measured(&fixture);
+    edit(
+        &fixture,
+        "crates/derive/src/lib.rs",
+        "repeats(2) > 1",
+        "repeats(2) > 0",
+    );
+    let skipped = skippable(&fixture);
+    assert!(
+        skipped.is_empty(),
+        "`noop` runs inside the compiler while every crate that derives it is built, so no test \
+         entering it or not says whether an edit to it changes a target: {skipped:?}"
+    );
+    let (_, human) = selected(&fixture, "human");
+    assert!(
+        human.contains("everything runs: crates/derive/src/lib.rs"),
+        "and the reason names the file the compiler ran: {human}"
+    );
+}

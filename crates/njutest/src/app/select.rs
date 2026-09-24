@@ -248,6 +248,11 @@ fn everything_because(everything: &Everything) -> String {
         Everything::Outside { path } => format!("{path}, read from outside the tree, changed"),
         Everything::Irregular { path } => format!("{path} is not a regular file and moved"),
         Everything::Build { path } => format!("{path} decides what every target compiles to"),
+        Everything::CompileTime { path } => {
+            format!(
+                "{path} is compiled into code the build runs, a procedural macro or a build script"
+            )
+        }
         Everything::Unitemized { path } => format!("{path} holds no measured item"),
         Everything::Whole { path } => format!("{path} was added or removed"),
         Everything::Unproven { path } => {

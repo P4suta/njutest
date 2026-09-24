@@ -76,7 +76,7 @@ pub(super) fn pristine(
 fn inputs_of(
     workspace: &Workspace,
     checked: &crate::cargo::Compiled,
-) -> Result<crate::select::Inputs, SessionError> {
+) -> Result<crate::select::Inputs, EngineError> {
     let mut inputs = crate::select::Inputs::default();
     for unit in &checked.units {
         for path in &unit.inputs {
@@ -103,6 +103,38 @@ fn inputs_of(
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone())),
         );
+    }
+    let root = workspace.snapshot_root();
+    for path in crate::cargo::compile_time_inputs(&checked.messages, root)? {
+        let Ok(relative) = path.strip_prefix(root) else {
+            if !path.starts_with(workspace.snapshot.dir())
+                && !path.starts_with(workspace.target_dir())
+            {
+                let name = path
+                    .to_str()
+                    .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?
+                    .to_owned();
+                let bytes =
+                    std::fs::read(&path).map_err(|source| SessionError::EvidenceReadFailed {
+                        path: path.clone(),
+                        source,
+                    })?;
+                inputs
+                    .outside
+                    .insert(name, crate::id::HexDigest::of(&bytes));
+            }
+            continue;
+        };
+        let text = relative
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
+        let name = crate::id::normalize_path(text).map_err(|source| {
+            SessionError::EvidencePathInvalid {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        inputs.compile_time.insert(name);
     }
     Ok(inputs)
 }

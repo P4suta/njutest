@@ -58,6 +58,7 @@ Every target runs when any of these differs from the measurement, and `select` s
 - the rules the tree is read by;
 - a file the build read outside the tree;
 - a manifest, lock file, build script, toolchain file, or cargo or njutest configuration;
+- a file compiled into a procedural macro or a build script, wherever it is and whatever it is named, because that code runs inside the build and decides what other targets compile to;
 - a file that holds no measured item, or was added or removed;
 - a change outside every measured body: an item, a signature, a type, a `use`, an attribute;
 - a changed body that gains an `impl`, an exported symbol, or a macro outside the standard expression macros, or a `use` that could shadow one;

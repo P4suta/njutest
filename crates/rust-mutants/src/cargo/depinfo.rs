@@ -172,6 +172,31 @@ pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>
     Ok(units)
 }
 
+/// Every file the compiler read for a unit whose code runs while the build does rather than in a test: a procedural macro, and a build script, compiled for the build and not tested.
+///
+/// # Errors
+/// What [`units_of`] refuses about one such unit's dep-info.
+pub fn compile_time_inputs(
+    messages: &[Message],
+    workspace_root: &Path,
+) -> Result<Vec<PathBuf>, CargoError> {
+    let mut inputs = Vec::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        let runs_in_the_build = artifact.target.is_custom_build()
+            || (artifact.target.is_proc_macro() && !artifact.profile.test);
+        if !runs_in_the_build || is_uplift(artifact) {
+            continue;
+        }
+        inputs.extend(unit_of(artifact, workspace_root)?.inputs);
+    }
+    inputs.sort();
+    inputs.dedup();
+    Ok(inputs)
+}
+
 /// Whether this artifact is cargo's uplifted copy of a unit rather than the unit itself.
 fn is_uplift(artifact: &Artifact) -> bool {
     artifact.filenames.iter().all(|file| {

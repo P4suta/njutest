@@ -108,6 +108,11 @@ pub enum Everything {
         /// The entry.
         path: String,
     },
+    /// A file compiled into code that runs while the build does changed: a procedural macro or a build script decides what other targets compile to.
+    CompileTime {
+        /// The file.
+        path: String,
+    },
     /// A file changed that holds no measured item, so nothing says who ran it.
     Unitemized {
         /// The file.
@@ -164,6 +169,8 @@ pub struct Inputs {
     pub outside: BTreeMap<String, crate::id::HexDigest>,
     /// Every variable the compiler read through `env!` or `option_env!`, with the value it read or nothing where it was unset.
     pub env: BTreeMap<String, Option<String>>,
+    /// Every file of the tree compiled into code that runs while the build does — a procedural macro, a build script — by its `/`-normalized path: no test entering it or not says what an edit to it changes.
+    pub compile_time: BTreeSet<String>,
 }
 
 /// Whether one target's reach was shown to be a function of the target, as a measurement records it.
@@ -1049,6 +1056,11 @@ pub fn changed_items(
         let path = change.path();
         if builds_everything(path) {
             return Err(Everything::Build {
+                path: path.to_owned(),
+            });
+        }
+        if measured.inputs.compile_time.contains(path) {
+            return Err(Everything::CompileTime {
                 path: path.to_owned(),
             });
         }
