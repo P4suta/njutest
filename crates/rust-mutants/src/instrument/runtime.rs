@@ -75,6 +75,15 @@ pub const CRASHED_CALL: &str = "rust_mutants::crashed_after";
 /// The exit status of a test process a crash stopped just after a call that writes (ADR 0035).
 pub const CRASH_EXIT: i32 = 93;
 
+/// Names the fresh file through which the runtime says a crash stopped the process at the active call.
+pub const CRASH_NOTICE_ENV: &str = "RUST_MUTANTS_CRASH_NOTICE";
+
+/// Ties one crash notice to exactly one supervised execution.
+pub const CRASH_NONCE_ENV: &str = "RUST_MUTANTS_CRASH_NONCE";
+
+/// The first field of every crash notice.
+pub const CRASH_NOTICE_SCHEMA: &str = "rust-mutants-crash-notice-v1";
+
 /// Marks the generated module, for a person reading the snapshot and for the drift gate.
 pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v1";
 
@@ -437,7 +446,32 @@ mod {{MODULE}} {
     // with nothing after it: no destructor, flush or unwinding, so what the
     // call wrote is on disk and nothing later is.
     pub(crate) fn crashed_after<T>(_written: T) -> T {
+        let _published = publish_crash_notice();
         __rm_std::process::exit({{CRASH_EXIT}})
+    }
+
+    // The notice is what tells the supervisor this status is a stop the
+    // runtime made rather than one a test chose; a notice that cannot be
+    // published leaves the status alone, which decides nothing.
+    fn publish_crash_notice() -> __rm_std::option::Option<()> {
+        let path = __rm_std::env::var("{{CRASH_NOTICE_ENV}}").ok()?;
+        let nonce = __rm_std::env::var("{{CRASH_NONCE_ENV}}").ok()?;
+        let wanted = __rm_std::env::var("{{ACTIVE_ENV}}").ok()?;
+        let partial = __rm_std::format!("{}.partial", path);
+        {
+            let mut file = __rm_std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&partial)
+                .ok()?;
+            let notice = __rm_std::format!(
+                "{{CRASH_NOTICE_SCHEMA}}\t{}\t{}\t{}\n",
+                nonce, CATALOG, wanted
+            );
+            __rm_std::io::Write::write_all(&mut file, notice.as_bytes()).ok()?;
+            file.sync_data().ok()?;
+        }
+        __rm_std::fs::rename(partial, path).ok()
     }
 
     #[inline(always)]
@@ -1340,6 +1374,9 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{INFECTED}}", crate::touch::INFECTED)
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
         .replace("{{CRASH_EXIT}}", &CRASH_EXIT.to_string())
+        .replace("{{CRASH_NOTICE_ENV}}", CRASH_NOTICE_ENV)
+        .replace("{{CRASH_NONCE_ENV}}", CRASH_NONCE_ENV)
+        .replace("{{CRASH_NOTICE_SCHEMA}}", CRASH_NOTICE_SCHEMA)
         .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
         .replace("{{STEPS_ENV}}", STEPS_ENV)
         .replace("{{DELAY_ENV}}", DELAY_ENV)

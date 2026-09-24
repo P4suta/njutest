@@ -214,10 +214,16 @@ const CONTROL_TOUCH_LOG: &str = "touch.log";
 /// One control process's question: which target, asked how, for how long.
 /// A scratch directory a run left, kept so a next run can start over what it holds.
 #[derive(Debug)]
-pub struct Kept(PathBuf);
+pub struct Kept(PathBuf, bool);
 
 impl Kept {
-    /// Every file and directory the run left in this scratch directory, a directory named with a trailing `/`, relative to it and in path order, leaving out the engine's own.
+    /// Whether the run stopped at the call its crash was put at.
+    #[must_use]
+    pub const fn stopped(&self) -> bool {
+        self.1
+    }
+
+    /// Every file and directory the run left in this scratch directory, a directory named with a trailing `/`, relative to it and in path order; the engine keeps its own files elsewhere, so every one of them is the run's.
     ///
     /// # Errors
     /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
@@ -255,9 +261,6 @@ impl Kept {
                         ),
                     }
                 })?;
-                if engine_owned(&relative) {
-                    continue;
-                }
                 if kind.is_dir() {
                     found.push(format!("{relative}/"));
                     pending.push(path);
@@ -271,11 +274,14 @@ impl Kept {
     }
 }
 
-/// Whether a file of a scratch directory is one the engine wrote there itself rather than the test.
-fn engine_owned(relative: &str) -> bool {
-    relative.starts_with("rust-mutants-")
-        || relative == CONTROL_TOUCH_LOG
-        || relative.ends_with(".profraw")
+/// A fresh nonce a crash notice must carry to be this execution's.
+///
+/// # Errors
+/// [`SessionError::CrashNonceUnavailable`] where the system gave no randomness.
+fn crash_nonce() -> Result<String, EngineError> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| SessionError::CrashNonceUnavailable { error })?;
+    Ok(hex::encode(bytes))
 }
 
 struct Once<'a> {
@@ -995,6 +1001,7 @@ impl Session {
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         };
         let timeout = self.mutant_timeout.of(self.baseline(&target.id))?.0;
         let request = ExecRequest::new(target)
@@ -1328,6 +1335,17 @@ impl Session {
         let target = self.named(request)?;
         let timeout = self.timeout_for(request, &target.id)?.0;
         let own = self.exec_scratch()?;
+        let (tmp, engine) = (own.join("tmp"), own.join("engine"));
+        for directory in [&tmp, &engine] {
+            std::fs::DirBuilder::new()
+                .create(directory)
+                .map_err(|source| SessionError::ScratchCreateFailed {
+                    path: directory.clone(),
+                    source,
+                })?;
+        }
+        let notice = engine.join("crash-notice");
+        let nonce = crash_nonce()?;
         let context = Context {
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
@@ -1337,17 +1355,31 @@ impl Session {
             touch: None,
             steps: self.mutant_steps,
             profile: None,
+            crash: Some(execute::Crashing {
+                notice: &notice,
+                nonce: &nonce,
+            }),
         };
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
             .with_timeout(Some(timeout))
-            .with_scratch(own.clone())
+            .with_scratch(tmp.clone())
+            .with_engine(engine)
             .in_scratch(self.scratch_working_directory);
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
         }
         let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
-        Ok((result, Kept(own)))
+        let stopped = result.exit_code == crate::instrument::CRASH_EXIT
+            && std::fs::read_to_string(&notice).is_ok_and(|said| {
+                said == format!(
+                    "{}\t{nonce}\t{}\t{}\n",
+                    crate::instrument::CRASH_NOTICE_SCHEMA,
+                    self.catalog.digest(),
+                    mutant.id
+                )
+            });
+        Ok((result, Kept(tmp, stopped)))
     }
 
     /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.
@@ -1363,6 +1395,7 @@ impl Session {
         let target = self.named(request)?;
         let timeout = self.timeout_for(request, &target.id)?.0;
         let none = Perturbation::none();
+        let engine = self.exec_scratch()?;
         Ok(self.control_once(
             &Once {
                 request,
@@ -1370,7 +1403,7 @@ impl Session {
                 timeout,
                 perturbation: &none,
             },
-            (&kept.0, None),
+            (&kept.0, Some(&engine), None),
             cancel,
         ))
     }
@@ -1498,6 +1531,7 @@ impl Session {
             touch: None,
             steps: self.mutant_steps,
             profile: None,
+            crash: None,
         };
         let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
@@ -1689,7 +1723,7 @@ impl Session {
                 timeout,
                 perturbation,
             };
-            let mut result = self.control_once(&once, (&own, log.as_deref()), cancel);
+            let mut result = self.control_once(&once, (&own, None, log.as_deref()), cancel);
             let unrecorded =
                 log.is_some() && result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT;
             if unrecorded {
@@ -1702,7 +1736,7 @@ impl Session {
                         target.id
                     ),
                 );
-                result = self.control_once(&once, (&self.exec_scratch()?, None), cancel);
+                result = self.control_once(&once, (&self.exec_scratch()?, None, None), cancel);
             }
             let perturbed = (*perturbation != Perturbation::none()).then(|| perturbation.record());
             if perturbed.is_none() {
@@ -1747,7 +1781,11 @@ impl Session {
     fn control_once(
         &self,
         once: &Once<'_>,
-        (own, log): (&std::path::Path, Option<&std::path::Path>),
+        (own, engine, log): (
+            &std::path::Path,
+            Option<&std::path::Path>,
+            Option<&std::path::Path>,
+        ),
         cancel: &Cancel,
     ) -> MutantResult {
         let perturbation = once.perturbation;
@@ -1763,6 +1801,7 @@ impl Session {
             }),
             steps: None,
             profile: None,
+            crash: None,
         };
         if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
             return MutantResult::apparatus_error(
@@ -1793,6 +1832,9 @@ impl Session {
                     .delay
                     .map(|delay| (delay, self.catalog.digest())),
             );
+        if let Some(engine) = engine {
+            exec = exec.with_engine(engine);
+        }
         if let Some(test) = &once.request.test {
             exec = exec.with_test(test.clone());
         }
@@ -1907,6 +1949,7 @@ impl Session {
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         };
         let mut asked = Vec::new();
         for target in targets {

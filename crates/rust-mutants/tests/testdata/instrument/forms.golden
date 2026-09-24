@@ -285,7 +285,32 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     // with nothing after it: no destructor, flush or unwinding, so what the
     // call wrote is on disk and nothing later is.
     pub(crate) fn crashed_after<T>(_written: T) -> T {
+        let _published = publish_crash_notice();
         __rm_std::process::exit(93)
+    }
+
+    // The notice is what tells the supervisor this status is a stop the
+    // runtime made rather than one a test chose; a notice that cannot be
+    // published leaves the status alone, which decides nothing.
+    fn publish_crash_notice() -> __rm_std::option::Option<()> {
+        let path = __rm_std::env::var("RUST_MUTANTS_CRASH_NOTICE").ok()?;
+        let nonce = __rm_std::env::var("RUST_MUTANTS_CRASH_NONCE").ok()?;
+        let wanted = __rm_std::env::var("RUST_MUTANTS_ACTIVE").ok()?;
+        let partial = __rm_std::format!("{}.partial", path);
+        {
+            let mut file = __rm_std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&partial)
+                .ok()?;
+            let notice = __rm_std::format!(
+                "rust-mutants-crash-notice-v1\t{}\t{}\t{}\n",
+                nonce, CATALOG, wanted
+            );
+            __rm_std::io::Write::write_all(&mut file, notice.as_bytes()).ok()?;
+            file.sync_data().ok()?;
+        }
+        __rm_std::fs::rename(partial, path).ok()
     }
 
     #[inline(always)]

@@ -20,6 +20,8 @@ pub struct Run {
     pub exit_code: i64,
     /// What the engine made of it.
     pub outcome: String,
+    /// Whether the runtime published the notice that it stopped at the call.
+    pub noticed: bool,
     /// What a stopped run left.
     pub left: Vec<String>,
     /// What a next or fresh run failed.
@@ -119,6 +121,10 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
                             .and_then(Value::as_i64)
                             .unwrap_or(-1),
                         outcome: text(record, "outcome"),
+                        noticed: record
+                            .get("noticed")
+                            .and_then(Value::as_bool)
+                            .unwrap_or_default(),
                         left: texts(record, "left"),
                         failed: texts(record, "failed"),
                     }),
@@ -296,7 +302,7 @@ fn routed(crash: &str, asked: &[Asked], cursor: &mut Cursor<'_, '_>) -> Result<S
         for test in tests {
             let on = format!("{}::{test}", reaches.target);
             let stop = cursor.run(&reaches.target, test, "crash")?;
-            if stop.exit_code != CRASH_EXIT {
+            if !stopped(stop) {
                 if stop.outcome == "survived" {
                     continue;
                 }
@@ -343,11 +349,16 @@ fn confirmed(
         return Ok(false);
     }
     let again = cursor.run(target, test, "crash")?;
-    if again.exit_code != CRASH_EXIT || again.left.is_empty() {
+    if !stopped(again) || again.left.is_empty() {
         return Ok(false);
     }
     let next = cursor.run(target, test, "next")?;
     Ok(next.outcome == "killed" && next.failed == failed && failed.iter().any(|one| one == test))
+}
+
+/// Whether a run stopped at the call: the stop's exit status, and the runtime's notice that it made it.
+const fn stopped(run: &Run) -> bool {
+    run.exit_code == CRASH_EXIT && run.noticed
 }
 
 /// Every place a report's crash sites and the recorded steps disagree, each with the crash it is about.

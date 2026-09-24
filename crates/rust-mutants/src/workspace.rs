@@ -603,6 +603,15 @@ pub enum SessionError {
         /// What reading it said.
         source: std::io::Error,
     },
+    /// The system gave no randomness for the nonce that ties a crash's notice to its execution.
+    #[error(
+        "{}: cannot draw the nonce a crash's notice must carry: {error}",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CrashNonceUnavailable {
+        /// What the system said.
+        error: getrandom::Error,
+    },
     /// A fresh execution scratch directory could not be created exclusively.
     #[error(
         "{}: cannot reserve the fresh execution scratch directory {}: {source}",
@@ -679,6 +688,7 @@ impl SessionError {
             | Self::ScratchUnclaimed { .. }
             | Self::ScratchCreateFailed { .. }
             | Self::ScratchUnreadable { .. }
+            | Self::CrashNonceUnavailable { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
             Self::SelectionSourceMissing { .. }

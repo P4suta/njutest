@@ -147,7 +147,7 @@ fn crash_step(taken: &Value) -> Value {
 /// One run of `test` with the crash [`CRASHED`] put to it, which `ended` stopped at the call, passed, failed or waited, with the `files` a stop left or a next or fresh run failed.
 fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
     let (exit_code, outcome) = match ended {
-        "stopped" => (93, "killed"),
+        "stopped" | "chose" => (93, "killed"),
         "passed" => (0, "survived"),
         "waited" => (124, "waited"),
         _ => (101, "killed"),
@@ -162,7 +162,8 @@ fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
         "type": "crash-exec",
         "crash": {
             "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
-            "exit_code": exit_code, "outcome": outcome, "left": left, "failed": failed
+            "exit_code": exit_code, "outcome": outcome, "noticed": ended == "stopped",
+            "left": left, "failed": failed
         }
     })
 }
@@ -303,6 +304,14 @@ fn crashes_planted_against_order(clean: &Perturbation) -> Vec<Perturbation> {
                     .chain([crash_run("t", "crash", "stopped", &["count"])])
                     .collect(),
             ),
+        ),
+        planted(
+            "a restart claimed over a run that ended with the stop's status and no notice",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(vec![
+                crash_run("t", "crash", "chose", &["count"]),
+                crash_run("t", "next", "passed", &[]),
+            ]),
         ),
         planted(
             "a restart claimed where the stopped test wrote into the tree",

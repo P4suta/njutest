@@ -261,12 +261,13 @@ impl Stopped<'_> {
         let (result, kept) = self
             .session
             .exec_keeping(&self.request(self.mutant.id.as_str()), self.watch.cancel)?;
-        if result.exit_code == CRASH_EXIT {
+        if result.exit_code == CRASH_EXIT && kept.stopped() {
             let left = kept.left()?;
             self.recorded(Recorded {
                 stage: "crash",
                 exit_code: result.exit_code,
                 outcome: result.outcome(),
+                noticed: true,
                 left: &left,
                 failed: &[],
             });
@@ -276,6 +277,7 @@ impl Stopped<'_> {
             stage: "crash",
             exit_code: result.exit_code,
             outcome: result.outcome(),
+            noticed: false,
             left: &[],
             failed: &[],
         });
@@ -317,6 +319,7 @@ impl Stopped<'_> {
             stage: "next",
             exit_code: next.exit_code,
             outcome: next.outcome(),
+            noticed: false,
             left: &[],
             failed: &next.failed_tests,
         });
@@ -344,6 +347,7 @@ impl Stopped<'_> {
             stage: "fresh",
             exit_code: fresh.exit_code,
             outcome: fresh.outcome(),
+            noticed: false,
             left: &[],
             failed: &fresh.failed_tests,
         });
@@ -373,6 +377,7 @@ impl Stopped<'_> {
             stage: "next",
             exit_code: again.exit_code,
             outcome: again.outcome(),
+            noticed: false,
             left: &[],
             failed: &again.failed_tests,
         });
@@ -401,6 +406,7 @@ impl Stopped<'_> {
             stage: run.stage.to_owned(),
             exit_code: i64::from(run.exit_code),
             outcome: run.outcome.name().to_owned(),
+            noticed: run.noticed,
             left: run.left.to_vec(),
             failed: run.failed.to_vec(),
         });
@@ -413,6 +419,7 @@ struct Recorded<'a> {
     stage: &'a str,
     exit_code: i32,
     outcome: Outcome,
+    noticed: bool,
     left: &'a [String],
     failed: &'a [String],
 }

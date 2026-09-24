@@ -26,3 +26,10 @@ fn a_count_kept_whole_goes_up() {
     fixture_durable::save_whole(&path, count + 1).expect("the count is kept");
     assert_eq!(fixture_durable::load(&path).expect("the count reads"), count + 1);
 }
+
+#[test]
+fn a_run_that_ends_with_the_stop_status_of_its_own() {
+    if std::env::var_os("RUST_MUTANTS_ACTIVE").is_some_and(|active| !active.is_empty()) {
+        std::process::exit(93);
+    }
+}

@@ -279,9 +279,10 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        Some(scratch),
+        (Some(scratch), Some(scratch)),
     );
     assert_eq!(
         result_state(&env),
@@ -346,9 +347,10 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&baseline),
@@ -383,9 +385,10 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             }),
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&asked),
@@ -475,9 +478,10 @@ fn a_test_process_learns_which_cargo_built_it() {
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target,
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&composed),
@@ -506,9 +510,10 @@ fn a_test_process_learns_which_cargo_built_it() {
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target,
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&without),
@@ -598,9 +603,10 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         },
         &target(),
-        Some(scratch),
+        (Some(scratch), Some(scratch)),
     );
     assert_eq!(
         result_state(&env),
@@ -645,9 +651,10 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
             touch: None,
             steps: None,
             profile: Some(mine),
+            crash: None,
         },
         &target(),
-        None,
+        (None, None),
     );
     assert_eq!(
         result_state(&env),

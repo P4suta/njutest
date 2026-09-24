@@ -1048,6 +1048,7 @@ fn target_key(
         }),
         steps: None,
         profile: None,
+        crash: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
@@ -1061,12 +1062,13 @@ fn target_key(
     for argument in argv {
         key.os("argv", &argument)?;
     }
-    let environment = execute::environment(&context, target, Some(own)).map_err(|source| {
-        BaselineCacheError::EnvironmentUnavailable {
-            target: target.id.clone(),
-            source,
-        }
-    })?;
+    let environment =
+        execute::environment(&context, target, (Some(own), Some(own))).map_err(|source| {
+            BaselineCacheError::EnvironmentUnavailable {
+                target: target.id.clone(),
+                source,
+            }
+        })?;
     key.u64(
         "environment-count",
         baseline_count(BaselineQuantity::Environment, environment.len())?,
@@ -1177,6 +1179,7 @@ fn ran(
         }),
         steps: None,
         profile: None,
+        crash: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())

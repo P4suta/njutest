@@ -476,6 +476,8 @@ pub struct CrashExecRecord {
     pub exit_code: i64,
     /// What the engine made of it.
     pub outcome: String,
+    /// Whether the runtime published the notice that it stopped at the call, which is what makes the exit status a stop rather than a status the test chose.
+    pub noticed: bool,
     /// The files a stopped run left in its scratch, on a `crash` run that stopped; empty otherwise.
     pub left: Vec<String>,
     /// The tests a `next` or `fresh` run failed.

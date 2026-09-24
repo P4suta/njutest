@@ -13,6 +13,7 @@ Each test reads the count its previous run left under the temporary directory, a
   A stop after the number leaves a whole count, and the next run passes over it: `restarted`.
 - `save_whole` writes the count beside the file and renames it into place.
   A stop after either leaves the old count or the new one, and the next run passes over it: both are `restarted`.
+- `a_run_that_ends_with_the_stop_status_of_its_own` reaches no call that writes and ends with the stop's exit status whenever a perturbation is active, so a stop is told by the notice the runtime publishes, never by the status alone.
 
 | Path | Unit | Candidates |
 | --- | --- | --- |

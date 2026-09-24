@@ -229,6 +229,7 @@ fn run_targets(
             touch: None,
             steps: None,
             profile: Some(&pattern),
+            crash: None,
         };
         let request = ExecRequest::new(target)
             .with_timeout(Workspace::timeout(options.build_timeout))

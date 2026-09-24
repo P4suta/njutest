@@ -244,7 +244,7 @@ A skip that quietly stops meaning anything when the code under it moves is worse
 ## Reserved environment
 
 A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_CATALOG`,
-`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process it starts.
+`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
 `RUST_MUTANTS_FAULT` names a fault to activate beside the active mutation, and only a fault whose guard the instrumentation carried into that mutation's branch can be; it is set only with `RUST_MUTANTS_ACTIVE` ([ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
 
@@ -256,6 +256,11 @@ malformed, mismatched or replayed notice fails closed as a protocol error.
 No exit status is reserved: a test that returns 95 is an ordinary non-zero test failure.
 Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_STATE` names the execution-private state shared by every instrumented module and descendant process, so a selected mutation has one process-wide allowance rather than one counter per compilation unit.
+
+`RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` are set for a run that keeps its scratch for a next run ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+When a crash stops the process after its call, the runtime first publishes a notice carrying the schema, the fresh nonce, the catalog and the mutant, in a directory apart from the scratch the test sees.
+A stop is the crash's exit status together with that notice: a test that returns 93 by itself stopped at nothing, and nothing is decided on it.
+What the engine keeps for such a run — the notice, step state, a spilled profile — lives in that directory too, so everything in the scratch is what the test left.
 
 There is one closed exception for this repository measuring itself.
 Cargo compiles every instrumented tree with an internal RUST_MUTANTS_COMPILED_CATALOG build input, and the two engine composition roots embed it with `option_env!`.

@@ -57,6 +57,10 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
             njutest_devkit::process::strict_utf8(&crashed.output)
         );
         assert!(
+            kept.stopped(),
+            "the runtime said it stopped at this call, which is what makes the status a stop"
+        );
+        assert!(
             !kept.left().expect("the scratch reads").is_empty(),
             "the crashed run left what it wrote in its scratch"
         );
@@ -85,6 +89,52 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
         ]),
         "a truncated or half-written count is one the next run cannot read, and a count moved \
          into place whole never is"
+    );
+    session.close().expect("close");
+}
+
+#[test]
+fn a_test_that_ends_with_the_stop_status_itself_is_not_a_stop() {
+    let fixture = Fixture::copy("fixture-durable");
+    let session = Workspace::open(
+        fixture.root(),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            operators: vec!["crash-after-write".to_owned()],
+            touch: true,
+            ..PrepareOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let mutant = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("a call that writes")
+        .id
+        .to_string();
+    let (ran, kept) = session
+        .exec_keeping(
+            &Request::new(mutant).with_target(TARGET).test(Some(
+                "a_run_that_ends_with_the_stop_status_of_its_own".to_owned(),
+            )),
+            &Cancel::new(),
+        )
+        .expect("the run runs");
+    assert_eq!(
+        ran.exit_code,
+        CRASH_EXIT,
+        "the test ends with the stop's status on its own: {}",
+        njutest_devkit::process::strict_utf8(&ran.output)
+    );
+    assert!(
+        !kept.stopped(),
+        "a status the test chose is not a stop the runtime made, so nothing is decided on it"
     );
     session.close().expect("close");
 }

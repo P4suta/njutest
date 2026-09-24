@@ -400,13 +400,14 @@
             "crash": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["crash", "target", "test", "stage", "exit_code", "outcome", "left", "failed"],
+              "required": ["crash", "target", "test", "stage", "exit_code", "outcome", "noticed", "left", "failed"],
               "properties": {
                 "crash": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
                 "target": { "type": "string", "minLength": 1 },
                 "test": { "type": "string", "minLength": 1 },
                 "stage": { "enum": ["crash", "next", "fresh"] },
                 "exit_code": { "type": "integer" },
+                "noticed": { "type": "boolean" },
                 "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
                 "left": { "type": "array", "items": { "type": "string" } },
                 "failed": { "type": "array", "items": { "type": "string" } }

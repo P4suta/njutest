@@ -7,7 +7,7 @@ use xtask::crashes::{Asked, Crashed, Run, Site, Step, Unmade, decided, disagreem
 
 fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
     let (exit_code, outcome) = match ended {
-        "stopped" => (93, "killed"),
+        "stopped" | "chose" => (93, "killed"),
         "passed" => (0, "survived"),
         _ => (101, "killed"),
     };
@@ -23,6 +23,7 @@ fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
         stage: stage.to_owned(),
         exit_code,
         outcome: outcome.to_owned(),
+        noticed: ended == "stopped",
         left,
         failed,
     })
@@ -100,6 +101,11 @@ fn each_sequence_a_run_makes_decides_exactly_one_thing() {
                 run("t", "crash", "passed", &[]),
             ],
             ("undecided", "pkg/test/other"),
+        ),
+        (
+            "the stop's status with no notice the runtime made it",
+            vec![asks_t(), run("t", "crash", "chose", &["count"])],
+            ("undecided", on.as_str()),
         ),
         ("a refusal", vec![Step::Rejected], ("not-put", "")),
         (
