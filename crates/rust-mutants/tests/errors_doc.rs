@@ -101,6 +101,10 @@ fn every_variant_reports_a_declared_code() {
             suspects: 2,
         }),
         rust_mutants::EngineError::from(artifact),
+        rust_mutants::EngineError::from(rust_mutants::sentinel::SentinelError::Unwritable {
+            path: std::path::PathBuf::from("planted"),
+            source: std::io::Error::other("refused"),
+        }),
     ];
     for sample in &samples {
         assert!(
