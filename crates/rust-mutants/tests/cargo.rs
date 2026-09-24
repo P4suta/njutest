@@ -534,3 +534,17 @@ fn a_run_told_not_to_touch_the_network_tells_every_command_it_starts() {
          the one that says so"
     );
 }
+
+#[test]
+fn a_windows_path_in_dep_info_keeps_its_separators() {
+    let parsed = parse_dep_info("C:\\t\\demo.d: C:\\src\\lib.rs C:\\with\\ space\\x.rs\n");
+    let Ok(parsed) = parsed else {
+        panic!("dep-info: {parsed:?}");
+    };
+    assert_eq!(
+        parsed,
+        ["C:\\src\\lib.rs", "C:\\with space\\x.rs"],
+        "only a space or another backslash follows an escaping backslash, so every other one is \
+         a separator the path keeps"
+    );
+}

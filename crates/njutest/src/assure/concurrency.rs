@@ -48,7 +48,7 @@ pub fn recorded(
         .flat_map(|closure| closure.iter().map(String::as_str))
         .collect();
     let every: Vec<&str> = every.into_iter().collect();
-    let compiled = crate::concurrency::read::Compiled::read(session.target_dir())?;
+    let compiled = crate::concurrency::read::Compiled::of(session.compilation())?;
     let read = scans(metadata, (&every, &compiled), workers)?;
     Ok(binaries
         .into_iter()

@@ -466,13 +466,19 @@ fn gated(
         trace,
     )?;
     discover_phase.end();
-    Ok(Gated { discovery, closure })
+    let compilation = crate::cargo::Compilation::of(&checked);
+    Ok(Gated {
+        discovery,
+        closure,
+        compilation,
+    })
 }
 
-/// What the gate established: what there is to mutate, and the digest of everything the build read.
+/// What the gate established: what there is to mutate, the digest of everything the build read, and what the build compiled.
 struct Gated {
     discovery: discover::Discovery,
     closure: String,
+    compilation: crate::cargo::Compilation,
 }
 
 /// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
@@ -523,16 +529,17 @@ pub fn prepare(
 ) -> Result<Session, EngineError> {
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
-    let Gated { discovery, closure } = gated(&workspace, options, cancel, &trace)?;
+    let gated = gated(&workspace, options, cancel, &trace)?;
     let manifests = manifests_of(&workspace)?;
-    let (sources, placements, eligible) = selection_plan(&workspace, &discovery, options, &trace)?;
+    let (sources, placements, eligible) =
+        selection_plan(&workspace, &gated.discovery, options, &trace)?;
     let asking = crate::prove::Asking {
         workspace: &workspace,
-        discovery: &discovery,
+        discovery: &gated.discovery,
         sources: &sources,
         options,
     };
-    let remembered = remembering(options, &closure, &manifests, &workspace);
+    let remembered = remembering(options, &gated.closure, &manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
     let Instrumented {
@@ -542,7 +549,7 @@ pub fn prepare(
     } = validated(
         &Establishing {
             workspace: &workspace,
-            discovery: &discovery,
+            discovery: &gated.discovery,
             sources: &sources,
             placements: &placements,
             established: &established,
@@ -560,10 +567,10 @@ pub fn prepare(
         workspace: &workspace,
         cancel,
         trace: &trace,
-        catalog: &discovery.catalog,
+        catalog: &gated.discovery.catalog,
         accepted: &validated.accepted,
         narrowing: &narrowing,
-        closure: &closure,
+        closure: &gated.closure,
         manifests: &manifests,
         asked: options.touch,
         last_build: &last_build,
@@ -571,14 +578,14 @@ pub fn prepare(
     })?;
     build_phase.end();
     phase.end();
-    let (packages, items) = attributed(&discovery);
+    let (packages, items) = attributed(&gated.discovery);
     let verified = narrowed(verified, narrowing);
     let sources = prepared_sources(sources)?;
     Ok(Session {
-        catalog: discovery.catalog,
-        files: discovery.files,
-        skips: discovery.skips,
-        claims: discovery.claims,
+        catalog: gated.discovery.catalog,
+        files: gated.discovery.files,
+        skips: gated.discovery.skips,
+        claims: gated.discovery.claims,
         sources,
         packages,
         items,
@@ -589,12 +596,10 @@ pub fn prepare(
         targets,
         scratch,
         verified,
-        established: std::sync::Mutex::new(super::EstablishmentState {
-            answers: BTreeMap::new(),
-            tests_started: 0,
-        }),
+        established: std::sync::Mutex::new(super::EstablishmentState::fresh()),
         written_by_a_test,
-        closure,
+        closure: gated.closure,
+        compilation: gated.compilation,
         manifests,
         executions: std::sync::Mutex::new(0),
         mutant_timeout: options.mutant_timeout,

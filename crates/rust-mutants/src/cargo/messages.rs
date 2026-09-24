@@ -43,6 +43,12 @@ pub struct BuildScript {
     /// What it put in the environment with `cargo::rustc-env`, in the order it said them.
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// Every library it told the linker to link, however it spelled that: cargo has already read `rustc-link-lib` and the `-l` of `rustc-flags` into this.
+    #[serde(default)]
+    pub linked_libs: Vec<String>,
+    /// Every directory it told the linker to search, from `rustc-link-search` and the `-L` of `rustc-flags`.
+    #[serde(default)]
+    pub linked_paths: Vec<String>,
     #[serde(flatten)]
     external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
