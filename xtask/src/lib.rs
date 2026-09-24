@@ -81,10 +81,13 @@ enum Gate {
         /// The directory the run left its recording in, which is what the proof layers are re-derived from.
         #[arg(long, conflicts_with = "shards")]
         trace: Option<std::path::PathBuf>,
-        /// Each shard a merged report was merged from, as its report or its run directory; each is audited against its own recording on its own.
+        /// Each shard a merged report was merged from, as its report or its run directory, each re-decided against its own recording before the merge is.
         /// Repeatable.
         #[arg(long = "shard", value_name = "REPORT")]
         shards: Vec<std::path::PathBuf>,
+        /// The directory holding each shard's recording under the run it names, as `.njutest/trace` does; without it, each shard's layers are unaudited.
+        #[arg(long, requires = "shards")]
+        traces: Option<std::path::PathBuf>,
     },
     /// Whether a completed engine run's report is the one its own rows, recording, and ledger support (ADR 0004).
     EngineAudit {
@@ -165,8 +168,17 @@ where
         Gate::Milestones => gates::milestones(&root),
         Gate::Reached => gates::reached(&root),
         Gate::Surfaces => gates::surfaces(&root),
-        Gate::Proofaudit { run, trace, shards } => {
-            return audit_run((&run, trace.as_deref(), &shards), stdout, stderr);
+        Gate::Proofaudit {
+            run,
+            trace,
+            shards,
+            traces,
+        } => {
+            return audit_run(
+                (&run, trace.as_deref(), &shards, traces.as_deref()),
+                stdout,
+                stderr,
+            );
         }
         Gate::EngineAudit {
             run,
@@ -234,10 +246,11 @@ fn audit_engine(
 
 /// A recording that could not be read at all, like an audit with a layer blind to what was planted for it, is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
 fn audit_run(
-    (run, trace, shards): (
+    (run, trace, shards, traces): (
         &std::path::Path,
         Option<&std::path::Path>,
         &[std::path::PathBuf],
+        Option<&std::path::Path>,
     ),
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -254,7 +267,7 @@ fn audit_run(
     let audited = if shards.is_empty() {
         gates::proofaudit(run, trace)
     } else {
-        gates::proofaudit_merged(run, shards)
+        gates::proofaudit_merged(run, shards, traces)
     };
     match audited {
         Ok(audit) => {

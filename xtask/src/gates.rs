@@ -2022,7 +2022,32 @@ pub fn proofaudit(
             path: label.clone(),
             source,
         })?;
-    let recorded = trace
+    let kept = recordings(trace)?;
+    proofaudit::audit_with(&label, &text, kept.recorded(), Some(run))
+}
+
+/// The runner's recording and every configured build's engine recording one run kept, each as its path and its text.
+struct Recordings {
+    runner: Option<(String, String)>,
+    engines: Vec<(String, String)>,
+}
+
+impl Recordings {
+    /// What the audit reads of them.
+    fn recorded(&self) -> proofaudit::Recorded<'_> {
+        proofaudit::Recorded {
+            runner: self
+                .runner
+                .as_ref()
+                .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
+            engines: &self.engines,
+        }
+    }
+}
+
+/// The runner's recording and every configured build's engine recording under `trace`, each as its path and its text; nothing where no recording was given.
+fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError> {
+    let runner = trace
         .map(|directory| directory.join("trace.jsonl"))
         .map(|path| {
             let label = path.display().to_string();
@@ -2038,37 +2063,46 @@ pub fn proofaudit(
         .map(engine_recordings)
         .transpose()?
         .unwrap_or_default();
-    proofaudit::audit_with(
-        &label,
-        &text,
-        proofaudit::Recorded {
-            runner: recorded
-                .as_ref()
-                .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
-            engines: &engines,
-        },
-        Some(run),
-    )
+    Ok(Recordings { runner, engines })
 }
 
-/// Whether the merged report at `merged`, a file or the directory holding one, is the merge of the shard documents `shards`, each a file or a run directory.
+/// Whether the merged report at `merged` is the merge of the shards `shards`, each re-decided against its recording under `traces`.
 ///
 /// # Errors
-/// A document that cannot be read, is not JSON or is off its schema, a report that is not a merge, and a shard the report was not merged from.
+/// A document that cannot be read, is not JSON or is off its schema, a report that is not a merge, a shard given twice, and a shard the report was not merged from.
 pub fn proofaudit_merged(
     merged: &Path,
     shards: &[PathBuf],
+    traces: Option<&Path>,
 ) -> Result<proofaudit::Audit, proofaudit::AuditError> {
-    let (label, text) = assurance_document(merged)?;
-    let given = shards
+    let merged = assurance_document(merged)?;
+    let audited = shards
         .iter()
-        .map(|shard| assurance_document(shard))
+        .map(|shard| {
+            let document = assurance_document(shard)?;
+            let run_id = proofaudit::merge::shard_run(&document.label, &document.text)?;
+            let trace = traces.map(|directory| directory.join(&run_id));
+            let kept = recordings(trace.as_deref())?;
+            proofaudit::merge::audited(
+                &document.label,
+                &document.text,
+                kept.recorded(),
+                document.run.as_deref(),
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
-    proofaudit::merge::merged_with(&label, &text, &given)
+    proofaudit::merge::merged_with(&merged.label, &merged.text, &audited)
 }
 
-/// The assurance document at `path`, or in the run directory `path` names, as its path and its text; a symbolic link is refused rather than followed.
-fn assurance_document(path: &Path) -> Result<(String, String), proofaudit::AuditError> {
+/// An assurance document as the audit reads it: where it is, what it says, and the run directory holding it when one was named.
+struct AssuranceDocument {
+    label: String,
+    text: String,
+    run: Option<PathBuf>,
+}
+
+/// The assurance document at `path`, or in the run directory `path` names; a symbolic link is refused rather than followed.
+fn assurance_document(path: &Path) -> Result<AssuranceDocument, proofaudit::AuditError> {
     let unreadable = |at: &Path, source: std::io::Error| proofaudit::AuditError::Unreadable {
         path: at.display().to_string(),
         source,
@@ -2083,14 +2117,18 @@ fn assurance_document(path: &Path) -> Result<(String, String), proofaudit::Audit
             ),
         ));
     }
-    let document = if metadata.is_dir() {
-        path.join(proofaudit::REPORT_FILE)
+    let (document, run) = if metadata.is_dir() {
+        (path.join(proofaudit::REPORT_FILE), Some(path.to_path_buf()))
     } else {
-        path.to_path_buf()
+        (path.to_path_buf(), None)
     };
-    std::fs::read_to_string(&document)
-        .map(|text| (document.display().to_string(), text))
-        .map_err(|source| unreadable(&document, source))
+    let text =
+        std::fs::read_to_string(&document).map_err(|source| unreadable(&document, source))?;
+    Ok(AssuranceDocument {
+        label: document.display().to_string(),
+        text,
+        run,
+    })
 }
 
 /// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.
@@ -2127,8 +2165,10 @@ fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::
 /// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
 pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
     let clean = proofaudit::sentinel::clean();
-    let merged = proofaudit::sentinel::merged_clean().ok_or_else(|| {
-        GateFailure("proofaudit: the clean specimen cannot be divided into shards".to_owned())
+    let merged = proofaudit::sentinel::sharded_clean().map_err(|error| {
+        GateFailure(format!(
+            "proofaudit: the clean specimen cannot be measured in shards: {error}"
+        ))
     })?;
     for specimen in [&clean, &merged] {
         silent(specimen)?;
@@ -2140,7 +2180,40 @@ pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
             GateFailure("proofaudit: more planted defects than a count can hold".to_owned())
         })?;
     }
+    for rule in proofaudit::merge::MergeRule::ALL {
+        merge_rule_sighted(rule)?;
+    }
     Ok(found)
+}
+
+/// Nothing, where the defect planted for `rule` draws a merge violation of that rule by name.
+///
+/// # Errors
+/// A plant that cannot be built or read, or one no violation of its rule names.
+fn merge_rule_sighted(rule: proofaudit::merge::MergeRule) -> Result<(), GateFailure> {
+    let plant = proofaudit::sentinel::merge_plant(rule).map_err(|error| {
+        GateFailure(format!(
+            "proofaudit: the merge rule {} has no defect planted for it: {error}",
+            rule.label()
+        ))
+    })?;
+    let audit = proofaudit_specimen(&plant)?;
+    let prefix = format!("{}: ", rule.label());
+    if audit.remarks.iter().any(|remark| {
+        remark.layer == proofaudit::Layer::Merge
+            && remark.standing == proofaudit::Standing::Violated
+            && remark.detail.starts_with(&prefix)
+    }) {
+        Ok(())
+    } else {
+        Err(GateFailure(format!(
+            "proofaudit: the merge rule {label} is blind. Its planted defect `{name}` drew no \
+             violation of it, so a merge it is silent about says nothing. Nothing this gate would \
+             have said is believed until the planted defect is found again.\n{audit}",
+            label = rule.label(),
+            name = plant.name,
+        )))
+    }
 }
 
 /// Nothing, where no layer finds anything in the clean `specimen`.
@@ -2206,7 +2279,7 @@ fn proofaudit_specimen(
     if shards.is_empty() {
         proofaudit(laid.run(), laid.trace())
     } else {
-        proofaudit_merged(laid.run(), &shards)
+        proofaudit_merged(laid.run(), &shards, laid.traces())
     }
     .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
 }

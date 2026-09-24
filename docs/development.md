@@ -156,8 +156,10 @@ A report states no verdict — the verdict is derived from its records — so th
 Every document is validated against its published schema before any layer reads it.
 
 A sharded run is audited the way it was measured: each `verify --shard K/N` run is its own run directory and its own recording, and `cargo xtask proofaudit <shard-run-directory> --trace <its-recording>` re-decides that shard's one part, leaving to the merge what only the whole catalog decides.
-`cargo xtask proofaudit <merged-report> --shard <shard> …` then holds the merged report to those shard documents: each part must be the part its shard measured, in the place the composition gives it, under the same run kind, contract, tool, repository, scope and run-wide findings.
-A shard the composition names and nobody gave is `unaudited`, and a shard given that the report was not merged from is refused, so the two steps together vouch for the whole and neither vouches for more than it read.
+`cargo xtask proofaudit <merged-report> --shard <shard> … --traces <directory>` then re-decides each shard against its recording under `<directory>/<its run>` — the layout `.njutest/trace` already has — and holds the merged report to them, each violation named by the `MergeRule` it breaks:
+the composition is one division of the catalog, every shard of one count once and in order (`division`); every build holds one part per shard (`parts`); each shard sits where its document says it measured (`placement`); the report is measured under what each shard was (`agreement`) and holds the builds each measured (`builds`); each part is byte for byte the part its shard measured (`bytes`); the merged run is none of its inputs (`identity`); a merge completes no model batch (`models`); and every shard, re-decided on its own, holds (`shards`), whose own remarks are carried under its run.
+Each rule has a defect planted for it that the gate must find by name before any run is read.
+A shard the composition names and nobody gave is `unaudited`, a shard given twice or one the report was not merged from is refused, and what only the whole catalog decides is `unaudited` in each shard, since a merged report stores none of it and its reader derives it.
 This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked whether it agrees with itself.
 

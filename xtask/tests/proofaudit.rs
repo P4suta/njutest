@@ -2017,10 +2017,20 @@ fn a_part_of_a_catalog_is_not_held_to_whether_a_target_noticed_anything() {
     );
     let audit = audited_with(&document, &never_noticed());
     assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Hollow
+                && remark.standing == Standing::Unaudited
+                && remark.detail.contains("when they are merged")),
+        "leaving it to the merge is said, not done in silence: {:?}",
+        audit.remarks
+    );
+    assert!(
         !audit
             .remarks
             .iter()
-            .any(|remark| remark.layer == Layer::Hollow),
+            .any(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Violated),
         "whether a target notices anything is a statement about the whole catalog, \
          and a part has seen a slice: demanding a finding here would demand one the \
          whole would contradict: {:?}",
@@ -2271,57 +2281,150 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
     );
 }
 
-#[test]
-fn a_shard_document_is_re_decided_as_the_one_part_it_measured() {
-    let (_, shards) = sentinel::sharded(&base(), 2).expect("the specimen divides");
-    let first = shards.first().expect("a first shard");
-    let directory = run_directory(first);
-    let audit = gates::proofaudit(directory.path(), None).expect("a shard is read as its part");
-    assert_eq!(audit.mutants, 1, "{audit}");
-    assert_eq!(audit.run_id, format!("{RUN}-s1"), "{audit}");
+fn laid_sharded(perturbation: &sentinel::Perturbation) -> sentinel::Laid {
+    perturbation
+        .lay()
+        .expect("the sharded specimen is laid out")
 }
 
-fn merge_audit(
-    merged: &serde_json::Value,
-    shards: &[serde_json::Value],
-) -> Result<Audit, AuditError> {
-    let run = run_directory(merged);
-    let laid: Vec<tempfile::TempDir> = shards.iter().map(run_directory).collect();
-    let paths: Vec<std::path::PathBuf> = laid.iter().map(|one| one.path().to_path_buf()).collect();
-    gates::proofaudit_merged(run.path(), &paths)
+fn merge_audit(perturbation: &sentinel::Perturbation) -> Result<Audit, AuditError> {
+    let laid = laid_sharded(perturbation);
+    let shards: Vec<std::path::PathBuf> =
+        laid.shards().into_iter().map(Path::to_path_buf).collect();
+    gates::proofaudit_merged(laid.run(), &shards, laid.traces())
+}
+
+fn merge_violations(perturbation: &sentinel::Perturbation) -> Vec<String> {
+    match merge_audit(perturbation) {
+        Ok(audit) => audit
+            .remarks
+            .iter()
+            .filter(|remark| remark.standing == Standing::Violated)
+            .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+            .collect(),
+        Err(error) => vec![format!("refused: {error}")],
+    }
+}
+
+fn sharded() -> sentinel::Perturbation {
+    sentinel::sharded_clean().expect("the specimen is measured in shards")
+}
+
+#[test]
+fn a_shard_document_is_re_decided_against_its_own_recording_as_the_one_part_it_measured() {
+    let laid = laid_sharded(&sharded());
+    let first = laid.shards().into_iter().next().expect("a first shard");
+    let trace = laid
+        .traces()
+        .expect("the shards' recordings")
+        .join(format!("{}-s1", sentinel::MERGED));
+    let audit = gates::proofaudit(first, Some(&trace)).expect("a shard is read as its part");
+    assert_eq!(audit.violations(), 0, "{audit}");
+    assert_eq!(audit.mutants, 1, "{audit}");
+    assert_eq!(audit.run_id, format!("{}-s1", sentinel::MERGED), "{audit}");
 }
 
 #[test]
 fn a_merged_report_is_held_to_every_shard_it_names_and_says_which_it_could_not_see() {
-    let (merged, shards) = sentinel::sharded(&base(), 2).expect("the specimen divides");
-    let whole = merge_audit(&merged, &shards).expect("the merge is read with its shards");
+    let clean = sharded();
+    let whole = merge_audit(&clean).expect("the merge is read with its shards");
     assert_eq!(whole.violations(), 0, "{whole}");
     assert_eq!(whole.mutants, 2, "{whole}");
-    let half = merge_audit(&merged, shards.get(..1).expect("one shard"))
-        .expect("the merge is read with one shard");
+    let mut half = clean.clone();
+    half.shards.truncate(1);
+    let half = merge_audit(&half).expect("the merge is read with one shard");
     assert!(
         half.remarks
             .iter()
             .any(|remark| remark.layer == Layer::Merge
                 && remark.standing == Standing::Unaudited
-                && remark.subject == format!("{RUN}-s2")),
+                && remark.subject == format!("{}-s2", sentinel::MERGED)),
         "a shard the report names and nobody gave is unaudited, not agreed: {half}"
     );
-    let alone = run_directory(&merged);
+    let alone = run_directory(&clean.document);
     let error = gates::proofaudit(alone.path(), None).expect_err("two parts are not one");
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
 }
 
 #[test]
 fn a_shard_the_report_was_not_merged_from_is_refused_rather_than_ignored() {
-    let (merged, mut shards) = sentinel::sharded(&base(), 2).expect("the specimen divides");
-    merge(
-        shards.get_mut(1).expect("a second shard"),
-        serde_json::json!({ "report": { "run_id": "20260906T101500Z-stranger" } }),
-    );
-    let error = merge_audit(&merged, &shards).expect_err("a stranger is not a part");
+    let mut stranger = sharded();
+    if let Some(shard) = stranger.shards.get_mut(1) {
+        merge(
+            &mut shard.document,
+            serde_json::json!({ "report": { "run_id": "20260906T101500Z-stranger" } }),
+        );
+    }
+    let error = merge_audit(&stranger).expect_err("a stranger is not a part");
     assert!(
         matches!(error, AuditError::ShardNotMerged { .. }),
         "{error}"
+    );
+}
+
+#[test]
+fn a_shard_given_twice_is_refused_rather_than_counted_once() {
+    let mut twice = sharded();
+    let first = twice.shards.first().cloned().expect("a first shard");
+    twice.shards.insert(0, first);
+    let error = merge_audit(&twice).expect_err("the same shard twice is an operator's mistake");
+    assert!(
+        matches!(error, AuditError::ShardGivenTwice { .. }),
+        "{error}"
+    );
+}
+
+#[test]
+fn only_a_merge_is_held_to_shards_and_only_a_shard_is_given_as_one() {
+    let clean = sharded();
+    let mut direct = clean.clone();
+    direct.document = sentinel::complete_report(&base()).expect("the specimen completes");
+    let error = merge_audit(&direct).expect_err("a report measured whole is no merge");
+    assert!(matches!(error, AuditError::NotMerged { .. }), "{error}");
+    let mut impostor = clean;
+    if let Some(shard) = impostor.shards.get_mut(1) {
+        shard.document = sentinel::complete_report(&base()).expect("the specimen completes");
+    }
+    let error = merge_audit(&impostor).expect_err("a complete report is not a shard");
+    assert!(matches!(error, AuditError::NotAShard { .. }), "{error}");
+}
+
+#[test]
+fn every_rule_of_a_merge_is_refused_by_name_where_its_plant_breaks_it() {
+    for rule in xtask::proofaudit::merge::MergeRule::ALL {
+        let plant = sentinel::merge_plant(rule).expect("a plant for every rule");
+        let said = merge_violations(&plant);
+        let prefix = format!("{}: ", rule.label());
+        assert!(
+            said.iter().any(|line| line.contains(&prefix)),
+            "`{}` must draw a {} violation: {said:?}",
+            plant.name,
+            rule.label()
+        );
+    }
+}
+
+#[test]
+fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_shard() {
+    let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/sharded-run");
+    let mut shards: Vec<std::path::PathBuf> = std::fs::read_dir(recorded.join("runs"))
+        .expect("the recorded shards")
+        .map(|entry| entry.expect("a readable shard").path())
+        .collect();
+    shards.sort();
+    let audit = gates::proofaudit_merged(
+        &recorded.join("merged.json"),
+        &shards,
+        Some(&recorded.join("traces")),
+    )
+    .expect("a real merge is read with its shards");
+    assert_eq!(audit.violations(), 0, "{audit}");
+    assert_eq!(audit.mutants, 4, "{audit}");
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Merge && remark.standing == Standing::Unaudited),
+        "every shard the merge names was given and re-decided: {audit}"
     );
 }

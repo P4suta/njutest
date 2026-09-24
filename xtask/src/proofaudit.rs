@@ -82,6 +82,21 @@ pub enum AuditError {
         /// The document.
         path: String,
     },
+    /// One shard was given more than once.
+    #[error("shard {run_id} was given more than once")]
+    ShardGivenTwice {
+        /// The run it names.
+        run_id: String,
+    },
+    /// The document is on its published schema and not one this audit can read into the two documents that schema describes.
+    #[error("{path}: on its schema and not a document this audit reads: {source}")]
+    Unshaped {
+        /// The document.
+        path: String,
+        /// What serde said.
+        #[source]
+        source: serde_json::Error,
+    },
     /// A shard was given that the merged report does not name.
     #[error("{path}: shard {run_id} is not one the report was merged from")]
     ShardNotMerged {
@@ -674,6 +689,13 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
     };
     held_to_records(&derived, &recorded, &mut notes);
     if recording.shard.is_some() {
+        notes.unaudited(
+            "drift",
+            "this shard does not hold the whole catalog, so which moved targets are owed \
+             unstable-baseline and which unmeasured ones drift-not-measured is decided over the \
+             combined parts when they are merged"
+                .to_owned(),
+        );
         return;
     }
     held_to_findings(recording, &derived, &mut notes);
@@ -1721,6 +1743,12 @@ fn model_columns(recording: &Recording<'_>, notes: &mut Notes<'_>) {
 fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Hollow);
     if recording.shard.is_some() {
+        notes.unaudited(
+            "hollow",
+            "this shard does not hold the whole catalog, so which targets answered about a \
+             mutation and noticed none is decided over the combined parts when they are merged"
+                .to_owned(),
+        );
         return;
     }
     let Some(routing) = routing else {
