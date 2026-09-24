@@ -205,6 +205,7 @@ enum Ending {
 /// Records that the interpreter ended without a test result, which says nothing about the suite.
 fn ran_no_test(interpreted: &mut Interpreted, said: &str) {
     interpreted.executed = false;
+    let read = reading(said);
     let last = said
         .lines()
         .map(str::trim)
@@ -217,7 +218,10 @@ fn ran_no_test(interpreted: &mut Interpreted, said: &str) {
         crate::limitation::MIRI_RAN_NO_TEST,
         &format!(
             "the interpreter ended without a test result that says a test failed or every one \
-             passed, so its status is its own trouble and not the suite's; {last}"
+             passed, so its status is its own trouble and not the suite's; it started {} test \
+             binaries and gave {} results, and {last}",
+            read.started,
+            read.results.len()
         ),
     ));
     interpreted.findings.push(Finding {
@@ -232,11 +236,9 @@ fn ran_no_test(interpreted: &mut Interpreted, said: &str) {
     });
 }
 
-/// How one test binary the interpreter started came out.
+/// What one result the interpreter gave said a test binary came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ended {
-    /// It gave no result.
-    Unfinished,
     /// Every test of it passed.
     Passed,
     /// A test of it failed.
@@ -246,8 +248,10 @@ enum Ended {
 /// What one interpreter run said, read by the structure of its output rather than a phrase anywhere in it.
 #[derive(Debug, Default)]
 struct Reading {
-    /// Every binary it started, in order, and how each ended.
-    binaries: Vec<Ended>,
+    /// How many binaries it started.
+    started: usize,
+    /// How each result it gave said a binary ended, in whatever order the streams interleaved.
+    results: Vec<Ended>,
     /// The first diagnostic that found undefined behaviour.
     undefined: Option<String>,
     /// The first diagnostic that could not interpret something.
@@ -256,7 +260,7 @@ struct Reading {
     absent: bool,
 }
 
-/// `said` read line by line: a test's captured output skipped, each binary held to the one result that follows it, and diagnostics taken only where the interpreter or the toolchain speaks.
+/// `said` read line by line: a test's captured output skipped, binaries and results counted apart since cargo and libtest write them to different streams, and diagnostics taken only where the interpreter or the toolchain speaks.
 fn reading(said: &str) -> Reading {
     let mut read = Reading::default();
     let mut captured = false;
@@ -272,15 +276,11 @@ fn reading(said: &str) -> Reading {
         }
         let spoken = line.trim_start();
         if BINARY.iter().any(|start| spoken.starts_with(start)) {
-            read.binaries.push(Ended::Unfinished);
+            read.started = read.started.saturating_add(1);
             continue;
         }
         if let Some(ended) = spoken.strip_prefix(RESULT).and_then(summary) {
-            if let Some(last) = read.binaries.last_mut()
-                && *last == Ended::Unfinished
-            {
-                *last = ended;
-            }
+            read.results.push(ended);
             continue;
         }
         let after_test = spoken
@@ -402,9 +402,10 @@ fn read(said: &str, ending: Ending) -> Interpreted {
         });
         return interpreted;
     }
-    let failed = read.binaries.contains(&Ended::Failed);
-    let passed =
-        !read.binaries.is_empty() && read.binaries.iter().all(|ended| *ended == Ended::Passed);
+    let failed = read.results.contains(&Ended::Failed);
+    let passed = read.started > 0
+        && read.results.len() == read.started
+        && read.results.iter().all(|ended| *ended == Ended::Passed);
     match ending {
         Ending::Failed if failed => interpreted.findings.push(Finding {
             kind: FindingKind::FailingTest,

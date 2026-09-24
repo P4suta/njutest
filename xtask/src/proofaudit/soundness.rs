@@ -208,8 +208,10 @@ enum Place {
 /// What the interpreter and the toolchain said in one output, and what each binary came to.
 #[derive(Debug, Default)]
 struct Heard {
-    /// For each binary started, in order: nothing yet, or whether a test of it failed.
-    results: Vec<Option<Outcome>>,
+    /// How many binaries were started.
+    started: usize,
+    /// How each result given said a binary came out, in whatever order cargo's and libtest's streams interleaved.
+    outcomes: Vec<Outcome>,
     /// Whether a diagnostic found undefined behaviour.
     undefined: bool,
     /// Whether a diagnostic could not interpret something.
@@ -244,13 +246,12 @@ impl Heard {
     /// One line outside any captured output.
     fn line(&mut self, line: &str) {
         if BINARY.iter().any(|start| line.starts_with(start)) {
-            self.results.push(None);
+            self.started = self.started.saturating_add(1);
             return;
         }
         if let Some(rest) = line.strip_prefix(RESULT) {
-            if let (Some(outcome), Some(slot @ None)) = (summarised(rest), self.results.last_mut())
-            {
-                *slot = Some(outcome);
+            if let Some(outcome) = summarised(rest) {
+                self.outcomes.push(outcome);
             }
             return;
         }
@@ -278,12 +279,13 @@ impl Heard {
         if self.unsupported {
             return Came::Unsupported;
         }
-        let failed = self.results.contains(&Some(Outcome::Failed));
-        let every_passed = !self.results.is_empty()
+        let failed = self.outcomes.contains(&Outcome::Failed);
+        let every_passed = self.started > 0
+            && self.outcomes.len() == self.started
             && self
-                .results
+                .outcomes
                 .iter()
-                .all(|result| *result == Some(Outcome::Passed));
+                .all(|outcome| *outcome == Outcome::Passed);
         match code {
             Some(0) if every_passed => Came::Passed,
             Some(code) if code != 0 && failed => Came::Failed,
