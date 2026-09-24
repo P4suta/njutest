@@ -1391,7 +1391,7 @@ fn run_mutation(
     model.capture(session, &mutation.judged, tree_written)?;
     record(mutating.report, &mutation, &accepted.ids)?;
     mutating.report.findings.extend(accepted.findings);
-    let concurrency = super::concurrency::recorded(session, &mutating.request.test_args);
+    let concurrency = super::concurrency::recorded(session, &mutating.request.test_args)?;
     mutating
         .report
         .limitations

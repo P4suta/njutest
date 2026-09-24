@@ -181,7 +181,8 @@ fn a_package_is_read_whole_outside_its_build_output_and_what_cannot_be_read_is_n
         ("pkg@1.0.0", false),
         root,
         (&[], &njutest::concurrency::read::Compiled::default()),
-    );
+    )
+    .expect("nothing ran short");
     let places: Vec<(&str, usize)> = scan
         .found
         .iter()
@@ -312,7 +313,8 @@ fn a_file_the_compiler_read_is_scanned_wherever_it_lives() {
         ("pkg@1.0.0", false),
         &root,
         (&["pkg".to_owned()], &compiled),
-    );
+    )
+    .expect("nothing ran short");
     let files: std::collections::BTreeSet<&str> = scan
         .found
         .iter()
@@ -343,7 +345,8 @@ fn a_build_script_that_asks_the_linker_for_a_library_links_native_code() {
         ("pkg@1.0.0", false),
         &root,
         (&["pkg".to_owned()], &compiled),
-    );
+    )
+    .expect("nothing ran short");
     assert!(
         scan.links,
         "an object a build script links can start a thread from its constructor with no \
@@ -377,7 +380,8 @@ fn a_file_read_as_data_is_not_a_source_and_one_read_as_code_is() {
         ("pkg@1.0.0", false),
         &root,
         (&["pkg".to_owned()], &compiled),
-    );
+    )
+    .expect("nothing ran short");
     assert!(
         scan.found.is_empty() && scan.unread.is_empty(),
         "a README a crate documents itself with is data the compiler read, not code: {scan:?}"
@@ -402,9 +406,158 @@ fn a_file_read_as_data_is_not_a_source_and_one_read_as_code_is() {
         ("pkg@1.0.0", false),
         &root,
         (&["pkg".to_owned()], &compiled),
-    );
+    )
+    .expect("nothing ran short");
     assert!(
         scan.found.iter().any(|(path, _found)| path == "gen.in"),
         "while a file `include!` pulls in is code, whatever it is named: {scan:?}"
+    );
+}
+
+fn quiet_package(dir: &std::path::Path) -> std::path::PathBuf {
+    let root = dir.join("pkg");
+    std::fs::create_dir_all(root.join("src")).expect("created");
+    std::fs::write(root.join("src/lib.rs"), "pub fn quiet() {}\n").expect("written");
+    root
+}
+
+fn scanned_against(root: &std::path::Path, target: &std::path::Path) -> PackageScan {
+    let compiled = njutest::concurrency::read::Compiled::read(target).expect("nothing ran short");
+    njutest::concurrency::read::compiled_directory(
+        ("pkg@1.0.0", false),
+        root,
+        (&["pkg".to_owned()], &compiled),
+    )
+    .expect("nothing ran short")
+}
+
+#[test]
+fn what_the_compiler_read_is_taken_from_the_dependency_files_of_the_build() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = quiet_package(dir.path());
+    let generated = dir.path().join("out/gen.rs");
+    std::fs::create_dir_all(generated.parent().expect("a parent")).expect("created");
+    std::fs::write(&generated, "pub fn g() { std::thread::spawn(|| {}); }\n").expect("written");
+    let deps = dir.path().join("target/debug/deps");
+    std::fs::create_dir_all(&deps).expect("created");
+    std::fs::write(
+        deps.join("pkg-0123abcd.d"),
+        format!(
+            "{}: {} {}\n",
+            deps.join("libpkg-0123abcd.rlib").display(),
+            root.join("src/lib.rs").display(),
+            generated.display()
+        ),
+    )
+    .expect("written");
+    let scan = scanned_against(&root, &dir.path().join("target"));
+    assert!(
+        scan.found
+            .iter()
+            .any(|(path, _)| path.ends_with("out/gen.rs"))
+            && scan.unread.is_empty(),
+        "the file the dependency file lists is read: {scan:?}"
+    );
+}
+
+#[test]
+fn a_build_with_no_dependency_file_proves_nothing_about_what_it_compiled() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = quiet_package(dir.path());
+    std::fs::create_dir_all(dir.path().join("target/debug/deps")).expect("created");
+    let scan = scanned_against(&root, &dir.path().join("target"));
+    assert!(
+        !scan.unread.is_empty(),
+        "with no dependency file, nothing says which files outside the package the compiler \
+         read, so the package cannot be said to start nothing: {scan:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dependency_file_that_cannot_be_read_leaves_its_crate_unread() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = quiet_package(dir.path());
+    let deps = dir.path().join("target/debug/deps");
+    std::fs::create_dir_all(&deps).expect("created");
+    let sealed = deps.join("pkg-0123abcd.d");
+    std::fs::write(&sealed, "x: y\n").expect("written");
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).expect("sealed");
+    let scan = scanned_against(&root, &dir.path().join("target"));
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o600)).expect("unsealed");
+    assert!(
+        scan.unread
+            .iter()
+            .any(|path| path.ends_with("pkg-0123abcd.d")),
+        "a dependency file that exists and cannot be read hides what its crate compiled, so it \
+         is named as unread rather than read as a list of nothing: {scan:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_build_script_output_that_cannot_be_read_is_taken_to_link() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = quiet_package(dir.path());
+    let deps = dir.path().join("target/debug/deps");
+    std::fs::create_dir_all(&deps).expect("created");
+    std::fs::write(
+        deps.join("pkg-0123abcd.d"),
+        format!("x: {}\n", root.join("src/lib.rs").display()),
+    )
+    .expect("written");
+    let run = dir.path().join("target/debug/build/pkg-4567cdef");
+    std::fs::create_dir_all(&run).expect("created");
+    let sealed = run.join("output");
+    std::fs::write(&sealed, "cargo:rustc-link-lib=ctor\n").expect("written");
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).expect("sealed");
+    let scan = scanned_against(&root, &dir.path().join("target"));
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o600)).expect("unsealed");
+    assert!(
+        scan.links,
+        "what a build script told the linker cannot be read, so it may have linked native code: \
+         {scan:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_machine_out_of_file_descriptors_is_an_error_and_never_an_unread_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = quiet_package(dir.path());
+    let deps = dir.path().join("target/debug/deps");
+    std::fs::create_dir_all(&deps).expect("created");
+    std::fs::write(
+        deps.join("pkg-0123abcd.d"),
+        format!("x: {}\n", root.join("src/lib.rs").display()),
+    )
+    .expect("written");
+    let compiled =
+        njutest::concurrency::read::Compiled::read(&dir.path().join("target")).expect("read");
+    let open = std::fs::read_dir("/dev/fd")
+        .expect("the open descriptors")
+        .count();
+    let before = rustix::process::getrlimit(rustix::process::Resource::Nofile);
+    rustix::process::setrlimit(
+        rustix::process::Resource::Nofile,
+        rustix::process::Rlimit {
+            current: Some(u64::try_from(open).expect("a small count")),
+            maximum: before.maximum,
+        },
+    )
+    .expect("the limit lowers");
+    let read = njutest::concurrency::read::compiled_directory(
+        ("pkg@1.0.0", false),
+        &root,
+        (&["pkg".to_owned()], &compiled),
+    );
+    rustix::process::setrlimit(rustix::process::Resource::Nofile, before).expect("restored");
+    assert!(
+        read.is_err(),
+        "a file that could not be opened because the process ran out of descriptors says nothing \
+         about the file, and whether a binary is proven cannot depend on how many read at once: \
+         {read:?}"
     );
 }

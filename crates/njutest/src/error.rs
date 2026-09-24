@@ -226,6 +226,12 @@ code!(
     "run it again; a worker panic or poisoned coordination lock is never recovered as ordinary state"
 );
 code!(
+    SOURCES_UNREADABLE,
+    "NJ7005",
+    "the run ran out of descriptors or memory while reading the sources a proof rests on",
+    "raise the open-file limit or free memory and run it again; what could not be opened is not known to be unreadable"
+);
+code!(
     PHASE_OUTPUT_UNREADABLE,
     "NJ7004",
     "an assurance phase printed output that is not valid UTF-8",
@@ -338,6 +344,9 @@ pub enum RunnerError {
     /// Measurements could not be scheduled without trusting state interrupted by a panic.
     #[error(transparent)]
     Schedule(#[from] crate::assure::schedule::ScheduleError),
+    /// The sources a proof rests on could not be read just now.
+    #[error(transparent)]
+    Sources(#[from] crate::concurrency::read::SourceReadError),
     /// Equivalence answers could not be correlated without ambiguity.
     #[error("{}: {source}", REPORT_UNSOUND.code)]
     Equivalence {
@@ -426,6 +435,7 @@ impl RunnerError {
             Self::PhaseOutput { .. } => PHASE_OUTPUT_UNREADABLE,
             Self::Model { .. } => MODEL_PHASE_FAILED,
             Self::Schedule(_) => SCHEDULER_UNUSABLE,
+            Self::Sources(error) => error.code(),
             Self::Blind { .. } => SENTINEL_BLIND,
             Self::Resource(error) => error.code(),
             Self::Report(error) => error.code(),
@@ -488,6 +498,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         MODEL_PHASE_FAILED,
         SCHEDULER_UNUSABLE,
         PHASE_OUTPUT_UNREADABLE,
+        SOURCES_UNREADABLE,
         SCRATCH_UNUSABLE,
         CACHE_UNUSABLE,
         CACHE_CORRUPT,

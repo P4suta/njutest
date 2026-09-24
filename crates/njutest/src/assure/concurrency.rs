@@ -6,15 +6,18 @@
 use std::collections::BTreeMap;
 
 use crate::concurrency::proof::{Evidence, Harness, PackageScan, Reach, standing, threads_of};
+use crate::concurrency::read::SourceReadError;
 use crate::report::concurrency::ConcurrencyRecord;
 use rust_mutants::execute::TargetKind;
 
 /// One record per test binary the session measured, in binary order, each package of every closure read once; `harness_args` are what every libtest binary was run with.
-#[must_use]
+///
+/// # Errors
+/// [`SourceReadError::Exhausted`] where the process ran out of descriptors or memory while reading.
 pub fn recorded(
     session: &rust_mutants::session::Session,
     harness_args: &[String],
-) -> Vec<ConcurrencyRecord> {
+) -> Result<Vec<ConcurrencyRecord>, SourceReadError> {
     let threads = threads_of(harness_args);
     let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
@@ -41,7 +44,7 @@ pub fn recorded(
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
-    let compiled = crate::concurrency::read::Compiled::read(session.target_dir());
+    let compiled = crate::concurrency::read::Compiled::read(session.target_dir())?;
     let mut read: BTreeMap<String, PackageScan> = BTreeMap::new();
     binaries
         .into_iter()
@@ -58,15 +61,15 @@ pub fn recorded(
             });
             for id in &closure {
                 if !read.contains_key(id) {
-                    let scan = metadata.package(id).map_or_else(
-                        || PackageScan {
+                    let scan = match metadata.package(id) {
+                        Some(package) => crate::concurrency::read::package(package, &compiled)?,
+                        None => PackageScan {
                             package: id.clone(),
                             links: false,
                             found: Vec::new(),
                             unread: vec!["Cargo.toml".to_owned()],
                         },
-                        |package| crate::concurrency::read::package(package, &compiled),
-                    );
+                    };
                     read.insert(id.clone(), scan);
                 }
             }
@@ -80,14 +83,14 @@ pub fn recorded(
                 Some(recorded) if recorded.reached.loose.is_empty() => Reach::OnItsTests,
                 Some(_) => Reach::OffItsTests,
             };
-            ConcurrencyRecord {
+            Ok(ConcurrencyRecord {
                 standing: standing(Evidence {
                     reach,
                     harness,
                     packages: &packages,
                 }),
                 target: binary,
-            }
+            })
         })
         .collect()
 }
