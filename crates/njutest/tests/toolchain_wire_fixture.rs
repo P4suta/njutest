@@ -102,15 +102,77 @@ fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
          run reports it could not attribute, the suite on this machine was already failing \
          without a fault, so what moved is the machine. Rewriting the block would then \
          write that machine into the oracle.\ncould not attribute: {}\n\n\
-         what the run said it could not do:\n{}\n",
+         what the run said it could not do:\n{}\n\n\
+         where each exchange the orders test made stopped, from the run's recorded output:\n{}\n",
         stated
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<String>>()
             .join("\n"),
         could_not_attribute.unwrap_or_else(|| "(nothing said so)".to_owned()),
-        every_absence(&report).join("\n")
+        every_absence(&report).join("\n"),
+        stages(fixture.root()).join("\n")
     );
+}
+
+/// Every place the fixture's orders test said an exchange stopped, from what the run recorded of each target it ran.
+fn stages(root: &Path) -> Vec<String> {
+    let mut said = Vec::new();
+    let mut pending = vec![root.join(".njutest").join("trace")];
+    while let Some(directory) = pending.pop() {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) => {
+                said.push(format!("(could not read {}: {error})", directory.display()));
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    said.push(format!("(could not list {}: {error})", directory.display()));
+                    continue;
+                }
+            };
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => pending.push(path),
+                Ok(_file) => match std::fs::read_to_string(&path) {
+                    Ok(text) => said.extend(
+                        text.lines()
+                            .filter(|line| {
+                                line.contains("left: Err(") || line.contains("left: Ok(")
+                            })
+                            .map(|line| format!("{}\t{}", line.trim(), path.display())),
+                    ),
+                    Err(error) => {
+                        said.push(format!("(could not read {}: {error})", path.display()));
+                    }
+                },
+                Err(error) => said.push(format!("(could not inspect {}: {error})", path.display())),
+            }
+        }
+    }
+    let mut by_stage: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for line in said {
+        let (stage, file) = line.split_once('\t').unwrap_or((line.as_str(), ""));
+        by_stage
+            .entry(stage.to_owned())
+            .or_default()
+            .push(file.to_owned());
+    }
+    if by_stage.is_empty() {
+        return vec!["(the recorded output named no stage)".to_owned()];
+    }
+    by_stage
+        .into_iter()
+        .map(|(stage, files)| {
+            let shown: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
+            format!("{stage} x{}: {}", files.len(), shown.join(", "))
+        })
+        .collect()
 }
 
 /// The copy's configuration, with the one thing a committed file cannot hold filled in.
