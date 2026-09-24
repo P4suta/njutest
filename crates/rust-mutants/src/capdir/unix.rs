@@ -168,14 +168,106 @@ pub(super) fn privacy(dir: &File) -> io::Result<Privacy> {
     if stat.st_uid != rustix::process::geteuid().as_raw() {
         return Ok(Privacy::ForeignOwner);
     }
-    let others = Mode::RWXG | Mode::RWXO;
-    if Mode::from_raw_mode(stat.st_mode).intersects(others) {
-        Ok(Privacy::Wider)
-    } else {
+    let permissions = Mode::from_raw_mode(stat.st_mode) & (Mode::all());
+    if permissions == Mode::RWXU {
         Ok(Privacy::OwnerOnly)
+    } else {
+        Ok(Privacy::Loose)
     }
 }
 
 pub(super) fn restrict_to_owner(dir: &File) -> io::Result<()> {
     rustix::fs::fchmod(dir, Mode::RWXU).map_err(io::Error::from)
+}
+
+pub(super) fn remove_contents(dir: &File) -> io::Result<()> {
+    let scan = open_dir_at_self(dir)?;
+    let mut listing = rustix::fs::Dir::read_from(&scan).map_err(io::Error::from)?;
+    while let Some(entry) = listing.read() {
+        let entry = entry.map_err(io::Error::from)?;
+        let held = entry.file_name();
+        if matches!(held.to_bytes(), b"." | b"..") {
+            continue;
+        }
+        remove_entry(dir, held)?;
+    }
+    sync(dir)
+}
+
+const fn same(a: &rustix::fs::Stat, b: &rustix::fs::Stat) -> bool {
+    a.st_dev == b.st_dev && a.st_ino == b.st_ino
+}
+
+fn remove_entry(dir: &File, held: &std::ffi::CStr) -> io::Result<()> {
+    let before =
+        rustix::fs::statat(dir, held, AtFlags::SYMLINK_NOFOLLOW).map_err(io::Error::from)?;
+    let aside = rename_aside(dir, held)?;
+    let after = rustix::fs::statat(dir, aside.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(io::Error::from)?;
+    if !same(&before, &after) {
+        return restore(dir, &aside, held);
+    }
+    if FileType::from_raw_mode(after.st_mode) == FileType::Directory {
+        let child = rustix::fs::openat(
+            dir,
+            aside.as_str(),
+            DIRECTORY | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(io::Error::from)?;
+        let opened = rustix::fs::fstat(&child).map_err(io::Error::from)?;
+        if !same(&opened, &after) {
+            return restore(dir, &aside, held);
+        }
+        remove_contents(&child)?;
+        let named = rustix::fs::statat(dir, aside.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io::Error::from)?;
+        if !same(&named, &opened) {
+            return Err(io::Error::other(
+                "a directory set aside for removal changed identity while it was emptied",
+            ));
+        }
+        rustix::fs::unlinkat(dir, aside.as_str(), AtFlags::REMOVEDIR).map_err(io::Error::from)
+    } else {
+        let named = rustix::fs::statat(dir, aside.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io::Error::from)?;
+        if !same(&named, &after) {
+            return Err(io::Error::other(
+                "an entry set aside for removal changed identity before it was removed",
+            ));
+        }
+        rustix::fs::unlinkat(dir, aside.as_str(), AtFlags::empty()).map_err(io::Error::from)
+    }
+}
+
+fn rename_aside(dir: &File, held: &std::ffi::CStr) -> io::Result<String> {
+    const ATTEMPTS: usize = 8;
+    for _attempt in 0..ATTEMPTS {
+        let mut token = [0_u8; 16];
+        getrandom::fill(&mut token).map_err(|error| {
+            io::Error::other(format!("no token to set an entry aside: {error}"))
+        })?;
+        let aside = format!(".capdir-remove-{}", hex::encode(token));
+        if held.to_bytes() == aside.as_bytes() {
+            continue;
+        }
+        match rustix::fs::renameat_with(dir, held, dir, aside.as_str(), RenameFlags::NOREPLACE) {
+            Ok(()) => return Ok(aside),
+            Err(rustix::io::Errno::EXIST) => {}
+            Err(errno) => return Err(io::Error::from(errno)),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("no free name to set an entry aside after {ATTEMPTS} attempts"),
+    ))
+}
+
+fn restore(dir: &File, aside: &str, held: &std::ffi::CStr) -> io::Result<()> {
+    rustix::fs::renameat_with(dir, aside, dir, held, RenameFlags::NOREPLACE)
+        .map_err(io::Error::from)?;
+    Err(io::Error::other(
+        "an entry changed identity as it was set aside, and was put back",
+    ))
 }

@@ -133,4 +133,66 @@ mod posix {
             "and not what it pointed at"
         );
     }
+
+    #[test]
+    fn owner_only_is_exactly_what_the_owner_needs_and_nothing_more() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = Dir::open(temp.path()).expect("the directory");
+        for (mode, expected) in [
+            (0o700, Privacy::OwnerOnly),
+            (0o500, Privacy::Loose),
+            (0o1700, Privacy::Loose),
+            (0o2700, Privacy::Loose),
+            (0o750, Privacy::Loose),
+            (0o701, Privacy::Loose),
+        ] {
+            std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(mode))
+                .expect("chmod");
+            assert_eq!(
+                dir.privacy().expect("privacy"),
+                expected,
+                "{mode:o}: owner-only is read, write and enter for the owner and no other bit"
+            );
+            if expected == Privacy::Loose {
+                dir.restrict_to_owner().expect("tightened");
+                assert_eq!(dir.privacy().expect("privacy"), Privacy::OwnerOnly);
+            }
+        }
+    }
+
+    #[test]
+    fn emptying_a_held_directory_removes_what_no_name_could_spell_and_follows_nothing() {
+        #[cfg(not(target_os = "macos"))]
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let elsewhere = tempfile::tempdir().expect("elsewhere");
+        std::fs::write(elsewhere.path().join("kept"), b"outside").expect("outside");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("model/deep")).expect("nested");
+        std::fs::write(root.join("model/deep/artifact"), b"a").expect("artifact");
+        std::fs::write(root.join("a:b"), b"colon").expect("colon");
+        std::fs::write(root.join("con"), b"device").expect("device");
+        #[cfg(not(target_os = "macos"))]
+        std::fs::write(
+            root.join(std::ffi::OsStr::from_bytes(b"not-utf8-\xff")),
+            b"bytes",
+        )
+        .expect("non-UTF-8, which APFS refuses to hold at all");
+        std::os::unix::fs::symlink(elsewhere.path(), root.join("link")).expect("link");
+        let dir = Dir::open(root).expect("the directory");
+        dir.remove_contents().expect("emptied");
+        assert_eq!(
+            std::fs::read_dir(root).expect("listing").count(),
+            0,
+            "every entry went, including those a Name refuses and one that is not UTF-8"
+        );
+        assert_eq!(
+            std::fs::read(elsewhere.path().join("kept")).expect("still there"),
+            b"outside",
+            "and a link was removed as a link, never followed"
+        );
+    }
 }

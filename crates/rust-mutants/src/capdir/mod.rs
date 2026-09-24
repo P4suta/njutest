@@ -121,8 +121,8 @@ pub struct Status {
 pub enum Privacy {
     /// This process's user owns it and nobody else may enter it.
     OwnerOnly,
-    /// This process's user owns it and somebody else may enter it.
-    Wider,
+    /// This process's user owns it, and its permissions are anything but read, write and enter for the owner alone.
+    Loose,
     /// Another user owns it.
     ForeignOwner,
 }
@@ -254,6 +254,17 @@ impl Dir {
         sys::privacy(&self.handle)
     }
 
+    /// Removes everything beneath this directory, leaving it empty and held.
+    ///
+    /// Each entry is renamed aside under a fresh name before it is removed, and is removed only if the aside name still holds what was renamed, so nothing another process put in its place is touched; a link is removed as a link.
+    /// Entries are handled by the names the platform holds, so one no [`Name`] could spell is removed too.
+    ///
+    /// # Errors
+    /// An entry cannot be renamed aside, changed identity, or cannot be removed.
+    pub fn remove_contents(&self) -> io::Result<()> {
+        sys::remove_contents(&self.handle)
+    }
+
     /// Takes every access but its owner's away from this directory.
     ///
     /// # Errors
@@ -336,6 +347,9 @@ mod sys {
         unsupported()
     }
     pub(super) fn restrict_to_owner(_dir: &File) -> io::Result<()> {
+        unsupported()
+    }
+    pub(super) fn remove_contents(_dir: &File) -> io::Result<()> {
         unsupported()
     }
     pub(super) fn file_status(_file: &File) -> io::Result<Status> {
