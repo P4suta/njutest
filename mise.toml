@@ -390,7 +390,7 @@ shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin njutest
-./target/release/njutest verify --locked --offline --ui=plain --trace "$@" || true
+./target/release/njutest verify --locked --offline --ui=plain --trace "$@" || case "$?" in 1 | 2) ;; *) exit 1 ;; esac
 run="$(ls -dt reports/runs/*/ | head -1)"
 trace="$(ls -dt .njutest/trace/*/ | head -1)"
 echo "re-deciding ${run} from ${trace}"
@@ -414,7 +414,7 @@ run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
 cargo build --release -p xtask
-./target/release/rust-mutants run --locked --offline --trace --jobs 4 "$@" || true
+./target/release/rust-mutants run --locked --offline --trace --jobs 4 "$@" || case "$?" in 1) ;; *) exit 1 ;; esac
 run="$(ls -dt reports/mutation/*/ 2>/dev/null | head -1)"
 if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
   echo "the run left no report to re-decide; read what it said above" >&2

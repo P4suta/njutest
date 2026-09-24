@@ -34,6 +34,15 @@ done < <(compgen -e)
 budget_seconds="${NJUTEST_PUSH_BUDGET_SECONDS:-600}"
 expected_seconds="${NJUTEST_PUSH_EXPECTED_SECONDS:-420}"
 
+# Sends SIGNAL to a job's process group, or to the job alone, only while one of them is still there to receive it.
+signal_live() {
+  if kill -0 "-$2" 2>/dev/null; then
+    kill "-$1" "-$2"
+  elif kill -0 "$2" 2>/dev/null; then
+    kill "-$1" "$2"
+  fi
+}
+
 within_budget() {
   local started elapsed job
   started=$(date +%s)
@@ -44,11 +53,12 @@ within_budget() {
   while kill -0 "${job}" 2>/dev/null; do
     elapsed=$(( $(date +%s) - started ))
     if (( elapsed >= budget_seconds )); then
-      kill -TERM "-${job}" 2>/dev/null || kill -TERM "${job}" 2>/dev/null || true
+      signal_live TERM "${job}"
       sleep 5
-      kill -KILL "-${job}" 2>/dev/null || kill -KILL "${job}" 2>/dev/null || true
-      wait "${job}" 2>/dev/null || true
-      echo "pre-push: the gate passed its ${budget_seconds}s budget and was stopped at ${elapsed}s" >&2
+      signal_live KILL "${job}"
+      stopped=0
+      wait "${job}" 2>/dev/null || stopped=$?
+      echo "pre-push: the gate passed its ${budget_seconds}s budget and was stopped at ${elapsed}s (status ${stopped})" >&2
       echo "pre-push: that is a report about the gate. Find what stopped being cached, or raise NJUTEST_PUSH_BUDGET_SECONDS in a commit that says why" >&2
       return 124
     fi
@@ -126,7 +136,9 @@ checkout="${TMPDIR:-/tmp}/njutest-pre-push-${key}/tree"
 
 cleanup() {
   if [[ -e "${checkout}/.git" ]]; then
-    git -C "${checkout}" restore --staged --worktree :/ >/dev/null 2>&1 || true
+    if ! git -C "${checkout}" restore --staged --worktree :/ >/dev/null 2>&1; then
+      echo "pre-push: the gate's tree could not be put back; the next push makes it again" >&2
+    fi
   fi
 }
 trap cleanup EXIT
@@ -168,8 +180,9 @@ require_exact_tree
 # `build` and `clippy` are not all of them: `lint` also runs `doc` and `fuzz:clippy`, each with fingerprints of its own, and those two left 600s of compiling inside a budget that was supposed to see none.
 # One pass that compiles and one that measures needs no list and cannot fall behind one.
 warming=$(date +%s)
-( cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check >/dev/null 2>&1 ) || true
-echo "pre-push: compiled in $(( $(date +%s) - warming ))s, which the budget does not count" >&2
+warmed=0
+( cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check >/dev/null 2>&1 ) || warmed=$?
+echo "pre-push: compiled in $(( $(date +%s) - warming ))s, which the budget does not count (warming pass status ${warmed}, decided by the pass below)" >&2
 
 within_budget bash -c 'cd "$1" && NJUTEST_COMMITTED_HEAD="$2" exec mise run check' _ "${checkout}" "${head}"
 # The tree is isolated and so is the cache, which is now warm because the path above no longer changes: the developer's own `target/debug` stays out of the answer, and the gate still does not recompile what the previous push compiled.
