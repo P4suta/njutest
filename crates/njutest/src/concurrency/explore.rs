@@ -35,39 +35,29 @@ pub enum Ended {
     Unsettled,
 }
 
-/// What delaying one site established, given the first delayed control and, where it failed, the two that repeat it and the one undelayed control run beside them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Delayed {
-    /// The tests passed with the site delayed.
-    Passed,
-    /// The tests fail with the site delayed, twice more, and pass without the delay: the schedule decides the verdict.
-    Broke {
-        /// The tests that failed, as the first delayed control named them.
-        failed: Vec<String>,
-    },
-    /// Nothing was established: a control was unsettled, a repeat passed, or the undelayed control failed too.
-    Undecided,
+/// How many rounds confirm a delayed failure: each a delayed control that fails exactly the same tests and an undelayed one that passes.
+///
+/// A test that fails at a rate `p` whatever the delay passes all of them with probability `p^6 (1-p)^5`, which is under one in a thousand at its worst.
+pub const CONFIRMING_ROUNDS: u32 = 5;
+
+/// Whether `delayed` fails exactly the tests `failed` names, in any order: the same failure again, not another.
+#[must_use]
+pub fn repeats(failed: &[String], delayed: &Ended) -> bool {
+    match delayed {
+        Ended::Failed(again) => {
+            let first: BTreeSet<&String> = failed.iter().collect();
+            let second: BTreeSet<&String> = again.iter().collect();
+            first == second
+        }
+        Ended::Passed | Ended::Unsettled => false,
+    }
 }
 
-/// What `first`, and where it failed `repeats` and `undelayed`, establish about one delayed site.
+/// Whether an undelayed control passed, which is what makes a delayed failure the delay's.
 #[must_use]
-pub fn delayed(first: &Ended, repeats: &[Ended], undelayed: Option<&Ended>) -> Delayed {
-    match first {
-        Ended::Passed => Delayed::Passed,
-        Ended::Unsettled => Delayed::Undecided,
-        Ended::Failed(failed) => {
-            let repeated = repeats.len() == 2
-                && repeats
-                    .iter()
-                    .all(|repeat| matches!(repeat, Ended::Failed(_)));
-            let clean = matches!(undelayed, Some(Ended::Passed));
-            if repeated && clean {
-                Delayed::Broke {
-                    failed: failed.clone(),
-                }
-            } else {
-                Delayed::Undecided
-            }
-        }
+pub const fn clean(undelayed: &Ended) -> bool {
+    match undelayed {
+        Ended::Passed => true,
+        Ended::Failed(_) | Ended::Unsettled => false,
     }
 }

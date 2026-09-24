@@ -2152,6 +2152,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         "limitations",
         "drift",
         "knobs",
+        "concurrency",
     ] {
         if let Some(value) = flat.get(key) {
             part.insert(key.to_owned(), value.clone());

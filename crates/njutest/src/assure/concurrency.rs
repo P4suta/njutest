@@ -6,25 +6,30 @@
 use std::collections::BTreeMap;
 
 use super::schedule::{self, ScheduleError};
-use crate::concurrency::explore::{Delayed, Ended, chosen, delayed};
-use crate::concurrency::proof::{Evidence, PackageScan, Reach, Standing, standing};
+use crate::concurrency::explore::{CONFIRMING_ROUNDS, Ended, chosen, clean, repeats};
+use crate::concurrency::proof::{
+    Evidence, Harness, PackageScan, Reach, Standing, Threads, standing, threads_of,
+};
 use crate::report::concurrency::{ConcurrencyRecord, Exploration, Unexplored};
+use rust_mutants::execute::TargetKind;
 use rust_mutants::session::{Conditions, Observing, Perturbation, Request};
 
 /// How long a delayed guard holds each thread that reaches it, once.
 pub const PAUSE_MS: u64 = 100;
 
-/// One record per test binary the session measured, in binary order, each package of every closure read once, at most `workers` at a time.
+/// One record per test binary the session measured, in binary order, each package of every closure read once, at most `workers` at a time; `harness_args` are what every libtest binary was run with.
 ///
 /// # Errors
 /// A reading worker panicked.
 pub fn recorded(
     session: &rust_mutants::session::Session,
-    workers: usize,
+    (harness_args, workers): (&[String], usize),
 ) -> Result<Vec<ConcurrencyRecord>, ScheduleError> {
-    let mut binaries: BTreeMap<String, (&str, bool)> = BTreeMap::new();
+    let threads = threads_of(harness_args);
+    let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
-        binaries.insert(target.id.clone(), (target.package.as_str(), target.harness));
+        let harness = harness_of(target, threads);
+        binaries.insert(target.id.clone(), (target.package.as_str(), harness));
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
@@ -46,13 +51,18 @@ pub fn recorded(
     let read = scans(metadata, &every, workers)?;
     Ok(binaries
         .into_iter()
-        .map(|(binary, (package, libtest))| {
+        .map(|(binary, (package, harness))| {
             let closure = closures.get(&binary).map_or(&[][..], Vec::as_slice);
-            let missing = closure.is_empty().then(|| unread_manifest(package));
+            let unread: Vec<PackageScan> = closure
+                .iter()
+                .filter(|id| !read.contains_key(*id))
+                .map(|id| unread_manifest(id))
+                .chain(closure.is_empty().then(|| unread_manifest(package)))
+                .collect();
             let packages: Vec<&PackageScan> = closure
                 .iter()
                 .filter_map(|id| read.get(id))
-                .chain(missing.iter())
+                .chain(unread.iter())
                 .collect();
             let reach = match touched.get(&binary) {
                 None => Reach::NotRecorded,
@@ -61,7 +71,7 @@ pub fn recorded(
             };
             let standing = standing(Evidence {
                 reach,
-                libtest,
+                harness,
                 packages: &packages,
             });
             let explored = match standing {
@@ -83,7 +93,9 @@ pub fn recorded(
         .collect())
 }
 
-/// Every package named in `ids` read once, at most `workers` at a time, by id; one the metadata does not hold is read as a package whose manifest was not read.
+/// Every package named in `ids` read once, at most `workers` at a time and never more than there are packages, by id.
+///
+/// One the metadata does not hold, or no answer came back for, is read as a package whose manifest was not read.
 ///
 /// # Errors
 /// A reading worker panicked.
@@ -92,12 +104,22 @@ pub fn scans(
     ids: &[&str],
     workers: usize,
 ) -> Result<BTreeMap<String, PackageScan>, ScheduleError> {
-    let read = schedule::measure(ids, workers, |_at, id| {
+    let read = schedule::measure(ids, workers.min(ids.len()), |_at, id| {
         metadata
             .package(id)
             .map_or_else(|| unread_manifest(id), crate::concurrency::read::package)
     })?;
-    Ok(ids.iter().map(|id| (*id).to_owned()).zip(read).collect())
+    let mut answers = read.into_iter();
+    Ok(ids
+        .iter()
+        .map(|id| {
+            let scan = match answers.next() {
+                Some(scan) => scan,
+                None => unread_manifest(id),
+            };
+            ((*id).to_owned(), scan)
+        })
+        .collect())
 }
 
 /// A package named `package` whose manifest was not read, which proves nothing about it.
@@ -107,6 +129,29 @@ fn unread_manifest(package: &str) -> PackageScan {
         links: false,
         found: Vec::new(),
         unread: vec!["Cargo.toml".to_owned()],
+    }
+}
+
+/// What runs `target`'s tests, when libtest runs them on `threads`.
+const fn harness_of(target: &rust_mutants::execute::TestTarget, threads: Threads) -> Harness {
+    match (target.kind, target.harness) {
+        (TargetKind::Doc, _) => Harness::Doctest,
+        (
+            TargetKind::Lib
+            | TargetKind::Bin
+            | TargetKind::Test
+            | TargetKind::Example
+            | TargetKind::ProcMacro,
+            true,
+        ) => Harness::Libtest(threads),
+        (
+            TargetKind::Lib
+            | TargetKind::Bin
+            | TargetKind::Test
+            | TargetKind::Example
+            | TargetKind::ProcMacro,
+            false,
+        ) => Harness::Other,
     }
 }
 
@@ -133,6 +178,7 @@ pub fn explored(
                 why: Unexplored::NotNeeded | Unexplored::NotPassing | Unexplored::NoSite,
             }
             | Exploration::Sampled { .. }
+            | Exploration::Undecided { .. }
             | Exploration::Broke { .. } => continue,
         }
         if !passing.contains(&record.target) {
@@ -151,62 +197,90 @@ pub fn explored(
             };
             continue;
         }
-        record.explored = schedules(session, &record.target, &chosen(&reached, explore), cancel)?;
+        record.explored = schedules(
+            session,
+            &record.target,
+            (&chosen(&reached, explore), explore),
+            cancel,
+        )?;
     }
     Ok(())
 }
 
-/// What delaying each of `sites` of `target` found: the first site that broke it, or every site delayed.
+/// What delaying each of `sites` of `target` found: the first site that broke it, or every site delayed and which of them settled nothing.
 fn schedules(
     session: &rust_mutants::session::Session,
     target: &str,
-    sites: &[u32],
+    (sites, asked): (&[u32], u32),
     cancel: &rust_mutants::runner::Cancel,
 ) -> Result<Exploration, rust_mutants::EngineError> {
     let mut undecided = Vec::new();
     for &site in sites {
-        let first = ended(session, target, Some(site), cancel)?;
-        let (repeats, undelayed) = match first {
-            Ended::Failed(_) => (
-                vec![
-                    ended(session, target, Some(site), cancel)?,
-                    ended(session, target, Some(site), cancel)?,
-                ],
-                Some(ended(session, target, None, cancel)?),
-            ),
-            Ended::Passed | Ended::Unsettled => (Vec::new(), None),
-        };
-        match delayed(&first, &repeats, undelayed.as_ref()) {
-            Delayed::Passed => {}
-            Delayed::Undecided => undecided.push(site),
-            Delayed::Broke { failed } => {
-                let (path, line) = session
-                    .catalog()
-                    .mutants()
-                    .iter()
-                    .find(|mutant| mutant.index == site)
-                    .map_or_else(
-                        || (String::new(), 0),
-                        |mutant| {
-                            (
-                                mutant.candidate.path.clone(),
-                                session.position(mutant).map_or(0, |position| position.line),
-                            )
-                        },
-                    );
-                return Ok(Exploration::Broke {
-                    site,
-                    path,
-                    line,
-                    failed,
-                });
+        match ended(session, target, Some(site), cancel)? {
+            Ended::Passed => {}
+            Ended::Unsettled => undecided.push(site),
+            Ended::Failed(failed) => {
+                let located = if confirmed(session, (target, site), &failed, cancel)? {
+                    located(session, site)
+                } else {
+                    None
+                };
+                match located {
+                    Some((path, line)) => {
+                        return Ok(Exploration::Broke {
+                            site,
+                            path,
+                            line,
+                            failed,
+                            rounds: CONFIRMING_ROUNDS,
+                        });
+                    }
+                    None => undecided.push(site),
+                }
             }
         }
     }
-    Ok(Exploration::Sampled {
-        delayed: sites.to_vec(),
-        undecided,
+    Ok(if undecided.is_empty() {
+        Exploration::Sampled {
+            asked,
+            delayed: sites.to_vec(),
+        }
+    } else {
+        Exploration::Undecided {
+            asked,
+            delayed: sites.to_vec(),
+            undecided,
+        }
     })
+}
+
+/// Whether every confirming round fails exactly `failed` with `site` delayed and passes without it, stopping at the first that does not.
+fn confirmed(
+    session: &rust_mutants::session::Session,
+    (target, site): (&str, u32),
+    failed: &[String],
+    cancel: &rust_mutants::runner::Cancel,
+) -> Result<bool, rust_mutants::EngineError> {
+    for _ in 0..CONFIRMING_ROUNDS {
+        if !repeats(failed, &ended(session, target, Some(site), cancel)?) {
+            return Ok(false);
+        }
+        if !clean(&ended(session, target, None, cancel)?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Where the guard at `site` is, or nothing where the catalog holds no such site, which a finding cannot then name.
+fn located(session: &rust_mutants::session::Session, site: u32) -> Option<(String, u32)> {
+    let mutant = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|mutant| mutant.index == site)?;
+    let line = session.position(mutant)?.line;
+    Some((mutant.candidate.path.clone(), line))
 }
 
 /// How one control of `target` ended, with the guard at `site` delayed or with nothing delayed.

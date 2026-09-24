@@ -1406,7 +1406,8 @@ fn concurrency_of(
         super::schedule::available()?,
         false,
     )?;
-    let mut concurrency = super::concurrency::recorded(session, workers)?;
+    let mut concurrency =
+        super::concurrency::recorded(session, (&mutating.request.test_args, workers))?;
     if mutating.report.scope.shard.is_none() {
         super::concurrency::explored(
             session,

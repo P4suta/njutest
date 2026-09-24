@@ -76,9 +76,12 @@ pub const SCHEDULE_NOT_EXPLORED: &str = "schedule-not-explored";
 /// A test binary passed every schedule a delayed guard made, which is a sample of its schedules and never all of them.
 pub const SCHEDULE_SAMPLED: &str = "schedule-sampled";
 
+/// A test binary no delay broke, where the controls of at least one delayed guard settled nothing.
+pub const SCHEDULE_UNDECIDED: &str = "schedule-undecided";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 24] = [
+pub const ALL: [&str; 25] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -103,4 +106,5 @@ pub const ALL: [&str; 24] = [
     KNOB_NOT_COMPARED,
     SCHEDULE_NOT_EXPLORED,
     SCHEDULE_SAMPLED,
+    SCHEDULE_UNDECIDED,
 ];

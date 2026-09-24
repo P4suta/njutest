@@ -2978,6 +2978,18 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "parallel-tests"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
             "kind",
             "package",
             "path",
@@ -3031,6 +3043,18 @@
           "properties": {
             "kind": {
               "const": "not-libtest"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "doctest"
             }
           }
         },
@@ -3188,12 +3212,42 @@
           "additionalProperties": false,
           "required": [
             "state",
+            "asked",
+            "delayed"
+          ],
+          "properties": {
+            "state": {
+              "const": "sampled"
+            },
+            "asked": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "delayed": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "asked",
             "delayed",
             "undecided"
           ],
           "properties": {
             "state": {
-              "const": "sampled"
+              "const": "undecided"
+            },
+            "asked": {
+              "type": "integer",
+              "minimum": 1
             },
             "delayed": {
               "type": "array",
@@ -3219,7 +3273,8 @@
             "site",
             "path",
             "line",
-            "failed"
+            "failed",
+            "rounds"
           ],
           "properties": {
             "state": {
@@ -3235,13 +3290,17 @@
             },
             "line": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 1
             },
             "failed": {
               "type": "array",
               "items": {
                 "type": "string"
               }
+            },
+            "rounds": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         }

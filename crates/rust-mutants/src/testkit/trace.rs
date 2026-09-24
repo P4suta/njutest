@@ -219,6 +219,7 @@ pub fn every_payload() -> Vec<Payload> {
                 outcome: "passed".to_owned(),
                 tests_run: Some(5),
                 duration_ms: 6,
+                args: vec!["--test-threads=1".to_owned()],
                 remembered: true,
                 retried: true,
             },
