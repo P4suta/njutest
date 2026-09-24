@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# 0026 — An item is entered where its body starts
+# 0027 — An item is entered where its body starts
 
 ## Status
 
