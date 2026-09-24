@@ -4285,6 +4285,8 @@ pub enum FindingKind {
     EnvironmentDependent,
     /// A target reached something else on a control started with something the contract lets differ between machines set differently, so every proof read off its baseline is unfounded where that differs.
     EnvironmentDependentReach,
+    /// A test binary that passed on its baseline failed, twice more, with one guard delayed, and passed again without the delay: its verdict depends on the schedule its threads get.
+    ScheduleDependent,
 }
 
 /// Which configured-build evidence raised a finding.
@@ -4324,6 +4326,7 @@ impl FindingKind {
             Self::UnstableBaseline => "unstable-baseline",
             Self::EnvironmentDependent => "environment-dependent",
             Self::EnvironmentDependentReach => "environment-dependent-reach",
+            Self::ScheduleDependent => "schedule-dependent",
         }
     }
 
@@ -4334,7 +4337,8 @@ impl FindingKind {
             Self::BuildFailure
             | Self::FailingTest
             | Self::UndefinedBehaviour
-            | Self::EnvironmentDependent => true,
+            | Self::EnvironmentDependent
+            | Self::ScheduleDependent => true,
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout

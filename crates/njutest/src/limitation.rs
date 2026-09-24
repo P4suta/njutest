@@ -73,9 +73,12 @@ pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 /// A test binary is not proven to run one thread, and no schedule of it was explored, so what it does when its threads interleave otherwise is not known.
 pub const SCHEDULE_NOT_EXPLORED: &str = "schedule-not-explored";
 
+/// A test binary passed every schedule a delayed guard made, which is a sample of its schedules and never all of them.
+pub const SCHEDULE_SAMPLED: &str = "schedule-sampled";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 23] = [
+pub const ALL: [&str; 24] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -99,4 +102,5 @@ pub const ALL: [&str; 23] = [
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
     SCHEDULE_NOT_EXPLORED,
+    SCHEDULE_SAMPLED,
 ];

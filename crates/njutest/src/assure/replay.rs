@@ -164,7 +164,8 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
         | FindingKind::WireUnnoticed
         | FindingKind::UnstableBaseline
         | FindingKind::EnvironmentDependent
-        | FindingKind::EnvironmentDependentReach => match outcome {
+        | FindingKind::EnvironmentDependentReach
+        | FindingKind::ScheduleDependent => match outcome {
             Measured::Survived => Outcome::Reproduced,
             Measured::Killed => Outcome::Resolved,
             Measured::NotRun

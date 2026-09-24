@@ -48,7 +48,7 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are fifteen kinds, and every report carries the stable name:
+There are sixteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -67,6 +67,7 @@ There are fifteen kinds, and every report carries the stable name:
 | `unstable-baseline` | a target reached something on an original-code control that it did not reach on its baseline, over the same passing tests | no |
 | `environment-dependent` | a target that passed on its baseline failed on a control started with a knob put | yes |
 | `environment-dependent-reach` | a target reached something else on a control started with a knob put, over the same passing tests | no |
+| `schedule-dependent` | a test binary failed with one guard delayed, twice more, and passed without the delay | yes |
 
 The last column is derived from the same closed `FindingKind` that decides the verdict.
 A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.
@@ -188,6 +189,8 @@ Every part carries `concurrency`, one `{ target, standing }` per test binary the
 `single-threaded` where the binary's baseline reached nothing off its tests' threads and no package of its closure can start a thread or runs native code;
 `concurrent` with every reason that holds in `because`, each `loose-reach` or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
 and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
+`explored` says what delaying its guards found, closed by `state`: `unexplored` with `why` (`not-needed` for a single-threaded binary, `not-asked`, `not-passing`, `no-site`), `sampled` with every guard `delayed` and those whose controls were `undecided`, or `broke` with the `site`, its `path` and `line`, and the tests that `failed`.
+A delay broke a binary only where its tests failed with the delay twice more and passed without it; the part then raises `schedule-dependent` about it, a defect, and a shard explores nothing.
 A part whose records name a binary twice or out of order is refused.
 
 A part states `schedule-not-explored` naming every binary that is not `single-threaded`: no schedule is explored yet, so each is a hole.

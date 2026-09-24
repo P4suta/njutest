@@ -261,6 +261,7 @@ And the working directory and the order of the tests are not knobs: cargo's cont
 A schedule is not something a run explores yet, so a suite whose tests race each other passes on the schedule it happened to get ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
 What a run does instead is prove, per test binary, where there is nothing to explore: its baseline reached no code off the threads its tests ran on, and no package in its dependency closure has a token that can start a thread, a task, a parallel iterator, a runtime, or a process, and none links native code or declares an `extern` block.
 Everything else is `schedule-not-explored`, naming the binaries in its closing list: `concurrent` where something says it can run more than one thread, and `not-proven` where something could not be looked at.
+Asked for with `[schedules] explore`, a run delays up to that many guards of each such binary whose baseline passed, one schedule each; a binary that passed every one is `schedule-sampled`, because a sample of its schedules is not all of them, and one a delay broke twice more while it passed without the delay is `schedule-dependent`.
 
 Three things follow and are not hidden.
 The scan reads tokens, not types, so a function of a user's own named `spawn`, or a word in a string, makes a binary concurrent that runs one thread; that is a hole the report states, never a proof it makes.

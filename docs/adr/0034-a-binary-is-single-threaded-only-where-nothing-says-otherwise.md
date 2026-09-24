@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-24.
-Implemented by `concurrency::scan` and `concurrency::proof`, by the `concurrency` record of every report part and the `schedule-not-explored` limitation.
+Implemented by `concurrency::scan`, `concurrency::proof` and `concurrency::explore`, by the runtime's delayed guard, by the `concurrency` record of every report part, the `schedule-dependent` finding, and the `schedule-not-explored` and `schedule-sampled` limitations.
 The first slice of dimension C, `concurrent-v1`: the proof layer, before any schedule is explored.
 
 ## Context
@@ -38,6 +38,15 @@ Reach alone cannot prove a binary single-threaded.
 3. **What is known to start a thread is said first.** A binary with a known spawn is `concurrent` even where something else of it could not be read, so the reason a reader acts on is not hidden behind the one they cannot.
 
 4. **A doctest binary is never proven.** Its code is a doc string the token scan does not read, and rustdoc runs it where no reach is recorded.
+
+5. **A schedule is one guard delayed.** Asked for with `[schedules] explore = N`, a run takes up to N guards the baseline of a binary not proven single-threaded reached, chosen by the SHA-256 of their index so they spread across the catalog the same way every run, and for each starts one control in which every thread pauses 100 ms the first time it reaches that guard (`RUST_MUTANTS_DELAY`, which only a control carries: the engine and the runtime both refuse it beside an active mutant).
+   The pause is bounded, one per thread per run, and the schedule is named by the guard a reader can go to, rather than by a seed nobody can read.
+
+6. **A broken schedule is believed only when it repeats and the clean control passes.** A delayed control that failed is run twice more with the same guard delayed, and once with nothing delayed; only when both repeats fail and the undelayed control passes is the binary `broke` at that guard, a `schedule-dependent` finding and a defect.
+   A control that ran past its bound under the pause, a repeat that passed, or an undelayed control that failed too settles nothing, and the guard is `undecided`.
+   A binary every delayed guard passed is `sampled`, named by `schedule-sampled`: a sample of its schedules is never all of them.
+   Only a whole run explores, since a shard's binaries are every part's.
+   The proofaudit concurrency layer holds a `broke` to three failing delayed controls the engine recorded at that guard, and a `sampled` to a delayed control for every guard it names.
 
 ## Consequences
 

@@ -1260,7 +1260,8 @@
             "wire-unnoticed",
             "unstable-baseline",
             "environment-dependent",
-            "environment-dependent-reach"
+            "environment-dependent-reach",
+            "schedule-dependent"
           ]
         },
         "subject": {
@@ -3142,7 +3143,8 @@
       "additionalProperties": false,
       "required": [
         "target",
-        "standing"
+        "standing",
+        "explored"
       ],
       "properties": {
         "target": {
@@ -3151,8 +3153,99 @@
         },
         "standing": {
           "$ref": "#/$defs/concurrencyStanding"
+        },
+        "explored": {
+          "$ref": "#/$defs/concurrencyExploration"
         }
       }
+    },
+    "concurrencyExploration": {
+      "description": "What delaying the guards of one test binary found.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "why"
+          ],
+          "properties": {
+            "state": {
+              "const": "unexplored"
+            },
+            "why": {
+              "enum": [
+                "not-needed",
+                "not-asked",
+                "not-passing",
+                "no-site"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "delayed",
+            "undecided"
+          ],
+          "properties": {
+            "state": {
+              "const": "sampled"
+            },
+            "delayed": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "undecided": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "site",
+            "path",
+            "line",
+            "failed"
+          ],
+          "properties": {
+            "state": {
+              "const": "broke"
+            },
+            "site": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }
