@@ -19,32 +19,46 @@ pub struct Gap<'a> {
     pub offer: Option<Offer<'a>>,
 }
 
-/// One candidate the run checked, with the mutations of a gap it was checked against and held up for.
+/// One candidate the run checked, with the mutations of a gap it was checked against and held up for: at least one, so everything said of it is said of something.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer<'a> {
-    /// The candidate's record for each mutation it closes, which name one content by one digest.
-    pub closes: Vec<&'a CandidateRecord>,
+    /// The candidate's record for the first mutation it closes.
+    pub first: &'a CandidateRecord,
+    /// Its records for every other, each naming the same content by the same digest.
+    pub rest: Vec<&'a CandidateRecord>,
 }
 
-impl Offer<'_> {
+impl<'a> Offer<'a> {
+    /// Every record of it, one per mutation it closes.
+    pub fn closes(&self) -> impl Iterator<Item = &'a CandidateRecord> + '_ {
+        std::iter::once(self.first).chain(self.rest.iter().copied())
+    }
+
+    /// How many mutations it closes.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.closes().count()
+    }
+
     /// The content every record of it names.
     #[must_use]
     pub fn digest(&self) -> &str {
-        self.closes.first().map_or("", |one| one.digest.as_str())
+        &self.first.digest
     }
 
     /// Where it would be written.
     #[must_use]
     pub fn path(&self) -> &str {
-        self.closes.first().map_or("", |one| one.path.as_str())
+        &self.first.path
     }
 
     /// The fewest times any of its records passed on the clean tree and noticed its mutation, which is what holds for every one of them.
     #[must_use]
     pub fn held(&self) -> (u32, u32) {
-        let stable = self.closes.iter().map(|one| one.stability_runs).min();
-        let killing = self.closes.iter().map(|one| one.kill_runs).min();
-        (stable.unwrap_or(0), killing.unwrap_or(0))
+        self.closes().fold(
+            (self.first.stability_runs, self.first.kill_runs),
+            |(stable, killing), one| (stable.min(one.stability_runs), killing.min(one.kill_runs)),
+        )
     }
 }
 
@@ -78,7 +92,7 @@ pub fn gaps<'a>(told: &'a Told, candidates: &'a [CandidateRecord]) -> Vec<Gap<'a
         })
         .collect();
     found.sort_by(|one, other| {
-        let closed = |gap: &Gap<'_>| gap.offer.as_ref().map_or(0, |offer| offer.closes.len());
+        let closed = |gap: &Gap<'_>| gap.offer.as_ref().map_or(0, Offer::count);
         other
             .offer
             .is_some()
@@ -107,7 +121,13 @@ fn offered<'a>(mutants: &[&str], candidates: &'a [CandidateRecord]) -> Option<Of
         .into_values()
         .rev()
         .max_by_key(Vec::len)
-        .map(|closes| Offer { closes })
+        .and_then(|closes| {
+            let (first, rest) = closes.split_first()?;
+            Some(Offer {
+                first,
+                rest: rest.to_vec(),
+            })
+        })
 }
 
 /// What somebody says to a checked test they are offered.
@@ -143,8 +163,6 @@ pub trait Deciding {
 pub struct Walked<'a> {
     /// The offers somebody took, in the order they were taken.
     pub taken: Vec<Offer<'a>>,
-    /// How many mutations are still open: every one no taken offer closes, including those of gaps never shown.
-    pub open: usize,
     /// Whether somebody stopped before the last.
     pub stopped: bool,
 }
@@ -174,13 +192,36 @@ pub fn walk<'a>(gaps: &[Gap<'a>], deciding: &mut dyn Deciding) -> Walked<'a> {
             break;
         }
     }
-    let all: usize = gaps.iter().map(|gap| gap.mutants.len()).sum();
-    let closed: usize = taken.iter().map(|offer| offer.closes.len()).sum();
-    Walked {
-        open: all.saturating_sub(closed),
-        taken,
-        stopped,
-    }
+    Walked { taken, stopped }
+}
+
+/// What became of one taken offer when it was checked again against the tree as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Became {
+    /// It held up and was written.
+    Written,
+    /// It held up, and the file already is what it would write.
+    Already,
+    /// It did not hold up, so nothing was written.
+    Refused,
+}
+
+/// How many mutations of `gaps` are still open once each of `taken` became what `became` says, in the same order: a take closes its mutations only where it was written or already there.
+#[must_use]
+pub fn open(gaps: &[Gap<'_>], taken: &[Offer<'_>], became: &[Became]) -> usize {
+    let closed: std::collections::BTreeSet<&str> = taken
+        .iter()
+        .zip(became)
+        .filter(|(_, became)| match became {
+            Became::Written | Became::Already => true,
+            Became::Refused => false,
+        })
+        .flat_map(|(offer, _)| offer.closes().map(|record| record.mutant.as_str()))
+        .collect();
+    gaps.iter()
+        .flat_map(|gap| gap.mutants.iter())
+        .filter(|mutant| !closed.contains(**mutant))
+        .count()
 }
 
 /// What a person is told about one gap: what closes it and how that was checked, or that nothing was offered and how to be.
@@ -191,7 +232,7 @@ pub fn said(gap: &Gap<'_>) -> String {
     let all = gap.mutants.len();
     match &gap.offer {
         Some(offer) => {
-            let closed = offer.closes.len();
+            let closed = offer.count();
             let (stable, killing) = offer.held();
             let mut told = format!(
                 "the cheapest thing you can do closes {closed} of the {all} gaps in `{item}` ({path}).\n  \
@@ -201,7 +242,11 @@ pub fn said(gap: &Gap<'_>) -> String {
                 offer.digest().get(..12).unwrap_or_else(|| offer.digest()),
                 if closed == 1 { "mutation" } else { "mutations" },
             );
-            let left = all.saturating_sub(closed);
+            let left = gap
+                .mutants
+                .iter()
+                .filter(|mutant| !offer.closes().any(|record| record.mutant == **mutant))
+                .count();
             if left > 0 {
                 told = format!(
                     "{told}\n  {left} other {} of `{item}` {} open after it.",

@@ -8,7 +8,7 @@ use std::io::{BufRead, Write};
 use crate::app::runs;
 use crate::build::Cargo;
 use crate::cli::{EXIT_ASSURED, EXIT_ERROR, EXIT_INSUFFICIENT, Environment, Next as Arguments};
-use crate::next::{Deciding, Offer, OnGap, OnOffer};
+use crate::next::{Became, Deciding, Offer, OnGap, OnOffer};
 use crate::trace::Recorder;
 use crate::watch::Watch;
 
@@ -166,34 +166,51 @@ pub fn run(
         super::diagnose(stderr, &error.to_string())?;
         return Ok(EXIT_ERROR);
     }
-    let refused = written(
+    let became = written(
         &walked.taken,
         (arguments, environment, run.config()),
         stdout,
         stderr,
     )?;
+    concluded(&gaps, &walked, &became, stdout)
+}
+
+/// Says what became of the takes and how much stays open, and answers assured only where nothing does and nothing was refused.
+fn concluded(
+    gaps: &[crate::next::Gap<'_>],
+    walked: &crate::next::Walked<'_>,
+    became: &[Became],
+    stdout: &mut dyn Write,
+) -> std::io::Result<u8> {
+    let open = crate::next::open(gaps, &walked.taken, became);
+    let refused = became
+        .iter()
+        .filter(|one| matches!(one, Became::Refused))
+        .count();
+    let kept = became
+        .iter()
+        .filter(|one| matches!(one, Became::Written | Became::Already))
+        .count();
     super::say(
         stdout,
         &format!(
-            "{}{} taken, {refused} not; {} {} still open",
+            "{}{kept} taken, {refused} not; {open} {} still open",
             if walked.stopped {
                 "stopped before the last gap; "
             } else {
                 ""
             },
-            walked.taken.len().saturating_sub(refused),
-            walked.open,
-            if walked.open == 1 {
+            if open == 1 {
                 "mutation is"
             } else {
                 "mutations are"
             },
         ),
     )?;
-    Ok(if refused > 0 {
-        EXIT_INSUFFICIENT
-    } else {
+    Ok(if open == 0 && refused == 0 {
         EXIT_ASSURED
+    } else {
+        EXIT_INSUFFICIENT
     })
 }
 
@@ -222,13 +239,13 @@ fn decided<'a>(
     }
 }
 
-/// Checks and writes every taken offer, saying what became of each; how many could not be written.
+/// Checks and writes every taken offer, saying what became of each, in the order they were taken.
 fn written(
     taken: &[Offer<'_>],
     (arguments, environment, config): (&Arguments, &Environment, &crate::config::Config),
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> std::io::Result<usize> {
+) -> std::io::Result<Vec<Became>> {
     let trace = Recorder::disabled();
     let watch = Watch::new(&environment.cancel, &trace);
     let checking = super::fix::checking(
@@ -239,49 +256,53 @@ fn written(
             locked: arguments.locked,
         },
     );
-    let mut refused = 0_usize;
+    let mut became = Vec::with_capacity(taken.len());
     for offer in taken {
         match one(offer, &checking, watch) {
-            Ok(said) => super::say(stdout, &said)?,
+            Ok((one, said)) => {
+                super::say(stdout, &said)?;
+                became.push(one);
+            }
             Err(why) => {
-                refused = refused.saturating_add(1);
                 super::diagnose(stderr, &why.to_string())?;
+                became.push(Became::Refused);
             }
         }
     }
-    Ok(refused)
+    Ok(became)
 }
 
-/// Checks one taken offer again against every mutation it was recorded as closing, and writes it only when every one still holds.
+/// Checks one taken offer again against every mutation it was recorded as closing, and writes it only when every one still holds; already there only when every one says so.
 fn one(
     offer: &Offer<'_>,
     checking: &crate::assure::repair::Checking<'_>,
     watch: Watch<'_>,
-) -> Result<String, super::fix::CandidateError> {
+) -> Result<(Became, String), super::fix::CandidateError> {
     let mut proposal = None;
-    for record in &offer.closes {
+    let mut already = None;
+    for record in offer.closes() {
         match super::fix::one(record, checking, watch)? {
-            super::fix::Taken::Already(path) => {
-                return Ok(format!("{path} is already what the test would write"));
-            }
+            super::fix::Taken::Already(path) => already = Some(path),
             super::fix::Taken::Written(checked) => proposal = Some(checked),
         }
     }
-    let Some(proposal) = proposal else {
-        return Ok(format!(
-            "{} closes nothing that is still open",
-            offer.path()
-        ));
-    };
-    super::fix::write(checking.root, &proposal)?;
-    Ok(format!(
-        "wrote {}, which closes {} {}",
-        proposal.path,
-        offer.closes.len(),
-        if offer.closes.len() == 1 {
-            "mutation"
-        } else {
-            "mutations"
+    let count = offer.count();
+    let mutations = if count == 1 { "mutation" } else { "mutations" };
+    match (proposal, already) {
+        (Some(proposal), _) => {
+            super::fix::write(checking.root, &proposal)?;
+            Ok((
+                Became::Written,
+                format!("wrote {}, which closes {count} {mutations}", proposal.path),
+            ))
         }
-    ))
+        (None, Some(path)) => Ok((
+            Became::Already,
+            format!("{path} is already what the test would write, and closes {count} {mutations}"),
+        )),
+        (None, None) => Ok((
+            Became::Refused,
+            format!("{} closes nothing that is still open", offer.path()),
+        )),
+    }
 }

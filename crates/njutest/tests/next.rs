@@ -162,7 +162,7 @@ fn the_offer_is_the_content_that_closes_the_most_and_claims_only_what_was_checke
         "wide",
         "the content that closes more is offered"
     );
-    let closes: Vec<&str> = offer.closes.iter().map(|one| one.mutant.as_str()).collect();
+    let closes: Vec<&str> = offer.closes().map(|one| one.mutant.as_str()).collect();
     assert_eq!(
         closes,
         ["m1", "m2"],
@@ -280,8 +280,10 @@ fn only_what_was_taken_is_written_and_stopping_leaves_the_rest_open() {
         ["d1"],
         "what was taken is what is written, and nothing else"
     );
+    let written = [njutest::next::Became::Written];
     assert_eq!(
-        walked.open, 4,
+        njutest::next::open(&found, &walked.taken, &written),
+        4,
         "the two mutations the offer does not close, the one stopped at, and the one never reached \
          are still open"
     );
@@ -305,6 +307,34 @@ fn passing_on_every_offer_writes_nothing() {
     };
     let walked = njutest::next::walk(&found, &mut deciding);
     assert!(walked.taken.is_empty());
-    assert_eq!(walked.open, 4, "every mutation of every gap is still open");
+    assert_eq!(
+        njutest::next::open(&found, &walked.taken, &[]),
+        4,
+        "every mutation of every gap is still open"
+    );
     assert!(!walked.stopped, "going through everything is not stopping");
+}
+
+#[test]
+fn a_taken_test_that_did_not_hold_up_again_closes_nothing() {
+    let shown = two_places();
+    let offered = [candidate("m1", "d1", true)];
+    let found = gaps(&shown, &offered);
+    let mut deciding = Scripted {
+        offers: vec![njutest::next::OnOffer::Take],
+        gaps: vec![njutest::next::OnGap::Next],
+        shown: Vec::new(),
+    };
+    let walked = njutest::next::walk(&found, &mut deciding);
+    let all = njutest::next::open(&found, &[], &[]);
+    assert_eq!(
+        njutest::next::open(&found, &walked.taken, &[njutest::next::Became::Refused]),
+        all,
+        "a take refused when it was checked again wrote nothing and closed nothing"
+    );
+    assert_eq!(
+        njutest::next::open(&found, &walked.taken, &[njutest::next::Became::Already]),
+        njutest::next::open(&found, &walked.taken, &[njutest::next::Became::Written]),
+        "a test already on disk that holds up closes what a written one does"
+    );
 }
