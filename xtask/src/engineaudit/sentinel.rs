@@ -296,7 +296,7 @@ pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
         let seq = taken("seq")?;
         let timestamp = taken("timestamp")?;
         let elapsed_ms = taken("elapsed_ms")?;
-        crate::schemas::completed(crate::schemas::Producer::Engine, &mut payload);
+        crate::specimen::completed(crate::schemas::Producer::Engine, &mut payload);
         let envelope = json!({
             "seq": seq,
             "timestamp": timestamp,
