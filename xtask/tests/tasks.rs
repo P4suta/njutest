@@ -1135,9 +1135,12 @@ fn a_gate_step_that_fails_says_which_it_was_and_how() {
     );
     let audit = task("audit");
     assert!(
-        audit.contains("exited ${status}") && audit.contains("--db \"${scratch}/db\""),
-        "`audit` says how each attempt ended, and reads a database of its own, since gates \
-         of several sessions fetching into the one shared checkout at once is a failure \
-         nobody's change caused: {audit}"
+        audit.contains("exited ${status}")
+            && audit.contains("--db \"${db}\"")
+            && audit.contains("not a fresh one"),
+        "`audit` says how each attempt ended, reads a database kept under its own target \
+         directory, since gates of several sessions fetching into the one shared checkout at \
+         once is a failure nobody's change caused, and says so when it checks against a copy \
+         it could not refresh: {audit}"
     );
 }

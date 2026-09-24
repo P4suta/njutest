@@ -270,17 +270,25 @@ description = "Check the dependency graph against the RustSec advisory database"
 shell = "bash -c"
 run = """
 set -uo pipefail
-scratch=$(mktemp -d)
-trap 'rm -rf "${scratch}"' EXIT
+db="${CARGO_TARGET_DIR:-target}/advisory-db"
+fetched=false
 for attempt in 1 2 3 4 5; do
-  git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "${scratch}/db" && break
+  if [ -d "${db}/.git" ]; then
+    git -C "${db}" fetch --quiet --depth 1 origin main && git -C "${db}" reset --quiet --hard FETCH_HEAD && fetched=true
+  else
+    rm -rf "${db}"
+    git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "${db}" && fetched=true
+  fi
   status=$?
+  [ "${fetched}" = true ] && break
   echo "audit: fetching the advisory database exited ${status} on attempt ${attempt} of 5" >&2
-  rm -rf "${scratch}/db"
-  [ "${attempt}" -eq 5 ] && exit "${status}"
   sleep $((attempt * 5))
 done
-cargo audit --no-fetch --deny warnings --db "${scratch}/db" || {
+if [ "${fetched}" = false ]; then
+  [ -d "${db}/.git" ] || { echo "audit: no advisory database was ever fetched into ${db}" >&2; exit 1; }
+  echo "audit: checking against the copy in ${db}, last updated $(git -C "${db}" log -1 --format=%cI), not a fresh one" >&2
+fi
+cargo audit --no-fetch --deny warnings --db "${db}" || {
   status=$?
   echo "audit: cargo audit exited ${status}; its own output above says why" >&2
   exit "${status}"
