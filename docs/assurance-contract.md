@@ -103,7 +103,7 @@ The original-code control that confirms a kill runs the whole target again under
 Where it passed exactly the tests the baseline passed and the target's union of sites reached, bodies entered, or sites infected differs, the baseline record is one sample rather than a measurement, and the report raises `unstable-baseline` about the target, counting the `unreached` claims and the discharged executions that rest on it.
 One such observation is enough; a counterexample does not wait for a second.
 A measured target no comparable control recorded is named by `drift-not-measured`, because a proof read off it rests on one run.
-This release reports a moved target and does not yet run again what rested on it ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+What rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); `unstable-baseline` counts only what could not be, and a moved target nothing rests on any more is named in `reach-moved`.
 
 The decision widens whenever the evidence cannot carry it, and every widening runs more rather than less.
 The route names which one it was:
