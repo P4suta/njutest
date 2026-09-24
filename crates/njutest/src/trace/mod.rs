@@ -20,9 +20,10 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, MutantExecRecord,
-    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord,
-    RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
+    ArtifactRecord, AskedRecord, ConfirmRecord, ControlAnswer, ControlRecord, DischargeRecord,
+    DriftRecord, Event, ExecRecord, Expected, MutantExecRecord, NoteRecord, Payload, PhaseRecord,
+    ProbeExecRecord, ProgressRecord, Read, RouteRecord, RunAccounting, RunRecord, SentinelRecord,
+    StartRecord, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -399,6 +400,16 @@ impl Recorder {
     /// Records one mutant planted for a routing layer, and how the engine routed it.
     pub fn sentinel(&self, record: SentinelRecord) {
         self.emit(Payload::Sentinel { sentinel: record });
+    }
+
+    /// Records what the original code answered to one test, the one time it was asked.
+    pub fn control(&self, record: ControlRecord) {
+        self.emit(Payload::Control { control: record });
+    }
+
+    /// Records how one kill or wait was confirmed.
+    pub fn confirm(&self, record: ConfirmRecord) {
+        self.emit(Payload::Confirm { confirm: record });
     }
 
     /// Records what one control established about one target's baseline reach.

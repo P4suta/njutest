@@ -873,7 +873,10 @@ fn a_route_that_kept_nothing_and_ran_something_is_one_violation_and_not_two() {
                     "duration_ms": 5
                 }
             }),
-        ],
+        ]
+        .into_iter()
+        .chain(sentinel::confirmation(&"a".repeat(64), "passed", Some("killed")))
+        .collect::<Vec<_>>(),
     );
 
     assert_eq!(
@@ -1257,7 +1260,13 @@ fn one_fact_said_twice_is_one_line() {
     if let Some(seq) = second.get_mut("seq") {
         *seq = serde_json::json!(2);
     }
-    let audit = audited_with(&base(), &[twice, second]);
+    let mut recording = vec![twice, second];
+    recording.extend(sentinel::confirmation(
+        &"a".repeat(64),
+        "passed",
+        Some("killed"),
+    ));
+    let audit = audited_with(&base(), &recording);
 
     assert_eq!(
         audit.violations(),
@@ -1398,15 +1407,16 @@ fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
 
     assert_eq!(
         audit.unaudited(),
-        6,
+        7,
         "one column that is not there leaves the column itself, the two equations it is \
-         a side of, and the three layers this recording does not carry — the routing, \
-         the targets put to mutations, and the outcomes held to their executions. A count of what could not be checked is what tells a reader how \
+         a side of, and the four layers this recording does not carry — the routing, \
+         the targets put to mutations, the outcomes held to their executions, and how its \
+         kills were confirmed. A count of what could not be checked is what tells a reader how \
          much of the report the audit is silent about, and one that is always zero says \
          it checked everything: {audit}"
     );
     assert!(
-        audit.to_string().contains("6 unaudited"),
+        audit.to_string().contains("7 unaudited"),
         "and the summary says it: {audit}"
     );
 }

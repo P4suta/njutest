@@ -131,6 +131,38 @@ pub fn with(overrides: Value) -> Value {
 /// A route and an execution for each mutant of [`base`], with no proof removing anything.
 #[must_use]
 pub fn routes() -> Vec<Value> {
+    let mut events = unconfirmed_routes();
+    events.extend(confirmation(&"a".repeat(64), "passed", Some("killed")));
+    numbered(events)
+}
+
+/// The control and the confirmation of `mutant`'s kill by [`TARGET`]: the control's `answer`, and what the second run came to.
+#[must_use]
+pub fn confirmation(mutant: &str, answer: &str, reproduced: Option<&str>) -> Vec<Value> {
+    let answer = if answer == "passed" {
+        json!({ "kind": "passed" })
+    } else {
+        json!({ "kind": "failed", "detail": answer })
+    };
+    vec![
+        json!({
+            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+            "type": "control",
+            "control": { "target": TARGET, "test": null, "asked_for": mutant, "answer": answer }
+        }),
+        json!({
+            "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
+            "type": "confirm",
+            "confirm": {
+                "mutant": mutant, "target": TARGET, "test": null, "expected": "killed",
+                "answered_for": mutant, "reproduced": reproduced
+            }
+        }),
+    ]
+}
+
+/// [`routes`] without the confirmation its kill rests on.
+fn unconfirmed_routes() -> Vec<Value> {
     let mut events = Vec::new();
     for (mutant, outcome) in [(KILLED, "killed"), (SURVIVED, "survived")] {
         events.push(json!({
@@ -150,7 +182,7 @@ pub fn routes() -> Vec<Value> {
             }
         }));
     }
-    numbered(events)
+    events
 }
 
 /// `events` with every sequence number counted again from one.
@@ -411,6 +443,35 @@ fn discharged_then_killed() -> Vec<Value> {
     ]
 }
 
+/// The defects planted for the confirmation layer: a kill with no confirmation, one whose test failed on the original code too, and one that did not come back.
+fn confirmation_plants(clean: &Perturbation) -> Vec<Perturbation> {
+    let mut failed_control = unconfirmed_routes();
+    failed_control.extend(confirmation(
+        &"a".repeat(64),
+        "failed: also on the original",
+        None,
+    ));
+    let mut not_reproduced = unconfirmed_routes();
+    not_reproduced.extend(confirmation(&"a".repeat(64), "passed", Some("survived")));
+    vec![
+        Perturbation {
+            name: "a kill the recording holds no confirmation of",
+            events: Some(numbered(unconfirmed_routes())),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a kill whose test failed on the original code too",
+            events: Some(numbered(failed_control)),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a kill that did not come back the second time",
+            events: Some(numbered(not_reproduced)),
+            ..clean.clone()
+        },
+    ]
+}
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -472,6 +533,7 @@ impl Layer {
                 document: with(json!({ "contract": "verified-v1" })),
                 ..clean
             }],
+            Self::Confirmations => confirmation_plants(&clean),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),

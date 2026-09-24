@@ -207,6 +207,8 @@ fn mutation(id: &str, events: &[Event]) -> Why {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Control { .. }
+            | Payload::Confirm { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }
@@ -289,6 +291,8 @@ fn mutations(events: &[Event]) -> usize {
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Control { .. }
+            | Payload::Confirm { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }

@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod confirm;
 pub mod deps;
 pub mod devgates;
 pub mod drift;

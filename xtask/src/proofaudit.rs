@@ -159,6 +159,8 @@ pub enum Layer {
     Drift,
     /// Each mutation's reported outcome, held to the executions of it the recording holds.
     Executions,
+    /// Each kill and wait, held to the control that answered for its test and to what its second run came to.
+    Confirmations,
 }
 
 impl Layer {
@@ -177,6 +179,7 @@ impl Layer {
             Self::Model => "model",
             Self::Drift => "drift",
             Self::Executions => "executions",
+            Self::Confirmations => "confirmations",
         }
     }
 }
@@ -428,6 +431,14 @@ pub fn audit_with(
             })
         })
         .transpose()?;
+    let confirmed = recorded_runner
+        .map(|(recording_path, text)| {
+            crate::confirm::read(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()?;
     let watched = recorded_runner
         .map(|(recording_path, text)| {
             crate::wire::read(text).map_err(|source| AuditError::MalformedRecording {
@@ -464,6 +475,7 @@ pub fn audit_with(
     executions(&recording, routing.as_ref(), &mut audit);
     hollow(&recording, routing.as_ref(), &mut audit);
     wire(&recording, watched.as_ref(), &mut audit);
+    confirmations(&recording, confirmed.as_ref(), &mut audit);
     models(&recording, run, &mut audit);
     drift(&recording, &engines, &mut audit);
     audit.remarks.sort();
@@ -1761,6 +1773,91 @@ fn named_hollow_targets<'a>(recording: &'a Recording<'_>) -> BTreeSet<&'a str> {
 /// The faults a seam recording licensed, re-derived here and held to what the run says became of them.
 ///
 /// The catalogue is minted again from the exchanges alone, by the rules and the identity recipe written out in `crate::wire`, so a fault this audit does not derive is one the run invented and a fault it derives that the run never put is a question the report is quiet about.
+/// Each kill and wait the report states, held to the confirmation the recording holds for it and to what that confirmation decides; a disposition read back from an earlier run was confirmed there, not here.
+fn confirmations(
+    recording: &Recording<'_>,
+    confirmed: Option<&crate::confirm::Confirmations>,
+    audit: &mut Audit,
+) {
+    let mut notes = Notes::on(audit, Layer::Confirmations);
+    let Some(confirmed) = confirmed else {
+        notes.unaudited(
+            "confirmations",
+            "the run kept no recording, so how its kills and waits were confirmed cannot be \
+             re-derived"
+                .to_owned(),
+        );
+        return;
+    };
+    for mutant in recording.mutants.iter().filter(|mutant| !mutant.reused) {
+        let owed = match mutant.outcome.as_str() {
+            KILLED => crate::confirm::Expected::Killed,
+            WAITED => crate::confirm::Expected::Waited,
+            UNCONFIRMED => {
+                unconfirmed(mutant, confirmed, &mut notes);
+                continue;
+            }
+            _ => continue,
+        };
+        let decided: Vec<crate::confirm::Decided> = confirmed
+            .confirms
+            .iter()
+            .filter(|(_, confirm)| {
+                (confirm.mutant == mutant.id || confirm.mutant == mutant.display_id)
+                    && confirm.expected == owed
+                    && (owed == crate::confirm::Expected::Waited
+                        || confirm.target == mutant.killed_by)
+            })
+            .map(|(seq, confirm)| confirmed.decided(*seq, confirm))
+            .collect();
+        if decided.contains(&crate::confirm::Decided::Stands(owed)) {
+            continue;
+        }
+        notes.violated(
+            mutant.label(),
+            match decided.iter().find_map(|one| match one {
+                crate::confirm::Decided::Contradicted(why) => Some(why.clone()),
+                crate::confirm::Decided::Stands(_) | crate::confirm::Decided::Unconfirmed => None,
+            }) {
+                Some(why) => why,
+                None if decided.is_empty() => format!(
+                    "the report says {} and the recording holds no confirmation of it, so \
+                     nothing a reader can check says the original code passed that test and \
+                     the result came back",
+                    mutant.outcome
+                ),
+                None => format!(
+                    "the report says {}, and every confirmation the recording holds of it \
+                     leaves it unconfirmed",
+                    mutant.outcome
+                ),
+            },
+        );
+    }
+}
+
+/// An unconfirmed disposition, held to a recorded confirmation that leaves it so.
+fn unconfirmed(
+    mutant: &MutantRow,
+    confirmed: &crate::confirm::Confirmations,
+    notes: &mut Notes<'_>,
+) {
+    let left = confirmed
+        .confirms
+        .iter()
+        .filter(|(_, confirm)| confirm.mutant == mutant.id || confirm.mutant == mutant.display_id)
+        .any(|(seq, confirm)| {
+            confirmed.decided(*seq, confirm) == crate::confirm::Decided::Unconfirmed
+        });
+    if !left {
+        notes.violated(
+            mutant.label(),
+            "the report says unconfirmed, and no confirmation the recording holds of it failed"
+                .to_owned(),
+        );
+    }
+}
+
 fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Wire);
     let Some(watched) = watched else {

@@ -315,6 +315,8 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
+        Payload::Control { .. } => "control",
+        Payload::Confirm { .. } => "confirm",
         Payload::Note { .. } => "note",
         Payload::RunEnd { .. } => "run",
     }
@@ -360,6 +362,10 @@ pub mod payload {
         Model,
         /// A control's drift observation.
         Drift(&'a crate::trace::DriftRecord),
+        /// What the original code answered to one test.
+        Control(&'a crate::trace::ControlRecord),
+        /// How one kill or wait was confirmed.
+        Confirm(&'a crate::trace::ConfirmRecord),
         /// A note.
         Note(&'a crate::trace::NoteRecord),
         /// A run-end record.
@@ -385,6 +391,8 @@ pub mod payload {
             Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
+            Payload::Control { control } => Ref::Control(control),
+            Payload::Confirm { confirm } => Ref::Confirm(confirm),
             Payload::Note { note } => Ref::Note(note),
             Payload::RunEnd { .. } => Ref::RunEnd,
         }
@@ -572,6 +580,26 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             model: Box::new(crate::report::ModelRecord::specimen_ineligible(
                 crate::report::ModelIneligibility::Effect,
             )),
+        },
+        Payload::Control {
+            control: crate::trace::ControlRecord {
+                target: Some("demo/lib/demo".to_owned()),
+                test: None,
+                asked_for: "a".repeat(64),
+                answer: crate::trace::ControlAnswer::Failed {
+                    detail: "failed: assertion `left == right` failed".to_owned(),
+                },
+            },
+        },
+        Payload::Confirm {
+            confirm: crate::trace::ConfirmRecord {
+                mutant: "b".repeat(64),
+                target: Some("demo/lib/demo".to_owned()),
+                test: None,
+                expected: crate::trace::Expected::Killed,
+                answered_for: "a".repeat(64),
+                reproduced: Some("killed".to_owned()),
+            },
         },
         Payload::Drift {
             drift: crate::trace::DriftRecord {
