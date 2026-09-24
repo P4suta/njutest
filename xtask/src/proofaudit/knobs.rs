@@ -104,7 +104,11 @@ fn established(
     notes: &mut Notes<'_>,
 ) -> BTreeMap<Put, Derived> {
     let mut controls: BTreeMap<Put, Vec<&Perturbed>> = BTreeMap::new();
-    for control in &perturbations.controls {
+    for control in perturbations
+        .controls
+        .iter()
+        .filter(|control| control.started.delayed.is_none())
+    {
         match control.started.knob() {
             Some(knob) => controls
                 .entry(Put {

@@ -244,7 +244,8 @@ pub fn perturbed(outcome: &str, failed: &[&str], reach: &Value) -> Value {
             "perturbation": {
                 "environment": [{ "name": "TZ", "value": "Australia/Lord_Howe" }],
                 "launcher": null,
-                "arguments": []
+                "arguments": [],
+                "delay": null
             },
             "outcome": outcome,
             "failed_tests": failed,
@@ -447,6 +448,39 @@ fn loose_yet_single_threaded(clean: Perturbation) -> Perturbation {
     }
 }
 
+/// The second planted defect of the concurrency layer: a delayed guard whose control passed, recorded as a schedule that broke the binary.
+fn passed_yet_broke(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({ "concurrency": [{
+            "explored": {
+                "state": "broke",
+                "site": 0,
+                "path": "src/lib.rs",
+                "line": 7,
+                "failed": ["lib::works"]
+            }
+        }] }),
+    );
+    let mut delayed = perturbed("survived", &[], &recorded_reach(&[0, 1]));
+    merge(
+        &mut delayed,
+        json!({ "perturbed": { "perturbation": {
+            "environment": [],
+            "delay": { "site": 0, "pause_ms": 100 }
+        } } }),
+    );
+    let mut engine = clean.engine.clone().unwrap_or_default();
+    engine.push(delayed);
+    Perturbation {
+        name: "a delayed guard whose control passed, recorded as a schedule that broke the binary",
+        document,
+        engine: Some(engine),
+        ..clean
+    }
+}
+
 /// The recording of a kill by a target the route's proof had discharged.
 fn discharged_then_killed() -> Vec<Value> {
     vec![
@@ -546,7 +580,10 @@ impl Layer {
                 ]),
                 ..clean
             }],
-            Self::Concurrency => vec![loose_yet_single_threaded(clean)],
+            Self::Concurrency => vec![
+                loose_yet_single_threaded(clean.clone()),
+                passed_yet_broke(clean),
+            ],
         }
     }
 }

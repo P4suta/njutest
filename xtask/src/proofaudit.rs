@@ -613,6 +613,7 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
             (_, _) => {}
         }
     }
+    explorations(rows, &engine_of(engines), &mut notes);
     if !proven.is_empty() {
         notes.unaudited(
             "concurrency",
@@ -622,6 +623,102 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
                 proven.len()
             ),
         );
+    }
+}
+
+/// The delayed controls of the one engine recording, where there is one.
+fn engine_of(engines: &[Engine]) -> Vec<&crate::knobs::Perturbed> {
+    match engines {
+        [one] => one
+            .perturbed
+            .controls
+            .iter()
+            .filter(|control| control.started.delayed.is_some())
+            .collect(),
+        [] | [_, _, ..] => Vec::new(),
+    }
+}
+
+/// Each binary the report says a delayed guard broke, or only sampled, held to the delayed controls the engine recorded for it.
+///
+/// A broke needs three failing controls with that guard delayed, the first and the two that repeat it; a sample needs a control for every guard it names.
+fn explorations(
+    rows: &[serde_json::Value],
+    delayed: &[&crate::knobs::Perturbed],
+    notes: &mut Notes<'_>,
+) {
+    let ran = |target: &str, site: u64| {
+        delayed
+            .iter()
+            .filter(|control| control.target == target && control.started.delayed == Some(site))
+            .collect::<Vec<_>>()
+    };
+    for row in rows {
+        let target = field(row, "target").unwrap_or_default();
+        let explored = row.get("explored").unwrap_or(&serde_json::Value::Null);
+        match field(explored, "state").as_deref() {
+            Some("broke") => {
+                let Some(site) = explored.get("site").and_then(serde_json::Value::as_u64) else {
+                    notes.violated(
+                        &target,
+                        format!(
+                            "the report says a delayed guard broke {target} and names no guard"
+                        ),
+                    );
+                    continue;
+                };
+                let failing = ran(&target, site)
+                    .into_iter()
+                    .filter(|control| control.ended == crate::knobs::Ended::Failed)
+                    .count();
+                if failing < 3 {
+                    notes.violated(
+                        &target,
+                        format!(
+                            "the report says delaying guard {site} broke {target}, and the engine \
+                             recorded {failing} failing control(s) with it delayed where a broken \
+                             schedule needs three"
+                        ),
+                    );
+                }
+            }
+            Some("sampled") => {
+                let sites: Vec<u64> = explored
+                    .get("delayed")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|sites| sites.iter().filter_map(serde_json::Value::as_u64).collect())
+                    .unwrap_or_default();
+                for site in sites {
+                    let controls = ran(&target, site);
+                    if controls.is_empty() {
+                        notes.violated(
+                            &target,
+                            format!(
+                                "the report says guard {site} of {target} was delayed, and the \
+                                 engine recorded no control with it delayed"
+                            ),
+                        );
+                    }
+                    if controls
+                        .iter()
+                        .any(|control| control.ended == crate::knobs::Ended::Failed)
+                        && controls.len() >= 3
+                        && controls
+                            .iter()
+                            .all(|control| control.ended == crate::knobs::Ended::Failed)
+                    {
+                        notes.violated(
+                            &target,
+                            format!(
+                                "the report calls {target} only sampled, and every control with \
+                                 guard {site} delayed failed, three times"
+                            ),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
