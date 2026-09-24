@@ -106,7 +106,33 @@ pub struct Started {
     pub delayed: Option<u64>,
 }
 
+/// What one perturbed control was started as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// The putting of one knob.
+    Knob(Knob),
+    /// A schedule: its threads paused at one guard, with nothing else set.
+    Delayed,
+    /// Nothing beyond its baseline: the undelayed half of a round confirming a delayed failure.
+    Undelayed,
+    /// Nothing a run starts a control as.
+    Unknown,
+}
+
 impl Started {
+    /// What it was started as, read from everything it was started with.
+    #[must_use]
+    pub fn role(&self) -> Role {
+        let plain =
+            self.environment.is_empty() && self.launcher.is_none() && self.arguments.is_empty();
+        match (self.delayed, plain) {
+            (Some(_), true) => Role::Delayed,
+            (Some(_), false) => Role::Unknown,
+            (None, true) => Role::Undelayed,
+            (None, false) => self.knob().map_or(Role::Unknown, Role::Knob),
+        }
+    }
+
     /// The one knob this is the putting of, or nothing where no knob starts a control this way.
     #[must_use]
     pub fn knob(&self) -> Option<Knob> {

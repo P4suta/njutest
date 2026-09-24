@@ -126,3 +126,112 @@ fn a_binary_the_recording_says_too_little_about_is_not_derived() {
         "a libtest binary whose baseline arguments were not recorded has no known thread count"
     );
 }
+
+mod explored {
+    use std::collections::BTreeSet;
+
+    use serde_json::json;
+    use xtask::concurrency::{Explored, Run, agrees_explored, replayed};
+    use xtask::knobs::Ended;
+
+    fn run(delayed: Option<u64>, ended: Ended, failed: &[&str]) -> Run {
+        Run {
+            delayed,
+            ended,
+            failed: failed.iter().map(|one| (*one).to_owned()).collect(),
+        }
+    }
+
+    fn broke_at(site: u64) -> Vec<Run> {
+        let mut runs = vec![run(Some(site), Ended::Failed, &["t"])];
+        for _ in 0..5 {
+            runs.push(run(Some(site), Ended::Failed, &["t"]));
+            runs.push(run(None, Ended::Passed, &[]));
+        }
+        runs
+    }
+
+    fn holds(report: &serde_json::Value, runs: &[Run]) -> bool {
+        replayed(runs).is_ok_and(|derived| agrees_explored(report, &derived).is_ok())
+    }
+
+    #[test]
+    fn a_broken_schedule_is_five_rounds_that_repeat_the_failure_and_pass_without_the_delay() {
+        let mut runs = vec![run(Some(2), Ended::Passed, &[])];
+        runs.extend(broke_at(7));
+        assert_eq!(
+            replayed(&runs).expect("a sequence the run gives"),
+            Explored::Broke {
+                site: 7,
+                failed: BTreeSet::from(["t".to_owned()]),
+                rounds: 5
+            }
+        );
+        let broke = json!({ "state": "broke", "site": 7, "path": "src/lib.rs", "line": 3, "failed": ["t"], "rounds": 5 });
+        assert!(holds(&broke, &runs));
+        let flaky = [
+            run(Some(7), Ended::Failed, &["t"]),
+            run(Some(7), Ended::Failed, &["t"]),
+            run(None, Ended::Passed, &[]),
+            run(Some(7), Ended::Failed, &["t", "other"]),
+        ];
+        assert!(
+            !holds(&broke, &flaky),
+            "a round that failed other tests confirms nothing"
+        );
+        let dirty = [
+            run(Some(7), Ended::Failed, &["t"]),
+            run(Some(7), Ended::Failed, &["t"]),
+            run(None, Ended::Failed, &["t"]),
+        ];
+        assert!(
+            !holds(&broke, &dirty),
+            "a test that fails without the delay is broken everywhere"
+        );
+    }
+
+    #[test]
+    fn every_state_a_report_gives_is_the_one_the_recorded_sequence_comes_to() {
+        let passed = [
+            run(Some(1), Ended::Passed, &[]),
+            run(Some(2), Ended::Passed, &[]),
+        ];
+        let sampled = json!({ "state": "sampled", "asked": 2, "delayed": [1, 2] });
+        assert!(holds(&sampled, &passed));
+        let waited = [
+            run(Some(1), Ended::Passed, &[]),
+            run(Some(2), Ended::Waited, &[]),
+        ];
+        assert!(
+            !holds(&sampled, &waited),
+            "a delay that settled nothing is no passing sample"
+        );
+        let undecided =
+            json!({ "state": "undecided", "asked": 2, "delayed": [1, 2], "undecided": [2] });
+        assert!(holds(&undecided, &waited));
+        let unexplored = json!({ "state": "unexplored", "why": "not-asked" });
+        assert!(holds(&unexplored, &[]));
+        assert!(
+            !holds(&unexplored, &broke_at(4)),
+            "a binary the engine broke is not one the report may call unexplored"
+        );
+        assert!(
+            !holds(
+                &json!({ "state": "sampled", "asked": 1, "delayed": [1] }),
+                &passed
+            ),
+            "a report may not drop a site the engine delayed"
+        );
+        let mut broke = broke_at(4);
+        broke.push(run(Some(5), Ended::Passed, &[]));
+        assert!(
+            replayed(&broke).is_err(),
+            "nothing runs after a schedule broke"
+        );
+        assert!(
+            replayed(&[run(None, Ended::Passed, &[])]).is_err(),
+            "an undelayed control before any delayed one is none the procedure starts"
+        );
+        assert!(!holds(&json!({ "state": "explored" }), &passed));
+    }
+}

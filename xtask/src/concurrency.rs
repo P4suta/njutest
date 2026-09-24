@@ -206,3 +206,215 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
         _ => Err(ContradictionError::Unknown { state }),
     }
 }
+
+/// How many rounds confirm a delayed failure, written again from the runner's contract rather than read from its code.
+pub const CONFIRMING_ROUNDS: usize = 5;
+
+/// One control the exploration of a binary started, in the order the engine recorded it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    /// The guard it paused its threads at, or nothing for an undelayed control.
+    pub delayed: Option<u64>,
+    /// How it ended.
+    pub ended: crate::knobs::Ended,
+    /// The tests that failed.
+    pub failed: BTreeSet<String>,
+}
+
+/// What the exploration of one binary comes to, replayed from its controls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Explored {
+    /// No control was started.
+    Nothing,
+    /// Every delayed control passed.
+    Sampled {
+        /// Every guard delayed, in order.
+        delayed: Vec<u64>,
+    },
+    /// No site broke it and some settled nothing.
+    Undecided {
+        /// Every guard delayed, in order.
+        delayed: Vec<u64>,
+        /// Those that settled nothing.
+        undecided: Vec<u64>,
+    },
+    /// Every confirming round held at one site.
+    Broke {
+        /// The guard.
+        site: u64,
+        /// The tests that failed.
+        failed: BTreeSet<String>,
+        /// How many rounds held.
+        rounds: usize,
+    },
+}
+
+/// Where a recorded sequence is not one the exploration procedure starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ReplayError {
+    /// A control the procedure would not have started there.
+    #[error("control {at} is not one the exploration starts at that point")]
+    Stray {
+        /// Its place in the sequence.
+        at: usize,
+    },
+    /// The sequence ends inside a confirming round.
+    #[error("the recording ends inside a confirming round")]
+    Truncated,
+    /// A control after the schedule broke.
+    #[error("control {at} was started after the schedule broke")]
+    AfterBroke {
+        /// Its place in the sequence.
+        at: usize,
+    },
+}
+
+/// What the exploration of one binary comes to, replaying the procedure over `runs`.
+///
+/// Each delayed site has its first control, and where that failed, rounds of a delayed control that must fail exactly the same tests and an undelayed one that must pass, stopping at the first that does not.
+///
+/// # Errors
+/// [`ReplayError`] where the sequence is not one the procedure gives.
+pub fn replayed(runs: &[Run]) -> Result<Explored, ReplayError> {
+    let (mut delayed, mut undecided) = (Vec::new(), Vec::new());
+    let mut rest = runs.iter().enumerate();
+    while let Some((at, first)) = rest.next() {
+        let site = first.delayed.ok_or(ReplayError::Stray { at })?;
+        delayed.push(site);
+        match first.ended {
+            crate::knobs::Ended::Passed => continue,
+            crate::knobs::Ended::Waited | crate::knobs::Ended::Unsettled => {
+                undecided.push(site);
+                continue;
+            }
+            crate::knobs::Ended::Failed => {}
+        }
+        if confirmed(&mut rest, site, &first.failed)? {
+            if let Some((at, _)) = rest.next() {
+                return Err(ReplayError::AfterBroke { at });
+            }
+            return Ok(Explored::Broke {
+                site,
+                failed: first.failed.clone(),
+                rounds: CONFIRMING_ROUNDS,
+            });
+        }
+        undecided.push(site);
+    }
+    Ok(match (delayed.is_empty(), undecided.is_empty()) {
+        (true, _) => Explored::Nothing,
+        (false, true) => Explored::Sampled { delayed },
+        (false, false) => Explored::Undecided { delayed, undecided },
+    })
+}
+
+/// Whether every confirming round of `site` holds, consuming the controls the procedure started for them.
+fn confirmed<'a>(
+    rest: &mut impl Iterator<Item = (usize, &'a Run)>,
+    site: u64,
+    failed: &BTreeSet<String>,
+) -> Result<bool, ReplayError> {
+    for _ in 0..CONFIRMING_ROUNDS {
+        let (at, again) = rest.next().ok_or(ReplayError::Truncated)?;
+        if again.delayed != Some(site) {
+            return Err(ReplayError::Stray { at });
+        }
+        if !(again.ended == crate::knobs::Ended::Failed && again.failed == *failed) {
+            return Ok(false);
+        }
+        let (at, without) = rest.next().ok_or(ReplayError::Truncated)?;
+        if without.delayed.is_some() {
+            return Err(ReplayError::Stray { at });
+        }
+        if without.ended != crate::knobs::Ended::Passed {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// What a reported exploration contradicts in the replayed one.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExploreContradictionError {
+    /// The report says something the replay does not come to.
+    #[error("the report says {reported}, and the recorded controls come to {derived:?}")]
+    Differs {
+        /// What the report says.
+        reported: String,
+        /// What the controls come to.
+        derived: Explored,
+    },
+}
+
+/// Whether the reported `explored` is exactly what the controls come to.
+///
+/// # Errors
+/// [`ExploreContradictionError`] where it is not.
+pub fn agrees_explored(
+    explored: &Value,
+    derived: &Explored,
+) -> Result<(), ExploreContradictionError> {
+    let sites = |key: &str| -> Option<Vec<u64>> {
+        explored
+            .get(key)?
+            .as_array()?
+            .iter()
+            .map(Value::as_u64)
+            .collect()
+    };
+    let asked = explored.get("asked").and_then(Value::as_u64);
+    let holds = match (explored.get("state").and_then(Value::as_str), derived) {
+        (Some("unexplored"), Explored::Nothing) => true,
+        (Some("sampled"), Explored::Sampled { delayed }) => {
+            sites("delayed").as_ref() == Some(delayed) && fits(asked, delayed)
+        }
+        (Some("undecided"), Explored::Undecided { delayed, undecided }) => {
+            sites("delayed").as_ref() == Some(delayed)
+                && sites("undecided").as_ref() == Some(undecided)
+                && fits(asked, delayed)
+        }
+        (
+            Some("broke"),
+            Explored::Broke {
+                site,
+                failed,
+                rounds,
+            },
+        ) => {
+            let named: Option<BTreeSet<String>> = explored
+                .get("failed")
+                .and_then(Value::as_array)
+                .and_then(|tests| {
+                    tests
+                        .iter()
+                        .map(|one| one.as_str().map(ToOwned::to_owned))
+                        .collect()
+                });
+            explored.get("site").and_then(Value::as_u64) == Some(*site)
+                && named.as_ref() == Some(failed)
+                && u64::try_from(*rounds).is_ok_and(|rounds| {
+                    explored.get("rounds").and_then(Value::as_u64) == Some(rounds)
+                })
+        }
+        (
+            _,
+            Explored::Nothing
+            | Explored::Sampled { .. }
+            | Explored::Undecided { .. }
+            | Explored::Broke { .. },
+        ) => false,
+    };
+    if holds {
+        Ok(())
+    } else {
+        Err(ExploreContradictionError::Differs {
+            reported: explored.to_string(),
+            derived: derived.clone(),
+        })
+    }
+}
+
+/// Whether `delayed` names no more guards than were asked for.
+fn fits(asked: Option<u64>, delayed: &[u64]) -> bool {
+    asked.is_some_and(|asked| u64::try_from(delayed.len()).is_ok_and(|count| count <= asked))
+}

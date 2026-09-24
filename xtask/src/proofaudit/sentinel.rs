@@ -400,7 +400,11 @@ pub fn clean() -> Perturbation {
             let mut document = document;
             merge(
                 &mut document,
-                json!({ "concurrency": [{ "target": TARGET, "standing": { "state": "single-threaded" } }] }),
+                json!({ "concurrency": [{
+                    "target": TARGET,
+                    "standing": { "state": "single-threaded" },
+                    "explored": { "state": "unexplored", "why": "not-needed" }
+                }] }),
             );
             document
         },
@@ -491,6 +495,33 @@ fn parallel_yet_single_threaded(clean: Perturbation) -> Perturbation {
     }
 }
 
+/// The planted defect of the concurrency layer: a delayed guard whose control ran past its bound, recorded as a sample that passed.
+fn waited_yet_sampled(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({ "concurrency": [{
+            "explored": { "state": "sampled", "asked": 1, "delayed": [0] }
+        }] }),
+    );
+    let mut delayed = perturbed("waited", &[], &json!({ "state": "not-read" }));
+    merge(
+        &mut delayed,
+        json!({ "perturbed": { "perturbation": {
+            "environment": [],
+            "delay": { "site": 0, "pause_ms": 100 }
+        } } }),
+    );
+    let mut engine = clean.engine.clone().unwrap_or_default();
+    engine.push(delayed);
+    Perturbation {
+        name: "a delayed guard whose control ran past its bound, recorded as a sample that passed",
+        document,
+        engine: Some(engine),
+        ..clean
+    }
+}
+
 /// The second planted defect of the concurrency layer: a delayed guard whose control passed, recorded as a schedule that broke the binary.
 fn passed_yet_broke(clean: Perturbation) -> Perturbation {
     let mut document = clean.document.clone();
@@ -502,7 +533,8 @@ fn passed_yet_broke(clean: Perturbation) -> Perturbation {
                 "site": 0,
                 "path": "src/lib.rs",
                 "line": 7,
-                "failed": ["lib::works"]
+                "failed": ["lib::works"],
+                "rounds": 5
             }
         }] }),
     );
@@ -626,6 +658,7 @@ impl Layer {
             Self::Concurrency => vec![
                 loose_yet_single_threaded(clean.clone()),
                 parallel_yet_single_threaded(clean.clone()),
+                waited_yet_sampled(clean.clone()),
                 passed_yet_broke(clean),
             ],
         }
