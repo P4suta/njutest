@@ -3,13 +3,13 @@
 
 //! What a runner recording says about the crashes a run put, read from the stream alone and decided again from it (ADR 0035).
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 /// One run of a test a crash was put to, in recording order.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run {
-    /// The crash a person types.
-    pub crash: String,
     /// The target the test is in.
     pub target: String,
     /// The test.
@@ -26,7 +26,33 @@ pub struct Run {
     pub failed: Vec<String>,
 }
 
-/// What a crash came to, as a report writes it and as this audit decides it again.
+/// One target a route asked, with its tests where the route names them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Asked {
+    /// The target.
+    pub target: String,
+    /// The tests that reach the call, or nothing where which of them does is not known.
+    pub tests: Option<Vec<String>>,
+}
+
+/// One thing the runner recorded about a crash, in recording order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// The compiler refused the crash.
+    Rejected,
+    /// An earlier stop wrote into the tree, so the crash was not run.
+    Tainted,
+    /// The targets and tests that reach the call, in the order they are asked.
+    Route(Vec<Asked>),
+    /// A stop of this crash wrote into the tree under measurement.
+    Outside,
+    /// One run of a test.
+    Ran(Run),
+    /// A step of a kind this audit does not know, which decides nothing it can check.
+    Unread(String),
+}
+
+/// What a report says a crash came to, and what this audit decides it came to.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Site {
     /// The crash a person types.
@@ -41,15 +67,34 @@ pub struct Site {
     pub failed: Vec<String>,
 }
 
-/// Every crash run a recording holds.
+/// Every step a recording holds about the crashes, keyed by crash, in recording order.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Crashed {
-    /// Every run, in recording order.
-    pub runs: Vec<Run>,
+    /// Every step and the crash it is about, in recording order.
+    pub steps: Vec<(String, Step)>,
+}
+
+/// A decision re-derived from a crash's steps, and whether a stop of it wrote into the tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decided {
+    /// The decision.
+    pub site: Site,
+    /// Whether every later crash is left undecided because of this one.
+    pub outside: bool,
+}
+
+/// A sequence of steps no run of the runner makes, which says the recording and the decision cannot be held to each other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unmade {
+    /// What in the sequence no run makes.
+    pub why: String,
 }
 
 /// The exit status of a test process a crash stopped, written out again from the engine's contract rather than read from its code.
 pub const CRASH_EXIT: i64 = 93;
+
+/// The rule every crash is put under, which an undecided crash names where no one test is to blame.
+pub const RULE: &str = "crash-after-write";
 
 /// Everything the recording says about the crashes.
 ///
@@ -58,27 +103,69 @@ pub const CRASH_EXIT: i64 = 93;
 pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
     let mut crashed = Crashed::default();
     for event in crate::route::events(recorded)? {
-        if event.get("type").and_then(Value::as_str) != Some("crash-exec") {
-            continue;
+        match event.get("type").and_then(Value::as_str) {
+            Some("crash-exec") => {
+                let Some(record) = event.get("crash") else {
+                    continue;
+                };
+                crashed.steps.push((
+                    text(record, "crash"),
+                    Step::Ran(Run {
+                        target: text(record, "target"),
+                        test: text(record, "test"),
+                        stage: text(record, "stage"),
+                        exit_code: record
+                            .get("exit_code")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(-1),
+                        outcome: text(record, "outcome"),
+                        left: texts(record, "left"),
+                        failed: texts(record, "failed"),
+                    }),
+                ));
+            }
+            Some("crash-step") => {
+                let Some(record) = event.get("step") else {
+                    continue;
+                };
+                let taken = record.get("taken").cloned().unwrap_or_default();
+                crashed.steps.push((text(record, "crash"), step(&taken)));
+            }
+            Some(_) | None => {}
         }
-        let Some(record) = event.get("crash") else {
-            continue;
-        };
-        crashed.runs.push(Run {
-            crash: text(record, "crash"),
-            target: text(record, "target"),
-            test: text(record, "test"),
-            stage: text(record, "stage"),
-            exit_code: record
-                .get("exit_code")
-                .and_then(Value::as_i64)
-                .unwrap_or(-1),
-            outcome: text(record, "outcome"),
-            left: texts(record, "left"),
-            failed: texts(record, "failed"),
-        });
     }
     Ok(crashed)
+}
+
+/// One step as the runner writes it.
+fn step(taken: &Value) -> Step {
+    match text(taken, "kind").as_str() {
+        "rejected" => Step::Rejected,
+        "tainted" => Step::Tainted,
+        "outside" => Step::Outside,
+        "route" => Step::Route(
+            taken
+                .get("asked")
+                .and_then(Value::as_array)
+                .map(|asked| {
+                    asked
+                        .iter()
+                        .map(|one| Asked {
+                            target: text(one, "target"),
+                            tests: one.get("tests").and_then(Value::as_array).map(|named| {
+                                named
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .map(ToOwned::to_owned)
+                                    .collect()
+                            }),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        ),
+        other => Step::Unread(other.to_owned()),
+    }
 }
 
 /// One site as a report writes it.
@@ -94,81 +181,242 @@ pub fn site(record: &Value) -> Site {
     }
 }
 
-/// What the ordered runs of one crash decide, by the run's own steps and none of its code.
+/// What the ordered steps of one crash decide, by the run's own steps and none of its code.
 ///
-/// The first test that stopped at the call decides, a test that passed without stopping hands on to the next, and anything else is undecided.
-/// A report whose decision is not this one claims something its runs do not show.
-#[must_use]
-pub fn decided(crash: &str, runs: &[&Run]) -> Site {
-    let site = |decision: &str, on: String| Site {
+/// Every step must be one the runner takes at that point and the last must be where it decides, so a step dropped, added or reordered is refused rather than read around.
+///
+/// # Errors
+/// The sequence is not one a run makes: `stained` is whether an earlier crash's stop wrote into the tree.
+pub fn decided(crash: &str, steps: &[&Step], stained: bool) -> Result<Decided, Unmade> {
+    let site = |decision: &str, on: &str| Site {
         crash: crash.to_owned(),
         decision: decision.to_owned(),
-        on,
+        on: on.to_owned(),
         ..Site::default()
     };
-    let mut rest = runs;
-    while let Some((run, after)) = rest.split_first() {
-        let on = format!("{}::{}", run.target, run.test);
-        if run.stage != "crash" {
-            return site("undecided", on);
-        }
-        if run.exit_code != CRASH_EXIT {
-            if run.outcome == "survived" {
-                rest = after;
-                continue;
-            }
-            return site("undecided", on);
-        }
-        if run.left.is_empty() {
-            return site("unshared", on);
-        }
-        let stage = |offset: usize| after.get(offset).map(|one| (one.stage.as_str(), *one));
-        return match stage(0) {
-            Some(("next", next)) if next.outcome == "survived" => Site {
-                left: run.left.clone(),
-                ..site("restarted", on)
-            },
-            Some(("next", next)) if next.outcome == "killed" => {
-                let confirmed = matches!(stage(1), Some(("fresh", fresh)) if fresh.outcome == "survived")
-                    && matches!(stage(2), Some(("crash", again)) if again.exit_code == CRASH_EXIT)
-                    && matches!(stage(3), Some(("next", again)) if again.outcome == "killed");
-                if confirmed {
-                    Site {
-                        failed: next.failed.clone(),
-                        ..site("corrupt", on)
-                    }
-                } else {
-                    site("undecided", on)
-                }
-            }
-            _ => site("undecided", on),
+    let Some((first, rest)) = steps.split_first() else {
+        return Err(unmade("no step of it was recorded"));
+    };
+    if stained {
+        return match (first, rest) {
+            (Step::Tainted, []) => Ok(Decided {
+                site: site("undecided", RULE),
+                outside: false,
+            }),
+            (Step::Rejected, []) => Ok(Decided {
+                site: site("not-put", ""),
+                outside: false,
+            }),
+            (
+                Step::Tainted
+                | Step::Rejected
+                | Step::Route(_)
+                | Step::Outside
+                | Step::Ran(_)
+                | Step::Unread(_),
+                _,
+            ) => Err(unmade(
+                "an earlier stop wrote into the tree, and this crash was not left alone",
+            )),
         };
     }
-    site("unreached", String::new())
+    let (decided, rest) = match first {
+        Step::Rejected => (site("not-put", ""), rest),
+        Step::Route(asked) => {
+            let mut cursor = Cursor { rest };
+            let decided = routed(crash, asked, &mut cursor)?;
+            (decided, cursor.rest)
+        }
+        Step::Tainted => {
+            return Err(unmade(
+                "it was left undecided for an earlier stop and no earlier stop wrote into the tree",
+            ));
+        }
+        Step::Outside | Step::Ran(_) | Step::Unread(_) => {
+            return Err(unmade("its first step is neither a route nor a refusal"));
+        }
+    };
+    match rest {
+        [] => Ok(Decided {
+            site: decided,
+            outside: false,
+        }),
+        [Step::Outside] if decided.decision != "not-put" => Ok(Decided {
+            site: site("undecided", RULE),
+            outside: true,
+        }),
+        [..] => Err(unmade("a step was recorded after the one that decides it")),
+    }
 }
 
-/// Whether a report's record of a crash says what its runs decide, where it rests on runs at all.
-///
-/// `undecided` claims less than any run shows, so it agrees with every recording; a crash the compiler refused has no runs; and every other decision is the one the runs decide, with the same test, files and failures.
-#[must_use]
-pub fn agrees(reported: &Site, runs: &[&Run]) -> bool {
-    if reported.decision == "undecided" {
-        return true;
-    }
-    if runs.is_empty() {
-        return matches!(
-            reported.decision.as_str(),
-            "unreached" | "not-put" | "undecided"
-        );
-    }
-    let derived = decided(&reported.crash, runs);
-    derived.decision == reported.decision
-        && match derived.decision.as_str() {
-            "restarted" => derived.on == reported.on && derived.left == reported.left,
-            "corrupt" => derived.on == reported.on && derived.failed == reported.failed,
-            "unshared" => derived.on == reported.on,
-            _ => true,
+/// The steps of one crash not yet read.
+struct Cursor<'a, 'b> {
+    rest: &'a [&'b Step],
+}
+
+impl<'b> Cursor<'_, 'b> {
+    /// The next step, which must be a run of `stage` of this test.
+    fn run(&mut self, target: &str, test: &str, stage: &str) -> Result<&'b Run, Unmade> {
+        let Some((next, rest)) = self.rest.split_first() else {
+            return Err(unmade(&format!(
+                "the {stage} run of {target}::{test} the decision needs was not recorded"
+            )));
+        };
+        match next {
+            Step::Ran(run) if run.target == target && run.test == test && run.stage == stage => {
+                self.rest = rest;
+                Ok(run)
+            }
+            Step::Ran(_)
+            | Step::Rejected
+            | Step::Tainted
+            | Step::Route(_)
+            | Step::Outside
+            | Step::Unread(_) => Err(unmade(&format!(
+                "a {stage} run of {target}::{test} was due and something else was recorded"
+            ))),
         }
+    }
+}
+
+/// What the runs after a route decide: the first test that stopped at the call decides, a test that passed without stopping hands on to the next, and anything else is undecided.
+fn routed(crash: &str, asked: &[Asked], cursor: &mut Cursor<'_, '_>) -> Result<Site, Unmade> {
+    let site = |decision: &str, on: &str| Site {
+        crash: crash.to_owned(),
+        decision: decision.to_owned(),
+        on: on.to_owned(),
+        ..Site::default()
+    };
+    let mut unnamed = Vec::new();
+    for reaches in asked {
+        let Some(tests) = &reaches.tests else {
+            unnamed.push(reaches.target.as_str());
+            continue;
+        };
+        for test in tests {
+            let on = format!("{}::{test}", reaches.target);
+            let stop = cursor.run(&reaches.target, test, "crash")?;
+            if stop.exit_code != CRASH_EXIT {
+                if stop.outcome == "survived" {
+                    continue;
+                }
+                return Ok(site("undecided", &on));
+            }
+            if stop.left.is_empty() {
+                return Ok(site("unshared", &on));
+            }
+            let next = cursor.run(&reaches.target, test, "next")?;
+            return Ok(match next.outcome.as_str() {
+                "survived" => Site {
+                    left: stop.left.clone(),
+                    ..site("restarted", &on)
+                },
+                "killed" => {
+                    if confirmed(cursor, &reaches.target, test, &next.failed)? {
+                        Site {
+                            failed: next.failed.clone(),
+                            ..site("corrupt", &on)
+                        }
+                    } else {
+                        site("undecided", &on)
+                    }
+                }
+                _ => site("undecided", &on),
+            });
+        }
+    }
+    Ok(if unnamed.is_empty() {
+        site("unreached", "")
+    } else {
+        site("undecided", &unnamed.join(", "))
+    })
+}
+
+/// Whether a failing next run is held to a fresh run that passes, and a second stop that leaves something and fails the next run over it the same way, with the stopped test among the failures.
+fn confirmed(
+    cursor: &mut Cursor<'_, '_>,
+    target: &str,
+    test: &str,
+    failed: &[String],
+) -> Result<bool, Unmade> {
+    if cursor.run(target, test, "fresh")?.outcome != "survived" {
+        return Ok(false);
+    }
+    let again = cursor.run(target, test, "crash")?;
+    if again.exit_code != CRASH_EXIT || again.left.is_empty() {
+        return Ok(false);
+    }
+    let next = cursor.run(target, test, "next")?;
+    Ok(next.outcome == "killed" && next.failed == failed && failed.iter().any(|one| one == test))
+}
+
+/// Every place a report's crash sites and the recorded steps disagree, each with the crash it is about.
+///
+/// Each crash's steps decide it exactly, every recorded crash is a site of the report and every site is a recorded crash, and once a stop wrote into the tree every later crash is left undecided.
+#[must_use]
+pub fn disagreements(reported: &[Site], crashed: &Crashed) -> Vec<(String, String)> {
+    let mut order: Vec<&str> = Vec::new();
+    let mut steps: BTreeMap<&str, Vec<&Step>> = BTreeMap::new();
+    for (crash, step) in &crashed.steps {
+        let held = steps.entry(crash.as_str()).or_insert_with(|| {
+            order.push(crash.as_str());
+            Vec::new()
+        });
+        held.push(step);
+    }
+    let mut sites: BTreeMap<&str, &Site> = BTreeMap::new();
+    let mut found = Vec::new();
+    for site in reported {
+        if sites.insert(site.crash.as_str(), site).is_some() {
+            found.push((
+                site.crash.clone(),
+                "the report holds this crash twice".to_owned(),
+            ));
+        }
+    }
+    let mut stained = false;
+    for crash in order {
+        let held = steps.get(crash).map_or(&[][..], Vec::as_slice);
+        let derived = match decided(crash, held, stained) {
+            Ok(derived) => derived,
+            Err(unmade) => {
+                found.push((crash.to_owned(), unmade.why));
+                continue;
+            }
+        };
+        stained |= derived.outside;
+        match sites.remove(crash) {
+            None => found.push((
+                crash.to_owned(),
+                format!(
+                    "the recording decides {} and no site of the report holds it",
+                    derived.site.decision
+                ),
+            )),
+            Some(site) if *site != derived.site => found.push((
+                crash.to_owned(),
+                format!(
+                    "the report says {} on {:?} and the recorded steps decide {} on {:?}",
+                    site.decision, site.on, derived.site.decision, derived.site.on
+                ),
+            )),
+            Some(_) => {}
+        }
+    }
+    for crash in sites.keys() {
+        found.push((
+            (*crash).to_owned(),
+            "the report holds this crash and the recording holds no step of it".to_owned(),
+        ));
+    }
+    found
+}
+
+/// A sequence no run makes, and why.
+fn unmade(why: &str) -> Unmade {
+    Unmade {
+        why: why.to_owned(),
+    }
 }
 
 /// One string field, or the empty string where the recording does not carry it.

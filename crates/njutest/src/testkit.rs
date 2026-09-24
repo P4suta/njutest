@@ -313,6 +313,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Beside { .. } => "beside",
         Payload::BesideRun { .. } => "pair",
         Payload::CrashExec { .. } | Payload::Crash { .. } => "crash",
+        Payload::CrashStep { .. } => "step",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -363,6 +364,8 @@ pub mod payload {
         BesideRun(&'a crate::report::faults::BesideRun),
         /// A run of a test a crash was put to.
         CrashExec(&'a crate::trace::CrashExecRecord),
+        /// A step of a crash that ran no test.
+        CrashStep(&'a crate::trace::CrashStepRecord),
         /// A crash site's decision.
         Crash(&'a crate::report::crashes::CrashRecord),
         /// A probe execution.
@@ -403,6 +406,7 @@ pub mod payload {
             Payload::Beside { beside } => Ref::Beside(beside),
             Payload::BesideRun { pair } => Ref::BesideRun(pair),
             Payload::CrashExec { crash } => Ref::CrashExec(crash),
+            Payload::CrashStep { step } => Ref::CrashStep(step),
             Payload::Crash { crash } => Ref::Crash(crash),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
@@ -641,6 +645,17 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 outcome: "killed".to_owned(),
                 left: vec!["count".to_owned()],
                 failed: Vec::new(),
+            },
+        },
+        Payload::CrashStep {
+            step: crate::trace::CrashStepRecord {
+                crash: "d".repeat(20),
+                taken: crate::trace::CrashStep::Route {
+                    asked: vec![crate::trace::CrashAsked {
+                        target: "demo/test/counter".to_owned(),
+                        tests: Some(vec!["a_count_goes_up".to_owned()]),
+                    }],
+                },
             },
         },
         Payload::Crash {

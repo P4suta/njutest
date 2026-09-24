@@ -37,6 +37,7 @@ const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
 const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
 const CORRUPT_AFTER_CRASH: &str = "corrupt-after-crash";
+const NOT_MEASURED: &str = "not-measured";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
 pub const DEFECT_KINDS: [&str; 6] = [
     "build-failure",
@@ -1950,7 +1951,7 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
     }
 }
 
-/// What each call that writes came to, re-derived from the recording's crash runs and held to the report, and each corrupt one held to its finding (ADR 0035).
+/// What each call that writes came to, re-derived from the recording's crash steps and held to the report exactly, with its counts and its findings in both directions (ADR 0035).
 fn crashes(
     recording: &Recording<'_>,
     crashed: Option<&crate::crashes::Crashed>,
@@ -1961,51 +1962,119 @@ fn crashes(
         .iter()
         .map(crate::crashes::site)
         .collect();
-    let corrupt: BTreeSet<&str> = reported
-        .iter()
-        .filter(|site| site.decision == "corrupt")
-        .map(|site| site.crash.as_str())
-        .collect();
-    let named: BTreeSet<&str> = recording
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == CORRUPT_AFTER_CRASH)
-        .map(|finding| finding.subject.as_str())
-        .collect();
-    for crash in corrupt.symmetric_difference(&named) {
+    crash_findings(recording, &reported, &mut notes);
+    crash_accounting(recording.document, &reported, &mut notes);
+    let Some(crashed) = crashed else {
+        if !reported.is_empty() {
+            notes.unaudited(
+                "crashes",
+                format!(
+                    "the report holds {} crash site(s) and there is no recording to re-derive them from",
+                    reported.len()
+                ),
+            );
+        }
+        return;
+    };
+    for (crash, why) in crate::crashes::disagreements(&reported, crashed) {
+        notes.violated(&crash, why);
+    }
+}
+
+/// Each corrupt crash held to its `corrupt-after-crash` finding, and each unshared or undecided one to a `not-measured` finding, both ways.
+fn crash_findings(
+    recording: &Recording<'_>,
+    reported: &[crate::crashes::Site],
+    notes: &mut Notes<'_>,
+) {
+    let decided = |decisions: &[&str]| -> BTreeSet<&str> {
+        reported
+            .iter()
+            .filter(|site| decisions.contains(&site.decision.as_str()))
+            .map(|site| site.crash.as_str())
+            .collect()
+    };
+    let crashes: BTreeSet<&str> = reported.iter().map(|site| site.crash.as_str()).collect();
+    let named = |kind: &str| -> BTreeSet<&str> {
+        recording
+            .findings
+            .iter()
+            .filter(|finding| finding.kind == kind && crashes.contains(finding.subject.as_str()))
+            .map(|finding| finding.subject.as_str())
+            .collect()
+    };
+    for crash in decided(&["corrupt"]).symmetric_difference(&named(CORRUPT_AFTER_CRASH)) {
         notes.violated(
             crash,
             "the report's corrupt crashes and its corrupt-after-crash findings are not the same"
                 .to_owned(),
         );
     }
-    if reported.is_empty() {
+    for crash in decided(&["unshared", "undecided"]).symmetric_difference(&named(NOT_MEASURED)) {
+        notes.violated(
+            crash,
+            "the report's unshared and undecided crashes and its not-measured findings about \
+             crashes are not the same"
+                .to_owned(),
+        );
+    }
+    let stray: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == CORRUPT_AFTER_CRASH)
+        .map(|finding| finding.subject.as_str())
+        .filter(|subject| !crashes.contains(subject))
+        .collect();
+    for crash in stray {
+        notes.violated(
+            crash,
+            "a corrupt-after-crash finding names no crash site of the report".to_owned(),
+        );
+    }
+}
+
+/// The report's crash counts held to what its sites add up to.
+fn crash_accounting(
+    document: &serde_json::Value,
+    reported: &[crate::crashes::Site],
+    notes: &mut Notes<'_>,
+) {
+    let counted = document
+        .get("accounting")
+        .and_then(|accounting| accounting.get("crashes"));
+    if counted.is_none() && reported.is_empty() {
         return;
     }
-    let Some(crashed) = crashed else {
-        notes.unaudited(
-            "crashes",
-            format!(
-                "the report holds {} crash site(s) and there is no recording to re-derive them from",
-                reported.len()
-            ),
-        );
-        return;
+    let count = |field: &str| {
+        counted
+            .and_then(|crashes| crashes.get(field))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default()
     };
-    for site in &reported {
-        let runs: Vec<&crate::crashes::Run> = crashed
-            .runs
-            .iter()
-            .filter(|run| run.crash == site.crash)
-            .collect();
-        if !crate::crashes::agrees(site, &runs) {
+    let held = |decision: &str| {
+        u64::try_from(
+            reported
+                .iter()
+                .filter(|site| decision.is_empty() || site.decision == decision)
+                .count(),
+        )
+    };
+    for (field, decision) in [
+        ("sites", ""),
+        ("restarted", "restarted"),
+        ("corrupt", "corrupt"),
+        ("unshared", "unshared"),
+        ("unreached", "unreached"),
+        ("undecided", "undecided"),
+        ("not_put", "not-put"),
+    ] {
+        let holds = held(decision);
+        if holds != Ok(count(field)) {
             notes.violated(
-                &site.crash,
+                "crashes",
                 format!(
-                    "the report says {} on {:?} and the recorded runs decide {:?}",
-                    site.decision,
-                    site.on,
-                    crate::crashes::decided(&site.crash, &runs)
+                    "the report counts {} crash(es) as {field} and holds {holds:?}",
+                    count(field)
                 ),
             );
         }
