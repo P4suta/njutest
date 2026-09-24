@@ -78,6 +78,26 @@ pub enum Payload {
         /// The record.
         fault: FaultExecRecord,
     },
+    /// Which targets reach one fault, which no reader of mutant routes ever sees.
+    FaultRoute {
+        /// The record.
+        route: FaultRouteRecord,
+    },
+    /// A fault the compiler refused, so it was never put.
+    FaultRejected {
+        /// The record.
+        rejected: FaultRejectedRecord,
+    },
+    /// Whether one fault, run alone, wrote a path the phase left in the tree, and whether its test did without it.
+    FaultAttribution {
+        /// The record.
+        attribution: FaultAttributionRecord,
+    },
+    /// What the original code did on the target a fault's detection is confirmed against.
+    FaultControl {
+        /// The record.
+        control: FaultControlRecord,
+    },
     /// What a run established about one site a fault was asked at.
     Fault {
         /// The record, as the report holds it.
@@ -154,6 +174,10 @@ impl Payload {
             Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
             Self::FaultExec { .. } => "fault-exec",
+            Self::FaultControl { .. } => "fault-control",
+            Self::FaultAttribution { .. } => "fault-attribution",
+            Self::FaultRoute { .. } => "fault-route",
+            Self::FaultRejected { .. } => "fault-rejected",
             Self::Fault { .. } => "fault",
             Self::Beside { .. } => "beside",
             Self::BesideRun { .. } => "beside-run",
@@ -424,12 +448,91 @@ pub struct MutantExecRecord {
     pub alone: bool,
 }
 
-/// One fault run against one target.
+/// Which execution of a fault one record is, so a detection can be held to the confirmation it needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FaultRole {
+    /// The execution that asked the target.
+    First,
+    /// The execution that asked again after a failure, with the control between.
+    Confirmation,
+    /// The execution run alone to see whether it writes a path the phase left in the tree.
+    Attribution,
+    /// The same test run alone without the fault, to see whether it writes that path anyway.
+    #[serde(rename = "attribution-control")]
+    AttributionControl,
+}
+
+/// Whether one fault, run alone on one target, wrote a path, and whether the target did without it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultAttributionRecord {
+    /// The fault.
+    pub fault: String,
+    /// The target it was run on.
+    pub target: String,
+    /// The path of the tree the phase left written.
+    pub path: String,
+    /// Whether the path was there after the fault ran alone.
+    pub faulted: bool,
+    /// Whether the target passed with the fault in place, which is what makes the write the program's rather than the test's own failure's.
+    pub passed: bool,
+    /// What the same target did run alone without the fault.
+    pub unfaulted: Unfaulted,
+}
+
+/// What a target run alone without a fault did to a path its faulted run wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Unfaulted {
+    /// It was not run, because the faulted run wrote nothing or its test failed.
+    NotAsked,
+    /// It wrote the path too, so the fault is not what wrote it.
+    Wrote,
+    /// It did not write the path, so the fault did.
+    DidNotWrite,
+}
+
+/// Which targets reach one fault.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultRouteRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// Every target whose baseline reached the site, which is empty where nothing did.
+    pub reaching: Vec<String>,
+}
+
+/// A fault the compiler refused.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultRejectedRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// The first line of what the compiler said.
+    pub diagnostic: String,
+}
+
+/// What the original code did on one target, answered for one fault's confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultControlRecord {
+    /// The fault whose detection this confirms.
+    pub fault: String,
+    /// The target.
+    pub target: String,
+    /// Whether the target passed on the original code.
+    pub passed: bool,
+}
+
+/// One fault run against one target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaultExecRecord {
     /// The fault a person types.
     pub fault: String,
+    /// Which execution of the fault this is.
+    pub role: FaultRole,
     /// The target it ran against.
     pub target: String,
     /// The arguments the target was given, verbatim.
