@@ -181,6 +181,16 @@ A part whose records repeat a knob for a target, or put two knobs on different t
 
 A part that measured the whole catalog raises `environment-dependent`, a defect, about each target a knob broke, `environment-dependent-reach` about each whose reach a knob moved, counting what rests on its baseline by the rule `unstable-baseline` counts with, and states `knob-not-put` and `knob-not-compared`.
 A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` rather than `PARTIAL` where a knob broke or moved a target; a merge raises them from the combined records of every part, keeping of two records of one knob and target the one that says more.
+## Concurrency
+
+Every part carries `concurrency`, one `{ target, standing }` per test binary the run measured, in binary order ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+`standing` is closed by its `state`:
+`single-threaded` where the binary's baseline reached nothing off its tests' threads and no package of its closure can start a thread or runs native code;
+`concurrent` with every reason that holds in `because`, each `loose-reach` or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
+and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
+A part whose records name a binary twice or out of order is refused.
+
+A part states `schedule-not-explored` naming every binary that is not `single-threaded`: no schedule is explored yet, so each is a hole.
 
 ## Sources
 

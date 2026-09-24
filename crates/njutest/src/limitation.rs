@@ -70,9 +70,12 @@ pub const KNOB_NOT_PUT: &str = "knob-not-put";
 /// A control under a knob established nothing to compare, so whether a target's verdict and reach hold there is not known.
 pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 
+/// A test binary is not proven to run one thread, and no schedule of it was explored, so what it does when its threads interleave otherwise is not known.
+pub const SCHEDULE_NOT_EXPLORED: &str = "schedule-not-explored";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 22] = [
+pub const ALL: [&str; 23] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -95,4 +98,5 @@ pub const ALL: [&str; 22] = [
     DRIFT_NOT_MEASURED,
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
+    SCHEDULE_NOT_EXPLORED,
 ];

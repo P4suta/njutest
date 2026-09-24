@@ -373,7 +373,14 @@ pub fn clean() -> Perturbation {
     merge(&mut document, knobbed("stable"));
     Perturbation {
         name: "clean",
-        document,
+        document: {
+            let mut document = document;
+            merge(
+                &mut document,
+                json!({ "concurrency": [{ "target": TARGET, "standing": { "state": "single-threaded" } }] }),
+            );
+            document
+        },
         events: Some(routes()),
         engine: Some(vec![
             touch("baseline", &[0, 1]),
@@ -426,6 +433,17 @@ impl Perturbation {
             })?;
         }
         Ok(Laid { run, trace })
+    }
+}
+
+/// The planted defect of the concurrency layer: a binary whose baseline reached code off its tests' threads, recorded as proven single-threaded.
+fn loose_yet_single_threaded(clean: Perturbation) -> Perturbation {
+    let mut loose = touch("baseline", &[0, 1]);
+    merge(&mut loose, json!({ "touch": { "loose": 1 } }));
+    Perturbation {
+        name: "a binary whose baseline reached code off its tests' threads, proven single-threaded",
+        engine: Some(vec![loose, touch("control", &[0, 1])]),
+        ..clean
     }
 }
 
@@ -528,6 +546,7 @@ impl Layer {
                 ]),
                 ..clean
             }],
+            Self::Concurrency => vec![loose_yet_single_threaded(clean)],
         }
     }
 }

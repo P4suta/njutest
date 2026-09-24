@@ -160,6 +160,8 @@ pub enum Layer {
     Drift,
     /// What each control started under a knob established, re-derived from the engine's perturbed-control records and held to what the report says of each.
     Knobs,
+    /// Which test binaries the report proves single-threaded, held to the reach their baseline recorded off their tests' threads.
+    Concurrency,
 }
 
 impl Layer {
@@ -178,6 +180,7 @@ impl Layer {
             Self::Model => "model",
             Self::Drift => "drift",
             Self::Knobs => "knobs",
+            Self::Concurrency => "concurrency",
         }
     }
 }
@@ -471,6 +474,7 @@ pub fn audit_with(
     models(&recording, run, &mut audit);
     drift(&recording, &engines, &mut audit);
     knobs::audited(&recording, &engines, &mut audit);
+    concurrency(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -518,6 +522,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "limitations",
         "drift",
         "knobs",
+        "concurrency",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -536,6 +541,88 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         .unwrap_or_default();
     flat.insert("models".to_owned(), serde_json::Value::Array(models));
     Ok(serde_json::Value::Object(flat))
+}
+
+/// Each test binary the report calls single-threaded, or concurrent for reach off its tests' threads, held to what the engine's baseline touch record says it reached there.
+///
+/// The source half of the proof is a scan of every package the binary links, which this audit does not repeat, so it is said to be unaudited rather than read as agreement.
+fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Concurrency);
+    let rows = rows(recording.document, "concurrency");
+    if rows.is_empty() {
+        return;
+    }
+    let touched = match engines {
+        [one] => &one.touched,
+        [] | [_, _, ..] => {
+            notes.unaudited(
+                "concurrency",
+                format!(
+                    "the recording holds {} engine recordings where one build's baseline reach \
+                     is what a single-threaded proof is held to",
+                    engines.len()
+                ),
+            );
+            return;
+        }
+    };
+    let mut proven: Vec<String> = Vec::new();
+    for row in rows {
+        let target = field(row, "target").unwrap_or_default();
+        let standing = row.get("standing").unwrap_or(&serde_json::Value::Null);
+        let state = field(standing, "state").unwrap_or_default();
+        let said_loose = standing
+            .get("because")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|because| {
+                because
+                    .iter()
+                    .any(|one| field(one, "kind").as_deref() == Some("loose-reach"))
+            });
+        let loose = touched
+            .touches
+            .iter()
+            .rev()
+            .find(|touch| {
+                touch.measured == crate::drift::Measured::Baseline && touch.target == target
+            })
+            .map(|touch| touch.loose);
+        match (state.as_str(), loose) {
+            ("single-threaded", Some(0)) => proven.push(target.clone()),
+            ("single-threaded", Some(sites)) => notes.violated(
+                &target,
+                format!(
+                    "the report proves {target} single-threaded, and its baseline reached {sites} \
+                     site(s) on a thread no test answers for"
+                ),
+            ),
+            ("single-threaded", None) => notes.violated(
+                &target,
+                format!(
+                    "the report proves {target} single-threaded, and the engine recorded no \
+                     baseline reach for it to rest on"
+                ),
+            ),
+            ("concurrent", Some(0)) if said_loose => notes.violated(
+                &target,
+                format!(
+                    "the report says {target} reached code off its tests' threads, and its \
+                     baseline reached nothing there"
+                ),
+            ),
+            (_, _) => {}
+        }
+    }
+    if !proven.is_empty() {
+        notes.unaudited(
+            "concurrency",
+            format!(
+                "{} test binary(ies) are proven single-threaded partly by a scan of every \
+                 package they link, which this audit does not repeat",
+                proven.len()
+            ),
+        );
+    }
 }
 
 /// The finding a report raises about a target whose baseline reach moved.

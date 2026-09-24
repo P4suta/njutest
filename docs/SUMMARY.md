@@ -66,3 +66,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0025 A reach that moves is not a measurement](adr/0025-a-reach-that-moves-is-not-a-measurement.md)
 - [0026 A bound measures quiet, not duration](adr/0026-a-bound-measures-quiet-not-duration.md)
 - [0031 A knob is one control started differently](adr/0031-a-knob-is-one-control-started-differently.md)
+- [0034 A binary is single-threaded only where nothing says otherwise](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)
