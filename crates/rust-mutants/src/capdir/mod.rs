@@ -116,7 +116,24 @@ pub struct Status {
     pub len: u64,
 }
 
-/// Who may reach into a directory.
+/// An entry opened once without following it, as what the opened handle turned out to be.
+#[derive(Debug)]
+pub enum Entry {
+    /// A regular file, open for reading.
+    File(File),
+    /// A directory, held.
+    Dir(Dir),
+    /// Anything else, closed again unread.
+    Other,
+}
+
+/// How many directories deep [`Dir::remove_contents`] goes before it refuses, rather than running out of handles on the way down.
+pub const REMOVAL_DEPTH: usize = 64;
+
+/// Who may reach into a directory, read from its owner and mode bits alone.
+///
+/// Owner-only is exactly read, write and enter for the owner, with no setuid, setgid or sticky bit: a directory made under a setgid parent reads as [`Privacy::Loose`] and is tightened.
+/// An access control list can grant what the mode bits do not show, and is not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Privacy {
     /// This process's user owns it and nobody else may enter it.
@@ -156,6 +173,19 @@ impl Dir {
     /// It is missing, a link, or not a directory.
     pub fn open_dir(&self, name: Name<'_>) -> io::Result<Self> {
         sys::open_dir(&self.handle, name).map(|handle| Self { handle })
+    }
+
+    /// The entry `name`, opened once without following a link or waiting on a pipe, as what the open handle is; a link is refused or [`Entry::Other`].
+    ///
+    /// # Errors
+    /// It is missing, or cannot be opened or inspected.
+    pub fn open_entry(&self, name: Name<'_>) -> io::Result<Entry> {
+        let (handle, kind) = sys::open_entry(&self.handle, name)?;
+        Ok(match kind {
+            Kind::File => Entry::File(handle),
+            Kind::Directory => Entry::Dir(Self { handle }),
+            Kind::Other => Entry::Other,
+        })
     }
 
     /// The child file `name`, for reading, not following a link and not waiting on a pipe.
@@ -257,7 +287,9 @@ impl Dir {
     /// Removes everything beneath this directory, leaving it empty and held.
     ///
     /// Each entry is renamed aside under a fresh name before it is removed, and is removed only if the aside name still holds what was renamed, so nothing another process put in its place is touched; a link is removed as a link.
-    /// Entries are handled by the names the platform holds, so one no [`Name`] could spell is removed too.
+    /// Entries are handled by the names the platform holds, so one no [`Name`] could spell is removed too, and one gone before it was reached counts as removed.
+    /// An entry that changed as it was set aside is put back; if its name was taken meanwhile it stays under its aside name, which a later emptying removes without the identity check, a residue only a directory its owner alone may enter can afford.
+    /// A tree deeper than [`REMOVAL_DEPTH`] is refused before anything beneath that depth is touched.
     ///
     /// # Errors
     /// An entry cannot be renamed aside, changed identity, or cannot be removed.
@@ -350,6 +382,9 @@ mod sys {
         unsupported()
     }
     pub(super) fn remove_contents(_dir: &File) -> io::Result<()> {
+        unsupported()
+    }
+    pub(super) fn open_entry(_dir: &File, _name: Name<'_>) -> io::Result<(File, super::Kind)> {
         unsupported()
     }
     pub(super) fn file_status(_file: &File) -> io::Result<Status> {

@@ -702,24 +702,27 @@ fn open_existing_configured_root(
 #[cfg(unix)]
 fn ensure_directory_at(parent: &Dir, entry: &str) -> io::Result<Dir> {
     let entry_name = name(entry)?;
-    match parent.open_dir(entry_name) {
-        Ok(directory) => return Ok(directory),
-        Err(error) if !absent(&error) => return Err(error),
-        Err(_missing) => {}
-    }
-    let directory = match parent.create_private_dir_exclusive(entry_name) {
+    let directory = match parent.open_dir(entry_name) {
         Ok(directory) => directory,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            return parent.open_dir(entry_name);
-        }
-        Err(error) => return Err(error),
+        Err(error) if !absent(&error) => return Err(error),
+        Err(_missing) => match parent.create_private_dir_exclusive(entry_name) {
+            Ok(directory) => {
+                let created = directory.status()?;
+                let cleanup_created = |primary: io::Error| {
+                    claim_cleanup_error(primary, remove_empty_if_identity(parent, entry, &created))
+                };
+                directory.sync().map_err(&cleanup_created)?;
+                parent.sync().map_err(&cleanup_created)?;
+                return Ok(directory);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                parent.open_dir(entry_name)?
+            }
+            Err(error) => return Err(error),
+        },
     };
-    let created = directory.status()?;
-    let cleanup_created = |primary: io::Error| {
-        claim_cleanup_error(primary, remove_empty_if_identity(parent, entry, &created))
-    };
-    directory.sync().map_err(&cleanup_created)?;
-    parent.sync().map_err(&cleanup_created)?;
+    directory.sync()?;
+    parent.sync()?;
     Ok(directory)
 }
 
@@ -2555,20 +2558,13 @@ fn retain_checked_directory(
 
 #[cfg(unix)]
 fn sync_open_tree(directory: &Dir) -> io::Result<()> {
+    use rust_mutants::capdir::Entry;
+
     for entry in directory.entries()? {
-        let entry_name = name(&entry)?;
-        match directory.status_at(entry_name)?.map(|status| status.kind) {
-            Some(Kind::File) => {
-                let file = directory.open_file(entry_name)?;
-                if rust_mutants::capdir::file_status(&file)?.kind != Kind::File {
-                    return Err(io::Error::other(format!(
-                        "unpublished report entry {entry:?} changed kind while it was synced"
-                    )));
-                }
-                file.sync_all()?;
-            }
-            Some(Kind::Directory) => sync_open_tree(&directory.open_dir(entry_name)?)?,
-            Some(Kind::Other) | None => {
+        match directory.open_entry(name(&entry)?)? {
+            Entry::File(file) => file.sync_all()?,
+            Entry::Dir(child) => sync_open_tree(&child)?,
+            Entry::Other => {
                 return Err(io::Error::other(format!(
                     "unpublished report entry {entry:?} is neither a regular file nor a directory"
                 )));

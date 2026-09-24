@@ -50,7 +50,7 @@ fn a_name_is_one_component_on_every_platform_the_store_runs_on() {
 
 #[cfg(unix)]
 mod posix {
-    use rust_mutants::capdir::{Dir, Kind, Name, Privacy};
+    use rust_mutants::capdir::{Dir, Entry, Kind, Name, Privacy};
 
     fn name(text: &str) -> Name<'_> {
         Name::new(text).expect("a component")
@@ -193,6 +193,54 @@ mod posix {
             std::fs::read(elsewhere.path().join("kept")).expect("still there"),
             b"outside",
             "and a link was removed as a link, never followed"
+        );
+    }
+
+    #[test]
+    fn an_entry_is_opened_once_and_is_what_the_open_handle_is() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let elsewhere = tempfile::tempdir().expect("elsewhere");
+        let root = temp.path();
+        std::fs::write(root.join("file"), b"bytes").expect("file");
+        std::fs::create_dir_all(root.join("dir")).expect("dir");
+        std::os::unix::fs::symlink(elsewhere.path(), root.join("link")).expect("link");
+        let fifo = std::process::Command::new("mkfifo")
+            .arg(root.join("fifo"))
+            .status()
+            .expect("mkfifo runs");
+        assert!(fifo.success(), "a fifo was made");
+        let dir = Dir::open(root).expect("the directory");
+        assert!(matches!(
+            dir.open_entry(name("file")).expect("file"),
+            Entry::File(_)
+        ));
+        assert!(matches!(
+            dir.open_entry(name("dir")).expect("dir"),
+            Entry::Dir(_)
+        ));
+        assert!(
+            matches!(dir.open_entry(name("link")), Ok(Entry::Other) | Err(_)),
+            "a link is never followed into what it names"
+        );
+        assert!(
+            matches!(dir.open_entry(name("fifo")).expect("fifo"), Entry::Other),
+            "and a pipe is seen without waiting on it"
+        );
+    }
+
+    #[test]
+    fn emptying_refuses_a_tree_deeper_than_its_bound_rather_than_running_out_of_handles() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut deep = temp.path().to_path_buf();
+        for _level in 0..=rust_mutants::capdir::REMOVAL_DEPTH {
+            deep.push("d");
+        }
+        std::fs::create_dir_all(&deep).expect("a deep tree");
+        let dir = Dir::open(temp.path()).expect("the directory");
+        let refused = dir.remove_contents();
+        assert!(
+            matches!(&refused, Err(error) if error.kind() == std::io::ErrorKind::InvalidData),
+            "a tree deeper than the bound is a named refusal: {refused:?}"
         );
     }
 }
