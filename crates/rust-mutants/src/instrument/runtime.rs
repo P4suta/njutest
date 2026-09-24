@@ -324,6 +324,7 @@ mod {{MODULE}} {
         Sync,
         Publish,
         Unlock,
+        Poisoned,
     }
     #[derive(Clone, Copy)]
     enum TouchMode {
@@ -357,6 +358,18 @@ mod {{MODULE}} {
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
     static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
+    // The step state this runtime copy opened, and the process that opened
+    // it: one open and one check per copy and process, where reopening the
+    // name at every boundary paid an open and a close per function entry and
+    // loop turn. A child made by fork without exec shares the parent's open
+    // file description and so its lock, which is why the process is recorded.
+    struct BoundStepState {
+        pid: u32,
+        file: __rm_std::fs::File,
+    }
+    static STEP_STATE: __rm_std::sync::OnceLock<
+        __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
+    > = __rm_std::sync::OnceLock::new();
 
 {{VALUE_MACRO}}
     #[inline(always)]
@@ -450,14 +463,30 @@ mod {{MODULE}} {
                 return __rm_std::result::Result::Err(StepStateError::MissingMutant);
             }
         };
-        let mut file = open_step_state(path)?;
-        file.lock().map_err(|_| StepStateError::Lock)?;
-        let transitioned = (|| {
-            let metadata = file.metadata().map_err(|_| StepStateError::Metadata)?;
+        let cell = STEP_STATE.get_or_init(|| __rm_std::sync::Mutex::new(__rm_std::option::Option::None));
+        let mut bound = cell.lock().map_err(|_| StepStateError::Poisoned)?;
+        let pid = __rm_std::process::id();
+        let reopen = match &*bound {
+            __rm_std::option::Option::Some(state) => state.pid != pid,
+            __rm_std::option::Option::None => true,
+        };
+        if reopen {
+            let opened = open_step_state(path)?;
+            let metadata = opened.metadata().map_err(|_| StepStateError::Metadata)?;
             if !metadata.file_type().is_file() {
                 return __rm_std::result::Result::Err(StepStateError::NotRegular);
             }
-            let phase = read_step_state(&mut file, nonce, mutant, limit)?;
+            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
+        }
+        let file = match &mut *bound {
+            __rm_std::option::Option::Some(state) => &mut state.file,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::Open);
+            }
+        };
+        file.lock().map_err(|_| StepStateError::Lock)?;
+        let transitioned = (|| {
+            let phase = read_step_state(file, nonce, mutant, limit)?;
             let (next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
             if let StepAdvance::Reached { allowed, observed } = advanced {
@@ -470,7 +499,7 @@ mod {{MODULE}} {
                 publish_step_notice(allowed, observed).map_err(|_| StepStateError::Publish)?;
             }
             if next != phase {
-                write_step_state(&mut file, nonce, mutant, limit, next)?;
+                write_step_state(file, nonce, mutant, limit, next)?;
             }
             __rm_std::result::Result::Ok(advanced)
         })();
