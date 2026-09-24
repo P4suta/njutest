@@ -10,4 +10,4 @@
 3 xtask/src/engineaudit/recording.rs
 25 xtask/src/proofaudit.rs
 3 xtask/src/proofaudit/sentinel.rs
-8 xtask/src/route.rs
+2 xtask/src/route.rs

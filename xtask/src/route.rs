@@ -224,23 +224,25 @@ impl Routing {
 /// A non-empty line that is not JSON is rejected.
 /// An audit must never turn a corrupt evidence stream into an apparently empty one.
 pub fn read(recorded: &str, producer: crate::schemas::Producer) -> Result<Routing, ReadError> {
-    Ok(from_events(&events(recorded, producer)?))
+    from_events(&events(recorded, producer)?)
 }
 
 /// Reads routing records from events that have already passed the JSONL boundary.
-pub(crate) fn from_events(events: &[Value]) -> Routing {
+pub(crate) fn from_events(events: &[Value]) -> Result<Routing, ReadError> {
     let mut routing = Routing::default();
-    for event in events {
+    for (at, event) in events.iter().enumerate() {
+        let placed = |cause| ReadError {
+            line: at.saturating_add(1),
+            cause,
+        };
         match text(event, "type").as_deref() {
             Some("route") => {
-                if let Some(record) = event.get("route") {
-                    routing.routes.push(route(record));
-                }
+                let record = required(event, "route", Some).map_err(placed)?;
+                routing.routes.push(route(record).map_err(placed)?);
             }
             Some("mutant-exec") => {
-                if let Some(record) = event.get("mutant") {
-                    routing.execs.push(exec(record));
-                }
+                let record = required(event, "mutant", Some).map_err(placed)?;
+                routing.execs.push(exec(record).map_err(placed)?);
             }
             Some("note") => {
                 let noted = event.get("note");
@@ -257,7 +259,7 @@ pub(crate) fn from_events(events: &[Value]) -> Routing {
             _ => {}
         }
     }
-    routing
+    Ok(routing)
 }
 
 /// Parses every non-empty event in a recording without discarding a corrupt line, holding each to `producer`'s published schema first.
@@ -320,28 +322,28 @@ fn nested_event(event: Value) -> Result<Value, serde_json::Error> {
 }
 
 /// One route record, from whichever producer wrote it.
-fn route(record: &Value) -> Route {
-    Route {
-        mutant: named(record),
+fn route(record: &Value) -> Result<Route, ReadCause> {
+    Ok(Route {
+        mutant: named(record)?,
         index: number(record, "index"),
-        granularity: text(record, "granularity").unwrap_or_default(),
+        granularity: required(record, "granularity", owned)?,
         fallback: text(record, "fallback"),
         reaching: strings(record, "reaching"),
-        discharged: discharges(record),
+        discharged: discharges(record)?,
         executed: strings(record, "executed"),
         considered: strings(record, "considered"),
         reused: text(record, "reused"),
         refused: text(record, "refused"),
-    }
+    })
 }
 
 /// One execution record, from whichever producer wrote it.
-fn exec(record: &Value) -> Exec {
-    Exec {
-        mutant: named(record),
+fn exec(record: &Value) -> Result<Exec, ReadCause> {
+    Ok(Exec {
+        mutant: named(record)?,
         index: number(record, "index"),
-        target: text(record, "target").unwrap_or_default(),
-        outcome: text(record, "outcome").unwrap_or_default(),
+        target: required(record, "target", owned)?,
+        outcome: required(record, "outcome", owned)?,
         step_notice: match record.get("step_notice") {
             None | Some(Value::Null) => None,
             Some(notice) => Some(notice.clone()),
@@ -349,31 +351,41 @@ fn exec(record: &Value) -> Exec {
         tests_run: number(record, "tests_run"),
         duration_ms: number(record, "duration_ms"),
         alone: Isolation::recorded(record.get("alone")),
-    }
+    })
 }
 
 /// The mutant a record is about: the runner writes `mutant`, the engine writes `id`.
-fn named(record: &Value) -> String {
+fn named(record: &Value) -> Result<String, ReadCause> {
     text(record, "mutant")
         .or_else(|| text(record, "id"))
-        .unwrap_or_default()
+        .ok_or_else(|| ReadCause::Absent {
+            field: "mutant or id".to_owned(),
+        })
 }
 
-/// Every target a proof removed, with the proof.
-fn discharges(record: &Value) -> Vec<Discharge> {
+/// Every target a proof removed, with the proof; none where the producer writes no such list.
+fn discharges(record: &Value) -> Result<Vec<Discharge>, ReadCause> {
     record
         .get("discharged")
         .and_then(Value::as_array)
         .map(|entries| {
             entries
                 .iter()
-                .map(|entry| Discharge {
-                    target: text(entry, "target").unwrap_or_default(),
-                    proof: text(entry, "proof").unwrap_or_default(),
+                .map(|entry| {
+                    Ok(Discharge {
+                        target: required(entry, "target", owned)?,
+                        proof: required(entry, "proof", owned)?,
+                    })
                 })
-                .collect()
+                .collect::<Result<Vec<Discharge>, ReadCause>>()
         })
-        .unwrap_or_default()
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+/// A string, owned.
+fn owned(value: &Value) -> Option<String> {
+    value.as_str().map(str::to_owned)
 }
 
 /// One string field, absent when it is absent or null.

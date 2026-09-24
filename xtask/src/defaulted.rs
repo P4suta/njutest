@@ -64,6 +64,18 @@ impl Visit<'_> for Counted {
         syn::visit::visit_expr_method_call(self, call);
     }
 
+    fn visit_expr_path(&mut self, path: &syn::ExprPath) {
+        if path
+            .path
+            .segments
+            .last()
+            .is_some_and(|last| DEFAULTING.contains(&last.ident.to_string().as_str()))
+        {
+            self.0 = self.0.saturating_add(1);
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+
     fn visit_item_mod(&mut self, module: &syn::ItemMod) {
         let tests = module.attrs.iter().any(|attribute| {
             attribute.path().is_ident("cfg")

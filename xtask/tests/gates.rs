@@ -509,10 +509,11 @@ fn a_function_behind_a_test_feature_is_test_support_rather_than_an_unreached_cap
 #[test]
 fn a_defaulting_call_is_counted_and_a_test_module_is_not() {
     let source = "fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) + v.map_or(1, |x| x) }\n\
+                  fn all(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }\n\
                   #[cfg(test)] mod tests { fn t(v: Option<u8>) -> u8 { v.unwrap_or_default() } }\n";
     assert_eq!(
         xtask::defaulted::defaulted_in(source).expect("the source parses"),
-        2,
+        3,
         "a value supplied where the input gave none is counted where the audit runs, and a test \
          building its own specimen is not the audit"
     );
