@@ -1170,7 +1170,7 @@ fn every_standing() -> Vec<njutest::report::knobs::KnobRecord> {
     ]
     .into_iter()
     .map(|(knob, standing)| KnobRecord {
-        target: "core/lib/core".to_owned(),
+        target: "core/lib/adds::works".to_owned(),
         knob,
         standing,
     })
@@ -1213,16 +1213,16 @@ fn knob_records_that_repeat_or_cover_different_targets_are_refused() {
     for (records, said) in [
         (
             vec![
-                record(Knob::Timezone, "core/lib/core"),
-                record(Knob::Timezone, "core/lib/core"),
+                record(Knob::Timezone, "core/lib/adds::works"),
+                record(Knob::Timezone, "core/lib/adds::works"),
             ],
-            "timezone is recorded twice for core/lib/core",
+            "timezone is recorded twice for core/lib/adds::works",
         ),
         (
             vec![
-                record(Knob::Timezone, "core/lib/core"),
+                record(Knob::Timezone, "core/lib/adds::works"),
                 record(Knob::Timezone, "core/test/it"),
-                record(Knob::Locale, "core/lib/core"),
+                record(Knob::Locale, "core/lib/adds::works"),
             ],
             "locale was put on other targets than timezone",
         ),
@@ -1256,9 +1256,46 @@ fn a_whole_report_whose_dimension_findings_were_deleted_is_still_not_assured() {
     named.sort_unstable();
     assert_eq!(
         named,
-        vec!["durable", "fault", "repeatable"],
+        vec!["durable", "fault", "repeatable", "schedule"],
         "the holes are derived from the records a report holds, so a report that drops the \
-         findings naming them still names them"
+         findings naming them still names them, and a binary that passed with no record of its \
+         threads is a schedule hole rather than nothing to ask"
     );
     assert_ne!(report.verdict(), Verdict::Assured);
+}
+
+#[test]
+fn a_report_whose_thread_records_were_deleted_has_a_schedule_hole_and_not_nothing_to_ask() {
+    let report = populated_varying(&|source: &mut BuildReport| {
+        source.contract = njutest::config::Contract::WholeV1;
+        source.concurrency.clear();
+    })
+    .expect("a whole-v1 report with no thread record");
+    let conclusion = report.conclusion().expect("a representable conclusion");
+    assert!(
+        conclusion.findings.iter().any(|finding| {
+            finding.kind == FindingKind::DimensionNotMeasured && finding.subject == "schedule"
+        }),
+        "a target passed its baseline and nothing says whether it runs one thread: {:?}",
+        conclusion.findings
+    );
+    assert_ne!(report.verdict(), Verdict::Assured);
+}
+
+#[test]
+fn knob_records_that_leave_out_a_target_whose_baseline_passed_are_refused() {
+    use njutest::report::knobs::{Knob, KnobRecord, Standing};
+    let refused = populated_varying(&|source| {
+        source.knobs = vec![KnobRecord {
+            target: "core/test/it::slow".to_owned(),
+            knob: Knob::Timezone,
+            standing: Standing::Stable,
+        }];
+    })
+    .expect_err("the target that passed has no knob record");
+    assert!(
+        refused.to_string().contains("core/lib/adds::works"),
+        "a knob asked for is put on every target whose baseline passed, so a report that drops \
+         one target's rows is refused rather than read as that target being repeatable: {refused}"
+    );
 }

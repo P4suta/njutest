@@ -2176,6 +2176,17 @@ fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError
             )));
         }
     }
+    if let Some((knob, covered)) = by_knob.iter().next()
+        && let Some(target) = part.targets.iter().find(|target| {
+            target.status == TargetStatus::Passed && !covered.contains(target.name.as_str())
+        })
+    {
+        return Err(refused(format!(
+            "{} passed its baseline and {} was not put on it",
+            target.name,
+            knob.name()
+        )));
+    }
     let mut knobs = by_knob.iter();
     if let Some((first, covered)) = knobs.next()
         && let Some((other, _)) = knobs.find(|(_, targets)| *targets != covered)
@@ -6853,6 +6864,7 @@ fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
 /// Every record of some builds a matrix is read off, gathered from every part.
 struct MatrixEvidence {
     mutations: (usize, usize),
+    targets: Vec<TargetRecord>,
     knobs: Vec<knobs::KnobRecord>,
     faults: Vec<faults::FaultRecord>,
     crashes: Vec<crashes::CrashRecord>,
@@ -6876,6 +6888,9 @@ impl MatrixEvidence {
             .count();
         Self {
             mutations: (answered, holes),
+            targets: parts()
+                .flat_map(|part| part.targets.iter().cloned())
+                .collect(),
             knobs: knobs::combined(parts().flat_map(|part| part.knobs.iter())),
             faults: parts()
                 .flat_map(|part| part.faults.iter().cloned())
@@ -6903,6 +6918,7 @@ impl MatrixEvidence {
     fn borrowed(&self) -> matrix::Evidence<'_> {
         matrix::Evidence {
             mutations: self.mutations,
+            targets: &self.targets,
             knobs: &self.knobs,
             faults: &self.faults,
             crashes: &self.crashes,

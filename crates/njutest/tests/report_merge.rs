@@ -1021,8 +1021,9 @@ fn a_merge_of_whole_parts_names_each_dimension_they_left_a_hole_once() {
     named.sort_unstable();
     assert_eq!(
         named,
-        vec!["durable", "fault", "repeatable"],
-        "no part raises a dimension finding, and the merge raises each once over every part"
+        vec!["durable", "fault", "repeatable", "schedule"],
+        "no part raises a dimension finding, and the merge raises each once over every part, the \
+         schedule among them since a binary passed in each part with no record of its threads"
     );
 }
 

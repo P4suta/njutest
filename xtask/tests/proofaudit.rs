@@ -2664,19 +2664,21 @@ fn a_whole_run_that_names_exactly_the_dimensions_it_left_a_hole_is_not_refused()
                 {},
                 finding("repeatable"),
                 finding("fault"),
-                finding("durable")
+                finding("durable"),
+                finding("schedule")
             ]
         }),
     );
     let audit = audited(&document);
     assert!(
         !audit.violated(Layer::Dimensions),
-        "the records leave repeatable, fault and durable a hole and the findings name exactly \
-         those: {audit}"
+        "the records leave repeatable, fault and durable a hole, and a target that passed with no \
+         record of its threads leaves the schedule one, and the findings name exactly those: \
+         {audit}"
     );
     merge(
         &mut document,
-        serde_json::json!({ "findings": [{}, {}, {}, {"subject": "wire"}] }),
+        serde_json::json!({ "findings": [{}, {}, {}, {}, {"subject": "wire"}] }),
     );
     assert!(
         audited(&document).violated(Layer::Dimensions),

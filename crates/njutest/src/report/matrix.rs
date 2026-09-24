@@ -114,6 +114,8 @@ pub struct Row {
 pub struct Evidence<'a> {
     /// How many mutations the run decided, and how many it put and could not decide.
     pub mutations: (usize, usize),
+    /// Every target the run selected, each whose baseline passed owed a record by a dimension that measures binaries.
+    pub targets: &'a [super::TargetRecord],
     /// What each knob established about each target.
     pub knobs: &'a [KnobRecord],
     /// What each fault site came to.
@@ -146,6 +148,7 @@ impl<'a> Evidence<'a> {
             .count();
         Self {
             mutations: (answered, holes),
+            targets: &report.targets,
             knobs: &report.knobs,
             faults: &report.faults,
             crashes: &report.crashes,
@@ -214,7 +217,7 @@ fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
         },
         Dimension::Repeatable => repeatable(evidence.knobs),
         Dimension::Fault => fault(evidence),
-        Dimension::Schedule => schedule(evidence.concurrency),
+        Dimension::Schedule => schedule(evidence.concurrency, evidence.targets),
         Dimension::Durable => durable(evidence),
         Dimension::Wire => wire(evidence),
     }
@@ -334,26 +337,38 @@ fn fault(evidence: &Evidence<'_>) -> Column {
     )
 }
 
-/// The schedules' column: a binary proven to run one thread, or one a delayed guard broke, is answered; a sample of schedules that all passed, one whose delays settled nothing, and a binary no schedule of which was explored, is a hole (ADR 0034).
-fn schedule(records: &[super::concurrency::ConcurrencyRecord]) -> Column {
+/// The schedules' column: a binary proven to run one thread, or one a delayed guard broke, is answered; a sample of schedules that all passed, one whose delays settled nothing, a binary no schedule of which was explored, and one that passed with no record at all, is a hole (ADR 0034).
+fn schedule(
+    records: &[super::concurrency::ConcurrencyRecord],
+    targets: &[super::TargetRecord],
+) -> Column {
     use super::concurrency::{Exploration, Unexplored};
-    if records.is_empty() {
+    let unrecorded: Vec<Counted> = targets
+        .iter()
+        .filter(|target| target.status == super::TargetStatus::Passed)
+        .filter(|target| !records.iter().any(|record| record.target == target.name))
+        .map(|_target| Counted::Hole)
+        .collect();
+    if records.is_empty() && unrecorded.is_empty() {
         return Column::NothingToAsk {
             why: "no test binary ran".to_owned(),
         };
     }
     tallied(
-        records.iter().map(|record| match &record.explored {
-            Exploration::Unexplored {
-                why: Unexplored::NotNeeded,
-            }
-            | Exploration::Broke { .. } => Counted::Answered,
-            Exploration::Sampled { .. }
-            | Exploration::Undecided { .. }
-            | Exploration::Unexplored {
-                why: Unexplored::NotAsked | Unexplored::NotPassing | Unexplored::NoSite,
-            } => Counted::Hole,
-        }),
+        records
+            .iter()
+            .map(|record| match &record.explored {
+                Exploration::Unexplored {
+                    why: Unexplored::NotNeeded,
+                }
+                | Exploration::Broke { .. } => Counted::Answered,
+                Exploration::Sampled { .. }
+                | Exploration::Undecided { .. }
+                | Exploration::Unexplored {
+                    why: Unexplored::NotAsked | Unexplored::NotPassing | Unexplored::NoSite,
+                } => Counted::Hole,
+            })
+            .chain(unrecorded),
         Vec::new(),
     )
 }

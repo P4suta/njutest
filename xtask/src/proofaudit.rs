@@ -2320,21 +2320,29 @@ fn dimensions(recording: &Recording<'_>, audit: &mut Audit) {
     }
 }
 
-/// Whether some test binary's schedules were neither shown to need none nor broken by a delay.
+/// Whether some test binary's schedules were neither shown to need none nor broken by a delay, or a target passed with no record of its threads at all.
 fn schedules_holed(document: &serde_json::Value) -> bool {
-    rows(document, "concurrency").iter().any(|record| {
-        let explored = record.get("explored");
-        let state = explored
-            .and_then(|one| one.get("state"))
-            .and_then(serde_json::Value::as_str);
-        let why = explored
-            .and_then(|one| one.get("why"))
-            .and_then(serde_json::Value::as_str);
-        !matches!(
-            (state, why),
-            (Some("broke"), _) | (Some("unexplored"), Some("not-needed"))
-        )
-    })
+    let records = rows(document, "concurrency");
+    let unrecorded = rows(document, "targets").iter().any(|target| {
+        field(target, "status").as_deref() == Some("passed")
+            && !records
+                .iter()
+                .any(|record| field(record, "target") == field(target, "name"))
+    });
+    unrecorded
+        || records.iter().any(|record| {
+            let explored = record.get("explored");
+            let state = explored
+                .and_then(|one| one.get("state"))
+                .and_then(serde_json::Value::as_str);
+            let why = explored
+                .and_then(|one| one.get("why"))
+                .and_then(serde_json::Value::as_str);
+            !matches!(
+                (state, why),
+                (Some("broke"), _) | (Some("unexplored"), Some("not-needed"))
+            )
+        })
 }
 
 /// Whether the knobs, whose standings are `knobs`, leave repeatability open: none put, one left undecided, or one this machine lacked and another could put.
