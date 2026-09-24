@@ -707,6 +707,9 @@ pub struct PerturbationRecord {
     /// The guard each thread paused at the first time it reached it, or nothing.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub delay: Option<DelayRecord>,
+    /// The guard whose delayed failure this undelayed control confirms, or nothing.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub confirms: Option<u32>,
 }
 
 /// The one guard a control paused each of its threads at, once: which schedule it ran.

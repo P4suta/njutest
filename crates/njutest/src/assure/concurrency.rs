@@ -124,7 +124,7 @@ pub fn explored(
     records: &mut [ConcurrencyRecord],
     (explore, passing): (u32, &std::collections::BTreeSet<String>),
     cancel: &rust_mutants::runner::Cancel,
-) -> Result<(), rust_mutants::EngineError> {
+) -> Result<(), crate::error::RunnerError> {
     if explore == 0 {
         return Ok(());
     }
@@ -173,30 +173,24 @@ fn schedules(
     target: &str,
     (sites, asked): (&[u32], u32),
     cancel: &rust_mutants::runner::Cancel,
-) -> Result<Exploration, rust_mutants::EngineError> {
+) -> Result<Exploration, crate::error::RunnerError> {
     let mut undecided = Vec::new();
     for &site in sites {
-        match ended(session, target, Some(site), cancel)? {
+        match ended(session, target, Started::Delayed(site), cancel)? {
             Ended::Passed => {}
             Ended::Unsettled => undecided.push(site),
             Ended::Failed(failed) => {
-                let located = if confirmed(session, (target, site), &failed, cancel)? {
-                    located(session, site)
-                } else {
-                    None
-                };
-                match located {
-                    Some((path, line)) => {
-                        return Ok(Exploration::Broke {
-                            site,
-                            path,
-                            line,
-                            failed,
-                            rounds: CONFIRMING_ROUNDS,
-                        });
-                    }
-                    None => undecided.push(site),
+                if confirmed(session, (target, site), &failed, cancel)? {
+                    let (path, line) = located(session, site)?;
+                    return Ok(Exploration::Broke {
+                        site,
+                        path,
+                        line,
+                        failed,
+                        rounds: CONFIRMING_ROUNDS,
+                    });
                 }
+                undecided.push(site);
             }
         }
     }
@@ -220,42 +214,70 @@ fn confirmed(
     (target, site): (&str, u32),
     failed: &[String],
     cancel: &rust_mutants::runner::Cancel,
-) -> Result<bool, rust_mutants::EngineError> {
+) -> Result<bool, crate::error::RunnerError> {
     for _ in 0..CONFIRMING_ROUNDS {
-        if !repeats(failed, &ended(session, target, Some(site), cancel)?) {
+        if !repeats(
+            failed,
+            &ended(session, target, Started::Delayed(site), cancel)?,
+        ) {
             return Ok(false);
         }
-        if !clean(&ended(session, target, None, cancel)?) {
+        if !clean(&ended(session, target, Started::Confirming(site), cancel)?) {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-/// Where the guard at `site` is, or nothing where the catalog holds no such site, which a finding cannot then name.
-fn located(session: &rust_mutants::session::Session, site: u32) -> Option<(String, u32)> {
+/// Where the guard at `site` is.
+///
+/// # Errors
+/// [`RunInvariantError::UnplacedSite`](crate::assure::run::RunInvariantError::UnplacedSite) where the catalog holds no such site or no position for it: a site a baseline reached is always one of its catalog's, and a finding that could not name its place is not raised in its stead.
+fn located(
+    session: &rust_mutants::session::Session,
+    site: u32,
+) -> Result<(String, u32), crate::error::RunnerError> {
+    let unplaced = || crate::error::RunnerError::RunInvariant {
+        source: crate::assure::run::RunInvariantError::UnplacedSite { site },
+    };
     let mutant = session
         .catalog()
         .mutants()
         .iter()
-        .find(|mutant| mutant.index == site)?;
-    let line = session.position(mutant)?.line;
-    Some((mutant.candidate.path.clone(), line))
+        .find(|mutant| mutant.index == site)
+        .ok_or_else(unplaced)?;
+    let line = session.position(mutant).ok_or_else(unplaced)?.line;
+    Ok((mutant.candidate.path.clone(), line))
 }
 
-/// How one control of `target` ended, with the guard at `site` delayed or with nothing delayed.
+/// What one exploration control is started as.
+#[derive(Debug, Clone, Copy)]
+enum Started {
+    /// Every thread paused once at the guard of this site.
+    Delayed(u32),
+    /// Nothing delayed: the undelayed half of a round confirming this site's delayed failure, named so a recording holds it.
+    Confirming(u32),
+}
+
+/// How one control of `target` ended, started as `started`.
 fn ended(
     session: &rust_mutants::session::Session,
     target: &str,
-    site: Option<u32>,
+    started: Started,
     cancel: &rust_mutants::runner::Cancel,
-) -> Result<Ended, rust_mutants::EngineError> {
-    let perturbation = Perturbation {
-        delay: site.map(|site| rust_mutants::execute::Delay {
-            site,
-            pause_ms: PAUSE_MS,
-        }),
-        ..Perturbation::none()
+) -> Result<Ended, crate::error::RunnerError> {
+    let perturbation = match started {
+        Started::Delayed(site) => Perturbation {
+            delay: Some(rust_mutants::execute::Delay {
+                site,
+                pause_ms: PAUSE_MS,
+            }),
+            ..Perturbation::none()
+        },
+        Started::Confirming(site) => Perturbation {
+            confirms: Some(site),
+            ..Perturbation::none()
+        },
     };
     let controlled = session.control_perturbed(
         &Request::new(String::new()).with_target(target),
