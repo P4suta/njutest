@@ -360,9 +360,12 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     ) -> __rm_std::result::Result<__rm_std::fs::File, StepStateError> {
         use __rm_std::os::unix::fs::OpenOptionsExt as _;
 
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options.read(true).write(true).custom_flags(no_follow_flag());
-        options.open(path).map_err(|_| StepStateError::Open)
+        __rm_std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(no_follow_flag())
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(windows)]
@@ -375,12 +378,12 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         // opened object. The regular-file check below then rejects links and
         // junctions instead of following them.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options
+        __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        options.open(path).map_err(|_| StepStateError::Open)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -524,13 +527,17 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         expected_limit: StepLimit,
     ) -> __rm_std::result::Result<StepPhase, StepStateError> {
         const MAX_STATE_BYTES: u64 = 1024;
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         let mut bytes = __rm_std::vec::Vec::new();
         let mut capped = __rm_std::io::Read::take(&mut *file, MAX_STATE_BYTES + 1);
-        __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
+        let read = __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
             .map_err(|_| StepStateError::Read)?;
-        if bytes.len() > MAX_STATE_BYTES as usize {
+        if read > MAX_STATE_BYTES as usize {
             return __rm_std::result::Result::Err(StepStateError::TooLarge);
         }
         let text = __rm_std::str::from_utf8(&bytes).map_err(|_| StepStateError::NotUtf8)?;
@@ -621,8 +628,12 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             name,
             spent,
         );
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         file.set_len(0).map_err(|_| StepStateError::Truncate)?;
         __rm_std::io::Write::write_all(file, state.as_bytes())
             .map_err(|_| StepStateError::Write)?;
