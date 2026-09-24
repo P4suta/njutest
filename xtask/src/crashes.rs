@@ -108,6 +108,9 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
         match event.get("type").and_then(Value::as_str) {
             Some("crash-exec") => {
                 let Some(record) = event.get("crash") else {
+                    crashed
+                        .steps
+                        .push((String::new(), Step::Unread("crash-exec".to_owned())));
                     continue;
                 };
                 let Some(noticed) = record.get("noticed").and_then(Value::as_bool) else {
@@ -136,6 +139,9 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
             }
             Some("crash-step") => {
                 let Some(record) = event.get("step") else {
+                    crashed
+                        .steps
+                        .push((String::new(), Step::Unread("crash-step".to_owned())));
                     continue;
                 };
                 let taken = record.get("taken").cloned().unwrap_or_default();
@@ -153,29 +159,36 @@ fn step(taken: &Value) -> Step {
         "rejected" => Step::Rejected,
         "tainted" => Step::Tainted,
         "outside" => Step::Outside,
-        "route" => Step::Route(
-            taken
-                .get("asked")
-                .and_then(Value::as_array)
-                .map(|asked| {
-                    asked
-                        .iter()
-                        .map(|one| Asked {
-                            target: text(one, "target"),
-                            tests: one.get("tests").and_then(Value::as_array).map(|named| {
-                                named
-                                    .iter()
-                                    .filter_map(Value::as_str)
-                                    .map(ToOwned::to_owned)
-                                    .collect()
-                            }),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-        ),
+        "route" => routed_as(taken).map_or_else(|| Step::Unread("route".to_owned()), Step::Route),
         other => Step::Unread(other.to_owned()),
     }
+}
+
+/// The targets a route step asks, or nothing where the step does not say them all in full: a target by name, and its tests as a list of names or `null`.
+fn routed_as(taken: &Value) -> Option<Vec<Asked>> {
+    taken
+        .get("asked")?
+        .as_array()?
+        .iter()
+        .map(|one| {
+            let tests = match one.get("tests")? {
+                Value::Null => None,
+                Value::Array(named) => Some(
+                    named
+                        .iter()
+                        .map(|name| name.as_str().map(ToOwned::to_owned))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => {
+                    return None;
+                }
+            };
+            Some(Asked {
+                target: one.get("target")?.as_str()?.to_owned(),
+                tests,
+            })
+        })
+        .collect()
 }
 
 /// One site as a report writes it.
@@ -342,22 +355,33 @@ fn routed(crash: &str, asked: &[Asked], cursor: &mut Cursor<'_, '_>) -> Result<S
     })
 }
 
-/// Whether a failing next run is held to a fresh run that passes, and a second stop that leaves something and fails the next run over it the same way, with the stopped test among the failures.
+/// How many rounds confirm a corrupt stop, written out again from the runner's contract rather than read from its code.
+pub const CONFIRMATIONS: usize = 3;
+
+/// Whether a failing next run, with the stopped test among its failures, is held to [`CONFIRMATIONS`] rounds of a fresh run that passes and a later stop that leaves something and fails the next run over it the same way.
 fn confirmed(
     cursor: &mut Cursor<'_, '_>,
     target: &str,
     test: &str,
     failed: &[String],
 ) -> Result<bool, Unmade> {
-    if cursor.run(target, test, "fresh")?.outcome != "survived" {
+    if !failed.iter().any(|one| one == test) {
         return Ok(false);
     }
-    let again = cursor.run(target, test, "crash")?;
-    if !stopped(again) || again.left.is_empty() {
-        return Ok(false);
+    for () in std::iter::repeat_n((), CONFIRMATIONS) {
+        if cursor.run(target, test, "fresh")?.outcome != "survived" {
+            return Ok(false);
+        }
+        let again = cursor.run(target, test, "crash")?;
+        if !stopped(again) || again.left.is_empty() {
+            return Ok(false);
+        }
+        let next = cursor.run(target, test, "next")?;
+        if next.outcome != "killed" || next.failed != failed {
+            return Ok(false);
+        }
     }
-    let next = cursor.run(target, test, "next")?;
-    Ok(next.outcome == "killed" && next.failed == failed && failed.iter().any(|one| one == test))
+    Ok(true)
 }
 
 /// Whether a run stopped at the call: the stop's exit status, and the runtime's notice that it made it.

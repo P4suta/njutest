@@ -184,15 +184,25 @@ fn crash_restarted() -> Vec<Value> {
     ]
 }
 
-/// A stop of `t`, a next run that failed `t`, a fresh run that passed, and a second stop whose next run failed `again`.
+/// A stop of `t`, a next run that failed `t`, and the rounds that confirm it, the last of whose next runs failed `again`.
 fn crash_corrupted(again: &str) -> Vec<Value> {
-    vec![
+    let mut runs = vec![
         crash_run("t", "crash", "stopped", &["count"]),
         crash_run("t", "next", "failed", &["t"]),
-        crash_run("t", "fresh", "passed", &[]),
-        crash_run("t", "crash", "stopped", &["count"]),
-        crash_run("t", "next", "failed", &[again]),
-    ]
+    ];
+    for round in 1..=crate::crashes::CONFIRMATIONS {
+        let failed = if round == crate::crashes::CONFIRMATIONS {
+            again
+        } else {
+            "t"
+        };
+        runs.extend([
+            crash_run("t", "fresh", "passed", &[]),
+            crash_run("t", "crash", "stopped", &["count"]),
+            crash_run("t", "next", "failed", &[failed]),
+        ]);
+    }
+    runs
 }
 
 /// The defects planted for the crashes layer: each a report that claims a decision, or drops one, where the recorded steps decide otherwise.
@@ -482,6 +492,55 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
             )),
             ..clean.clone()
         },
+    ]
+    .into_iter()
+    .chain(faults_owing(clean))
+    .collect()
+}
+
+/// The faults layer's planted defects about what a fault's decision owes: the finding a decision raises, and the attribution a write rests on.
+fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "an undecided fault whose not-measured finding the report dropped",
+            document: with(json!({
+                "faults": [fault_site(&json!({
+                    "decision": "undecided", "on": TARGET, "why": "the kill did not happen the second time"
+                }))],
+                "accounting": { "faults": { "sites": 1, "undecided": 1 } }
+            })),
+            events: Some(fault_recorded(
+                &json!({
+                    "decision": "undecided", "on": TARGET, "why": "the kill did not happen the second time"
+                }),
+                "killed",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a write called broken-under-fault that no attribution ties to the fault",
+            document: with(json!({
+                "verdict": "DEFECT",
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }, {
+                    "kind": "broken-under-fault",
+                    "subject": FAULTED,
+                    "detail": "wrote failed-read.log",
+                    "position": null
+                }]
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
         Perturbation {
             name: "a fault site the recording holds and the report dropped",
             events: Some(fault_recorded(
@@ -502,7 +561,7 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
                 "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
                 "type": "fault-exec",
                 "fault": {
-                    "fault": FAULTED, "target": TARGET, "args": [],
+                    "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
                     "outcome": outcome, "duration_ms": 5, "alone": false
                 }
             }),

@@ -51,14 +51,24 @@ fn decision(steps: &[Step]) -> Result<(String, String), Unmade> {
 }
 
 fn corrupted(again: &str) -> Vec<Step> {
-    vec![
+    let mut steps = vec![
         asks_t(),
         run("t", "crash", "stopped", &["count"]),
         run("t", "next", "failed", &["t"]),
-        run("t", "fresh", "passed", &[]),
-        run("t", "crash", "stopped", &["count"]),
-        run("t", "next", "failed", &[again]),
-    ]
+    ];
+    for round in 1..=xtask::crashes::CONFIRMATIONS {
+        let failed = if round == xtask::crashes::CONFIRMATIONS {
+            again
+        } else {
+            "t"
+        };
+        steps.extend([
+            run("t", "fresh", "passed", &[]),
+            run("t", "crash", "stopped", &["count"]),
+            run("t", "next", "failed", &[failed]),
+        ]);
+    }
+    steps
 }
 
 #[test]
@@ -107,6 +117,19 @@ fn each_sequence_a_run_makes_decides_exactly_one_thing() {
             vec![asks_t(), run("t", "crash", "chose", &["count"])],
             ("undecided", on.as_str()),
         ),
+        (
+            "a failure that did not reproduce in a later round",
+            vec![
+                asks_t(),
+                run("t", "crash", "stopped", &["count"]),
+                run("t", "next", "failed", &["t"]),
+                run("t", "fresh", "passed", &[]),
+                run("t", "crash", "stopped", &["count"]),
+                run("t", "next", "failed", &["t"]),
+                run("t", "fresh", "failed", &["t"]),
+            ],
+            ("undecided", on.as_str()),
+        ),
         ("a refusal", vec![Step::Rejected], ("not-put", "")),
         (
             "a stop that wrote into the tree",
@@ -133,6 +156,10 @@ fn a_sequence_no_run_makes_is_refused_rather_than_read_around() {
     let cases = [
         ("no route", vec![run("t", "crash", "stopped", &["count"])]),
         ("a route whose test was never run", vec![asks_t()]),
+        (
+            "a corrupt stop confirmed fewer times than the runner confirms it",
+            corrupted("t").into_iter().take(6).collect(),
+        ),
         (
             "a next run of another test",
             vec![

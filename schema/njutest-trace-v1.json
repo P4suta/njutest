@@ -341,14 +341,88 @@
             "fault": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["fault", "target", "args", "outcome", "duration_ms", "alone"],
+              "required": ["fault", "role", "target", "args", "outcome", "duration_ms", "alone"],
               "properties": {
                 "fault": { "type": "string", "minLength": 1 },
+                "role": { "enum": ["first", "confirmation", "attribution", "attribution-control"] },
                 "target": { "type": "string", "minLength": 1 },
                 "args": { "type": "array", "items": { "type": "string" } },
                 "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
                 "duration_ms": { "type": "integer", "minimum": 0 },
                 "alone": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "attribution"],
+          "properties": {
+            "type": { "const": "fault-attribution" },
+            "attribution": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "target", "path", "faulted", "passed", "unfaulted"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "path": { "type": "string", "minLength": 1 },
+                "faulted": { "type": "boolean" },
+                "passed": { "type": "boolean" },
+                "unfaulted": { "enum": ["not-asked", "wrote", "did-not-write"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "route"],
+          "properties": {
+            "type": { "const": "fault-route" },
+            "route": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "reaching"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "reaching": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "rejected"],
+          "properties": {
+            "type": { "const": "fault-rejected" },
+            "rejected": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "diagnostic"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "diagnostic": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "control"],
+          "properties": {
+            "type": { "const": "fault-control" },
+            "control": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "target", "passed"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "passed": { "type": "boolean" }
               }
             }
           }

@@ -2682,3 +2682,15 @@ fn a_whole_run_that_names_exactly_the_dimensions_it_left_a_hole_is_not_refused()
         "and naming a dimension the records establish is refused"
     );
 }
+
+#[test]
+fn a_report_that_says_there_was_nothing_to_crash_is_unaudited_without_a_recording() {
+    let document = with(serde_json::json!({
+        "limitations": [{ "name": "crash-no-site", "detail": "no measured file writes" }]
+    }));
+    assert!(
+        unaudited(&document).contains(&"crashes".to_owned()),
+        "a report that dropped every crash site and said there was none reads the same as one \
+         that had none, and only the recording tells them apart"
+    );
+}
