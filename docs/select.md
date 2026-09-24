@@ -31,7 +31,7 @@ nextest does not run documentation, so `--format nextest` prints the filterset o
 
 Two programs identical except at *p* run identically until *p* is first reached ([ADR 0014](adr/0014-the-guards-are-the-measurement.md)).
 A test that never entered the item holding *p* on the measured tree therefore runs the same on the changed one, and running it asks nothing the change could answer.
-`measure` records, for every target, which items anything of it entered ([ADR 0026](adr/0026-an-item-is-entered-where-its-body-starts.md)), and runs each target whole a second time to show that what it entered is a function of the target and not of the run ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+`measure` records, for every target, which items anything of it entered ([ADR 0027](adr/0027-an-item-is-entered-where-its-body-starts.md)), and runs each target whole a second time to show that what it entered is a function of the target and not of the run ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
 A target whose second run reached something else, or could not be compared, is never skipped.
 
 Entering is not the only way a test depends on a file: a test that reads `src/quiet.rs` as text depends on it without running a line of it.
@@ -45,7 +45,7 @@ A selection never asks git what changed.
 `select` reads the tree again by the same rules and compares.
 A file git ignores, an uncommitted edit, a filter, a file made runnable: each is a change, because each is a difference in what a build or a test could read.
 
-Each changed source file is read in both versions ([ADR 0027](adr/0027-a-change-is-placed-by-reading-both-versions.md)).
+Each changed source file is read in both versions ([ADR 0028](adr/0028-a-change-is-placed-by-reading-both-versions.md)).
 A change is placed in an item only where it lies strictly inside the body of a measurable item, the rest of the file is the same tokens, and the change does not reach past the body.
 An item whose tokens moved to another line or column is changed too, because a panic inside it says where it is.
 
@@ -74,4 +74,4 @@ The doc target is never measured, so it always runs.
 A selection says which targets need not run, never which need not compile: build everything, then run what it selected.
 `measure` is one instrumented build and two runs of every target; it is worth paying once and reusing for as long as nothing above moves.
 A test that reads a source file only when one is missing, or reads it without its answer depending on the text, is not told apart from one that does not read it at all; the run without the files finds a test whose answer changes when the files are gone.
-A child process started with a cleared environment is noticed and its target runs ([ADR 0028](adr/0028-a-process-that-loses-the-environment-says-so.md)).
+A child process started with a cleared environment is noticed and its target runs ([ADR 0029](adr/0029-a-process-that-loses-the-environment-says-so.md)).

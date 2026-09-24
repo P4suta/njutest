@@ -3,13 +3,13 @@ SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# 0027 — A change is placed by reading both versions
+# 0028 — A change is placed by reading both versions
 
 ## Status
 
 Accepted, 2026-09-24.
 Implemented by the `select` module of rust-mutants.
-The measurement it reads is [ADR 0026](0026-an-item-is-entered-where-its-body-starts.md)'s item reach, and the standing of each target is [ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md)'s drift.
+The measurement it reads is [ADR 0027](0027-an-item-is-entered-where-its-body-starts.md)'s item reach, and the standing of each target is [ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md)'s drift.
 
 ## Context
 

@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# 0028 — A process that loses the environment says so
+# 0029 — A process that loses the environment says so
 
 ## Status
 
