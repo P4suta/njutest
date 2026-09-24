@@ -232,6 +232,9 @@ They are what the run says about its own footing, and each is stated fail-closed
   A run that met any of these and said nothing recorded no seam, raised no finding and stated no limitation, so a reader read the wire dimension as covered when nothing about it had been measured.
 - The interpreter ran out of the time it was given (`miri-timed-out`).
   This is not a claim that it found nothing: a budget that expired is a question nobody answered, which is why it is a limitation and never a pass.
+- The toolchain has no interpreter and the contract is `whole-v1` (`miri-unavailable`).
+  `whole-v1` names each thing it could not establish rather than refusing the run, so the soundness nothing interpreted is a limitation beside a `not-measured` finding, and the run is not `ASSURED`.
+  `deep-v1` promises interpretation, and there the same toolchain ends the run with `NJ7001`.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 

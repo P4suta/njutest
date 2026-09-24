@@ -451,6 +451,11 @@ fn deepened(
             timeout: Some(request.config.execution.timeout),
             offline: request.cargo.offline,
             locked: request.cargo.locked,
+            absent: if request.config.contract.asks_every_dimension() {
+                super::deep::Absent::Hole
+            } else {
+                super::deep::Absent::Refused
+            },
         },
         watch,
     )?;

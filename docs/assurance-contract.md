@@ -43,7 +43,8 @@ It advances no index and stores no verdict.
 `whole-v1` asks every dimension: mutations, knobs, faults, seams, schedules and durability ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
 It runs soundness as `deep-v1` does and puts every fault, every crash and every knob, and each dimension it did not establish — not asked, unmeasured, or measured with a hole — is a `dimension-not-measured` finding, so the run is not `ASSURED`.
 A dimension with nothing to ask, and the classes a dimension says it cannot speak about, are stated and are not holes.
-No run of this release satisfies it, because schedules are not measured yet.
+A toolchain with no interpreter is one more thing it names rather than refuses: `miri-unavailable`, beside a `not-measured` finding.
+Schedules are explored by delaying guards, and a sample of schedules is never a proof, so a suite with a test binary not proven to run one thread and not broken by a delay is not `ASSURED` under it ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
 
 ## Crashes
 
