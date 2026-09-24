@@ -1089,3 +1089,33 @@ fn every_dev_build_compiles_the_one_feature_set_the_suite_does() {
          one the suite links: {divergent:#?}"
     );
 }
+
+#[test]
+fn an_advisory_check_reads_a_database_fetched_by_a_step_that_tries_again() {
+    let workflow = repository(".github/workflows/ci.yml");
+    for (check, offline, fetch) in [
+        ("cargo deny", "check --disable-fetch", "fetch db"),
+        (
+            "cargo audit",
+            "--no-fetch",
+            "git clone --depth 1 https://github.com/RustSec/advisory-db.git",
+        ),
+    ] {
+        let runs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .filter(|line| line.contains(check) && !line.contains(fetch))
+            .filter(|line| !line.contains("tools:"))
+            .collect();
+        assert!(
+            !runs.is_empty() && runs.iter().all(|line| line.contains(offline)),
+            "{check} fetched the advisory database itself, once, so a network error on that one \
+             fetch failed the job, twice on 2026-09-24; it reads a database a step of its own \
+             fetched and tried again for ({offline}): {runs:?}"
+        );
+        assert!(
+            workflow.contains(fetch) && workflow.contains("for attempt in 1 2 3 4 5"),
+            "and that step is there, and tries again: {fetch}"
+        );
+    }
+}
