@@ -216,15 +216,7 @@ impl Expect {
     /// How the claim is written back to a reader.
     #[must_use]
     pub fn name(&self) -> String {
-        self.id.clone().unwrap_or_else(|| {
-            format!(
-                "{} {} {} {:?}",
-                self.path.as_deref().unwrap_or_default(),
-                self.item.as_deref().unwrap_or_default(),
-                self.rule.as_deref().unwrap_or_default(),
-                self.original.as_deref().unwrap_or_default()
-            )
-        })
+        self.expectation().name()
     }
 
     /// Whether the entry names a mutant by where it is rather than by identity.

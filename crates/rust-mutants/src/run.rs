@@ -68,10 +68,7 @@ impl Expectation {
     pub fn name(&self) -> String {
         match (&self.id, &self.locator) {
             (Some(id), _) => id.clone(),
-            (None, Some(locator)) => format!(
-                "{} {} {} {:?}",
-                locator.path, locator.item, locator.rule, locator.original
-            ),
+            (None, Some(locator)) => locator.name(),
             (None, None) => String::new(),
         }
     }
@@ -1631,8 +1628,25 @@ pub fn verify(
     judged: &mut [Judged],
 ) -> Result<Vec<Verified>, SessionError> {
     let mut verified = Vec::with_capacity(expectations.len());
+    let mut reasons: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     for expectation in expectations {
         let resolved = addressed(session, expectation);
+        let named: &[&Mutant] = match &resolved {
+            Ok((mutants, _moved)) => mutants,
+            Err(_unresolved) => &[],
+        };
+        for mutant in named {
+            if let Some(first) = reasons.insert(mutant.index, expectation.name()) {
+                return Err(SessionError::ExpectationsOverlap {
+                    first,
+                    second: expectation.name(),
+                    mutant: session.position(mutant).map_or_else(
+                        || mutant.display_id.to_string(),
+                        |at| format!("{}@{}", mutant.display_id, at.line),
+                    ),
+                });
+            }
+        }
         let (covered, mutant, standing) = match resolved {
             Err(why) => (
                 0,

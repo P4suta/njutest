@@ -425,6 +425,19 @@ pub enum SessionError {
         /// The unrepresentable number of resolved mutants.
         count: usize,
     },
+    /// Two expectations name one mutation, which then has two reasons.
+    #[error(
+        "{}: the expectations {first:?} and {second:?} both name mutation {mutant}; a mutant has one reason",
+        error::CONFIG_INVALID.code
+    )]
+    ExpectationsOverlap {
+        /// The expectation that named it first.
+        first: String,
+        /// The one that named it again.
+        second: String,
+        /// The mutation both name, with its line.
+        mutant: String,
+    },
     /// A run collection contains more rows than its durable counter can represent.
     #[error(
         "{}: a run collection contains {count} rows, which exceeds its durable counter",
@@ -629,6 +642,7 @@ impl SessionError {
                 error::SESSION_UNKNOWN_TARGET
             }
             Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
+            Self::ExpectationsOverlap { .. } => error::CONFIG_INVALID,
             Self::WriteFailed { .. }
             | Self::TemporaryRootUnavailable { .. }
             | Self::ScratchStatePoisoned

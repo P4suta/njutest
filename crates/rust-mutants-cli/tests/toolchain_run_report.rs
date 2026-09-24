@@ -1315,3 +1315,76 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         stderr(&merged)
     );
 }
+
+#[test]
+fn claims_a_line_tells_apart_are_two_claims_and_a_mutant_two_claims_name_is_refused() {
+    let fixture = Fixture::copy("fixture-families");
+    let claim = |line: Option<u32>, count: Option<u32>, reason: &str| {
+        let line = line.map_or_else(String::new, |line| format!("line = {line}\n"));
+        let count = count.map_or_else(String::new, |count| format!("count = {count}\n"));
+        format!(
+            "\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+             \"question-to-unwrap\"\noriginal = \"?\"\n{line}{count}outcome = \
+             \"killed\"\nreason = \"{reason}\"\n"
+        )
+    };
+    let narrowed = [
+        "run",
+        "--offline",
+        "--locked",
+        "--include",
+        "src/lib.rs",
+        "--operator",
+        "question-to-unwrap",
+    ];
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        format!(
+            "version = 1\n{}{}",
+            claim(Some(47), None, "the parse a caller can see"),
+            claim(Some(48), None, "the parse whose value is thrown away")
+        ),
+    )
+    .expect("write the configuration");
+    let output = against(&fixture, &narrowed);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "two claims on one item that a line tells apart are two claims, not one written twice: {}",
+        stderr(&output)
+    );
+    let stored = stored(&fixture);
+    let claims: Vec<(String, String)> = stored["expectations"]
+        .as_array()
+        .expect("expectations")
+        .iter()
+        .map(|one| (one["id"].to_string(), one["mutant"].to_string()))
+        .collect();
+    assert_eq!(claims.len(), 2, "{claims:?}");
+    assert!(
+        claims.first().map(|one| &one.0) != claims.get(1).map(|one| &one.0)
+            && claims.first().map(|one| &one.1) != claims.get(1).map(|one| &one.1),
+        "each is named apart in the report and answers for its own mutation: {claims:?}"
+    );
+
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        format!(
+            "version = 1\n{}{}",
+            claim(None, Some(2), "both parses"),
+            claim(Some(47), None, "the parse a caller can see")
+        ),
+    )
+    .expect("write the configuration");
+    let overlapping = against(&fixture, &narrowed);
+    assert_eq!(
+        overlapping.status.code(),
+        Some(2),
+        "a mutation two claims both name has two reasons, which a report cannot audit: {}",
+        stderr(&overlapping)
+    );
+    assert!(
+        stderr(&overlapping).contains("RM0004") && stderr(&overlapping).contains("@47"),
+        "the refusal is the configuration's, and names the mutation both claims hold: {}",
+        stderr(&overlapping)
+    );
+}
