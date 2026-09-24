@@ -6293,75 +6293,95 @@ fn implied(condition: &proc_macro2::TokenStream, held: &[String]) -> bool {
 
 impl Visit<'_> for ImpliedCfg<'_> {
     fn visit_item_mod(&mut self, item: &syn::ItemMod) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_mod(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_mod(walk, item);
+        });
     }
 
     fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_impl(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_impl(walk, item);
+        });
     }
 
     fn visit_item_trait(&mut self, item: &syn::ItemTrait) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_trait(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_trait(walk, item);
+        });
     }
 
     fn visit_item_fn(&mut self, item: &syn::ItemFn) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_fn(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_fn(walk, item);
+        });
     }
 
     fn visit_impl_item_fn(&mut self, item: &syn::ImplItemFn) {
         self.within(&item.attrs, |walk| {
-            syn::visit::visit_impl_item_fn(walk, item)
+            syn::visit::visit_impl_item_fn(walk, item);
         });
     }
 
     fn visit_trait_item_fn(&mut self, item: &syn::TraitItemFn) {
         self.within(&item.attrs, |walk| {
-            syn::visit::visit_trait_item_fn(walk, item)
+            syn::visit::visit_trait_item_fn(walk, item);
         });
     }
 
     fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
         self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_struct(walk, item)
+            syn::visit::visit_item_struct(walk, item);
         });
     }
 
     fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_enum(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_enum(walk, item);
+        });
     }
 
     fn visit_item_use(&mut self, item: &syn::ItemUse) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_use(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_use(walk, item);
+        });
     }
 
     fn visit_item_const(&mut self, item: &syn::ItemConst) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_const(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_const(walk, item);
+        });
     }
 
     fn visit_item_static(&mut self, item: &syn::ItemStatic) {
         self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_static(walk, item)
+            syn::visit::visit_item_static(walk, item);
         });
     }
 
     fn visit_item_type(&mut self, item: &syn::ItemType) {
-        self.within(&item.attrs, |walk| syn::visit::visit_item_type(walk, item));
+        self.within(&item.attrs, |walk| {
+            syn::visit::visit_item_type(walk, item);
+        });
     }
 
     fn visit_field(&mut self, field: &syn::Field) {
-        self.within(&field.attrs, |walk| syn::visit::visit_field(walk, field));
+        self.within(&field.attrs, |walk| {
+            syn::visit::visit_field(walk, field);
+        });
     }
 
     fn visit_variant(&mut self, variant: &syn::Variant) {
         self.within(&variant.attrs, |walk| {
-            syn::visit::visit_variant(walk, variant)
+            syn::visit::visit_variant(walk, variant);
         });
     }
 
     fn visit_stmt(&mut self, stmt: &syn::Stmt) {
         match stmt {
             syn::Stmt::Local(local) => {
-                self.within(&local.attrs, |walk| syn::visit::visit_stmt(walk, stmt));
+                self.within(&local.attrs, |walk| {
+                    syn::visit::visit_stmt(walk, stmt);
+                });
             }
             syn::Stmt::Item(_) | syn::Stmt::Expr(..) | syn::Stmt::Macro(_) => {
                 syn::visit::visit_stmt(self, stmt);
