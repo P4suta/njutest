@@ -98,6 +98,11 @@ pub enum Payload {
         /// The record.
         crash: CrashExecRecord,
     },
+    /// One thing a run did about a crash besides running a test: refused it, left it alone, routed it, or saw its stop write into the tree.
+    CrashStep {
+        /// The record.
+        step: CrashStepRecord,
+    },
     /// What a run established about one call that writes a crash was asked at.
     Crash {
         /// The record, as the report holds it.
@@ -168,6 +173,7 @@ impl Payload {
             Self::Beside { .. } => "beside",
             Self::BesideRun { .. } => "beside-run",
             Self::CrashExec { .. } => "crash-exec",
+            Self::CrashStep { .. } => "crash-step",
             Self::Crash { .. } => "crash",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
@@ -474,6 +480,44 @@ pub struct CrashExecRecord {
     pub left: Vec<String>,
     /// The tests a `next` or `fresh` run failed.
     pub failed: Vec<String>,
+}
+
+/// One thing a run did about a crash besides running a test.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashStepRecord {
+    /// The crash a person types.
+    pub crash: String,
+    /// What the run did.
+    pub taken: CrashStep,
+}
+
+/// What a run did about a crash besides running a test, in the order its decision is re-derived from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum CrashStep {
+    /// The compiler refused the crash, so nothing ran.
+    Rejected,
+    /// An earlier stop wrote into the tree under measurement, so nothing ran.
+    Tainted,
+    /// The targets and tests that reach the call, in the order they are asked.
+    Route {
+        /// Every target, with its tests where the route names them.
+        asked: Vec<CrashAsked>,
+    },
+    /// A stop of this crash wrote into the tree under measurement.
+    Outside,
+}
+
+/// One target a crash's route asks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashAsked {
+    /// The target.
+    pub target: String,
+    /// The tests that reach the call, or nothing where which of them does is not known.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub tests: Option<Vec<String>>,
 }
 
 /// What the probe pass measured for one target.

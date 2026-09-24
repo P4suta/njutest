@@ -107,71 +107,222 @@ pub fn base() -> Value {
     })
 }
 
-/// The defect planted for the crashes layer: a crash said to have restarted that no recorded run stopped at.
-fn crashes_planted(clean: Perturbation) -> Vec<Perturbation> {
-    let claimed = |decision: Value| {
-        with(json!({
-            "crashes": [{
-                "catalog_index": 0,
-                "id": "d".repeat(64),
-                "display_id": "d".repeat(20),
-                "path": "src/lib.rs",
-                "item": "save",
-                "position": null,
-                "decision": decision
-            }],
-            "accounting": { "crashes": { "sites": 1, "restarted": 1 } }
-        }))
-    };
-    let unreached = with(json!({
+/// The display identity of the crash the crashes layer's planted defects put.
+const CRASHED: &str = "dddddddddddddddddddd";
+
+/// A report of one crash site decided `decision`, counted once under `counted`, with `finding` beside the specimen's own where it names one.
+fn crash_reported(decision: &Value, counted: &str, finding: Option<(&str, &str)>) -> Value {
+    let mut document = with(json!({
         "crashes": [{
             "catalog_index": 0,
             "id": "d".repeat(64),
-            "display_id": "d".repeat(20),
+            "display_id": CRASHED,
             "path": "src/lib.rs",
             "item": "save",
             "position": null,
-            "decision": { "decision": "unreached" }
+            "decision": decision
         }],
-        "accounting": { "crashes": { "sites": 1, "unreached": 1 } }
+        "accounting": { "crashes": { "sites": 1, counted: 1 } }
     }));
-    let run = |stage: &str, exit_code: i64, outcome: &str, left: &[&str]| {
-        json!({
-            "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
-            "type": "crash-exec",
-            "crash": {
-                "crash": "d".repeat(20), "target": TARGET, "test": "t", "stage": stage,
-                "exit_code": exit_code, "outcome": outcome, "left": left, "failed": []
-            }
-        })
+    if let (Some((kind, subject)), Some(findings)) = (
+        finding,
+        document.get_mut("findings").and_then(Value::as_array_mut),
+    ) {
+        findings.push(json!({
+            "kind": kind, "subject": subject, "detail": "planted", "position": null
+        }));
+    }
+    document
+}
+
+/// One step of the crash [`CRASHED`], as the runner records it.
+fn crash_step(taken: &Value) -> Value {
+    json!({
+        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
+        "type": "crash-step",
+        "step": { "crash": CRASHED, "taken": taken }
+    })
+}
+
+/// One run of `test` with the crash [`CRASHED`] put to it, which `ended` stopped at the call, passed, failed or waited, with the `files` a stop left or a next or fresh run failed.
+fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
+    let (exit_code, outcome) = match ended {
+        "stopped" => (93, "killed"),
+        "passed" => (0, "survived"),
+        "waited" => (124, "waited"),
+        _ => (101, "killed"),
     };
-    let recorded = |runs: Vec<Value>| routes().into_iter().chain(runs).collect::<Vec<_>>();
+    let (left, failed): (&[&str], &[&str]) = if stage == "crash" {
+        (files, &[])
+    } else {
+        (&[], files)
+    };
+    json!({
+        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
+        "type": "crash-exec",
+        "crash": {
+            "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
+            "exit_code": exit_code, "outcome": outcome, "left": left, "failed": failed
+        }
+    })
+}
+
+/// The specimen's recording with the route that asks the one test `t`, and `runs` after it.
+fn crash_recorded(runs: Vec<Value>) -> Vec<Value> {
+    let route = crash_step(&json!({
+        "kind": "route", "asked": [{ "target": TARGET, "tests": ["t"] }]
+    }));
+    numbered(routes().into_iter().chain([route]).chain(runs).collect())
+}
+
+/// A stop of `t` that left `count`, and a next run that passed over it.
+fn crash_restarted() -> Vec<Value> {
     vec![
-        Perturbation {
-            name: "a crash said to have restarted that no recorded run stopped at",
-            document: claimed(
-                json!({ "decision": "restarted", "on": format!("{TARGET}::t"), "left": ["count"] }),
+        crash_run("t", "crash", "stopped", &["count"]),
+        crash_run("t", "next", "passed", &[]),
+    ]
+}
+
+/// A stop of `t`, a next run that failed `t`, a fresh run that passed, and a second stop whose next run failed `again`.
+fn crash_corrupted(again: &str) -> Vec<Value> {
+    vec![
+        crash_run("t", "crash", "stopped", &["count"]),
+        crash_run("t", "next", "failed", &["t"]),
+        crash_run("t", "fresh", "passed", &[]),
+        crash_run("t", "crash", "stopped", &["count"]),
+        crash_run("t", "next", "failed", &[again]),
+    ]
+}
+
+/// The defects planted for the crashes layer: each a report that claims a decision, or drops one, where the recorded steps decide otherwise.
+fn crashes_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    let on = format!("{TARGET}::t");
+    let restarted = json!({ "decision": "restarted", "on": on, "left": ["count"] });
+    let planted = |name: &'static str, document: Value, events: Vec<Value>| Perturbation {
+        name,
+        document,
+        events: Some(events),
+        ..clean.clone()
+    };
+    vec![
+        planted(
+            "a crash said to have restarted that no recorded run stopped at",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(Vec::new()),
+        ),
+        planted(
+            "a crash said to be unreached whose recorded run waited",
+            crash_reported(&json!({ "decision": "unreached" }), "unreached", None),
+            crash_recorded(vec![crash_run("t", "crash", "waited", &[])]),
+        ),
+        planted(
+            "a crash said to have restarted whose stop left nothing",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(vec![
+                crash_run("t", "crash", "stopped", &[]),
+                crash_run("t", "next", "passed", &[]),
+            ]),
+        ),
+        planted(
+            "a crash said to be undecided whose runs decide it corrupt",
+            crash_reported(
+                &json!({ "decision": "undecided", "on": on, "why": "planted" }),
+                "undecided",
+                Some(("not-measured", CRASHED)),
             ),
-            events: Some(routes()),
-            ..clean.clone()
-        },
-        Perturbation {
-            name: "a crash said to be unreached whose recorded run waited",
-            document: unreached,
-            events: Some(recorded(vec![run("crash", 124, "waited", &[])])),
-            ..clean.clone()
-        },
-        Perturbation {
-            name: "a crash said to have restarted whose stop left nothing",
-            document: claimed(
-                json!({ "decision": "restarted", "on": format!("{TARGET}::t"), "left": [] }),
+            crash_recorded(crash_corrupted("t")),
+        ),
+        planted(
+            "corrupt runs no site of the report holds",
+            with(json!({})),
+            crash_recorded(crash_corrupted("t")),
+        ),
+        planted(
+            "a crash said to be not put that no recorded step refused",
+            crash_reported(
+                &json!({ "decision": "not-put", "diagnostic": "planted" }),
+                "not_put",
+                None,
             ),
-            events: Some(recorded(vec![
-                run("crash", 93, "killed", &[]),
-                run("next", 0, "survived", &[]),
-            ])),
-            ..clean
-        },
+            numbered(routes()),
+        ),
+        planted(
+            "a crash said to be unreached whose route asks a test no run was recorded for",
+            crash_reported(&json!({ "decision": "unreached" }), "unreached", None),
+            crash_recorded(Vec::new()),
+        ),
+    ]
+    .into_iter()
+    .chain(crashes_planted_against_order(clean))
+    .collect()
+}
+
+/// The defects planted for the crashes layer about counts, the runs a decision rests on, and the order they come in.
+fn crashes_planted_against_order(clean: &Perturbation) -> Vec<Perturbation> {
+    let on = format!("{TARGET}::t");
+    let restarted = json!({ "decision": "restarted", "on": on, "left": ["count"] });
+    let corrupt = json!({ "decision": "corrupt", "on": on, "failed": ["t"] });
+    let planted = |name: &'static str, document: Value, events: Vec<Value>| Perturbation {
+        name,
+        document,
+        events: Some(events),
+        ..clean.clone()
+    };
+    vec![
+        planted(
+            "crash accounting that does not add up to the report's sites",
+            with(json!({
+                "crashes": [{
+                    "catalog_index": 0, "id": "d".repeat(64), "display_id": CRASHED,
+                    "path": "src/lib.rs", "item": "save", "position": null,
+                    "decision": restarted
+                }],
+                "accounting": { "crashes": { "sites": 7, "restarted": 1 } }
+            })),
+            crash_recorded(crash_restarted()),
+        ),
+        planted(
+            "a restart claimed over a next run of another test",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(vec![
+                crash_run("t", "crash", "stopped", &["count"]),
+                crash_run("u", "next", "passed", &[]),
+            ]),
+        ),
+        planted(
+            "a crash said to be corrupt whose second next run failed another test",
+            crash_reported(&corrupt, "corrupt", Some(("corrupt-after-crash", CRASHED))),
+            crash_recorded(crash_corrupted("u")),
+        ),
+        planted(
+            "a restart claimed with a run recorded after its decision",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(
+                crash_restarted()
+                    .into_iter()
+                    .chain([crash_run("t", "crash", "stopped", &["count"])])
+                    .collect(),
+            ),
+        ),
+        planted(
+            "a restart claimed where the stopped test wrote into the tree",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(
+                crash_restarted()
+                    .into_iter()
+                    .chain([crash_step(&json!({ "kind": "outside" }))])
+                    .collect(),
+            ),
+        ),
+        planted(
+            "an undecided crash with no not-measured finding",
+            crash_reported(
+                &json!({ "decision": "undecided", "on": on, "why": "planted" }),
+                "undecided",
+                None,
+            ),
+            crash_recorded(vec![crash_run("t", "crash", "waited", &[])]),
+        ),
     ]
 }
 
@@ -811,7 +962,7 @@ impl Layer {
             }],
             Self::Faults => faults_and_besides_planted(&clean),
             Self::Dimensions => dimensions_planted(clean),
-            Self::Crashes => crashes_planted(clean),
+            Self::Crashes => crashes_planted(&clean),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),

@@ -20,10 +20,10 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, CrashExecRecord, DischargeRecord, DriftRecord, Event, ExecRecord,
-    FaultExecRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord,
-    ProgressRecord, Read, RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord,
-    WireExchangeRecord, WireExecRecord,
+    ArtifactRecord, AskedRecord, CrashAsked, CrashExecRecord, CrashStep, CrashStepRecord,
+    DischargeRecord, DriftRecord, Event, ExecRecord, FaultExecRecord, MutantExecRecord, NoteRecord,
+    Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord, RunAccounting,
+    RunRecord, SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -405,6 +405,11 @@ impl Recorder {
     /// Records one run of a test a crash was put to.
     pub fn crash_exec(&self, record: CrashExecRecord) {
         self.emit(Payload::CrashExec { crash: record });
+    }
+
+    /// Records one thing a run did about a crash besides running a test.
+    pub fn crash_step(&self, step: CrashStepRecord) {
+        self.emit(Payload::CrashStep { step });
     }
 
     /// Records what a run established about one call that writes a crash was asked at.

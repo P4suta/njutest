@@ -16,6 +16,7 @@ use crate::cli::Environment;
 use crate::error::RunnerError;
 use crate::report::crashes::{CrashAccounting, CrashDecision, CrashRecord};
 use crate::report::{BuildReport, CatalogIndex, Finding, FindingKind, Limitation};
+use crate::trace::{CrashAsked, CrashStep};
 use crate::ui::Notes;
 use crate::watch::Watch;
 
@@ -99,21 +100,28 @@ fn sites(
         .filter(|mutant| request.shard.is_none_or(|shard| shard.holds(mutant.index)))
     {
         let decision = match rejected.get(mutant.id.as_str()) {
-            Some(diagnostic) => CrashDecision::NotPut {
-                diagnostic: crate::assure::run::first_line(diagnostic).replace(&root, "."),
-            },
-            None if tainted => CrashDecision::Undecided {
-                on: RULE.to_owned(),
-                why: "an earlier stop wrote into the tree under measurement, so every later run \
-                      starts over what it left there"
-                    .to_owned(),
-            },
+            Some(diagnostic) => {
+                stepped(watch, mutant, CrashStep::Rejected);
+                CrashDecision::NotPut {
+                    diagnostic: crate::assure::run::first_line(diagnostic).replace(&root, "."),
+                }
+            }
+            None if tainted => {
+                stepped(watch, mutant, CrashStep::Tainted);
+                CrashDecision::Undecided {
+                    on: RULE.to_owned(),
+                    why: "an earlier stop wrote into the tree under measurement, so every later \
+                          run starts over what it left there"
+                        .to_owned(),
+                }
+            }
             None => {
                 let decision = decided(session, mutant, watch)?;
                 if written(session)? == untouched {
                     decision
                 } else {
                     tainted = true;
+                    stepped(watch, mutant, CrashStep::Outside);
                     CrashDecision::Undecided {
                         on: RULE.to_owned(),
                         why: "the stopped test wrote outside its scratch, into the tree under \
@@ -150,6 +158,22 @@ fn decided(
 ) -> Result<CrashDecision, RunnerError> {
     let mut asked = session.route(mutant).asked();
     asked.sort_by(|one, other| one.target.cmp(&other.target));
+    stepped(
+        watch,
+        mutant,
+        CrashStep::Route {
+            asked: asked
+                .iter()
+                .map(|reaches| CrashAsked {
+                    target: reaches.target.clone(),
+                    tests: match &reaches.tests {
+                        Asked::Every => None,
+                        Asked::These(tests) => Some(tests.clone()),
+                    },
+                })
+                .collect(),
+        },
+    );
     let mut unnamed = Vec::new();
     for reaches in asked {
         let tests = match reaches.tests {
@@ -181,6 +205,14 @@ fn decided(
               test at once and tear what the others were writing"
             .to_owned(),
     })
+}
+
+/// Records one thing the run did about `mutant` besides running a test.
+fn stepped(watch: Watch<'_>, mutant: &Mutant, taken: CrashStep) {
+    watch.trace.crash_step(crate::trace::CrashStepRecord {
+        crash: mutant.display_id.to_string(),
+        taken,
+    });
 }
 
 /// Every path of the tree under measurement that no longer matches what was instrumented.
@@ -302,7 +334,7 @@ impl Stopped<'_> {
         }))
     }
 
-    /// A failing next run held to a fresh run that passes and a second stop that fails the next run again.
+    /// A failing next run held to a fresh run that passes, and a second stop that leaves something and fails the next run over it the same way, with this test among the failures.
     fn confirmed(&self, on: String, failed: Vec<String>) -> Result<CrashDecision, RunnerError> {
         let fresh = self
             .session
@@ -328,6 +360,12 @@ impl Stopped<'_> {
                 why: "a second run did not stop at the call".to_owned(),
             });
         };
+        if kept.left()?.is_empty() {
+            return Ok(CrashDecision::Undecided {
+                on,
+                why: "a second stop at the call left nothing for the next run".to_owned(),
+            });
+        }
         let again = self
             .session
             .control_in(&self.request(""), &kept, self.watch.cancel)?;
@@ -338,14 +376,20 @@ impl Stopped<'_> {
             left: &[],
             failed: &again.failed_tests,
         });
-        Ok(if again.outcome() == Outcome::Killed {
-            CrashDecision::Corrupt { on, failed }
-        } else {
-            CrashDecision::Undecided {
-                on,
-                why: "the next run failed once and passed after a second stop".to_owned(),
-            }
-        })
+        Ok(
+            if again.outcome() == Outcome::Killed
+                && again.failed_tests == failed
+                && failed.iter().any(|one| one == self.test)
+            {
+                CrashDecision::Corrupt { on, failed }
+            } else {
+                CrashDecision::Undecided {
+                    on,
+                    why: "the next run did not fail this test the same way after a second stop"
+                        .to_owned(),
+                }
+            },
+        )
     }
 
     /// One execution, as the recording holds it.

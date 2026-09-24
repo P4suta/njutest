@@ -417,6 +417,57 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "step"],
+          "properties": {
+            "type": { "const": "crash-step" },
+            "step": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["crash", "taken"],
+              "properties": {
+                "crash": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "taken": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind"],
+                      "properties": { "kind": { "enum": ["rejected", "tainted", "outside"] } }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["kind", "asked"],
+                      "properties": {
+                        "kind": { "const": "route" },
+                        "asked": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["target", "tests"],
+                            "properties": {
+                              "target": { "type": "string", "minLength": 1 },
+                              "tests": {
+                                "oneOf": [
+                                  { "type": "null" },
+                                  { "type": "array", "items": { "type": "string", "minLength": 1 } }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "crash"],
           "properties": {
             "type": { "const": "crash" },
