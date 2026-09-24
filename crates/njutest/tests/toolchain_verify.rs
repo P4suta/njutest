@@ -1193,12 +1193,9 @@ fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
     assert_eq!(parsed(&fixture).verdict(), Verdict::Assured);
 }
 
+/// Leaves the state a run interrupted after its kills would leave, carrying every kill `established` recorded.
 #[cfg(unix)]
-#[test]
-fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
-    let fixture = fixture("fixture-assured");
-    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
-    let established = document(&fixture);
+fn interrupted_after_its_kills(fixture: &Fixture, established: &serde_json::Value) {
     let identity = established["provenance"]["identity"]
         .as_str()
         .expect("an identity")
@@ -1212,7 +1209,16 @@ fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
         .map(|row| {
             serde_json::json!({
                 "id": row["id"],
-                "disposition": { "kind": "killed", "by": row["decision"]["killed_by"] },
+                "disposition": {
+                    "kind": "killed",
+                    "by": row["decision"]["killed_by"],
+                    "before": row["routing"]["answered"]
+                        .as_array()
+                        .expect("answered")
+                        .iter()
+                        .take_while(|one| one["target"] != row["decision"]["killed_by"])
+                        .collect::<Vec<_>>(),
+                },
                 "duration_ms": 1,
             })
         })
@@ -1221,14 +1227,6 @@ fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
     assert!(
         !kills.is_empty(),
         "the fixture kills something: {established}"
-    );
-    assert!(
-        part["drift"]
-            .as_array()
-            .expect("drift")
-            .iter()
-            .all(|one| one["state"] == "held"),
-        "the interrupted run compared every target and found each held: {part}"
     );
 
     let store = njutest_devkit::paths::cache_beside(&fixture.root)
@@ -1254,6 +1252,53 @@ fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
         serde_json::to_string(&state).expect("the state renders"),
     )
     .expect("write");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_resumed_kill_carries_the_answers_the_interrupted_run_was_given() {
+    let fixture = fixture("fixture-hollow");
+    verify(&fixture, &[]);
+    let cold = document(&fixture);
+    interrupted_after_its_kills(&fixture, &cold);
+    verify(&fixture, &[]);
+    let resumed = document(&fixture);
+    assert!(
+        names(&resumed).contains(&"resumed-from-checkpoint".to_owned()),
+        "the run continued the interrupted one: {resumed}"
+    );
+    let routing = |report: &serde_json::Value| -> Vec<serde_json::Value> {
+        report["builds"][0]["parts"][0]["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .map(|one| one["routing"].clone())
+            .collect()
+    };
+    assert_eq!(
+        routing(&resumed),
+        routing(&cold),
+        "a kill the interrupted run established is the same kill, asked of the same \
+         targets with the same answers, whichever run reports it"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let established = document(&fixture);
+    interrupted_after_its_kills(&fixture, &established);
+    let part = &established["builds"][0]["parts"][0];
+    assert!(
+        part["drift"]
+            .as_array()
+            .expect("drift")
+            .iter()
+            .all(|one| one["state"] == "held"),
+        "the interrupted run compared every target and found each held: {part}"
+    );
 
     let resumed = verify(&fixture, &[]);
     let stderr = njutest_devkit::process::strict_utf8(&resumed.stderr);
@@ -1359,6 +1404,52 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
                     && one["reuse"]["source_run_id"] == first["builds"][0]["parts"][0]["run_id"]
             }),
         "a reused verdict names the run that established it: {second}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_run_that_reads_its_answers_back_finds_the_hollow_targets_a_run_that_asked_found() {
+    let fixture = fixture("fixture-hollow");
+    verify(&fixture, &[]);
+    let cold = document(&fixture);
+    std::fs::write(
+        fixture.root.join("NOTES.md"),
+        "nothing to do with the code\n",
+    )
+    .expect("write");
+    verify(&fixture, &[]);
+    let warm = document(&fixture);
+    assert!(
+        warm["builds"][0]["parts"][0]["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .filter(|one| one["routing"]["reaching"]
+                .as_array()
+                .is_some_and(|all| !all.is_empty()))
+            .all(|one| one["reuse"]["reused"] == true),
+        "the second run reads every answer back, which is the case under test: {warm}"
+    );
+    let hollow = |report: &serde_json::Value| -> Vec<(String, String)> {
+        report["builds"][0]["parts"][0]["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .filter(|one| one["kind"] == "hollow-target")
+            .map(|one| (one["subject"].to_string(), one["detail"].to_string()))
+            .collect()
+    };
+    assert!(
+        !hollow(&cold).is_empty(),
+        "the cold run accuses `smoke`: {cold}"
+    );
+    assert_eq!(
+        hollow(&warm),
+        hollow(&cold),
+        "the same catalog over the same tree is the same suite, so whether its answers \
+         were asked again or read back from the run that asked them cannot change which \
+         targets noticed nothing"
     );
 }
 

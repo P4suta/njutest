@@ -7,10 +7,10 @@
     clippy::expect_used,
     reason = "a test reports a setup failure by panicking"
 )]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use njutest::evidence::store::{
-    Outcome, Refusal, SCHEMA, Standing, StoreError, path_of, read, record, write,
+    Answer, Outcome, Refusal, SCHEMA, Standing, StoreError, path_of, read, record, write,
 };
 use rust_mutants::id::HexDigest;
 
@@ -18,7 +18,7 @@ fn mutant(number: u8) -> HexDigest {
     HexDigest::try_from(format!("{number:064x}")).expect("a canonical mutant id")
 }
 
-fn reaching(targets: &[&str]) -> BTreeSet<String> {
+fn reaching(targets: &[&str]) -> Vec<String> {
     targets.iter().map(|one| (*one).to_owned()).collect()
 }
 
@@ -35,6 +35,7 @@ fn killed(target: &str, key: &str) -> Outcome {
     Outcome::Killed {
         target: target.to_owned(),
         key: key.to_owned(),
+        before: Vec::new(),
     }
 }
 
@@ -245,5 +246,61 @@ fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
          file it would have held: carrying on to the write turns one refusal a person \
          can act on into a second one about a path that was never the problem. It said \
          {refused}, and the directory is {directory}"
+    );
+}
+
+fn killed_after(target: &str, before: &[(&str, &str)]) -> Outcome {
+    Outcome::Killed {
+        target: target.to_owned(),
+        key: "k2".to_owned(),
+        before: before
+            .iter()
+            .map(|(asked, key)| Answer {
+                target: (*asked).to_owned(),
+                key: (*key).to_owned(),
+                outcome: njutest::report::Outcome::Survived,
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_kill_is_believed_only_where_this_run_would_ask_exactly_the_targets_asked_before_it() {
+    let both = standing(&[("t1", "k1"), ("t2", "k2")]);
+    let one = record(mutant(1), "run-1", killed_after("t2", &[("t1", "k1")]));
+    assert_eq!(
+        one.believable(&reaching(&["t1", "t2"]), &both),
+        Ok(()),
+        "this run asks `t1` first, as the recording run did, so what `t1` answered is \
+         what asking it again would say"
+    );
+
+    let unasked = record(mutant(2), "run-1", killed_after("t2", &[]));
+    assert_eq!(
+        unasked.believable(&reaching(&["t1", "t2"]), &both),
+        Err(Refusal::TargetEntered {
+            target: "t1".to_owned()
+        }),
+        "this run would ask `t1` before the one that noticed, and the record has no \
+         answer from it, so reading it back would leave out an answer asking gives"
+    );
+
+    assert_eq!(
+        one.believable(&reaching(&["t2"]), &standing(&[("t2", "k2")])),
+        Err(Refusal::NotRouted {
+            target: "t1".to_owned()
+        }),
+        "the record answers for `t1`, which this run no longer asks"
+    );
+
+    assert_eq!(
+        one.believable(
+            &reaching(&["t1", "t2"]),
+            &standing(&[("t1", "moved"), ("t2", "k2")])
+        ),
+        Err(Refusal::KeyChanged {
+            target: "t1".to_owned()
+        }),
+        "what `t1` answered is only this run's answer while `t1` behaves as it did"
     );
 }

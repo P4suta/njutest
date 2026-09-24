@@ -39,6 +39,8 @@ pub enum Outcome {
         target: String,
         /// That target's behaviour key.
         key: String,
+        /// Every target asked before it, in the order they were asked, with what each answered.
+        before: Vec<Answer>,
     },
     /// Every target that could notice it passed with it active.
     /// The claim is about all of them, so all of them are named.
@@ -46,6 +48,18 @@ pub enum Outcome {
         /// Every target the run routed to it, with the behaviour key each had.
         targets: BTreeMap<String, String>,
     },
+}
+
+/// One target a run asked about a mutant before another noticed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Answer {
+    /// The target asked.
+    pub target: String,
+    /// That target's behaviour key.
+    pub key: String,
+    /// What it answered.
+    pub outcome: crate::report::Outcome,
 }
 
 /// Why a record could not be believed.
@@ -128,32 +142,57 @@ impl Standing {
 }
 
 impl Record {
-    /// Whether this run may believe what the record says, given the targets it routes to the mutant and what it saw of them.
+    /// Whether this run may believe what the record says, given the targets it routes to the mutant in the order it asks them and what it saw of them.
+    ///
+    /// A kill is believed only where this run would ask exactly the targets the record says were asked before the one that noticed, so the answers it reads back are the ones asking again would give.
     ///
     /// # Errors
     /// Returns why not, which is never "no reason".
-    pub fn believable(
-        &self,
-        reaching: &BTreeSet<String>,
-        standing: &Standing,
-    ) -> Result<(), Refusal> {
+    pub fn believable(&self, asking: &[String], standing: &Standing) -> Result<(), Refusal> {
+        let reaching: BTreeSet<&String> = asking.iter().collect();
         match &self.outcome {
-            Outcome::Killed { target, key } => {
-                if !reaching.contains(target) {
+            Outcome::Killed {
+                target,
+                key,
+                before,
+            } => {
+                let Some(position) = asking.iter().position(|one| one == target) else {
                     return Err(Refusal::NotRouted {
                         target: target.clone(),
                     });
+                };
+                standing.vouches(target, key)?;
+                for answer in before {
+                    if !asking
+                        .iter()
+                        .take(position)
+                        .any(|one| *one == answer.target)
+                    {
+                        return Err(Refusal::NotRouted {
+                            target: answer.target.clone(),
+                        });
+                    }
+                    standing.vouches(&answer.target, &answer.key)?;
                 }
-                standing.vouches(target, key)
+                if let Some(entered) = asking
+                    .iter()
+                    .take(position)
+                    .find(|one| !before.iter().any(|answer| answer.target == **one))
+                {
+                    return Err(Refusal::TargetEntered {
+                        target: entered.clone(),
+                    });
+                }
+                Ok(())
             }
             Outcome::Survived { targets } => {
                 if reaching.is_empty() {
                     return Err(Refusal::NothingRouted);
                 }
                 for target in reaching {
-                    let Some(key) = targets.get(target) else {
+                    let Some(key) = targets.get(target.as_str()) else {
                         return Err(Refusal::TargetEntered {
-                            target: target.clone(),
+                            target: (*target).clone(),
                         });
                     };
                     standing.vouches(target, key)?;

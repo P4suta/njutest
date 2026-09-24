@@ -141,7 +141,7 @@ duplicates and missing counterparts are rejected.
 | `reaching` | targets that could notice the mutation |
 | `discharged` | targets removed by `branch-never-taken` or `never-infected` |
 | `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete` |
-| `answered` | targets actually asked, in order, with their outcomes |
+| `answered` | targets actually asked, in order, with their outcomes: by this run, or by the run a read-back or resumed row came from |
 
 A row this run decided by a route it asked is held to that route's own answers, and a report that contradicts them is refused.
 A `killed` row's answers end with the target it names noticing, and hold no other kill: the mutation phase stops at the first target that notices.

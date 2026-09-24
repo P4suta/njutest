@@ -733,15 +733,15 @@ pub struct Routing {
     /// What widened the question, when the run could not narrow it.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub fallback: Option<rust_mutants::session::Fallback>,
-    /// The targets the run actually asked, in the order it asked them, with what each answered.
+    /// The targets actually asked, in the order they were asked, with what each answered: by this run, or by the run a read-back or resumed disposition came from.
     /// A target in `reaching` and not here reached the mutation and was never given the chance, because one asked before it noticed.
     pub answered: Vec<Answered>,
 }
 
 impl Routing {
-    /// What a route says, as a report records it.
+    /// What a route says, with what the targets asked about it answered, as a report records it.
     #[must_use]
-    pub fn of(route: &rust_mutants::session::Route) -> Self {
+    pub fn of(route: &rust_mutants::session::Route, answered: Vec<Answered>) -> Self {
         Self {
             granularity: route.granularity(),
             reaching: route
@@ -758,7 +758,7 @@ impl Routing {
                 })
                 .collect(),
             fallback: route.fallback(),
-            answered: Vec::new(),
+            answered,
         }
     }
 }

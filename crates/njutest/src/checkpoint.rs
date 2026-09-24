@@ -129,6 +129,8 @@ pub enum SavedDisposition {
     Killed {
         /// The target that noticed it.
         by: String,
+        /// Every target asked before it, in the order they were asked, with what each answered.
+        before: Vec<crate::report::Answered>,
     },
 }
 
@@ -252,6 +254,14 @@ pub enum CheckpointViolation {
     EmptyObserver {
         /// The affected mutant.
         mutant: String,
+    },
+    /// A kill that says the target which noticed it was also asked before it, so the answers it carries are not the ones a run gave.
+    #[error("mutant {mutant:?} says {target:?} was asked before it noticed")]
+    ObserverAskedBefore {
+        /// The affected mutant.
+        mutant: String,
+        /// The target that noticed.
+        target: String,
     },
 }
 
@@ -452,9 +462,17 @@ fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolation> 
             });
         }
         match &mutant.disposition {
-            SavedDisposition::Killed { by } if by.is_empty() => {
+            SavedDisposition::Killed { by, .. } if by.is_empty() => {
                 return Err(CheckpointViolation::EmptyObserver {
                     mutant: mutant.id.clone(),
+                });
+            }
+            SavedDisposition::Killed { by, before }
+                if before.iter().any(|answer| answer.target == *by) =>
+            {
+                return Err(CheckpointViolation::ObserverAskedBefore {
+                    mutant: mutant.id.clone(),
+                    target: by.clone(),
                 });
             }
             SavedDisposition::Killed { .. } => {}

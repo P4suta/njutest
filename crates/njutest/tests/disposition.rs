@@ -429,7 +429,7 @@ fn a_record_says_who_could_have_noticed_a_mutation_and_what_removed_the_rest() {
         discharged: vec![discharge("pkg/test/it", NEVER_INFECTED)],
         fallback: None,
     };
-    let routing = njutest::report::Routing::of(&route);
+    let routing = njutest::report::Routing::of(&route, Vec::new());
 
     assert_eq!(
         routing.granularity,

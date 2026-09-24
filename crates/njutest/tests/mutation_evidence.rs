@@ -81,6 +81,7 @@ fn a_kill_an_earlier_run_recorded_is_read_back_under_the_name_a_reader_reads() {
             store::Outcome::Killed {
                 target: "id-one".to_owned(),
                 key: "k1".repeat(16),
+                before: Vec::new(),
             },
         ),
     )
@@ -90,6 +91,7 @@ fn a_kill_an_earlier_run_recorded_is_read_back_under_the_name_a_reader_reads() {
     let Consulted::Believed {
         disposition,
         run_id,
+        ..
     } = consulted
     else {
         panic!("a kill this run may believe");
@@ -166,7 +168,7 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
     keep(
         &held,
         &id(1),
-        &reaching(&["core/lib/core"]),
+        (&reaching(&["core/lib/core"]), &[]),
         &Disposition::Killed {
             by: "core/lib/nobody".to_owned(),
         },
@@ -184,7 +186,7 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
     keep(
         &held,
         &id(2),
-        &reaching(&["core/lib/core", "core/lib/newcomer"]),
+        (&reaching(&["core/lib/core", "core/lib/newcomer"]), &[]),
         &Disposition::Survived {
             route: reaching(&["core/lib/core", "core/lib/newcomer"]),
         },
@@ -207,8 +209,13 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
         ),
         (id(4), Disposition::Unreached),
     ] {
-        keep(&held, &mutant, &reaching(&["core/lib/core"]), &disposition)
-            .expect("a non-cacheable disposition writes nothing successfully");
+        keep(
+            &held,
+            &mutant,
+            (&reaching(&["core/lib/core"]), &[]),
+            &disposition,
+        )
+        .expect("a non-cacheable disposition writes nothing successfully");
         assert!(
             store::read(
                 dir.path(),
@@ -232,7 +239,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(5),
-        &reaching(&["core/lib/core"]),
+        (&reaching(&["core/lib/core"]), &[]),
         &Disposition::Killed {
             by: "core/lib/core".to_owned(),
         },
@@ -241,7 +248,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(6),
-        &reaching(&["core/lib/core", "core/test/wide"]),
+        (&reaching(&["core/lib/core", "core/test/wide"]), &[]),
         &Disposition::Survived {
             route: reaching(&["core/lib/core", "core/test/wide"]),
         },
@@ -265,7 +272,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(8),
-        &reaching(&["core/lib/core"]),
+        (&reaching(&["core/lib/core"]), &[]),
         &Disposition::StepLimitReached {
             on: "core/lib/core".to_owned(),
             boundary: StepBoundary::new(10, 11).expect("the first count beyond the allowance"),
@@ -280,7 +287,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
     keep(
         held,
         &id(7),
-        &reaching(&[]),
+        (&reaching(&[]), &[]),
         &Disposition::Survived {
             route: reaching(&[]),
         },
@@ -299,6 +306,7 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
         store::Outcome::Killed {
             target: "id-one".to_owned(),
             key: "k1".repeat(16),
+            before: Vec::new(),
         },
         "a kill this run can attribute is recorded by identity and by the behaviour key \
          the next run will check it against"
@@ -374,7 +382,7 @@ fn a_run_with_nowhere_to_read_or_write_evidence_neither_believes_nor_records() {
     keep(
         &none,
         &id(1),
-        &reaching(&["core/lib/core"]),
+        (&reaching(&["core/lib/core"]), &[]),
         &Disposition::Killed {
             by: "core/lib/core".to_owned(),
         },
