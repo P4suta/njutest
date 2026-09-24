@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking"
 )]
 
-use njutest::concurrency::scan::{Starts, scanned};
+use njutest::concurrency::scan::{ScanError, Starts, scanned};
 
 fn found(source: &str) -> Vec<(Starts, String)> {
     scanned("src/lib.rs", source)
@@ -111,5 +111,55 @@ fn a_file_that_is_not_rust_is_refused_rather_than_read_as_starting_nothing() {
     assert!(
         scanned("src/broken.rs", "fn a( {").is_err(),
         "a file that was not read is not a file with nothing in it"
+    );
+}
+
+#[test]
+fn a_raw_identifier_is_read_as_the_name_it_spells() {
+    assert_eq!(
+        kinds(
+            "fn a() { std::thread::r#spawn(|| {}); std::thread::r#scope(|s| {}); r#rayon::join(|| 1, || 2); }"
+        ),
+        [Starts::Spawn, Starts::Scope, Starts::Parallel],
+        "`r#spawn` is `spawn` to the compiler, so it is `spawn` to the scan"
+    );
+}
+
+#[test]
+fn a_file_nested_deeper_than_the_scan_reads_is_refused_on_any_stack() {
+    let source = format!(
+        "fn a() {{ let _ = {}1{}; }}",
+        "(".repeat(5000),
+        ")".repeat(5000)
+    );
+    let refused = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn_scoped(scope, || {
+                matches!(
+                    scanned("src/deep.rs", &source),
+                    Err(ScanError::TooDeep { .. })
+                )
+            })
+            .expect("a thread")
+            .join()
+            .expect("the scan returns rather than overflowing the stack")
+    });
+    assert!(
+        refused,
+        "a nesting the parser would recurse through is refused before it is parsed"
+    );
+}
+
+#[test]
+fn brackets_in_comments_and_literals_are_not_nesting() {
+    let many = "(".repeat(300);
+    let source = format!(
+        "// {many}\n/* {many} /* {many} */ */\nfn a<'a>(x: &'a str) -> char {{\n    let _ = \"{many}\\\"\";\n    let _ = r#\"{many}\"#;\n    let _ = b\"{many}\";\n    let _ = br##\"{many}\"##;\n    let _ = b'(';\n    '('\n}}\n"
+    );
+    assert_eq!(
+        scanned("src/lib.rs", &source).expect("read").len(),
+        0,
+        "a file whose brackets nest shallowly is read, whatever its comments and literals hold"
     );
 }
