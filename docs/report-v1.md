@@ -55,8 +55,8 @@ There are twenty kinds, and every report carries the stable name:
 | `build-failure` | the workspace does not compile | yes |
 | `failing-test` | a test fails with nothing active | yes |
 | `undefined-behaviour` | the interpreter found unsoundness | yes |
-| `corrupt-after-crash` | the next run failed over what a stop just after a call that writes left, where a fresh run passed and a second stop failed it again | yes |
-| `broken-under-fault` | a test wrote into the tree under measurement while a fault failed a call, which it did not do while none did | yes |
+| `corrupt-after-crash` | the next run failed over what a stop just after a call that writes left, with the stopped test among its failures, and three rounds of a fresh run that passes and another stop that fails it the same way confirmed it | yes |
+| `broken-under-fault` | one fault, run alone, wrote into the tree under measurement, and the same test run alone without it did not | yes |
 | `surviving-mutant` | every reaching test passed with the mutation active | no |
 | `target-missing` | a selected target could not be measured | no |
 | `timeout` | a non-mutation phase exhausted its time bound | no |
@@ -191,7 +191,7 @@ Every `unnoticed` record raises one `unnoticed-fault` finding naming its `displa
 `not-put` records are stated as one `fault-not-put` limitation naming each compiler error class with its sites.
 A tree whose faulted baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and carries no records.
 A record's `position` is `null` where the run could not place the site.
-`broken-under-fault` names every path of the tree that was written while faults were put and had not been written before any was.
+A path of the tree written while faults were put, and not before any was, is a `not-measured` finding about `fault-write-unattributed` naming it, since no one execution is tied to the write; `broken-under-fault` is kept for a write tied to one fault.
 
 Every part also carries `beside`: one record for each error-propagation survivor of the part (`question-to-unwrap`, `ignore-question-statement`) that a target told apart once the call at its own `?` failed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md) decision 6).
 The survivor is put again with the fault that is carried into its alternative active beside it, target by target in name order, and the fault alone is put to the same target; a record names the first target on which exactly one of the two runs failed, and `failed` says which (`beside` or `alone`), confirmed by running the survivor beside the fault a second time.

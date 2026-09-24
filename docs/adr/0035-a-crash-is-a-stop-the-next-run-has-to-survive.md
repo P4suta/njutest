@@ -29,7 +29,7 @@ The suite already is the check: a test that reads what the previous run left is 
    Stopping after the call rather than before it is the case that tears state: before it, the write never happened, which a program already has to be ready for.
 
 3. **The next run is the observer, in the state the crash left.** A target whose process ended at the crash is run again with nothing active in the same scratch directory — the same temporary directory, holding exactly what the crashed process left — and the paths the crash left there are named.
-   It is `restarted`, with those paths, where that run passes; `corrupt` where it fails, a run of the same target in a fresh scratch passes, and a second crash at the site leaves something and fails the next run again with the same failures, the stopped test among them; `unshared` where the crashed process left nothing in its scratch, so the next run could not have read anything of it; `unreached` where no reaching test stopped at the site; and `undecided` where a bound expired or a run could not be read.
+   It is `restarted`, with those paths, where that run passes; `corrupt` where it fails with the stopped test among its failures, and three rounds each confirm it — a run in a fresh scratch passes, and another crash at the site leaves something and fails the next run again with the same failures — so a test that fails half its runs by itself passes for corrupt about once in 128; `unshared` where the crashed process left nothing in its scratch, so the next run could not have read anything of it; `unreached` where no reaching test stopped at the site; and `undecided` where a bound expired or a run could not be read.
    `corrupt` is a `corrupt-after-crash` finding and a `DEFECT`: the program cannot start over what it wrote.
    Every step a decision rests on is recorded: the route with the tests it asks in order, each run, a refusal, a crash left alone because an earlier stop wrote into the tree, and a stop that did.
    The audit decides each crash again from those steps alone and holds the report to exactly that decision, its counts and its findings; a step missing, added after the decision, or out of order is refused rather than read around.
@@ -43,6 +43,6 @@ The suite already is the check: a test that reads what the previous run left is 
 
 ## Consequences
 
-- Every write call a test reaches costs three executions, four where it is corrupt.
+- Every write call a test reaches costs two executions, eleven where it is corrupt.
 - A torn write, a missing rename-into-place, a reader that does not tolerate a partial file are each named at the call that tears them.
 - The durable column of the matrix is measured, and `whole-v1` becomes satisfiable once schedules are.

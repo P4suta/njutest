@@ -37,7 +37,8 @@ const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
 const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
 const CORRUPT_AFTER_CRASH: &str = "corrupt-after-crash";
-const NOT_MEASURED: &str = "not-measured";
+const BROKEN_UNDER_FAULT: &str = "broken-under-fault";
+const NOT_MEASURED_FINDING: &str = "not-measured";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
 pub const DEFECT_KINDS: [&str; 7] = [
     "build-failure",
@@ -2105,6 +2106,7 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
         );
         return;
     };
+    broken(recording, faulted, &mut notes);
     let recorded: BTreeMap<&str, &crate::faults::Site> = faulted
         .sites
         .iter()
@@ -2125,12 +2127,7 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
                 "the report's record of this fault is not the one the recording holds".to_owned(),
             );
         }
-        let execs: Vec<&crate::faults::Exec> = faulted
-            .execs
-            .iter()
-            .filter(|exec| exec.fault == site.fault)
-            .collect();
-        if let Err(why) = crate::faults::supports(site, &execs) {
+        if let Err(why) = crate::faults::supports(site, &faulted.evidence(&site.fault)) {
             notes.violated(&site.fault, why.to_string());
         }
     }
@@ -2150,12 +2147,21 @@ fn crashes(
     crash_findings(recording, &reported, &mut notes);
     crash_accounting(recording.document, &reported, &mut notes);
     let Some(crashed) = crashed else {
-        if !reported.is_empty() {
+        let no_site = rows(recording.document, "limitations")
+            .iter()
+            .any(|row| field(row, "name").as_deref() == Some("crash-no-site"));
+        if !reported.is_empty() || no_site {
             notes.unaudited(
                 "crashes",
                 format!(
-                    "the report holds {} crash site(s) and there is no recording to re-derive them from",
-                    reported.len()
+                    "the report holds {} crash site(s){} and there is no recording to re-derive \
+                     what it put from",
+                    reported.len(),
+                    if no_site {
+                        " and says there was none to put"
+                    } else {
+                        ""
+                    }
                 ),
             );
         }
@@ -2195,7 +2201,9 @@ fn crash_findings(
                 .to_owned(),
         );
     }
-    for crash in decided(&["unshared", "undecided"]).symmetric_difference(&named(NOT_MEASURED)) {
+    for crash in
+        decided(&["unshared", "undecided"]).symmetric_difference(&named(NOT_MEASURED_FINDING))
+    {
         notes.violated(
             crash,
             "the report's unshared and undecided crashes and its not-measured findings about \
@@ -2366,7 +2374,7 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
     let limited = |name: &str| {
         rows(document, "limitations")
             .iter()
-            .any(|row| field(row, "name").is_some_and(|said| said.starts_with(name)))
+            .any(|row| field(row, "name").as_deref() == Some(name))
     };
     let mut holed = BTreeSet::new();
     if schedules_holed(document) {
@@ -2538,34 +2546,80 @@ fn fault_counts(
 }
 
 /// The failures nothing noticed, held to the findings that name them, in both directions.
+/// Every `broken-under-fault` finding, held to the attribution that ties its write to that fault, and every such attribution to a finding.
+fn broken(recording: &Recording<'_>, faulted: &crate::faults::Faulted, notes: &mut Notes<'_>) {
+    let named: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == BROKEN_UNDER_FAULT)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    let tied: BTreeSet<&str> = faulted.attributed.iter().map(String::as_str).collect();
+    for fault in named.difference(&tied) {
+        notes.violated(
+            fault,
+            "a finding says this fault wrote into the tree, and the recording holds no run of it \
+             alone that wrote while its test passed where the test alone without it did not"
+                .to_owned(),
+        );
+    }
+    for fault in tied.difference(&named) {
+        notes.violated(
+            fault,
+            "the recording ties a write into the tree to this fault, and no broken-under-fault \
+             finding says so"
+                .to_owned(),
+        );
+    }
+}
+
 fn fault_findings(
     recording: &Recording<'_>,
     reported: &[crate::faults::Site],
     notes: &mut Notes<'_>,
 ) {
-    let unnoticed: BTreeSet<&str> = reported
+    let owed: BTreeMap<&str, &str> = reported
         .iter()
-        .filter(|site| site.decision == "unnoticed")
-        .map(|site| site.fault.as_str())
+        .filter_map(|site| {
+            let kind = match site.decision.as_str() {
+                "unnoticed" => UNNOTICED_FAULT,
+                "waited" | "undecided" => NOT_MEASURED_FINDING,
+                _ => return None,
+            };
+            Some((site.fault.as_str(), kind))
+        })
         .collect();
-    let named: BTreeSet<&str> = recording
+    let sites: BTreeSet<&str> = reported.iter().map(|site| site.fault.as_str()).collect();
+    let named: BTreeSet<(&str, &str)> = recording
         .findings
         .iter()
-        .filter(|finding| finding.kind == UNNOTICED_FAULT)
-        .map(|finding| finding.subject.as_str())
+        .filter(|finding| {
+            finding.kind == UNNOTICED_FAULT
+                || (finding.kind == NOT_MEASURED_FINDING
+                    && sites.contains(finding.subject.as_str()))
+        })
+        .map(|finding| (finding.subject.as_str(), finding.kind.as_str()))
         .collect();
-    for fault in unnoticed.difference(&named) {
-        notes.violated(
-            fault,
-            "nothing noticed this fault, and no finding says so".to_owned(),
-        );
+    for (fault, kind) in &owed {
+        if !named.contains(&(*fault, *kind)) {
+            notes.violated(
+                fault,
+                format!(
+                    "the report's decision about this fault owes a {kind} finding, and none says so"
+                ),
+            );
+        }
     }
-    for fault in named.difference(&unnoticed) {
-        notes.violated(
-            fault,
-            "a finding says nothing noticed this fault, and the report records no such site"
-                .to_owned(),
-        );
+    for (fault, kind) in &named {
+        if owed.get(fault) != Some(kind) {
+            notes.violated(
+                fault,
+                format!(
+                    "a {kind} finding names this fault, and the report records no decision about \
+                     it that owes one"
+                ),
+            );
+        }
     }
 }
 
