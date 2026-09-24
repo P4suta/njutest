@@ -242,10 +242,10 @@ pub fn repaired(
             Limitation::new(
                 crate::limitation::REACH_MOVED,
                 &format!(
-                    "{target} reached something on an original-code control that it did not \
+                    "a target reached something on an original-code control that it did not \
                      reach on its baseline, so what it reaches is not a function of the target; \
                      {again} {} that rested on its baseline {} decided again by running against \
-                     it, and nothing this run concludes stands on the moved record",
+                     it, and nothing this run concludes stands on the moved record ({target})",
                     if again == 1 {
                         "disposition"
                     } else {

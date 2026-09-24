@@ -1186,7 +1186,7 @@ impl Session {
             source,
             alone: false,
         })?;
-        let reach = self.site_reach(target, &log, (mutant.index, &result))?;
+        let reach = self.site_reach(target, &log, (mutant.index, mutant.id.as_str(), &result))?;
         Ok((result, reach))
     }
 
@@ -1195,7 +1195,7 @@ impl Session {
         &self,
         target: &TestTarget,
         log: &std::path::Path,
-        (index, result): (u32, &MutantResult),
+        (index, mutant, result): (u32, &str, &MutantResult),
     ) -> Result<SiteReach, EngineError> {
         if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
             return Ok(SiteReach::Unrecorded);
@@ -1214,12 +1214,14 @@ impl Session {
         };
         let reached = recorded.reached.any(index);
         let gathered = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
-        self.workspace.trace.touch(verify::touch_record(
+        let mut record = verify::touch_record(
             &target.id,
             crate::trace::Measurement::Repair,
             &gathered,
             crate::trace::SummaryRecord::of(result),
-        )?);
+        )?;
+        record.mutant = Some(mutant.to_owned());
+        self.workspace.trace.touch(record);
         Ok(if reached {
             SiteReach::Reached
         } else {
