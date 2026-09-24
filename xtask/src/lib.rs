@@ -14,9 +14,11 @@ pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;
 pub mod kaniaudit;
+pub mod lanes;
 pub mod lints;
 pub mod milestones;
 pub mod modelaudit;
+pub mod prepush;
 pub mod proofaudit;
 pub mod release;
 pub mod reportdiff;
@@ -29,8 +31,9 @@ pub mod surface;
 pub mod wire;
 
 use std::ffi::{OsStr, OsString};
-use std::io::Write;
-use std::process::ExitCode;
+use std::io::{BufRead, Write};
+use std::path::Path;
+use std::process::{Command, ExitCode, ExitStatus};
 
 use clap::{Parser, Subcommand};
 
@@ -38,7 +41,24 @@ use clap::{Parser, Subcommand};
 #[command(name = "cargo xtask", about = "Repository gates", term_width = 100, color = clap::ColorChoice::Never)]
 struct Cli {
     #[command(subcommand)]
-    gate: Gate,
+    task: Task,
+}
+
+/// What `cargo xtask` can be asked to do: a repository gate, or one of the tools the gates' own machinery is.
+#[derive(Debug, Subcommand)]
+enum Task {
+    #[command(flatten)]
+    Gate(Gate),
+    /// Runs a command once this machine's lane for it is free, and holds the lane until the command ends.
+    Slot {
+        /// The lane: `heavy`, for a run that compiles or tests the whole workspace.
+        lane: String,
+        /// The command and its arguments, after `--`.
+        #[arg(last = true, required = true)]
+        command: Vec<OsString>,
+    },
+    /// The pre-push hook: the exact commit being pushed, checked in this repository's one reusable tree.
+    PrePush,
 }
 
 #[derive(Debug, Subcommand)]
@@ -116,17 +136,42 @@ enum Gate {
     All,
 }
 
+/// What the composition root read from the process, handed to the commands that need it.
+#[derive(Debug, Clone, Copy)]
+pub struct Process<'a> {
+    /// The exact cargo the composition root selected.
+    pub cargo: &'a OsStr,
+    /// The environment the process was started with.
+    pub environment: &'a [(OsString, OsString)],
+    /// The directory the process was started in.
+    pub directory: &'a Path,
+    /// The program that is running.
+    pub executable: &'a Path,
+}
+
+/// The process's standard streams.
+pub struct Streams<'a> {
+    /// Standard input.
+    pub input: &'a mut dyn BufRead,
+    /// Standard output.
+    pub output: &'a mut dyn Write,
+    /// Standard error.
+    pub errors: &'a mut dyn Write,
+}
+
+impl std::fmt::Debug for Streams<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Streams")
+    }
+}
+
 /// Runs the gate named by `args` against the workspace and reports.
-/// `cargo` is the exact program selected by the process-environment composition root.
-pub fn run_from<I>(
-    args: I,
-    cargo: &OsStr,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> ExitCode
+pub fn run_from<I>(args: I, process: &Process<'_>, streams: &mut Streams<'_>) -> ExitCode
 where
     I: IntoIterator<Item = OsString>,
 {
+    let stdout = &mut *streams.output;
+    let stderr = &mut *streams.errors;
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) => {
@@ -140,15 +185,19 @@ where
             return after_output(stream.write_all(rendered.as_bytes()), intended);
         }
     };
+    let gate = match cli.task {
+        Task::Gate(gate) => gate,
+        Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
+        Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
+    };
     let root = gates::workspace_root();
-    let outcome = match cli.gate {
+    let outcome = match gate {
         Gate::Devgates => gates::devgates(&root),
         Gate::Lints => gates::lints(&root),
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
-        Gate::FuzzClippy { alternate: _ } => {
-            fuzzclippy::check(&root, cargo).map_err(|error| gates::GateFailure(error.to_string()))
-        }
+        Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
+            .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
@@ -225,8 +274,8 @@ fn audit_engine(
 
 /// A recording that could not be read at all, like an audit with a layer blind to what was planted for it, is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
 fn audit_run(
-    run: &std::path::Path,
-    trace: Option<&std::path::Path>,
+    run: &Path,
+    trace: Option<&Path>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
@@ -255,6 +304,114 @@ fn audit_run(
             writeln!(stderr, "{failure}"),
             ExitCode::from(proofaudit::EXIT_UNREADABLE),
         ),
+    }
+}
+
+/// Holds `lane` while `command` runs, and answers with the command's own exit status.
+fn slot(
+    lane: &str,
+    command: &[OsString],
+    process: &Process<'_>,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    let Some(named) = lanes::Lane::named(lane) else {
+        return after_output(
+            writeln!(
+                stderr,
+                "slot: there is no lane named {lane:?}; the lane there is: heavy"
+            ),
+            ExitCode::from(2),
+        );
+    };
+    let Some((program, arguments)) = command.split_first() else {
+        return after_output(
+            writeln!(stderr, "slot: nothing to run after `--`"),
+            ExitCode::from(2),
+        );
+    };
+    let lanes = match lanes::Lanes::from_environment(process.environment) {
+        Ok(lanes) => lanes,
+        Err(failure) => {
+            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::FAILURE);
+        }
+    };
+    let holder = lanes::Holder {
+        worktree: process.directory.to_path_buf(),
+        revision: lanes::revision_of(process.directory),
+        command: command
+            .iter()
+            .map(|word| word.display().to_string())
+            .collect::<Vec<_>>()
+            .join(" "),
+    };
+    let held = match lanes.hold(named, &holder, stderr) {
+        Ok(held) => held,
+        Err(failure) => {
+            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::FAILURE);
+        }
+    };
+    let ran = Command::new(program)
+        .args(arguments)
+        .env(lanes::HELD, lanes.held_with(named))
+        .status();
+    drop(held);
+    match ran {
+        Ok(status) => ExitCode::from(exit_status(status)),
+        Err(source) => after_output(
+            writeln!(
+                stderr,
+                "slot: {} could not be started: {source}",
+                program.display()
+            ),
+            ExitCode::from(127),
+        ),
+    }
+}
+
+/// The exit status a shell would report for `status`, signals included.
+fn exit_status(status: ExitStatus) -> u8 {
+    if let Some(code) = status.code() {
+        return match u8::try_from(code) {
+            Ok(code) => code,
+            Err(_beyond_a_byte) => 1,
+        };
+    }
+    signalled(status)
+}
+
+#[cfg(unix)]
+fn signalled(status: ExitStatus) -> u8 {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let code = status.signal().and_then(|signal| signal.checked_add(128));
+    match code.map(u8::try_from) {
+        Some(Ok(code)) => code,
+        Some(Err(_)) | None => 1,
+    }
+}
+
+#[cfg(not(unix))]
+const fn signalled(_status: ExitStatus) -> u8 {
+    1
+}
+
+/// Runs the pre-push gate over the ref updates on `input`.
+fn pre_push(process: &Process<'_>, input: &mut dyn BufRead, stderr: &mut dyn Write) -> ExitCode {
+    let surroundings = prepush::Surroundings {
+        directory: process.directory,
+        environment: process.environment,
+        executable: process.executable,
+    };
+    match prepush::gate(&surroundings, input, stderr) {
+        Ok(_passed) => ExitCode::SUCCESS,
+        Err(failure) => {
+            let code = ExitCode::from(failure.exit_code());
+            let written = failure
+                .to_string()
+                .lines()
+                .try_for_each(|line| writeln!(stderr, "pre-push: {line}"));
+            after_output(written, code)
+        }
     }
 }
 

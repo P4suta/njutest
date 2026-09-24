@@ -65,3 +65,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0024 A copy is one prefix substitution](adr/0024-a-copy-is-one-prefix-substitution.md)
 - [0025 A reach that moves is not a measurement](adr/0025-a-reach-that-moves-is-not-a-measurement.md)
 - [0026 A bound measures quiet, not duration](adr/0026-a-bound-measures-quiet-not-duration.md)
+- [0030 One machine, several sessions](adr/0030-one-machine-several-sessions.md)

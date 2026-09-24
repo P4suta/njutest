@@ -316,6 +316,11 @@ Nothing a caller can see reports this — not load, not free processors, not fre
 `rust-mutants doctor` therefore runs one newly written file twice and prints both numbers, because the pair is the evidence and neither number means anything alone.
 A first execution in the hundreds of seconds beside a second in hundredths says a run started now would measure the evaluation and not the tests.
 
+What removes the cost is outside the tree.
+An application listed and switched on under System Settings → Privacy & Security → Developer Tools may run what it builds without the evaluation, and so may everything it starts.
+Measured on the development machine on 2026-09-24, with the terminal and the multiplexer the sessions run in switched on there: a fresh copy of a program went from 25,100 ms on its first run to 44–69 ms, with no restart, and one suite went from 776 s to 110 s at a higher load.
+A multiplexer that is not signed by a developer is listed by its binary, so an upgrade has to be listed again.
+
 ## Where a count reaches, and where the clock is still the only bound
 
 A mutation whose active guard crosses the configured count is `step_limit_reached`.

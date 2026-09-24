@@ -293,21 +293,12 @@ done
 description = "Run cargo-mutants, the external mutation tester, against this workspace"
 run = "cargo mutants --config .cargo/mutants.toml --workspace"
 
-# The order is cheapest refusal first, which is not the order CI runs them in:
-# CI runs the jobs at once and waits for all of them, and a person waits for
-# each in turn. Formatting answers in seconds, rustdoc and clippy and the
-# repository gates in tens of them, the suite in minutes. Two broken
-# documentation links and two fuzz targets naming code that had been deleted
-# all lived behind a three-minute suite, and every one of them is something
-# `lint` says in seventeen seconds.
-# What this leaves to CI is what this machine cannot answer: the suite on the
-# other two platforms, the coverage ratchets (a second instrumented run of
-# everything), the suite under the interpreter, and the composite action driven
-# the way another repository drives it. Everything else CI asks is asked here
-# first, because a push that has to wait twenty minutes to be told about a
-# stale golden is a push nobody waits for.
-# The pre-push gate isolates the tree and not the build cache: it symlinks the developer's target/debug in, which is minutes per push and the reason every earlier "green" in this campaign was about artifacts compiled before the field they were meant to prove existed.
-# CI is always cold and never had the problem; this is the one place that needs asking.
+# The order is cheapest refusal first, which is not the order CI runs them in: CI runs the jobs at once and waits for all of them, and a person waits for each in turn.
+# Formatting answers in seconds, rustdoc and clippy and the repository gates in tens of them, the suite in minutes.
+# Two broken documentation links and two fuzz targets naming code that had been deleted all lived behind a three-minute suite, and every one of them is something `lint` says in seventeen seconds.
+# What this leaves to CI is what this machine cannot answer: the suite on the other two platforms, the coverage ratchets (a second instrumented run of everything), the suite under the interpreter, and the composite action driven the way another repository drives it.
+# Everything else CI asks is asked here first, because a push that has to wait twenty minutes to be told about a stale golden is a push nobody waits for.
+# The pre-push gate (`cargo xtask pre-push`) checks the pushed object in the repository's one gate tree, with a build of its own that every worktree shares and nobody's `target/debug` feeds; docs/adr/0030-one-machine-several-sessions.md says why.
 [tasks."build:release"]
 description = "Build the njutest binary this commit would ship, which is what a smoke test of the action runs"
 run = "cargo build --locked --release --bin njutest"
