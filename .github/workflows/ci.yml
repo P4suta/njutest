@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          components: llvm-tools
+          components: llvm-tools, clippy
           tools: cargo-nextest@0.9.140
       - name: Fetch the locked dependency graph
         env:
@@ -77,6 +77,11 @@ jobs:
       - name: Doctests
         shell: bash
         run: cargo test --locked --workspace --all-features --doc
+      # The lint job stands on Linux, so code only another platform compiles is linted here or nowhere.
+      - name: Lint what only this platform compiles
+        if: runner.os != 'Linux'
+        shell: bash
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   lint:
     name: lint
