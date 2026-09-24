@@ -341,14 +341,33 @@
             "fault": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["fault", "target", "args", "outcome", "duration_ms", "alone"],
+              "required": ["fault", "role", "target", "args", "outcome", "duration_ms", "alone"],
               "properties": {
                 "fault": { "type": "string", "minLength": 1 },
+                "role": { "enum": ["first", "confirmation"] },
                 "target": { "type": "string", "minLength": 1 },
                 "args": { "type": "array", "items": { "type": "string" } },
                 "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
                 "duration_ms": { "type": "integer", "minimum": 0 },
                 "alone": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "control"],
+          "properties": {
+            "type": { "const": "fault-control" },
+            "control": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "target", "passed"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "passed": { "type": "boolean" }
               }
             }
           }

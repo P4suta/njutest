@@ -20,10 +20,10 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, FaultExecRecord,
-    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
-    RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord,
-    WireExecRecord,
+    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord,
+    FaultControlRecord, FaultExecRecord, FaultRole, MutantExecRecord, NoteRecord, Payload,
+    PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord, RunAccounting, RunRecord,
+    SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -385,6 +385,11 @@ impl Recorder {
     /// Records one fault run against one target.
     pub fn fault_exec(&self, record: FaultExecRecord) {
         self.emit(Payload::FaultExec { fault: record });
+    }
+
+    /// Records what the original code did on the target a fault's detection is confirmed against.
+    pub fn fault_control(&self, record: FaultControlRecord) {
+        self.emit(Payload::FaultControl { control: record });
     }
 
     /// Records what a run established about one site a fault was asked at.

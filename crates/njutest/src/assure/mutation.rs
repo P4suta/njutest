@@ -1139,7 +1139,7 @@ impl Aggregation {
     fn observe(
         &mut self,
         judging: &Judging<'_>,
-        target: &str,
+        (mutant, target): (&Mutant, &str),
         fact: TargetFact,
     ) -> Result<Option<Disposition>, crate::error::RunnerError> {
         let answered = AnsweredIndex::append(
@@ -1154,7 +1154,7 @@ impl Aggregation {
                 self.observation = self.observation.join(TargetObservation::Survived);
             }
             TargetFact::Killed { on, retry } => {
-                match confirm(judging, &retry, ExpectedReproduction::Killed)? {
+                match confirm(judging, (mutant, &on), &retry, ExpectedReproduction::Killed)? {
                     Ok(()) => return Ok(Some(Disposition::Killed { by: on })),
                     Err(why) => {
                         answered.mark_unconfirmed(&mut self.answered, &on)?;
@@ -1187,6 +1187,7 @@ impl Aggregation {
     fn finish(
         mut self,
         judging: &Judging<'_>,
+        mutant: &Mutant,
         route: Route,
     ) -> Result<(Disposition, Vec<crate::report::Answered>), crate::error::RunnerError> {
         let Some(selected) = select_unsettled(self.unsettled, self.observation) else {
@@ -1208,13 +1209,14 @@ impl Aggregation {
             answered,
         } = selected
         {
-            let disposition = match confirm(judging, &retry, ExpectedReproduction::Waited)? {
-                Ok(()) => Disposition::Waited { on },
-                Err(why) => {
-                    answered.mark_unconfirmed(&mut self.answered, &on)?;
-                    Disposition::Unconfirmed { on, why }
-                }
-            };
+            let disposition =
+                match confirm(judging, (mutant, &on), &retry, ExpectedReproduction::Waited)? {
+                    Ok(()) => Disposition::Waited { on },
+                    Err(why) => {
+                        answered.mark_unconfirmed(&mut self.answered, &on)?;
+                        Disposition::Unconfirmed { on, why }
+                    }
+                };
             return Ok((disposition, self.answered));
         }
         Ok((selected.disposition(), self.answered))
@@ -1247,11 +1249,11 @@ fn judge(
         if judging.watch.cancel.is_cancelled() {
             return Err(crate::error::RunnerError::Interrupted);
         }
-        if let Some(disposition) = aggregation.observe(judging, target, established)? {
+        if let Some(disposition) = aggregation.observe(judging, (mutant, target), established)? {
             return Ok((disposition, aggregation.answered));
         }
     }
-    aggregation.finish(judging, route)
+    aggregation.finish(judging, mutant, route)
 }
 
 /// What one mutation comes to against one test before the route aggregates every target.
@@ -1339,19 +1341,50 @@ fn against(
 /// The pair: the original must pass right now, and the kill must reproduce.
 fn confirm(
     judging: &Judging<'_>,
+    asked: (&Mutant, &str),
     request: &Request,
     expected: ExpectedReproduction,
 ) -> Result<Result<(), Unconfirmed>, crate::error::RunnerError> {
-    if let Some(failure) = judging
+    let (mutant, on) = asked;
+    let control = judging
         .controls
-        .ask(judging.subject, request, judging.watch)?
-    {
+        .ask(judging.subject, request, judging.watch)?;
+    let faulted = judging.subject.perturbing == Perturbing::Faults;
+    if faulted {
+        judging
+            .watch
+            .trace
+            .fault_control(crate::trace::FaultControlRecord {
+                fault: mutant.display_id.to_string(),
+                target: on.to_owned(),
+                passed: control.is_none(),
+            });
+    }
+    if let Some(failure) = control {
         return Ok(Err(Unconfirmed::ControlFailed { detail: failure }));
     }
     let second = judging
         .subject
         .session
         .exec(request, judging.watch.cancel)?;
+    if faulted {
+        let milliseconds = second.duration.as_millis();
+        let duration_ms = u64::try_from(milliseconds).map_err(|_outside_wire_range| {
+            crate::assure::run::RunInvariantError::MutationDurationOutsideWire { milliseconds }
+        })?;
+        judging
+            .watch
+            .trace
+            .fault_exec(crate::trace::FaultExecRecord {
+                fault: mutant.display_id.to_string(),
+                role: crate::trace::FaultRole::Confirmation,
+                target: on.to_owned(),
+                args: request.args.clone(),
+                outcome: second.outcome().name().to_owned(),
+                duration_ms,
+                alone: false,
+            });
+    }
     Ok(expected.compare(second.outcome()))
 }
 
@@ -1545,6 +1578,7 @@ fn record_exec(
         }),
         Perturbing::Faults => watch.trace.fault_exec(crate::trace::FaultExecRecord {
             fault: ran.mutant.display_id.to_string(),
+            role: crate::trace::FaultRole::First,
             target,
             args: ran.request.args.clone(),
             outcome: ran.result.outcome().name().to_owned(),

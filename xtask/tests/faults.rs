@@ -3,7 +3,7 @@
 
 //! What the executions a recording holds of one fault say its decision can be.
 
-use xtask::faults::{Contradiction, Exec, Site, supports};
+use xtask::faults::{Contradiction, Control, Exec, Site, supports};
 
 fn site(decision: &str, by: Option<&str>) -> Site {
     Site {
@@ -20,21 +20,55 @@ fn ran(outcomes: &[(&str, &str)]) -> Vec<Exec> {
             fault: "cccc".to_owned(),
             target: (*target).to_owned(),
             outcome: (*outcome).to_owned(),
+            role: "first".to_owned(),
         })
         .collect()
 }
 
 fn asked(decision: &str, by: Option<&str>, outcomes: &[(&str, &str)]) -> Result<(), Contradiction> {
     let execs = ran(outcomes);
-    supports(&site(decision, by), &execs.iter().collect::<Vec<_>>())
+    supports(&site(decision, by), &execs.iter().collect::<Vec<_>>(), &[])
+}
+
+/// A failure on `t`, the control on `t` answering `passed`, and a confirmation coming to `again`.
+fn confirmed(passed: bool, again: &str) -> Result<(), Contradiction> {
+    let mut execs = ran(&[("t", "killed")]);
+    execs.push(Exec {
+        fault: "cccc".to_owned(),
+        target: "t".to_owned(),
+        outcome: again.to_owned(),
+        role: "confirmation".to_owned(),
+    });
+    let control = Control {
+        fault: "cccc".to_owned(),
+        target: "t".to_owned(),
+        passed,
+    };
+    supports(
+        &site("noticed", Some("t")),
+        &execs.iter().collect::<Vec<_>>(),
+        &[&control],
+    )
 }
 
 #[test]
 fn every_decision_is_held_to_the_executions_it_rests_on() {
     let cases: Vec<(&str, Result<(), Contradiction>)> = vec![
         (
-            "noticed where it failed",
+            "noticed where it failed once and nothing confirmed it",
             asked("noticed", Some("t"), &[("t", "killed")]),
+        ),
+        (
+            "noticed where it failed, the original passed, and it failed again",
+            confirmed(true, "killed"),
+        ),
+        (
+            "noticed where the original code failed too",
+            confirmed(false, "killed"),
+        ),
+        (
+            "noticed where the failure did not repeat",
+            confirmed(true, "survived"),
         ),
         (
             "noticed where it passed",
@@ -91,6 +125,9 @@ fn every_decision_is_held_to_the_executions_it_rests_on() {
     assert_eq!(
         refused,
         vec![
+            "noticed where it failed once and nothing confirmed it",
+            "noticed where the original code failed too",
+            "noticed where the failure did not repeat",
             "noticed where it passed",
             "unnoticed with nothing run",
             "unnoticed beside a run that waited",

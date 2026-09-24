@@ -310,6 +310,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Route { .. } => "route",
         Payload::MutantExec { .. } => "mutant",
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
+        Payload::FaultControl { .. } => "control",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -351,6 +352,8 @@ pub mod payload {
         MutantExec(&'a crate::trace::MutantExecRecord),
         /// A fault execution.
         FaultExec(&'a crate::trace::FaultExecRecord),
+        /// A fault confirmation's control.
+        FaultControl(&'a crate::trace::FaultControlRecord),
         /// A fault site's decision.
         Fault(&'a crate::report::faults::FaultRecord),
         /// A probe execution.
@@ -385,6 +388,7 @@ pub mod payload {
             Payload::Route { route } => Ref::Route(route),
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
             Payload::FaultExec { fault } => Ref::FaultExec(fault),
+            Payload::FaultControl { control } => Ref::FaultControl(control),
             Payload::Fault { fault } => Ref::Fault(fault),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
@@ -571,11 +575,19 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         Payload::FaultExec {
             fault: crate::trace::FaultExecRecord {
                 fault: "abcdef".to_owned(),
+                role: crate::trace::FaultRole::First,
                 target: "demo/test/calls".to_owned(),
                 args: vec!["--exact".to_owned(), "tests::one".to_owned()],
                 outcome: "killed".to_owned(),
                 duration_ms: 5,
                 alone: false,
+            },
+        },
+        Payload::FaultControl {
+            control: crate::trace::FaultControlRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                passed: true,
             },
         },
         Payload::Fault {

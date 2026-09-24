@@ -1894,7 +1894,12 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
             .iter()
             .filter(|exec| exec.fault == site.fault)
             .collect();
-        if let Err(why) = crate::faults::supports(site, &execs) {
+        let controls: Vec<&crate::faults::Control> = faulted
+            .controls
+            .iter()
+            .filter(|control| control.fault == site.fault)
+            .collect();
+        if let Err(why) = crate::faults::supports(site, &execs, &controls) {
             notes.violated(&site.fault, why.to_string());
         }
     }

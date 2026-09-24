@@ -78,6 +78,11 @@ pub enum Payload {
         /// The record.
         fault: FaultExecRecord,
     },
+    /// What the original code did on the target a fault's detection is confirmed against.
+    FaultControl {
+        /// The record.
+        control: FaultControlRecord,
+    },
     /// What a run established about one site a fault was asked at.
     Fault {
         /// The record, as the report holds it.
@@ -139,6 +144,7 @@ impl Payload {
             Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
             Self::FaultExec { .. } => "fault-exec",
+            Self::FaultControl { .. } => "fault-control",
             Self::Fault { .. } => "fault",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
@@ -406,12 +412,36 @@ pub struct MutantExecRecord {
     pub alone: bool,
 }
 
-/// One fault run against one target.
+/// Which execution of a fault one record is, so a detection can be held to the confirmation it needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FaultRole {
+    /// The execution that asked the target.
+    First,
+    /// The execution that asked again after a failure, with the control between.
+    Confirmation,
+}
+
+/// What the original code did on one target, answered for one fault's confirmation.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultControlRecord {
+    /// The fault whose detection this confirms.
+    pub fault: String,
+    /// The target.
+    pub target: String,
+    /// Whether the target passed on the original code.
+    pub passed: bool,
+}
+
+/// One fault run against one target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaultExecRecord {
     /// The fault a person types.
     pub fault: String,
+    /// Which execution of the fault this is.
+    pub role: FaultRole,
     /// The target it ran against.
     pub target: String,
     /// The arguments the target was given, verbatim.

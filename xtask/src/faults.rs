@@ -14,6 +14,19 @@ pub struct Exec {
     pub target: String,
     /// What the execution established, as the engine names outcomes.
     pub outcome: String,
+    /// Which execution it was: `first`, or the `confirmation` after a failure.
+    pub role: String,
+}
+
+/// Whether the original code passed on one target when a fault's failure on it was confirmed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Control {
+    /// The fault whose detection this confirms.
+    pub fault: String,
+    /// The target.
+    pub target: String,
+    /// Whether the target passed on the original code.
+    pub passed: bool,
 }
 
 /// What the run said one fault site came to.
@@ -32,6 +45,8 @@ pub struct Site {
 pub struct Faulted {
     /// Every execution, in recording order.
     pub execs: Vec<Exec>,
+    /// Every control a confirmation asked, in recording order.
+    pub controls: Vec<Control>,
     /// Every site decision, in recording order.
     pub sites: Vec<Site>,
 }
@@ -43,6 +58,16 @@ pub struct Faulted {
 pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
     let mut faulted = Faulted::default();
     for event in crate::route::events(recorded)? {
+        if event.get("type").and_then(Value::as_str) == Some("fault-control")
+            && let Some(record) = event.get("control")
+        {
+            faulted.controls.push(Control {
+                fault: text(record, "fault"),
+                target: text(record, "target"),
+                passed: record.get("passed").and_then(Value::as_bool) == Some(true),
+            });
+            continue;
+        }
         let Some(record) = event.get("fault") else {
             continue;
         };
@@ -51,6 +76,7 @@ pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
                 fault: text(record, "fault"),
                 target: text(record, "target"),
                 outcome: text(record, "outcome"),
+                role: text(record, "role"),
             }),
             Some("fault") => faulted.sites.push(site(record)),
             _ => {}
@@ -83,6 +109,16 @@ pub enum Contradiction {
     NoticedWithoutFailure {
         /// The target named.
         by: String,
+    },
+    /// A target was named as noticing and the failure was never confirmed: the original code was not seen to pass, or the failure did not repeat.
+    #[error(
+        "the run says {by} noticed it, and the recording does not hold what confirms that: {missing}"
+    )]
+    NoticedUnconfirmed {
+        /// The target named.
+        by: String,
+        /// What is missing.
+        missing: &'static str,
     },
     /// A decision that rests on executions has none.
     #[error("the run says it is {decision}, and the recording holds no execution of it")]
@@ -129,7 +165,7 @@ pub enum Contradiction {
 ///
 /// # Errors
 /// The [`Contradiction`] the executions hold.
-pub fn supports(site: &Site, execs: &[&Exec]) -> Result<(), Contradiction> {
+pub fn supports(site: &Site, execs: &[&Exec], controls: &[&Control]) -> Result<(), Contradiction> {
     let ran = !execs.is_empty();
     let failed = execs.iter().find(|one| one.outcome != "survived");
     let bounded = execs
@@ -138,13 +174,25 @@ pub fn supports(site: &Site, execs: &[&Exec]) -> Result<(), Contradiction> {
     match site.decision.as_str() {
         "noticed" => {
             let by = site.by.clone().unwrap_or_default();
-            if execs
-                .iter()
-                .any(|one| one.target == by && one.outcome == "killed")
-            {
-                Ok(())
-            } else {
+            let failed_as = |role: &str| {
+                execs
+                    .iter()
+                    .any(|one| one.target == by && one.outcome == "killed" && one.role == role)
+            };
+            if !failed_as("first") {
                 Err(Contradiction::NoticedWithoutFailure { by })
+            } else if !controls.iter().any(|one| one.target == by && one.passed) {
+                Err(Contradiction::NoticedUnconfirmed {
+                    by,
+                    missing: "the original code passing on that target",
+                })
+            } else if !failed_as("confirmation") {
+                Err(Contradiction::NoticedUnconfirmed {
+                    by,
+                    missing: "the failure repeating when it was asked again",
+                })
+            } else {
+                Ok(())
             }
         }
         "unnoticed" if !ran => Err(Contradiction::NothingRan {
