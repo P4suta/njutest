@@ -2817,3 +2817,85 @@ fn a_fault_baseline_that_was_not_measured_leaves_the_faults_a_hole_whatever_reco
          established: {audit}"
     );
 }
+
+#[test]
+fn a_whole_run_owes_every_knob_the_schema_names_on_every_target_that_passed() {
+    let knobs = [
+        "timezone",
+        "locale",
+        "temp-directory",
+        "home",
+        "umask",
+        "columns",
+        "threads",
+    ];
+    let target = base()
+        .pointer("/targets/0/name")
+        .and_then(serde_json::Value::as_str)
+        .expect("the base specimen's target")
+        .to_owned();
+    let row = |knob: &str| {
+        serde_json::json!({
+            "target": target,
+            "knob": knob,
+            "standing": { "state": "stable" }
+        })
+    };
+    let whole = |rows: Vec<serde_json::Value>| {
+        let mut document = base();
+        merge(
+            &mut document,
+            serde_json::json!({ "contract": "whole-v1", "knobs": rows }),
+        );
+        document
+    };
+    let every = audited(&whole(knobs.iter().map(|knob| row(knob)).collect()));
+    assert!(
+        !every
+            .remarks
+            .iter()
+            .any(|remark| remark.detail.contains("puts every knob")),
+        "every knob the schema names has a row: {every}"
+    );
+    let one_dropped = audited(&whole(knobs.iter().skip(1).map(|knob| row(knob)).collect()));
+    assert!(
+        one_dropped.violated(Layer::Knobs)
+            && one_dropped
+                .remarks
+                .iter()
+                .any(|remark| remark.detail.contains("timezone")),
+        "a whole run that drops one knob's rows on every target reads as repeatable along a \
+         knob it never put: {one_dropped}"
+    );
+}
+
+fn schema_knobs() -> Vec<String> {
+    let schema = xtask::strictjson::from_str(
+        &std::fs::read_to_string(
+            gates::workspace_root().join("schema/njutest-assurance-report-v1.json"),
+        )
+        .expect("the published report schema"),
+    )
+    .expect("the schema is JSON");
+    schema
+        .pointer("/$defs/knob/enum")
+        .and_then(serde_json::Value::as_array)
+        .expect("the schema names its knobs")
+        .iter()
+        .map(|knob| knob.as_str().expect("a knob is a name").to_owned())
+        .collect()
+}
+
+#[test]
+fn the_audit_knows_exactly_the_knobs_the_published_schema_names() {
+    let ours: Vec<String> = xtask::knobs::Knob::ALL
+        .iter()
+        .map(|knob| knob.name().to_owned())
+        .collect();
+    assert_eq!(
+        ours,
+        schema_knobs(),
+        "the audit's own list of knobs and the contract's are one list, so a knob added to either \
+         and not the other fails here rather than being owed by one reading and not the other"
+    );
+}

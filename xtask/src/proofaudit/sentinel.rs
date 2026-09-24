@@ -1141,18 +1141,30 @@ impl Layer {
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
                 ..clean
             }],
-            Self::Knobs => vec![Perturbation {
-                name: "a control a knob broke, recorded as stable",
-                engine: Some(vec![
-                    touch("baseline", &[0, 1]),
-                    touch("control", &[0, 1]),
-                    perturbed("killed", &["lib::works"], &json!({ "state": "not-read" })),
-                ]),
-                ..clean
-            }],
+            Self::Knobs => knobs_planted(clean),
             Self::Concurrency => concurrency_planted(&clean),
         }
     }
+}
+
+/// The lies about knobs the knobs layer must refuse.
+fn knobs_planted(clean: Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "a control a knob broke, recorded as stable",
+            engine: Some(vec![
+                touch("baseline", &[0, 1]),
+                touch("control", &[0, 1]),
+                perturbed("killed", &["lib::works"], &json!({ "state": "not-read" })),
+            ]),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a whole run with no row for a knob the contract puts",
+            document: with(json!({ "contract": "whole-v1" })),
+            ..clean
+        },
+    ]
 }
 
 /// The lies about threads and schedules the concurrency layer must refuse.

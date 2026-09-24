@@ -40,6 +40,9 @@ struct Put {
 /// What each control under a knob established, re-derived from the engine's perturbed-control records against its baseline touch record, and held to what the report says of each.
 pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Knobs);
+    if recording.contract == "whole-v1" {
+        owed_every_knob(recording, &mut notes);
+    }
     let recorded: Vec<Row<'_>> = rows(recording.document, "knobs")
         .iter()
         .map(|row| {
@@ -342,6 +345,37 @@ fn held_to_limitations(
                      that {why}"
                 ),
             );
+        }
+    }
+}
+
+/// Holds a whole run to a row for every knob on every target whose baseline passed, since the contract puts every one of them.
+fn owed_every_knob(recording: &Recording<'_>, notes: &mut Notes<'_>) {
+    let put: BTreeSet<(String, String)> = rows(recording.document, "knobs")
+        .iter()
+        .map(|row| {
+            (
+                field(row, "target").unwrap_or_default(),
+                field(row, "knob").unwrap_or_default(),
+            )
+        })
+        .collect();
+    for target in rows(recording.document, "targets")
+        .iter()
+        .filter(|target| field(target, "status").as_deref() == Some("passed"))
+        .filter_map(|target| field(target, "name"))
+    {
+        for knob in Knob::ALL {
+            if !put.contains(&(target.clone(), knob.name().to_owned())) {
+                notes.violated(
+                    &target,
+                    format!(
+                        "whole-v1 puts every knob on every target whose baseline passed, and \
+                         {} has no row for {target}",
+                        knob.name()
+                    ),
+                );
+            }
         }
     }
 }
