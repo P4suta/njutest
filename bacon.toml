@@ -1,5 +1,9 @@
-# bacon configuration. Launch with `bacon` for the default `check` job, or
-# `bacon clippy` / `bacon test` / `bacon nextest` / `bacon doc`.
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# bacon configuration.
+# Launch with `bacon` for the default `check` job, or `bacon clippy` / `bacon test` / `bacon nextest` / `bacon doc`.
+# A job that builds or tests selects `--workspace --all-features`, the one feature set the gate compiles, so a job run here warms what a push reads.
 #
 # Config reference: https://dystroy.org/bacon/config/
 
@@ -34,6 +38,7 @@ command = [
   "run",
   "--workspace",
   "--all-targets",
+  "--all-features",
   "--color",
   "always",
   "-E",
@@ -48,6 +53,7 @@ command = [
   "run",
   "--workspace",
   "--all-targets",
+  "--all-features",
   "--color",
   "always",
   "-E",
@@ -57,7 +63,16 @@ need_stdout = true
 
 # Every test, the fixture-driven ones included.
 [jobs.test-all]
-command = ["cargo", "nextest", "run", "--workspace", "--all-targets", "--color", "always"]
+command = [
+  "cargo",
+  "nextest",
+  "run",
+  "--workspace",
+  "--all-targets",
+  "--all-features",
+  "--color",
+  "always",
+]
 need_stdout = true
 
 # The repository's own gates.

@@ -1,0 +1,7 @@
+pub fn small(x: i32) -> bool {
+    x < 3
+}
+
+pub fn tiny(x: i32) -> bool {
+    x < 3
+}

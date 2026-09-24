@@ -1,0 +1,15 @@
+pub fn pick(a: i32, b: i32) -> i32 {
+    if a <= b {
+        a
+    } else {
+        b
+    }
+}
+
+pub fn pick_tied(a: i32, b: i32) -> i32 {
+    if a <= b {
+        a
+    } else {
+        b
+    }
+}

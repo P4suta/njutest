@@ -51,6 +51,8 @@ enum Gate {
     Deps,
     /// Conventions of the independent fixture projects under fixtures/.
     Fixtures,
+    /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
+    Tracked,
     /// Clippy every independent fuzz target under the root workspace lint policy.
     FuzzClippy {
         /// Reserved for a future alternate manifest; keeps this execution gate out of `all`.
@@ -146,6 +148,7 @@ where
         Gate::Lints => gates::lints(&root),
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
+        Gate::Tracked => gates::tracked(&root),
         Gate::FuzzClippy { alternate: _ } => {
             fuzzclippy::check(&root, cargo).map_err(|error| gates::GateFailure(error.to_string()))
         }
