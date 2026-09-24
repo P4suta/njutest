@@ -1840,6 +1840,11 @@ pub fn limitation_detail(name: &str) -> String {
             "the library documents no example, so its documentation target has nothing to \
              run and no mutation is routed to it"
         }
+        crate::limitation::FAULT_NOT_PUT => {
+            "the compiler refused a fault, because the `?` it asks about propagates an error \
+             type the engine does not make without guessing, so nothing is claimed about that \
+             call failing"
+        }
         crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED => {
             "a procedural macro decides what it expands to during the build, and a mutation \
              is activated for a test process: the two never meet, and cargo does not rebuild \

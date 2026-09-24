@@ -64,9 +64,12 @@ pub const SEAM_NOT_WATCHED: &str = "seam-not-watched";
 /// A target's baseline was measured and no original-code control over the same passing tests recorded what it reached, so whether its reach is a function of the target is not known.
 pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
+/// A run asked for faults could not put some, because the compiler refused them: their sites propagate an error type the engine does not make.
+pub const FAULT_NOT_PUT: &str = "fault-not-put";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 20] = [
+pub const ALL: [&str; 21] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -87,4 +90,5 @@ pub const ALL: [&str; 20] = [
     RESOURCE_NOT_STOPPED,
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
+    FAULT_NOT_PUT,
 ];

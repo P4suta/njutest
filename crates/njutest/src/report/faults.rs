@@ -9,12 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{CatalogIndex, CountError, Finding, FindingKind, Limitation, Position};
 
-/// The limitation a run states for the faults the compiler refused.
-pub const NOT_PUT: &str = "fault-not-put";
-
-/// The limitation a run states for the faults it put and could not decide.
-pub const NOT_DECIDED: &str = "fault-not-decided";
-
 /// What the suite did with one call failing, and who established it.
 ///
 /// A closed set of its own rather than a [`super::Decision`]: a fault changes what the program is given, never the program, so nothing here is a kill and nothing is proved.
@@ -50,11 +44,24 @@ pub enum FaultDecision {
 }
 
 impl FaultDecision {
+    /// Names every decision and decides nothing, so a decision added later sends whoever adds it to [`Self::every`].
+    #[cfg(feature = "testkit")]
+    const fn witnessed(&self) {
+        match self {
+            Self::Noticed { .. }
+            | Self::Unnoticed
+            | Self::Unreached
+            | Self::Waited { .. }
+            | Self::Undecided { .. }
+            | Self::NotPut { .. } => {}
+        }
+    }
+
     /// One of every decision, named in full, so a test can hold the set to the schema that publishes it.
     #[must_use]
     #[cfg(feature = "testkit")]
     pub fn every() -> Vec<Self> {
-        vec![
+        let every = vec![
             Self::Noticed { by: "t".to_owned() },
             Self::Unnoticed,
             Self::Unreached,
@@ -66,7 +73,11 @@ impl FaultDecision {
             Self::NotPut {
                 diagnostic: "d".to_owned(),
             },
-        ]
+        ];
+        for decision in &every {
+            decision.witnessed();
+        }
+        every
     }
 
     /// The wire name a report records.
@@ -179,77 +190,79 @@ impl FaultAccounting {
     }
 }
 
-/// One finding for every failure nothing noticed.
+/// One finding for every failure nothing noticed, and one for every fault the run put and could not decide, which leaves the run short of assured.
 #[must_use]
 pub fn found(records: &[FaultRecord]) -> Vec<Finding> {
     records
         .iter()
-        .filter(|record| record.decision == FaultDecision::Unnoticed)
-        .map(|record| {
-            let mut finding = Finding::new(
-                FindingKind::UnnoticedFault,
-                &record.display_id,
-                &format!(
-                    "the call the `?` at {} asks about failed and every test that reached it \
-                     passed: no test asserts what `{}` does when it fails",
-                    record.place(),
-                    record.item
+        .filter_map(|record| {
+            let (kind, detail) = match &record.decision {
+                FaultDecision::Unnoticed => (
+                    FindingKind::UnnoticedFault,
+                    format!(
+                        "the call the `?` at {} asks about failed and every test that reached \
+                         it passed: no test asserts what `{}` does when it fails",
+                        record.place(),
+                        record.item
+                    ),
                 ),
-            );
+                FaultDecision::Waited { on } => (
+                    FindingKind::NotMeasured,
+                    format!(
+                        "the call the `?` at {} asks about failed and {on} did not finish \
+                         before its bound, so nothing is claimed about that failure",
+                        record.place()
+                    ),
+                ),
+                FaultDecision::Undecided { on, why } => (
+                    FindingKind::NotMeasured,
+                    format!(
+                        "the call the `?` at {} asks about failed and what {on} did with it \
+                         was not decided ({why}), so nothing is claimed about that failure",
+                        record.place()
+                    ),
+                ),
+                FaultDecision::Noticed { .. }
+                | FaultDecision::Unreached
+                | FaultDecision::NotPut { .. } => return None,
+            };
+            let mut finding = Finding::new(kind, &record.display_id, &detail);
             finding.path = Some(record.path.clone());
             finding.position = record.position;
-            finding
+            Some(finding)
         })
         .collect()
 }
 
-/// What a run does not claim about the faults it asked, one limitation for each kind of gap.
+/// What a run does not claim about the faults the compiler refused, stated once with every class of refusal and its sites.
 #[must_use]
 pub fn limited(records: &[FaultRecord]) -> Vec<Limitation> {
     let mut refused: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    let mut undecided: Vec<String> = Vec::new();
     for record in records {
-        match &record.decision {
-            FaultDecision::NotPut { diagnostic } => refused
+        if let FaultDecision::NotPut { diagnostic } = &record.decision {
+            refused
                 .entry(class(diagnostic))
                 .or_default()
-                .push(record.place()),
-            FaultDecision::Waited { .. } | FaultDecision::Undecided { .. } => {
-                undecided.push(record.place());
-            }
-            FaultDecision::Noticed { .. } | FaultDecision::Unnoticed | FaultDecision::Unreached => {
-            }
+                .push(record.place());
         }
     }
-    let mut limitations = Vec::new();
-    if !refused.is_empty() {
-        let classes: Vec<String> = refused
-            .iter()
-            .map(|(class, places)| format!("{class} at {}", places.join(", ")))
-            .collect();
-        limitations.push(Limitation::new(
-            NOT_PUT,
-            &format!(
-                "the compiler refused {} fault(s), because the engine makes only the standard \
-                 error types it can build without guessing and these sites propagate another, \
-                 so nothing is claimed about their failures: {}",
-                refused.values().map(Vec::len).sum::<usize>(),
-                classes.join("; ")
-            ),
-        ));
+    if refused.is_empty() {
+        return Vec::new();
     }
-    if !undecided.is_empty() {
-        limitations.push(Limitation::new(
-            NOT_DECIDED,
-            &format!(
-                "{} fault(s) were put and the run could not decide what the suite did with \
-                 them, so nothing is claimed about those failures: {}",
-                undecided.len(),
-                undecided.join(", ")
-            ),
-        ));
-    }
-    limitations
+    let classes: Vec<String> = refused
+        .iter()
+        .map(|(class, places)| format!("{class} at {}", places.join(", ")))
+        .collect();
+    vec![Limitation::new(
+        crate::limitation::FAULT_NOT_PUT,
+        &format!(
+            "the compiler refused {} fault(s), because the engine makes only the standard \
+             error types it can build without guessing and these sites propagate another, so \
+             nothing is claimed about their failures: {}",
+            refused.values().map(Vec::len).sum::<usize>(),
+            classes.join("; ")
+        ),
+    )]
 }
 
 /// The compiler's error code in a first line, or the whole line where it named none.

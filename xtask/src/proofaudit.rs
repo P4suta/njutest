@@ -34,6 +34,13 @@ const ERRORED: &str = "errored";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
+/// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
+pub const DEFECT_KINDS: [&str; 4] = [
+    "build-failure",
+    "failing-test",
+    "undefined-behaviour",
+    "broken-under-fault",
+];
 const WAITED_MUTANT: &str = "waited-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
 const FAILING_TEST: &str = "failing-test";
@@ -1849,10 +1856,10 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
         .collect();
     fault_counts(recording, &reported, &mut notes);
     fault_findings(recording, &reported, &mut notes);
-    if reported.is_empty() {
-        return;
-    }
     let Some(faulted) = faulted else {
+        if reported.is_empty() {
+            return;
+        }
         notes.unaudited(
             "faults",
             format!(
@@ -1867,6 +1874,14 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
         .iter()
         .map(|site| (site.fault.as_str(), site))
         .collect();
+    for site in &faulted.sites {
+        if !reported.iter().any(|one| one.fault == site.fault) {
+            notes.violated(
+                &site.fault,
+                "the recording holds this fault site and the report does not".to_owned(),
+            );
+        }
+    }
     for site in &reported {
         if recorded.get(site.fault.as_str()) != Some(&site) {
             notes.violated(
@@ -2626,11 +2641,10 @@ fn scope(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
 }
 
 fn defect(recording: &Recording<'_>, audit: &mut Audit) {
-    const FAULTS: [&str; 3] = ["build-failure", "failing-test", "flaky-test"];
     if !recording
         .findings
         .iter()
-        .any(|finding| FAULTS.contains(&finding.kind.as_str()))
+        .any(|finding| DEFECT_KINDS.contains(&finding.kind.as_str()))
     {
         Notes::on(audit, Layer::Accounting).violated(
             "verdict",

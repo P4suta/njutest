@@ -895,7 +895,14 @@
           "type": "string"
         },
         "position": {
-          "$ref": "#/$defs/position"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/position"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "decision": {
           "$ref": "#/$defs/faultDecision"

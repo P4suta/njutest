@@ -107,8 +107,64 @@ pub fn base() -> Value {
     })
 }
 
-/// A route and an execution for each mutant of [`base`], then one fault the one target ran and passed.
-fn fault_put_and_passed() -> Vec<Value> {
+/// The defects planted for the faults layer: one for every way a fault's record can disagree with what the recording says ran.
+fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "a failed call nothing noticed that no finding names",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } }
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault said to be noticed that no execution of it failed",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "noticed", "by": TARGET }))],
+                "accounting": { "faults": { "sites": 1, "noticed": 1 } }
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "noticed", "by": TARGET }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault said to be unnoticed that an execution of it failed",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }]
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "killed",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault site the recording holds and the report dropped",
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+    ]
+}
+
+/// A route and an execution for each mutant of [`base`], then one fault the one target ran to `outcome`, and the site the run said it came to `decision`.
+fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
     routes()
         .into_iter()
         .chain([
@@ -117,20 +173,20 @@ fn fault_put_and_passed() -> Vec<Value> {
                 "type": "fault-exec",
                 "fault": {
                     "fault": FAULTED, "target": TARGET, "args": [],
-                    "outcome": "survived", "duration_ms": 5, "alone": false
+                    "outcome": outcome, "duration_ms": 5, "alone": false
                 }
             }),
             json!({
                 "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
                 "type": "fault",
-                "fault": unnoticed_fault()
+                "fault": fault_site(decision)
             }),
         ])
         .collect()
 }
 
-/// One fault site every test that reached it passed.
-fn unnoticed_fault() -> Value {
+/// One fault site, decided `decision`.
+fn fault_site(decision: &Value) -> Value {
     json!({
         "catalog_index": 0,
         "id": "c".repeat(64),
@@ -138,7 +194,7 @@ fn unnoticed_fault() -> Value {
         "path": "src/lib.rs",
         "item": "load",
         "position": { "line": 13, "column": 16, "character_column": 16 },
-        "decision": { "decision": "unnoticed" }
+        "decision": decision
     })
 }
 
@@ -514,15 +570,7 @@ impl Layer {
                 document: with(json!({ "contract": "verified-v1" })),
                 ..clean
             }],
-            Self::Faults => vec![Perturbation {
-                name: "a failed call nothing noticed that no finding names",
-                document: with(json!({
-                    "faults": [unnoticed_fault()],
-                    "accounting": { "faults": { "sites": 1, "unnoticed": 1 } }
-                })),
-                events: Some(fault_put_and_passed()),
-                ..clean
-            }],
+            Self::Faults => faults_planted(&clean),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),

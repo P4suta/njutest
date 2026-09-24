@@ -9,7 +9,8 @@ A call whose failure a test answers by writing into the tree it is measured in (
 
 `load` reads a file with `read_to_string(path)?`.
 `a_failed_read_leaves_a_note` passes whether the read works or not, and where it fails it writes `failed-read.log` beside the manifest.
-With no fault in place nothing is written, so the tree is only ever written while the fault fails the read: njutest reports that as `broken-under-fault`, and the fault itself as unnoticed, since the test passed.
+With no fault in place `failed-read.log` is never written, so it is written only while the fault fails the read: njutest reports that as `broken-under-fault`, and the fault itself as unnoticed, since the test passed.
+`every_run_leaves_a_log` writes `always.log` on every run, fault or not, so it was written before any fault was put and the finding does not name it.
 
 | Path | Unit | Candidates |
 | --- | --- | --- |

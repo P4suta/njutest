@@ -82,6 +82,10 @@ pub fn replay(
     kind: FindingKind,
     watch: Watch<'_>,
 ) -> Result<Outcome, RunnerError> {
+    let operators = match replayed(kind) {
+        Replayable::Site(operators) => operators,
+        Replayable::Phase => return Ok(Outcome::Inconclusive),
+    };
     let workspace = Workspace::open(
         replaying.root,
         OpenOptions {
@@ -110,7 +114,7 @@ pub fn replay(
             skip_targets: replaying.skip_targets.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
-            operators: catalogued_by(kind),
+            operators,
             ..crate::assure::engine::switches()
         },
         watch.cancel,
@@ -131,12 +135,21 @@ pub fn replay(
     outcome
 }
 
-/// The rules the catalog a finding's subject is in was discovered by, where they are not the tier's.
-fn catalogued_by(kind: FindingKind) -> Vec<String> {
+/// Where a finding's subject can be put back to the tests from.
+enum Replayable {
+    /// One site of a catalog discovered by these rules, or by the tier's where there are none.
+    Site(Vec<String>),
+    /// A phase as a whole, which no single execution reproduces.
+    Phase,
+}
+
+/// Where a finding of `kind` is put back to the tests from.
+fn replayed(kind: FindingKind) -> Replayable {
     match kind {
-        FindingKind::UnnoticedFault | FindingKind::BrokenUnderFault => {
-            vec![crate::assure::faults::RULE.to_owned()]
+        FindingKind::UnnoticedFault => {
+            Replayable::Site(vec![crate::assure::faults::RULE.to_owned()])
         }
+        FindingKind::BrokenUnderFault => Replayable::Phase,
         FindingKind::BuildFailure
         | FindingKind::FailingTest
         | FindingKind::TargetMissing
@@ -149,7 +162,7 @@ fn catalogued_by(kind: FindingKind) -> Vec<String> {
         | FindingKind::UndefinedBehaviour
         | FindingKind::HollowTarget
         | FindingKind::WireUnnoticed
-        | FindingKind::UnstableBaseline => Vec::new(),
+        | FindingKind::UnstableBaseline => Replayable::Site(Vec::new()),
     }
 }
 

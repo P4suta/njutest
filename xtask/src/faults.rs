@@ -90,11 +90,20 @@ pub enum Contradiction {
         /// The decision given.
         decision: String,
     },
-    /// Nothing is said to have noticed a fault an execution failed on.
+    /// Nothing is said to have noticed a fault that an execution did not pass.
     #[error(
-        "the run says nothing noticed it, and the recording holds an execution of it that failed"
+        "the run says every test that reached it passed, and an execution of it came to {outcome}"
     )]
-    UnnoticedThoughFailed,
+    NotAllPassed {
+        /// What the execution that did not pass came to.
+        outcome: String,
+    },
+    /// A fault every execution of which passed is said to be undecided.
+    #[error("the run says it could not decide it, and every one of its {runs} execution(s) passed")]
+    UndecidedThoughPassed {
+        /// How many executions the recording holds.
+        runs: usize,
+    },
     /// A fault said never to have run ran.
     #[error("the run says it was {decision}, and the recording holds {runs} execution(s) of it")]
     RanThough {
@@ -121,8 +130,11 @@ pub enum Contradiction {
 /// # Errors
 /// The [`Contradiction`] the executions hold.
 pub fn supports(site: &Site, execs: &[&Exec]) -> Result<(), Contradiction> {
-    let outcomes: Vec<&str> = execs.iter().map(|one| one.outcome.as_str()).collect();
     let ran = !execs.is_empty();
+    let failed = execs.iter().find(|one| one.outcome != "survived");
+    let bounded = execs
+        .iter()
+        .any(|one| one.outcome == "waited" || one.outcome == "step_limit_reached");
     match site.decision.as_str() {
         "noticed" => {
             let by = site.by.clone().unwrap_or_default();
@@ -135,18 +147,23 @@ pub fn supports(site: &Site, execs: &[&Exec]) -> Result<(), Contradiction> {
                 Err(Contradiction::NoticedWithoutFailure { by })
             }
         }
-        "unnoticed" | "undecided" if !ran => Err(Contradiction::NothingRan {
+        "unnoticed" if !ran => Err(Contradiction::NothingRan {
             decision: site.decision.clone(),
         }),
-        "unnoticed" if outcomes.contains(&"killed") => Err(Contradiction::UnnoticedThoughFailed),
+        "unnoticed" => failed.map_or(Ok(()), |one| {
+            Err(Contradiction::NotAllPassed {
+                outcome: one.outcome.clone(),
+            })
+        }),
+        "undecided" if ran && failed.is_none() => {
+            Err(Contradiction::UndecidedThoughPassed { runs: execs.len() })
+        }
         "unreached" | "not-put" if ran => Err(Contradiction::RanThough {
             decision: site.decision.clone(),
             runs: execs.len(),
         }),
-        "waited" if !outcomes.contains(&"waited") && !outcomes.contains(&"step_limit_reached") => {
-            Err(Contradiction::WaitedWithoutBound)
-        }
-        "unnoticed" | "unreached" | "not-put" | "waited" | "undecided" => Ok(()),
+        "waited" if !bounded => Err(Contradiction::WaitedWithoutBound),
+        "unreached" | "not-put" | "waited" | "undecided" => Ok(()),
         other => Err(Contradiction::Unknown {
             decision: other.to_owned(),
         }),

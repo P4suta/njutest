@@ -2286,3 +2286,29 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
          {said:?}"
     );
 }
+
+#[test]
+fn the_kinds_that_let_a_run_conclude_defect_are_the_ones_the_report_page_marks() {
+    let page =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/report-v1.md"))
+            .expect("the report page");
+    let marked: std::collections::BTreeSet<String> = page
+        .lines()
+        .skip_while(|line| !line.starts_with("| `kind` |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            let defect = cells.get(3).is_some_and(|cell| *cell == "yes");
+            defect.then(|| cells.get(1).map(|name| name.trim_matches('`').to_owned()))?
+        })
+        .collect();
+    let audited: std::collections::BTreeSet<String> = xtask::proofaudit::DEFECT_KINDS
+        .iter()
+        .map(|kind| (*kind).to_owned())
+        .collect();
+    assert_eq!(
+        marked, audited,
+        "a DEFECT the audit cannot trace to a defect finding is refused, so its list is the page's"
+    );
+}

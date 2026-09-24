@@ -69,7 +69,7 @@ Options:
 
       --faults
           Fail every call a `?` asks about, one at a time, and say which failures the suite noticed.
-          Wins over `[faults] inject`
+          Turns `[faults] inject` on for this run; it cannot turn it off
 
       --shard <K/N>
           Judge only one part of the catalog, as `K/N`. Every part measures the whole baseline;

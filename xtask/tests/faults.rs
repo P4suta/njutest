@@ -1,0 +1,104 @@
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! What the executions a recording holds of one fault say its decision can be.
+
+use xtask::faults::{Contradiction, Exec, Site, supports};
+
+fn site(decision: &str, by: Option<&str>) -> Site {
+    Site {
+        fault: "cccc".to_owned(),
+        decision: decision.to_owned(),
+        by: by.map(ToOwned::to_owned),
+    }
+}
+
+fn ran(outcomes: &[(&str, &str)]) -> Vec<Exec> {
+    outcomes
+        .iter()
+        .map(|(target, outcome)| Exec {
+            fault: "cccc".to_owned(),
+            target: (*target).to_owned(),
+            outcome: (*outcome).to_owned(),
+        })
+        .collect()
+}
+
+fn asked(decision: &str, by: Option<&str>, outcomes: &[(&str, &str)]) -> Result<(), Contradiction> {
+    let execs = ran(outcomes);
+    supports(&site(decision, by), &execs.iter().collect::<Vec<_>>())
+}
+
+#[test]
+fn every_decision_is_held_to_the_executions_it_rests_on() {
+    let cases: Vec<(&str, Result<(), Contradiction>)> = vec![
+        (
+            "noticed where it failed",
+            asked("noticed", Some("t"), &[("t", "killed")]),
+        ),
+        (
+            "noticed where it passed",
+            asked("noticed", Some("t"), &[("t", "survived"), ("u", "killed")]),
+        ),
+        (
+            "unnoticed where every run passed",
+            asked("unnoticed", None, &[("t", "survived")]),
+        ),
+        ("unnoticed with nothing run", asked("unnoticed", None, &[])),
+        (
+            "unnoticed beside a run that waited",
+            asked("unnoticed", None, &[("t", "survived"), ("u", "waited")]),
+        ),
+        ("undecided with nothing run", asked("undecided", None, &[])),
+        (
+            "undecided where a run failed",
+            asked("undecided", None, &[("t", "killed")]),
+        ),
+        (
+            "undecided where every run passed",
+            asked("undecided", None, &[("t", "survived")]),
+        ),
+        ("unreached with nothing run", asked("unreached", None, &[])),
+        (
+            "not-put that ran",
+            asked("not-put", None, &[("t", "survived")]),
+        ),
+        (
+            "waited where a bound expired",
+            asked("waited", None, &[("t", "waited")]),
+        ),
+        (
+            "waited where nothing was bounded",
+            asked("waited", None, &[("t", "survived")]),
+        ),
+        ("a decision no fault has", asked("proved", None, &[])),
+    ];
+    let said: Vec<(&str, Option<String>)> = cases
+        .into_iter()
+        .map(|(case, answer)| {
+            let why = match answer {
+                Ok(()) => None,
+                Err(why) => Some(format!("{why:?}")),
+            };
+            (case, why)
+        })
+        .collect();
+    let refused: Vec<&str> = said
+        .iter()
+        .filter(|(_, why)| why.is_some())
+        .map(|(case, _)| *case)
+        .collect();
+    assert_eq!(
+        refused,
+        vec![
+            "noticed where it passed",
+            "unnoticed with nothing run",
+            "unnoticed beside a run that waited",
+            "undecided where every run passed",
+            "not-put that ran",
+            "waited where nothing was bounded",
+            "a decision no fault has",
+        ],
+        "{said:#?}"
+    );
+}

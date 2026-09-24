@@ -10,14 +10,14 @@ use crate::cli::Environment;
 use crate::error::RunnerError;
 use crate::report::BuildReport;
 use crate::report::faults::{FaultAccounting, FaultDecision, FaultRecord};
-use crate::report::{CatalogIndex, Finding, FindingKind, Limitation};
+use crate::report::{CatalogIndex, Finding, FindingKind};
 use crate::ui::Notes;
 use crate::watch::Watch;
 
 /// The one rule a faulted session is discovered by.
 pub const RULE: &str = "inject-error";
 
-/// The limitation a run states when the tree it faults would not give a baseline.
+/// What the finding is about when the tree it faults would not give a baseline.
 pub const NOT_MEASURED: &str = "fault-baseline-not-measured";
 
 /// Puts every fault the tree holds to the tests, and writes what became of each into `report`.
@@ -41,16 +41,17 @@ pub fn put(
             if baseline::refused(&error).is_none() {
                 return Err(error);
             }
-            report.limitations.push(unmeasured());
+            report.findings.push(unmeasured());
             return Ok(());
         }
     };
     let measured = baseline::observe(&session, Reporting { notes, watch })?;
     if !crate::assure::run::measurable(&measured) {
-        report.limitations.push(unmeasured());
+        report.findings.push(unmeasured());
         session.close()?;
         return Ok(());
     }
+    let before = written(&session)?;
     let judged = mutation::run_resuming(
         Subject {
             session: &session,
@@ -70,17 +71,31 @@ pub fn put(
         },
         Reporting { notes, watch },
     )?;
-    let records: Vec<FaultRecord> = judged.judged.iter().map(recorded).collect();
+    let root = request.root.display().to_string();
+    let records: Vec<FaultRecord> = judged
+        .judged
+        .iter()
+        .map(|judged| recorded(judged, &root))
+        .collect();
     for record in &records {
         watch.trace.fault(record.clone());
     }
-    if !session.changes()?.is_empty() {
+    let after = written(&session)?;
+    let broke: Vec<&String> = after.difference(&before).collect();
+    if !broke.is_empty() {
         report.findings.push(Finding::new(
             FindingKind::BrokenUnderFault,
             RULE,
-            "a test wrote into the tree it was measured in while a call it made was failing, \
-             and did not while none was: what the program does when that call fails reaches \
-             past the place it was asked to work in",
+            &format!(
+                "a test wrote into the tree it was measured in while calls it made were \
+                 failing, where nothing had written before any failed: what the program does \
+                 when a call fails reaches past the place it was asked to work in ({})",
+                broke
+                    .iter()
+                    .map(|path| path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         ));
     }
     report.accounting.faults = FaultAccounting::of(&records)?;
@@ -97,13 +112,25 @@ pub fn put(
     Ok(())
 }
 
-/// What a run says when the tree it faults gave no baseline to put a fault against.
-fn unmeasured() -> Limitation {
-    Limitation::new(
+/// What a run says when the tree it faults gave no baseline to put a fault against, which leaves a run asked for faults short of assured.
+fn unmeasured() -> Finding {
+    Finding::new(
+        FindingKind::NotMeasured,
         NOT_MEASURED,
         "the tree with every fault site guarded did not build or passed no test with no fault \
          in place, so no fault was put and nothing is claimed about any failure",
     )
+}
+
+/// Every path of the tree under measurement that no longer matches what was instrumented.
+fn written(
+    session: &rust_mutants::session::Session,
+) -> Result<std::collections::BTreeSet<String>, RunnerError> {
+    Ok(session
+        .changes()?
+        .iter()
+        .map(|drift| drift.rel_path().to_owned())
+        .collect())
 }
 
 /// The session every fault site of the tree is guarded in, with its one run with nothing active.
@@ -129,8 +156,8 @@ fn prepared(
     )?)
 }
 
-/// What one judged fault site comes to.
-fn recorded(judged: &Judged) -> FaultRecord {
+/// What one judged fault site comes to, with the tree's own location taken out of anything the compiler said.
+fn recorded(judged: &Judged, root: &str) -> FaultRecord {
     FaultRecord {
         catalog_index: CatalogIndex::new(judged.catalog_index),
         id: judged.id.clone(),
@@ -138,15 +165,38 @@ fn recorded(judged: &Judged) -> FaultRecord {
         path: judged.path.clone(),
         item: judged.item.clone(),
         position: judged.position,
-        decision: decided(&judged.disposition),
+        decision: match decided(&judged.disposition) {
+            FaultDecision::NotPut { diagnostic } => FaultDecision::NotPut {
+                diagnostic: diagnostic.replace(root, "."),
+            },
+            other @ (FaultDecision::Noticed { .. }
+            | FaultDecision::Unnoticed
+            | FaultDecision::Unreached
+            | FaultDecision::Waited { .. }
+            | FaultDecision::Undecided { .. }) => other,
+        },
     }
 }
 
 /// The decision a disposition of the shared judging comes to for a fault.
-fn decided(disposition: &Disposition) -> FaultDecision {
+///
+/// Two dispositions no fault's judging produces — a route a proof emptied, and an equivalence — are undecided rather than read as nothing noticing, so a change that made them reachable fails closed.
+#[must_use]
+pub fn decided(disposition: &Disposition) -> FaultDecision {
     match disposition {
         Disposition::Killed { by } => FaultDecision::Noticed { by: by.clone() },
-        Disposition::Survived { .. } | Disposition::Equivalent { .. } => FaultDecision::Unnoticed,
+        Disposition::Survived {
+            route: rust_mutants::session::Route::Discharged { .. },
+        } => FaultDecision::Undecided {
+            on: RULE.to_owned(),
+            why: "a proof removed every target that reached it, which no fault's route admits"
+                .to_owned(),
+        },
+        Disposition::Survived { .. } => FaultDecision::Unnoticed,
+        Disposition::Equivalent { .. } => FaultDecision::Undecided {
+            on: RULE.to_owned(),
+            why: "the equivalence layer answered, which it is never asked about a fault".to_owned(),
+        },
         Disposition::Unreached => FaultDecision::Unreached,
         Disposition::Waited { on } | Disposition::StepLimitReached { on, .. } => {
             FaultDecision::Waited { on: on.clone() }

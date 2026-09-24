@@ -276,7 +276,7 @@ pub struct Verify {
     #[arg(long, value_name = "REV")]
     pub changed_from: Option<String>,
     /// Fail every call a `?` asks about, one at a time, and say which failures the suite noticed.
-    /// Wins over `[faults] inject`.
+    /// Turns `[faults] inject` on for this run; it cannot turn it off.
     #[arg(long)]
     pub faults: bool,
     /// Judge only one part of the catalog, as `K/N`.

@@ -137,6 +137,37 @@ fn part_stated(
     vary: &dyn Fn(&mut BuildReport),
     stated: &dyn Fn(&mut BuildReport),
 ) -> ShardReport {
+    let latticed = tried_part(run, shard, rows, vary, stated).expect("one checked shard lattice");
+    let LatticedDocument::Shard(part) = latticed else {
+        panic!("the sharded fixture cannot be a whole report");
+    };
+    part
+}
+
+/// What the checked lattice makes of one shard's measurement, or what it refused about it.
+fn tried_part(
+    run: &str,
+    shard: &str,
+    rows: Vec<MutantRecord>,
+    vary: &dyn Fn(&mut BuildReport),
+    stated: &dyn Fn(&mut BuildReport),
+) -> Result<LatticedDocument, njutest::report::across::ConfiguredError> {
+    njutest::report::across::configured(&envelope(run), &measured(run, shard, rows, vary, stated))
+}
+
+/// The namespace the report of `run` is written under.
+fn envelope(run: &str) -> RunId {
+    RunId::try_from(format!("{run}-report")).expect("a canonical envelope namespace")
+}
+
+/// One shard's measurement, as a run would hand it to the lattice.
+fn measured(
+    run: &str,
+    shard: &str,
+    rows: Vec<MutantRecord>,
+    vary: &dyn Fn(&mut BuildReport),
+    stated: &dyn Fn(&mut BuildReport),
+) -> njutest::report::across::BuildMeasurements {
     let mut source = BuildReport::new(run, RunKind::Full, Contract::StandardV1);
     source.repository.workspace_digest = "a".repeat(64);
     source.repository.configuration_digest = "b".repeat(64);
@@ -176,20 +207,40 @@ fn part_stated(
     stated(&mut source);
     njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
-    let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
+    njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),
         rust_mutants::cargo::BuildConfig::default().selection(),
         source,
     )])
-    .expect("one checked build measurement");
-    let envelope =
-        RunId::try_from(format!("{run}-report")).expect("a canonical envelope namespace");
-    let latticed = njutest::report::across::configured(&envelope, &measurements)
-        .expect("one checked shard lattice");
-    let LatticedDocument::Shard(part) = latticed else {
-        panic!("the sharded fixture cannot be a whole report");
-    };
-    part
+    .expect("one checked build measurement")
+}
+
+/// One fault site at `index`, decided `decision`.
+fn fault(
+    index: u32,
+    decision: njutest::report::faults::FaultDecision,
+) -> njutest::report::faults::FaultRecord {
+    njutest::report::faults::FaultRecord {
+        catalog_index: njutest::report::CatalogIndex::new(index),
+        id: format!("{index:0>64}"),
+        display_id: format!("{index:0>20}"),
+        path: "src/lib.rs".to_owned(),
+        item: "load".to_owned(),
+        position: None,
+        decision,
+    }
+}
+
+/// States `faults` in a part, with the counts and findings a run derives from them.
+fn faulted(faults: Vec<njutest::report::faults::FaultRecord>) -> impl Fn(&mut BuildReport) {
+    move |source: &mut BuildReport| {
+        source.faults = faults.clone();
+        source.accounting.faults =
+            njutest::report::faults::FaultAccounting::of(&source.faults).expect("a small count");
+        source
+            .findings
+            .extend(njutest::report::faults::found(&source.faults));
+    }
 }
 
 fn part_varying(
@@ -844,4 +895,78 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
         conclusion.limitations
     );
     assert_eq!(whole.verdict(), Verdict::Insufficient);
+}
+
+#[test]
+fn the_fault_sites_of_every_part_are_the_whole_s_and_are_counted_again() {
+    use njutest::report::faults::FaultDecision;
+    let one = part_stated(
+        "one",
+        "1/2",
+        Vec::new(),
+        &|_| {},
+        &faulted(vec![fault(0, FaultDecision::Unnoticed)]),
+    );
+    let two = part_stated(
+        "two",
+        "2/2",
+        Vec::new(),
+        &|_| {},
+        &faulted(vec![fault(
+            1,
+            FaultDecision::Noticed {
+                by: "pkg/lib/pkg".to_owned(),
+            },
+        )]),
+    );
+    let conclusion = whole("the-whole", &[one, two])
+        .conclusion()
+        .expect("a representable conclusion");
+    assert_eq!(conclusion.faults.len(), 2, "{:?}", conclusion.faults);
+    assert_eq!(
+        (
+            conclusion.accounting.faults.sites,
+            conclusion.accounting.faults.noticed
+        ),
+        (2, 1),
+        "the whole counts its faults again from the records it holds"
+    );
+}
+
+#[test]
+fn a_fault_site_is_in_the_one_part_its_index_belongs_to() {
+    use njutest::report::faults::FaultDecision;
+    let refused = tried_part(
+        "one",
+        "1/2",
+        Vec::new(),
+        &|_| {},
+        &faulted(vec![fault(1, FaultDecision::Unreached)]),
+    )
+    .expect_err("index 1 belongs to the second of two parts")
+    .to_string();
+    assert!(
+        refused.contains("puts catalog index 1 in shard 1/2"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_part_whose_fault_counts_are_not_its_records_is_refused() {
+    use njutest::report::faults::FaultDecision;
+    let refused = tried_part(
+        "one",
+        "1/2",
+        Vec::new(),
+        &|_| {},
+        &|source: &mut BuildReport| {
+            source.faults = vec![fault(0, FaultDecision::Unreached)];
+        },
+    )
+    .expect_err("one record and a count of none")
+    .to_string();
+    assert!(
+        refused.contains("has fault accounting that disagrees with its rows"),
+        "{refused}"
+    );
 }

@@ -253,11 +253,12 @@ A run that is asked pays a second instrumented build and baseline of the tree, a
 
 Three things are not claimed, and each is stated.
 A `?` whose error type is not one of the six the engine makes — `std::io::Error`, `Utf8Error`, `FromUtf8Error`, `ParseIntError`, `ParseFloatError`, `TryFromIntError` — or that propagates an `Option` is refused by the compiler under the fault and named in `fault-not-put`, one entry per compiler error class; a user's own error type is never injected, because guessing its constructor would inject something the program never returns.
-A fault a bound expired on, or whose failure did not reproduce, is named in `fault-not-decided`.
+A fault a bound expired on, or whose failure did not reproduce, is a `not-measured` finding, so the run is not `ASSURED`.
 And a caller that swallows the injected error reads as `unnoticed`, which is what the suite could tell: where the error went is not recorded yet.
 
 A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
-A tree whose faulted build or baseline could not be measured states `fault-baseline-not-measured` and puts nothing.
+Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.
+A tree whose faulted build or baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and puts nothing.
 
 ## What a run asks of a suite that talks about time
 

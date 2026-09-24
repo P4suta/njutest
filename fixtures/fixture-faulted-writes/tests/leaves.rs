@@ -16,3 +16,12 @@ fn a_failed_read_leaves_a_note() {
         );
     }
 }
+
+#[test]
+fn every_run_leaves_a_log() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        std::fs::write(manifest.join("always.log"), "every run writes this").is_ok(),
+        "the log is written"
+    );
+}

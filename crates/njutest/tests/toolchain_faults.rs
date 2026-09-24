@@ -193,10 +193,16 @@ fn a_test_that_writes_into_the_tree_only_when_a_call_fails_is_a_defect() {
         "{part}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
+    let broke = named(&part, "findings", "kind", "broken-under-fault");
     assert_eq!(
-        named(&part, "findings", "kind", "broken-under-fault").len(),
+        broke.len(),
         1,
         "the write happened only with the read failing, which is the program's doing: {part}"
+    );
+    let detail = broke[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("failed-read.log") && !detail.contains("always.log"),
+        "the finding names what was written under a fault and not what every run writes: {detail}"
     );
     assert_eq!(
         named(&part, "findings", "kind", "unnoticed-fault").len(),
@@ -235,5 +241,17 @@ fn why_follows_a_fault_from_every_target_it_was_put_to_to_what_it_came_to() {
             && page.contains("asked fixture-faulted/test/calls  survived"),
         "the page names every target the fault was put to and what the run concluded: {page}\n{}",
         njutest_devkit::process::strict_utf8(&why.stderr)
+    );
+}
+
+#[test]
+fn a_tree_every_run_writes_into_is_not_broken_by_a_fault() {
+    let fixture = fixture("fixture-writes-tree");
+    let output = verify(&fixture, &["--faults"]);
+    let part = part(&fixture);
+    assert!(
+        named(&part, "findings", "kind", "broken-under-fault").is_empty(),
+        "the tree was written with no fault in place, so no fault wrote it: {part}\n{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
     );
 }

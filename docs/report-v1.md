@@ -182,9 +182,11 @@ A record carries the fault's `id` and `display_id`, its `path`, `item` and `posi
 
 Nothing here is a kill, and nothing is proved: a fault changes what the program is given, never the program, and no discharge is applied to a fault's route.
 `accounting.faults` counts the records, and `noticed + unnoticed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
-Every `unnoticed` record raises one `unnoticed-fault` finding naming its `display_id`.
-`not-put` records are stated as one `fault-not-put` limitation naming each compiler error class with its sites, and `waited` and `undecided` ones as one `fault-not-decided` limitation.
-A tree whose faulted baseline could not be measured states `fault-baseline-not-measured` and carries no records.
+Every `unnoticed` record raises one `unnoticed-fault` finding naming its `display_id`, and every `waited` or `undecided` one a `not-measured` finding naming it, so a run asked for faults that could not decide one is not `ASSURED`.
+`not-put` records are stated as one `fault-not-put` limitation naming each compiler error class with its sites.
+A tree whose faulted baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and carries no records.
+A record's `position` is `null` where the run could not place the site.
+`broken-under-fault` names every path of the tree that was written while faults were put and had not been written before any was.
 
 ## Sources
 
