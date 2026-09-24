@@ -144,7 +144,7 @@ impl Standing {
 impl Record {
     /// Whether this run may believe what the record says, given the targets it routes to the mutant in the order it asks them and what it saw of them.
     ///
-    /// A kill is believed only where this run would ask exactly the targets the record says were asked before the one that noticed, so the answers it reads back are the ones asking again would give.
+    /// A kill is believed only where this run would ask exactly the targets the record says were asked before the one that noticed, in the order it asks them, so the answers it reads back are the ones asking again would give.
     ///
     /// # Errors
     /// Returns why not, which is never "no reason".
@@ -162,6 +162,18 @@ impl Record {
                     });
                 };
                 standing.vouches(target, key)?;
+                if let Some(noticed) = before
+                    .iter()
+                    .find(|answer| answer.outcome == crate::report::Outcome::Killed)
+                {
+                    return Err(Refusal::Unreadable {
+                        message: format!(
+                            "says {} noticed it before {target} did, and a run stops at the first \
+                             kill it confirms",
+                            noticed.target
+                        ),
+                    });
+                }
                 for answer in before {
                     if !asking
                         .iter()
@@ -181,6 +193,17 @@ impl Record {
                 {
                     return Err(Refusal::TargetEntered {
                         target: entered.clone(),
+                    });
+                }
+                if !before
+                    .iter()
+                    .map(|answer| &answer.target)
+                    .eq(asking.iter().take(position))
+                {
+                    return Err(Refusal::Unreadable {
+                        message: "names the targets asked before the kill in an order no run \
+                                  asks them in"
+                            .to_owned(),
                     });
                 }
                 Ok(())

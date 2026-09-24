@@ -35,9 +35,10 @@ Three directions were weighed.
 A kill carries the answers given before it, wherever it is kept.
 
 - The evidence store's `Killed` record carries `before`: every target asked before the killer, in order, each with its behaviour key and outcome.
-  It is believed only when those are exactly the targets this run would ask before the killer — a run asks targets in name order and stops at the first confirmed kill — each with the same key and seen to pass by this run's baseline.
+  It is believed only when those are exactly the targets this run would ask before the killer, in the same order — a run asks the targets its route reaches in name order and stops at the first confirmed kill — each with the same key and seen to pass by this run's baseline.
+  A record naming them in another order, or holding a kill among them, is one no run wrote and is unreadable: a kill that did not reproduce is recorded as unconfirmed and the run moves on.
   A target this run would ask that the record has no answer from refuses reuse as `target-entered`; one the record answered for that this run would not ask refuses it as `not-routed`.
-- The checkpoint's `SavedDisposition::Killed` carries the same `before`, by target name, and a `before` naming the target that noticed is not a checkpoint.
+- The checkpoint's `SavedDisposition::Killed` carries the same `before`, by target name, and a `before` that names the target that noticed, or holds a kill, is not a checkpoint.
 - A read-back or resumed row reports those answers followed by the kill; a read-back survival reports every target this run routes, each `survived`.
 - `Routing::of` takes the answers, so no path builds a row's routing without saying what was answered.
 

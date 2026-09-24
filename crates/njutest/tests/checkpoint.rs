@@ -540,3 +540,27 @@ fn a_kill_that_says_its_observer_was_asked_before_it_is_not_a_checkpoint() {
          target that noticed before it notices: {error}"
     );
 }
+
+#[test]
+fn a_kill_that_says_another_target_noticed_it_first_is_not_a_checkpoint() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut state = State::new(&"a".repeat(64));
+    state.attempts = 1;
+    let mut killed = mutant(&"1".repeat(64));
+    killed.disposition = SavedDisposition::Killed {
+        by: "demo/test/late".to_owned(),
+        before: vec![njutest::report::Answered {
+            target: "demo/lib/demo".to_owned(),
+            outcome: njutest::report::Outcome::Killed,
+        }],
+    };
+    state.record_mutant(killed);
+    let error = write(dir.path(), &state).expect_err("a kill before the kill");
+    assert!(
+        error
+            .to_string()
+            .contains("noticed it before the kill it records"),
+        "a run stops at the first kill it confirms, and one that did not reproduce is \
+         recorded unconfirmed, so no run leaves a kill among the answers before one: {error}"
+    );
+}

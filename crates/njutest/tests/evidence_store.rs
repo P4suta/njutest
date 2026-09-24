@@ -304,3 +304,42 @@ fn a_kill_is_believed_only_where_this_run_would_ask_exactly_the_targets_asked_be
         "what `t1` answered is only this run's answer while `t1` behaves as it did"
     );
 }
+
+#[test]
+fn a_kill_whose_earlier_answers_no_run_could_have_given_is_not_believed() {
+    let three = standing(&[("t1", "k1"), ("t2", "k2"), ("t3", "k2")]);
+    let reordered = record(
+        mutant(3),
+        "run-1",
+        killed_after("t3", &[("t2", "k2"), ("t1", "k1")]),
+    );
+    assert!(
+        matches!(
+            reordered.believable(&reaching(&["t1", "t2", "t3"]), &three),
+            Err(Refusal::Unreadable { .. })
+        ),
+        "a run asks in one order, so a record holding the same targets in another was not \
+         written by one"
+    );
+    let noticed = record(
+        mutant(4),
+        "run-1",
+        Outcome::Killed {
+            target: "t2".to_owned(),
+            key: "k2".to_owned(),
+            before: vec![Answer {
+                target: "t1".to_owned(),
+                key: "k1".to_owned(),
+                outcome: njutest::report::Outcome::Killed,
+            }],
+        },
+    );
+    assert!(
+        matches!(
+            noticed.believable(&reaching(&["t1", "t2"]), &three),
+            Err(Refusal::Unreadable { .. })
+        ),
+        "a run stops at the first kill it confirms, so an earlier kill among the answers \
+         before one is a record no run wrote"
+    );
+}

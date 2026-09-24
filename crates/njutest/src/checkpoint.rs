@@ -263,6 +263,14 @@ pub enum CheckpointViolation {
         /// The target that noticed.
         target: String,
     },
+    /// A kill that says another target noticed it first, which a run that stops at the first confirmed kill never records.
+    #[error("mutant {mutant:?} says {target:?} noticed it before the kill it records")]
+    NoticedBefore {
+        /// The affected mutant.
+        mutant: String,
+        /// The target said to have noticed first.
+        target: String,
+    },
 }
 
 impl CheckpointError {
@@ -475,7 +483,17 @@ fn validate_mutants(mutants: &[SavedMutant]) -> Result<(), CheckpointViolation> 
                     target: by.clone(),
                 });
             }
-            SavedDisposition::Killed { .. } => {}
+            SavedDisposition::Killed { before, .. } => {
+                if let Some(noticed) = before
+                    .iter()
+                    .find(|answer| answer.outcome == crate::report::Outcome::Killed)
+                {
+                    return Err(CheckpointViolation::NoticedBefore {
+                        mutant: mutant.id.clone(),
+                        target: noticed.target.clone(),
+                    });
+                }
+            }
         }
     }
     Ok(())
