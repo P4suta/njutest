@@ -2101,7 +2101,47 @@ pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
             GateFailure("proofaudit: more planted defects than a count can hold".to_owned())
         })?;
     }
+    for rule in xtask_confirm_rules() {
+        confirm_rule_sighted(rule)?;
+    }
     Ok(found)
+}
+
+/// Every rule of the confirmation layer.
+const fn xtask_confirm_rules() -> [crate::confirm::ConfirmRule; 7] {
+    crate::confirm::ConfirmRule::ALL
+}
+
+/// Nothing, where every defect planted for `rule` draws a confirmation violation of that rule by name.
+///
+/// # Errors
+/// A rule with nothing planted for it, or a plant no violation of its rule names.
+fn confirm_rule_sighted(rule: crate::confirm::ConfirmRule) -> Result<(), GateFailure> {
+    let planted = proofaudit::sentinel::confirm_plants(rule);
+    if planted.is_empty() {
+        return Err(GateFailure(format!(
+            "proofaudit: the confirmation rule {} has nothing planted for it",
+            rule.label()
+        )));
+    }
+    let prefix = format!("{}: ", rule.label());
+    for plant in &planted {
+        let audit = proofaudit_specimen(plant)?;
+        if !audit.remarks.iter().any(|remark| {
+            remark.layer == proofaudit::Layer::Confirmations
+                && remark.standing == proofaudit::Standing::Violated
+                && remark.detail.starts_with(&prefix)
+        }) {
+            return Err(GateFailure(format!(
+                "proofaudit: the confirmation rule {label} is blind. Its planted defect `{name}` \
+                 drew no violation of it, so a run it is silent about says nothing. Nothing this \
+                 gate would have said is believed until the planted defect is found again.\n{audit}",
+                label = rule.label(),
+                name = plant.name,
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// How many of `planted` the proof audit found as a violation of `layer`, which is all of them or an error.

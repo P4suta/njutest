@@ -611,11 +611,14 @@ fn establish(
     });
     let mut source: Option<String> = None;
     let mut routing: Option<crate::report::Routing> = None;
-    let disposition = if let Some(saved) = state
-        .and_then(|state| state.mutant(mutant.id.as_str()))
-        .map(inherited)
+    let disposition = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str()))
     {
-        saved
+        let crate::checkpoint::SavedDisposition::Killed { by } = &saved.disposition;
+        watch.trace.resumed(crate::trace::ResumedRecord {
+            mutant: mutant.id.as_str().to_owned(),
+            killed_by: by.clone(),
+        });
+        inherited(saved)
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
         Disposition::Rejected {
             diagnostic: (*diagnostic).to_owned(),
@@ -1337,7 +1340,7 @@ fn confirm(
         test: request.test.clone(),
         expected: expected.recorded(),
         answered_for: answered_for.clone(),
-        reproduced: reproduced.map(|outcome| outcome.name().to_owned()),
+        reproduced,
     };
     if let Original::Failed(failure) = original {
         judging.watch.trace.confirm(confirmed(None));

@@ -353,6 +353,24 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "resumed"],
+          "properties": {
+            "type": { "const": "resumed" },
+            "resumed": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "killed_by"],
+              "description": "One kill an interrupted run established and this run inherited from its checkpoint, confirmed in that run's recording and not in this one.",
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "killed_by": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "control"],
           "properties": {
             "type": { "const": "control" },
@@ -402,7 +420,9 @@
                 "test": { "type": ["string", "null"], "minLength": 1 },
                 "expected": { "enum": ["killed", "waited"] },
                 "answered_for": { "type": "string", "minLength": 1 },
-                "reproduced": { "type": ["string", "null"], "minLength": 1 }
+                "reproduced": {
+                  "enum": [null, "not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"]
+                }
               }
             }
           }

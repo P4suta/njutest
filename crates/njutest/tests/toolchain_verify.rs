@@ -1901,6 +1901,19 @@ fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
         .lines()
         .map(|line| njutest_devkit::strictjson::decode_str(line).expect("a recorded line"))
         .collect();
+    let validator = trace_schema();
+    let off: Vec<String> = events
+        .iter()
+        .filter_map(|event| match validator.validate(event) {
+            Ok(()) => None,
+            Err(error) => Some(format!("{error}: {event}")),
+        })
+        .collect();
+    assert_eq!(
+        off,
+        Vec::<String>::new(),
+        "every recorded line is on its schema"
+    );
     let of_type = |kind: &str| -> Vec<&serde_json::Value> {
         events
             .iter()
@@ -1943,13 +1956,42 @@ fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
                 )
             });
         let answered_for = &confirmation["payload"]["confirm"]["answered_for"];
+        let confirmed_at = confirmation["seq"].as_u64().expect("a recorded seq");
         assert!(
             controls.iter().any(|control| {
                 control["payload"]["control"]["asked_for"] == *answered_for
                     && control["payload"]["control"]["target"] == target.as_str()
-                    && control["seq"].as_u64() < confirmation["seq"].as_u64()
+                    && control["seq"].as_u64().expect("a recorded seq") < confirmed_at
             }),
             "the control a confirmation rests on is recorded before it: {controls:?}"
         );
     }
+}
+
+#[cfg(unix)]
+fn trace_schema() -> jsonschema::Validator {
+    let schema = |name: &str| -> serde_json::Value {
+        let path = njutest_devkit::paths::workspace_root()
+            .join("schema")
+            .join(name);
+        let text = std::fs::read_to_string(&path).expect("the published schema");
+        njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON")
+    };
+    let registry = jsonschema::Registry::new()
+        .add(
+            "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v1.json",
+            schema("rust-mutants-trace-v1.json"),
+        )
+        .expect("the engine trace schema has a canonical URI")
+        .add(
+            "https://github.com/P4suta/njutest/schema/njutest-assurance-report-v1.json",
+            schema("njutest-assurance-report-v1.json"),
+        )
+        .expect("the report schema has a canonical URI")
+        .prepare()
+        .expect("the referenced schemas prepare");
+    jsonschema::options()
+        .with_registry(&registry)
+        .build(&schema("njutest-trace-v1.json"))
+        .expect("the trace schema compiles offline")
 }

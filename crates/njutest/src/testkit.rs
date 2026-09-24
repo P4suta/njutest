@@ -317,6 +317,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Drift { .. } => "drift",
         Payload::Control { .. } => "control",
         Payload::Confirm { .. } => "confirm",
+        Payload::Resumed { .. } => "resumed",
         Payload::Note { .. } => "note",
         Payload::RunEnd { .. } => "run",
     }
@@ -366,6 +367,8 @@ pub mod payload {
         Control(&'a crate::trace::ControlRecord),
         /// How one kill or wait was confirmed.
         Confirm(&'a crate::trace::ConfirmRecord),
+        /// A kill inherited from a checkpoint.
+        Resumed(&'a crate::trace::ResumedRecord),
         /// A note.
         Note(&'a crate::trace::NoteRecord),
         /// A run-end record.
@@ -393,6 +396,7 @@ pub mod payload {
             Payload::Drift { drift } => Ref::Drift(drift),
             Payload::Control { control } => Ref::Control(control),
             Payload::Confirm { confirm } => Ref::Confirm(confirm),
+            Payload::Resumed { resumed } => Ref::Resumed(resumed),
             Payload::Note { note } => Ref::Note(note),
             Payload::RunEnd { .. } => Ref::RunEnd,
         }
@@ -598,7 +602,13 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 test: None,
                 expected: crate::trace::Expected::Killed,
                 answered_for: "a".repeat(64),
-                reproduced: Some("killed".to_owned()),
+                reproduced: Some(rust_mutants::outcome::Outcome::Killed),
+            },
+        },
+        Payload::Resumed {
+            resumed: crate::trace::ResumedRecord {
+                mutant: "c".repeat(64),
+                killed_by: "demo/lib/demo".to_owned(),
             },
         },
         Payload::Drift {

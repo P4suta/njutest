@@ -113,6 +113,11 @@ pub enum Payload {
         /// The record.
         confirm: ConfirmRecord,
     },
+    /// A kill inherited from an interrupted run's checkpoint.
+    Resumed {
+        /// The record.
+        resumed: ResumedRecord,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -146,6 +151,7 @@ impl Payload {
             Self::Drift { .. } => "drift",
             Self::Control { .. } => "control",
             Self::Confirm { .. } => "confirm",
+            Self::Resumed { .. } => "resumed",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -477,7 +483,17 @@ pub struct ConfirmRecord {
     pub answered_for: String,
     /// What the second run came to; nothing where the control failed and there was no second run.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
-    pub reproduced: Option<String>,
+    pub reproduced: Option<rust_mutants::outcome::Outcome>,
+}
+
+/// One kill an interrupted run established and this run inherited from its checkpoint, so it was confirmed in that run's recording and not in this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResumedRecord {
+    /// The mutation, in full.
+    pub mutant: String,
+    /// The target the interrupted run said killed it.
+    pub killed_by: String,
 }
 
 /// What one original-code control, run to confirm a kill, established about whether one target reached what its baseline did.

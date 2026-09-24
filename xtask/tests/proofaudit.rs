@@ -2303,3 +2303,21 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
          {said:?}"
     );
 }
+
+#[test]
+fn every_layer_the_audit_re_decides_is_one_the_development_guide_names() {
+    let guide = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/development.md"),
+    )
+    .expect("the development guide");
+    let unnamed: Vec<&str> = Layer::ALL
+        .iter()
+        .map(|layer| layer.label())
+        .filter(|label| !guide.contains(&format!("`{label}`")))
+        .collect();
+    assert_eq!(
+        unnamed,
+        Vec::<&str>::new(),
+        "a layer nobody can read about is one a reader of its remarks cannot interpret"
+    );
+}

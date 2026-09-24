@@ -1770,15 +1770,13 @@ fn named_hollow_targets<'a>(recording: &'a Recording<'_>) -> BTreeSet<&'a str> {
         .collect()
 }
 
-/// The faults a seam recording licensed, re-derived here and held to what the run says became of them.
-///
-/// The catalogue is minted again from the exchanges alone, by the rules and the identity recipe written out in `crate::wire`, so a fault this audit does not derive is one the run invented and a fault it derives that the run never put is a question the report is quiet about.
-/// Each kill and wait the report states, held to the confirmation the recording holds for it and to what that confirmation decides; a disposition read back from an earlier run was confirmed there, not here.
+/// Each kill, wait and unconfirmed disposition the report states, held to the last confirmation the recording holds for it against its target and to what that confirmation decides; one read back from an earlier run or inherited from an interrupted one was confirmed there, not here.
 fn confirmations(
     recording: &Recording<'_>,
     confirmed: Option<&crate::confirm::Confirmations>,
     audit: &mut Audit,
 ) {
+    use crate::confirm::{ConfirmRule, Expected};
     let mut notes = Notes::on(audit, Layer::Confirmations);
     let Some(confirmed) = confirmed else {
         notes.unaudited(
@@ -1789,75 +1787,108 @@ fn confirmations(
         );
         return;
     };
+    let broke = |notes: &mut Notes<'_>, subject: &str, rule: ConfirmRule, why: &str| {
+        notes.violated(subject, format!("{}: {why}", rule.label()));
+    };
+    for (target, test) in confirmed.asked_twice() {
+        broke(
+            &mut notes,
+            "control",
+            ConfirmRule::Twice,
+            &format!(
+                "the original code was asked about {} {} more than once, which one control per \
+                 question rules out",
+                match target.as_deref() {
+                    Some(target) => target,
+                    None => "the whole suite",
+                },
+                match test.as_deref() {
+                    Some(test) => test,
+                    None => "with every test",
+                }
+            ),
+        );
+    }
     for mutant in recording.mutants.iter().filter(|mutant| !mutant.reused) {
         let owed = match mutant.outcome.as_str() {
-            KILLED => crate::confirm::Expected::Killed,
-            WAITED => crate::confirm::Expected::Waited,
-            UNCONFIRMED => {
-                unconfirmed(mutant, confirmed, &mut notes);
-                continue;
-            }
+            KILLED => Some(Expected::Killed),
+            WAITED => Some(Expected::Waited),
+            UNCONFIRMED => None,
             _ => continue,
         };
-        let decided: Vec<crate::confirm::Decided> = confirmed
-            .confirms
-            .iter()
-            .filter(|(_, confirm)| {
-                (confirm.mutant == mutant.id || confirm.mutant == mutant.display_id)
-                    && confirm.expected == owed
-                    && (owed == crate::confirm::Expected::Waited
-                        || confirm.target == mutant.killed_by)
-            })
-            .map(|(seq, confirm)| confirmed.decided(*seq, confirm))
-            .collect();
-        if decided.contains(&crate::confirm::Decided::Stands(owed)) {
+        if confirmed.resumed.contains(&mutant.id) {
+            notes.unaudited(
+                mutant.label(),
+                "it was inherited from an interrupted run's checkpoint, so it was confirmed in \
+                 that run's recording and not in this one"
+                    .to_owned(),
+            );
             continue;
         }
-        notes.violated(
-            mutant.label(),
-            match decided.iter().find_map(|one| match one {
-                crate::confirm::Decided::Contradicted(why) => Some(why.clone()),
-                crate::confirm::Decided::Stands(_) | crate::confirm::Decided::Unconfirmed => None,
-            }) {
-                Some(why) => why,
-                None if decided.is_empty() => format!(
-                    "the report says {} and the recording holds no confirmation of it, so \
-                     nothing a reader can check says the original code passed that test and \
-                     the result came back",
-                    mutant.outcome
-                ),
-                None => format!(
-                    "the report says {}, and every confirmation the recording holds of it \
-                     leaves it unconfirmed",
-                    mutant.outcome
-                ),
-            },
-        );
+        confirmation_of(mutant, owed, confirmed, &mut notes);
     }
 }
 
-/// An unconfirmed disposition, held to a recorded confirmation that leaves it so.
-fn unconfirmed(
+/// One disposition, owed a standing confirmation where `owed` names what it stands as and a failed one where it names nothing, held to the confirmations `confirmed` holds of it against its target.
+fn confirmation_of(
     mutant: &MutantRow,
+    owed: Option<crate::confirm::Expected>,
     confirmed: &crate::confirm::Confirmations,
     notes: &mut Notes<'_>,
 ) {
-    let left = confirmed
+    use crate::confirm::{ConfirmRule, Decided};
+    let mut broke = |rule: ConfirmRule, why: &str| {
+        notes.violated(mutant.label(), format!("{}: {why}", rule.label()));
+    };
+    let on: Vec<Decided> = confirmed
         .confirms
         .iter()
-        .filter(|(_, confirm)| confirm.mutant == mutant.id || confirm.mutant == mutant.display_id)
-        .any(|(seq, confirm)| {
-            confirmed.decided(*seq, confirm) == crate::confirm::Decided::Unconfirmed
-        });
-    if !left {
-        notes.violated(
-            mutant.label(),
-            "the report says unconfirmed, and no confirmation the recording holds of it failed"
-                .to_owned(),
-        );
+        .filter(|(_, confirm)| {
+            confirm.mutant == mutant.id
+                && confirm.target.as_deref() == mutant.killed_by.as_deref()
+                && owed.is_none_or(|expected| confirm.expected == expected)
+        })
+        .map(|(seq, confirm)| confirmed.decided(*seq, confirm))
+        .collect();
+    for decided in &on {
+        if let Decided::Broke(rule, why) = decided {
+            broke(*rule, why);
+        }
+    }
+    match (owed, on.last()) {
+        (_, None) => broke(
+            ConfirmRule::Missing,
+            &format!(
+                "the report says {} against {}, and the recording holds no confirmation of \
+                     it there, so nothing a reader can check says the original code passed that \
+                     test and the result came back",
+                mutant.outcome,
+                match mutant.killed_by.as_deref() {
+                    Some(target) => target,
+                    None => "no target",
+                }
+            ),
+        ),
+        (Some(_), Some(Decided::Unconfirmed)) => broke(
+            ConfirmRule::Unconfirmed,
+            &format!(
+                "the report says {}, and its last confirmation leaves it unconfirmed",
+                mutant.outcome
+            ),
+        ),
+        (None, Some(Decided::Stands)) => broke(
+            ConfirmRule::Confirmed,
+            "the report says unconfirmed, and its last confirmation passed its control and \
+                 came back",
+        ),
+        (Some(_), Some(Decided::Stands | Decided::Broke(..)))
+        | (None, Some(Decided::Unconfirmed | Decided::Broke(..))) => {}
     }
 }
 
+/// The faults a seam recording licensed, re-derived here and held to what the run says became of them.
+///
+/// The catalogue is minted again from the exchanges alone, by the rules and the identity recipe written out in `crate::wire`, so a fault this audit does not derive is one the run invented and a fault it derives that the run never put is a question the report is quiet about.
 fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Wire);
     let Some(watched) = watched else {

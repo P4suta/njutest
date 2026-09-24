@@ -22,8 +22,8 @@ pub use event::SCHEMA;
 pub use event::{
     ArtifactRecord, AskedRecord, ConfirmRecord, ControlAnswer, ControlRecord, DischargeRecord,
     DriftRecord, Event, ExecRecord, Expected, MutantExecRecord, NoteRecord, Payload, PhaseRecord,
-    ProbeExecRecord, ProgressRecord, Read, RouteRecord, RunAccounting, RunRecord, SentinelRecord,
-    StartRecord, WireExchangeRecord, WireExecRecord,
+    ProbeExecRecord, ProgressRecord, Read, ResumedRecord, RouteRecord, RunAccounting, RunRecord,
+    SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -410,6 +410,11 @@ impl Recorder {
     /// Records how one kill or wait was confirmed.
     pub fn confirm(&self, record: ConfirmRecord) {
         self.emit(Payload::Confirm { confirm: record });
+    }
+
+    /// Records one kill inherited from an interrupted run's checkpoint.
+    pub fn resumed(&self, record: ResumedRecord) {
+        self.emit(Payload::Resumed { resumed: record });
     }
 
     /// Records what one control established about one target's baseline reach.
