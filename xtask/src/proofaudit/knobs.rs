@@ -104,20 +104,17 @@ fn established(
     notes: &mut Notes<'_>,
 ) -> BTreeMap<Put, Derived> {
     let mut controls: BTreeMap<Put, Vec<&Perturbed>> = BTreeMap::new();
-    for control in perturbations
-        .controls
-        .iter()
-        .filter(|control| control.started.delayed.is_none())
-    {
-        match control.started.knob() {
-            Some(knob) => controls
+    for control in &perturbations.controls {
+        match control.started.role() {
+            crate::knobs::Role::Knob(knob) => controls
                 .entry(Put {
                     target: control.target.clone(),
                     knob,
                 })
                 .or_default()
                 .push(control),
-            None => notes.violated(
+            crate::knobs::Role::Delayed | crate::knobs::Role::Undelayed => {}
+            crate::knobs::Role::Unknown => notes.violated(
                 &control.target,
                 format!(
                     "the engine started a control of {} with {}, which is not what any knob puts",

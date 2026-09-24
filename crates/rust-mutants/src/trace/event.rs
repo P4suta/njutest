@@ -664,6 +664,8 @@ pub struct VerifyRecord {
     pub tests_run: Option<u32>,
     /// How long it took, which is what a derived timeout is five times.
     pub duration_ms: u64,
+    /// The harness arguments it was run with, verbatim, which is how many threads libtest ran its tests on.
+    pub args: Vec<String>,
     /// Whether this exact passing measurement was read back instead of running the target again.
     pub remembered: bool,
     /// Whether the target had to be run a second time, because the first run did not pass.
@@ -705,6 +707,9 @@ pub struct PerturbationRecord {
     /// The guard each thread paused at the first time it reached it, or nothing.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub delay: Option<DelayRecord>,
+    /// The guard whose delayed failure this undelayed control confirms, or nothing.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub confirms: Option<u32>,
 }
 
 /// The one guard a control paused each of its threads at, once: which schedule it ran.

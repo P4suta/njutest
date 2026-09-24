@@ -334,7 +334,7 @@ fn fault(evidence: &Evidence<'_>) -> Column {
     )
 }
 
-/// The schedules' column: a binary proven to run one thread, or one a delayed guard broke, is answered; a sample of schedules that all passed, and a binary no schedule of which was explored, is a hole (ADR 0034).
+/// The schedules' column: a binary proven to run one thread, or one a delayed guard broke, is answered; a sample of schedules that all passed, one whose delays settled nothing, and a binary no schedule of which was explored, is a hole (ADR 0034).
 fn schedule(records: &[super::concurrency::ConcurrencyRecord]) -> Column {
     use super::concurrency::{Exploration, Unexplored};
     if records.is_empty() {
@@ -349,6 +349,7 @@ fn schedule(records: &[super::concurrency::ConcurrencyRecord]) -> Column {
             }
             | Exploration::Broke { .. } => Counted::Answered,
             Exploration::Sampled { .. }
+            | Exploration::Undecided { .. }
             | Exploration::Unexplored {
                 why: Unexplored::NotAsked | Unexplored::NotPassing | Unexplored::NoSite,
             } => Counted::Hole,

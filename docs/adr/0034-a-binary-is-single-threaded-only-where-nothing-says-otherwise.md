@@ -25,19 +25,27 @@ Reach alone cannot prove a binary single-threaded.
 
 ## Decision
 
-1. **Single-threaded is a conjunction, and everything else is a hole.** A test binary is `single-threaded` only when its baseline reached no code off its tests' threads, its harness is libtest, no package in its dependency closure has a place that can start a thread, and none of them links native code.
+1. **Single-threaded is a conjunction, and everything else is a hole.** A test binary is `single-threaded` only when its baseline reached no code off its tests' threads, its harness is libtest run with `--test-threads=1`, no package in its dependency closure has a place that can start a thread, and none of them links native code.
+   Libtest runs a binary's tests on every processor unless it is told otherwise, and two tests on two threads interleave over whatever they share, so a binary run without `--test-threads=1` is `concurrent` with `parallel-tests`, however quiet its closure.
    Where anything says it can run more than one thread it is `concurrent`, with every reason; where anything could not be looked at it is `not-proven`, with every reason.
    Both are named by `schedule-not-explored`, since nothing explores a schedule yet.
 
 2. **The source half reads tokens of the whole closure and fails closed.** Every `.rs` file of every package the binary links is read, registry packages included, as tokens, so a macro body and an attribute are read exactly as code is.
    A call or method whose name starts with `spawn` on any receiver, a path call to `scope`, rayon, crossbeam, a thread pool or a parallel iterator, a runtime's `main` or `test` attribute and `new_multi_thread` each make it `concurrent`.
    An `extern` block, a `links` key, and `pthread_create` make it `not-proven` as `native-code`, because code no Rust source here shows can start threads without a token saying so.
-   A file that is not Rust, or not UTF-8, is `unread`, and never read as a file that starts nothing.
+   A file that is not Rust's tokens, or not UTF-8, is `unread`, and never read as a file that starts nothing.
+   A raw identifier is read as the name it spells, so `r#spawn` is `spawn`.
+   A file is held to being Rust's tokens and parsed no further: no rule reads more than tokens, and a parser recurses through a chain of unary operators or nested generics that no limit on the source could bound.
+   A file whose brackets nest deeper than 128 outside its comments and literals is `unread` before it is lexed, because its token tree is built and dropped recursively and would end the run on a small enough stack.
    A false "can start one" leaves a hole the report states; a false "cannot" would be a proof of nothing, so every uncertain token is read the first way.
 
 3. **What is known to start a thread is said first.** A binary with a known spawn is `concurrent` even where something else of it could not be read, so the reason a reader acts on is not hidden behind the one they cannot.
 
-4. **A doctest binary is never proven.** Its code is a doc string the token scan does not read, and rustdoc runs it where no reach is recorded.
+4. **A doctest binary is never proven.** Its code is a doc string the token scan does not read, and rustdoc runs it where no reach is recorded; its standing is `not-proven` with `doctest`, named for what it is rather than for the reach it happens not to record.
+
+5. **Every witnessed reason is re-derived by the audit.** The engine recording holds each binary's kind and harness, the harness arguments its baseline ran with, and its reach off its tests' threads.
+   `proofaudit` derives `loose-reach`, `parallel-tests`, `no-touch`, `not-libtest` and `doctest` from them and requires the report to name exactly those, in the state they come to; the reasons a scan gives are stated as not re-derived.
+   Shards of one run must agree on every record, and a part that measured a binary and records nothing about its threads is refused.
 
 5. **A schedule is one guard delayed.** Asked for with `[schedules] explore = N`, a run takes up to N guards the baseline of a binary not proven single-threaded reached, chosen by the SHA-256 of their index so they spread across the catalog the same way every run, and for each starts one control in which every thread pauses 100 ms the first time it reaches that guard (`RUST_MUTANTS_DELAY`, which only a control carries: the engine and the runtime both refuse it beside an active mutant).
    The pause is bounded, one per thread per run, and the schedule is named by the guard a reader can go to, rather than by a seed nobody can read.

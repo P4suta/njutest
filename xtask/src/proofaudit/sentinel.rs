@@ -695,6 +695,28 @@ pub fn touch(measured: &str, reached: &[u32]) -> Value {
     json!({ "type": "touch", "touch": touched(measured, reached) })
 }
 
+/// The build record naming [`TARGET`] as a library test binary libtest runs.
+fn built() -> Value {
+    json!({
+        "type": "build",
+        "build": {
+            "targets": [TARGET],
+            "details": [{ "id": TARGET, "kind": "lib", "harness": true, "limitations": [] }]
+        }
+    })
+}
+
+/// The baseline record of [`TARGET`], run with the harness arguments `args`.
+fn verified(args: &[&str]) -> Value {
+    json!({
+        "type": "verify",
+        "verify": {
+            "target": TARGET, "outcome": "survived", "tests_run": 1, "duration_ms": 1,
+            "args": args, "remembered": false, "retried": false
+        }
+    })
+}
+
 /// The record of [`touch`] without its event.
 fn touched(measured: &str, reached: &[u32]) -> Value {
     json!({
@@ -723,7 +745,8 @@ pub fn perturbed(outcome: &str, failed: &[&str], reach: &Value) -> Value {
                 "environment": [{ "name": "TZ", "value": "Australia/Lord_Howe" }],
                 "launcher": null,
                 "arguments": [],
-                "delay": null
+                "delay": null,
+                "confirms": null
             },
             "outcome": outcome,
             "failed_tests": failed,
@@ -856,12 +879,18 @@ pub fn clean() -> Perturbation {
             let mut document = document;
             merge(
                 &mut document,
-                json!({ "concurrency": [{ "target": TARGET, "standing": { "state": "single-threaded" } }] }),
+                json!({ "concurrency": [{
+                    "target": TARGET,
+                    "standing": { "state": "single-threaded" },
+                    "explored": { "state": "unexplored", "why": "not-needed" }
+                }] }),
             );
             document
         },
         events: Some(routes()),
         engine: Some(vec![
+            built(),
+            verified(&["--test-threads=1"]),
             touch("baseline", &[0, 1]),
             touch("control", &[0, 1]),
             perturbed("survived", &[], &recorded_reach(&[0, 1])),
@@ -921,7 +950,66 @@ fn loose_yet_single_threaded(clean: Perturbation) -> Perturbation {
     merge(&mut loose, json!({ "touch": { "loose": 1 } }));
     Perturbation {
         name: "a binary whose baseline reached code off its tests' threads, proven single-threaded",
-        engine: Some(vec![loose, touch("control", &[0, 1])]),
+        engine: Some(vec![
+            built(),
+            verified(&["--test-threads=1"]),
+            loose,
+            touch("control", &[0, 1]),
+        ]),
+        ..clean
+    }
+}
+
+/// The planted defect of the concurrency layer: a report that measured mutants and dropped every concurrency record.
+fn unrecorded_threads(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    if let Some(part) = document.as_object_mut() {
+        part.insert("concurrency".to_owned(), json!([]));
+    }
+    Perturbation {
+        name: "a report that measured mutants and records nothing about any binary's threads",
+        document,
+        ..clean
+    }
+}
+
+/// The planted defect of the concurrency layer: a binary libtest ran on every processor, recorded as proven single-threaded.
+fn parallel_yet_single_threaded(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a binary libtest ran its tests side by side in, proven single-threaded",
+        engine: Some(vec![
+            built(),
+            verified(&[]),
+            touch("baseline", &[0, 1]),
+            touch("control", &[0, 1]),
+        ]),
+        ..clean
+    }
+}
+
+/// The planted defect of the concurrency layer: a delayed guard whose control ran past its bound, recorded as a sample that passed.
+fn waited_yet_sampled(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({ "concurrency": [{
+            "explored": { "state": "sampled", "asked": 1, "delayed": [0] }
+        }] }),
+    );
+    let mut delayed = perturbed("waited", &[], &json!({ "state": "not-read" }));
+    merge(
+        &mut delayed,
+        json!({ "perturbed": { "perturbation": {
+            "environment": [],
+            "delay": { "site": 0, "pause_ms": 100 }
+        } } }),
+    );
+    let mut engine = clean.engine.clone().unwrap_or_default();
+    engine.push(delayed);
+    Perturbation {
+        name: "a delayed guard whose control ran past its bound, recorded as a sample that passed",
+        document,
+        engine: Some(engine),
         ..clean
     }
 }
@@ -937,7 +1025,8 @@ fn passed_yet_broke(clean: Perturbation) -> Perturbation {
                 "site": 0,
                 "path": "src/lib.rs",
                 "line": 7,
-                "failed": ["lib::works"]
+                "failed": ["lib::works"],
+                "rounds": 5
             }
         }] }),
     );
@@ -1061,10 +1150,18 @@ impl Layer {
                 ]),
                 ..clean
             }],
-            Self::Concurrency => vec![
-                loose_yet_single_threaded(clean.clone()),
-                passed_yet_broke(clean),
-            ],
+            Self::Concurrency => concurrency_planted(&clean),
         }
     }
+}
+
+/// The lies about threads and schedules the concurrency layer must refuse.
+fn concurrency_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        loose_yet_single_threaded(clean.clone()),
+        unrecorded_threads(clean.clone()),
+        parallel_yet_single_threaded(clean.clone()),
+        waited_yet_sampled(clean.clone()),
+        passed_yet_broke(clean.clone()),
+    ]
 }

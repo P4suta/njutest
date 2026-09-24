@@ -919,6 +919,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         outcome: "survived".to_owned(),
         tests_run: Some(3),
         duration_ms: 12,
+        args: vec![],
         remembered: false,
         retried: false,
     });
@@ -945,6 +946,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
             launcher: None,
             arguments: Vec::new(),
             delay: None,
+            confirms: None,
         },
         outcome: "killed".to_owned(),
         failed_tests: vec!["the_zone_is_utc".to_owned()],

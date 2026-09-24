@@ -30,14 +30,23 @@ pub enum Exploration {
         /// Why.
         why: Unexplored,
     },
-    /// Every delayed schedule passed or settled nothing: a sample, never a proof.
+    /// Every delayed schedule passed: a sample, never a proof.
     Sampled {
+        /// How many guards the run asked to delay.
+        asked: u32,
         /// The catalog index of every guard delayed, in the order they were.
         delayed: Vec<u32>,
-        /// Those whose delayed controls settled nothing.
+    },
+    /// No delay broke it, and the controls of at least one delayed guard settled nothing: neither a sample passed nor a failure found.
+    Undecided {
+        /// How many guards the run asked to delay.
+        asked: u32,
+        /// The catalog index of every guard delayed, in the order they were.
+        delayed: Vec<u32>,
+        /// Those whose delayed controls settled nothing, or whose failure no round confirmed.
         undecided: Vec<u32>,
     },
-    /// Delaying one site made its tests fail, twice more, and they passed without the delay.
+    /// Delaying one site made its tests fail, and every confirming round failed the same tests with the delay and passed without it.
     Broke {
         /// The catalog index of the guard.
         site: u32,
@@ -47,6 +56,8 @@ pub enum Exploration {
         line: u32,
         /// The tests that failed.
         failed: Vec<String>,
+        /// How many confirming rounds held.
+        rounds: u32,
     },
 }
 
@@ -73,15 +84,20 @@ pub fn found(records: &[ConcurrencyRecord]) -> Vec<Finding> {
         .iter()
         .filter_map(|record| match &record.explored {
             Exploration::Broke {
-                path, line, failed, ..
+                path,
+                line,
+                failed,
+                rounds,
+                ..
             } => Some(Finding::new(
                 FindingKind::ScheduleDependent,
                 &record.target,
                 &format!(
                     "{} passed on its baseline and failed when a thread was paused the first time \
-                     it reached {path}:{line}: {}. It passed again without the pause, so what it \
-                     answers depends on the schedule its threads get; make the test wait for what \
-                     it asserts on rather than for time to pass, and run again",
+                     it reached {path}:{line}: {}. It failed the same way {rounds} more times with \
+                     the pause and passed each time without it, so what it answers depends on the \
+                     schedule its threads get; make the test wait for what it asserts on rather \
+                     than for time to pass, and run again",
                     record.target,
                     if failed.is_empty() {
                         "its harness named no test".to_owned()
@@ -90,7 +106,9 @@ pub fn found(records: &[ConcurrencyRecord]) -> Vec<Finding> {
                     }
                 ),
             )),
-            Exploration::Unexplored { .. } | Exploration::Sampled { .. } => None,
+            Exploration::Unexplored { .. }
+            | Exploration::Sampled { .. }
+            | Exploration::Undecided { .. } => None,
         })
         .collect()
 }
@@ -100,6 +118,7 @@ pub fn found(records: &[ConcurrencyRecord]) -> Vec<Finding> {
 pub fn limited(records: &[ConcurrencyRecord]) -> Vec<Limitation> {
     let mut unexplored = Vec::new();
     let mut sampled = Vec::new();
+    let mut undecided = Vec::new();
     for record in records {
         match &record.explored {
             Exploration::Broke { .. }
@@ -110,6 +129,7 @@ pub fn limited(records: &[ConcurrencyRecord]) -> Vec<Limitation> {
                 why: Unexplored::NotAsked | Unexplored::NotPassing | Unexplored::NoSite,
             } => unexplored.push(record.target.as_str()),
             Exploration::Sampled { .. } => sampled.push(record.target.as_str()),
+            Exploration::Undecided { .. } => undecided.push(record.target.as_str()),
         }
     }
     let mut limitations = Vec::new();
@@ -143,6 +163,17 @@ pub fn limited(records: &[ConcurrencyRecord]) -> Vec<Limitation> {
                  and not all of them, so a race none of those delays exposed is not ruled out ({})",
                 binaries(sampled.len()),
                 sampled.join(", ")
+            ),
+        ));
+    }
+    if !undecided.is_empty() {
+        limitations.push(Limitation::new(
+            crate::limitation::SCHEDULE_UNDECIDED,
+            &format!(
+                "{} not broken by any delay, and the controls of at least one delayed guard settled \
+                 nothing, so neither a passing sample nor a failure is known of that schedule ({})",
+                binaries(undecided.len()),
+                undecided.join(", ")
             ),
         ));
     }

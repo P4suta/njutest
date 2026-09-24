@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod concurrency;
 pub mod crashes;
 pub mod deps;
 pub mod devgates;

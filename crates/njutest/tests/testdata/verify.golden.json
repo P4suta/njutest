@@ -87,6 +87,9 @@
                 "why": [
                   {
                     "kind": "no-touch"
+                  },
+                  {
+                    "kind": "doctest"
                   }
                 ]
               },
@@ -95,20 +98,30 @@
             {
               "explored": {
                 "state": "unexplored",
-                "why": "not-needed"
+                "why": "not-asked"
               },
               "standing": {
-                "state": "single-threaded"
+                "because": [
+                  {
+                    "kind": "parallel-tests"
+                  }
+                ],
+                "state": "concurrent"
               },
               "target": "<volatile>"
             },
             {
               "explored": {
                 "state": "unexplored",
-                "why": "not-needed"
+                "why": "not-asked"
               },
               "standing": {
-                "state": "single-threaded"
+                "because": [
+                  {
+                    "kind": "parallel-tests"
+                  }
+                ],
+                "state": "concurrent"
               },
               "target": "<volatile>"
             }
@@ -218,7 +231,7 @@
               "name": "skipped-test-code"
             },
             {
-              "detail": "1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-baseline/doc/fixture_baseline)",
+              "detail": "3 test binaries are not proven to run one thread and no schedule of them was explored, so what they do when their threads interleave otherwise is not known (fixture-baseline/doc/fixture_baseline, fixture-baseline/lib/fixture_baseline, fixture-baseline/test/doubling)",
               "name": "schedule-not-explored"
             }
           ],
