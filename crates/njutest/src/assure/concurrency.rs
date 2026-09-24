@@ -44,7 +44,7 @@ pub fn recorded(
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
-    let compiled = crate::concurrency::read::Compiled::read(session.target_dir())?;
+    let compiled = crate::concurrency::read::Compiled::of(session.compilation())?;
     let mut read: BTreeMap<String, PackageScan> = BTreeMap::new();
     binaries
         .into_iter()

@@ -442,6 +442,8 @@ pub struct Session {
     written_by_a_test: Vec<Drift>,
     /// The digest of the pristine sources every unit of this build compiled.
     closure: String,
+    /// What the pristine build compiled: every unit with the files it read, and every build script with what it told the linker.
+    compilation: crate::cargo::Compilation,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
 }
@@ -519,6 +521,12 @@ impl Session {
     #[must_use]
     pub fn workspace_digest(&self) -> &str {
         self.workspace.workspace_digest()
+    }
+
+    /// What the pristine build compiled, as cargo reported it: every unit with the files the compiler read, and every build script with what it told the linker.
+    #[must_use]
+    pub const fn compilation(&self) -> &crate::cargo::Compilation {
+        &self.compilation
     }
 
     /// The directory every build of this session writes into, which is where the proof layers left their own files.
@@ -1938,6 +1946,16 @@ type Established = BTreeMap<(String, Vec<String>), Option<Duration>>;
 struct EstablishmentState {
     answers: Established,
     tests_started: u64,
+}
+
+impl EstablishmentState {
+    /// The state of a session that has established nothing and started no test.
+    const fn fresh() -> Self {
+        Self {
+            answers: BTreeMap::new(),
+            tests_started: 0,
+        }
+    }
 }
 
 /// A non-empty ledger of one mutant's executions.

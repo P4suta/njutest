@@ -103,6 +103,22 @@ fn flattened(stream: proc_macro2::TokenStream, into: &mut Vec<Token>) {
     }
 }
 
+/// Whether `source` asks the compiler to read another file as code: an `include!` however it is spaced or delimited, or a source that does not read as tokens, which says nothing about what it includes.
+#[must_use]
+pub fn includes_code(source: &str) -> bool {
+    if nesting(source) > MAX_DEPTH {
+        return true;
+    }
+    let Ok(stream) = <proc_macro2::TokenStream as std::str::FromStr>::from_str(source) else {
+        return true;
+    };
+    let mut tokens = Vec::new();
+    flattened(stream, &mut tokens);
+    tokens
+        .windows(2)
+        .any(|pair| matches!(pair, [Token::Ident(name, _), Token::Punct('!')] if name == "include"))
+}
+
 /// The names that are always something that can start one, wherever they appear.
 const PARALLEL: [&str; 6] = [
     "rayon",

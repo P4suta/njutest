@@ -22,13 +22,15 @@ use crate::runner::Cancel;
 use crate::trace::Recorder;
 
 pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionDigest};
-pub use compile::{BuildConfig, CompileKind, CompileOptions, Compiled, compile, compile_arguments};
+pub use compile::{
+    BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, compile, compile_arguments,
+};
 pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_of};
 
 pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{
-    Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, names_file,
-    parse_messages,
+    Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile,
+    names_file, parse_messages,
 };
 pub use metadata::{
     DepKind, Dependency, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target,

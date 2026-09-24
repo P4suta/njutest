@@ -20,6 +20,8 @@ pub struct Unit {
     pub test: bool,
     /// Every source file the unit compiled, absolute, sorted, deduplicated.
     pub sources: Vec<PathBuf>,
+    /// Every file the compiler read for the unit, Rust or not — what `include!` and `include_str!` pulled in among them — absolute, sorted, deduplicated.
+    pub inputs: Vec<PathBuf>,
 }
 
 /// The dep-info file rustc wrote beside `artifact`: the same stem without the `lib` prefix and with the `.d` extension.
@@ -186,7 +188,7 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
         )
         .with_source(source)
     })?;
-    let mut sources: Vec<PathBuf> = parse_dep_info(&text)?
+    let mut inputs: Vec<PathBuf> = parse_dep_info(&text)?
         .into_iter()
         .map(|path| {
             let path = PathBuf::from(path);
@@ -196,15 +198,20 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
                 workspace_root.join(path)
             }
         })
-        .filter(|path| is_rust(path))
         .collect();
-    sources.sort();
-    sources.dedup();
+    inputs.sort();
+    inputs.dedup();
+    let sources = inputs
+        .iter()
+        .filter(|path| is_rust(path))
+        .cloned()
+        .collect();
     Ok(Unit {
         package_id: artifact.package_id.clone(),
         target: artifact.target.clone(),
         test: artifact.profile.test,
         sources,
+        inputs,
     })
 }
 
