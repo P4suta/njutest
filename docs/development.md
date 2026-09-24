@@ -246,7 +246,11 @@ A run that has to wait says whom it is waiting for — pid, worktree, revision, 
 The lane is an operating-system lock held by the xtask process and closed on exec, so a daemon started along the way (the compilation cache's server, Git's file monitor) cannot carry it off, and a holder that dies, however it dies, lets the next run in.
 Inside a held lane `NJUTEST_SLOT_HELD` names it, and asking for it again passes straight through: the gate hands it to its check, so a `cargo xtask slot heavy` somewhere inside the check does not wait for the gate.
 The gate's tree has a lane of its own, taken whatever `NJUTEST_SLOT_HELD` says, so two gates never write one tree at once.
-The work a lane admits runs in a process group of its own; `SIGINT`, `SIGTERM` and `SIGHUP` stop that whole group before the holder ends, and a budget stops it with `SIGTERM`, then `SIGKILL` after five seconds.
+The work a lane admits runs in a process group of its own; `SIGINT`, `SIGTERM` and `SIGHUP` stop that whole group before the holder ends, and a bound stops it with `SIGTERM`, then `SIGKILL` after five seconds.
+
+**One pass, bounded by quiet.** The gate runs `mise run check` once, with its output passed on as it arrives.
+Following [ADR 0026](adr/0026-a-bound-measures-quiet-not-duration.md), what stops it is quiet rather than duration: a check that says nothing for `NJUTEST_PUSH_QUIET_SECONDS` (600 by default) is stopped, and `NJUTEST_PUSH_BUDGET_SECONDS` (3600) is only the ceiling behind it.
+A check that is slow because the machine is loaded keeps talking, so it is not stopped for how long it took.
 The lane's record names the work's leader and when it started, and the next run waits for that leader to end, so a holder killed outright still keeps its work from sharing the machine.
 A narrowed run — one crate, one test binary, one filter — does not take the lane: it is the inner loop, and queueing it behind a push would cost more than it saves.
 Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextest run --workspace --all-targets --all-features`.
