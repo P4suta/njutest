@@ -2051,6 +2051,48 @@ pub fn proofaudit(
     )
 }
 
+/// Whether the merged report at `merged`, a file or the directory holding one, is the merge of the shard documents `shards`, each a file or a run directory.
+///
+/// # Errors
+/// A document that cannot be read, is not JSON or is off its schema, a report that is not a merge, and a shard the report was not merged from.
+pub fn proofaudit_merged(
+    merged: &Path,
+    shards: &[PathBuf],
+) -> Result<proofaudit::Audit, proofaudit::AuditError> {
+    let (label, text) = assurance_document(merged)?;
+    let given = shards
+        .iter()
+        .map(|shard| assurance_document(shard))
+        .collect::<Result<Vec<_>, _>>()?;
+    proofaudit::merge::merged_with(&label, &text, &given)
+}
+
+/// The assurance document at `path`, or in the run directory `path` names, as its path and its text; a symbolic link is refused rather than followed.
+fn assurance_document(path: &Path) -> Result<(String, String), proofaudit::AuditError> {
+    let unreadable = |at: &Path, source: std::io::Error| proofaudit::AuditError::Unreadable {
+        path: at.display().to_string(),
+        source,
+    };
+    let metadata = std::fs::symlink_metadata(path).map_err(|source| unreadable(path, source))?;
+    if metadata.file_type().is_symlink() {
+        return Err(unreadable(
+            path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "an assurance document path must not be a symbolic link",
+            ),
+        ));
+    }
+    let document = if metadata.is_dir() {
+        path.join(proofaudit::REPORT_FILE)
+    } else {
+        path.to_path_buf()
+    };
+    std::fs::read_to_string(&document)
+        .map(|text| (document.display().to_string(), text))
+        .map_err(|source| unreadable(&document, source))
+}
+
 /// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.
 fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::AuditError> {
     let builds = trace.join("builds");
@@ -2085,14 +2127,11 @@ fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::
 /// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
 pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
     let clean = proofaudit::sentinel::clean();
-    let audit = proofaudit_specimen(&clean)?;
-    if audit.violations() > 0 {
-        return Err(GateFailure(format!(
-            "proofaudit: the clean specimen draws {} violation(s), so a layer that fires on it \
-             fires on anything and its violations about a real run say nothing. Nothing this \
-             gate would have said is believed until the clean specimen is silent again.\n{audit}",
-            audit.violations()
-        )));
+    let merged = proofaudit::sentinel::merged_clean().ok_or_else(|| {
+        GateFailure("proofaudit: the clean specimen cannot be divided into shards".to_owned())
+    })?;
+    for specimen in [&clean, &merged] {
+        silent(specimen)?;
     }
     let mut found = 0_usize;
     for layer in proofaudit::Layer::ALL {
@@ -2102,6 +2141,24 @@ pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
         })?;
     }
     Ok(found)
+}
+
+/// Nothing, where no layer finds anything in the clean `specimen`.
+///
+/// # Errors
+/// A violation in it, which means that layer fires on anything.
+fn silent(specimen: &proofaudit::sentinel::Perturbation) -> Result<(), GateFailure> {
+    let audit = proofaudit_specimen(specimen)?;
+    if audit.violations() > 0 {
+        return Err(GateFailure(format!(
+            "proofaudit: the clean specimen `{}` draws {} violation(s), so a layer that fires on \
+             it fires on anything and its violations about a real run say nothing. Nothing this \
+             gate would have said is believed until the clean specimen is silent again.\n{audit}",
+            specimen.name,
+            audit.violations()
+        )));
+    }
+    Ok(())
 }
 
 /// How many of `planted` the proof audit found as a violation of `layer`, which is all of them or an error.
@@ -2145,8 +2202,13 @@ fn proofaudit_specimen(
     let laid = specimen
         .lay()
         .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))?;
-    proofaudit(laid.run(), laid.trace())
-        .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
+    let shards: Vec<PathBuf> = laid.shards().into_iter().map(Path::to_path_buf).collect();
+    if shards.is_empty() {
+        proofaudit(laid.run(), laid.trace())
+    } else {
+        proofaudit_merged(laid.run(), &shards)
+    }
+    .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
 }
 
 /// What one engine run is audited against: its own directory, and everything a layer needs beyond it.

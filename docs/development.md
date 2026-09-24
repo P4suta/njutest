@@ -151,8 +151,13 @@ whether the mutations nothing noticed and the `surviving-mutant` findings are th
 Given the run's recording as well, it holds the proof layers to what the run wrote down: no target a proof removed from what could notice a mutation may then be the target that killed it, a route that says no measured target reaches a mutation may not then run one against it, a route the measurement widened has to run something, and a route may not say both that it read an answer back and that it refused one.
 The reach layer is re-derived rather than confirmed, because a route names the targets it removed every execution from: each of those names is held to the targets the run reports, to the targets the same route kept, and to the proofs that route names — and a route that removed every execution while naming nobody is a violation, since nothing reaches a place only if somebody was in a position to notice and did not.
 It reads the recording as lines of JSON rather than through the code that wrote them, and a run recorded without `--trace` leaves the layers `unaudited` rather than passed.
-A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds or of shards with exit code 2 rather than reading one of them as the whole.
-Such a report states no verdict — the verdict is derived from its records — so the verdict is `unaudited` there, since one this audit derived would be a verdict it agreed with by construction.
+A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds with exit code 2 rather than reading one of them as the whole.
+A report states no verdict — the verdict is derived from its records — so the verdict is re-decided against the `run-end` the runner recorded, and is `unaudited` where the recording holds none.
+Every document is validated against its published schema before any layer reads it.
+
+A sharded run is audited the way it was measured: each `verify --shard K/N` run is its own run directory and its own recording, and `cargo xtask proofaudit <shard-run-directory> --trace <its-recording>` re-decides that shard's one part, leaving to the merge what only the whole catalog decides.
+`cargo xtask proofaudit <merged-report> --shard <shard> …` then holds the merged report to those shard documents: each part must be the part its shard measured, in the place the composition gives it, under the same run kind, contract, tool, repository, scope and run-wide findings.
+A shard the composition names and nobody gave is `unaudited`, and a shard given that the report was not merged from is refused, so the two steps together vouch for the whole and neither vouches for more than it read.
 This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked whether it agrees with itself.
 

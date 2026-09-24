@@ -322,6 +322,17 @@ pub fn complete_report(flat: &Value) -> Result<Value, SpecimenError> {
     Ok(crate::specimen::complete(flat)?)
 }
 
+/// The flat specimen `flat` completed and divided into `of` shards, as the merged report and the shard documents it was merged from.
+///
+/// # Errors
+/// [`SpecimenError::Incomplete`] where `flat` cannot be completed.
+pub fn sharded(flat: &Value, of: u64) -> Result<(Value, Vec<Value>), SpecimenError> {
+    Ok(crate::specimen::sharded(
+        &complete_report(flat)?,
+        (RUN, of),
+    )?)
+}
+
 /// The runner recording `events` of a run whose flat report says it concluded something, ending with the `run-end` that says so, since a complete report stores no verdict.
 #[must_use]
 pub fn concluding(document: &Value, events: &[Value]) -> Vec<Value> {
@@ -385,6 +396,8 @@ pub struct Perturbation {
     pub events: Option<Vec<Value>>,
     /// The one configured build's engine recording, as events before their envelope, or nothing where the run kept none.
     pub engine: Option<Vec<Value>>,
+    /// The shard documents a merged report was merged from, each laid in a run directory of its own; none for a run measured whole.
+    pub shards: Vec<Value>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -395,6 +408,7 @@ pub fn clean() -> Perturbation {
         document: with(drifted("held")),
         events: Some(routes()),
         engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
+        shards: Vec::new(),
     }
 }
 
@@ -403,6 +417,7 @@ pub fn clean() -> Perturbation {
 pub struct Laid {
     run: TempDir,
     trace: Option<TempDir>,
+    shards: Vec<TempDir>,
 }
 
 impl Laid {
@@ -416,6 +431,12 @@ impl Laid {
     #[must_use]
     pub fn trace(&self) -> Option<&Path> {
         self.trace.as_ref().map(TempDir::path)
+    }
+
+    /// The run directory of each shard a merged report was merged from, in the order they were laid.
+    #[must_use]
+    pub fn shards(&self) -> Vec<&Path> {
+        self.shards.iter().map(TempDir::path).collect()
     }
 }
 
@@ -444,7 +465,12 @@ impl Perturbation {
                 source,
             })?;
         }
-        Ok(Laid { run, trace })
+        let shards = self
+            .shards
+            .iter()
+            .map(run_directory)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Laid { run, trace, shards })
     }
 }
 
@@ -469,6 +495,53 @@ fn discharged_then_killed() -> Vec<Value> {
                 "duration_ms": 5
             }
         }),
+    ]
+}
+
+/// The clean specimen divided into two shards and merged, on which the merge layer may find nothing; nothing where the specimen cannot be divided.
+#[must_use]
+pub fn merged_clean() -> Option<Perturbation> {
+    match sharded(&clean().document, 2) {
+        Ok((document, shards)) => Some(Perturbation {
+            name: "the clean specimen, merged from two shards",
+            document,
+            events: None,
+            engine: None,
+            shards,
+        }),
+        Err(_incomplete) => None,
+    }
+}
+
+/// The defects planted for the merge layer: a part that is not the part its shard measured, and a composition that places a shard where it did not measure.
+fn merge_plants() -> Vec<Perturbation> {
+    let Some(clean) = merged_clean() else {
+        return Vec::new();
+    };
+    let mut edited = clean.document.clone();
+    merge(
+        &mut edited,
+        json!({ "report": { "builds": [{ "parts": [{ "mutants": [{ "item": "another" }] }] }] } }),
+    );
+    let mut swapped = clean.document.clone();
+    merge(
+        &mut swapped,
+        json!({ "report": { "composition": { "sources": [
+            { "shard": { "index": 2 } },
+            { "shard": { "index": 1 } }
+        ] } } }),
+    );
+    vec![
+        Perturbation {
+            name: "a merged part that is not the part its shard measured",
+            document: edited,
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a composition that places each shard where the other measured",
+            document: swapped,
+            ..clean
+        },
     ]
 }
 
@@ -535,9 +608,11 @@ impl Layer {
                 document: with(json!({ "contract": "verified-v1" })),
                 ..clean
             }],
+            Self::Merge => merge_plants(),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
+                shards: Vec::new(),
                 ..clean
             }],
             Self::Executions => [

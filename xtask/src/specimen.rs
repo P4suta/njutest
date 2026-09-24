@@ -281,3 +281,135 @@ pub(crate) fn concluded(verdict: &str, events: usize) -> Value {
         }
     })
 }
+
+/// The complete report `complete` divided into `of` shards by catalog index, as the merge of those shards and the shard documents it was merged from, each shard run named after `run`.
+///
+/// # Errors
+/// [`CompletionError::Shape`] where `complete` holds no first part of a first build.
+pub(crate) fn sharded(
+    complete: &Value,
+    (run, of): (&str, u64),
+) -> Result<(Value, Vec<Value>), CompletionError> {
+    let mut merged = complete.clone();
+    let report = merged
+        .get_mut("report")
+        .and_then(Value::as_object_mut)
+        .ok_or(CompletionError::Shape { at: "report" })?;
+    let build = report
+        .get("builds")
+        .and_then(|builds| builds.get(0))
+        .cloned()
+        .ok_or(CompletionError::Shape { at: "first build" })?;
+    let whole = build
+        .get("parts")
+        .and_then(|parts| parts.get(0))
+        .cloned()
+        .ok_or(CompletionError::Shape {
+            at: "first part of its first build",
+        })?;
+    let mut parts = Vec::new();
+    let mut sources = Vec::new();
+    for index in 1..=of {
+        let shard_run = format!("{run}-s{index}");
+        let identity = serde_json::json!({ "index": index, "of": of });
+        let part = shard_part(&whole, &build, (&shard_run, index, of));
+        sources.push(serde_json::json!({ "run_id": shard_run, "shard": identity }));
+        parts.push((shard_run, identity, part));
+    }
+    let shards = parts
+        .iter()
+        .map(|(shard_run, identity, part)| {
+            shard_document(report, &build, (shard_run, identity, part))
+        })
+        .collect();
+    report.insert(
+        "composition".to_owned(),
+        serde_json::json!({ "kind": "merged", "sources": sources }),
+    );
+    let mut build = build;
+    if let Some(fields) = build.as_object_mut() {
+        fields.insert(
+            "parts".to_owned(),
+            Value::Array(parts.into_iter().map(|(_, _, part)| part).collect()),
+        );
+    }
+    report.insert("builds".to_owned(), Value::Array(vec![build]));
+    Ok((merged, shards))
+}
+
+/// The part of `whole` shard `index` of `of` holds, under the build `build` and the shard run `shard_run`: its rows, its identity, and its findings' origin.
+fn shard_part(whole: &Value, build: &Value, (shard_run, index, of): (&str, u64, u64)) -> Value {
+    let placed = serde_json::json!({ "kind": "shard", "index": index, "of": of });
+    let mut part = whole.clone();
+    if let Some(fields) = part.as_object_mut() {
+        fields.insert(
+            "run_id".to_owned(),
+            Value::from(format!("{shard_run}-b0000000000")),
+        );
+        fields.insert("part".to_owned(), placed.clone());
+        if let Some(Value::Array(rows)) = fields.get_mut("mutants") {
+            rows.retain(|row| {
+                row.get("catalog_index")
+                    .and_then(Value::as_u64)
+                    .and_then(|at| at.checked_rem(of))
+                    == Some(index.saturating_sub(1))
+            });
+        }
+        if index > 1 {
+            fields.insert("findings".to_owned(), Value::Array(Vec::new()));
+        }
+        let origin = serde_json::json!({
+            "scope": "source",
+            "build": build.get("name").cloned().unwrap_or(Value::Null),
+            "run_id": format!("{shard_run}-b0000000000"),
+            "part": placed
+        });
+        if let Some(Value::Array(rows)) = fields.get_mut("findings") {
+            for row in rows.iter_mut() {
+                if let Some(row) = row.as_object_mut() {
+                    row.insert("origin".to_owned(), origin.clone());
+                }
+            }
+        }
+    }
+    part
+}
+
+/// The shard document the shard run `shard_run` writes about `part` of `build`, measured under the envelope of `report`.
+fn shard_document(
+    report: &serde_json::Map<String, Value>,
+    build: &Value,
+    (shard_run, identity, part): (&str, &Value, &Value),
+) -> Value {
+    let mut shard = serde_json::Map::new();
+    for key in [
+        "run_kind",
+        "contract",
+        "tool",
+        "repository",
+        "provenance",
+        "scope",
+        "global_findings",
+    ] {
+        shard.insert(
+            key.to_owned(),
+            report.get(key).cloned().unwrap_or(Value::Null),
+        );
+    }
+    shard.insert(
+        "schema".to_owned(),
+        Value::from("njutest-assurance-shard-report-v1"),
+    );
+    shard.insert("schema_version".to_owned(), Value::from(2));
+    shard.insert("run_id".to_owned(), Value::from(shard_run));
+    shard.insert("shard".to_owned(), identity.clone());
+    shard.insert(
+        "builds".to_owned(),
+        serde_json::json!([{
+            "name": build.get("name").cloned().unwrap_or(Value::Null),
+            "configuration": build.get("configuration").cloned().unwrap_or(Value::Null),
+            "source": part
+        }]),
+    );
+    serde_json::json!({ "document_type": "shard", "report": shard })
+}

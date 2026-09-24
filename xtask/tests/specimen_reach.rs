@@ -17,6 +17,7 @@ fn only_a_sentinel_completes_a_specimen() {
         if text.contains("specimen::completed(")
             || text.contains("specimen::complete(")
             || text.contains("specimen::concluded(")
+            || text.contains("specimen::sharded(")
         {
             callers.push(path.strip_prefix(&root).expect("under src").to_path_buf());
         }

@@ -5,6 +5,7 @@
 //!
 //! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
+pub mod merge;
 pub mod sentinel;
 
 use std::collections::BTreeMap;
@@ -68,6 +69,26 @@ pub enum AuditError {
         /// Which line failed to parse.
         #[source]
         source: crate::route::ReadError,
+    },
+    /// A report given with its shards is not the merge of any.
+    #[error("{path}: not a report merged from shards, so there are no shards to hold it to")]
+    NotMerged {
+        /// The document.
+        path: String,
+    },
+    /// A document given as a shard is not one.
+    #[error("{path}: given as a shard, and not a shard document")]
+    NotAShard {
+        /// The document.
+        path: String,
+    },
+    /// A shard was given that the merged report does not name.
+    #[error("{path}: shard {run_id} is not one the report was merged from")]
+    ShardNotMerged {
+        /// The shard document.
+        path: String,
+        /// The run it names.
+        run_id: String,
     },
     /// The document is a complete report off its published schema, so a reader could meet an absent required field.
     #[error("{path}: off the published report schema: {source}")]
@@ -153,6 +174,8 @@ pub enum Layer {
     Wire,
     /// Affirmative model answers re-derived from retained generated source and raw Kani JSON.
     Model,
+    /// A merged report's parts, held to the shard documents it names.
+    Merge,
     /// Which targets reached something different on a control than on their baseline, re-derived from the engine's touch records and held to what the report says of each.
     Drift,
     /// Each mutation's reported outcome, held to the executions of it the recording holds.
@@ -173,6 +196,7 @@ impl Layer {
             Self::Hollow => "hollow",
             Self::Wire => "wire",
             Self::Model => "model",
+            Self::Merge => "merge",
             Self::Drift => "drift",
             Self::Executions => "executions",
         }
