@@ -545,7 +545,11 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
 
 /// Every binary the engine built that the report records nothing about, each a violation.
 fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes: &mut Notes<'_>) {
-    for target in touched.kinds.keys() {
+    for target in touched
+        .kinds
+        .keys()
+        .filter(|target| touched.passing.contains(*target))
+    {
         if !rows
             .iter()
             .any(|row| field(row, "target").as_deref() == Some(target.as_str()))
@@ -553,8 +557,9 @@ fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes
             notes.violated(
                 target,
                 format!(
-                    "the engine built {target} and the report, which measured mutants, records \
-                     nothing about its threads, so it is neither proven nor named as a hole"
+                    "the engine built {target} and its baseline passed, and the report, which \
+                     measured mutants, records nothing about its threads, so it is neither proven \
+                     nor named as a hole"
                 ),
             );
         }
@@ -577,7 +582,6 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
     }
     let touched = match engines {
         [one] => &one.touched,
-        [] if rows.is_empty() => return,
         [] | [_, _, ..] => {
             notes.unaudited(
                 "concurrency",
@@ -590,6 +594,14 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
             return;
         }
     };
+    if touched.kinds.is_empty() {
+        notes.unaudited(
+            "concurrency",
+            "the engine recording holds no build record, so which binaries a run measured, and \
+             so which records the report owes, is not known"
+                .to_owned(),
+        );
+    }
     unrecorded(rows, touched, &mut notes);
     let mut proven: Vec<String> = Vec::new();
     for row in rows {

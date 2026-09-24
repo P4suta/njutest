@@ -189,3 +189,60 @@ fn a_chain_the_parser_would_recurse_through_without_a_bracket_is_read_on_a_small
         "the spawn is found however long the chains beside it"
     );
 }
+
+#[test]
+fn a_letter_beyond_ascii_before_a_prefix_is_part_of_a_name_as_the_lexer_reads_it() {
+    let source = format!(
+        "fn f() {{ ér#\" \" {}std::thread::spawn(|| {{}}){} \"# \" }}\n",
+        "(".repeat(200),
+        ")".repeat(200)
+    );
+    assert!(
+        matches!(
+            scanned("src/lib.rs", &source),
+            Err(ScanError::TooDeep { .. })
+        ),
+        "`ér` is a name, so what follows `#` is an ordinary string and the brackets after it nest"
+    );
+}
+
+fn lexed_depth(stream: proc_macro2::TokenStream) -> usize {
+    stream
+        .into_iter()
+        .map(|tree| match tree {
+            proc_macro2::TokenTree::Group(group) => lexed_depth(group.stream()).saturating_add(1),
+            proc_macro2::TokenTree::Ident(_)
+            | proc_macro2::TokenTree::Punct(_)
+            | proc_macro2::TokenTree::Literal(_) => 0,
+        })
+        .max()
+        .unwrap_or_default()
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(4096))]
+    #[test]
+    fn the_nesting_counted_is_the_nesting_the_lexer_builds(
+        fragments in proptest::collection::vec(
+            proptest::sample::select(vec![
+                "(", ")", "[", "]", "{", "}", "\"(\"", "\")\\\"(\"", "r#\"(\"#", "br##\")\"##",
+                "c\"(\"", "b\"(\"", "'('", "b'('", "'\\''", "'a", "// ( \n", "/* ( /* ) */ ( */",
+                "é", "ér", "r", "b", "c", "#", " ", "a", "_", "1", "\\", "'", "\"", "\n", "π",
+                "'r", "'é", "'ab", "r#", "br", "cr", "1r", "r##", "cr#\"(\"#", "b'\\x28'",
+                "'\\u{28}'", "\"\\\\\"", "/**/", "//!(\n", "0x1", "1.0", "*/", "/*", "!", "///(\n", "////\n", "/*!(*/", "/**(*/", "/***/",
+            ]),
+            0..40,
+        )
+    ) {
+        let source: String = fragments.concat();
+        match <proc_macro2::TokenStream as std::str::FromStr>::from_str(&source) {
+            Ok(stream) => proptest::prop_assert_eq!(
+                njutest::concurrency::scan::nesting(&source),
+                lexed_depth(stream),
+                "{:?}",
+                source
+            ),
+            Err(_not_lexed) => {}
+        }
+    }
+}

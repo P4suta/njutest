@@ -233,7 +233,7 @@ fn verified(args: &[&str]) -> Value {
     json!({
         "type": "verify",
         "verify": {
-            "target": TARGET, "outcome": "passed", "tests_run": 1, "duration_ms": 1,
+            "target": TARGET, "outcome": "survived", "tests_run": 1, "duration_ms": 1,
             "args": args, "remembered": false, "retried": false
         }
     })

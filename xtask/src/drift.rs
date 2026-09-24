@@ -106,6 +106,8 @@ pub struct Touched {
     pub args: BTreeMap<String, Vec<String>>,
     /// Each target the build produced: its kind, and whether libtest runs it.
     pub kinds: BTreeMap<String, (String, bool)>,
+    /// Every target whose baseline passed, which is every one a run goes on to measure.
+    pub passing: BTreeSet<String>,
 }
 
 /// Every touch record of one engine recording.
@@ -132,6 +134,13 @@ pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
                 .collect::<Option<Vec<String>>>()
         {
             touched.args.insert(target.to_owned(), args);
+        }
+        if event.get("type").and_then(Value::as_str) == Some("verify")
+            && let Some(verify) = event.get("verify")
+            && verify.get("outcome").and_then(Value::as_str) == Some("survived")
+            && let Some(target) = verify.get("target").and_then(Value::as_str)
+        {
+            touched.passing.insert(target.to_owned());
         }
         if event.get("type").and_then(Value::as_str) == Some("build")
             && let Some(details) = event
