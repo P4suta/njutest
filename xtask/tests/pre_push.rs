@@ -188,6 +188,11 @@ impl Repository {
         handed: &[(&str, &std::ffi::OsStr)],
     ) -> SupervisedChild {
         let mut command = isolated(env!("CARGO_BIN_EXE_xtask"));
+        for (name, _value) in std::env::vars_os() {
+            if xtask::prepush::shapes_the_build(&name) {
+                command.env_remove(name);
+            }
+        }
         command
             .arg("pre-push")
             .current_dir(directory)
