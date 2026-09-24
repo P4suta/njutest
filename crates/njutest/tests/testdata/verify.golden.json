@@ -716,6 +716,12 @@
           "resources": [],
           "run_id": "<volatile>",
           "seams": [],
+          "sources": [
+            {
+              "digest": "400591d2b6d70ca7438752af8cd8d95dacff6daa96a65af1e1b0e80c0f7c275e",
+              "path": "src/lib.rs"
+            }
+          ],
           "targets": [
             {
               "duration_ms": 0,

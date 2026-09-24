@@ -193,6 +193,7 @@ fn populated_draft(vary: &dyn Fn(&mut BuildReport)) -> BuildReport {
         packages_with_unsafe: 1,
         executed: true,
     };
+    njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
     vary(&mut source);
     source
@@ -835,6 +836,17 @@ fn mutant_rows_rederive_every_counter_and_refuse_duplicate_identities() {
     );
 }
 
+/// The row's route answered as a survivor's is: every target it asked ran it and did not notice.
+fn answered_as_a_survivor(row: &mut MutantRecord) {
+    for one in row
+        .routing
+        .iter_mut()
+        .flat_map(|routing| &mut routing.answered)
+    {
+        one.outcome = njutest::report::Outcome::Survived;
+    }
+}
+
 #[test]
 fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
     for outcome in [
@@ -846,6 +858,7 @@ fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
             source.contract = njutest::config::Contract::VerifiedV1;
             source.mutants[0].outcome = outcome.clone();
             source.mutants[0].reuse = njutest::report::Reuse(njutest::report::Established::Here);
+            answered_as_a_survivor(&mut source.mutants[0]);
             source.accounting.mutants = match &outcome {
                 njutest::report::Decided::Survived => MutantAccounting {
                     cataloged: 1,

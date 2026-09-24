@@ -174,6 +174,7 @@ fn part_stated(
         })
         .collect();
     stated(&mut source);
+    njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),

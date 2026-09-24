@@ -106,6 +106,7 @@ fn report(run_id: &str, identity: &str) -> Report {
         },
         ..njutest::report::MutantAccounting::default()
     };
+    njutest::testkit::read_every_named_file(&mut source);
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),
         rust_mutants::cargo::BuildConfig::default().selection(),

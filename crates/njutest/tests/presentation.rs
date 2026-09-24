@@ -36,7 +36,9 @@ fn survivor() -> Diagnostic {
             path: "src/lib.rs".to_owned(),
             line: 8,
             column: 10,
-            excerpt: Excerpt::Read("    if a > b { a } else { b }".to_owned()),
+            excerpt: Excerpt::Read(njutest::presentation::MeasuredLine::specimen(
+                "    if a > b { a } else { b }",
+            )),
             label: "changed to `>=`, and 1 test ran without noticing".to_owned(),
             width: 1,
         }),
@@ -109,7 +111,7 @@ fn a_caret_lands_under_the_code_however_wide_the_characters_before_it_are() {
         .at
         .as_mut()
         .expect("the survivor is somewhere");
-    site.excerpt = Excerpt::Read(line.to_owned());
+    site.excerpt = Excerpt::Read(njutest::presentation::MeasuredLine::specimen(line));
     site.column = u32::try_from(line.chars().take_while(|one| *one != '>').count())
         .expect("a column")
         .saturating_add(1);
@@ -150,11 +152,11 @@ fn before(line: &str, mark: char) -> String {
 fn a_file_that_moved_under_the_run_is_said_rather_than_drawn() {
     let mut told = told();
     if let Some(site) = told.diagnostics[0].at.as_mut() {
-        site.excerpt = Excerpt::Instead(Missing::Moved);
+        site.excerpt = Excerpt::Instead(Missing::Edited);
     }
     let drawn = human::draw(&told, Terminal::plain(80));
     assert!(
-        drawn.contains("the file has changed since the run, so the line is not shown"),
+        drawn.contains("the file has changed since the run read it, so its source is not shown"),
         "drawing a line the run never measured is worse than drawing none: {drawn}"
     );
     assert!(

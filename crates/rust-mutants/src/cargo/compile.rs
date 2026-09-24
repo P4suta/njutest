@@ -233,6 +233,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         }
         crate::runner::Termination::NotStarted { .. }
         | crate::runner::Termination::TimedOut
+        | crate::runner::Termination::Stalled
         | crate::runner::Termination::StoppedByMonitor
         | crate::runner::Termination::MonitorFailed { .. }
         | crate::runner::Termination::WaitFailed { .. } => {

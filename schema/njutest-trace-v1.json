@@ -65,6 +65,19 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "raised"],
+          "properties": {
+            "kind": { "const": "stalled" },
+            "raised": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "How many step boundaries the process had raised before it went quiet for a whole window. Null says the state could not be read, which is not a count of zero."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "started"],
           "properties": {
             "kind": { "const": "cancelled" },
