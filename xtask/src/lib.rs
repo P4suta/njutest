@@ -22,6 +22,7 @@ pub mod release;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
+pub mod schemas;
 pub mod sentinel;
 pub mod shapes;
 pub mod strictjson;

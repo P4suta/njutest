@@ -18,8 +18,9 @@ Yasunobu = "Yasunobu"
 extend-exclude = [
   "target/",
   "*.lock",
-  "*.golden",     # instrumentation output compared byte for byte
+  "*.golden",                           # instrumentation output compared byte for byte
   "*.input",
-  "fixtures/",    # deliberately weak, odd, or non-ASCII code under test
+  "fixtures/",                          # deliberately weak, odd, or non-ASCII code under test
+  "xtask/tests/testdata/engine-run-*/", # recorded runs over fixtures, quoting their code
   "CHANGELOG.md",
 ]

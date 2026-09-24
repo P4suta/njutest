@@ -187,12 +187,22 @@ pub fn went_past() -> Value {
         "exchange": {
             "capability": "api",
             "seq": 0,
-            "wire": "http",
-            "method": "GET",
-            "path": "/orders",
-            "status": 200
+            "during": null,
+            "duration_ms": 1,
+            "read": { "wire": "http", "method": "GET", "path": "/orders", "status": 200 },
+            "request_bytes": 1,
+            "response_bytes": 1
         }
     })
+}
+
+/// A seam answer of `decision`, with the test that noticed it where that is what it says.
+fn answered(decision: &str) -> Value {
+    match decision {
+        "tests" => json!({ "decision": "tests", "noticed_by": TARGET }),
+        "proved" => json!({ "decision": "proved", "proof": "never-reached" }),
+        other => json!({ "decision": other }),
+    }
 }
 
 /// One fault put to the suite, decided as `decision` says.
@@ -205,8 +215,7 @@ pub fn was_put(fault: &str, decision: &str) -> Value {
             "capability": "api",
             "seq": 0,
             "rule": "status-server-error",
-            "decision": decision,
-            "noticed_by": null
+            "answer": answered(decision)
         }
     })
 }
@@ -292,6 +301,17 @@ pub fn run_directory(document: &Value) -> Result<TempDir, SpecimenError> {
 /// # Errors
 /// [`SpecimenError`] when an event is not an object, or the recording cannot be written.
 pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
+    recorded_by(events, crate::schemas::Producer::Runner)
+}
+
+/// As [`recorded`], for a recording `producer` writes, each payload completed with what its test leaves out.
+///
+/// # Errors
+/// [`SpecimenError`] when an event is not an object, or the recording cannot be written.
+pub fn recorded_by(
+    events: &[Value],
+    producer: crate::schemas::Producer,
+) -> Result<TempDir, SpecimenError> {
     let mut stream = String::new();
     for ((at, event), position) in events.iter().enumerate().zip(1_u64..) {
         let mut payload = event
@@ -303,6 +323,7 @@ pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
             .remove("timestamp")
             .unwrap_or_else(|| json!("2026-09-06T00:00:00Z"));
         let elapsed_ms = payload.remove("elapsed_ms").unwrap_or_else(|| json!(at));
+        crate::schemas::completed(producer, &mut payload);
         let envelope = json!({
             "seq": seq,
             "timestamp": timestamp,
@@ -371,7 +392,7 @@ impl Perturbation {
         let run = run_directory(&self.document)?;
         let trace = self.events.as_deref().map(recorded).transpose()?;
         if let (Some(trace), Some(engine)) = (trace.as_ref(), self.engine.as_deref()) {
-            let laid = recorded(engine)?;
+            let laid = recorded_by(engine, crate::schemas::Producer::Engine)?;
             let namespace = trace.path().join("builds").join("0000000000");
             std::fs::create_dir_all(&namespace).map_err(|source| SpecimenError::Unwritable {
                 path: namespace.display().to_string(),

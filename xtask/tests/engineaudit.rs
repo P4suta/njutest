@@ -94,7 +94,7 @@ fn a_row_without_byte_offsets_is_not_a_report() {
     let run = run_directory(&document);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("a report missing an identity input must fail at the boundary");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         "mutants": [{
             "outcome": "step_limit_reached", "expected": false,
             "step_notice": {
-                "nonce": "not-a-nonce", "catalog": "another-catalog",
+                "nonce": "0".repeat(32), "catalog": "e".repeat(64),
                 "mutant": SURVIVED, "limit": 9, "observed": 9
             }
         }, {}],
@@ -219,7 +219,12 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         }]
     }));
     let audit = audited(&document);
-    assert_eq!(violations(&audit, Layer::Accounting).len(), 5, "{audit}");
+    assert_eq!(
+        violations(&audit, Layer::Accounting).len(),
+        4,
+        "another catalog, another mutant, another allowance, and a count not one past it; \
+         a nonce that is not hex is refused by the schema before any layer reads it: {audit}"
+    );
 }
 
 #[test]
@@ -424,7 +429,7 @@ fn a_target_the_build_records_as_configured_out_needs_no_verification() {
     let mut events = recording();
     events[4]["build"]["targets"] = serde_json::json!([TARGET, "demo/test/ui"]);
     events[4]["build"]["details"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true},
+        {"id": TARGET, "kind": "lib", "harness": true, "limitations": []},
         {
             "id": "demo/test/ui",
             "kind": "test",
@@ -684,14 +689,14 @@ fn the_report_boundary_rejects_unknown_fields_and_closed_state_values() {
     let run = run_directory(&unknown);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("an unknown field must not look like ignored evidence");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 
     let mut open_state = base();
     open_state["mutants"][0]["outcome"] = serde_json::json!("probably-killed");
     let run = run_directory(&open_state);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("an outcome outside the closed contract must not enter the audit");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -724,7 +729,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         &Evidence::default(),
     )
     .expect_err("a missing nullable key is different from an explicit null");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 
     let mut missing_route = base();
     assert!(
@@ -741,7 +746,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         &Evidence::default(),
     )
     .expect_err("a missing route cannot be silently read as no route");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -916,7 +921,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
             "step_notice": null, "retried": false, "not_run_reason": "interrupted",
-            "route": null, "identical": null,
+            "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]
     }));
@@ -1066,7 +1071,7 @@ fn a_file_whose_walk_decided_less_than_it_saw_is_a_violation() {
             "discover": {
                 "path": "src/lib.rs",
                 "candidates": 2,
-                "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C" }],
+                "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C", "skip": null, "note": null }],
                 "skips": []
             }
         }),

@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde::de::Error as _;
-use serde::de::{self, Visitor};
 use serde_json::Value;
 
 use super::{
@@ -306,67 +305,25 @@ struct Mutant {
     #[serde(deserialize_with = "required_option")]
     route: Option<Route>,
     #[serde(rename = "identical")]
-    _identical: NullableBoolean,
+    _identical: CodegenIdentity,
     expected: bool,
     unreached: bool,
     #[serde(deserialize_with = "required_option")]
     source_run_id: Option<String>,
 }
 
-/// A required wire field whose explicit value is one of null, false, or true.
-///
-/// Keeping the three states nominal prevents an absent field from being confused with an explicit null while also avoiding `Option<bool>` as a domain state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NullableBoolean {
-    Null,
-    False,
-    True,
-}
-
-impl<'de> Deserialize<'de> for NullableBoolean {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct NullableBooleanVisitor;
-
-        impl<'de> Visitor<'de> for NullableBooleanVisitor {
-            type Value = NullableBoolean;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("null or a boolean")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(NullableBoolean::Null)
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(NullableBoolean::Null)
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                bool::deserialize(deserializer).map(|value| {
-                    if value {
-                        NullableBoolean::True
-                    } else {
-                        NullableBoolean::False
-                    }
-                })
-            }
-        }
-
-        deserializer.deserialize_option(NullableBooleanVisitor)
-    }
+/// What the engine's compiler-artifact comparison established about one mutant, as the published run report spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum CodegenIdentity {
+    /// Nothing was compared.
+    NotMeasured,
+    /// The mutant compiles to the same code.
+    Identical,
+    /// It compiles to different code.
+    Different,
+    /// The comparison could not be made.
+    NotEstablished,
 }
 
 impl Mutant {

@@ -422,9 +422,11 @@ pub fn audit_with(
     let recording = Recording::of(&document);
     let routing = recorded_runner
         .map(|(recording_path, text)| {
-            crate::route::read(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
-                source,
+            crate::route::read(text, crate::schemas::Producer::Runner).map_err(|source| {
+                AuditError::MalformedRecording {
+                    path: recording_path.to_owned(),
+                    source,
+                }
             })
         })
         .transpose()?;

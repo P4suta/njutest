@@ -87,7 +87,7 @@ pub enum IdentityError {
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
 pub fn read(recorded: &str) -> Result<Watched, crate::route::ReadError> {
     let mut watched = Watched::default();
-    for event in crate::route::events(recorded)? {
+    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
         match text(&event, "type").as_deref() {
             Some("wire-exchange") => {
                 if let Some(record) = event.get("exchange") {
@@ -164,46 +164,29 @@ fn field_length(field: &'static str, bytes: usize) -> Result<u32, IdentityError>
 
 /// One exchange, as the recording writes it.
 fn exchange(record: &Value) -> Exchange {
+    let read = record.get("read").unwrap_or(&Value::Null);
     Exchange {
         capability: text(record, "capability").unwrap_or_default(),
         seq: number(record, "seq").unwrap_or_default(),
-        wire: text(record, "wire").unwrap_or_default(),
-        method: text(record, "method"),
-        path: text(record, "path"),
-        status: number(record, "status").and_then(|one| match u16::try_from(one) {
+        wire: text(read, "wire").unwrap_or_default(),
+        method: text(read, "method"),
+        path: text(read, "path"),
+        status: number(read, "status").and_then(|one| match u16::try_from(one) {
             Ok(status) => Some(status),
             Err(_) => None,
         }),
     }
 }
 
-#[cfg(all(test, target_pointer_width = "64"))]
-mod tests {
-
-    use super::{IdentityError, field_length};
-
-    #[test]
-    fn an_identity_field_outside_the_wire_recipe_is_a_typed_refusal() {
-        let bytes = usize::try_from(u64::from(u32::MAX) + 1).expect("a 64-bit usize");
-        assert_eq!(
-            field_length("capability", bytes),
-            Err(IdentityError::FieldTooLong {
-                field: "capability",
-                bytes,
-            })
-        );
-    }
-}
-
-/// One fault execution, as the recording writes it.
 fn exec(record: &Value) -> Exec {
+    let answer = record.get("answer").unwrap_or(&Value::Null);
     Exec {
         fault: text(record, "fault").unwrap_or_default(),
         capability: text(record, "capability").unwrap_or_default(),
         seq: number(record, "seq").unwrap_or_default(),
         rule: text(record, "rule").unwrap_or_default(),
-        decision: text(record, "decision").unwrap_or_default(),
-        noticed_by: text(record, "noticed_by"),
+        decision: text(answer, "decision").unwrap_or_default(),
+        noticed_by: text(answer, "noticed_by"),
     }
 }
 

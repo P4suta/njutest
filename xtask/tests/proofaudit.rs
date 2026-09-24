@@ -949,7 +949,12 @@ fn at(seq: u64, mutant: &str, target: &str, outcome: &str) -> serde_json::Value 
     serde_json::json!({
         "seq": seq, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
         "mutant": { "mutant": mutant, "target": target, "args": [], "outcome": outcome,
-                    "duration_ms": 5 }
+                    "duration_ms": 5,
+                    "step_boundary": if outcome == "step_limit_reached" {
+                        serde_json::json!({ "limit": 10, "observed": 11 })
+                    } else {
+                        serde_json::Value::Null
+                    } }
     })
 }
 
@@ -1935,8 +1940,11 @@ fn all_put(gap: &str) -> Vec<serde_json::Value> {
                 "capability": "api",
                 "seq": 0,
                 "rule": rule,
-                "decision": decision,
-                "noticed_by": if decision == "tests" { Some(TARGET) } else { None }
+                "answer": if decision == "tests" {
+                    serde_json::json!({ "decision": "tests", "noticed_by": TARGET })
+                } else {
+                    serde_json::json!({ "decision": decision })
+                }
             }
         }));
     }
@@ -1981,12 +1989,12 @@ fn a_question_no_exchange_licenses_is_a_violation_however_the_run_decided_it() {
 /// A recording where `blunt` was put to two mutations and answered `outcome` to both.
 fn answering(outcome: &str) -> Vec<serde_json::Value> {
     let mut lines = routes();
-    for (at, mutant) in [KILLED, SURVIVED].iter().enumerate() {
+    for (seq, mutant) in [(10_u64, KILLED), (11, SURVIVED)] {
         lines.push(serde_json::json!({
+            "seq": seq,
             "type": "mutant-exec",
             "mutant": {
-                "id": mutant,
-                "index": at,
+                "mutant": mutant,
                 "target": "blunt",
                 "outcome": outcome,
                 "duration_ms": 1
@@ -1998,7 +2006,7 @@ fn answering(outcome: &str) -> Vec<serde_json::Value> {
 
 #[test]
 fn a_target_whose_executions_nobody_decided_is_not_one_the_audit_demands_a_finding_about() {
-    for outcome in ["errored", "unconfirmed"] {
+    for outcome in ["errored", "inconclusive"] {
         let audit = audited_with(&base(), &answering(outcome));
         assert!(
             !audit
@@ -2276,12 +2284,21 @@ fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
 
 #[test]
 fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_short_of() {
-    let custom =
-        serde_json::json!({ "touch": { "summary": { "protocol": "custom" }, "passed": [] } });
-    let mut baseline = sentinel::touch("baseline", &[0]);
-    merge(&mut baseline, custom.clone());
-    let mut control = sentinel::touch("control", &[0, 1]);
-    merge(&mut control, custom);
+    let custom = |mut touch: serde_json::Value| {
+        if let Some(record) = touch
+            .get_mut("touch")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            record.insert(
+                "summary".to_owned(),
+                serde_json::json!({ "protocol": "custom" }),
+            );
+            record.insert("passed".to_owned(), serde_json::json!([]));
+        }
+        touch
+    };
+    let baseline = custom(sentinel::touch("baseline", &[0]));
+    let control = custom(sentinel::touch("control", &[0, 1]));
     let said = drift_violations(&drift_audit(
         with(sentinel::drifted("not-measured")),
         vec![baseline, control],

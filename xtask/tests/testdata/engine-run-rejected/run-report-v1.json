@@ -3,10 +3,10 @@
   "schema_version": 2,
   "tool_version": "0.1.0",
   "run": {
-    "id": "current-v1",
-    "started_at": "2026-09-19T17:36:07.102393Z",
-    "finished_at": "2026-09-19T17:36:08.80933Z",
-    "duration_ms": 98,
+    "id": "20260924t131143739z",
+    "started_at": "2026-09-24T13:11:43.739238Z",
+    "finished_at": "2026-09-24T13:11:47.089288Z",
+    "duration_ms": 332,
     "interrupted": false,
     "exit_code": 1,
     "shard": null
@@ -14,7 +14,7 @@
   "workspace": {
     "root_name": "fixture-rejectable",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "2652d72ad7dea0b60a2e4c5682efc8e5e207b34fbb73488667c8700b15f0e82d",
+    "workspace_digest": "cd84a068441097f4bdf801085892062e48ae7d1986eddfb1a6025daea650702f",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
       "os": "darwin",
@@ -87,27 +87,27 @@
       "original": "name + \"!\"",
       "replacement": "Default::default()",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 2,
@@ -127,27 +127,27 @@
       "original": "\"!\"",
       "replacement": "\"\"",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 3,
@@ -167,27 +167,27 @@
       "original": "0",
       "replacement": "1",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 4,
@@ -207,27 +207,27 @@
       "original": "0..n",
       "replacement": "Default::default()",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 6,
@@ -247,27 +247,27 @@
       "original": "value * 0",
       "replacement": "Default::default()",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 8,
@@ -287,27 +287,27 @@
       "original": "0",
       "replacement": "1",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 10,
@@ -327,27 +327,27 @@
       "original": "\"here\"",
       "replacement": "\"\"",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 11,
@@ -367,27 +367,27 @@
       "original": "if a > b { a - b } else { b - a }",
       "replacement": "Default::default()",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 12,
@@ -407,27 +407,27 @@
       "original": "a > b",
       "replacement": "!(a > b)",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 13,
@@ -447,27 +447,27 @@
       "original": "a > b",
       "replacement": "true",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 14,
@@ -487,27 +487,27 @@
       "original": "a > b",
       "replacement": "false",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 15,
@@ -527,27 +527,27 @@
       "original": ">",
       "replacement": ">=",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 16,
@@ -567,27 +567,27 @@
       "original": "a - b",
       "replacement": "Default::default()",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 17,
@@ -607,27 +607,27 @@
       "original": "-",
       "replacement": "+",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 18,
@@ -647,27 +647,27 @@
       "original": "b - a",
       "replacement": "Default::default()",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 19,
@@ -687,27 +687,27 @@
       "original": "-",
       "replacement": "+",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     }
   ],
   "rejections": [
@@ -718,7 +718,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:97\n   |\n12 |     (if __rm_b1a35a68::active(0) { Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + (if __rm_b1a35...\n   |                                                                                            ---- ^ --- &str\n   |                                                                                            |\n   |                                                                                            String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:147\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
       "isolated": true
     },
     {
@@ -728,7 +728,7 @@
       "path": "src/lib.rs",
       "rule": "range-to-inclusive",
       "code": "E0308",
-      "diagnostic": "error[E0308]: mismatched types\n  --> src/lib.rs:17:92\n   |\n16 | ...all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn window(n: usize) -> std::ops::Range<usize> {\n   |                                                                                                            ---------------------- expected `std::ops::Range<usize>` because of return type\n17 | ... { 0..=n } else { (if __rm_b1a35a68::active(3) { 1 } else { 0 })..n })\n   |       ^^^^^ expected `Range<usize>`, found `RangeInclusive<usize>`\n   |\n   = note: expected struct `std::ops::Range<usize>`\n              found struct `std::ops::RangeInclusive<usize>`\n\n",
+      "diagnostic": "error[E0308]: mismatched types\n  --> src/lib.rs:17:142\n   |\n16 | ...-> std::ops::Range<usize> {\n   |       ---------------------- expected `std::ops::Range<usize>` because of return type\n17 | ...point(); __rm_b1a35a68::value!(if __rm_b1a35a68::active(4) { Default::default() } else if __rm_b1a35a68::active(5) { 0..=n } else...\n   |                                                                                                                         ^^^^^ expected `Range<usize>`, found `RangeInclusive<usize>`\n   |\n   = note: expected struct `std::ops::Range<usize>`\n              found struct `std::ops::RangeInclusive<usize>`\n\n",
       "isolated": true
     },
     {
@@ -738,7 +738,7 @@
       "path": "src/lib.rs",
       "rule": "mul-to-div",
       "code": "unconditional_panic",
-      "diagnostic": "error: this operation will panic at runtime\n  --> src/lib.rs:22:92\n   |\n22 | ...fault() } else if __rm_b1a35a68::active(7) { value / 0 } else { value * (if __rm_b1a35a68::active(8) { 1 } else { 0 }) })\n   |                                                 ^^^^^^^^^ attempt to divide `_` by zero\n   |\n   = note: `#[deny(unconditional_panic)]` on by default\n\n",
+      "diagnostic": "error: this operation will panic at runtime\n  --> src/lib.rs:22:142\n   |\n22 | ...fault() } else if __rm_b1a35a68::active(7) { value / 0 } else { value * __rm_b1a35a68::value!(if __rm_b1a35a68::active(8) { 1 } e...\n   |                                                 ^^^^^^^^^ attempt to divide `_` by zero\n   |\n   = note: `#[deny(unconditional_panic)]` on by default\n\n",
       "isolated": true
     },
     {
@@ -748,7 +748,7 @@
       "path": "src/lib.rs",
       "rule": "return-default",
       "code": "E0277",
-      "diagnostic": "error[E0277]: the trait bound `Label: Default` is not satisfied\n  --> src/lib.rs:27:36\n   |\n27 |     (if __rm_b1a35a68::active(9) { Default::default() } else { Label((if __rm_b1a35a68::active(10) { \"\" } else { \"here\" })) })\n   |                                    ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Label`\n   |\nhelp: consider annotating `Label` with `#[derive(Default)]`\n   |\n 8 + #[derive(Default)]\n 9 | pub struct Label(pub &'static str);\n   |\n\n",
+      "diagnostic": "error[E0277]: the trait bound `Label: Default` is not satisfied\n  --> src/lib.rs:27:86\n   |\n27 | ...if __rm_b1a35a68::active(9) { Default::default() } else { Label(__rm_b1a35a68::value!(if __rm_b1a35a68::active(10) { \"\" } else { ...\n   |                                  ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Label`\n   |\nhelp: consider annotating `Label` with `#[derive(Default)]`\n   |\n 8 + #[derive(Default)]\n 9 | pub struct Label(pub &'static str);\n   |\n\n",
       "isolated": true
     }
   ],

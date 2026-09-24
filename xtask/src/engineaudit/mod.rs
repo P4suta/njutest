@@ -90,6 +90,18 @@ pub enum AuditError {
         #[source]
         source: serde_json::Error,
     },
+    /// The run report is JSON and departs from the engine's published run-report schema, so a reader could meet an absent required field or a value of another shape.
+    #[error("{path}: off the published run-report schema: {source}")]
+    OffSchema {
+        /// The document.
+        path: String,
+        /// Where and how.
+        #[source]
+        source: crate::schemas::OffSchema,
+    },
+    /// The published run-report schema itself does not compile.
+    #[error(transparent)]
+    Schema(#[from] crate::schemas::SchemaError),
     /// A JSON evidence document supplied to the audit is corrupt.
     #[error("{path}: not an evidence document this audit can read: {source}")]
     MalformedEvidence {
@@ -371,12 +383,11 @@ impl<'a> Evidence<'a> {
         let recorded = self
             .recorded
             .map(|source| {
-                let events = crate::route::events(source.text).map_err(|error| {
-                    AuditError::MalformedRecording {
+                let events = crate::route::events(source.text, crate::schemas::Producer::Engine)
+                    .map_err(|error| AuditError::MalformedRecording {
                         path: source.path.to_owned(),
                         source: error,
-                    }
-                })?;
+                    })?;
                 if let Some(schema) = events.iter().find_map(|event| {
                     (string(event, "type").as_deref() == Some("run-start"))
                         .then(|| string(event, "schema"))
@@ -499,8 +510,22 @@ impl<'a> Notes<'a> {
 /// What an independent re-decision makes of the run report in `text`.
 ///
 /// # Errors
-/// [`AuditError::Unparsable`] for a document that is not JSON, and [`AuditError::Unrecognised`] for one that is not a run report.
+/// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::OffSchema`] for a run report off its published schema, and [`AuditError::Unrecognised`] for one that is not a run report.
 pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, AuditError> {
+    let raw = crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
+        path: path.to_owned(),
+        source,
+    })?;
+    if raw.get("document_type").and_then(Value::as_str) == Some(DOCUMENT_TYPE)
+        && raw.get("schema_version").and_then(Value::as_u64) == Some(SCHEMA_VERSION)
+    {
+        crate::schemas::Checker::engine_report()?
+            .check(&raw)
+            .map_err(|source| AuditError::OffSchema {
+                path: path.to_owned(),
+                source,
+            })?;
+    }
     let document = wire::decode(text).map_err(|source| AuditError::Unparsable {
         path: path.to_owned(),
         source,
