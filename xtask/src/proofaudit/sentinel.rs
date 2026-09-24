@@ -217,6 +217,28 @@ pub fn touch(measured: &str, reached: &[u32]) -> Value {
     json!({ "type": "touch", "touch": touched(measured, reached) })
 }
 
+/// The build record naming [`TARGET`] as a library test binary libtest runs.
+fn built() -> Value {
+    json!({
+        "type": "build",
+        "build": {
+            "targets": [TARGET],
+            "details": [{ "id": TARGET, "kind": "lib", "harness": true, "limitations": [] }]
+        }
+    })
+}
+
+/// The baseline record of [`TARGET`], run with the harness arguments `args`.
+fn verified(args: &[&str]) -> Value {
+    json!({
+        "type": "verify",
+        "verify": {
+            "target": TARGET, "outcome": "passed", "tests_run": 1, "duration_ms": 1,
+            "args": args, "remembered": false, "retried": false
+        }
+    })
+}
+
 /// The record of [`touch`] without its event.
 fn touched(measured: &str, reached: &[u32]) -> Value {
     json!({
@@ -383,6 +405,8 @@ pub fn clean() -> Perturbation {
         },
         events: Some(routes()),
         engine: Some(vec![
+            built(),
+            verified(&["--test-threads=1"]),
             touch("baseline", &[0, 1]),
             touch("control", &[0, 1]),
             perturbed("survived", &[], &recorded_reach(&[0, 1])),
@@ -442,7 +466,26 @@ fn loose_yet_single_threaded(clean: Perturbation) -> Perturbation {
     merge(&mut loose, json!({ "touch": { "loose": 1 } }));
     Perturbation {
         name: "a binary whose baseline reached code off its tests' threads, proven single-threaded",
-        engine: Some(vec![loose, touch("control", &[0, 1])]),
+        engine: Some(vec![
+            built(),
+            verified(&["--test-threads=1"]),
+            loose,
+            touch("control", &[0, 1]),
+        ]),
+        ..clean
+    }
+}
+
+/// The planted defect of the concurrency layer: a binary libtest ran on every processor, recorded as proven single-threaded.
+fn parallel_yet_single_threaded(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a binary libtest ran its tests side by side in, proven single-threaded",
+        engine: Some(vec![
+            built(),
+            verified(&[]),
+            touch("baseline", &[0, 1]),
+            touch("control", &[0, 1]),
+        ]),
         ..clean
     }
 }
@@ -546,7 +589,10 @@ impl Layer {
                 ]),
                 ..clean
             }],
-            Self::Concurrency => vec![loose_yet_single_threaded(clean)],
+            Self::Concurrency => vec![
+                loose_yet_single_threaded(clean.clone()),
+                parallel_yet_single_threaded(clean),
+            ],
         }
     }
 }
