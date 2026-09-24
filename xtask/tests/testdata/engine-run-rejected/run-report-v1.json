@@ -3,17 +3,17 @@
   "schema_version": 2,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260924t131143739z",
-    "started_at": "2026-09-24T13:11:43.739238Z",
-    "finished_at": "2026-09-24T13:11:47.089288Z",
-    "duration_ms": 332,
+    "id": "20260924t141455235z",
+    "started_at": "2026-09-24T14:14:55.235915Z",
+    "finished_at": "2026-09-24T14:14:59.057572Z",
+    "duration_ms": 187,
     "interrupted": false,
     "exit_code": 1,
     "shard": null
   },
   "workspace": {
     "root_name": "fixture-rejectable",
-    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "workspace_digest": "cd84a068441097f4bdf801085892062e48ae7d1986eddfb1a6025daea650702f",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
@@ -718,7 +718,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:147\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:147\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
       "isolated": true
     },
     {
