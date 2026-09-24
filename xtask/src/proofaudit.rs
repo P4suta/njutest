@@ -570,47 +570,37 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
     for row in rows {
         let target = field(row, "target").unwrap_or_default();
         let standing = row.get("standing").unwrap_or(&serde_json::Value::Null);
-        let state = field(standing, "state").unwrap_or_default();
-        let said_loose = standing
-            .get("because")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|because| {
-                because
-                    .iter()
-                    .any(|one| field(one, "kind").as_deref() == Some("loose-reach"))
-            });
-        let loose = touched
-            .touches
-            .iter()
-            .rev()
-            .find(|touch| {
-                touch.measured == crate::drift::Measured::Baseline && touch.target == target
-            })
-            .map(|touch| touch.loose);
-        match (state.as_str(), loose) {
-            ("single-threaded", Some(0)) => proven.push(target.clone()),
-            ("single-threaded", Some(sites)) => notes.violated(
-                &target,
-                format!(
-                    "the report proves {target} single-threaded, and its baseline reached {sites} \
-                     site(s) on a thread no test answers for"
-                ),
-            ),
-            ("single-threaded", None) => notes.violated(
-                &target,
-                format!(
-                    "the report proves {target} single-threaded, and the engine recorded no \
-                     baseline reach for it to rest on"
-                ),
-            ),
-            ("concurrent", Some(0)) if said_loose => notes.violated(
-                &target,
-                format!(
-                    "the report says {target} reached code off its tests' threads, and its \
-                     baseline reached nothing there"
-                ),
-            ),
-            (_, _) => {}
+        let witnessed = crate::concurrency::Witnessed {
+            loose: touched
+                .touches
+                .iter()
+                .rev()
+                .find(|touch| {
+                    touch.measured == crate::drift::Measured::Baseline && touch.target == target
+                })
+                .map(|touch| touch.loose),
+            kind: touched.kinds.get(&target).cloned(),
+            args: touched.args.get(&target).cloned(),
+        };
+        let derived = match crate::concurrency::derived(&witnessed) {
+            Ok(derived) => derived,
+            Err(why) => {
+                notes.violated(
+                    &target,
+                    format!(
+                        "the report gives {target} a standing the recording cannot rest: {why}"
+                    ),
+                );
+                continue;
+            }
+        };
+        match crate::concurrency::agrees(standing, &derived) {
+            Ok(()) => {
+                if field(standing, "state").as_deref() == Some("single-threaded") {
+                    proven.push(target.clone());
+                }
+            }
+            Err(why) => notes.violated(&target, format!("{target}: {why}")),
         }
     }
     explorations(rows, &engine_of(engines), &mut notes);

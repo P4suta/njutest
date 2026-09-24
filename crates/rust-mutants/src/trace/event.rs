@@ -664,6 +664,8 @@ pub struct VerifyRecord {
     pub tests_run: Option<u32>,
     /// How long it took, which is what a derived timeout is five times.
     pub duration_ms: u64,
+    /// The harness arguments it was run with, verbatim, which is how many threads libtest ran its tests on.
+    pub args: Vec<String>,
     /// Whether this exact passing measurement was read back instead of running the target again.
     pub remembered: bool,
     /// Whether the target had to be run a second time, because the first run did not pass.
