@@ -186,8 +186,8 @@ A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` 
 Every part carries `concurrency`, one `{ target, standing }` per test binary the run measured, in binary order ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
 `standing` is closed by its `state`:
 `single-threaded` where the binary's baseline reached nothing off its tests' threads and no package of its closure can start a thread or runs native code;
-`concurrent` with every reason that holds in `because`, each `loose-reach` or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
-and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
+`concurrent` with every reason that holds in `because`, each `loose-reach`, `parallel-tests` (libtest ran its tests on more than one thread, which it does unless the run passes `--test-threads=1`), or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
+and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `doctest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
 A part whose records name a binary twice or out of order is refused.
 
 A part states `schedule-not-explored` naming every binary that is not `single-threaded`: no schedule is explored yet, so each is a hole.

@@ -49,10 +49,15 @@ fn environment(root: &Path) -> Environment {
 
 /// The one part of the report `verify` leaves in `fixture`.
 fn verified(fixture: &Fixture) -> serde_json::Value {
+    verified_with(fixture, &[])
+}
+
+fn verified_with(fixture: &Fixture, harness: &[&str]) -> serde_json::Value {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = njutest::run_from(
         ["njutest", "verify", "--offline", "--locked"]
             .into_iter()
+            .chain(harness.iter().copied())
             .map(OsString::from),
         &environment(&fixture.root),
         &mut out,
@@ -131,18 +136,25 @@ fn a_binary_whose_test_spawns_a_thread_is_concurrent_and_says_where() {
 #[test]
 fn a_binary_that_starts_nothing_and_reached_nothing_off_its_tests_is_proven_single_threaded() {
     let fixture = fixture("fixture-baseline");
-    let part = verified(&fixture);
+    let side_by_side = verified(&fixture);
+    let record = record_of(&side_by_side, "fixture-baseline/lib/fixture_baseline");
+    assert_eq!(
+        record["standing"],
+        serde_json::json!({ "state": "concurrent", "because": [{ "kind": "parallel-tests" }] }),
+        "libtest runs a binary's tests on every processor unless told otherwise: {record}"
+    );
+    let part = verified_with(&fixture, &["--", "--test-threads=1"]);
     let record = record_of(&part, "fixture-baseline/lib/fixture_baseline");
     assert_eq!(
         record["standing"]["state"], "single-threaded",
-        "a binary whose tests stayed on their own threads and whose closure starts nothing \
-         needs no schedule explored: {record}"
+        "a binary whose tests ran one at a time, stayed on their own threads, and whose closure \
+         starts nothing needs no schedule explored: {record}"
     );
     let doc = record_of(&part, "fixture-baseline/doc/fixture_baseline");
     assert_eq!(
         doc["standing"],
-        serde_json::json!({ "state": "not-proven", "why": [{ "kind": "no-touch" }] }),
-        "a doctest records no reach and its code sits in a doc string, so nothing is proven: {doc}"
+        serde_json::json!({ "state": "not-proven", "why": [{ "kind": "no-touch" }, { "kind": "doctest" }] }),
+        "a doctest's code sits in a doc string and it records no reach, so nothing is proven: {doc}"
     );
     let stated = limitation(&part, njutest::limitation::SCHEDULE_NOT_EXPLORED);
     assert!(

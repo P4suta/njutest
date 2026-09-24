@@ -5,22 +5,46 @@
 
 use std::collections::BTreeMap;
 
-use crate::concurrency::proof::{Evidence, PackageScan, Reach, standing};
+use crate::concurrency::proof::{Evidence, Harness, PackageScan, Reach, standing, threads_of};
 use crate::report::concurrency::ConcurrencyRecord;
+use rust_mutants::execute::TargetKind;
 
-/// One record per test binary the session measured, in binary order, each package of every closure read once.
+/// One record per test binary the session measured, in binary order, each package of every closure read once; `harness_args` are what every libtest binary was run with.
 #[must_use]
-pub fn recorded(session: &rust_mutants::session::Session) -> Vec<ConcurrencyRecord> {
-    let mut binaries: BTreeMap<String, (&str, bool)> = BTreeMap::new();
+pub fn recorded(
+    session: &rust_mutants::session::Session,
+    harness_args: &[String],
+) -> Vec<ConcurrencyRecord> {
+    let threads = threads_of(harness_args);
+    let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
-        binaries.insert(target.id.clone(), (target.package.as_str(), target.harness));
+        let harness = match (target.kind, target.harness) {
+            (TargetKind::Doc, _) => Harness::Doctest,
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                true,
+            ) => Harness::Libtest(threads),
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                false,
+            ) => Harness::Other,
+        };
+        binaries.insert(target.id.clone(), (target.package.as_str(), harness));
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
     let mut read: BTreeMap<String, PackageScan> = BTreeMap::new();
     binaries
         .into_iter()
-        .map(|(binary, (package, libtest))| {
+        .map(|(binary, (package, harness))| {
             let closure = metadata
                 .members()
                 .find(|member| member.name == package)
@@ -58,7 +82,7 @@ pub fn recorded(session: &rust_mutants::session::Session) -> Vec<ConcurrencyReco
             ConcurrencyRecord {
                 standing: standing(Evidence {
                     reach,
-                    libtest,
+                    harness,
                     packages: &packages,
                 }),
                 target: binary,
