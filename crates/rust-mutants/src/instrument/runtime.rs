@@ -57,6 +57,12 @@ pub const TOUCH_UNAVAILABLE_EXIT: i32 = 96;
 /// The name the generated module takes when the file does not already spell it; otherwise a digit is appended until one is free.
 pub const MODULE_STEM: &str = "__rm";
 
+/// What a fault replaces the call a `?` asks about with, naming the runtime's constructor the way a reader would; the instrumenter writes the path the site reaches the runtime by in its place.
+pub const INJECTED: &str = "::core::result::Result::Err(rust_mutants::injected())";
+
+/// The call [`INJECTED`] names, which the instrumenter replaces.
+pub const INJECTED_CALL: &str = "rust_mutants::injected";
+
 /// Marks the generated module, for a person reading the snapshot and for the drift gate.
 pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v1";
 
@@ -359,6 +365,62 @@ mod {{MODULE}} {
     static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
 
 {{VALUE_MACRO}}
+    // The failures a fault can make without guessing: an error type the
+    // standard library defines and a caller already has to be ready for.
+    // A `?` whose error is anything else does not compile under a fault,
+    // and the compiler's refusal is what says the fault was not put.
+    pub(crate) trait Injectable {
+        fn injected() -> Self;
+    }
+    impl Injectable for __rm_std::io::Error {
+        fn injected() -> Self {
+            __rm_std::io::Error::other("a failure rust-mutants injected")
+        }
+    }
+    impl Injectable for __rm_std::str::Utf8Error {
+        fn injected() -> Self {
+            match __rm_std::str::from_utf8(__rm_std::hint::black_box(&[0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::string::FromUtf8Error {
+        fn injected() -> Self {
+            match __rm_std::string::String::from_utf8(__rm_std::hint::black_box(__rm_std::vec![0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseFloatError {
+        fn injected() -> Self {
+            match <f64 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::TryFromIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::convert::TryFrom<u16>>::try_from(__rm_std::hint::black_box(256_u16)) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    pub(crate) fn injected<E: Injectable>() -> E {
+        E::injected()
+    }
+
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         touch(index);

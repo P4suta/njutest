@@ -1686,6 +1686,16 @@ impl<'a> Walker<'a> {
 
     fn walk_try(&mut self, t: &syn::ExprTry, ctx: Ctx) {
         let own = self.span(t);
+        let asked = self.span(&*t.expr);
+        self.emit(
+            "inject-error",
+            Edit {
+                span: asked,
+                replacement: crate::instrument::INJECTED.as_bytes().to_vec(),
+                site: Self::site_for(ctx.value(), asked),
+                probe: None,
+            },
+        );
         let edit = self.span(&t.question_token);
         self.emit(
             "question-to-unwrap",

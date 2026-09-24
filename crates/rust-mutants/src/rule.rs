@@ -83,6 +83,8 @@ pub enum Family {
     Literal,
     /// `saturating_add` ↔ `wrapping_add`, and its siblings: one operation, the other boundary.
     SaturatingArithmetic,
+    /// Failing the call a `?` asks about, so the suite is asked whether it noticed (ADR 0032); never chosen by a tier.
+    Fault,
 }
 
 impl Family {
@@ -107,6 +109,7 @@ impl Family {
             Self::StatementDeletion => "statement-deletion",
             Self::Literal => "literal",
             Self::SaturatingArithmetic => "saturating-arithmetic",
+            Self::Fault => "fault",
         }
     }
 
@@ -114,6 +117,31 @@ impl Family {
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|family| family.name() == name)
+    }
+
+    /// Whether a tier chooses the family's rules, which a fault's never are: it perturbs the program's environment rather than its text, and asks another question of the suite.
+    #[must_use]
+    pub const fn chosen_by_tiers(self) -> bool {
+        match self {
+            Self::Fault => false,
+            Self::BooleanLiteral
+            | Self::ConditionNegation
+            | Self::BooleanConnective
+            | Self::Comparison
+            | Self::Range
+            | Self::Arithmetic
+            | Self::ReturnReplacement
+            | Self::ErrorPropagation
+            | Self::MatchArm
+            | Self::ControlFlow
+            | Self::ConditionRemoval
+            | Self::Bitwise
+            | Self::CompoundAssignment
+            | Self::MethodSwap
+            | Self::StatementDeletion
+            | Self::Literal
+            | Self::SaturatingArithmetic => true,
+        }
     }
 }
 
@@ -144,6 +172,16 @@ const UNEXECUTED_PATH_RULES: [&str; 3] = [
 ];
 
 impl Rule {
+    /// What chooses the rule: the tier it is in, or `named` for a rule no tier chooses and a run asks for by name.
+    #[must_use]
+    pub const fn chosen_by(&self) -> &'static str {
+        if self.family.chosen_by_tiers() {
+            self.tier.name()
+        } else {
+            "named"
+        }
+    }
+
     /// Whether a survivor of this rule says a path was never taken.
     #[must_use]
     pub fn survivor_names_an_unexecuted_path(&self) -> bool {
@@ -161,7 +199,7 @@ impl fmt::Display for Rule {
 /// The counts of the canonical v1 table, asserted by the registry tests.
 pub const CANONICAL_FAMILY_COUNT: usize = Family::ALL.len();
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 74;
+pub const CANONICAL_RULE_COUNT: usize = 75;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -348,6 +386,7 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         "saturating-mul-to-wrapping-mul",
         Tier::All,
     ),
+    v1(Family::Fault, "inject-error", Tier::All),
 ];
 
 /// Whether a rule name is well formed: non-empty, and free of whitespace and of the `@` that separates the version in the rendered form.
@@ -570,7 +609,7 @@ impl Registry {
         self.rules
             .iter()
             .copied()
-            .filter(|rule| tier.includes(rule.tier))
+            .filter(|rule| tier.includes(rule.tier) && rule.family.chosen_by_tiers())
             .collect()
     }
 

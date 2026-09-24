@@ -444,6 +444,12 @@
       "name": "saturating-mul-to-wrapping-mul",
       "tier": "all",
       "version": 1
+    },
+    {
+      "family": "fault",
+      "name": "inject-error",
+      "tier": "named",
+      "version": 1
     }
   ],
   "schema_version": 1,

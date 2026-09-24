@@ -73,5 +73,6 @@ literal              string-to-empty                all       1
 saturating-arithmetic saturating-add-to-wrapping-add all       1
 saturating-arithmetic saturating-sub-to-wrapping-sub all       1
 saturating-arithmetic saturating-mul-to-wrapping-mul all       1
+fault                inject-error                   named     1
 
-74 rules in 17 families. `operators = [...]` in .rust-mutants.toml pins exactly these; a tier selects them by name.
+75 rules in 18 families. `operators = [...]` in .rust-mutants.toml pins exactly these; a tier selects them by name.
