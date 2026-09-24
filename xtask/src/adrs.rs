@@ -75,7 +75,11 @@ pub fn numbered(file: &str) -> Option<u16> {
         && slug
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
-    named.then(|| digits.parse().ok()).flatten()
+    match digits.parse::<u16>() {
+        Ok(number) if named => Some(number),
+        Ok(_not_a_record) => None,
+        Err(_not_four_digits) => None,
+    }
 }
 
 /// Every record of `files`, each given as its file name under `docs/adr/` and its text.
@@ -135,7 +139,10 @@ pub fn summary(text: &str, records: &[Record]) -> Result<(), RecordError> {
         let said = label
             .split_whitespace()
             .next()
-            .and_then(|number| number.parse::<u16>().ok());
+            .and_then(|number| match number.parse::<u16>() {
+                Ok(number) => Some(number),
+                Err(_not_a_number) => None,
+            });
         let Some(record) = records.iter().find(|record| record.file == file) else {
             return Err(RecordError::Summary {
                 detail: format!("lists adr/{file}, and no decision record has that name"),
