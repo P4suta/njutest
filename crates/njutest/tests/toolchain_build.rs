@@ -272,7 +272,7 @@ fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_h
     )
     .expect("the build runs");
     trace
-        .run_end("COMPLETED", None, None)
+        .run_end(njutest::report::Verdict::Assured, None, None)
         .expect("trace closes");
 
     let events = trace.events();

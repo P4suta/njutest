@@ -428,8 +428,11 @@ fn every_suite_that_starts_a_toolchain_says_so_in_its_name() {
             let scripted = source.contains("fake_cargo::");
             let against_a_fixture = source.contains("Fixture::copy")
                 && (source.contains("cargo_binary()") || source.contains("CARGO_BIN_EXE"));
-            let starts_cargo =
-                !scripted && (source.contains("Workspace::open") || against_a_fixture);
+            let verified_in_process = (source.contains("Fixture::copy")
+                || source.contains("copy_tree("))
+                && source.contains("\"verify\"");
+            let starts_cargo = !scripted
+                && (source.contains("Workspace::open") || against_a_fixture || verified_in_process);
             if starts_cargo && !name.starts_with("toolchain_") {
                 wrong.push(format!("{crate_name}/{name}"));
             }
