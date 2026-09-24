@@ -964,19 +964,22 @@ fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
 }
 
 #[test]
-fn the_fast_suite_leaves_nothing_in_a_temporary_directory_nobody_owns() {
-    let fast = task("\"test:fast\"");
-    let workflow = repository(".github/workflows/ci.yml");
-    let pipeline = workflow
-        .lines()
-        .find(|line| line.contains("-E 'not binary(/^toolchain_/)'") && !line.contains("llvm"))
-        .unwrap_or_default();
-    for (place, runs) in [("mise run test:fast", fast.as_str()), ("ci.yml", pipeline)] {
+fn every_suite_leaves_nothing_in_a_temporary_directory_nobody_owns() {
+    for place in ["mise.toml", ".github/workflows/ci.yml"] {
+        let text = repository(place);
+        let bare: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .filter(|line| line.contains("cargo nextest run"))
+            .filter(|line| !line.contains("cargo xtask tidy -- cargo nextest run"))
+            .collect();
         assert!(
-            runs.contains("cargo xtask tidy -- cargo nextest run"),
-            "{place} runs the fast suite without `cargo xtask tidy`, so a test that leaves a \
-             directory in the shared temporary directory passes: 1,545 of them in one day on \
-             this machine before the rule existed (ADR 0006): {runs}"
+            bare.is_empty(),
+            "{place} runs a suite without `cargo xtask tidy`, so a test that leaves a directory \
+             in the shared temporary directory passes: 1,545 of them in one day on this machine \
+             before the rule existed, and the slow lane's toolchain tests leave the most \
+             (ADR 0006):\n  {}",
+            bare.join("\n  ")
         );
     }
 }

@@ -73,7 +73,7 @@ jobs:
           # Each test in these binaries drives its own Cargo. Two outer tests
           # keep hosted runners busy without multiplying their build jobs into
           # resource exhaustion; the ordinary suite above remains fully parallel.
-          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Doctests
         shell: bash
         run: cargo test --locked --workspace --doc
@@ -208,10 +208,10 @@ jobs:
           # profiles sitting in `target` all along. The steps are told where.
           echo "CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR" >> "$GITHUB_ENV"
           cargo build --locked --examples -p rust-mutants
-          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast -E 'not binary(/^toolchain_/)'
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast -E 'not binary(/^toolchain_/)'
           # Coverage makes every nested build heavier. Bound only the suites
           # that start those builds, preserving full parallelism everywhere else.
-          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 2 -E 'binary(/^toolchain_/)'
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Report (lcov + HTML + summary)
         run: |
           cargo llvm-cov report --lcov --output-path lcov.info
