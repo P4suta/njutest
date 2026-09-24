@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use super::schedule::{self, ScheduleError};
+use super::schedule;
 use crate::concurrency::explore::{CONFIRMING_ROUNDS, Ended, chosen, clean, repeats};
 use crate::concurrency::proof::{
     Evidence, Harness, PackageScan, Reach, Standing, Threads, standing, threads_of,
@@ -20,11 +20,11 @@ pub const PAUSE_MS: u64 = 100;
 /// One record per test binary the session measured, in binary order, each package of every closure read once, at most `workers` at a time; `harness_args` are what every libtest binary was run with.
 ///
 /// # Errors
-/// A reading worker panicked.
+/// A reading worker panicked, or the process ran out of descriptors or memory while reading.
 pub fn recorded(
     session: &rust_mutants::session::Session,
     (harness_args, workers): (&[String], usize),
-) -> Result<Vec<ConcurrencyRecord>, ScheduleError> {
+) -> Result<Vec<ConcurrencyRecord>, crate::error::RunnerError> {
     let threads = threads_of(harness_args);
     let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
@@ -48,7 +48,8 @@ pub fn recorded(
         .flat_map(|closure| closure.iter().map(String::as_str))
         .collect();
     let every: Vec<&str> = every.into_iter().collect();
-    let read = scans(metadata, &every, workers)?;
+    let compiled = crate::concurrency::read::Compiled::read(session.target_dir())?;
+    let read = scans(metadata, (&every, &compiled), workers)?;
     Ok(binaries
         .into_iter()
         .map(|(binary, (package, harness))| {
@@ -93,33 +94,33 @@ pub fn recorded(
         .collect())
 }
 
-/// Every package named in `ids` read once, at most `workers` at a time and never more than there are packages, by id.
+/// Every package named in `ids` read once, at most `workers` at a time and never more than there are packages, by id, each held to the files `compiled` says its crates were built from.
 ///
 /// One the metadata does not hold, or no answer came back for, is read as a package whose manifest was not read.
 ///
 /// # Errors
-/// A reading worker panicked.
+/// A reading worker panicked, or the process ran out of descriptors or memory while reading.
 pub fn scans(
     metadata: &rust_mutants::cargo::Metadata,
-    ids: &[&str],
+    (ids, compiled): (&[&str], &crate::concurrency::read::Compiled),
     workers: usize,
-) -> Result<BTreeMap<String, PackageScan>, ScheduleError> {
+) -> Result<BTreeMap<String, PackageScan>, crate::error::RunnerError> {
     let read = schedule::measure(ids, workers.min(ids.len()), |_at, id| {
-        metadata
-            .package(id)
-            .map_or_else(|| unread_manifest(id), crate::concurrency::read::package)
+        metadata.package(id).map_or_else(
+            || Ok(unread_manifest(id)),
+            |package| crate::concurrency::read::package(package, compiled),
+        )
     })?;
     let mut answers = read.into_iter();
-    Ok(ids
-        .iter()
-        .map(|id| {
-            let scan = match answers.next() {
-                Some(scan) => scan,
-                None => unread_manifest(id),
-            };
-            ((*id).to_owned(), scan)
-        })
-        .collect())
+    let mut scanned = BTreeMap::new();
+    for id in ids {
+        let scan = match answers.next() {
+            Some(answer) => answer?,
+            None => unread_manifest(id),
+        };
+        scanned.insert((*id).to_owned(), scan);
+    }
+    Ok(scanned)
 }
 
 /// A package named `package` whose manifest was not read, which proves nothing about it.
