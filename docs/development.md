@@ -259,6 +259,14 @@ What is remembered is the commit, the base the commit-message check reads, and t
 Every relinked test binary, fixture build, and mutant pays it.
 Switch the applications that start the sessions on under System Settings → Privacy & Security → Developer Tools; on the development machine that is the terminal and the multiplexer running in it.
 
+### Nothing accumulates
+
+Every worktree builds into its own `target/`, and a day of sessions leaves dozens of them, each tens of gigabytes; the disk filled on 2026-09-24 and every session stopped at once.
+`cargo xtask sweep` takes back what nobody has written for six hours (thirty minutes when less than 15% of the disk is free): the `target/` of any worktree of this repository, the per-worktree gate trees the gate made before it had one, and the directories this repository's tests and gates leave in `TMPDIR`.
+It moves each into a `.njutest-trash` directory on the same volume, which takes it out of use at once, and then removes files until its budget runs out; what is left waits for the next sweep.
+Nobody has to remember it: the push gate sweeps for thirty seconds when it ends, and every merge sweeps for five.
+Source is never taken, and neither is a directory some other program made.
+
 ## Test harness
 
 `crates/njutest-devkit` is test-only support shared by every crate: the golden-file comparison, the workspace and fixture paths, the `cargo` that built the test binary, a throwaway copy of a fixture project, and the scripted toolchain.

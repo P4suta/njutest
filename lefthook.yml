@@ -58,6 +58,9 @@ post-merge:
     cargo-fetch-warm:
       glob: "{Cargo.toml,Cargo.lock,crates/*/Cargo.toml}"
       run: cargo fetch --quiet || true
+    # Takes back build output and temporary directories nobody has written for a while, so a machine that develops all day does not fill up; the push gate does the same when it ends.
+    sweep:
+      run: cargo xtask sweep --budget-seconds 5
 
 post-checkout:
   commands:
