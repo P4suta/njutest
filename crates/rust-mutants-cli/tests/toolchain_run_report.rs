@@ -92,7 +92,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 
     let document = stored(&fixture);
     assert_eq!(document["document_type"], "rust-mutants/run-report");
-    assert_eq!(document["schema_version"], 2);
+    assert_eq!(document["schema_version"], 3);
     assert_eq!(document["run"]["exit_code"], 1);
     assert!(!document["run"]["interrupted"].as_bool().expect("a flag"));
     assert_eq!(document["selection"]["tier"], "all");
@@ -1463,5 +1463,53 @@ fn claims_a_line_tells_apart_are_two_claims_and_a_mutant_two_claims_name_is_refu
         stderr(&overlapping).contains("RM0004") && stderr(&overlapping).contains("@47"),
         "the refusal is the configuration's, and names the mutation both claims hold: {}",
         stderr(&overlapping)
+    );
+}
+
+#[test]
+fn a_claim_on_mutations_the_selection_left_out_is_unjudged_and_no_finding() {
+    let fixture = Fixture::copy("fixture-families");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+         \"question-to-unwrap\"\noriginal = \"?\"\ncount = 2\noutcome = \"killed\"\nreason = \
+         \"both of them parse the same text\"\n",
+    )
+    .expect("write the configuration");
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--file", "src/lib.rs:55-58"],
+    );
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&output)
+    );
+    let stored = stored(&fixture);
+    let claims: Vec<(String, String)> = stored["expectations"]
+        .as_array()
+        .expect("expectations")
+        .iter()
+        .map(|one| (one["standing"].to_string(), one["mutant"].to_string()))
+        .collect();
+    let findings: Vec<String> = stored["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|one| {
+            one["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.ends_with("-expectation"))
+        })
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        (claims, findings),
+        (
+            vec![("\"unjudged\"".to_owned(), "null".to_owned())],
+            Vec::new()
+        ),
+        "a run that decided none of a claim's mutations has not judged it: that is neither met nor \
+         stale, and nothing to find"
     );
 }

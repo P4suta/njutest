@@ -17,7 +17,7 @@ use rust_mutants::work::{Removal, Work};
 fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
     let value = serde_json::json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
+        "schema_version": 3,
         "tool_version": "0.1.0",
         "run": {
             "id": "20260907T000000000Z",

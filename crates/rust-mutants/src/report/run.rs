@@ -21,7 +21,7 @@ use crate::run::{
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The file one run writes under its own directory.
 pub const FILE_NAME: &str = "run-report-v1.json";
@@ -774,7 +774,7 @@ impl ExpectationDocument {
     /// Refuses a claim whose fields do not carry the standing it states.
     pub fn finding(&self) -> Result<Option<FindingDocument>, DocumentError> {
         match (self.standing.as_str(), self.actual, &self.why) {
-            ("met", None, _) => Ok(None),
+            ("met", None, _) | ("unjudged", None, None) => Ok(None),
             ("stale", Some(actual), None) => Ok(Some(FindingDocument {
                 kind: FindingKind::StaleExpectation,
                 mutant: self.mutant.clone(),
@@ -1048,14 +1048,17 @@ fn expectation_document(verified: &crate::run::Verified) -> ExpectationDocument 
         standing: standing_name(&verified.standing).to_owned(),
         actual: match &verified.standing {
             Standing::Stale { actual } => Some(*actual),
-            Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
+            Standing::Met
+            | Standing::Moved { .. }
+            | Standing::Unmatched { .. }
+            | Standing::Unjudged => None,
         },
         why: match &verified.standing {
             Standing::Unmatched { why } => Some(why.clone()),
             Standing::Moved { from, to } => {
                 Some(format!("the mutation moved from line {from} to line {to}"))
             }
-            Standing::Met | Standing::Stale { .. } => None,
+            Standing::Met | Standing::Stale { .. } | Standing::Unjudged => None,
         },
     }
 }
@@ -1065,6 +1068,7 @@ const fn standing_name(standing: &Standing) -> &'static str {
         Standing::Met | Standing::Moved { .. } => "met",
         Standing::Stale { .. } => "stale",
         Standing::Unmatched { .. } => "unmatched",
+        Standing::Unjudged => "unjudged",
     }
 }
 
@@ -1263,18 +1267,23 @@ pub enum MergeError {
 /// Every claim the parts state, one each, answered as the whole run answers it.
 ///
 /// A claim is the same claim in every part, and each part judged the mutations it held in catalog order and named the first that contradicted the claim, or the first it held when none did.
-/// The whole run names the first in catalog order across all of them, so the merged claim is the part's answer that names the earliest contradicting mutation, or failing any, the earliest held one.
+/// The whole run names the first in catalog order across all of them, so the merged claim is the part's answer that names the earliest contradicting mutation, or failing any, the earliest met one, and is unjudged only where no part decided any of them.
 fn claims_of(parts: &[RunDocument], rows: &[RunMutantDocument]) -> Vec<ExpectationDocument> {
     let at = |one: &ExpectationDocument| {
+        let rank = match one.standing.as_str() {
+            "met" => 1,
+            "unjudged" => 2,
+            _ => 0,
+        };
         let position = match &one.mutant {
             Some(mutant) => match rows.iter().find(|row| row.id == *mutant) {
                 Some(row) => row.index,
                 None => u32::MAX,
             },
-            None if one.standing == "met" => u32::MAX,
-            None => 0,
+            None if rank == 0 => 0,
+            None => u32::MAX,
         };
-        (one.standing == "met", position)
+        (rank, position)
     };
     let mut claims: Vec<ExpectationDocument> = Vec::new();
     for one in parts.iter().flat_map(|part| part.expectations.iter()) {
@@ -1461,13 +1470,15 @@ mod tests {
             Standing::Unmatched {
                 why: "the identity names nothing".to_owned(),
             },
+            Standing::Unjudged,
         ];
         for standing in &every {
             match standing {
                 Standing::Met
                 | Standing::Moved { .. }
                 | Standing::Stale { .. }
-                | Standing::Unmatched { .. } => {}
+                | Standing::Unmatched { .. }
+                | Standing::Unjudged => {}
             }
         }
         every

@@ -57,7 +57,7 @@ fn mutant(path: &str, digest: &str) -> RunMutantDocument {
 fn document(mutants: Vec<RunMutantDocument>) -> RunDocument {
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 2,
+        schema_version: 3,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T120000000Z".to_owned(),

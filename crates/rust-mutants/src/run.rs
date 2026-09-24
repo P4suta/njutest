@@ -175,6 +175,8 @@ pub enum Standing {
         /// Why the identity resolved to nothing.
         why: String,
     },
+    /// The claim names mutations of this catalog, and this run decided none of them: a selection left them out, another shard holds them, or the run stopped first.
+    Unjudged,
 }
 
 /// One declared expectation, as the run left it.
@@ -464,7 +466,7 @@ impl Run {
         }
         for expectation in &self.expectations {
             match &expectation.standing {
-                Standing::Met | Standing::Moved { .. } => {}
+                Standing::Met | Standing::Moved { .. } | Standing::Unjudged => {}
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
@@ -946,6 +948,21 @@ fn addressed<'s>(
         (to != from).then_some(Standing::Moved { from, to })
     });
     Ok((mutants, moved))
+}
+
+/// Whether this run decided the mutation `id`: a row it did not leave out, stop short of, or never get to.
+fn decided_here(judged: &[Judged], id: &str) -> bool {
+    judged.iter().find(|one| one.id == id).is_none_or(|one| {
+        !(one.outcome == Outcome::NotRun
+            && matches!(
+                one.not_run_reason,
+                Some(
+                    NotRunReason::Unselected
+                        | NotRunReason::StoppedEarly
+                        | NotRunReason::Interrupted
+                )
+            ))
+    })
 }
 
 /// What the run says about every mutant one claim names, and which of them decided it.
@@ -1745,13 +1762,19 @@ pub fn verify(
                     .iter()
                     .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
                     .map(|mutant| mutant.id.to_string())
+                    .filter(|id| decided_here(judged, id))
                     .collect();
-                let (named, standing) = standing_of(judged, expectation.outcome, &ids);
+                let (named, standing) = if ids.is_empty() {
+                    (None, Standing::Unjudged)
+                } else {
+                    standing_of(judged, expectation.outcome, &ids)
+                };
                 let standing = match standing {
                     Standing::Met => moved.unwrap_or(Standing::Met),
                     held @ (Standing::Moved { .. }
                     | Standing::Stale { .. }
-                    | Standing::Unmatched { .. }) => held,
+                    | Standing::Unmatched { .. }
+                    | Standing::Unjudged) => held,
                 };
                 if matches!(standing, Standing::Met | Standing::Moved { .. }) {
                     for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
