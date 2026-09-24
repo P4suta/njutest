@@ -481,6 +481,19 @@ fn loose_yet_single_threaded(clean: Perturbation) -> Perturbation {
     }
 }
 
+/// The planted defect of the concurrency layer: a report that measured mutants and dropped every concurrency record.
+fn unrecorded_threads(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    if let Some(part) = document.as_object_mut() {
+        part.insert("concurrency".to_owned(), json!([]));
+    }
+    Perturbation {
+        name: "a report that measured mutants and records nothing about any binary's threads",
+        document,
+        ..clean
+    }
+}
+
 /// The planted defect of the concurrency layer: a binary libtest ran on every processor, recorded as proven single-threaded.
 fn parallel_yet_single_threaded(clean: Perturbation) -> Perturbation {
     Perturbation {
@@ -657,6 +670,7 @@ impl Layer {
             }],
             Self::Concurrency => vec![
                 loose_yet_single_threaded(clean.clone()),
+                unrecorded_threads(clean.clone()),
                 parallel_yet_single_threaded(clean.clone()),
                 waited_yet_sampled(clean.clone()),
                 passed_yet_broke(clean),

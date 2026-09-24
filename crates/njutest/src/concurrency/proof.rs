@@ -114,16 +114,63 @@ pub enum Threads {
     Many,
 }
 
-/// How many threads libtest runs tests on under the harness arguments `args`: one only where exactly one `--test-threads` names 1.
+/// The libtest options that take the next word as their value.
+const LIBTEST_VALUED: [&str; 7] = [
+    "--test-threads",
+    "--skip",
+    "--logfile",
+    "--format",
+    "--color",
+    "-Z",
+    "--shuffle-seed",
+];
+
+/// The libtest options that take no value.
+const LIBTEST_FLAGS: [&str; 17] = [
+    "--include-ignored",
+    "--ignored",
+    "--force-run-in-process",
+    "--exclude-should-panic",
+    "--test",
+    "--bench",
+    "--list",
+    "--nocapture",
+    "--no-capture",
+    "--show-output",
+    "--exact",
+    "-q",
+    "--quiet",
+    "--shuffle",
+    "--report-time",
+    "--ensure-time",
+    "--fail-fast",
+];
+
+/// How many threads libtest runs tests on under the harness arguments `args`, read the way libtest reads them: an option that takes a value takes the next word, `--` ends the options, and one only where exactly one `--test-threads` names 1 and no option this reading does not know comes before it.
 #[must_use]
 pub fn threads_of(args: &[String]) -> Threads {
+    const MANY: Threads = Threads::Many;
     let mut named = Vec::new();
-    let mut rest = args.iter();
-    while let Some(arg) = rest.next() {
-        if arg == "--test-threads" {
-            named.push(rest.next().map(String::as_str));
-        } else if let Some(value) = arg.strip_prefix("--test-threads=") {
-            named.push(Some(value));
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        if word == "--" {
+            break;
+        }
+        if let Some((flag, value)) = word.split_once('=')
+            && flag.starts_with("--")
+        {
+            if flag == "--test-threads" {
+                named.push(Some(value));
+            } else if !LIBTEST_VALUED.contains(&flag) {
+                return MANY;
+            }
+        } else if LIBTEST_VALUED.contains(&word.as_str()) {
+            let value = words.next().map(String::as_str);
+            if word == "--test-threads" {
+                named.push(value);
+            }
+        } else if word.starts_with('-') && !LIBTEST_FLAGS.contains(&word.as_str()) {
+            return MANY;
         }
     }
     match named.as_slice() {

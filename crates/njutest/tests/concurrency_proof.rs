@@ -251,4 +251,24 @@ fn only_an_explicit_single_test_thread_is_one_thread() {
         "a flag given twice is one libtest refuses, and nothing is read from it"
     );
     assert_eq!(threads(&["--test-threads"]), Threads::Many);
+    assert_eq!(
+        threads(&["--skip", "--test-threads=1"]),
+        Threads::Many,
+        "the value of `--skip` is a name to skip, not a thread count"
+    );
+    assert_eq!(
+        threads(&["--", "--test-threads=1"]),
+        Threads::Many,
+        "after `--` every word is a filter"
+    );
+    assert_eq!(
+        threads(&["--exact", "tests::a", "--test-threads=1"]),
+        Threads::One,
+        "a filter and a flag without a value leave the count alone"
+    );
+    assert_eq!(
+        threads(&["--unheard-of", "--test-threads=1"]),
+        Threads::Many,
+        "an option this reading does not know may take the next word, so nothing is read past it"
+    );
 }

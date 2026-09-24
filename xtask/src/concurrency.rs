@@ -33,6 +33,18 @@ pub const WITNESSED_BECAUSE: [&str; 2] = ["loose-reach", "parallel-tests"];
 /// The reasons nothing is proven that a recording can witness.
 pub const WITNESSED_WHY: [&str; 3] = ["no-touch", "not-libtest", "doctest"];
 
+/// Every reason for concurrency a report can give.
+pub const BECAUSE: [&str; 3] = ["loose-reach", "parallel-tests", "starts"];
+
+/// Every reason nothing is proven that a report can give.
+pub const WHY: [&str; 5] = [
+    "no-touch",
+    "not-libtest",
+    "doctest",
+    "unread",
+    "native-code",
+];
+
 /// What a recording says too little about for a standing to be derived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum UnwitnessedError {
@@ -71,6 +83,12 @@ pub enum ContradictionError {
         /// The reasons for concurrency.
         because: BTreeSet<&'static str>,
     },
+    /// A reason no run gives.
+    #[error("{kind:?} is no reason a run gives")]
+    Reason {
+        /// The kind.
+        kind: String,
+    },
     /// A state no run gives, or one that names no reason.
     #[error("{state:?} with no reason is no standing a run gives")]
     Unknown {
@@ -79,16 +97,63 @@ pub enum ContradictionError {
     },
 }
 
-/// How many threads libtest runs tests on under `args`: one only where exactly one `--test-threads` names 1, as the run reads it.
+/// The libtest options that take the next word as their value.
+const LIBTEST_VALUED: [&str; 7] = [
+    "--test-threads",
+    "--skip",
+    "--logfile",
+    "--format",
+    "--color",
+    "-Z",
+    "--shuffle-seed",
+];
+
+/// The libtest options that take no value.
+const LIBTEST_FLAGS: [&str; 17] = [
+    "--include-ignored",
+    "--ignored",
+    "--force-run-in-process",
+    "--exclude-should-panic",
+    "--test",
+    "--bench",
+    "--list",
+    "--nocapture",
+    "--no-capture",
+    "--show-output",
+    "--exact",
+    "-q",
+    "--quiet",
+    "--shuffle",
+    "--report-time",
+    "--ensure-time",
+    "--fail-fast",
+];
+
+/// Whether libtest runs tests on one thread under `args`, read the way libtest reads them and written again here rather than taken from the runner.
 #[must_use]
 pub fn one_thread(args: &[String]) -> bool {
+    const MANY: bool = false;
     let mut named = Vec::new();
-    let mut rest = args.iter();
-    while let Some(arg) = rest.next() {
-        if arg == "--test-threads" {
-            named.push(rest.next().map(String::as_str));
-        } else if let Some(value) = arg.strip_prefix("--test-threads=") {
-            named.push(Some(value));
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        if word == "--" {
+            break;
+        }
+        if let Some((flag, value)) = word.split_once('=')
+            && flag.starts_with("--")
+        {
+            if flag == "--test-threads" {
+                named.push(Some(value));
+            } else if !LIBTEST_VALUED.contains(&flag) {
+                return MANY;
+            }
+        } else if LIBTEST_VALUED.contains(&word.as_str()) {
+            let value = words.next().map(String::as_str);
+            if word == "--test-threads" {
+                named.push(value);
+            }
+        } else if word.starts_with('-') && !LIBTEST_FLAGS.contains(&word.as_str()) {
+            return MANY;
         }
     }
     named.as_slice() == [Some("1")]
@@ -138,25 +203,8 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let named = |list: &str, witnessable: &[&str]| -> (usize, BTreeSet<String>) {
-        let all: Vec<String> = standing
-            .get(list)
-            .and_then(Value::as_array)
-            .map(|reasons| {
-                reasons
-                    .iter()
-                    .filter_map(|reason| reason.get("kind").and_then(Value::as_str))
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let witnessed = all
-            .iter()
-            .filter(|kind| witnessable.contains(&kind.as_str()))
-            .cloned()
-            .collect();
-        (all.len(), witnessed)
-    };
+    known(standing)?;
+    let named = |list: &str, witnessable: &[&str]| named(standing, list, witnessable);
     let same = |reported: &BTreeSet<String>, witnessed: &BTreeSet<&'static str>| {
         reported.len() == witnessed.len() && witnessed.iter().all(|one| reported.contains(*one))
     };
@@ -205,6 +253,50 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
         }
         _ => Err(ContradictionError::Unknown { state }),
     }
+}
+
+/// Whether every reason `standing` gives is one a run gives.
+fn known(standing: &Value) -> Result<(), ContradictionError> {
+    for (list, known) in [("because", &BECAUSE[..]), ("why", &WHY[..])] {
+        for reason in standing
+            .get(list)
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            let kind = reason
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !known.contains(&kind) {
+                return Err(ContradictionError::Reason {
+                    kind: kind.to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// How many reasons `standing` gives in `list`, and which of them are `witnessable`.
+fn named(standing: &Value, list: &str, witnessable: &[&str]) -> (usize, BTreeSet<String>) {
+    let all: Vec<String> = standing
+        .get(list)
+        .and_then(Value::as_array)
+        .map(|reasons| {
+            reasons
+                .iter()
+                .filter_map(|reason| reason.get("kind").and_then(Value::as_str))
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let witnessed = all
+        .iter()
+        .filter(|kind| witnessable.contains(&kind.as_str()))
+        .cloned()
+        .collect();
+    (all.len(), witnessed)
 }
 
 /// How many rounds confirm a delayed failure, written again from the runner's contract rather than read from its code.

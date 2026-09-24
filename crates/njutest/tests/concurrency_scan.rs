@@ -163,3 +163,29 @@ fn brackets_in_comments_and_literals_are_not_nesting() {
         "a file whose brackets nest shallowly is read, whatever its comments and literals hold"
     );
 }
+
+#[test]
+fn a_chain_the_parser_would_recurse_through_without_a_bracket_is_read_on_a_small_stack() {
+    let source = format!(
+        "fn a() -> bool {{ {}true }}\nfn b() {{ std::thread::spawn(|| {{}}); }}\ntype T = {}u8{};\nconst C: u8 = 1{};\n",
+        "!".repeat(20_000),
+        "Vec<".repeat(5_000),
+        ">".repeat(5_000),
+        "+1".repeat(100_000)
+    );
+    let found = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn_scoped(scope, || {
+                scanned("src/chain.rs", &source).map(|found| found.len())
+            })
+            .expect("a thread")
+            .join()
+            .expect("the scan returns rather than overflowing the stack")
+    });
+    assert_eq!(
+        found.expect("tokens are read without a parse that recurses"),
+        1,
+        "the spawn is found however long the chains beside it"
+    );
+}

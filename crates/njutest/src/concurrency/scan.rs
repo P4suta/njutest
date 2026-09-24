@@ -56,7 +56,7 @@ pub enum ScanError {
         /// What the parser said.
         message: String,
     },
-    /// Its groups nest deeper than the scan reads, which a parser recursing through them could not survive on every stack.
+    /// Its groups nest deeper than the scan reads, which building and dropping its token tree could not survive on every stack.
     #[error("{path}: groups nest deeper than {limit}, which the scan does not read")]
     TooDeep {
         /// The file.
@@ -289,25 +289,25 @@ fn past_prefixed(bytes: &[u8], at: usize) -> usize {
 
 /// Every place in `source`, the file at `path`, that can start a thread, a process, or native code, in source order.
 ///
-/// Read from its tokens, so a macro body and an attribute are read exactly as code is; the parse first holds the file to being Rust.
+/// Read from its tokens, so a macro body and an attribute are read exactly as code is; the lexer first holds the file to being Rust's tokens, and nothing parses it further, since no rule reads more than tokens and a parser recurses through chains no limit here can bound.
 ///
 /// # Errors
-/// [`ScanError::Unparsable`] when `source` is not Rust this release reads, which is never read as a file that starts nothing.
+/// [`ScanError::Unparsable`] when `source` is not Rust's tokens, and [`ScanError::TooDeep`] when its brackets nest deeper than [`MAX_DEPTH`]; neither is ever read as a file that starts nothing.
 pub fn scanned(path: &str, source: &str) -> Result<Vec<Found>, ScanError> {
-    let refused = |error: &syn::Error| ScanError::Unparsable {
-        path: path.to_owned(),
-        line: error.span().start().line,
-        message: error.to_string(),
-    };
     if nesting(source) > MAX_DEPTH {
         return Err(ScanError::TooDeep {
             path: path.to_owned(),
             limit: MAX_DEPTH,
         });
     }
-    syn::parse_file(source).map_err(|error| refused(&error))?;
-    let stream: proc_macro2::TokenStream =
-        syn::parse_str(source).map_err(|error| refused(&error))?;
+    let stream =
+        <proc_macro2::TokenStream as std::str::FromStr>::from_str(source).map_err(|error| {
+            ScanError::Unparsable {
+                path: path.to_owned(),
+                line: error.span().start().line,
+                message: error.to_string(),
+            }
+        })?;
     let mut tokens = Vec::new();
     flattened(stream, &mut tokens);
     Ok(tokens
