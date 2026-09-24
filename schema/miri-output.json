@@ -1,8 +1,93 @@
 {
-  "description": "What Miri's output says, as both readings of one interpretation must read it: the runner's soundness phase and the audit that re-derives it. A line containing `undefined` is unsoundness found; one containing an `unsupported` marker is a suite not interpreted whole; one containing an `absent` marker is a toolchain with no interpreter. Otherwise only libtest's own `result` lines say anything about the suite: one whose remainder starts with `failed` is a test that failed, and a run with at least one and none failed passed; a status with no such line is the interpreter's own trouble.",
-  "undefined": "Undefined Behavior",
-  "unsupported": ["unsupported operation", "can't call foreign function", "unsupported target"],
-  "absent": ["no such command", "no such subcommand", "is not installed"],
+  "description": "What Miri's output means, as both readings of one interpretation must read it: the runner's soundness phase and the audit that re-derives it. Output is read by its structure, never by a phrase anywhere in it. Each line whose trimmed start is one of `binary` starts one test binary. A line `---- <name> stdout ----` or `---- <name> stderr ----` opens a test's captured output, which the harness prints only for a failing test and which says nothing about the run, until a line that is exactly `failures:`. Outside captured output, a line whose trimmed start is `result` followed by exactly libtest's summary shape ends the binary most recently started, as passed or failed; a line whose trimmed start, after the `test <name> ... ` libtest prints before a test's outcome where there is one, is `diagnostic` is the interpreter or the toolchain speaking, and it is undefined behaviour where it goes on with `undefined`, a suite not interpreted whole where it holds an `unsupported` marker, and a toolchain with nothing to interpret with where it holds an `absent` marker. A run passed where it exited 0 and every binary it started ended passed; a test failed where some binary ended failed; anything else ran no test to a result. `cases` are outputs both readings must come to the same verdict on.",
+  "binary": [
+    "Running ",
+    "Doc-tests "
+  ],
+  "captured": {
+    "open": "---- ",
+    "stdout": " stdout ----",
+    "stderr": " stderr ----",
+    "close": "failures:"
+  },
+  "diagnostic": "error: ",
+  "undefined": "Undefined Behavior:",
+  "unsupported": [
+    "unsupported operation",
+    "can't call foreign function",
+    "unsupported target"
+  ],
+  "absent": [
+    "no such command",
+    "no such subcommand",
+    "is not installed"
+  ],
   "result": "test result: ",
-  "failed": "FAILED"
+  "failed": "FAILED",
+  "cases": [
+    {
+      "name": "every binary gave a passing result",
+      "status": 0,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nrunning 1 test\ntest t ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n",
+      "came": "passed"
+    },
+    {
+      "name": "a test failed",
+      "status": 101,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nnothing special\nthread 't' panicked at src/lib.rs:3:5:\nboom\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n",
+      "came": "failed"
+    },
+    {
+      "name": "a failing test printed the words of undefined behaviour",
+      "status": 101,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nerror: Undefined Behavior: quoted by the test\nthread 't' panicked at src/lib.rs:3:5:\nboom\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n",
+      "came": "failed"
+    },
+    {
+      "name": "a failing test printed a passing result line",
+      "status": 101,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\nthread 't' panicked at src/lib.rs:3:5:\nboom\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n",
+      "came": "failed"
+    },
+    {
+      "name": "the interpreter found undefined behaviour",
+      "status": 1,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nrunning 1 test\ntest t ... error: Undefined Behavior: trying to retag from <1> for Unique permission\n --> src/lib.rs:3:5\n",
+      "came": "undefined"
+    },
+    {
+      "name": "the interpreter cannot interpret a foreign call",
+      "status": 1,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nrunning 1 test\ntest t ... error: unsupported operation: can't call foreign function `getrandom` on OS `macos`\n",
+      "came": "unsupported"
+    },
+    {
+      "name": "one binary passed and another started and gave no result",
+      "status": 134,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nrunning 1 test\ntest t ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n     Running tests/it.rs (target/miri/debug/deps/it-2)\n\nrunning 1 test\ntest u ... \nfatal runtime error: stack overflow\n",
+      "came": "ran-no-test"
+    },
+    {
+      "name": "cargo-miri could not start the binary it built",
+      "status": 101,
+      "output": "   Compiling demo v0.1.0\n    Finished `test` profile\n     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\n\nthread 'main' panicked at cargo-miri/src/util.rs:132:9:\nfailed to run `cd /gone`\n",
+      "came": "ran-no-test"
+    },
+    {
+      "name": "nothing ran",
+      "status": 0,
+      "output": "   Compiling demo v0.1.0\n    Finished `test` profile\n",
+      "came": "ran-no-test"
+    },
+    {
+      "name": "a result line not in libtest's shape",
+      "status": 0,
+      "output": "     Running unittests src/lib.rs (target/miri/debug/deps/demo-1)\ntest result: ok. 3 passed\n",
+      "came": "ran-no-test"
+    }
+  ],
+  "test_prefix": {
+    "start": "test ",
+    "end": " ... "
+  }
 }

@@ -2298,35 +2298,26 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
 }
 
 #[test]
-fn the_audit_reads_what_the_published_contract_says_miri_writes() {
-    use xtask::proofaudit::soundness::{ABSENT, FAILED, RESULT, UNDEFINED, UNSUPPORTED};
+fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
     let contract = xtask::strictjson::from_str(
         &std::fs::read_to_string(gates::workspace_root().join("schema/miri-output.json"))
             .expect("the published contract"),
     )
     .expect("the contract is JSON");
-    let text = |key: &str| contract.get(key).and_then(serde_json::Value::as_str);
-    let list = |key: &str| -> Option<Vec<&str>> {
-        contract
-            .get(key)
-            .and_then(serde_json::Value::as_array)
-            .map(|named| named.iter().filter_map(serde_json::Value::as_str).collect())
-    };
-    assert_eq!(
-        (
-            text("undefined"),
-            list("unsupported"),
-            list("absent"),
-            text("result"),
-            text("failed")
-        ),
-        (
-            Some(UNDEFINED),
-            Some(UNSUPPORTED.to_vec()),
-            Some(ABSENT.to_vec()),
-            Some(RESULT),
-            Some(FAILED)
-        ),
-        "the audit and the runner read one published contract of what Miri writes"
-    );
+    let cases = contract
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .expect("the contract's cases");
+    for case in cases {
+        let field = |key: &str| case.get(key).and_then(serde_json::Value::as_str);
+        let name = field("name").expect("a case is named");
+        assert_eq!(
+            Some(xtask::proofaudit::soundness::verdict(
+                field("output").expect("a case has output"),
+                case.get("status").and_then(serde_json::Value::as_i64),
+            )),
+            field("came"),
+            "{name}: the audit and the runner come to what the contract says of this case"
+        );
+    }
 }

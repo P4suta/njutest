@@ -9,8 +9,23 @@ use serde_json::Value;
 
 use super::{Audit, Layer, Notes, Recording, field, rows};
 
-/// What Miri says when it has found unsoundness.
-pub const UNDEFINED: &str = "Undefined Behavior";
+/// What Miri's diagnostic says next when it has found unsoundness.
+pub const UNDEFINED: &str = "Undefined Behavior:";
+
+/// What starts a line in which the interpreter or the toolchain speaks.
+pub const DIAGNOSTIC: &str = "error: ";
+
+/// What starts the line cargo prints before each test binary.
+pub const BINARY: [&str; 2] = ["Running ", "Doc-tests "];
+
+/// What a test's captured output opens with, and the two endings its header can have.
+pub const CAPTURE_OPEN: (&str, [&str; 2]) = ("---- ", [" stdout ----", " stderr ----"]);
+
+/// The line that closes every failing test's captured output.
+pub const CAPTURE_CLOSE: &str = "failures:";
+
+/// What libtest prints around a test's name before its outcome, which a diagnostic may follow on the same line.
+pub const TEST_PREFIX: (&str, &str) = ("test ", " ... ");
 
 /// What Miri says when it cannot interpret the suite whole.
 pub const UNSUPPORTED: [&str; 3] = [
@@ -129,7 +144,8 @@ fn came(run: Said<'_>, probe: Option<&Value>) -> Option<Came> {
         return None;
     };
     let (kind, code) = ended(run.exec);
-    if kind == "not-started" || ABSENT.iter().any(|marker| said.contains(marker)) {
+    let heard = Heard::of(said);
+    if kind == "not-started" || heard.absent {
         return Some(Came::Absent);
     }
     if kind == "timed-out" || kind == "stalled" {
@@ -138,22 +154,166 @@ fn came(run: Said<'_>, probe: Option<&Value>) -> Option<Came> {
     if code != Some(0) && probe.is_some_and(|asked| ended(asked).1 != Some(0)) {
         return Some(Came::Absent);
     }
-    if said.contains(UNDEFINED) {
-        return Some(Came::Undefined);
+    Some(heard.came(code))
+}
+
+/// What the interpreter's output `said` comes to where its run exited with `code`, read by the structure the published contract gives it, as the contract names the verdict.
+#[cfg(feature = "testkit")]
+#[must_use]
+pub fn verdict(said: &str, code: Option<i64>) -> &'static str {
+    let heard = Heard::of(said);
+    if heard.absent {
+        return "absent";
     }
-    if UNSUPPORTED.iter().any(|marker| said.contains(marker)) {
-        return Some(Came::Unsupported);
+    match heard.came(code) {
+        Came::Absent => "absent",
+        Came::TimedOut => "timed-out",
+        Came::Undefined => "undefined",
+        Came::Unsupported => "unsupported",
+        Came::Failed => "failed",
+        Came::Passed => "passed",
+        Came::RanNoTest => "ran-no-test",
     }
-    let results: Vec<&str> = said
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix(RESULT))
-        .collect();
-    let failed = results.iter().any(|result| result.starts_with(FAILED));
-    Some(match code {
-        Some(0) if !results.is_empty() && !failed => Came::Passed,
-        Some(code) if code != 0 && failed => Came::Failed,
-        Some(_) | None => Came::RanNoTest,
-    })
+}
+
+/// How one binary the interpreter started came out, where it gave a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// Every test of it passed.
+    Passed,
+    /// A test of it failed.
+    Failed,
+}
+
+/// Where one line of the output stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    /// Outside any test's captured output.
+    Open,
+    /// Inside a failing test's captured output, which says nothing about the run.
+    Captured,
+}
+
+/// What the interpreter and the toolchain said in one output, and what each binary came to.
+#[derive(Debug, Default)]
+struct Heard {
+    /// For each binary started, in order: nothing yet, or whether a test of it failed.
+    results: Vec<Option<Outcome>>,
+    /// Whether a diagnostic found undefined behaviour.
+    undefined: bool,
+    /// Whether a diagnostic could not interpret something.
+    unsupported: bool,
+    /// Whether a diagnostic said there is nothing to interpret with.
+    absent: bool,
+}
+
+impl Heard {
+    /// `said`, read line by line.
+    fn of(said: &str) -> Self {
+        let mut heard = Self::default();
+        let mut place = Place::Open;
+        for line in said.lines().map(str::trim_end) {
+            let (open, endings) = CAPTURE_OPEN;
+            if line.starts_with(open) && endings.iter().any(|end| line.ends_with(end)) {
+                place = Place::Captured;
+                continue;
+            }
+            if place == Place::Captured {
+                if line == CAPTURE_CLOSE {
+                    place = Place::Open;
+                }
+                continue;
+            }
+            heard.line(line.trim_start());
+        }
+        heard
+    }
+
+    /// One line outside any captured output.
+    fn line(&mut self, line: &str) {
+        if BINARY.iter().any(|start| line.starts_with(start)) {
+            self.results.push(None);
+            return;
+        }
+        if let Some(rest) = line.strip_prefix(RESULT) {
+            if let (Some(outcome), Some(slot @ None)) = (summarised(rest), self.results.last_mut())
+            {
+                *slot = Some(outcome);
+            }
+            return;
+        }
+        let (start, end) = TEST_PREFIX;
+        let spoken = match line
+            .strip_prefix(start)
+            .and_then(|rest| rest.split_once(end))
+        {
+            Some((_name, after)) => after,
+            None => line,
+        };
+        let Some(diagnostic) = spoken.strip_prefix(DIAGNOSTIC) else {
+            return;
+        };
+        self.undefined |= diagnostic.starts_with(UNDEFINED);
+        self.unsupported |= UNSUPPORTED.iter().any(|marker| diagnostic.contains(marker));
+        self.absent |= ABSENT.iter().any(|marker| diagnostic.contains(marker));
+    }
+
+    /// What the run came to where it exited with `code`.
+    fn came(&self, code: Option<i64>) -> Came {
+        if self.undefined {
+            return Came::Undefined;
+        }
+        if self.unsupported {
+            return Came::Unsupported;
+        }
+        let failed = self.results.contains(&Some(Outcome::Failed));
+        let every_passed = !self.results.is_empty()
+            && self
+                .results
+                .iter()
+                .all(|result| *result == Some(Outcome::Passed));
+        match code {
+            Some(0) if every_passed => Came::Passed,
+            Some(code) if code != 0 && failed => Came::Failed,
+            Some(_) | None => Came::RanNoTest,
+        }
+    }
+}
+
+/// How a binary came out where `rest` is exactly libtest's summary after [`RESULT`], and nothing otherwise.
+fn summarised(rest: &str) -> Option<Outcome> {
+    let (status, counts) = rest.split_once(". ")?;
+    let outcome = if status == "ok" {
+        Outcome::Passed
+    } else if status == FAILED {
+        Outcome::Failed
+    } else {
+        return None;
+    };
+    let mut parts = counts.split("; ");
+    for what in [
+        " passed",
+        " failed",
+        " ignored",
+        " measured",
+        " filtered out",
+    ] {
+        let number = parts.next()?.strip_suffix(what)?;
+        if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+    }
+    let time = parts
+        .next()?
+        .strip_prefix("finished in ")?
+        .strip_suffix('s')?;
+    let digits = time.bytes().filter(u8::is_ascii_digit).count();
+    let points = time.bytes().filter(|byte| *byte == b'.').count();
+    let only_digits_and_a_point = time
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'.');
+    (parts.next().is_none() && digits > 0 && only_digits_and_a_point && points <= 1)
+        .then_some(outcome)
 }
 
 /// Holds what the report says of soundness to what the recorded interpretation came to, in both directions; `execs` is every exec record of the runner's recording and `outputs` what the recording kept of each run it re-derives from.

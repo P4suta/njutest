@@ -531,7 +531,10 @@ const SETUP_FAILED: &str =
     "thread 'main' panicked at cargo-miri/src/util.rs:132:9:\nfailed to run `cd /gone`\n";
 
 /// What Miri prints when every test it ran passed.
-const PASSED: &str = "test result: ok. 1 passed; 0 failed; 0 ignored\n";
+const PASSED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+/// What Miri prints when a test failed and its captured output quotes the words of undefined behaviour.
+const QUOTED_UNDEFINED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nerror: Undefined Behavior: quoted by the test\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
 
 /// The report saying the suite was interpreted and a test failed under the interpreter.
 fn failing_under_the_interpreter() -> Value {
@@ -564,6 +567,21 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             document: failing_under_the_interpreter(),
             events: with_run(101, SETUP_FAILED),
             outputs: vec![("output/1.txt", SETUP_FAILED)],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "undefined behaviour read from a failing test's captured output",
+            document: with(json!({
+                "accounting": { "soundness": { "executed": true } },
+                "findings": [{}, {
+                    "kind": "undefined-behaviour",
+                    "subject": "soundness",
+                    "detail": "error: Undefined Behavior: quoted by the test",
+                    "position": null
+                }]
+            })),
+            events: with_run(101, QUOTED_UNDEFINED),
+            outputs: vec![("output/1.txt", QUOTED_UNDEFINED)],
             ..clean.clone()
         },
         Perturbation {
