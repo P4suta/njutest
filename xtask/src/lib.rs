@@ -425,7 +425,7 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     let code = match ran {
         Ok(work::Ended::Exited(status)) => exit_status(status),
         Ok(work::Ended::Interrupted { signal }) => signalled_code(signal),
-        Ok(work::Ended::OverBudget { .. }) => 124,
+        Ok(work::Ended::OverBudget { .. } | work::Ended::Quiet { .. }) => 124,
         Err(failure) => {
             return after_output(writeln!(stderr, "tidy: {failure}"), ExitCode::from(127));
         }
