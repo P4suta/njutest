@@ -702,6 +702,19 @@ pub struct PerturbationRecord {
     pub launcher: Option<String>,
     /// The harness arguments its schedule added after the baseline's.
     pub arguments: Vec<String>,
+    /// The guard each thread paused at the first time it reached it, or nothing.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub delay: Option<DelayRecord>,
+}
+
+/// The one guard a control paused each of its threads at, once: which schedule it ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelayRecord {
+    /// The catalog index of the guard.
+    pub site: u32,
+    /// How many milliseconds each thread paused there.
+    pub pause_ms: u64,
 }
 
 /// What one control started under a perturbation came to, and what became of the reach it could have recorded.

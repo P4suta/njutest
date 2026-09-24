@@ -15,7 +15,7 @@ use crate::cargo::{
 };
 use crate::id::{is_digest, is_id};
 use crate::instrument::{
-    ACTIVE_ENV, CATALOG_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
+    ACTIVE_ENV, CATALOG_ENV, DELAY_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
     STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
@@ -26,8 +26,9 @@ use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 7] = [
+pub const RESERVED_ENV: [&str; 8] = [
     ACTIVE_ENV,
+    DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
     STEPS_ENV,
@@ -37,8 +38,9 @@ pub const RESERVED_ENV: [&str; 7] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 8] = [
+pub const COMPOSED_ENV: [&str; 9] = [
     ACTIVE_ENV,
+    DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
     STEPS_ENV,
@@ -1481,6 +1483,15 @@ fn rustlib_targets(sysroot: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(found)
 }
 
+/// One guard a control pauses at, the first time each of its threads reaches it: one schedule of the program, named by the site it delays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Delay {
+    /// The catalog index of the guard.
+    pub site: u32,
+    /// How many milliseconds each thread pauses there, once.
+    pub pause_ms: u64,
+}
+
 /// One execution to make.
 #[derive(Debug, Clone)]
 pub struct ExecRequest<'a> {
@@ -1495,6 +1506,8 @@ pub struct ExecRequest<'a> {
     overlay: Vec<(Variable, OsString)>,
     /// A program the process is started through.
     launcher: Option<Launcher>,
+    /// The guard the process pauses at, with the catalog its index is in.
+    delay: Option<(Delay, &'a str)>,
 }
 
 impl<'a> ExecRequest<'a> {
@@ -1510,7 +1523,15 @@ impl<'a> ExecRequest<'a> {
             scratch_cwd: false,
             overlay: Vec::new(),
             launcher: None,
+            delay: None,
         }
+    }
+
+    /// Pauses each thread of the process at `delay`'s guard of the catalog digested as `catalog`, the first time it reaches it.
+    #[must_use]
+    pub const fn with_delay(mut self, delay: Option<(Delay, &'a str)>) -> Self {
+        self.delay = delay;
+        self
     }
 
     /// Sets `overlay` over the environment the process would otherwise have, each variable replacing one of the same name.
@@ -1842,6 +1863,54 @@ pub const fn answered(outcome: Outcome) -> bool {
     !matches!(outcome, Outcome::Inconclusive | Outcome::StepLimitReached)
 }
 
+/// Why a control's perturbation cannot be put.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unput {
+    /// A delay beside an active mutant, which only a control may carry.
+    DelayBesideMutant,
+}
+
+impl Unput {
+    /// What a reader is told.
+    const fn said(self) -> &'static str {
+        match self {
+            Self::DelayBesideMutant => {
+                "a delay is a control's perturbation, and this execution activates a mutant"
+            }
+        }
+    }
+}
+
+/// Lays a control's perturbation over `env`: the variables it sets, and the guard it pauses at with the catalog that guard's index is in.
+///
+/// # Errors
+/// Why the perturbation cannot be put: a delay beside an active mutant, which only a control may carry.
+fn perturbed(
+    request: &ExecRequest<'_>,
+    active: bool,
+    env: &mut Vec<(OsString, OsString)>,
+) -> Result<(), Unput> {
+    for (variable, value) in &request.overlay {
+        let name = OsStr::new(variable.name());
+        env.retain(|(held, _)| !crate::vars::same_name(held, name));
+        env.push((name.to_owned(), value.clone()));
+    }
+    if let Some((delay, catalog)) = request.delay {
+        if active {
+            return Err(Unput::DelayBesideMutant);
+        }
+        for name in [DELAY_ENV, CATALOG_ENV] {
+            env.retain(|(held, _)| !crate::vars::same_name(held, OsStr::new(name)));
+        }
+        env.push((
+            OsString::from(DELAY_ENV),
+            OsString::from(format!("{}@{}", delay.site, delay.pause_ms)),
+        ));
+        env.push((OsString::from(CATALOG_ENV), OsString::from(catalog)));
+    }
+    Ok(())
+}
+
 /// The bound one execution runs under: a quiet window under a ceiling where it counts its steps, and the bound it was given where it does not.
 fn watched(timeout: Option<Duration>, step: Option<&ExpectedStep>) -> (Bound, Option<Progress>) {
     match (timeout, step) {
@@ -1900,10 +1969,8 @@ pub fn exec(
         step.add_environment(&mut env);
         spec.stop_file = Some(step.path.clone());
     }
-    for (variable, value) in &request.overlay {
-        let name = OsStr::new(variable.name());
-        env.retain(|(held, _)| !crate::vars::same_name(held, name));
-        env.push((name.to_owned(), value.clone()));
+    if let Err(refusal) = perturbed(request, context.active.is_some(), &mut env) {
+        return MutantResult::apparatus_error(&target.id, refusal.said().to_owned());
     }
     spec.env = Some(env);
     let result = run(&spec, cancel);

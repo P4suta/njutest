@@ -48,6 +48,9 @@ pub const STEP_PROTOCOL_EXIT: i32 = 94;
 /// Names the file the guards append to, saying which of the process's threads reached them.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
+/// Names the one guard each thread pauses at the first time it reaches it, as `<catalog index>@<milliseconds>`: one schedule of the program, told apart from the others by the site it delays.
+pub const DELAY_ENV: &str = "RUST_MUTANTS_DELAY";
+
 /// The trait the runtime names the types a probe may compare a value of.
 pub(super) const OBSERVABLE: &str = "Observable";
 
@@ -362,6 +365,7 @@ mod {{MODULE}} {
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         touch(index);
+        delay(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
             Selection::Index(selected) if selected == index => {
@@ -961,6 +965,57 @@ mod {{MODULE}} {
         }
     }
 
+    /// The one guard this process delays, and for how long.
+    #[derive(Clone, Copy)]
+    enum Delay {
+        None,
+        At { index: u32, millis: u64 },
+    }
+
+    static DELAY: __rm_std::sync::OnceLock<Delay> = __rm_std::sync::OnceLock::new();
+
+    __rm_std::thread_local! {
+        static DELAYED: __rm_std::cell::Cell<bool> = const { __rm_std::cell::Cell::new(false) };
+    }
+
+    fn configured_delay() -> Delay {
+        let raw = match __rm_std::env::var("{{DELAY_ENV}}") {
+            __rm_std::result::Result::Ok(raw) => raw,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotPresent) => return Delay::None,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotUnicode(_)) => protocol_failure(),
+        };
+        if raw.is_empty() {
+            return Delay::None;
+        }
+        match __rm_std::env::var_os("{{ACTIVE_ENV}}") {
+            __rm_std::option::Option::Some(active) if !active.is_empty() => protocol_failure(),
+            _ => {}
+        }
+        match __rm_std::env::var("{{CATALOG_ENV}}") {
+            __rm_std::result::Result::Ok(catalog) if catalog == CATALOG => {}
+            __rm_std::result::Result::Ok(catalog) => stale_catalog(&catalog),
+            __rm_std::result::Result::Err(_) => stale_catalog("<unset>"),
+        }
+        let (index, millis) = match raw.split_once('@') {
+            __rm_std::option::Option::Some(parts) => parts,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        match (index.parse::<u32>(), millis.parse::<u64>()) {
+            (__rm_std::result::Result::Ok(index), __rm_std::result::Result::Ok(millis)) => Delay::At { index, millis },
+            _ => protocol_failure(),
+        }
+    }
+
+    /// Pauses this thread the first time it reaches the guard this process delays.
+    #[inline(never)]
+    fn delay(index: u32) {
+        if let Delay::At { index: at, millis } = *DELAY.get_or_init(configured_delay) {
+            if at == index && !DELAYED.with(|delayed| delayed.replace(true)) {
+                __rm_std::thread::sleep(__rm_std::time::Duration::from_millis(millis));
+            }
+        }
+    }
+
     #[inline(never)]
     fn touch(index: u32) {
         if !touching() {
@@ -1190,6 +1245,7 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
         .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
         .replace("{{STEPS_ENV}}", STEPS_ENV)
+        .replace("{{DELAY_ENV}}", DELAY_ENV)
         .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)
         .replace("{{STEP_NONCE_ENV}}", STEP_NONCE_ENV)
         .replace("{{STEP_STATE_ENV}}", STEP_STATE_ENV)

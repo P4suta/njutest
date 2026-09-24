@@ -204,6 +204,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         touch(index);
+        delay(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
             Selection::Index(selected) if selected == index => {
@@ -800,6 +801,57 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             __rm_std::result::Result::Ok(TouchAccess::Applied) => {}
             __rm_std::result::Result::Ok(TouchAccess::AlreadyBorrowed)
             | __rm_std::result::Result::Err(_) => touch_failure(),
+        }
+    }
+
+    /// The one guard this process delays, and for how long.
+    #[derive(Clone, Copy)]
+    enum Delay {
+        None,
+        At { index: u32, millis: u64 },
+    }
+
+    static DELAY: __rm_std::sync::OnceLock<Delay> = __rm_std::sync::OnceLock::new();
+
+    __rm_std::thread_local! {
+        static DELAYED: __rm_std::cell::Cell<bool> = const { __rm_std::cell::Cell::new(false) };
+    }
+
+    fn configured_delay() -> Delay {
+        let raw = match __rm_std::env::var("RUST_MUTANTS_DELAY") {
+            __rm_std::result::Result::Ok(raw) => raw,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotPresent) => return Delay::None,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotUnicode(_)) => protocol_failure(),
+        };
+        if raw.is_empty() {
+            return Delay::None;
+        }
+        match __rm_std::env::var_os("RUST_MUTANTS_ACTIVE") {
+            __rm_std::option::Option::Some(active) if !active.is_empty() => protocol_failure(),
+            _ => {}
+        }
+        match __rm_std::env::var("RUST_MUTANTS_CATALOG") {
+            __rm_std::result::Result::Ok(catalog) if catalog == CATALOG => {}
+            __rm_std::result::Result::Ok(catalog) => stale_catalog(&catalog),
+            __rm_std::result::Result::Err(_) => stale_catalog("<unset>"),
+        }
+        let (index, millis) = match raw.split_once('@') {
+            __rm_std::option::Option::Some(parts) => parts,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        match (index.parse::<u32>(), millis.parse::<u64>()) {
+            (__rm_std::result::Result::Ok(index), __rm_std::result::Result::Ok(millis)) => Delay::At { index, millis },
+            _ => protocol_failure(),
+        }
+    }
+
+    /// Pauses this thread the first time it reaches the guard this process delays.
+    #[inline(never)]
+    fn delay(index: u32) {
+        if let Delay::At { index: at, millis } = *DELAY.get_or_init(configured_delay) {
+            if at == index && !DELAYED.with(|delayed| delayed.replace(true)) {
+                __rm_std::thread::sleep(__rm_std::time::Duration::from_millis(millis));
+            }
         }
     }
 
