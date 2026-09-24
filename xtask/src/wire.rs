@@ -82,8 +82,8 @@ pub enum IdentityError {
 }
 
 impl crate::error::Coded for IdentityError {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::IDENTITY_FIELD
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::IdentityField
     }
 }
 

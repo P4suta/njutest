@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use xtask::error::ERROR_CODES;
+use xtask::error::XtCode;
 
 fn documented() -> BTreeSet<String> {
     let path = njutest_devkit::paths::workspace_root().join("docs/errors.md");
@@ -26,17 +26,17 @@ fn documented() -> BTreeSet<String> {
 
 #[test]
 fn every_xtask_code_is_documented_and_every_documented_code_exists() {
-    let declared: BTreeSet<String> = ERROR_CODES.iter().map(|c| c.code.to_owned()).collect();
+    let declared: BTreeSet<String> = XtCode::ALL.iter().map(|c| c.code().to_owned()).collect();
     assert_eq!(
         declared,
         documented(),
-        "docs/errors.md and xtask::error::ERROR_CODES disagree"
+        "docs/errors.md and xtask::error::XtCode disagree"
     );
 }
 
 #[test]
 fn xtask_codes_are_unique_well_formed_and_sorted() {
-    let codes: Vec<&str> = ERROR_CODES.iter().map(|c| c.code).collect();
+    let codes: Vec<&str> = XtCode::ALL.iter().map(|c| c.code()).collect();
     let unique: BTreeSet<&str> = codes.iter().copied().collect();
     assert_eq!(unique.len(), codes.len(), "duplicate codes: {codes:?}");
     let mut sorted = codes.clone();
@@ -56,8 +56,13 @@ fn xtask_codes_are_unique_well_formed_and_sorted() {
 fn every_documented_row_says_what_the_code_says() {
     let path = njutest_devkit::paths::workspace_root().join("docs/errors.md");
     let text = std::fs::read_to_string(&path).expect("docs/errors.md");
-    for code in ERROR_CODES {
-        let row = format!("| `{}` | {} | {} |", code.code, code.meaning, code.remedy);
+    for code in XtCode::ALL {
+        let row = format!(
+            "| `{}` | {} | {} |",
+            code.code(),
+            code.meaning(),
+            code.remedy()
+        );
         assert!(
             text.lines().any(|line| line == row),
             "docs/errors.md lacks {row}"

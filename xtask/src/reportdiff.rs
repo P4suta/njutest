@@ -48,8 +48,8 @@ pub enum DiffError {
 }
 
 impl crate::error::Coded for DiffError {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::DIFF_UNREADABLE
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::DiffUnreadable
     }
 }
 

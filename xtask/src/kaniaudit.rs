@@ -296,13 +296,13 @@ pub(crate) enum AuditError {
 }
 
 impl crate::error::Coded for AuditError {
-    fn code(&self) -> crate::error::ErrorCode {
+    fn code(&self) -> crate::error::XtCode {
         match self {
-            Self::Read { .. } | Self::Json { .. } => crate::error::KANI_UNREADABLE,
+            Self::Read { .. } | Self::Json { .. } => crate::error::XtCode::KaniUnreadable,
             Self::Metadata { .. } | Self::Project { .. } | Self::Toolchain { .. } => {
-                crate::error::KANI_CONTRACT
+                crate::error::XtCode::KaniContract
             }
-            Self::Ledger { .. } | Self::Harness { .. } => crate::error::KANI_LEDGER,
+            Self::Ledger { .. } | Self::Harness { .. } => crate::error::XtCode::KaniLedger,
             Self::Execution { .. }
             | Self::Properties { .. }
             | Self::Backend { .. }
@@ -310,8 +310,8 @@ impl crate::error::Coded for AuditError {
             | Self::Result { .. }
             | Self::Assertion { .. }
             | Self::Cover { .. }
-            | Self::CheckId { .. } => crate::error::KANI_UNPROVEN,
-            Self::Arithmetic { .. } => crate::error::KANI_ARITHMETIC,
+            | Self::CheckId { .. } => crate::error::XtCode::KaniUnproven,
+            Self::Arithmetic { .. } => crate::error::XtCode::KaniArithmetic,
         }
     }
 }

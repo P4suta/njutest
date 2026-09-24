@@ -18,8 +18,8 @@ pub struct ReadError {
 }
 
 impl crate::error::Coded for ReadError {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::RECORDING_LINE
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::RecordingLine
     }
 }
 

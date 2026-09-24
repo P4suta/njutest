@@ -49,13 +49,13 @@ pub enum FuzzClippyError {
 }
 
 impl crate::error::Coded for FuzzClippyError {
-    fn code(&self) -> crate::error::ErrorCode {
+    fn code(&self) -> crate::error::XtCode {
         match self {
             Self::Read { .. } | Self::Parse { .. } | Self::Missing { .. } | Self::Level { .. } => {
-                crate::error::FUZZ_POLICY
+                crate::error::XtCode::FuzzPolicy
             }
-            Self::Start(..) => crate::error::FUZZ_CARGO,
-            Self::Refused => crate::error::GATE_REFUSED,
+            Self::Start(..) => crate::error::XtCode::FuzzCargo,
+            Self::Refused => crate::error::XtCode::GateRefused,
         }
     }
 }

@@ -254,10 +254,12 @@ pub enum SpecimenError {
 }
 
 impl crate::error::Coded for SpecimenError {
-    fn code(&self) -> crate::error::ErrorCode {
+    fn code(&self) -> crate::error::XtCode {
         match self {
-            Self::Directory { .. } | Self::Unwritable { .. } => crate::error::SPECIMEN_UNWRITABLE,
-            Self::NotAnObject { .. } | Self::Envelope { .. } => crate::error::SPECIMEN_EVENT,
+            Self::Directory { .. } | Self::Unwritable { .. } => {
+                crate::error::XtCode::SpecimenUnwritable
+            }
+            Self::NotAnObject { .. } | Self::Envelope { .. } => crate::error::XtCode::SpecimenEvent,
         }
     }
 }

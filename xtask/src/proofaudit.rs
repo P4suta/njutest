@@ -91,13 +91,13 @@ pub enum AuditError {
 }
 
 impl crate::error::Coded for AuditError {
-    fn code(&self) -> crate::error::ErrorCode {
+    fn code(&self) -> crate::error::XtCode {
         match self {
-            Self::Unreadable { .. } => crate::error::PROOF_UNREADABLE,
-            Self::Unparsable { .. } => crate::error::PROOF_UNPARSABLE,
-            Self::MalformedRecording { .. } => crate::error::PROOF_RECORDING,
-            Self::Unprojected { .. } => crate::error::PROOF_UNPROJECTED,
-            Self::Unrecognised { .. } => crate::error::PROOF_UNRECOGNISED,
+            Self::Unreadable { .. } => crate::error::XtCode::ProofUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::ProofUnparsable,
+            Self::MalformedRecording { .. } => crate::error::XtCode::ProofRecording,
+            Self::Unprojected { .. } => crate::error::XtCode::ProofUnprojected,
+            Self::Unrecognised { .. } => crate::error::XtCode::ProofUnrecognised,
         }
     }
 }
@@ -127,8 +127,8 @@ pub enum Unprojectable {
 }
 
 impl crate::error::Coded for Unprojectable {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::PROOF_UNPROJECTED
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::ProofUnprojected
     }
 }
 

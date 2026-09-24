@@ -20,8 +20,8 @@ pub enum RegistryError {
 }
 
 impl crate::error::Coded for RegistryError {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::MILESTONE_REGISTRY
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::MilestoneRegistry
     }
 }
 

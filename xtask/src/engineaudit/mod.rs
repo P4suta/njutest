@@ -144,17 +144,17 @@ pub enum AuditError {
 }
 
 impl crate::error::Coded for AuditError {
-    fn code(&self) -> crate::error::ErrorCode {
+    fn code(&self) -> crate::error::XtCode {
         match self {
-            Self::Unreadable { .. } => crate::error::ENGINE_UNREADABLE,
-            Self::Unparsable { .. } => crate::error::ENGINE_UNPARSABLE,
-            Self::MalformedEvidence { .. } => crate::error::ENGINE_EVIDENCE,
+            Self::Unreadable { .. } => crate::error::XtCode::EngineUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::EngineUnparsable,
+            Self::MalformedEvidence { .. } => crate::error::XtCode::EngineEvidence,
             Self::MalformedRecording { .. } | Self::UnsupportedTrace { .. } => {
-                crate::error::ENGINE_RECORDING
+                crate::error::XtCode::EngineRecording
             }
-            Self::MalformedLedger { .. } => crate::error::ENGINE_LEDGER,
+            Self::MalformedLedger { .. } => crate::error::XtCode::EngineLedger,
             Self::Unrecognised { .. } | Self::UnsupportedVersion { .. } => {
-                crate::error::ENGINE_UNRECOGNISED
+                crate::error::XtCode::EngineUnrecognised
             }
         }
     }

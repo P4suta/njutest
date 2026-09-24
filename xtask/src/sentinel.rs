@@ -78,8 +78,8 @@ pub enum PlantedError {
 }
 
 impl crate::error::Coded for PlantedError {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::SENTINEL_PLANTED
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::SentinelPlanted
     }
 }
 

@@ -29,8 +29,8 @@ pub fn workspace_root() -> PathBuf {
 pub struct GateFailure(pub String);
 
 impl crate::error::Coded for GateFailure {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::GATE_REFUSED
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::GateRefused
     }
 }
 

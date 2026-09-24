@@ -123,8 +123,8 @@ pub struct SbomError {
 }
 
 impl crate::error::Coded for SbomError {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::SBOM_METADATA
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::SbomMetadata
     }
 }
 

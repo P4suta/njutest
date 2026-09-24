@@ -450,7 +450,7 @@ pub struct LedgerError {
 }
 
 impl crate::error::Coded for LedgerError {
-    fn code(&self) -> crate::error::ErrorCode {
-        crate::error::SEAM_LEDGER
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::SeamLedger
     }
 }

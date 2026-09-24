@@ -80,13 +80,13 @@ pub enum CheckError {
 }
 
 impl crate::error::Coded for CheckError {
-    fn code(&self) -> crate::error::ErrorCode {
+    fn code(&self) -> crate::error::XtCode {
         match self {
-            Self::Walk { .. } | Self::Read { .. } => crate::error::FIXTURE_UNREADABLE,
-            Self::Symlink { .. } => crate::error::FIXTURE_SYMLINK,
-            Self::NonUtf8Path { .. } => crate::error::FIXTURE_PATH,
-            Self::NotAFixture { .. } => crate::error::NOT_A_FIXTURE,
-            Self::Config { .. } => crate::error::FIXTURE_CONFIG,
+            Self::Walk { .. } | Self::Read { .. } => crate::error::XtCode::FixtureUnreadable,
+            Self::Symlink { .. } => crate::error::XtCode::FixtureSymlink,
+            Self::NonUtf8Path { .. } => crate::error::XtCode::FixturePath,
+            Self::NotAFixture { .. } => crate::error::XtCode::NotAFixture,
+            Self::Config { .. } => crate::error::XtCode::FixtureConfig,
         }
     }
 }
