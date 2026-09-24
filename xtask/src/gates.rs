@@ -1629,7 +1629,8 @@ fn features_only_tests_build_with(
 ) -> Result<Vec<(String, Vec<String>)>, GateFailure> {
     let tree = |edges: &str| -> Result<String, GateFailure> {
         let mut args = vec![
-            "tree", "--locked", "--prefix", "none", "--format", "{p}|{f}", "--edges", edges,
+            "tree", "--locked", "--color", "never", "--prefix", "none", "--format", "{p}|{f}",
+            "--edges", edges,
         ];
         for shipped in deps::SHIPPED {
             args.extend(["--package", shipped]);
