@@ -51,6 +51,8 @@ pub struct Faulted {
     pub routes: Vec<(String, Vec<String>)>,
     /// Every fault the compiler refused.
     pub rejected: Vec<String>,
+    /// Every fault a path the phase left written was tied to: run alone it wrote the path while its test passed, and its test alone without it did not.
+    pub attributed: Vec<String>,
     /// Every site decision, in recording order.
     pub sites: Vec<Site>,
 }
@@ -78,6 +80,18 @@ pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
                 })
                 .unwrap_or_default();
             faulted.routes.push((text(record, "fault"), reaching));
+            continue;
+        }
+        if kind == Some("fault-attribution")
+            && let Some(record) = event.get("attribution")
+        {
+            let flag = |key: &str| record.get(key).and_then(Value::as_bool);
+            if flag("faulted") == Some(true)
+                && flag("passed") == Some(true)
+                && record.get("unfaulted").and_then(Value::as_str) == Some("did-not-write")
+            {
+                faulted.attributed.push(text(record, "fault"));
+            }
             continue;
         }
         if kind == Some("fault-rejected")

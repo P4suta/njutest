@@ -34,6 +34,7 @@ const ERRORED: &str = "errored";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
+const BROKEN_UNDER_FAULT: &str = "broken-under-fault";
 const NOT_MEASURED_FINDING: &str = "not-measured";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
 pub const DEFECT_KINDS: [&str; 4] = [
@@ -1870,6 +1871,7 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
         );
         return;
     };
+    broken(recording, faulted, &mut notes);
     let recorded: BTreeMap<&str, &crate::faults::Site> = faulted
         .sites
         .iter()
@@ -1936,6 +1938,33 @@ fn fault_counts(
 }
 
 /// The failures nothing noticed, held to the findings that name them, in both directions.
+/// Every `broken-under-fault` finding, held to the attribution that ties its write to that fault, and every such attribution to a finding.
+fn broken(recording: &Recording<'_>, faulted: &crate::faults::Faulted, notes: &mut Notes<'_>) {
+    let named: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == BROKEN_UNDER_FAULT)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    let tied: BTreeSet<&str> = faulted.attributed.iter().map(String::as_str).collect();
+    for fault in named.difference(&tied) {
+        notes.violated(
+            fault,
+            "a finding says this fault wrote into the tree, and the recording holds no run of it \
+             alone that wrote while its test passed where the test alone without it did not"
+                .to_owned(),
+        );
+    }
+    for fault in tied.difference(&named) {
+        notes.violated(
+            fault,
+            "the recording ties a write into the tree to this fault, and no broken-under-fault \
+             finding says so"
+                .to_owned(),
+        );
+    }
+}
+
 fn fault_findings(
     recording: &Recording<'_>,
     reported: &[crate::faults::Site],

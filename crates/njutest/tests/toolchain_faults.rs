@@ -183,9 +183,9 @@ fn a_run_not_asked_for_faults_puts_none() {
 }
 
 #[test]
-fn a_write_under_faults_no_execution_is_tied_to_is_not_measured() {
+fn a_write_one_fault_makes_on_its_own_and_its_test_does_not_without_it_is_a_defect() {
     let fixture = fixture("fixture-faulted-writes");
-    let output = verify(&fixture, &["--faults"]);
+    let output = verify(&fixture, &["--faults", "--trace"]);
     let part = part(&fixture);
     assert_eq!(
         decisions(&part),
@@ -193,26 +193,65 @@ fn a_write_under_faults_no_execution_is_tied_to_is_not_measured() {
         "{part}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
+    let broke = named(&part, "findings", "kind", "broken-under-fault");
+    assert_eq!(
+        broke.len(),
+        1,
+        "the fault, run alone, wrote failed-read.log while its test passed, and the same test \
+         run alone without it did not: that write is the program's answer to the failed call, \
+         tied to one fault: {part}"
+    );
+    let detail = broke[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("failed-read.log") && !detail.contains("always.log"),
+        "the finding names what the fault wrote and not what every run writes: {detail}"
+    );
+    assert!(
+        named(&part, "findings", "kind", "not-measured")
+            .iter()
+            .all(|finding| finding["subject"] != "fault-write-unattributed"),
+        "and nothing is left unattributed: {part}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(njutest::cli::EXIT_DEFECT.into()),
+        "a defect decides the run: {part}"
+    );
+}
+
+#[test]
+fn a_write_a_test_makes_as_it_fails_under_a_fault_is_not_a_defect() {
+    let fixture = fixture("fixture-faulted-failure-writes");
+    let output = verify(&fixture, &["--faults", "--trace"]);
+    let part = part(&fixture);
+    assert_eq!(
+        decisions(&part),
+        vec![(13, "noticed".to_owned())],
+        "{part}\n{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
     assert!(
         named(&part, "findings", "kind", "broken-under-fault").is_empty(),
-        "the faulted executions share one tree and run at once, so a write is not yet tied to \
-         the failed call that made it, and a DEFECT nobody can attribute is a verdict about how \
-         the run measured: {part}"
+        "the test wrote regressions.txt because it noticed the fault and failed, which is the \
+         suite doing its job; a property test keeping the input that broke it is not the \
+         program writing past where it was asked to work: {part}"
     );
     let unattributed: Vec<&serde_json::Value> = named(&part, "findings", "kind", "not-measured")
         .into_iter()
         .filter(|finding| finding["subject"] == "fault-write-unattributed")
         .collect();
     assert_eq!(unattributed.len(), 1, "{part}");
-    let detail = unattributed[0]["detail"].as_str().unwrap_or_default();
     assert!(
-        detail.contains("failed-read.log") && !detail.contains("always.log"),
-        "the finding names what was written under a fault and not what every run writes: {detail}"
+        unattributed[0]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("regressions.txt"),
+        "{part}"
     );
     assert_ne!(
         output.status.code(),
         Some(njutest::cli::EXIT_DEFECT.into()),
-        "and nothing the run could not attribute decides it: {part}"
+        "{part}"
     );
 }
 

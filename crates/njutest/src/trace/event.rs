@@ -88,6 +88,11 @@ pub enum Payload {
         /// The record.
         rejected: FaultRejectedRecord,
     },
+    /// Whether one fault, run alone, wrote a path the phase left in the tree, and whether its test did without it.
+    FaultAttribution {
+        /// The record.
+        attribution: FaultAttributionRecord,
+    },
     /// What the original code did on the target a fault's detection is confirmed against.
     FaultControl {
         /// The record.
@@ -155,6 +160,7 @@ impl Payload {
             Self::MutantExec { .. } => "mutant-exec",
             Self::FaultExec { .. } => "fault-exec",
             Self::FaultControl { .. } => "fault-control",
+            Self::FaultAttribution { .. } => "fault-attribution",
             Self::FaultRoute { .. } => "fault-route",
             Self::FaultRejected { .. } => "fault-rejected",
             Self::Fault { .. } => "fault",
@@ -432,6 +438,41 @@ pub enum FaultRole {
     First,
     /// The execution that asked again after a failure, with the control between.
     Confirmation,
+    /// The execution run alone to see whether it writes a path the phase left in the tree.
+    Attribution,
+    /// The same test run alone without the fault, to see whether it writes that path anyway.
+    #[serde(rename = "attribution-control")]
+    AttributionControl,
+}
+
+/// Whether one fault, run alone on one target, wrote a path, and whether the target did without it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultAttributionRecord {
+    /// The fault.
+    pub fault: String,
+    /// The target it was run on.
+    pub target: String,
+    /// The path of the tree the phase left written.
+    pub path: String,
+    /// Whether the path was there after the fault ran alone.
+    pub faulted: bool,
+    /// Whether the target passed with the fault in place, which is what makes the write the program's rather than the test's own failure's.
+    pub passed: bool,
+    /// What the same target did run alone without the fault.
+    pub unfaulted: Unfaulted,
+}
+
+/// What a target run alone without a fault did to a path its faulted run wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Unfaulted {
+    /// It was not run, because the faulted run wrote nothing or its test failed.
+    NotAsked,
+    /// It wrote the path too, so the fault is not what wrote it.
+    Wrote,
+    /// It did not write the path, so the fault did.
+    DidNotWrite,
 }
 
 /// Which targets reach one fault.

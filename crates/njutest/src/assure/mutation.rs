@@ -631,12 +631,7 @@ fn establish(
         saved
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
         if judging.subject.perturbing == Perturbing::Faults {
-            watch
-                .trace
-                .fault_rejected(crate::trace::FaultRejectedRecord {
-                    fault: mutant.display_id.to_string(),
-                    diagnostic: crate::assure::run::first_line(diagnostic),
-                });
+            record_rejection(watch, mutant, diagnostic);
         }
         Disposition::Rejected {
             diagnostic: (*diagnostic).to_owned(),
@@ -647,14 +642,7 @@ fn establish(
         let consulted = reuse(options, &route, mutant.id.as_str());
         match judging.subject.perturbing {
             Perturbing::Mutants => record_route(watch, mutant, &route, &consulted),
-            Perturbing::Faults => watch.trace.fault_route(crate::trace::FaultRouteRecord {
-                fault: mutant.display_id.to_string(),
-                reaching: route
-                    .reaching()
-                    .into_iter()
-                    .map(ToOwned::to_owned)
-                    .collect(),
-            }),
+            Perturbing::Faults => record_fault_route(watch, mutant, &route),
         }
         if let Consulted::Believed {
             disposition,
@@ -743,6 +731,28 @@ fn record_probe(
 }
 
 /// Records how one mutant's tests were chosen, and whether this run established the answer itself.
+/// Records a fault the compiler refused, which is what `not-put` rests on.
+fn record_rejection(watch: Watch<'_>, mutant: &Mutant, diagnostic: &str) {
+    watch
+        .trace
+        .fault_rejected(crate::trace::FaultRejectedRecord {
+            fault: mutant.display_id.to_string(),
+            diagnostic: crate::assure::run::first_line(diagnostic),
+        });
+}
+
+/// Records which targets reach a fault, which is what `unreached` rests on, apart from every mutant route.
+fn record_fault_route(watch: Watch<'_>, mutant: &Mutant, route: &Route) {
+    watch.trace.fault_route(crate::trace::FaultRouteRecord {
+        fault: mutant.display_id.to_string(),
+        reaching: route
+            .reaching()
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+    });
+}
+
 fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Consulted) {
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.to_string(),

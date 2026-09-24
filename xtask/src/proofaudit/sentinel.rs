@@ -152,6 +152,15 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
             )),
             ..clean.clone()
         },
+    ]
+    .into_iter()
+    .chain(faults_owing(clean))
+    .collect()
+}
+
+/// The faults layer's planted defects about what a fault's decision owes: the finding a decision raises, and the attribution a write rests on.
+fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
         Perturbation {
             name: "an undecided fault whose not-measured finding the report dropped",
             document: with(json!({
@@ -165,6 +174,30 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
                     "decision": "undecided", "on": TARGET, "why": "the kill did not happen the second time"
                 }),
                 "killed",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a write called broken-under-fault that no attribution ties to the fault",
+            document: with(json!({
+                "verdict": "DEFECT",
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }, {
+                    "kind": "broken-under-fault",
+                    "subject": FAULTED,
+                    "detail": "wrote failed-read.log",
+                    "position": null
+                }]
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
             )),
             ..clean.clone()
         },

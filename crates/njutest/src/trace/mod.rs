@@ -21,10 +21,10 @@ use sha2::{Digest as _, Sha256};
 pub use event::SCHEMA;
 pub use event::{
     ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord,
-    FaultControlRecord, FaultExecRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord,
-    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
-    RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord,
-    WireExecRecord,
+    FaultAttributionRecord, FaultControlRecord, FaultExecRecord, FaultRejectedRecord, FaultRole,
+    FaultRouteRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord,
+    ProgressRecord, Read, RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord,
+    Unfaulted, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -386,6 +386,13 @@ impl Recorder {
     /// Records one fault run against one target.
     pub fn fault_exec(&self, record: FaultExecRecord) {
         self.emit(Payload::FaultExec { fault: record });
+    }
+
+    /// Records whether one fault, run alone, wrote a path, and whether its target did without it.
+    pub fn fault_attribution(&self, record: FaultAttributionRecord) {
+        self.emit(Payload::FaultAttribution {
+            attribution: record,
+        });
     }
 
     /// Records which targets reach one fault.

@@ -72,9 +72,9 @@ fn confirmed(passed: bool, again: &str) -> Result<(), Contradiction> {
     )
 }
 
-#[test]
-fn every_decision_is_held_to_the_executions_it_rests_on() {
-    let cases: Vec<(&str, Result<(), Contradiction>)> = vec![
+/// Every decision a fault can be given, against recordings that do and do not support it.
+fn cases() -> Vec<(&'static str, Result<(), Contradiction>)> {
+    vec![
         (
             "noticed where it failed once and nothing confirmed it",
             asked("noticed", Some("t"), &[("t", "killed")]),
@@ -143,8 +143,12 @@ fn every_decision_is_held_to_the_executions_it_rests_on() {
             asked("waited", None, &[("t", "survived")]),
         ),
         ("a decision no fault has", asked("proved", None, &[])),
-    ];
-    let said: Vec<(&str, Option<String>)> = cases
+    ]
+}
+
+#[test]
+fn every_decision_is_held_to_the_executions_it_rests_on() {
+    let said: Vec<(&str, Option<String>)> = cases()
         .into_iter()
         .map(|(case, answer)| {
             let why = match answer {
