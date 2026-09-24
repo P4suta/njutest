@@ -282,8 +282,20 @@ pub fn command(program: &Path) -> std::process::Command {
     for inherited in NOT_INHERITED {
         remove_environment(&mut command, inherited);
     }
+    discard_profile(&mut command);
     command
 }
+
+#[expect(
+    unused_results,
+    reason = "Command's infallible builder API returns self; this unit helper is the explicit boundary"
+)]
+fn discard_profile(command: &mut std::process::Command) {
+    command.env("LLVM_PROFILE_FILE", NULL_DEVICE);
+}
+
+/// The file this platform discards everything written to.
+pub const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 /// What a fixture run is insulated from, spelled here because this crate depends on nothing.
 ///
