@@ -194,3 +194,64 @@ fn a_package_is_read_whole_outside_its_build_output_and_what_cannot_be_read_is_n
         "a file that was not read is named, never read as one that starts nothing"
     );
 }
+
+#[test]
+fn every_package_of_a_closure_is_read_once_and_alike_however_many_read_at_once() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let mut packages = Vec::new();
+    for (name, text) in [
+        ("quiet", "pub fn go() {}"),
+        ("spawns", "pub fn go() { std::thread::spawn(|| {}); }"),
+        ("broken", "fn a( {"),
+    ] {
+        let root = dir.path().join(name);
+        std::fs::create_dir_all(root.join("src")).expect("a directory");
+        std::fs::write(root.join("src/lib.rs"), text).expect("written");
+        packages.push(serde_json::json!({
+            "id": format!("{name} 1.0.0"),
+            "name": name,
+            "version": "1.0.0",
+            "manifest_path": root.join("Cargo.toml"),
+        }));
+    }
+    let document = serde_json::json!({
+        "version": 1,
+        "workspace_root": dir.path(),
+        "target_directory": dir.path().join("target"),
+        "workspace_members": [],
+        "packages": packages,
+    })
+    .to_string();
+    let metadata =
+        rust_mutants::cargo::Metadata::parse(document.as_bytes()).expect("the document parses");
+    let ids = ["broken 1.0.0", "gone 1.0.0", "quiet 1.0.0", "spawns 1.0.0"];
+    let alone =
+        njutest::assure::concurrency::scans(&metadata, &ids, 1).expect("read by one worker");
+    let together =
+        njutest::assure::concurrency::scans(&metadata, &ids, 3).expect("read by three workers");
+    assert_eq!(
+        alone, together,
+        "how many packages are read at once changes nothing about what is read"
+    );
+    let summary: Vec<(&str, usize, &[String])> = ids
+        .iter()
+        .map(|id| {
+            let scan = alone.get(*id).expect("every id is read");
+            (
+                scan.package.as_str(),
+                scan.found.len(),
+                scan.unread.as_slice(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("broken@1.0.0", 0, &["src/lib.rs".to_owned()][..]),
+            ("gone 1.0.0", 0, &["Cargo.toml".to_owned()][..]),
+            ("quiet@1.0.0", 0, &[][..]),
+            ("spawns@1.0.0", 1, &[][..]),
+        ],
+        "each package is read once, and one the metadata lacks is named unread rather than skipped"
+    );
+}

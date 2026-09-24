@@ -52,7 +52,8 @@ Reach alone cannot prove a binary single-threaded.
 
 Most real projects state `schedule-not-explored` for their doctest binaries, and for every binary whose closure holds an async runtime or a parallel iterator.
 That is the dimension saying where it cannot speak, which is what `whole-v1` will read as a hole.
-Reading a large closure costs time once per package per run; the packages are immutable by id, so a cache keyed by id and version is the next change.
+Reading a large closure costs time once per package per run, so the packages are read as many at a time as the run measures mutations; that holds this repository's 282 packages to about a third of the time one reader takes.
+A cache across runs is not taken: a stale entry would be a proof of nothing, and its key would have to name the scanner's own rules as well as the package, which no key here can be checked to do.
 
 ## Alternatives
 

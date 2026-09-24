@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use super::schedule::{self, ScheduleError};
 use crate::concurrency::explore::{Delayed, Ended, chosen, delayed};
 use crate::concurrency::proof::{Evidence, PackageScan, Reach, Standing, standing};
 use crate::report::concurrency::{ConcurrencyRecord, Exploration, Unexplored};
@@ -13,43 +14,41 @@ use rust_mutants::session::{Conditions, Observing, Perturbation, Request};
 /// How long a delayed guard holds each thread that reaches it, once.
 pub const PAUSE_MS: u64 = 100;
 
-/// One record per test binary the session measured, in binary order, each package of every closure read once.
-#[must_use]
-pub fn recorded(session: &rust_mutants::session::Session) -> Vec<ConcurrencyRecord> {
+/// One record per test binary the session measured, in binary order, each package of every closure read once, at most `workers` at a time.
+///
+/// # Errors
+/// A reading worker panicked.
+pub fn recorded(
+    session: &rust_mutants::session::Session,
+    workers: usize,
+) -> Result<Vec<ConcurrencyRecord>, ScheduleError> {
     let mut binaries: BTreeMap<String, (&str, bool)> = BTreeMap::new();
     for target in session.targets() {
         binaries.insert(target.id.clone(), (target.package.as_str(), target.harness));
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
-    let mut read: BTreeMap<String, PackageScan> = BTreeMap::new();
-    binaries
-        .into_iter()
-        .map(|(binary, (package, libtest))| {
+    let closures: BTreeMap<String, Vec<String>> = binaries
+        .iter()
+        .map(|(binary, (package, _))| {
             let closure = metadata
                 .members()
-                .find(|member| member.name == package)
+                .find(|member| member.name == *package)
                 .map_or_else(Vec::new, |member| metadata.closure(&member.id));
-            let missing = closure.is_empty().then(|| PackageScan {
-                package: package.to_owned(),
-                links: false,
-                found: Vec::new(),
-                unread: vec!["Cargo.toml".to_owned()],
-            });
-            for id in &closure {
-                if !read.contains_key(id) {
-                    let scan = metadata.package(id).map_or_else(
-                        || PackageScan {
-                            package: id.clone(),
-                            links: false,
-                            found: Vec::new(),
-                            unread: vec!["Cargo.toml".to_owned()],
-                        },
-                        crate::concurrency::read::package,
-                    );
-                    read.insert(id.clone(), scan);
-                }
-            }
+            (binary.clone(), closure)
+        })
+        .collect();
+    let every: std::collections::BTreeSet<&str> = closures
+        .values()
+        .flat_map(|closure| closure.iter().map(String::as_str))
+        .collect();
+    let every: Vec<&str> = every.into_iter().collect();
+    let read = scans(metadata, &every, workers)?;
+    Ok(binaries
+        .into_iter()
+        .map(|(binary, (package, libtest))| {
+            let closure = closures.get(&binary).map_or(&[][..], Vec::as_slice);
+            let missing = closure.is_empty().then(|| unread_manifest(package));
             let packages: Vec<&PackageScan> = closure
                 .iter()
                 .filter_map(|id| read.get(id))
@@ -81,7 +80,34 @@ pub fn recorded(session: &rust_mutants::session::Session) -> Vec<ConcurrencyReco
                 target: binary,
             }
         })
-        .collect()
+        .collect())
+}
+
+/// Every package named in `ids` read once, at most `workers` at a time, by id; one the metadata does not hold is read as a package whose manifest was not read.
+///
+/// # Errors
+/// A reading worker panicked.
+pub fn scans(
+    metadata: &rust_mutants::cargo::Metadata,
+    ids: &[&str],
+    workers: usize,
+) -> Result<BTreeMap<String, PackageScan>, ScheduleError> {
+    let read = schedule::measure(ids, workers, |_at, id| {
+        metadata
+            .package(id)
+            .map_or_else(|| unread_manifest(id), crate::concurrency::read::package)
+    })?;
+    Ok(ids.iter().map(|id| (*id).to_owned()).zip(read).collect())
+}
+
+/// A package named `package` whose manifest was not read, which proves nothing about it.
+fn unread_manifest(package: &str) -> PackageScan {
+    PackageScan {
+        package: package.to_owned(),
+        links: false,
+        found: Vec::new(),
+        unread: vec!["Cargo.toml".to_owned()],
+    }
 }
 
 /// Delays up to `explore` guards of every binary not proven to run one thread whose baseline passed, one schedule each, and records what that found.
