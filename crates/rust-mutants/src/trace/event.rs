@@ -683,6 +683,9 @@ pub struct TouchRecord {
     pub target: String,
     /// Which run it was measured on.
     pub measured: Measurement,
+    /// The mutation a repair ran, in full; nothing on a baseline or a control, which run with nothing active.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub mutant: Option<String>,
     /// The tests that run passed, which is what everything below is the reach of.
     pub passed: Vec<String>,
     /// What the run's own summary said, in the protocol it answered in; under libtest a comparison stands only where its count equals the length of `passed`.

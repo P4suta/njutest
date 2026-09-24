@@ -835,6 +835,7 @@ pub(super) fn touch_record(
     Ok(crate::trace::TouchRecord {
         target: target.to_owned(),
         measured,
+        mutant: None,
         passed: gathered.ran.clone(),
         summary,
         tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,

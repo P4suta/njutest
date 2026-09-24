@@ -1335,6 +1335,7 @@
                 "infected_sites",
                 "loose",
                 "measured",
+                "mutant",
                 "passed",
                 "reached_sites",
                 "sites",
@@ -1353,6 +1354,13 @@
                     "baseline",
                     "control",
                     "repair"
+                  ]
+                },
+                "mutant": {
+                  "description": "The mutation a repair ran, in full; null on a baseline or a control, which run with nothing active.",
+                  "oneOf": [
+                    { "type": "null" },
+                    { "type": "string", "pattern": "^[0-9a-f]{64}$" }
                   ]
                 },
                 "passed": {
