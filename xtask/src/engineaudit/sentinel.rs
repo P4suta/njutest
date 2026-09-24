@@ -75,7 +75,7 @@ fn survived() -> Value {
 pub fn base() -> Value {
     json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
+        "schema_version": super::SCHEMA_VERSION,
         "tool_version": "0.1.0",
         "run": {
             "id": RUN,
