@@ -90,11 +90,22 @@ Measured on one developer machine after the per-take `fsync` was lifted out of t
 So whether the count is reached before the clock is a fact about the machine, which is the one thing a verdict may not rest on ([ADR 0023](../adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
 
 Tuning the number does not fix that, because the number is machine-independent and its cost is not.
-What fixes it is taking the clock out of the decision where the count can answer: a process raising the count is one the allowance will end, so a bound that ends it instead has decided from how fast this machine is.
-Until that is built, a project whose fixtures race the two sizes its own allowance down until the count wins on its slowest machine, which is what `fixtures/fixture-hang` documents doing.
-`0` counts nothing and leaves the clock as the only thing that can stop an execution that does not end.
+What fixes it is taking the clock out of the decision where the count can answer, and that is what an execution counting its steps does.
+**For such an execution, `timeout` is how long it may go without raising the count, not how long it may take.**
+The runner watches the step state the process rewrites at every boundary, and each change starts the window again ([ADR 0026](../adr/0026-a-bound-measures-quiet-not-duration.md)).
 
-The reason to lower it is a project whose own bound is short: **a bound the count cannot beat produces `waited` instead of `step_limit_reached`**. Both are unresolved, and the latter says exactly which deterministic boundary the execution reached.
+- A mutation that spins through instrumented source keeps raising the count, is never quiet for a window, and is ended by the allowance at the same count on every machine.
+- A mutation that blocks raises nothing, and the window ends it as `stalled`, which is `waited`: nothing was moving, so the clock is the only instrument there is.
+- A mutation, or a test, that is merely slow keeps raising the count and finishes, which a bound on the whole execution used to cut short on a loaded machine.
+
+Neither decision rests on how fast the machine is; both rest on whether the process is moving.
+The window is still a duration, and it has to be long enough that a machine pausing a process does not read as quiet.
+That is a far weaker dependence than before, because it bounds scheduling noise rather than the work, but it is not none.
+
+A process that keeps moving forever more slowly than the allowance can end it — a polling loop that sleeps between passes, say — still needs a clock.
+Ten windows is the ceiling over the whole execution, and a process that reaches it is `timed-out` with the count it had raised, which says the allowance would have ended it and the clock got there first.
+An execution that counts nothing, which is every baseline and every run with `steps = 0`, keeps `timeout` as the bound on the whole of it.
+`0` counts nothing and leaves the clock as the only thing that can stop an execution that does not end.
 Where the count does not reach at all — a mutation outside the loop it stopped ending — is in [limitations](../limitations.md).
 
 

@@ -66,6 +66,9 @@ fn fixture_run_name(run: &RunId) -> String {
     )
 }
 
+/// The file the fixture run measured, with its mutation on line 7.
+const CLEF: &str = "\n\n\n\n\n\n\u{1D11E}x = 1;\n";
+
 fn reported() -> Report {
     reported_at(
         Position {
@@ -74,10 +77,25 @@ fn reported() -> Report {
             character_column: 5,
         },
         false,
+        CLEF,
     )
 }
 
-fn reported_at(position: Position, unplaced_finding: bool) -> Report {
+/// The SHA-256 of `text`, as a run records the file it read.
+fn digest_of(text: &str) -> rust_mutants::id::HexDigest {
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    sha2::Digest::update(&mut hasher, text.as_bytes());
+    rust_mutants::id::HexDigest::finish(hasher)
+}
+
+/// A workspace holding `text` at `src/lib.rs`.
+fn holding(root: &std::path::Path, text: &str) {
+    std::fs::create_dir_all(root.join("src")).expect("mkdir");
+    std::fs::write(root.join("src/lib.rs"), text).expect("the file a finding is in");
+}
+
+/// A run that measured `measured` at `src/lib.rs` and found the mutation at `position` survived.
+fn reported_at(position: Position, unplaced_finding: bool, measured: &str) -> Report {
     let mut source = BuildReport::new("source-one", RunKind::Full, Contract::StandardV1);
     source.repository.root_name = "workspace".to_owned();
     source.repository.workspace_digest = "b".repeat(64);
@@ -144,6 +162,9 @@ fn reported_at(position: Position, unplaced_finding: bool) -> Report {
         "git-metadata-unavailable",
         "the LSP fixture is not a git repository",
     ));
+    source
+        .sources
+        .insert("src/lib.rs".to_owned(), digest_of(measured));
     source.verdict = source.concluded();
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),
@@ -165,6 +186,7 @@ fn reported_at(position: Position, unplaced_finding: bool) -> Report {
 #[test]
 fn a_finding_is_shown_where_the_mutation_it_names_is() {
     let root = tempfile::tempdir().expect("a directory");
+    holding(root.path(), CLEF);
     let shown = diagnostics(&reported(), root.path(), Encoding::Utf8)
         .expect("the checked report has representable diagnostics");
 
@@ -198,8 +220,10 @@ fn a_finding_about_something_that_is_not_in_a_file_is_not_shown_in_one() {
             character_column: 5,
         },
         true,
+        CLEF,
     );
     let root = tempfile::tempdir().expect("a directory");
+    holding(root.path(), CLEF);
 
     let shown = diagnostics(&report, root.path(), Encoding::Utf8)
         .expect("the checked report has representable diagnostics");
@@ -215,11 +239,9 @@ fn a_finding_about_something_that_is_not_in_a_file_is_not_shown_in_one() {
 fn a_column_is_counted_the_way_the_client_says_it_counts() {
     let root = tempfile::tempdir().expect("a directory");
     std::fs::create_dir_all(root.path().join("src")).expect("mkdir");
-    std::fs::write(
-        root.path().join("src/lib.rs"),
-        "\n\n\n\n\n\n\u{1D11E}\u{1D11E}x = 1;\n",
-    )
-    .expect("a line whose characters are not one code unit each");
+    let clefs = "\n\n\n\n\n\n\u{1D11E}\u{1D11E}x = 1;\n";
+    std::fs::write(root.path().join("src/lib.rs"), clefs)
+        .expect("a line whose characters are not one code unit each");
 
     let report = reported_at(
         Position {
@@ -228,6 +250,7 @@ fn a_column_is_counted_the_way_the_client_says_it_counts() {
             character_column: 5,
         },
         false,
+        clefs,
     );
 
     let utf8 = diagnostics(&report, root.path(), Encoding::Utf8)
@@ -421,8 +444,7 @@ fn ran(root: &std::path::Path) {
     let one = run_id("one");
     std::fs::create_dir_all(fixture_run(root, &one)).expect("mkdir");
     std::fs::create_dir_all(root.join("src")).expect("mkdir");
-    std::fs::write(root.join("src/lib.rs"), "\n\n\n\n\n\n\u{1D11E}x = 1;\n")
-        .expect("the file a finding is in");
+    holding(root, CLEF);
     std::fs::write(
         fixture_run(root, &one).join(njutest::app::reports::DOCUMENT_NAME),
         serde_json::to_string(&reported()).expect("a report"),
@@ -450,6 +472,7 @@ fn a_finding_this_cannot_place_does_not_hide_the_ones_after_it() {
             character_column: 5,
         },
         true,
+        CLEF,
     );
 
     let shown = diagnostics(&report, root.path(), Encoding::Utf8)
@@ -465,8 +488,10 @@ fn a_finding_this_cannot_place_does_not_hide_the_ones_after_it() {
 }
 
 #[test]
-fn a_line_that_cannot_be_read_is_counted_the_way_the_report_already_counted_it() {
+fn a_file_the_run_cannot_vouch_for_is_noted_and_a_line_its_measured_file_lacks_is_counted_as_the_report_counted_it()
+ {
     let root = tempfile::tempdir().expect("a directory");
+    let short = "one line\n";
     let report = reported_at(
         Position {
             line: 7,
@@ -474,25 +499,25 @@ fn a_line_that_cannot_be_read_is_counted_the_way_the_report_already_counted_it()
             character_column: 5,
         },
         false,
+        short,
     );
 
     let missing = diagnostics(&report, root.path(), Encoding::Utf16)
         .expect("the checked report has representable diagnostics");
-
-    std::fs::create_dir_all(root.path().join("src")).expect("mkdir");
-    std::fs::write(root.path().join("src/lib.rs"), "one line\n").expect("a short file");
-    let short = diagnostics(&report, root.path(), Encoding::Utf16)
-        .expect("the checked report has representable diagnostics");
-
     assert_eq!(
-        missing[0].diagnostics[0]["range"]["start"]["character"], 4,
-        "a file this cannot read is one whose characters it cannot count, and the \
-         report's own scalar column is the number that is right wherever a line holds \
-         nothing outside the basic plane"
+        missing[0].diagnostics[0]["code"], "not-yet-asked",
+        "a file this cannot read is one it cannot hold to the run's record, so the finding \
+         is not placed in it and the reader is told why: {missing:?}"
     );
+
+    holding(root.path(), short);
+    let counted = diagnostics(&report, root.path(), Encoding::Utf16)
+        .expect("the checked report has representable diagnostics");
     assert_eq!(
-        short[0].diagnostics[0]["range"]["start"]["character"], 4,
-        "and a line the file does not have is the same question with the same answer"
+        counted[0].diagnostics[0]["range"]["start"]["character"], 4,
+        "a file that is the one the run read but has no line 7 has no characters there to \
+         count, and the report's own scalar column is the number that is right wherever a \
+         line holds nothing outside the basic plane: {counted:?}"
     );
 }
 

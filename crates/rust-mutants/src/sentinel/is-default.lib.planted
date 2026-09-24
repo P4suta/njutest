@@ -1,0 +1,7 @@
+pub fn zero(n: u32) -> u32 {
+    n
+}
+
+pub fn seven(n: u32) -> u32 {
+    n
+}

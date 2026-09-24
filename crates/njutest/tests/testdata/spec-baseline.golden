@@ -1,0 +1,39 @@
+spec of 2 items from run <run>, a full run, 1 build, default
+
+src/lib.rs  sign
+  what is pinned
+    - `n > 0` => `false`  njutest explain src/lib.rs:sign:condition-to-false@8
+        fixture-baseline/lib/fixture_baseline notices it
+    - `n > 0` => `true`  njutest explain src/lib.rs:sign:condition-to-true@8
+        fixture-baseline/lib/fixture_baseline notices it
+    - `n > 0` => `!(n > 0)`  njutest explain src/lib.rs:sign:negate-condition@8
+        fixture-baseline/lib/fixture_baseline notices it
+    - `if n > 0 {`... (6 more lines) => `Default::default()`
+      njutest explain src/lib.rs:sign:return-default@8
+        fixture-baseline/lib/fixture_baseline notices it
+    - `"positive"` => `Default::default()`  njutest explain src/lib.rs:sign:return-default@9
+        fixture-baseline/lib/fixture_baseline notices it
+    - `n < 0` => `false`  njutest explain src/lib.rs:sign:condition-to-false@10
+        fixture-baseline/lib/fixture_baseline notices it
+    - `n < 0` => `!(n < 0)`  njutest explain src/lib.rs:sign:negate-condition@10
+        fixture-baseline/lib/fixture_baseline notices it
+    - `"negative"` => `Default::default()`  njutest explain src/lib.rs:sign:return-default@11
+        fixture-baseline/lib/fixture_baseline notices it
+  what is left free
+    - `>` => `>=`  njutest explain src/lib.rs:sign:gt-to-ge@8
+        never-infected removed every target that reaches it
+          (fixture-baseline/lib/fixture_baseline), so nothing ran it; check the proof, not the tests
+    - `n < 0` => `true`  njutest explain src/lib.rs:sign:condition-to-true@10
+        fixture-baseline/lib/fixture_baseline ran it and did not notice
+    - `<` => `<=`  njutest explain src/lib.rs:sign:lt-to-le@10
+        never-infected removed every target that reaches it
+          (fixture-baseline/lib/fixture_baseline), so nothing ran it; check the proof, not the tests
+    - `"zero"` => `Default::default()`  njutest explain src/lib.rs:sign:return-default@13
+        nothing the suite runs executes it
+
+src/lib.rs  double
+  what is pinned
+    - `*` => `/`  njutest explain src/lib.rs:double:mul-to-div@19
+        fixture-baseline/test/doubling notices it
+    - `n * 2` => `Default::default()`  njutest explain src/lib.rs:double:return-default@19
+        fixture-baseline/test/doubling notices it
