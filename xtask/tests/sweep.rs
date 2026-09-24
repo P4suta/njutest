@@ -11,7 +11,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::{Duration, SystemTime};
 
 /// A repository with worktrees and a temporary directory, all inside one scratch directory.
 struct Machine {
@@ -27,7 +26,12 @@ impl Machine {
         std::fs::create_dir_all(machine.main()).expect("a repository");
         git(&machine.main(), &["init", "-q", "-b", "main"]);
         std::fs::write(machine.main().join("README"), "one\n").expect("a file");
-        git(&machine.main(), &["add", "README"]);
+        std::fs::write(
+            machine.main().join(".gitignore"),
+            "/target/\n/.njutest-trash/\n",
+        )
+        .expect("what the repository ignores");
+        git(&machine.main(), &["add", "README", ".gitignore"]);
         git(
             &machine.main(),
             &[
@@ -41,6 +45,17 @@ impl Machine {
                 "one",
             ],
         );
+        let origin = machine.scratch.path().join("origin.git");
+        git(
+            machine.scratch.path(),
+            &["init", "-q", "--bare", "-b", "main", "origin.git"],
+        );
+        git(
+            &machine.main(),
+            &["remote", "add", "origin", &origin.display().to_string()],
+        );
+        git(&machine.main(), &["push", "-q", "origin", "main"]);
+        git(&machine.main(), &["fetch", "-q", "origin"]);
         machine
     }
 
@@ -69,6 +84,35 @@ impl Machine {
         );
     }
 
+    fn open_work(&self, at: &Path) {
+        git(
+            &self.main(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "open",
+                &at.display().to_string(),
+            ],
+        );
+        std::fs::write(at.join("README"), "two\n").expect("a change");
+        git(at, &["add", "README"]);
+        git(
+            at,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "-m",
+                "two",
+            ],
+        );
+    }
+
     fn sweep(&self) -> Output {
         let mut command = isolated(env!("CARGO_BIN_EXE_xtask"));
         command
@@ -88,6 +132,7 @@ fn isolated(program: &str) -> Command {
         }
     }
     command.env("GIT_CONFIG_GLOBAL", "/dev/null");
+    command.env("GIT_CONFIG_NOSYSTEM", "1");
     command
 }
 
@@ -111,19 +156,6 @@ fn built(at: &Path) {
     std::fs::write(deep.join("libone.rlib"), vec![0_u8; 4096]).expect("an artifact");
 }
 
-/// Marks everything at and below `at` as last written two days ago.
-fn aged(at: &Path) {
-    let then = SystemTime::now()
-        .checked_sub(Duration::from_hours(48))
-        .expect("two days ago");
-    for entry in walkdir::WalkDir::new(at).contents_first(true) {
-        let entry = entry.expect("an entry");
-        std::fs::File::open(entry.path())
-            .and_then(|file| file.set_modified(then))
-            .expect("an old modification time");
-    }
-}
-
 /// Whether something is at `path`, which is a different answer from a path that cannot be read.
 fn present(path: &Path) -> bool {
     path.try_exists().expect("a path can be looked for")
@@ -138,32 +170,46 @@ fn listed(machine: &Machine) -> String {
     String::from_utf8(output.stdout).expect("utf-8")
 }
 
+/// Claims `directory` as the engine's owners do, holding its lock for as long as the value lives.
+fn owned(directory: &Path) -> std::fs::File {
+    std::fs::create_dir_all(directory).expect("a directory to own");
+    let lock = std::fs::File::create(directory.join("owner.lock")).expect("the owner lock");
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+        .expect("the lock is ours");
+    lock
+}
+
 #[test]
-fn build_output_and_temporaries_nobody_touched_go_and_nothing_else_does() {
+fn what_landed_and_what_nobody_owns_goes_and_nothing_else_does() {
     let machine = Machine::new();
-    let idle = machine.root().join("idle");
-    let busy = machine.root().join("busy");
-    machine.worktree(&idle);
-    machine.worktree(&busy);
-    built(&idle.join("target"));
-    aged(&idle.join("target"));
-    built(&busy.join("target"));
+    built(&machine.main().join("target"));
+    let landed = machine.root().join("landed");
+    machine.worktree(&landed);
+    built(&landed.join("target"));
+    let open = machine.root().join("open");
+    machine.open_work(&open);
+    built(&open.join("target"));
+    let dirty = machine.root().join("dirty");
+    machine.worktree(&dirty);
+    built(&dirty.join("target"));
+    std::fs::write(dirty.join("notes"), "unsaved\n").expect("a change nobody committed");
 
     let gate = machine.temp().join("njutest-pre-push-abc");
     machine.worktree(&gate.join("tree"));
     built(&gate.join("target"));
-    aged(&gate);
 
-    let left = machine.temp().join("njutest-commands-old");
-    std::fs::create_dir_all(left.join("fixture-baseline")).expect("a leftover");
-    aged(&left);
-    let running = machine.temp().join("njutest-commands-new");
-    std::fs::create_dir_all(&running).expect("a test that is running");
+    let abandoned = machine.temp().join("njutest-commands-abandoned");
+    let released = owned(&abandoned);
+    drop(released);
+    let running = machine.temp().join("njutest-commands-running");
+    let holding = owned(&running);
+    let unmarked = machine.temp().join("njutest-fixture-unmarked");
+    std::fs::create_dir_all(unmarked.join("fixture-baseline")).expect("a leftover");
     let foreign = machine.temp().join("somebody-else");
     std::fs::create_dir_all(&foreign).expect("another program's directory");
-    aged(&foreign);
 
     let swept = machine.sweep();
+    drop(holding);
     let said = format!(
         "{}{}",
         String::from_utf8(swept.stdout.clone()).expect("the sweep writes text"),
@@ -171,30 +217,38 @@ fn build_output_and_temporaries_nobody_touched_go_and_nothing_else_does() {
     );
     assert!(swept.status.success(), "{said}");
     assert!(
-        !present(&idle.join("target")),
-        "build output nobody has written for two days is regenerable and goes: {said}"
+        !present(&landed.join("target")) && present(&landed.join("README")),
+        "a worktree whose head main already holds, with nothing of its own, has landed: its build \
+         output is garbage and its source stays: {said}"
     );
     assert!(
-        present(&idle.join("README")),
-        "and the worktree it sat in stays, source and all"
+        present(&open.join("target")),
+        "a worktree with a commit main does not hold is work in progress, and its build is its \
+         cache: {said}"
     );
     assert!(
-        present(&busy.join("target")),
-        "build output written just now belongs to somebody working: {said}"
+        present(&dirty.join("target")),
+        "and one with a change nobody committed has not landed either: {said}"
+    );
+    assert!(
+        present(&machine.main().join("target")),
+        "the primary checkout's build is the one every worktree's work comes back to: {said}"
     );
     assert!(
         !present(&gate) && !listed(&machine).contains("njutest-pre-push-abc"),
-        "a gate tree nobody has used for two days goes, and git forgets the worktree it was: \
-         {said}\n{}",
-        listed(&machine)
+        "a gate tree nothing uses goes, and git forgets the worktree it was: {said}"
     );
     assert!(
-        !present(&left),
-        "a test's temporary directory two days old is a leak: {said}"
+        !present(&abandoned),
+        "a directory whose owner's lock nobody holds lost its owner, however it went: {said}"
     );
     assert!(
         present(&running),
-        "one made just now is a test still running"
+        "one whose owner still holds its lock is in use, whenever it was last written: {said}"
+    );
+    assert!(
+        !present(&unmarked),
+        "an unmarked leftover nothing on the machine uses is garbage: {said}"
     );
     assert!(
         present(&foreign),
@@ -234,21 +288,18 @@ impl Drop for Sitting {
 }
 
 #[test]
-fn build_output_a_process_is_using_stays_however_long_nothing_wrote_it() {
+fn what_a_process_is_using_stays_however_landed_or_unowned_it_is() {
     let machine = Machine::new();
     let running = machine.root().join("running");
     machine.worktree(&running);
     built(&running.join("target"));
-    aged(&running.join("target"));
     let sitting = Sitting::at(&running.join("target").join("debug"));
     let held = machine.temp().join("njutest-commands-held");
     std::fs::create_dir_all(held.join("fixture-baseline")).expect("a test's directory");
-    aged(&held);
     let holding = Sitting::at(&held.join("fixture-baseline"));
     let across = machine.root().join("across");
     machine.worktree(&across);
     built(&across.join("target"));
-    aged(&across.join("target"));
     let beside = Sitting::at(&across);
 
     let swept = machine.sweep();
@@ -282,14 +333,11 @@ fn a_directory_that_cannot_be_taken_leaves_the_rest_to_be_taken() {
     let machine = Machine::new();
     let stuck = machine.temp().join("njutest-commands-stuck");
     std::fs::create_dir_all(&stuck).expect("a leftover");
-    aged(&stuck);
     let later = machine.temp().join("njutest-fixture-later");
     std::fs::create_dir_all(&later).expect("a leftover");
-    aged(&later);
     let idle = machine.root().join("idle");
     machine.worktree(&idle);
     built(&idle.join("target"));
-    aged(&idle.join("target"));
     let trash = machine.temp().join(".njutest-trash");
     std::fs::create_dir_all(&trash).expect("the trash");
     std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(0o500)).expect("sealed");
@@ -319,10 +367,8 @@ fn a_directory_the_product_makes_for_somebody_s_own_run_is_not_this_repository_s
     let machine = Machine::new();
     let theirs = machine.temp().join("rust-mutants-target-abc");
     std::fs::create_dir_all(&theirs).expect("a user's run directory");
-    aged(&theirs);
     let provider = machine.temp().join("njutest-provider-output-abc");
     std::fs::create_dir_all(&provider).expect("a user's run directory");
-    aged(&provider);
     let swept = machine.sweep();
     assert!(swept.status.success());
     assert!(

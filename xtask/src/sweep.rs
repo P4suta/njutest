@@ -6,21 +6,15 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-/// How long build output or a temporary directory sits unwritten before it is taken.
-pub const IDLE: Duration = Duration::from_hours(6);
-
-/// How long it sits unwritten before it is taken when the disk is nearly full.
-pub const PRESSED_IDLE: Duration = Duration::from_mins(30);
-
-/// The share of the disk, in percent, below which free space counts as nearly full.
-pub const PRESSURE_PERCENT: u64 = 15;
-
 /// How long the sweep at the end of a push may spend removing.
 pub const AFTER_A_PUSH: Duration = Duration::from_secs(30);
+
+/// The file whose lock a temporary directory's owner holds for as long as it lives, as the engine's `tempowner` writes it.
+const OWNER_LOCK: &str = "owner.lock";
 
 /// The name of the directory taken things wait in, one per volume, until they are removed.
 pub const TRASH: &str = ".njutest-trash";
@@ -48,10 +42,8 @@ pub struct Request<'a> {
     pub temp: &'a Path,
     /// The process environment, for the `git` it asks.
     pub environment: &'a [(OsString, OsString)],
-    /// How long removing may take before the rest is left for the next sweep.
+    /// How long removing may take before the rest is left for the next sweep; it bounds the work, and decides nothing about what is garbage.
     pub budget: Duration,
-    /// The time the sweep judges idleness against.
-    pub now: SystemTime,
 }
 
 /// What a sweep took and what it left.
@@ -59,28 +51,26 @@ pub struct Request<'a> {
 pub struct Swept {
     /// Every directory it took.
     pub taken: Vec<PathBuf>,
-    /// Every idle directory it left because a process works in it or holds something under it.
+    /// Every directory it would have taken and left because a process works in it or holds something under it.
     pub in_use: Vec<PathBuf>,
     /// Every directory it meant to take and could not, with what the system said.
     pub failed: Vec<(PathBuf, String)>,
-    /// Whether nothing could say which directories are in use, so nothing idle was taken.
+    /// Whether nothing could say which directories are in use, so nothing was taken.
     pub blind: bool,
     /// How many files and directories it removed.
     pub removed: u64,
     /// Whether taken things are still waiting in a trash directory because the budget ran out.
     pub unfinished: bool,
-    /// How long a thing had to sit unwritten to be taken this time.
-    pub idle: Duration,
 }
 
 impl std::fmt::Display for Swept {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "sweep: took {} director{} unwritten for {} minutes or more and removed {} entries",
+            "sweep: took {} director{} whose work landed or whose owner is gone, and removed {} \
+             entries",
             self.taken.len(),
             if self.taken.len() == 1 { "y" } else { "ies" },
-            self.idle.as_secs() / 60,
             self.removed
         )?;
         if self.unfinished {
@@ -92,7 +82,7 @@ impl std::fmt::Display for Swept {
         if self.blind {
             write!(
                 formatter,
-                "; nothing could say which directories a process is using, so nothing idle was taken"
+                "; nothing could say which directories a process is using, so nothing was taken"
             )?;
         }
         for kept in &self.in_use {
@@ -136,58 +126,48 @@ pub enum SweepError {
     },
 }
 
-/// Takes the build output and temporary directories nobody has written for a while, and removes what it took within the budget.
+/// Takes what landed work and gone owners left, deciding nothing by how long it sat.
 ///
 /// # Errors
 /// Returns a [`SweepError`] when git cannot list the worktrees or a directory cannot be moved aside.
 pub fn sweep(request: &Request<'_>) -> Result<Swept, SweepError> {
     let started = Instant::now();
-    let idle = if pressed(request.temp) {
-        PRESSED_IDLE
-    } else {
-        IDLE
-    };
-    let mut swept = Swept {
-        idle,
-        ..Swept::default()
-    };
+    let mut swept = Swept::default();
     let mut trashes: Vec<PathBuf> = vec![request.temp.join(TRASH)];
     let mut forgotten = false;
-    let mut idle_ones: Vec<(PathBuf, PathBuf, PathBuf)> = Vec::new();
-    for worktree in worktrees(request)? {
-        let (candidate, holder, trash) = match gate_directory(&worktree, request.temp) {
-            Some(gate) => (gate.clone(), gate, request.temp.join(TRASH)),
-            None => (
-                worktree.join("target"),
-                worktree.clone(),
-                worktree.join(TRASH),
-            ),
-        };
-        if unwritten_for(&candidate, request.now).is_some_and(|quiet| quiet >= idle) {
-            idle_ones.push((candidate, holder, trash));
+    let mut garbage: Vec<(PathBuf, PathBuf, PathBuf)> = Vec::new();
+    for (at, listed) in worktrees(request)?.into_iter().enumerate() {
+        if let Some(gate) = gate_directory(&listed.path, request.temp) {
+            garbage.push((gate.clone(), gate, request.temp.join(TRASH)));
+        } else if at > 0 && landed(request, &listed) {
+            garbage.push((
+                listed.path.join("target"),
+                listed.path.clone(),
+                listed.path.join(TRASH),
+            ));
         }
     }
     for leftover in ours(request.temp)? {
-        let already = idle_ones
+        let already = garbage
             .iter()
             .any(|(candidate, _holder, _trash)| *candidate == leftover);
-        if !already && unwritten_for(&leftover, request.now).is_some_and(|quiet| quiet >= idle) {
-            idle_ones.push((leftover.clone(), leftover, request.temp.join(TRASH)));
+        if !already && ownership(&leftover) != Ownership::Held {
+            garbage.push((leftover.clone(), leftover, request.temp.join(TRASH)));
         }
     }
-    if idle_ones.is_empty() {
+    if garbage.is_empty() {
         return Ok(swept);
     }
     let Some(held) = Held::now() else {
         swept.blind = true;
         return Ok(swept);
     };
-    for (candidate, holder, trash) in idle_ones {
+    for (index, (candidate, holder, trash)) in garbage.into_iter().enumerate() {
         let Some(unheld) = held.release(&candidate, &holder) else {
             swept.in_use.push(candidate);
             continue;
         };
-        match take(unheld, &trash, request.now) {
+        match take(unheld, &trash, index) {
             Ok(()) => {
                 forgotten |= candidate.starts_with(request.temp);
                 swept.taken.push(candidate);
@@ -208,6 +188,111 @@ pub fn sweep(request: &Request<'_>) -> Result<Swept, SweepError> {
         swept.unfinished |= !finished;
     }
     Ok(swept)
+}
+
+/// One worktree git lists: where it is, and the branch it has out, where it has one.
+#[derive(Debug, Clone)]
+struct Listed {
+    /// Where it is.
+    path: PathBuf,
+    /// The branch it has out, without `refs/heads/`, or nothing where its head is detached.
+    branch: Option<String>,
+}
+
+/// Whether `listed` holds nothing that has not landed: no change of its own, and a head `origin/main` already holds or a pull request for its branch that is merged or closed.
+fn landed(request: &Request<'_>, listed: &Listed) -> bool {
+    let at = |arguments: &[&str]| {
+        let mut command = Command::new("git");
+        for (name, _value) in request.environment {
+            if name.as_encoded_bytes().starts_with(b"GIT_") {
+                command.env_remove(name);
+            }
+        }
+        command
+            .args(["-c", "core.fsmonitor=false", "-C"])
+            .arg(&listed.path)
+            .args(arguments)
+            .output()
+    };
+    let clean = match at(&["status", "--porcelain"]) {
+        Ok(status) => status.status.success() && status.stdout.is_empty(),
+        Err(_git_not_run) => false,
+    };
+    if !clean {
+        return false;
+    }
+    let merged = match at(&["merge-base", "--is-ancestor", "HEAD", "origin/main"]) {
+        Ok(ancestry) => ancestry.status.success(),
+        Err(_git_not_run) => false,
+    };
+    let landed = merged
+        || listed
+            .branch
+            .as_deref()
+            .is_some_and(|branch| closed(listed, branch));
+    if landed {
+        match at(&["fsmonitor--daemon", "stop"]) {
+            Ok(_stopped_or_none_running) => {}
+            Err(_git_not_run) => {}
+        }
+    }
+    landed
+}
+
+/// Whether GitHub says every pull request for `branch` is merged or closed, and there is one; anything it cannot say is not closed.
+fn closed(listed: &Listed, branch: &str) -> bool {
+    let asked = Command::new("gh")
+        .args([
+            "pr", "list", "--state", "all", "--head", branch, "--json", "state", "--jq",
+        ])
+        .arg("[.[].state] | join(\" \")")
+        .current_dir(&listed.path)
+        .output();
+    let Ok(asked) = asked else {
+        return false;
+    };
+    let Ok(states) = String::from_utf8(asked.stdout) else {
+        return false;
+    };
+    let states: Vec<&str> = states.split_whitespace().collect();
+    asked.status.success()
+        && !states.is_empty()
+        && states
+            .iter()
+            .all(|state| *state == "MERGED" || *state == "CLOSED")
+}
+
+/// Whether a temporary directory's owner is still there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ownership {
+    /// A process holds its owner lock, or the lock could not be asked.
+    Held,
+    /// It has an owner lock nobody holds: the process that claimed it is gone, however it went.
+    Gone,
+    /// It has no owner lock, so only what the machine says is using it can keep it.
+    Unmarked,
+}
+
+/// Whether the owner of `directory` still holds the lock it claimed it with.
+#[cfg(unix)]
+fn ownership(directory: &Path) -> Ownership {
+    let lock = match std::fs::File::open(directory.join(OWNER_LOCK)) {
+        Ok(lock) => lock,
+        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {
+            return Ownership::Unmarked;
+        }
+        Err(_unreadable) => return Ownership::Held,
+    };
+    match rustix::fs::flock(&lock, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => Ownership::Gone,
+        Err(_held) => Ownership::Held,
+    }
+}
+
+/// Whether the owner of `directory` is there, which this platform cannot ask, so it is.
+#[cfg(not(unix))]
+const fn ownership(_directory: &Path) -> Ownership {
+    Ownership::Held
 }
 
 /// `path` with every link resolved, which is how the operating system names what a process holds, or `path` as it is where it cannot be resolved.
@@ -272,34 +357,23 @@ const fn in_use() -> Option<Vec<PathBuf>> {
     None
 }
 
-/// Whether the volume `path` is on has less than [`PRESSURE_PERCENT`] of its space free.
-#[cfg(unix)]
-fn pressed(path: &Path) -> bool {
-    match rustix::fs::statvfs(path) {
-        Ok(volume) => {
-            let total = u128::from(volume.f_blocks);
-            let free = u128::from(volume.f_bavail);
-            total > 0
-                && free.saturating_mul(100) < total.saturating_mul(u128::from(PRESSURE_PERCENT))
-        }
-        Err(_unreadable) => false,
-    }
-}
-
-/// Whether the volume `path` is on is nearly full, which this platform cannot say.
-#[cfg(not(unix))]
-const fn pressed(_path: &Path) -> bool {
-    false
-}
-
 /// Every worktree of the repository, as git lists them.
-fn worktrees(request: &Request<'_>) -> Result<Vec<PathBuf>, SweepError> {
-    let listed = git(request, "list", &["worktree", "list", "--porcelain"])?;
-    Ok(listed
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .map(PathBuf::from)
-        .collect())
+fn worktrees(request: &Request<'_>) -> Result<Vec<Listed>, SweepError> {
+    let said = git(request, "list", &["worktree", "list", "--porcelain"])?;
+    let mut listed: Vec<Listed> = Vec::new();
+    for line in said.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            listed.push(Listed {
+                path: PathBuf::from(path),
+                branch: None,
+            });
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/")
+            && let Some(last) = listed.last_mut()
+        {
+            last.branch = Some(branch.to_owned());
+        }
+    }
+    Ok(listed)
 }
 
 /// Runs git in the repository with the environment's own git variables removed, and hands back what it printed.
@@ -376,51 +450,19 @@ fn ours(temp: &Path) -> Result<Vec<PathBuf>, SweepError> {
     Ok(found)
 }
 
-/// How long since anything at `path`, its entries, or theirs was written; nothing where `path` is not a directory.
-fn unwritten_for(path: &Path, now: SystemTime) -> Option<Duration> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) | Err(_) => return None,
-    }
-    let newest = walkdir::WalkDir::new(path)
-        .max_depth(2)
-        .into_iter()
-        .filter_map(|entry| match entry {
-            Ok(entry) => Some(entry),
-            Err(_vanished) => None,
-        })
-        .filter_map(|entry| match entry.metadata() {
-            Ok(metadata) => Some(metadata),
-            Err(_vanished) => None,
-        })
-        .filter_map(|metadata| match metadata.modified() {
-            Ok(modified) => Some(modified),
-            Err(_unsupported) => None,
-        })
-        .max()?;
-    match now.duration_since(newest) {
-        Ok(quiet) => Some(quiet),
-        Err(_in_the_future) => Some(Duration::ZERO),
-    }
-}
-
 /// Moves `path` into `trash` on the same volume, which takes it out of use at once whatever its size.
-fn take(Unheld(path): Unheld, trash: &Path, now: SystemTime) -> Result<(), SweepError> {
+fn take(Unheld(path): Unheld, trash: &Path, index: usize) -> Result<(), SweepError> {
     let path = path.as_path();
     std::fs::create_dir_all(trash).map_err(|source| SweepError::Io {
         path: trash.to_path_buf(),
         source,
     })?;
-    let stamp = match now.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(since) => since.as_nanos(),
-        Err(_before_the_epoch) => 0,
-    };
     let relative = match path.strip_prefix("/") {
         Ok(relative) => relative,
         Err(_already_relative) => path,
     };
     let named = relative.display().to_string().replace('/', "_");
-    let destination = trash.join(format!("{named}-{stamp}"));
+    let destination = trash.join(format!("{named}-{}-{index}", std::process::id()));
     std::fs::rename(path, &destination).map_err(|source| SweepError::Io {
         path: path.to_path_buf(),
         source,

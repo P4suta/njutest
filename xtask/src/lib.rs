@@ -356,7 +356,6 @@ fn sweep_report(
         temp: &temp,
         environment: process.environment,
         budget,
-        now: std::time::SystemTime::now(),
     };
     sweep::sweep(&request)
 }
