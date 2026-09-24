@@ -191,7 +191,8 @@ A record's `position` is `null` where the run could not place the site.
 Every part also carries `beside`: one record for each error-propagation survivor of the part (`question-to-unwrap`, `ignore-question-statement`) that a target told apart once the call at its own `?` failed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md) decision 6).
 The survivor is put again with the fault that is carried into its alternative active beside it, target by target in name order, and the fault alone is put to the same target; a record names the first target on which exactly one of the two runs failed, and `failed` says which (`beside` or `alone`), confirmed by running the survivor beside the fault a second time.
 It is evidence that the survivor is not an equivalence and never a kill: the survivor stays `survived`, its finding stays, and no count moves, because no test made that call fail.
-A record names a survivor and a fault the same part holds, or the part is not a v1 document.
+A record names a survivor the part holds, and in a part of the whole catalog a fault it holds too; a shard owns its survivors by their index, and the fault beside one may be in another shard.
+Only a fault whose guard the instrumentation carried into the survivor's branch is ever put beside it: an `ignore-question-statement` rewrites the whole statement, above the node the call's fault sits at, and is not asked.
 
 ## Sources
 

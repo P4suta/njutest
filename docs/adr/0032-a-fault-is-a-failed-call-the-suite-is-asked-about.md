@@ -50,8 +50,11 @@ This decision fails a call inside the program, at the place it asks whether the 
    If the suite then tells the mutant from the original, the mutant is `observable-under-fault`: evidence that it is not an equivalence, attached to the survivor, in no kill count and no score.
    It is not a kill, because no test made the call fail; the engine did, and counting it would have the report claim a failure path is covered that no test exercises — a verdict produced by how the run measured ([ADR 0023](0023-a-run-may-not-conclude-from-how-it-measured.md)).
    The survivor stays a gap, and the fault dimension says what closes it: the site whose failure the suite would notice, and that no test makes fail.
-   The composite rests on the instrumentation: a fault's guard is carried into the alternative of every mutation at its site that keeps the call's bytes, so `RUST_MUTANTS_FAULT` can make it active inside that branch, and `Session::fault_beside` names exactly the fault so carried.
-   The faulted session holds the error-propagation mutations beside the faults for that and judges only the faults; each survivor is put beside its fault, target by target in name order, against the fault alone on the same target, and the first target on which exactly one of the two failed — the one beside it confirmed by a second run — is the part's `beside` record.
+   The composite rests on the instrumentation: a fault's guard whose every alternative is a fault is carried into the alternative of every mutation of the site it is a child of that keeps the call's bytes, so `RUST_MUTANTS_FAULT` can make it active inside that branch.
+   The instrumenter records each pair it carried, the session reads the pair back rather than deriving it again, a request for any other pair is refused, and the runtime stops a process named an unknown fault rather than running the mutation alone.
+   A rewrite above the call's node — `ignore-question-statement` rewrites the whole statement — carries nothing, and its survivors are not asked.
+   The faulted session holds the error-propagation mutations beside the faults for that and judges only the faults; each survivor is put beside its fault, target by target in name order, against the fault alone on the same target, and every pair of runs is recorded.
+   The first target on which two pairs agree that exactly one run failed is the part's `beside` record — the `observable-under-fault` evidence — and the audit re-derives it from the recorded pairs.
 
 ## Consequences
 

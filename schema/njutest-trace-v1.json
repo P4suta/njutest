@@ -374,6 +374,26 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "pair"],
+          "properties": {
+            "type": { "const": "beside-run" },
+            "pair": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "fault", "target", "alone", "with"],
+              "properties": {
+                "mutant": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "fault": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "target": { "type": "string", "minLength": 1 },
+                "alone": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
+                "with": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "probe"],
           "properties": {
             "type": { "const": "probe-exec" },

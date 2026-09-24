@@ -2086,13 +2086,16 @@ fn validate_catalog_positions(
     Ok(())
 }
 
-/// Holds every record of evidence under a fault to a survivor and a fault the part holds.
+/// Holds every record of evidence under a fault to a survivor the part holds, and, where the part is the whole catalog, to a fault it holds: a shard owns its survivors by their index, and the fault beside one may be another shard's.
 fn validate_beside(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
     for beside in &part.beside {
         let survivor = part.mutants.iter().any(|mutant| {
             mutant.display_id == beside.mutant && mutant.outcome.outcome() == Outcome::Survived
         });
-        let fault = part.faults.iter().any(|one| one.display_id == beside.fault);
+        let fault = match part.part {
+            CatalogPart::Whole => part.faults.iter().any(|one| one.display_id == beside.fault),
+            CatalogPart::Shard(_) => true,
+        };
         if !survivor || !fault {
             return Err(PartLedgerError::BesideUnheld {
                 run_id: part.run_id.clone(),

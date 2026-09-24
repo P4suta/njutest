@@ -99,7 +99,7 @@ impl FaultDecision {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaultRecord {
-    /// The dense position in the catalog of faults, which is what a shard divides.
+    /// The dense position in the faulted session's catalog, which also holds the mutations a fault is put beside and is what a shard divides.
     pub catalog_index: CatalogIndex,
     /// The fault's full identity.
     pub id: String,
@@ -162,6 +162,24 @@ pub struct BesideRecord {
     pub target: String,
     /// Which of the two runs failed.
     pub failed: Failed,
+}
+
+/// One pair of runs of one target behind evidence beside a fault: the call failing alone, then with the survivor beside it.
+///
+/// Recorded for every pair a run makes, so the evidence can be re-derived from the runs rather than read back from itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BesideRun {
+    /// The survivor's short identity.
+    pub mutant: String,
+    /// The fault's short identity.
+    pub fault: String,
+    /// The target both runs were put to.
+    pub target: String,
+    /// What the run with the call failing alone came to, as the engine names outcomes.
+    pub alone: String,
+    /// What the run with the survivor beside the failing call came to.
+    pub with: String,
 }
 
 /// How many sites a run asked a fault at, by what became of each.

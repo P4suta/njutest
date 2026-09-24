@@ -9,7 +9,9 @@ use crate::assure::run::Request;
 use crate::cli::Environment;
 use crate::error::RunnerError;
 use crate::report::BuildReport;
-use crate::report::faults::{BesideRecord, Failed, FaultAccounting, FaultDecision, FaultRecord};
+use crate::report::faults::{
+    BesideRecord, BesideRun, Failed, FaultAccounting, FaultDecision, FaultRecord,
+};
 use crate::report::{CatalogIndex, Finding, FindingKind};
 use crate::ui::Notes;
 use crate::watch::Watch;
@@ -81,6 +83,7 @@ pub fn put(
     for record in &records {
         watch.trace.fault(record.clone());
     }
+    report.beside = beside(&session, report, watch)?;
     let after = written(&session)?;
     let broke: Vec<&String> = after.difference(&before).collect();
     if !broke.is_empty() {
@@ -99,7 +102,6 @@ pub fn put(
             ),
         ));
     }
-    report.beside = beside(&session, report, watch)?;
     report.accounting.faults = FaultAccounting::of(&records)?;
     report
         .findings
@@ -148,27 +150,33 @@ fn beside(
             if watch.cancel.is_cancelled() {
                 return Err(RunnerError::Interrupted);
             }
-            let asked = |request: rust_mutants::session::Request| {
-                session
-                    .exec(&request.with_target(target.clone()), watch.cancel)
-                    .map(|result| result.outcome())
-            };
-            let alone = asked(rust_mutants::session::Request::new(fault.id.to_string()))?;
-            let with = |()| {
-                asked(
+            let pair = || -> Result<(Outcome, Outcome), RunnerError> {
+                let asked = |request: rust_mutants::session::Request| {
+                    session
+                        .exec(&request.with_target(target.clone()), watch.cancel)
+                        .map(|result| result.outcome())
+                };
+                let alone = asked(rust_mutants::session::Request::new(fault.id.to_string()))?;
+                let with = asked(
                     rust_mutants::session::Request::new(mutant.id.to_string())
                         .with_fault(fault.id.to_string()),
-                )
+                )?;
+                watch.trace.beside_run(BesideRun {
+                    mutant: survivor.display_id.clone(),
+                    fault: fault.display_id.to_string(),
+                    target: target.clone(),
+                    alone: alone.name().to_owned(),
+                    with: with.name().to_owned(),
+                });
+                Ok((alone, with))
             };
-            let failed = match (alone, with(())?) {
-                (Outcome::Survived, Outcome::Killed) if with(())? == Outcome::Killed => {
-                    Failed::Beside
-                }
-                (Outcome::Killed, Outcome::Survived) if with(())? == Outcome::Survived => {
-                    Failed::Alone
-                }
-                _ => continue,
+            let first = pair()?;
+            let Some(failed) = told(first) else {
+                continue;
             };
+            if pair()? != first {
+                continue;
+            }
             let record = BesideRecord {
                 mutant: survivor.display_id.clone(),
                 fault: fault.display_id.to_string(),
@@ -181,6 +189,24 @@ fn beside(
         }
     }
     Ok(found)
+}
+
+/// Which run of a pair failed, where exactly one did and the other passed.
+const fn told(pair: (Outcome, Outcome)) -> Option<Failed> {
+    match pair {
+        (Outcome::Survived, Outcome::Killed) => Some(Failed::Beside),
+        (Outcome::Killed, Outcome::Survived) => Some(Failed::Alone),
+        (
+            Outcome::NotRun
+            | Outcome::Killed
+            | Outcome::Survived
+            | Outcome::StepLimitReached
+            | Outcome::Waited
+            | Outcome::Inconclusive
+            | Outcome::Errored,
+            _,
+        ) => None,
+    }
 }
 
 /// What a run says when the tree it faults gave no baseline to put a fault against, which leaves a run asked for faults short of assured.

@@ -391,6 +391,8 @@ pub struct Session {
     established: std::sync::Mutex<EstablishmentState>,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
+    /// Every mutation whose branch in the instrumented tree carries a fault's guard, with that fault: the only pairs a fault can be active beside, as the instrumenter wrote them.
+    beside: BTreeSet<(u32, u32)>,
     /// The digest of the pristine sources every unit of this build compiled.
     closure: String,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
@@ -1075,25 +1077,21 @@ impl Session {
         })
     }
 
-    /// A catalogued mutant this instrumented build actually contains.
-    /// The fault whose guard the instrumentation carried into `mutant`'s alternative: the one at the call the mutation keeps the bytes of, right before its edit or first in it.
-    ///
-    /// Only such a fault can be active beside the mutation, because only its guard is inside the mutation's branch.
+    /// The one fault whose guard the instrumentation carried into `mutant`'s branch, read from what the instrumenter wrote rather than derived again; none where it carried none or more than one.
     #[must_use]
     pub fn fault_beside(&self, mutant: &Mutant) -> Option<&Mutant> {
-        let edit = mutant.candidate.span;
-        self.catalog.mutants().iter().find(|fault| {
-            fault.candidate.rule.family.perturbs() == crate::rule::Perturbs::Environment
-                && fault.candidate.path == mutant.candidate.path
-                && (fault.candidate.span.end == edit.start
-                    || (fault.candidate.span.start == edit.start
-                        && fault.candidate.span.end <= edit.end
-                        && mutant
-                            .candidate
-                            .replacement
-                            .starts_with(&fault.candidate.original)))
-                && self.validated.accepted.binary_search(&fault.index).is_ok()
-        })
+        let mut carried = self
+            .beside
+            .range((mutant.index, 0)..=(mutant.index, u32::MAX))
+            .map(|(_, fault)| *fault);
+        let fault = carried.next()?;
+        if carried.next().is_some() {
+            return None;
+        }
+        self.catalog
+            .mutants()
+            .iter()
+            .find(|candidate| candidate.index == fault)
     }
 
     /// The fault a request names beside its mutant, held to being a fault beside something that is not one.
@@ -1106,7 +1104,15 @@ impl Session {
             mutant.candidate.rule.family.perturbs(),
             fault.candidate.rule.family.perturbs(),
         ) {
-            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Environment) => None,
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Environment)
+                if self.beside.contains(&(mutant.index, fault.index)) =>
+            {
+                None
+            }
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Environment) => Some(
+                "the instrumentation did not carry this fault's guard into that mutation's branch, \
+                 so activating it there would activate nothing",
+            ),
             (crate::rule::Perturbs::Environment, _) => {
                 Some("what runs is itself a fault, and a fault is put beside a mutation")
             }
@@ -1124,6 +1130,7 @@ impl Session {
         }
     }
 
+    /// A catalogued mutant this instrumented build actually contains.
     fn executable(&self, prefix: &str) -> Result<&Mutant, EngineError> {
         let mutant = self.resolve(prefix)?;
         if self.validated.accepted.binary_search(&mutant.index).is_ok() {

@@ -1936,6 +1936,40 @@ fn besides(
     let Some(faulted) = faulted else {
         return;
     };
+    let mut asked: BTreeSet<(&str, &str)> = faulted
+        .pairs
+        .iter()
+        .map(|pair| (pair.mutant.as_str(), pair.fault.as_str()))
+        .collect();
+    asked.extend(
+        held.iter()
+            .map(|one| (one.mutant.as_str(), one.fault.as_str())),
+    );
+    for (mutant, fault) in asked {
+        let pairs: Vec<&crate::faults::Pair> = faulted
+            .pairs
+            .iter()
+            .filter(|pair| pair.mutant == mutant && pair.fault == fault)
+            .collect();
+        let derived = crate::faults::derived(&pairs);
+        let claimed = held
+            .iter()
+            .find(|one| one.mutant == mutant && one.fault == fault)
+            .map(|one| (one.target.clone(), one.failed.as_str()));
+        if derived
+            .as_ref()
+            .map(|(target, failed)| (target.clone(), *failed))
+            != claimed
+        {
+            notes.violated(
+                mutant,
+                format!(
+                    "the pairs of runs the recording holds beside {fault} support {derived:?}, \
+                     and the report says {claimed:?}"
+                ),
+            );
+        }
+    }
     let mut recorded = faulted.besides.clone();
     recorded.sort();
     if held != recorded {
