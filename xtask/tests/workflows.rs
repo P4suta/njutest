@@ -520,44 +520,231 @@ fn pages() -> Vec<PathBuf> {
     found
 }
 
-/// The text a workflow step can end in that turns its failure into a success.
-const SWALLOWED: [&str; 4] = ["|| true", "|| :", "|| exit 0", "continue-on-error: true"];
-
-#[test]
-fn no_step_turns_its_own_failure_into_a_success() {
-    let mut swallowing = Vec::new();
-    for path in workflows().into_iter().chain(actions()).chain(pages()) {
+/// The shell text a workflow, an action, a task or a script runs: the whole file, since a line that is not shell holds no `||` outside the expressions [`shell_text`] removes.
+fn shell_sources() -> Vec<(PathBuf, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut scripts: Vec<PathBuf> = std::fs::read_dir(root.join("scripts"))
+        .unwrap_or_else(|error| panic!("scripts: {error}"))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|error| panic!("scripts: {error}"))
+                .path()
+        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sh"))
+        .collect();
+    scripts.sort();
+    let mut found = Vec::new();
+    for path in workflows()
+        .into_iter()
+        .chain(actions())
+        .chain([root.join("mise.toml")])
+        .chain(scripts)
+    {
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        let steps = path.extension().is_some_and(|extension| extension == "md");
-        let mut inside = !steps;
-        for (at, line) in source.lines().enumerate() {
-            if steps && line.trim_start().starts_with("```") {
+        found.push((path, source));
+    }
+    for path in pages() {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let mut inside = false;
+        let mut examples = String::new();
+        for line in source.lines() {
+            if line.trim_start().starts_with("```") {
                 inside = line.trim_start().starts_with("```yaml");
+                examples.push('\n');
                 continue;
             }
-            if !inside {
-                continue;
+            if inside {
+                examples.push_str(line);
             }
-            if let Some(swallowed) = SWALLOWED
-                .iter()
-                .find(|swallowed| line.contains(**swallowed))
-            {
-                swallowing.push(format!(
-                    "{}:{}: `{swallowed}`",
-                    path.display(),
-                    at.saturating_add(1)
-                ));
+            examples.push('\n');
+        }
+        found.push((path, examples));
+    }
+    found
+}
+
+/// `source` with what is not a shell command blanked, line lengths kept: comments, quoted strings, `${{ … }}` expressions, and `[[ … ]]` tests.
+fn shell_text(source: &str) -> String {
+    let characters: Vec<char> = source.chars().collect();
+    let mut kept = String::with_capacity(source.len());
+    let mut at = 0_usize;
+    while let Some(&character) = characters.get(at) {
+        let rest: String = characters.iter().skip(at).take(3).collect();
+        if rest == "\"\"\"" {
+            kept.push_str(&rest);
+            at = at.saturating_add(3);
+            continue;
+        }
+        let closing = if rest.starts_with("${{") {
+            Some("}}")
+        } else if rest.starts_with("[[") {
+            Some("]]")
+        } else if character == '\'' || character == '"' {
+            Some(if character == '\'' { "'" } else { "\"" })
+        } else if character == '#'
+            && (at == 0
+                || characters
+                    .get(at.saturating_sub(1))
+                    .is_some_and(|before| before.is_whitespace()))
+        {
+            Some("\n")
+        } else {
+            None
+        };
+        let Some(closing) = closing else {
+            kept.push(character);
+            at = at.saturating_add(1);
+            continue;
+        };
+        let opened = if closing == "}}" || closing == "]]" {
+            2
+        } else {
+            1
+        };
+        let mut end = at.saturating_add(opened);
+        while end < characters.len() {
+            let here: String = characters.iter().skip(end).take(closing.len()).collect();
+            if here == closing {
+                break;
             }
+            end = end.saturating_add(1);
+        }
+        let through = if closing == "\n" {
+            end
+        } else {
+            end.saturating_add(closing.len())
+        };
+        for blanked in characters.iter().take(through).skip(at) {
+            kept.push(if *blanked == '\n' { '\n' } else { ' ' });
+        }
+        at = through;
+    }
+    kept
+}
+
+/// Whether the command after a `||` still ends non-zero, or records the failure for a later decision, rather than turning it into a success.
+fn answers_the_failure(right: &str, left_is_a_test: bool) -> bool {
+    let right = right.trim_start();
+    if let Some(group) = right.strip_prefix('{') {
+        let body = group.split('}').next().unwrap_or("");
+        return body
+            .split([';', '\n'])
+            .map(str::trim)
+            .rfind(|command| !command.is_empty())
+            .is_some_and(ends_non_zero);
+    }
+    let command: String = right
+        .chars()
+        .take_while(|character| !matches!(character, ';' | '\n' | '&' | '|' | ')'))
+        .collect();
+    let command = command.trim();
+    command.starts_with("case ")
+        || ends_non_zero(command)
+        || command.split_once('=').is_some_and(|(name, _value)| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+        || (left_is_a_test && matches!(command, "continue" | "break"))
+}
+
+/// Whether `command` ends its shell non-zero.
+fn ends_non_zero(command: &str) -> bool {
+    command == "false"
+        || ["exit ", "return "].iter().any(|keyword| {
+            command
+                .strip_prefix(keyword)
+                .is_some_and(|code| code.trim() != "0" && !code.trim().is_empty())
+        })
+}
+
+/// Every `||` in `text` whose right side turns the left side's failure into a success, and every `set +e`, by line.
+fn swallowed(text: &str) -> Vec<usize> {
+    let mut found = Vec::new();
+    for (at, line) in text.lines().enumerate() {
+        if line
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| pair == ["set", "+e"])
+            || line.contains("continue-on-error: true")
+        {
+            found.push(at.saturating_add(1));
+        }
+    }
+    let mut from = 0_usize;
+    while let Some(offset) = text.get(from..).and_then(|rest| rest.find("||")) {
+        let at = from.saturating_add(offset);
+        let before = text.get(..at).unwrap_or("");
+        let left_start = before
+            .rfind(['\n', ';', '(', '{', '&', '|'])
+            .map_or(0, |boundary| boundary.saturating_add(1));
+        let left = before.get(left_start..).unwrap_or("").trim_start();
+        let left_is_a_test = ["[ ", "test ", "if ", "elif ", "while ", "until "]
+            .iter()
+            .any(|opening| left.starts_with(opening))
+            || left.trim().is_empty();
+        let right = text.get(at.saturating_add(2)..).unwrap_or("");
+        let right = right.trim_start_matches([' ', '\t', '\\', '\n']);
+        if !left_is_a_test && !answers_the_failure(right, left_is_a_test) {
+            found.push(before.matches('\n').count().saturating_add(1));
+        }
+        from = at.saturating_add(2);
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+#[test]
+fn no_command_turns_its_own_failure_into_a_success() {
+    let mut swallowing = Vec::new();
+    for (path, source) in shell_sources() {
+        for line in swallowed(&shell_text(&source)) {
+            swallowing.push(format!("{}:{line}", path.display()));
         }
     }
     assert!(
         swallowing.is_empty(),
-        "a step that cannot fail says nothing when it goes wrong: the dogfood parts passed a \
+        "a command that cannot fail says nothing when it goes wrong: the dogfood parts passed a \
          flag the engine does not have, every part refused to run, and `|| true` reported each \
-         one as a part that measured. Accept the exit codes that are answers by name, as the \
-         soundness step does with `case`, and let every other one fail. {swallowing:?}"
+         one as a part that measured. After `||`, end non-zero, record the status for a later \
+         decision, or accept the exit codes that are answers by name in a `case`; `set +e` and \
+         `continue-on-error` are refused outright. {swallowing:#?}"
     );
+}
+
+#[test]
+fn the_swallowing_rule_tells_a_refusal_from_a_decision() {
+    for swallowing in [
+        "cmd || true",
+        "cmd ||true",
+        "cmd || :",
+        "cmd || echo failed",
+        "cmd || exit 0",
+        "a || b || true",
+        "set +e",
+        "continue-on-error: true",
+    ] {
+        assert!(
+            !swallowed(&shell_text(swallowing)).is_empty(),
+            "{swallowing}"
+        );
+    }
+    for deciding in [
+        "cmd || exit 1",
+        "cmd || { echo why; exit 1; }",
+        "cmd || case \"$?\" in 1) ;; *) exit 1 ;; esac",
+        "cmd || status=1",
+        "[ -f x ] || continue",
+        "if a || b; then c; fi",
+        "while read -r line || [[ -n \"${line}\" ]]; do :; done",
+        "ref: ${{ inputs.tag || github.ref }}",
+        "echo 'a || true'",
+        "# a || true",
+    ] {
+        assert!(swallowed(&shell_text(deciding)).is_empty(), "{deciding}");
+    }
 }
 
 /// Every long option a help golden lists for `program`'s `command`, with whether it takes a value.
