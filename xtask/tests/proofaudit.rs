@@ -627,7 +627,7 @@ fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
     let rendered = audited_with_routes(&base()).to_string();
     assert!(
         rendered.ends_with(&format!(
-            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 0 unaudited"
+            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 1 unaudited"
         )),
         "{rendered}"
     );
@@ -640,7 +640,7 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
     let first = lines.next().unwrap_or_default();
     assert!(first.starts_with("violation: findings: "), "{rendered}");
     assert!(first.contains(SURVIVED), "{rendered}");
-    assert!(rendered.ends_with("1 violation, 0 unaudited"), "{rendered}");
+    assert!(rendered.ends_with("1 violation, 1 unaudited"), "{rendered}");
 }
 
 #[test]
@@ -1391,7 +1391,7 @@ fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
 
     assert_eq!(
         audit.unaudited(),
-        5,
+        6,
         "one column that is not there leaves the column itself, the two equations it is \
          a side of, and the two layers this recording does not carry — the routing and \
          the executions. A count of what could not be checked is what tells a reader how \
@@ -1399,7 +1399,7 @@ fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
          it checked everything: {audit}"
     );
     assert!(
-        audit.to_string().contains("5 unaudited"),
+        audit.to_string().contains("6 unaudited"),
         "and the summary says it: {audit}"
     );
 }
@@ -2616,5 +2616,81 @@ fn a_part_of_a_catalog_records_its_knobs_and_is_not_held_to_findings_it_does_not
         Vec::<String>::new(),
         "a part raises no finding a knob earns, because the merge raises it from every part: \
          {shard}"
+    );
+}
+
+#[test]
+fn a_binary_the_run_did_not_measure_owes_no_thread_record() {
+    let clean = sentinel::clean();
+    let mut engine = clean
+        .engine
+        .clone()
+        .expect("the clean specimen keeps an engine recording");
+    engine.push(serde_json::json!({
+        "type": "build",
+        "build": {
+            "targets": ["pkg/test/failing", "pkg/test/skipped"],
+            "details": [
+                { "id": "pkg/test/failing", "kind": "test", "harness": true, "limitations": [] },
+                { "id": "pkg/test/skipped", "kind": "test", "harness": true, "limitations": [] }
+            ]
+        }
+    }));
+    engine.push(serde_json::json!({
+        "type": "verify",
+        "verify": {
+            "target": "pkg/test/failing", "outcome": "killed", "tests_run": 1, "duration_ms": 1,
+            "args": ["--test-threads=1"], "remembered": false, "retried": false
+        }
+    }));
+    let laid = sentinel::Perturbation {
+        name: "a failing and a skipped binary",
+        engine: Some(engine),
+        ..clean
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit = gates::proofaudit(laid.run(), laid.trace()).expect("the specimen is read");
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.standing == Standing::Violated
+                && remark.subject.starts_with("pkg/test/")),
+        "a binary whose baseline failed is excluded, and a skipped one never measured, so neither owes a record: {audit}"
+    );
+}
+
+#[test]
+fn a_built_binary_with_no_baseline_record_is_said_to_be_unaccounted_for() {
+    let clean = sentinel::clean();
+    let mut engine = clean
+        .engine
+        .clone()
+        .expect("the clean specimen keeps an engine recording");
+    engine.push(serde_json::json!({
+        "type": "build",
+        "build": {
+            "targets": ["pkg/test/vanished"],
+            "details": [
+                { "id": "pkg/test/vanished", "kind": "test", "harness": true, "limitations": [] }
+            ]
+        }
+    }));
+    let laid = sentinel::Perturbation {
+        name: "a built binary whose baseline record is gone",
+        engine: Some(engine),
+        ..clean
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit = gates::proofaudit(laid.run(), laid.trace()).expect("the specimen is read");
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited
+                && remark.detail.contains("pkg/test/vanished")),
+        "a binary with no baseline record may have been skipped or dropped from the recording, and the audit says it cannot tell: {audit}"
     );
 }

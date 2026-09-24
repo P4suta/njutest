@@ -104,6 +104,8 @@ pub struct Started {
     pub arguments: Vec<String>,
     /// The catalog index of the guard it paused its threads at, which makes it a schedule and never a knob.
     pub delayed: Option<u64>,
+    /// The guard whose delayed failure it is the undelayed half of a confirming round for.
+    pub confirms: Option<u64>,
 }
 
 /// What one perturbed control was started as.
@@ -113,7 +115,7 @@ pub enum Role {
     Knob(Knob),
     /// A schedule: its threads paused at one guard, with nothing else set.
     Delayed,
-    /// Nothing beyond its baseline: the undelayed half of a round confirming a delayed failure.
+    /// Nothing beyond its baseline, named as the undelayed half of a round confirming a delayed failure.
     Undelayed,
     /// Nothing a run starts a control as.
     Unknown,
@@ -125,11 +127,14 @@ impl Started {
     pub fn role(&self) -> Role {
         let plain =
             self.environment.is_empty() && self.launcher.is_none() && self.arguments.is_empty();
-        match (self.delayed, plain) {
-            (Some(_), true) => Role::Delayed,
-            (Some(_), false) => Role::Unknown,
-            (None, true) => Role::Undelayed,
-            (None, false) => self.knob().map_or(Role::Unknown, Role::Knob),
+        match (self.delayed, self.confirms, plain) {
+            (Some(_), None, true) => Role::Delayed,
+            (None, Some(_), true) => Role::Undelayed,
+            (None, None, true) => Role::Unknown,
+            (None, None, false) => self.knob().map_or(Role::Unknown, Role::Knob),
+            (Some(_), Some(_), _) | (Some(_), None, false) | (None, Some(_), false) => {
+                Role::Unknown
+            }
         }
     }
 
@@ -288,6 +293,10 @@ fn started(record: &Value) -> Option<Started> {
         delayed: match record.get("delay")? {
             Value::Null => None,
             delay => Some(delay.get("site")?.as_u64()?),
+        },
+        confirms: match record.get("confirms")? {
+            Value::Null => None,
+            site => Some(site.as_u64()?),
         },
     })
 }

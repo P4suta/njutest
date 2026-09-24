@@ -235,6 +235,7 @@ pub fn every_payload() -> Vec<Payload> {
                     launcher: Some("umask 077".to_owned()),
                     arguments: vec!["--test-threads=1".to_owned()],
                     delay: None,
+                    confirms: None,
                 },
                 outcome: "survived".to_owned(),
                 failed_tests: Vec::new(),

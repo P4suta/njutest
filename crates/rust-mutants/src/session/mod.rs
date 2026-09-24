@@ -136,6 +136,8 @@ pub struct Perturbation {
     pub schedule: execute::Schedule,
     /// The guard each thread pauses at the first time it reaches it, which is how one schedule of the program is chosen.
     pub delay: Option<execute::Delay>,
+    /// The guard whose delayed failure this control is the undelayed half of a confirming round for; it changes nothing the process is started with, and is what makes the control one a recording names.
+    pub confirms: Option<u32>,
 }
 
 impl Perturbation {
@@ -147,6 +149,7 @@ impl Perturbation {
             launcher: None,
             schedule: execute::Schedule::AsConfigured,
             delay: None,
+            confirms: None,
         }
     }
 
@@ -175,6 +178,7 @@ impl Perturbation {
                 site: delay.site,
                 pause_ms: delay.pause_ms,
             }),
+            confirms: self.confirms,
         }
     }
 }

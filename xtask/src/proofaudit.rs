@@ -545,19 +545,45 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
 
 /// Every binary the engine built that the report records nothing about, each a violation.
 fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes: &mut Notes<'_>) {
+    if touched.kinds.is_empty() {
+        notes.unaudited(
+            "concurrency",
+            "the engine recording holds no build record, so which binaries a run measured, and \
+             so which records the report owes, is not known"
+                .to_owned(),
+        );
+    }
+    let mut unverified = Vec::new();
     for target in touched.kinds.keys() {
-        if !rows
-            .iter()
-            .any(|row| field(row, "target").as_deref() == Some(target.as_str()))
+        if !touched.verified.contains(target) {
+            unverified.push(target.as_str());
+            continue;
+        }
+        if touched.passing.contains(target)
+            && !rows
+                .iter()
+                .any(|row| field(row, "target").as_deref() == Some(target.as_str()))
         {
             notes.violated(
                 target,
                 format!(
-                    "the engine built {target} and the report, which measured mutants, records \
-                     nothing about its threads, so it is neither proven nor named as a hole"
+                    "the engine built {target} and its baseline passed, and the report, which \
+                     measured mutants, records nothing about its threads, so it is neither proven \
+                     nor named as a hole"
                 ),
             );
         }
+    }
+    if !unverified.is_empty() {
+        notes.unaudited(
+            "concurrency",
+            format!(
+                "the engine built {} and recorded no baseline of them, so whether they were skipped \
+                 by name or their record is missing, and so whether the report owes a thread \
+                 record for them, is not known",
+                unverified.join(", ")
+            ),
+        );
     }
 }
 
@@ -577,7 +603,6 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
     }
     let touched = match engines {
         [one] => &one.touched,
-        [] if rows.is_empty() => return,
         [] | [_, _, ..] => {
             notes.unaudited(
                 "concurrency",
@@ -628,7 +653,7 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
             Err(why) => notes.violated(&target, format!("{target}: {why}")),
         }
     }
-    explorations(rows, &engine_of(engines), &mut notes);
+    explorations(rows, engines, &mut notes);
     if !proven.is_empty() {
         notes.unaudited(
             "concurrency",
@@ -656,12 +681,13 @@ fn engine_of(engines: &[Engine]) -> Vec<&crate::knobs::Perturbed> {
     }
 }
 
-/// What each binary's exploration came to, replayed from the controls the engine started for it in the order it recorded them, held to the report exactly (ADR 0034).
-fn explorations(
-    rows: &[serde_json::Value],
-    explored: &[&crate::knobs::Perturbed],
-    notes: &mut Notes<'_>,
-) {
+/// What each binary's exploration came to, replayed from the controls the engine started for it in the order it recorded them, held to the report exactly, and why one with none was not explored, derived from its baseline (ADR 0034).
+fn explorations(rows: &[serde_json::Value], engines: &[Engine], notes: &mut Notes<'_>) {
+    let [engine] = engines else {
+        return;
+    };
+    let explored = engine_of(engines);
+    let touched = &engine.touched;
     for row in rows {
         let target = field(row, "target").unwrap_or_default();
         let runs: Vec<crate::concurrency::Run> = explored
@@ -669,20 +695,40 @@ fn explorations(
             .filter(|control| control.target == target)
             .map(|control| crate::concurrency::Run {
                 delayed: control.started.delayed,
+                confirms: control.started.confirms,
                 ended: control.ended,
                 failed: control.failed.clone(),
             })
             .collect();
+        let context = crate::concurrency::Context {
+            single_threaded: row
+                .get("standing")
+                .and_then(|standing| field(standing, "state"))
+                .as_deref()
+                == Some("single-threaded"),
+            passing: touched.passing.contains(&target),
+            reached: touched
+                .touches
+                .iter()
+                .rev()
+                .find(|touch| {
+                    touch.measured == crate::drift::Measured::Baseline && touch.target == target
+                })
+                .map_or(0, |touch| touch.reached.len()),
+            asked_any: !explored.is_empty(),
+        };
         let reported = row.get("explored").unwrap_or(&serde_json::Value::Null);
         match crate::concurrency::replayed(&runs) {
             Ok(derived) => {
-                if let Err(why) = crate::concurrency::agrees_explored(reported, &derived) {
+                if let Err(why) = crate::concurrency::agrees_explored(reported, &derived, context) {
                     notes.violated(&target, format!("{target}: {why}"));
                 }
             }
             Err(why) => notes.violated(
                 &target,
-                format!("{target}: the controls the engine recorded for it are not an exploration: {why}"),
+                format!(
+                    "{target}: the controls the engine recorded for it are not an exploration: {why}"
+                ),
             ),
         }
     }

@@ -83,6 +83,12 @@ pub enum ContradictionError {
         /// The reasons for concurrency.
         because: BTreeSet<&'static str>,
     },
+    /// A proven binary that names a reason it is not.
+    #[error("it is reported single-threaded, and it names reasons in `{list}`")]
+    ProvenWithReasons {
+        /// The list that should not be there.
+        list: &'static str,
+    },
     /// A reason no run gives.
     #[error("{kind:?} is no reason a run gives")]
     Reason {
@@ -210,7 +216,12 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
     };
     match state.as_str() {
         "single-threaded" => {
-            if derived.because.is_empty() && derived.why.is_empty() {
+            if let Some(list) = ["because", "why"]
+                .into_iter()
+                .find(|list| standing.get(*list).is_some())
+            {
+                Err(ContradictionError::ProvenWithReasons { list })
+            } else if derived.because.is_empty() && derived.why.is_empty() {
                 Ok(())
             } else {
                 Err(ContradictionError::Proven {
@@ -307,6 +318,8 @@ pub const CONFIRMING_ROUNDS: usize = 5;
 pub struct Run {
     /// The guard it paused its threads at, or nothing for an undelayed control.
     pub delayed: Option<u64>,
+    /// The guard an undelayed control names itself the confirming half of a round for.
+    pub confirms: Option<u64>,
     /// How it ended.
     pub ended: crate::knobs::Ended,
     /// The tests that failed.
@@ -372,6 +385,9 @@ pub fn replayed(runs: &[Run]) -> Result<Explored, ReplayError> {
     let mut rest = runs.iter().enumerate();
     while let Some((at, first)) = rest.next() {
         let site = first.delayed.ok_or(ReplayError::Stray { at })?;
+        if first.confirms.is_some() {
+            return Err(ReplayError::Stray { at });
+        }
         delayed.push(site);
         match first.ended {
             crate::knobs::Ended::Passed => continue,
@@ -415,7 +431,7 @@ fn confirmed<'a>(
             return Ok(false);
         }
         let (at, without) = rest.next().ok_or(ReplayError::Truncated)?;
-        if without.delayed.is_some() {
+        if without.delayed.is_some() || without.confirms != Some(site) {
             return Err(ReplayError::Stray { at });
         }
         if without.ended != crate::knobs::Ended::Passed {
@@ -438,13 +454,41 @@ pub enum ExploreContradictionError {
     },
 }
 
-/// Whether the reported `explored` is exactly what the controls come to.
+/// What else a reported exploration answers to beyond its own controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Context {
+    /// Whether the audited standing of the binary is single-threaded.
+    pub single_threaded: bool,
+    /// Whether its baseline passed.
+    pub passing: bool,
+    /// How many guards its baseline reached.
+    pub reached: usize,
+    /// Whether the run delayed any guard of any binary, which is what asking for schedules does.
+    pub asked_any: bool,
+}
+
+/// Why a binary with no delayed control was not explored, as the recording decides it.
+#[must_use]
+pub const fn unexplored_because(context: Context) -> &'static str {
+    if context.single_threaded {
+        "not-needed"
+    } else if !context.passing {
+        "not-passing"
+    } else if context.reached == 0 {
+        "no-site"
+    } else {
+        "not-asked"
+    }
+}
+
+/// Whether the reported `explored` is exactly what the controls come to, for a binary `context` describes.
 ///
 /// # Errors
 /// [`ExploreContradictionError`] where it is not.
 pub fn agrees_explored(
     explored: &Value,
     derived: &Explored,
+    context: Context,
 ) -> Result<(), ExploreContradictionError> {
     let sites = |key: &str| -> Option<Vec<u64>> {
         explored
@@ -456,14 +500,21 @@ pub fn agrees_explored(
     };
     let asked = explored.get("asked").and_then(Value::as_u64);
     let holds = match (explored.get("state").and_then(Value::as_str), derived) {
-        (Some("unexplored"), Explored::Nothing) => true,
+        (Some("unexplored"), Explored::Nothing) => {
+            let why = unexplored_because(context);
+            explored.get("why").and_then(Value::as_str) == Some(why)
+                && !(why == "not-asked" && context.asked_any)
+        }
         (Some("sampled"), Explored::Sampled { delayed }) => {
-            sites("delayed").as_ref() == Some(delayed) && fits(asked, delayed)
+            !context.single_threaded
+                && sites("delayed").as_ref() == Some(delayed)
+                && fits(asked, delayed, context.reached)
         }
         (Some("undecided"), Explored::Undecided { delayed, undecided }) => {
-            sites("delayed").as_ref() == Some(delayed)
+            !context.single_threaded
+                && sites("delayed").as_ref() == Some(delayed)
                 && sites("undecided").as_ref() == Some(undecided)
-                && fits(asked, delayed)
+                && fits(asked, delayed, context.reached)
         }
         (
             Some("broke"),
@@ -482,7 +533,8 @@ pub fn agrees_explored(
                         .map(|one| one.as_str().map(ToOwned::to_owned))
                         .collect()
                 });
-            explored.get("site").and_then(Value::as_u64) == Some(*site)
+            !context.single_threaded
+                && explored.get("site").and_then(Value::as_u64) == Some(*site)
                 && named.as_ref() == Some(failed)
                 && u64::try_from(*rounds).is_ok_and(|rounds| {
                     explored.get("rounds").and_then(Value::as_u64) == Some(rounds)
@@ -506,7 +558,9 @@ pub fn agrees_explored(
     }
 }
 
-/// Whether `delayed` names no more guards than were asked for.
-fn fits(asked: Option<u64>, delayed: &[u64]) -> bool {
-    asked.is_some_and(|asked| u64::try_from(delayed.len()).is_ok_and(|count| count <= asked))
+/// Whether `delayed` is as many guards as were asked for, or every guard reached where fewer were.
+fn fits(asked: Option<u64>, delayed: &[u64], reached: usize) -> bool {
+    asked.is_some_and(|asked| {
+        usize::try_from(asked).is_ok_and(|asked| delayed.len() == asked.min(reached))
+    })
 }
