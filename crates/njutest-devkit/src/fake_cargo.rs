@@ -252,7 +252,9 @@ pub fn example_in(name: &str, into: &Path) -> PathBuf {
     at
 }
 
-/// Copies `from` to `at`, again where `from` changed while it was being read, and refuses after a few tries rather than keeping a torn copy.
+/// Copies `from` beside `at` and moves it into place, again where `from` changed while it was being read, and refuses after a few tries rather than keeping a torn copy.
+///
+/// The move is what lets a test ask for the same program twice while its first copy is still running: Linux refuses to write over an executable a process has open, and never refuses to replace it.
 fn copied(from: &Path, at: &Path) {
     let stamp = |path: &Path| match std::fs::metadata(path)
         .and_then(|metadata| Ok((metadata.len(), metadata.modified()?)))
@@ -260,20 +262,38 @@ fn copied(from: &Path, at: &Path) {
         Ok(stamp) => Some(stamp),
         Err(_unreadable) => None,
     };
+    let partial = at.with_extension("partial");
+    let mut said = Vec::new();
     let stable = std::iter::repeat_n((), 5).any(|()| {
         let before = stamp(from);
-        let wrote = std::fs::copy(from, at);
+        let wrote = std::fs::copy(from, &partial);
         let after = stamp(from);
-        matches!(
-            (before, wrote),
-            (Some(before), Ok(wrote)) if Some(before) == after && wrote == before.0
-        )
+        match (before, wrote) {
+            (Some(before), Ok(wrote)) if Some(before) == after && wrote == before.0 => {
+                match std::fs::rename(&partial, at) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        said.push(format!("moving the copy into place: {error}"));
+                        false
+                    }
+                }
+            }
+            (_, Err(error)) => {
+                said.push(format!("copying: {error}"));
+                false
+            }
+            (Some(_) | None, Ok(_)) => {
+                said.push("the file changed while it was read".to_owned());
+                false
+            }
+        }
     });
     assert!(
         stable,
-        "{} kept changing while it was copied into {}: something rebuilds it while tests run",
+        "no stable copy of {} could be put at {}: {}",
         from.display(),
-        at.display()
+        at.display(),
+        said.join("; ")
     );
 }
 
