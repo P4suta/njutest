@@ -5,7 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # fixture-strict-lints
 
-A crate that denies every lint the code the engine plants could trip — `warnings`, and the allow-by-default `unused_qualifications`, `unused_results`, `unused_import_braces`, `unused_lifetimes`, `single_use_lifetimes`, `trivial_casts`, `trivial_numeric_casts`, `unreachable_pub` and `unsafe_code` — so a guard, a checkpoint, or the runtime module that trips one fails validation here rather than in somebody's project.
+A crate that denies every lint the code the engine plants could trip, so a guard, a checkpoint, or the runtime module that trips one fails validation here rather than in somebody's project.
+The set is the union of this repository's own list and an adopter's `[workspace.lints.rust]`: `warnings`, `unused` and `future_incompatible` as groups; `unsafe_code`, `non_ascii_idents`, `unexpected_cfgs`, `missing_debug_implementations`, `missing_copy_implementations`, `unreachable_pub`, `unused_qualifications`, `unused_results`, `unused_import_braces`, `elided_lifetimes_in_paths`, `unused_lifetimes`, `single_use_lifetimes`, `redundant_lifetimes`, `trivial_casts`, `trivial_numeric_casts`, `let_underscore_drop`, `meta_variable_misuse`, `unit_bindings`, `variant_size_differences` and `ambiguous_negative_literals`.
+A lint somebody denies that trips generated code joins this list with the fix.
 
 The runtime module lives at the file root and is reached from three depths: the root itself, `signs`, which glob-imports its parent and so already has the runtime's name in scope, and `signs::plain`, which imports nothing.
 A qualified call from `signs` is one `unused_qualifications` refuses; an unqualified one from `plain` does not resolve.
