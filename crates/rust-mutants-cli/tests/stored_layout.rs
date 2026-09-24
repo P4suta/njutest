@@ -5,7 +5,6 @@
 
 #![expect(
     clippy::expect_used,
-    clippy::panic,
     reason = "the helpers that arrange a directory of runs are not themselves tests: a \
               directory that could not be made leaves nothing to prune"
 )]
@@ -20,17 +19,12 @@ use rust_mutants_cli::report::run as run_report;
 
 include!("support/metadata.rs");
 
-/// A directory a test arranges runs under.
-fn scratch(name: &str) -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("rust-mutants-stored-{}-{name}", std::process::id()));
-    match std::fs::remove_dir_all(&root) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!("the old scratch directory can be removed: {error}"),
-    }
-    std::fs::create_dir_all(&root).expect("a directory to arrange runs under");
-    root
+/// A directory a test arranges runs under, removed with the value.
+fn scratch(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("rust-mutants-stored-{name}-"))
+        .tempdir()
+        .expect("a directory to arrange runs under")
 }
 
 /// A stored run of that name, as far as anything reading the directory can tell.
@@ -169,11 +163,12 @@ fn a_name_a_person_chose_is_the_one_the_run_goes_by() {
 
 #[test]
 fn a_new_run_cannot_alias_a_historical_spelling_by_case() {
-    let directory = scratch("write-case-alias");
-    let historical = run_at(&directory, "RUN-A");
+    let owned_directory = scratch("write-case-alias");
+    let directory = owned_directory.path();
+    let historical = run_at(directory, "RUN-A");
     let id = RunId::try_from("run-a").expect("a canonical writable id");
 
-    let refused = stored::store(&directory, &id, &document())
+    let refused = stored::store(directory, &id, &document())
         .expect_err("a case-fold alias is not a writable run");
     assert!(
         refused.to_string().contains("ASCII case"),
@@ -188,20 +183,22 @@ fn a_new_run_cannot_alias_a_historical_spelling_by_case() {
 
 #[test]
 fn an_exact_canonical_run_may_replace_its_own_document() {
-    let directory = scratch("exact-replace");
+    let owned_directory = scratch("exact-replace");
+    let directory = owned_directory.path();
     let id = RunId::try_from("same-run").expect("a canonical writable id");
-    let first = stored::store(&directory, &id, &document()).expect("the first write");
-    let second = stored::store(&directory, &id, &document()).expect("an exact replacement");
+    let first = stored::store(directory, &id, &document()).expect("the first write");
+    let second = stored::store(directory, &id, &document()).expect("an exact replacement");
     assert_eq!(first, second);
 }
 
 #[test]
 fn a_latest_pointer_cannot_bypass_a_case_collision_inventory() {
-    let directory = scratch("pointer-case-alias");
-    let upper = run_at(&directory, "RUN-A");
-    let lower = run_at(&directory, "run-a");
+    let owned_directory = scratch("pointer-case-alias");
+    let directory = owned_directory.path();
+    let upper = run_at(directory, "RUN-A");
+    let lower = run_at(directory, "run-a");
     if upper != lower
-        && stored::subdirectories(&directory)
+        && stored::subdirectories(directory)
             .expect("the store is readable")
             .len()
             == 2
@@ -212,7 +209,7 @@ fn a_latest_pointer_cannot_bypass_a_case_collision_inventory() {
         )
         .expect("a latest pointer");
         assert!(
-            stored::newest(&directory).is_err(),
+            stored::newest(directory).is_err(),
             "the pointer fast path must first establish that stored spellings are unique"
         );
     }
@@ -220,11 +217,12 @@ fn a_latest_pointer_cannot_bypass_a_case_collision_inventory() {
 
 #[test]
 fn the_newest_run_is_the_one_the_last_run_pointed_at() {
-    let directory = scratch("pointer");
-    let older = run_at(&directory, "20260101T000000000Z");
+    let owned_directory = scratch("pointer");
+    let directory = owned_directory.path();
+    let older = run_at(directory, "20260101T000000000Z");
     assert!(test_metadata(&older).is_dir(), "the older run was arranged");
-    let newer = run_at(&directory, "20260102T000000000Z");
-    let by_name = stored::newest(&directory).expect("a run is stored");
+    let newer = run_at(directory, "20260102T000000000Z");
+    let by_name = stored::newest(directory).expect("a run is stored");
     assert_eq!(
         by_name,
         newer.join(run_report::FILE_NAME),
@@ -244,7 +242,7 @@ fn the_newest_run_is_the_one_the_last_run_pointed_at() {
     .expect("a pointer the last run wrote");
 
     assert_eq!(
-        stored::newest(&directory).expect("a run is stored"),
+        stored::newest(directory).expect("a run is stored"),
         directory
             .join("20260101T000000000Z")
             .join(run_report::FILE_NAME),
@@ -255,8 +253,9 @@ fn the_newest_run_is_the_one_the_last_run_pointed_at() {
 
 #[test]
 fn a_pointer_at_a_run_nobody_kept_falls_back_to_the_names_rather_than_refusing() {
-    let directory = scratch("dangling");
-    let newer = run_at(&directory, "20260102T000000000Z");
+    let owned_directory = scratch("dangling");
+    let directory = owned_directory.path();
+    let newer = run_at(directory, "20260102T000000000Z");
     std::fs::write(
         directory.join(run_report::LATEST_FILE_NAME),
         serde_json::to_string(&serde_json::json!({
@@ -270,7 +269,7 @@ fn a_pointer_at_a_run_nobody_kept_falls_back_to_the_names_rather_than_refusing()
     .expect("a pointer at a run somebody removed");
 
     assert_eq!(
-        stored::newest(&directory).expect("a run is still stored"),
+        stored::newest(directory).expect("a run is still stored"),
         newer.join(run_report::FILE_NAME),
         "a pointer at a run that is gone is a pointer, not an answer: `--gc --all` \
          removes runs and leaves the pointer, and refusing there would mean a person \
@@ -280,15 +279,16 @@ fn a_pointer_at_a_run_nobody_kept_falls_back_to_the_names_rather_than_refusing()
 
 #[test]
 fn a_pointer_nobody_can_parse_is_refused_instead_of_becoming_another_run() {
-    let directory = scratch("unreadable-pointer");
-    let only = run_at(&directory, "20260102T000000000Z");
+    let owned_directory = scratch("unreadable-pointer");
+    let directory = owned_directory.path();
+    let only = run_at(directory, "20260102T000000000Z");
     for text in ["", "not json at all", "{}", r#"{"document": 7}"#] {
         std::fs::write(
             directory.join(run_report::LATEST_FILE_NAME),
             text.as_bytes(),
         )
         .expect("a pointer nobody can read");
-        let error = stored::newest(&directory).expect_err("the corrupt pointer is observable");
+        let error = stored::newest(directory).expect_err("the corrupt pointer is observable");
         assert!(
             error.to_string().contains("stored") || error.to_string().contains("pointer"),
             "a malformed pointer must not silently select {only:?}: {error}"
@@ -298,8 +298,9 @@ fn a_pointer_nobody_can_parse_is_refused_instead_of_becoming_another_run() {
 
 #[test]
 fn a_pointer_run_is_a_typed_component_not_a_path() {
-    let directory = scratch("pointer-traversal");
-    let only = run_at(&directory, "20260102T000000000Z");
+    let owned_directory = scratch("pointer-traversal");
+    let directory = owned_directory.path();
+    let only = run_at(directory, "20260102T000000000Z");
     assert!(test_metadata(&only).is_dir(), "the run was arranged");
     std::fs::write(
         directory.join(run_report::LATEST_FILE_NAME),
@@ -307,7 +308,7 @@ fn a_pointer_run_is_a_typed_component_not_a_path() {
     )
     .expect("an adversarial pointer");
     assert!(
-        stored::newest(&directory).is_err(),
+        stored::newest(directory).is_err(),
         "a pointer cannot escape the store or fall back to an unrelated valid run"
     );
 }
@@ -317,9 +318,11 @@ fn a_pointer_run_is_a_typed_component_not_a_path() {
 fn a_symlink_cannot_stand_in_for_a_run_or_its_report() {
     use std::os::unix::fs::symlink;
 
-    let directory = scratch("symlink-run");
-    let outside = scratch("symlink-outside");
-    let outside_run = run_at(&outside, "elsewhere");
+    let owned_directory = scratch("symlink-run");
+    let directory = owned_directory.path();
+    let owned_outside = scratch("symlink-outside");
+    let outside = owned_outside.path();
+    let outside_run = run_at(outside, "elsewhere");
     assert!(
         test_metadata(&outside_run).is_dir(),
         "the outside run was arranged"
@@ -330,8 +333,8 @@ fn a_symlink_cannot_stand_in_for_a_run_or_its_report() {
     )
     .expect("an adversarial run symlink");
     assert!(
-        stored::newest(&directory).is_err()
-            && stored::report_of(&directory, Some("20260101T000000000Z")).is_err(),
+        stored::newest(directory).is_err()
+            && stored::report_of(directory, Some("20260101T000000000Z")).is_err(),
         "a canonical name does not make a symlink beneath it part of the store"
     );
 
@@ -343,15 +346,16 @@ fn a_symlink_cannot_stand_in_for_a_run_or_its_report() {
     )
     .expect("an adversarial report symlink");
     assert!(
-        stored::report_of(&directory, Some("20260102T000000000Z")).is_err(),
+        stored::report_of(directory, Some("20260102T000000000Z")).is_err(),
         "the report itself must be a regular file rather than a link"
     );
 }
 
 #[test]
 fn a_directory_with_no_run_in_it_is_named_rather_than_answered_about() {
-    let directory = scratch("empty");
-    let refused = stored::newest(&directory).expect_err("nothing is stored here");
+    let owned_directory = scratch("empty");
+    let directory = owned_directory.path();
+    let refused = stored::newest(directory).expect_err("nothing is stored here");
     assert!(
         refused
             .to_string()
@@ -367,18 +371,19 @@ fn a_directory_with_no_run_in_it_is_named_rather_than_answered_about() {
 
 #[test]
 fn only_the_newest_runs_are_kept_and_a_recording_never_costs_a_run_its_place() {
-    let directory = scratch("prune");
+    let owned_directory = scratch("prune");
+    let directory = owned_directory.path();
     for day in 1..=5u32 {
-        run_at(&directory, &format!("2026010{day}T000000000Z"));
+        run_at(directory, &format!("2026010{day}T000000000Z"));
     }
     let recording = directory.join("20260106T000000000Z");
     std::fs::create_dir_all(recording.join("run")).expect("a run that recorded and did not report");
     let traces = directory.join("traces");
     std::fs::create_dir_all(traces.join("20260101T000000000Z")).expect("a recording of a command");
 
-    stored::prune(&directory, 2).expect("stored directories are readable");
+    stored::prune(directory, 2).expect("stored directories are readable");
 
-    let left: Vec<String> = stored::subdirectories(&directory)
+    let left: Vec<String> = stored::subdirectories(directory)
         .expect("stored directories are readable")
         .iter()
         .filter_map(|path| {
@@ -411,13 +416,14 @@ fn only_the_newest_runs_are_kept_and_a_recording_never_costs_a_run_its_place() {
 
 #[test]
 fn keeping_none_keeps_everything_rather_than_removing_everything() {
-    let directory = scratch("keep-zero");
+    let owned_directory = scratch("keep-zero");
+    let directory = owned_directory.path();
     for day in 1..=3u32 {
-        run_at(&directory, &format!("2026010{day}T000000000Z"));
+        run_at(directory, &format!("2026010{day}T000000000Z"));
     }
-    stored::prune(&directory, 0).expect("keeping everything does not read the store");
+    stored::prune(directory, 0).expect("keeping everything does not read the store");
     assert_eq!(
-        stored::subdirectories(&directory)
+        stored::subdirectories(directory)
             .expect("stored directories are readable")
             .len(),
         3,
@@ -428,12 +434,13 @@ fn keeping_none_keeps_everything_rather_than_removing_everything() {
 
 #[test]
 fn what_a_run_left_behind_is_a_directory_and_never_a_file_beside_them() {
-    let directory = scratch("files");
-    run_at(&directory, "20260101T000000000Z");
+    let owned_directory = scratch("files");
+    let directory = owned_directory.path();
+    run_at(directory, "20260101T000000000Z");
     std::fs::write(directory.join("latest.json"), b"{}").expect("the pointer");
     std::fs::write(directory.join("notes.md"), b"mine").expect("a file somebody put here");
 
-    let found = stored::subdirectories(&directory).expect("stored directories are readable");
+    let found = stored::subdirectories(directory).expect("stored directories are readable");
     assert_eq!(
         found.len(),
         1,
@@ -441,14 +448,14 @@ fn what_a_run_left_behind_is_a_directory_and_never_a_file_beside_them() {
          remove somebody's notes: {found:?}"
     );
 
-    let (runs, recordings) = stored::kept(&directory).expect("stored directories are readable");
+    let (runs, recordings) = stored::kept(directory).expect("stored directories are readable");
     assert_eq!(runs.len(), 1, "and a run is one with a report in it");
     assert!(
         recordings.is_empty(),
         "and a recording is one without: {recordings:?}"
     );
 
-    stored::prune(&directory, 1).expect("stored directories are readable");
+    stored::prune(directory, 1).expect("stored directories are readable");
     assert!(
         test_metadata(&directory.join("notes.md")).is_file()
             && test_metadata(&directory.join("latest.json")).is_file(),
@@ -458,7 +465,8 @@ fn what_a_run_left_behind_is_a_directory_and_never_a_file_beside_them() {
 
 #[test]
 fn a_store_that_cannot_be_enumerated_is_not_reported_as_empty() {
-    let directory = scratch("not-a-directory");
+    let owned_directory = scratch("not-a-directory");
+    let directory = owned_directory.path();
     let path = directory.join("store");
     std::fs::write(&path, b"not a directory").expect("a file in the directory's place");
 
@@ -476,14 +484,15 @@ fn a_store_that_cannot_be_enumerated_is_not_reported_as_empty() {
 
 #[test]
 fn removing_all_but_the_newest_removes_the_oldest_and_keeps_the_order_they_are_in() {
-    let directory = scratch("oldest");
+    let owned_directory = scratch("oldest");
+    let directory = owned_directory.path();
     let all: Vec<PathBuf> = (1..=4u32)
-        .map(|day| run_at(&directory, &format!("2026010{day}T000000000Z")))
+        .map(|day| run_at(directory, &format!("2026010{day}T000000000Z")))
         .collect();
 
     stored::oldest(&all, 4).expect("keeping every directory is a complete cleanup");
     assert_eq!(
-        stored::subdirectories(&directory)
+        stored::subdirectories(directory)
             .expect("stored directories are readable")
             .len(),
         4,
@@ -491,7 +500,7 @@ fn removing_all_but_the_newest_removes_the_oldest_and_keeps_the_order_they_are_i
     );
 
     stored::oldest(&all, 1).expect("the three oldest directories are reclaimable");
-    let left = stored::subdirectories(&directory).expect("stored directories are readable");
+    let left = stored::subdirectories(directory).expect("stored directories are readable");
     assert_eq!(left.len(), 1, "and keeping one leaves one: {left:?}");
     assert_eq!(
         left.first(),

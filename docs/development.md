@@ -254,6 +254,10 @@ Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextes
 **A pass is remembered for an hour.** A commit that passed the gate against the same base is not checked again within the hour, so pushing it to the hub and then to origin costs one gate rather than two.
 What is remembered is the commit, the base the commit-message check reads, and the bytes of the gate that passed it; a moved base or a changed gate is a question nobody has answered yet.
 
+**Every temporary directory has an owner.** `mise run test:fast` and CI's fast suite run under `cargo xtask tidy`, which hands the suite an empty temporary directory and fails naming whatever it finds there afterwards ([ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md)).
+Before the rule, one day's runs left 1,545 directories in the machine's shared one.
+A test that needs a project tree takes `njutest_devkit::paths::Project`, whose root sits inside a directory of its own, and `temp_beside` refuses a root that sits directly in the shared temporary directory.
+
 **The machine has to let a new executable run.** macOS evaluates every newly written executable before its first run, and under the load several sessions make that cost seconds per file — see [the limitation](limitations.md#on-macos-measure-what-an-execution-costs-before-measuring-anything-else).
 Every relinked test binary, fixture build, and mutant pays it.
 Switch the applications that start the sessions on under System Settings → Privacy & Security → Developer Tools; on the development machine that is the terminal and the multiplexer running in it.

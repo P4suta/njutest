@@ -147,7 +147,7 @@ run = "cargo build --locked --examples -p rust-mutants"
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
 depends = ["build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
 # cmd.exe is not a POSIX shell: it leaves single quotes in the argument rather than taking them off, so the filterset reaches nextest as `'not` and the task dies parsing it before a single test runs.
 # Double quotes are what this shell spells the same intent with.
 run_windows = 'cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E "not binary(/^toolchain_/)"'

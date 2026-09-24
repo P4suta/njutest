@@ -69,7 +69,7 @@ jobs:
       - name: Test every target
         shell: bash
         run: |
-          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
           # Each test in these binaries drives its own Cargo. Two outer tests
           # keep hosted runners busy without multiplying their build jobs into
           # resource exhaustion; the ordinary suite above remains fully parallel.

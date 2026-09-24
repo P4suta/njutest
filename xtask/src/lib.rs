@@ -60,6 +60,12 @@ enum Task {
     },
     /// The pre-push hook: the exact commit being pushed, checked in this repository's one reusable tree.
     PrePush,
+    /// Runs a command with a temporary directory of its own, and fails naming whatever the command left in it (ADR 0006).
+    Tidy {
+        /// The command and its arguments, after `--`.
+        #[arg(last = true, required = true)]
+        command: Vec<OsString>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -190,6 +196,7 @@ where
         Task::Gate(gate) => gate,
         Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
+        Task::Tidy { command } => return tidy(&command, process, stderr),
     };
     let root = gates::workspace_root();
     let outcome = match gate {
@@ -375,6 +382,82 @@ fn slot(
         Ok(work::Ended::Interrupted { signal }) => ExitCode::from(signalled_code(signal)),
         Ok(work::Ended::OverBudget { .. }) => ExitCode::from(124),
         Err(failure) => after_output(writeln!(stderr, "slot: {failure}"), ExitCode::from(127)),
+    }
+}
+
+/// Runs `command` with a temporary directory nothing else uses, and refuses whatever it leaves there.
+fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> ExitCode {
+    let Some((program, arguments)) = command.split_first() else {
+        return after_output(
+            writeln!(stderr, "tidy: nothing to run after `--`"),
+            ExitCode::from(2),
+        );
+    };
+    let parent = match lanes::variable(process.environment, "TMPDIR") {
+        Some(named) => std::path::PathBuf::from(named),
+        None => std::path::PathBuf::from("/tmp"),
+    };
+    let scratch = match tempfile::Builder::new()
+        .prefix("njutest-tidy-")
+        .tempdir_in(&parent)
+    {
+        Ok(scratch) => scratch,
+        Err(source) => {
+            return after_output(
+                writeln!(
+                    stderr,
+                    "tidy: no temporary directory under {}: {source}",
+                    parent.display()
+                ),
+                ExitCode::FAILURE,
+            );
+        }
+    };
+    let stops = match work::Stops::arm() {
+        Ok(stops) => stops,
+        Err(failure) => {
+            return after_output(writeln!(stderr, "tidy: {failure}"), ExitCode::FAILURE);
+        }
+    };
+    let mut running = Command::new(program);
+    running.args(arguments).env("TMPDIR", scratch.path());
+    let ran = work::run(&mut running, None, &stops, |_leader| Ok(()));
+    let code = match ran {
+        Ok(work::Ended::Exited(status)) => exit_status(status),
+        Ok(work::Ended::Interrupted { signal }) => signalled_code(signal),
+        Ok(work::Ended::OverBudget { .. }) => 124,
+        Err(failure) => {
+            return after_output(writeln!(stderr, "tidy: {failure}"), ExitCode::from(127));
+        }
+    };
+    let left = match std::fs::read_dir(scratch.path()) {
+        Ok(entries) => entries
+            .map(|entry| entry.map(|entry| entry.file_name().display().to_string()))
+            .collect::<std::io::Result<Vec<String>>>(),
+        Err(source) => Err(source),
+    };
+    match left {
+        Ok(left) if left.is_empty() => ExitCode::from(code),
+        Ok(mut left) => {
+            left.sort();
+            after_output(
+                writeln!(
+                    stderr,
+                    "tidy: the run left {} entr{} in the temporary directory it was given, each one a temporary directory nobody owns (ADR 0006):\n  {}",
+                    left.len(),
+                    if left.len() == 1 { "y" } else { "ies" },
+                    left.join("\n  ")
+                ),
+                ExitCode::FAILURE,
+            )
+        }
+        Err(source) => after_output(
+            writeln!(
+                stderr,
+                "tidy: what the run left could not be read: {source}"
+            ),
+            ExitCode::FAILURE,
+        ),
     }
 }
 

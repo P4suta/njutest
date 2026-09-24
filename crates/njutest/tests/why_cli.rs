@@ -102,7 +102,7 @@ fn ask(root: &Path, id: &str) -> (u8, String, String) {
 
 #[test]
 fn why_seam_reads_the_exchange_and_decision_as_one_chain() {
-    let root = tempfile::tempdir().expect("a temporary project");
+    let root = njutest_devkit::paths::Project::fresh();
     recorded(root.path());
     let (code, stdout, stderr) = ask(root.path(), FAULT);
     assert_eq!(code, 0, "{stderr}");
@@ -124,7 +124,7 @@ fn why_seam_reads_the_exchange_and_decision_as_one_chain() {
 
 #[test]
 fn an_unknown_seam_is_distinct_from_a_run_that_kept_no_recording() {
-    let root = tempfile::tempdir().expect("a temporary project");
+    let root = njutest_devkit::paths::Project::fresh();
     recorded(root.path());
     let unknown = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let (code, stdout, stderr) = ask(root.path(), unknown);
@@ -136,7 +136,7 @@ fn an_unknown_seam_is_distinct_from_a_run_that_kept_no_recording() {
         "{stdout}"
     );
 
-    let root = tempfile::tempdir().expect("another temporary project");
+    let root = njutest_devkit::paths::Project::fresh();
     named_run(root.path());
     let (code, stdout, stderr) = ask(root.path(), FAULT);
     assert_eq!(code, 0, "{stderr}");
@@ -149,7 +149,7 @@ fn an_unknown_seam_is_distinct_from_a_run_that_kept_no_recording() {
 
 #[test]
 fn an_unreadable_recording_is_an_error_not_an_absent_recording() {
-    let root = tempfile::tempdir().expect("a temporary project");
+    let root = njutest_devkit::paths::Project::fresh();
     named_run(root.path());
     let recording = root.path().join(".njutest/trace").join(RUN);
     std::fs::create_dir_all(&recording).expect("the recording directory");

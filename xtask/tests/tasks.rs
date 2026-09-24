@@ -962,3 +962,21 @@ fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
          crate was never measured"
     );
 }
+
+#[test]
+fn the_fast_suite_leaves_nothing_in_a_temporary_directory_nobody_owns() {
+    let fast = task("\"test:fast\"");
+    let workflow = repository(".github/workflows/ci.yml");
+    let pipeline = workflow
+        .lines()
+        .find(|line| line.contains("-E 'not binary(/^toolchain_/)'") && !line.contains("llvm"))
+        .unwrap_or_default();
+    for (place, runs) in [("mise run test:fast", fast.as_str()), ("ci.yml", pipeline)] {
+        assert!(
+            runs.contains("cargo xtask tidy -- cargo nextest run"),
+            "{place} runs the fast suite without `cargo xtask tidy`, so a test that leaves a \
+             directory in the shared temporary directory passes: 1,545 of them in one day on \
+             this machine before the rule existed (ADR 0006): {runs}"
+        );
+    }
+}
