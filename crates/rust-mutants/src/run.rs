@@ -471,18 +471,17 @@ impl Run {
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
-                    detail: format!(
-                        "{:?} was expected to be {}, and the run says {}; the claim {:?} no longer holds",
-                        expectation.id,
-                        expectation.outcome.name(),
-                        actual.name(),
-                        expectation.reason
+                    detail: stale_detail(
+                        &expectation.id,
+                        expectation.outcome,
+                        *actual,
+                        &expectation.reason,
                     ),
                 }),
                 Standing::Unmatched { why } => findings.push(Finding {
                     kind: FindingKind::UnmatchedExpectation,
                     mutant: None,
-                    detail: format!("the expectation for {:?} verifies nothing: {why}", expectation.id),
+                    detail: unmatched_detail(&expectation.id, why),
                 }),
             }
         }
@@ -518,6 +517,20 @@ impl Run {
             EXIT_UNDETECTED
         }
     }
+}
+
+/// What a stale-expectation finding says about the claim it restates.
+pub(crate) fn stale_detail(id: &str, claimed: Outcome, actual: Outcome, reason: &str) -> String {
+    format!(
+        "{id:?} was expected to be {}, and the run says {}; the claim {reason:?} no longer holds",
+        claimed.name(),
+        actual.name()
+    )
+}
+
+/// What an unmatched-expectation finding says about the claim it restates.
+pub(crate) fn unmatched_detail(id: &str, why: &str) -> String {
+    format!("the expectation for {id:?} verifies nothing: {why}")
 }
 
 fn detail(kind: FindingKind, one: &Judged) -> String {
@@ -1626,12 +1639,15 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
 
 /// Resolves every declared expectation against what the run established, and marks the mutants a reviewer accounted for.
 ///
+/// A part of a sharded run judges only the mutations it holds, since the parts together hold each exactly once and the merge answers for the claim.
+///
 /// # Errors
 /// Refuses when one expectation resolves to more mutants than the durable coverage counter can represent.
 pub fn verify(
     session: &Session,
     expectations: &[Expectation],
     judged: &mut [Judged],
+    shard: Option<Shard>,
 ) -> Result<Vec<Verified>, SessionError> {
     let mut verified = Vec::with_capacity(expectations.len());
     for expectation in expectations {
@@ -1645,7 +1661,13 @@ pub fn verify(
                 },
             ),
             Ok((mutants, moved)) => {
-                let ids: Vec<String> = mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+                let every: Vec<String> =
+                    mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+                let ids: Vec<String> = mutants
+                    .iter()
+                    .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
+                    .map(|mutant| mutant.id.to_string())
+                    .collect();
                 let (named, standing) = standing_of(judged, expectation.outcome, &ids);
                 let standing = match standing {
                     Standing::Met => moved.unwrap_or(Standing::Met),
@@ -1658,8 +1680,8 @@ pub fn verify(
                         one.expected = true;
                     }
                 }
-                let covered = u32::try_from(ids.len()).map_err(|_outside_range| {
-                    SessionError::ExpectationCoverageTooLarge { count: ids.len() }
+                let covered = u32::try_from(every.len()).map_err(|_outside_range| {
+                    SessionError::ExpectationCoverageTooLarge { count: every.len() }
                 })?;
                 (covered, named, standing)
             }
