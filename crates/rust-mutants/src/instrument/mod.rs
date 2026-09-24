@@ -948,7 +948,19 @@ impl File<'_> {
             )
         })?;
         if placement.hint.form == Form::M {
-            return Ok(replacement.to_owned());
+            return replacement
+                .strip_prefix(crate::syntax::ARM_GUARD_OPENING)
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    self.error(
+                        InstrumentErrorKind::SourceMismatch,
+                        format!(
+                            "mutant {} writes a guard its edit does not open with {:?}",
+                            placement.index,
+                            crate::syntax::ARM_GUARD_OPENING
+                        ),
+                    )
+                });
         }
         let text = format!("{head}{replacement}{tail}");
         debug_assert!(!site_text.is_empty() || text.is_empty());

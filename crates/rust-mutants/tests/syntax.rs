@@ -730,7 +730,7 @@ fn an_arm_is_deletable_only_when_a_bare_wildcard_follows_it() {
     assert_eq!(
         by_rule(&d, &["delete-match-arm", "remove-match-guard"]),
         [
-            "delete-match-arm@3 \"\"=>\"false\" M",
+            "delete-match-arm@3 \"\"=>\" if false\" M",
             "delete-match-arm@4 \"n < 5\"=>\"false\" C",
             "remove-match-guard@4 \"n < 5\"=>\"true\" C",
             "remove-match-guard@11 \"n < 5\"=>\"true\" C",

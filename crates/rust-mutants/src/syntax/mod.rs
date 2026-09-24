@@ -69,6 +69,9 @@ pub struct SiteHint {
     pub super_depth: u32,
 }
 
+/// What an arm with no guard is given before the guard a mutation writes, so the edit a catalog records is the source the mutant compiles to rather than an expression spliced against the pattern.
+pub const ARM_GUARD_OPENING: &str = " if ";
+
 /// One candidate plus where a human would look for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
