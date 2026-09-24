@@ -79,6 +79,18 @@ pub enum ExplainError {
     /// The mutation's unified diff could not be represented exactly.
     #[error(transparent)]
     Diff(#[from] super::diff::DiffError),
+    /// The run's catalog and its report say different things about what happened to the mutant.
+    #[error(
+        "the stored catalog and report disagree about {mutant}: the catalog {catalog}, the report {report}; neither is shown as what happened, since one of them is wrong"
+    )]
+    Disagreeing {
+        /// The mutant, as a person types it.
+        mutant: String,
+        /// What the catalog says.
+        catalog: &'static str,
+        /// What the report says.
+        report: &'static str,
+    },
 }
 
 /// What an explanation is built from.
@@ -122,12 +134,41 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
     let row: Option<&RunMutantDocument> = asked
         .run
         .and_then(|run| run.mutants.iter().find(|one| one.id == mutant.id));
-    let refused = asked
+    let cataloged = asked
         .catalog
         .rejections
         .iter()
         .find(|one| one.id == mutant.id)
         .map(|one| one.diagnostic.clone());
+    let refused = match asked.run {
+        None => cataloged,
+        Some(run) => {
+            let reported = run
+                .rejections
+                .iter()
+                .find(|one| one.id == mutant.id)
+                .map(|one| one.diagnostic.clone());
+            let said = |refused: bool| {
+                if refused {
+                    "refuses it"
+                } else {
+                    "does not refuse it"
+                }
+            };
+            if cataloged.is_some() != reported.is_some() || (cataloged.is_some() && row.is_some()) {
+                return Err(ExplainError::Disagreeing {
+                    mutant: mutant.display_id.clone(),
+                    catalog: said(cataloged.is_some()),
+                    report: if row.is_some() {
+                        "measured it"
+                    } else {
+                        said(reported.is_some())
+                    },
+                });
+            }
+            reported
+        }
+    };
     let (diff, source) = changed(&mutant, asked.source)?;
     Ok(ExplainDocument {
         document_type: DOCUMENT_TYPE.to_owned(),

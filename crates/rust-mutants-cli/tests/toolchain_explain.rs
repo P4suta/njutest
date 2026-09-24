@@ -452,3 +452,60 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
         "naming what was asked for and where runs are kept: {message}"
     );
 }
+
+#[test]
+fn a_catalog_and_a_report_that_disagree_about_a_mutant_are_said_to_rather_than_one_believed() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let run = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let path = run.join(rust_mutants::report::evidence::CATALOG);
+    let mut catalog: rust_mutants::report::catalog::CatalogDocument =
+        njutest_devkit::strictjson::decode_str(
+            &std::fs::read_to_string(&path).expect("the stored catalog"),
+        )
+        .expect("the catalog is a document");
+    let measured_one = catalog
+        .mutants
+        .iter()
+        .find(|one| one.display_id.starts_with("f0d2"))
+        .expect("the mutant the report answers for")
+        .clone();
+    catalog
+        .rejections
+        .push(rust_mutants::report::catalog::RejectionDocument {
+            index: measured_one.index,
+            id: measured_one.id.clone(),
+            display_id: measured_one.display_id.clone(),
+            path: measured_one.path.clone(),
+            rule: measured_one.rule.clone(),
+            code: Some("E0308".to_owned()),
+            diagnostic: "error[E0308]: mismatched types at another mutant's line".to_owned(),
+            isolated: false,
+        });
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&catalog).expect("the catalog serializes"),
+    )
+    .expect("the catalog rewritten");
+
+    let output = against(&fixture, &["explain", "f0d2"]);
+    let said = format!(
+        "{}{}",
+        njutest_devkit::process::strict_utf8(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert!(
+        !said.contains("refused by the compiler"),
+        "the run measured this mutant, so a refusal the catalog carries for it is not what \
+         happened to it; saying so states a false fact about a mutation: {said}"
+    );
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "and two stored documents that disagree about one mutant are a defect to report, not a \
+         choice to make quietly: {said}"
+    );
+    assert!(said.contains(&measured_one.display_id), "{said}");
+}
