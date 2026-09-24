@@ -606,7 +606,7 @@ pub enum SessionError {
     /// The system gave no randomness for the nonce that ties a crash's notice to its execution.
     #[error(
         "{}: cannot draw the nonce a crash's notice must carry: {error}",
-        error::SESSION_WRITE_FAILED.code
+        error::SESSION_NONCE_UNAVAILABLE.code
     )]
     CrashNonceUnavailable {
         /// What the system said.
@@ -657,6 +657,7 @@ impl SessionError {
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
             Self::NotBeside { .. } => error::SESSION_NOT_BESIDE,
+            Self::CrashNonceUnavailable { .. } => error::SESSION_NONCE_UNAVAILABLE,
             Self::UnknownTarget { .. } | Self::SkippedTargetUnknown { .. } => {
                 error::SESSION_UNKNOWN_TARGET
             }
@@ -688,7 +689,6 @@ impl SessionError {
             | Self::ScratchUnclaimed { .. }
             | Self::ScratchCreateFailed { .. }
             | Self::ScratchUnreadable { .. }
-            | Self::CrashNonceUnavailable { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
             Self::SelectionSourceMissing { .. }

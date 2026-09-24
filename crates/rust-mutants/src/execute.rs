@@ -995,9 +995,7 @@ impl ExpectedStep {
         if !is_id(mutant) {
             return Err(StepSetupError::InvalidMutant);
         }
-        let mut bytes = [0u8; 16];
-        getrandom::fill(&mut bytes).map_err(|error| StepSetupError::NonceUnavailable { error })?;
-        let nonce = hex::encode(bytes);
+        let nonce = fresh_nonce().map_err(|error| StepSetupError::NonceUnavailable { error })?;
         let directory = scratch.ok_or(StepSetupError::ScratchRequired)?;
         let path = directory.join(format!("rust-mutants-step-{nonce}.notice"));
         let state_path = directory.join(format!("rust-mutants-step-{nonce}.state"));
@@ -1682,6 +1680,16 @@ pub struct Context<'a> {
     /// Where the runtime publishes that a crash stopped the process, and the nonce that ties the notice to this execution.
     /// `None` runs a process whose crash, if it has one, says nothing it can be told by.
     pub crash: Option<Crashing<'a>>,
+}
+
+/// A fresh 128-bit nonce in lowercase hexadecimal, which ties a notice the runtime publishes to exactly one execution.
+///
+/// # Errors
+/// What the system's random source said where it gave nothing.
+pub(crate) fn fresh_nonce() -> Result<String, getrandom::Error> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes)?;
+    Ok(hex::encode(bytes))
 }
 
 /// The fresh file a crash's notice is published to, outside the scratch the test can see, and the nonce it must carry.

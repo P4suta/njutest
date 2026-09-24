@@ -95,7 +95,7 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
 
 #[test]
 fn a_test_that_ends_with_the_stop_status_itself_is_not_a_stop() {
-    let fixture = Fixture::copy("fixture-durable");
+    let fixture = Fixture::copy("fixture-stop-status");
     let session = Workspace::open(
         fixture.root(),
         opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
@@ -115,26 +115,26 @@ fn a_test_that_ends_with_the_stop_status_itself_is_not_a_stop() {
         .catalog()
         .mutants()
         .first()
-        .expect("a call that writes")
+        .expect("the one call that writes")
         .id
         .to_string();
     let (ran, kept) = session
         .exec_keeping(
-            &Request::new(mutant).with_target(TARGET).test(Some(
-                "a_run_that_ends_with_the_stop_status_of_its_own".to_owned(),
-            )),
+            &Request::new(mutant)
+                .with_target("fixture-stop-status/test/status")
+                .test(Some("a_count_is_kept".to_owned())),
             &Cancel::new(),
         )
         .expect("the run runs");
     assert_eq!(
         ran.exit_code,
         CRASH_EXIT,
-        "the test ends with the stop's status on its own: {}",
+        "the program ends with the stop's status on its own, before the call: {}",
         njutest_devkit::process::strict_utf8(&ran.output)
     );
     assert!(
         !kept.stopped(),
-        "a status the test chose is not a stop the runtime made, so nothing is decided on it"
+        "a status the program chose is not a stop the runtime made, so nothing is decided on it"
     );
     session.close().expect("close");
 }

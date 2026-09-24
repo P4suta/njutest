@@ -488,6 +488,12 @@ snapshot_code!(
     "a fault was asked to run beside something that is not a mutation, or what was named beside it is not a fault",
     "a fault is put beside a mutation of the same session: name an `inject-error` fault beside a mutant of any other rule"
 );
+snapshot_code!(
+    SESSION_NONCE_UNAVAILABLE,
+    "RM5010",
+    "the system gave no randomness for the nonce that ties a crash's notice to its execution",
+    "the operating system's random source failed; nothing the run could do stands in for it, so check the machine rather than the tree"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -633,6 +639,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SENTINEL_UNWRITABLE,
         SENTINEL_OTHER_TOOLCHAIN,
         SESSION_NOT_BESIDE,
+        SESSION_NONCE_UNAVAILABLE,
         COVERAGE_UNREADABLE,
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,

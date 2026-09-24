@@ -110,6 +110,13 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
                 let Some(record) = event.get("crash") else {
                     continue;
                 };
+                let Some(noticed) = record.get("noticed").and_then(Value::as_bool) else {
+                    crashed.steps.push((
+                        text(record, "crash"),
+                        Step::Unread("crash-exec without `noticed`".to_owned()),
+                    ));
+                    continue;
+                };
                 crashed.steps.push((
                     text(record, "crash"),
                     Step::Ran(Run {
@@ -121,10 +128,7 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
                             .and_then(Value::as_i64)
                             .unwrap_or(-1),
                         outcome: text(record, "outcome"),
-                        noticed: record
-                            .get("noticed")
-                            .and_then(Value::as_bool)
-                            .unwrap_or_default(),
+                        noticed,
                         left: texts(record, "left"),
                         failed: texts(record, "failed"),
                     }),

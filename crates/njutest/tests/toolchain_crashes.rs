@@ -171,3 +171,17 @@ fn a_tree_that_writes_nothing_has_nothing_to_stop_after() {
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
 }
+
+#[test]
+fn a_program_that_ends_with_the_stop_status_itself_is_not_decided_on_it() {
+    let fixture = fixture("fixture-stop-status");
+    let output = verify(&fixture, &["--crashes"]);
+    let part = part(&fixture);
+    assert_eq!(
+        decisions(&part),
+        vec![(16, "undecided".to_owned())],
+        "the status is the stop's, and no notice says the runtime made it, so the next run is \
+         never asked: {part}\n{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+}

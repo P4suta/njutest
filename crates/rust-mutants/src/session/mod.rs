@@ -279,9 +279,7 @@ impl Kept {
 /// # Errors
 /// [`SessionError::CrashNonceUnavailable`] where the system gave no randomness.
 fn crash_nonce() -> Result<String, EngineError> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes).map_err(|error| SessionError::CrashNonceUnavailable { error })?;
-    Ok(hex::encode(bytes))
+    Ok(execute::fresh_nonce().map_err(|error| SessionError::CrashNonceUnavailable { error })?)
 }
 
 struct Once<'a> {
