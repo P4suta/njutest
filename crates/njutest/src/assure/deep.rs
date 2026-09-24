@@ -28,6 +28,12 @@ const UNDEFINED: &str = "Undefined Behavior";
 /// What a toolchain says when there is nothing to interpret with.
 const ABSENT: [&str; 3] = ["no such command", "no such subcommand", "is not installed"];
 
+/// What starts each line in which libtest says how one test binary ended.
+const RESULT: &str = "test result: ";
+
+/// What such a line says next when a test of the binary failed.
+const FAILED: &str = "FAILED";
+
 /// What the phase is asked to interpret, and how it is bounded.
 #[derive(Debug, Clone)]
 pub struct Interpreting<'a> {
@@ -245,9 +251,9 @@ fn read(said: &str, ending: Ending) -> Interpreted {
     }
     let results: Vec<&str> = said
         .lines()
-        .filter_map(|line| line.trim().strip_prefix("test result: "))
+        .filter_map(|line| line.trim().strip_prefix(RESULT))
         .collect();
-    let failed = results.iter().any(|result| result.starts_with("FAILED"));
+    let failed = results.iter().any(|result| result.starts_with(FAILED));
     let passed = !results.is_empty() && !failed;
     match ending {
         Ending::Failed if failed => interpreted.findings.push(Finding {

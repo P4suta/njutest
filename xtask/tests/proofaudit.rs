@@ -603,6 +603,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
         let nothing = xtask::proofaudit::Recorded {
             runner: None,
             engines: &[],
+            outputs: &[],
         };
         let error = xtask::proofaudit::audit_with("duplicate.json", &document, nothing, None)
             .expect_err("duplicate keys never reach proof redecision");
@@ -2042,6 +2043,7 @@ fn drift_audit(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         document,
         events: Some(routes()),
         engine: Some(engine),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2179,6 +2181,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         document,
         events: Some(routes()),
         engine: sentinel::clean().engine,
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2291,5 +2294,39 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
         "the test-set premise is empty for a harness that names no tests, so a union that moved \
          is still a counterexample, and a report that called it not measured is refused: \
          {said:?}"
+    );
+}
+
+#[test]
+fn the_audit_reads_what_the_published_contract_says_miri_writes() {
+    use xtask::proofaudit::soundness::{ABSENT, FAILED, RESULT, UNDEFINED, UNSUPPORTED};
+    let contract = xtask::strictjson::from_str(
+        &std::fs::read_to_string(gates::workspace_root().join("schema/miri-output.json"))
+            .expect("the published contract"),
+    )
+    .expect("the contract is JSON");
+    let text = |key: &str| contract.get(key).and_then(serde_json::Value::as_str);
+    let list = |key: &str| -> Option<Vec<&str>> {
+        contract
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .map(|named| named.iter().filter_map(serde_json::Value::as_str).collect())
+    };
+    assert_eq!(
+        (
+            text("undefined"),
+            list("unsupported"),
+            list("absent"),
+            text("result"),
+            text("failed")
+        ),
+        (
+            Some(UNDEFINED),
+            Some(UNSUPPORTED.to_vec()),
+            Some(ABSENT.to_vec()),
+            Some(RESULT),
+            Some(FAILED)
+        ),
+        "the audit and the runner read one published contract of what Miri writes"
     );
 }

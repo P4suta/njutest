@@ -588,3 +588,76 @@ fn an_interpreter_that_ran_no_test_found_nothing_to_fail_and_interpreted_nothing
         "{said_nothing:?}"
     );
 }
+
+#[test]
+fn the_phase_reads_miri_as_the_published_contract_says_it_writes() {
+    let contract: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(
+            njutest_devkit::paths::workspace_root().join("schema/miri-output.json"),
+        )
+        .expect("the published contract"),
+    )
+    .expect("the contract is JSON");
+    let text = |key: &str| {
+        contract
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .expect("the contract names it")
+            .to_owned()
+    };
+    let list = |key: &str| -> Vec<String> {
+        contract
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .expect("the contract lists them")
+            .iter()
+            .map(|marker| marker.as_str().expect("a marker is text").to_owned())
+            .collect()
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let undefined = interpreted(
+        &format!("error: {}: retag", text("undefined")),
+        1,
+        dir.path(),
+    )
+    .expect("ran");
+    assert_eq!(
+        undefined.findings.first().map(|one| one.kind),
+        Some(FindingKind::UndefinedBehaviour),
+        "{undefined:?}"
+    );
+    for marker in list("unsupported") {
+        let done = interpreted(&format!("error: {marker}: x"), 1, dir.path()).expect("ran");
+        assert_eq!(
+            done.limitations.first().map(|one| one.name.clone()),
+            Some("miri-unsupported".to_owned()),
+            "{marker}: {done:?}"
+        );
+    }
+    for marker in list("absent") {
+        let refused = interpreted(&format!("error: {marker}"), 1, dir.path())
+            .expect_err("nothing to interpret with");
+        assert!(
+            matches!(refused, RunnerError::MiriMissing { .. }),
+            "{marker}: {refused}"
+        );
+    }
+    let failed = interpreted(
+        &format!("{}{}. 0 passed; 1 failed", text("result"), text("failed")),
+        101,
+        dir.path(),
+    )
+    .expect("ran");
+    assert_eq!(
+        failed.findings.first().map(|one| one.kind),
+        Some(FindingKind::FailingTest),
+        "{failed:?}"
+    );
+    let passed = interpreted(
+        &format!("{}ok. 1 passed; 0 failed", text("result")),
+        0,
+        dir.path(),
+    )
+    .expect("ran");
+    assert!(passed.executed && passed.findings.is_empty(), "{passed:?}");
+}

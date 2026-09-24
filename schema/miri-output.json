@@ -1,0 +1,8 @@
+{
+  "description": "What Miri's output says, as both readings of one interpretation must read it: the runner's soundness phase and the audit that re-derives it. A line containing `undefined` is unsoundness found; one containing an `unsupported` marker is a suite not interpreted whole; one containing an `absent` marker is a toolchain with no interpreter. Otherwise only libtest's own `result` lines say anything about the suite: one whose remainder starts with `failed` is a test that failed, and a run with at least one and none failed passed; a status with no such line is the interpreter's own trouble.",
+  "undefined": "Undefined Behavior",
+  "unsupported": ["unsupported operation", "can't call foreign function", "unsupported target"],
+  "absent": ["no such command", "no such subcommand", "is not installed"],
+  "result": "test result: ",
+  "failed": "FAILED"
+}

@@ -2038,6 +2038,10 @@ pub fn proofaudit(
         .map(engine_recordings)
         .transpose()?
         .unwrap_or_default();
+    let outputs = match (trace, recorded.as_ref()) {
+        (Some(directory), Some((_path, text))) => kept_outputs(directory, text),
+        (None, _) | (_, None) => Vec::new(),
+    };
     proofaudit::audit_with(
         &label,
         &text,
@@ -2046,9 +2050,46 @@ pub fn proofaudit(
                 .as_ref()
                 .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
             engines: &engines,
+            outputs: &outputs,
         },
         Some(run),
     )
+}
+
+/// What each interpreter run in the runner's recording `text` said, read whole from beside it in `directory`; a copy that is cut, missing, or unreadable is left out, which the audit says it could not re-derive.
+fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, String)> {
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let Ok(event) = crate::strictjson::from_str(line) else {
+            continue;
+        };
+        let Some(exec) = event.pointer("/payload/exec") else {
+            continue;
+        };
+        if !proofaudit::soundness::interprets(exec)
+            && !exec
+                .get("argv")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|argv| argv.iter().any(|word| word == "--version"))
+        {
+            continue;
+        }
+        if exec
+            .get("output_truncated")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
+            continue;
+        }
+        let Some(relative) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        match std::fs::read_to_string(directory.join(relative)) {
+            Ok(said) => kept.push((relative.to_owned(), said)),
+            Err(_not_kept_whole) => {}
+        }
+    }
+    kept
 }
 
 /// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.

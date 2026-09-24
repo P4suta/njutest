@@ -6,6 +6,7 @@
 //! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
 pub mod sentinel;
+pub mod soundness;
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -159,6 +160,8 @@ pub enum Layer {
     Drift,
     /// Each mutation's reported outcome, held to the executions of it the recording holds.
     Executions,
+    /// What interpreting the suite established, re-derived from what the interpreter said.
+    Soundness,
 }
 
 impl Layer {
@@ -177,6 +180,7 @@ impl Layer {
             Self::Model => "model",
             Self::Drift => "drift",
             Self::Executions => "executions",
+            Self::Soundness => "soundness",
         }
     }
 }
@@ -386,6 +390,8 @@ pub struct Recorded<'a> {
     pub runner: Option<(&'a str, &'a str)>,
     /// Every configured build's engine recording, in namespace order.
     pub engines: &'a [(String, String)],
+    /// What each run the audit re-derives from said, by the path the runner's recording gives its kept output, where that copy is whole.
+    pub outputs: &'a [(String, String)],
 }
 
 /// Re-decides a report against what the run recorded beside it and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
@@ -465,10 +471,31 @@ pub fn audit_with(
     hollow(&recording, routing.as_ref(), &mut audit);
     wire(&recording, watched.as_ref(), &mut audit);
     models(&recording, run, &mut audit);
+    let execs = recorded_runner
+        .map(|(recording_path, text)| {
+            executions_of(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()?;
+    soundness::audited(&recording, execs.as_deref(), recorded.outputs, &mut audit);
     drift(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
+}
+
+/// Every exec record a runner's recording holds, in the order it holds them.
+///
+/// # Errors
+/// The first line that does not read, as the recording's own reader says it.
+fn executions_of(text: &str) -> Result<Vec<serde_json::Value>, crate::route::ReadError> {
+    Ok(crate::route::events(text)?
+        .into_iter()
+        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
+        .filter_map(|mut event| event.get_mut("exec").map(serde_json::Value::take))
+        .collect())
 }
 
 /// The flat view of one configured build measured whole that every layer re-decides, taken from a complete report or as it is.
