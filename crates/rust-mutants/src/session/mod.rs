@@ -210,7 +210,7 @@ const CONTROL_TOUCH_LOG: &str = "touch.log";
 pub struct Kept(PathBuf);
 
 impl Kept {
-    /// Every file the run left in this scratch directory, relative to it and in path order, leaving out the engine's own.
+    /// Every file and directory the run left in this scratch directory, a directory named with a trailing `/`, relative to it and in path order, leaving out the engine's own.
     ///
     /// # Errors
     /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
@@ -236,10 +236,6 @@ impl Kept {
                         path: path.clone(),
                         source,
                     })?;
-                if kind.is_dir() {
-                    pending.push(path);
-                    continue;
-                }
                 let Ok(relative) = path.strip_prefix(&self.0) else {
                     continue;
                 };
@@ -252,7 +248,13 @@ impl Kept {
                         ),
                     }
                 })?;
-                if !engine_owned(&relative) {
+                if engine_owned(&relative) {
+                    continue;
+                }
+                if kind.is_dir() {
+                    found.push(format!("{relative}/"));
+                    pending.push(path);
+                } else {
                     found.push(relative);
                 }
             }

@@ -1998,8 +1998,16 @@ fn crashes(
             .iter()
             .filter(|run| run.crash == site.crash)
             .collect();
-        if let Err(why) = crate::crashes::supports(site, &runs) {
-            notes.violated(&site.crash, why.to_string());
+        if !crate::crashes::agrees(site, &runs) {
+            notes.violated(
+                &site.crash,
+                format!(
+                    "the report says {} on {:?} and the recorded runs decide {:?}",
+                    site.decision,
+                    site.on,
+                    crate::crashes::decided(&site.crash, &runs)
+                ),
+            );
         }
     }
 }

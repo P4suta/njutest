@@ -227,7 +227,7 @@ The first test that reaches the call, target by target in name order, is stopped
 | `corrupt` | the next run failed, a fresh run passed, and a second stop failed the next run again | `on`; `failed`, the tests |
 | `unshared` | the stopped run left nothing in its scratch | `on` |
 | `unreached` | no test that reached the call stopped at it | |
-| `undecided` | a run could not be decided, or which test reaches the call is not known | `on`, `why` |
+| `undecided` | a run came to something other than passing or stopping at the call, which test reaches the call is not known, or an earlier stop wrote outside its scratch into the tree | `on`, `why` |
 | `not-put` | the compiler refused the crash | `diagnostic` |
 
 `accounting.crashes` counts the records, and `restarted + corrupt + unshared + unreached + undecided + not_put` equals `sites`.

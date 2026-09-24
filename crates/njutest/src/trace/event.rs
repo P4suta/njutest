@@ -470,6 +470,10 @@ pub struct CrashExecRecord {
     pub exit_code: i64,
     /// What the engine made of it.
     pub outcome: String,
+    /// The files a stopped run left in its scratch, on a `crash` run that stopped; empty otherwise.
+    pub left: Vec<String>,
+    /// The tests a `next` or `fresh` run failed.
+    pub failed: Vec<String>,
 }
 
 /// What the probe pass measured for one target.
