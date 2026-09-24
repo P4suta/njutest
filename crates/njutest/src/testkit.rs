@@ -1213,6 +1213,7 @@ pub mod reports {
             })
             .collect();
         report.mutants = rows;
+        super::raise_what_the_records_decide(&mut report);
         super::read_every_named_file(&mut report);
         report.verdict = report.concluded();
         Ok(report)
@@ -1264,6 +1265,7 @@ pub mod reports {
         for (at, (name, rows, drift)) in builds.into_iter().enumerate() {
             let mut report = measured(&format!("{run}-{at}"), kind, rows, &order)?;
             report.drift = drift;
+            super::raise_what_the_records_decide(&mut report);
             report.verdict = report.concluded();
             measured_builds.push((
                 name.to_owned(),
@@ -1280,6 +1282,20 @@ pub mod reports {
             crate::report::LatticedDocument::Shard(_) => Err(UnmadeReport::Part),
         }
     }
+}
+
+/// Sets the findings the records of `report` decide to exactly the ones they raise, as a run does, leaving every finding of another derivation as the fixture put it.
+#[cfg(feature = "testkit")]
+pub fn raise_what_the_records_decide(report: &mut crate::report::BuildReport) {
+    report
+        .findings
+        .retain(|finding| finding.kind.derivation() != crate::report::Derivation::Records);
+    let derived = crate::report::derived::findings(report);
+    report.findings.extend(
+        derived
+            .into_iter()
+            .filter(|finding| finding.kind.derivation() == crate::report::Derivation::Records),
+    );
 }
 
 /// Records, for every file the rows and findings of `report` name, a digest as a run that read the file would have, which a report assembled by hand needs before the audit accepts it.

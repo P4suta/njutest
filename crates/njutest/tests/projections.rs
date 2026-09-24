@@ -31,6 +31,11 @@ fn found(subject: &str, detail: &str, line: u32) -> Finding {
 }
 
 fn report_with(findings: Vec<Finding>) -> Report {
+    report_varying(findings, &|_source| {})
+}
+
+/// The report of [`report_with`], with `vary` laid over its records and the findings they decide raised from them, as a run raises them.
+fn report_varying(findings: Vec<Finding>, vary: &dyn Fn(&mut BuildReport)) -> Report {
     let mut source = BuildReport::new("fixture-evidence", RunKind::Full, Contract::StandardV1);
     source.repository.root_name = "workspace".to_owned();
     source.repository.workspace_digest = "a".repeat(64);
@@ -98,6 +103,8 @@ fn report_with(findings: Vec<Finding>) -> Report {
         ..MutantAccounting::default()
     };
     source.findings = findings;
+    vary(&mut source);
+    njutest::testkit::raise_what_the_records_decide(&mut source);
     source.limitations = vec![
         Limitation::new(
             rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
@@ -391,18 +398,20 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
         gained: std::collections::BTreeSet::new(),
         lost: std::collections::BTreeSet::new(),
     };
-    let moved = Drift::Moved {
-        target: "workspace/lib/workspace".to_owned(),
-        reached: Moved {
-            gained: std::collections::BTreeSet::from([3]),
-            lost: std::collections::BTreeSet::from([2]),
+    let report = report_varying(
+        vec![found("cccccccccccccccccccc", "no test noticed it", 12)],
+        &|source| {
+            source.drift = vec![Drift::Moved {
+                target: "core/lib/core tests::works".to_owned(),
+                reached: Moved {
+                    gained: std::collections::BTreeSet::from([3]),
+                    lost: std::collections::BTreeSet::from([2]),
+                },
+                bodies: nothing(),
+                infected: nothing(),
+            }];
         },
-        bodies: nothing(),
-        infected: nothing(),
-    };
-    let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
-    findings.extend(njutest::report::drift::found(&[moved], &[]));
-    let report = report_with(findings);
+    );
     let root = tempfile::tempdir().expect("a directory with no source in it");
     let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
     let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");
@@ -431,10 +440,10 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
     assert_eq!(
         diagnostic.notes,
         [
-            "workspace/lib/workspace reached something on an original-code control that it \
-             did not reach on its baseline, over the same passing tests, so what it reaches \
-             is not a function of the target and every proof read off its baseline is \
-             unfounded: 0 mutations a proof removed its run of, and 0 mutations no test \
+            "core/lib/core tests::works reached something on an original-code control that \
+             it did not reach on its baseline, over the same passing tests, so what it \
+             reaches is not a function of the target and every proof read off its baseline is \
+             unfounded: 1 mutation a proof removed its run of, and 0 mutations no test \
              reached, rest on it. Make what the suite reaches independent of order, time and \
              earlier processes, and run again"
         ],
@@ -446,15 +455,16 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
 fn a_knob_that_broke_a_target_is_told_as_a_suite_that_depends_on_its_machine() {
     use njutest::report::knobs::{Knob, KnobRecord, Standing};
     let broke = KnobRecord {
-        target: "environment/test/timezone".to_owned(),
+        target: "core/lib/core tests::works".to_owned(),
         knob: Knob::Timezone,
         standing: Standing::Broke {
             failed: vec!["the_zone_is_not_lord_howe".to_owned()],
         },
     };
-    let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
-    findings.extend(njutest::report::knobs::found(&[broke], &[]));
-    let report = report_with(findings);
+    let report = report_varying(
+        vec![found("cccccccccccccccccccc", "no test noticed it", 12)],
+        &|source| source.knobs = vec![broke.clone()],
+    );
     let root = tempfile::tempdir().expect("a directory with no source in it");
     let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
     let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");
@@ -486,7 +496,7 @@ fn a_knob_that_broke_a_target_is_told_as_a_suite_that_depends_on_its_machine() {
     assert_eq!(
         diagnostic.notes,
         [
-            "environment/test/timezone passed on its baseline and failed with \
+            "core/lib/core tests::works passed on its baseline and failed with \
              TZ=Australia/Lord_Howe: the_zone_is_not_lord_howe. What it answers depends on \
              something that differs between machines; set it in the test, or make the code not \
              read it, and run again"

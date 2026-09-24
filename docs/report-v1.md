@@ -48,6 +48,10 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
+A finding is one of four derivations, by its kind (`FindingKind::derivation`).
+A mutation row decides the surviving, waited and step-limit ones; the part's own records decide the ones they are raised from — `hollow-target`, `unstable-baseline`, `unnoticed-fault`, `corrupt-after-crash`, `environment-dependent`, `environment-dependent-reach`, `schedule-dependent`, `dimension-not-measured`; `not-measured` is raised both from records and by phases; and the rest a phase observed.
+A report is refused, when it is written and when it is read, if the findings its records decide are not exactly the ones it holds: one no record raises, or one they raise that it dropped, is a report saying something its records contradict.
+
 There are twenty kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |

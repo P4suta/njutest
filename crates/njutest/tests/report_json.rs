@@ -907,6 +907,9 @@ fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
                     &source.mutants[0].display_id.clone(),
                     "no test noticed it",
                 )];
+                source
+                    .findings
+                    .extend(njutest::report::derived::findings(source));
             }
         })
         .expect_err("verified-v1 cannot complete without its model batch");
@@ -1239,47 +1242,37 @@ fn knob_records_that_repeat_or_cover_different_targets_are_refused() {
 
 #[test]
 fn a_whole_report_whose_dimension_findings_were_deleted_is_still_not_assured() {
-    let report = populated_varying(&|source: &mut BuildReport| {
+    let refused = populated_varying(&|source: &mut BuildReport| {
         source.contract = njutest::config::Contract::WholeV1;
         source
             .findings
             .retain(|finding| finding.kind != FindingKind::DimensionNotMeasured);
     })
-    .expect("a whole-v1 report with no dimension finding stored");
-    let conclusion = report.conclusion().expect("a representable conclusion");
-    let mut named: Vec<&str> = conclusion
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == FindingKind::DimensionNotMeasured)
-        .map(|finding| finding.subject.as_str())
-        .collect();
-    named.sort_unstable();
-    assert_eq!(
-        named,
-        vec!["durable", "fault", "repeatable", "schedule"],
+    .expect_err("a whole-v1 report with no dimension finding stored");
+    let said = format!("{refused:?}");
+    assert!(
+        ["durable", "fault", "repeatable"]
+            .iter()
+            .all(|dimension| said.contains(dimension)),
         "the holes are derived from the records a report holds, so a report that drops the \
-         findings naming them still names them, and a binary that passed with no record of its \
-         threads is a schedule hole rather than nothing to ask"
+         findings naming them is refused: {said}"
     );
-    assert_ne!(report.verdict(), Verdict::Assured);
 }
 
 #[test]
 fn a_report_whose_thread_records_were_deleted_has_a_schedule_hole_and_not_nothing_to_ask() {
-    let report = populated_varying(&|source: &mut BuildReport| {
+    let refused = populated_varying(&|source: &mut BuildReport| {
         source.contract = njutest::config::Contract::WholeV1;
         source.concurrency.clear();
     })
-    .expect("a whole-v1 report with no thread record");
-    let conclusion = report.conclusion().expect("a representable conclusion");
+    .expect_err("a whole-v1 report with no thread record and no finding saying so");
     assert!(
-        conclusion.findings.iter().any(|finding| {
-            finding.kind == FindingKind::DimensionNotMeasured && finding.subject == "schedule"
-        }),
-        "a target passed its baseline and nothing says whether it runs one thread: {:?}",
-        conclusion.findings
+        format!("{refused:?}")
+            .contains("dimension-not-measured findings disagree with the records")
+            && format!("{refused:?}").contains("schedule"),
+        "a target passed its baseline and nothing says whether it runs one thread, which is a \
+         schedule hole the report has to name: {refused:?}"
     );
-    assert_ne!(report.verdict(), Verdict::Assured);
 }
 
 #[test]
@@ -1298,4 +1291,58 @@ fn knob_records_that_leave_out_a_target_whose_baseline_passed_are_refused() {
         "a knob asked for is put on every target whose baseline passed, so a report that drops \
          one target's rows is refused rather than read as that target being repeatable: {refused}"
     );
+}
+
+#[test]
+fn a_finding_the_records_decide_can_be_neither_invented_nor_dropped() {
+    let refused = |vary: &dyn Fn(&mut BuildReport)| match populated_varying(vary) {
+        Ok(_) => String::new(),
+        Err(error) => format!("{error:?}"),
+    };
+    let invented = refused(&|source: &mut BuildReport| {
+        source.findings.push(Finding::new(
+            FindingKind::EnvironmentDependent,
+            "pkg/test/it",
+            "planted: no knob record says anything broke",
+        ));
+    });
+    assert!(
+        invented.contains("environment-dependent findings disagree with the records"),
+        "a finding the knob records decide, stored where no record raises it, is refused: \
+         {invented}"
+    );
+    let dropped = refused(&|source: &mut BuildReport| {
+        source.contract = njutest::config::Contract::WholeV1;
+        let rows = njutest::report::matrix::rows(&njutest::report::matrix::Evidence::of(source));
+        source
+            .findings
+            .extend(njutest::report::matrix::holes(&rows));
+        source.findings.retain(|finding| finding.subject != "fault");
+    });
+    assert!(
+        dropped.contains("dimension-not-measured findings disagree with the records"),
+        "a finding the records raise, dropped from the report, is refused rather than read \
+         past: {dropped}"
+    );
+}
+
+#[test]
+fn every_kind_the_records_decide_is_refused_where_no_record_raises_it() {
+    for kind in FindingKind::ALL {
+        let planted = populated_varying(&|source: &mut BuildReport| {
+            source
+                .findings
+                .push(Finding::new(kind, "planted", "no record raises this"));
+        });
+        match kind.derivation() {
+            njutest::report::Derivation::Records => assert!(
+                format!("{planted:?}").contains("disagree with the records"),
+                "{} is decided by the records, so one no record raises is refused: {planted:?}",
+                kind.name()
+            ),
+            njutest::report::Derivation::Row
+            | njutest::report::Derivation::Shared
+            | njutest::report::Derivation::Observed => {}
+        }
+    }
 }

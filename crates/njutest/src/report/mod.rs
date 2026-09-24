@@ -7,6 +7,7 @@ pub mod across;
 pub mod audit;
 pub mod concurrency;
 pub mod crashes;
+pub mod derived;
 pub mod drift;
 pub mod faults;
 pub mod hollow;
@@ -4405,6 +4406,19 @@ pub(crate) fn count_mutants(mutants: &[MutantRecord]) -> Result<MutantAccounting
     Ok(counts)
 }
 
+/// Where the findings of one kind come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Derivation {
+    /// One mutation row decides it, which the audit holds row by row.
+    Row,
+    /// The part's records decide it wholly: [`derived::findings`] is every one of them, and a report holds exactly those.
+    Records,
+    /// The records decide some of them and a phase observes the rest, so a report holds at least the ones the records decide.
+    Shared,
+    /// A phase observed it, and nothing a report records can decide it again.
+    Observed,
+}
+
 /// What kind of thing a run found.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
@@ -4495,6 +4509,33 @@ impl FindingKind {
             Self::EnvironmentDependent => "environment-dependent",
             Self::EnvironmentDependentReach => "environment-dependent-reach",
             Self::ScheduleDependent => "schedule-dependent",
+        }
+    }
+
+    /// Where a finding of this kind comes from, which decides what a report may say about it: one its own records decide is neither added nor dropped.
+    #[must_use]
+    pub const fn derivation(self) -> Derivation {
+        match self {
+            Self::SurvivingMutant | Self::WaitedMutant | Self::StepLimitReachedMutant => {
+                Derivation::Row
+            }
+            Self::HollowTarget
+            | Self::UnstableBaseline
+            | Self::UnnoticedFault
+            | Self::CorruptAfterCrash
+            | Self::EnvironmentDependent
+            | Self::EnvironmentDependentReach
+            | Self::ScheduleDependent
+            | Self::DimensionNotMeasured => Derivation::Records,
+            Self::NotMeasured => Derivation::Shared,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::TargetMissing
+            | Self::Timeout
+            | Self::UnmatchedAcceptance
+            | Self::UndefinedBehaviour
+            | Self::WireUnnoticed
+            | Self::BrokenUnderFault => Derivation::Observed,
         }
     }
 
