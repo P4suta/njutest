@@ -181,7 +181,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             message: "model artifact could not be retained".to_owned(),
         },
         RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked),
-        RunnerError::Sources(crate::concurrency::read::SourceReadError::Exhausted {
+        RunnerError::Sources(crate::observe::SourceReadError::Exhausted {
             path: nowhere.to_path_buf(),
             source: std::io::Error::other("no"),
         }),

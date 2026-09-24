@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::concurrency::proof::{Evidence, Harness, PackageScan, Reach, standing, threads_of};
-use crate::concurrency::read::SourceReadError;
+use crate::observe::SourceReadError;
 use crate::report::concurrency::ConcurrencyRecord;
 use rust_mutants::execute::TargetKind;
 

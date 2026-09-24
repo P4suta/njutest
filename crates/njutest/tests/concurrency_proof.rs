@@ -524,40 +524,79 @@ fn a_build_script_output_that_cannot_be_read_is_taken_to_link() {
 
 #[cfg(unix)]
 #[test]
-fn a_machine_out_of_file_descriptors_is_an_error_and_never_an_unread_file() {
+fn a_failure_to_look_says_absent_unreadable_or_that_the_process_ran_out() {
+    use njutest::observe::{Observed, SourceReadError, failed};
+    let path = std::path::Path::new("somewhere");
+    let meaning = |errno: rustix::io::Errno| {
+        failed::<()>(
+            path,
+            std::io::Error::from_raw_os_error(errno.raw_os_error()),
+        )
+    };
+    for out in [rustix::io::Errno::MFILE, rustix::io::Errno::NFILE] {
+        assert!(
+            matches!(meaning(out), Err(SourceReadError::Exhausted { .. })),
+            "a process out of descriptors says nothing about the path, so it is an error and never \
+             an unread file, and whether a binary is proven cannot depend on how many read at \
+             once: {out:?}"
+        );
+    }
+    assert!(
+        matches!(
+            failed::<()>(path, std::io::Error::from(std::io::ErrorKind::OutOfMemory)),
+            Err(SourceReadError::Exhausted { .. })
+        ),
+        "nor does a process out of memory"
+    );
+    assert_eq!(
+        meaning(rustix::io::Errno::NOENT).expect("a fact about the path"),
+        Observed::Absent
+    );
+    for there in [
+        rustix::io::Errno::ACCESS,
+        rustix::io::Errno::NOTDIR,
+        rustix::io::Errno::ISDIR,
+    ] {
+        assert_eq!(
+            meaning(there).expect("a fact about the path"),
+            Observed::Unreadable,
+            "something is there that could not be looked at: {there:?}"
+        );
+    }
+}
+
+#[test]
+fn the_files_cargo_and_the_engine_leave_in_a_target_directory_are_not_profiles() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = quiet_package(dir.path());
-    let deps = dir.path().join("target/debug/deps");
+    let target = dir.path().join("target");
+    let deps = target.join("debug/deps");
     std::fs::create_dir_all(&deps).expect("created");
     std::fs::write(
         deps.join("pkg-0123abcd.d"),
         format!("x: {}\n", root.join("src/lib.rs").display()),
     )
     .expect("written");
-    let compiled =
-        njutest::concurrency::read::Compiled::read(&dir.path().join("target")).expect("read");
-    let open = std::fs::read_dir("/dev/fd")
-        .expect("the open descriptors")
-        .count();
-    let before = rustix::process::getrlimit(rustix::process::Resource::Nofile);
-    rustix::process::setrlimit(
-        rustix::process::Resource::Nofile,
-        rustix::process::Rlimit {
-            current: Some(u64::try_from(open).expect("a small count")),
-            maximum: before.maximum,
-        },
-    )
-    .expect("the limit lowers");
-    let read = njutest::concurrency::read::compiled_directory(
-        ("pkg@1.0.0", false),
-        &root,
-        (&["pkg".to_owned()], &compiled),
-    );
-    rustix::process::setrlimit(rustix::process::Resource::Nofile, before).expect("restored");
+    for file in [
+        ".rustc_info.json",
+        "CACHEDIR.TAG",
+        "owner.json",
+        "owner.lock",
+        "debug/.cargo-lock",
+        "debug/.cargo-build-lock",
+        "debug/.cargo-artifact-lock",
+        "witness/CACHEDIR.TAG",
+        "witness/.rustc_info.json",
+    ] {
+        let at = target.join(file);
+        std::fs::create_dir_all(at.parent().expect("a parent")).expect("created");
+        std::fs::write(at, "{}").expect("written");
+    }
+    let scan = scanned_against(&root, &target);
     assert!(
-        read.is_err(),
-        "a file that could not be opened because the process ran out of descriptors says nothing \
-         about the file, and whether a binary is proven cannot depend on how many read at once: \
-         {read:?}"
+        scan.unread.is_empty(),
+        "a file beside the profiles is not a profile to look inside, and looking inside it is \
+         not a directory that could not be read: {:?}",
+        scan.unread
     );
 }
