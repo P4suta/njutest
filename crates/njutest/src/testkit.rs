@@ -394,7 +394,6 @@ pub mod payload {
     impl<'a> Ref<'a> {
         /// The execution record, where this is one.
         #[must_use]
-        #[cfg(feature = "testkit")]
         pub const fn exec(self) -> Option<&'a crate::trace::ExecRecord> {
             let Self::Exec(exec) = self else {
                 return None;

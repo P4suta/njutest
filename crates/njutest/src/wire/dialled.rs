@@ -19,7 +19,6 @@ pub struct Dialled {
 impl Dialled {
     /// What `value` names, or nothing where it names no authority to sit in front of.
     #[must_use]
-    #[cfg(feature = "testkit")]
     pub fn of(variable: &str, value: &str) -> Option<Self> {
         Some(Self {
             variable: variable.to_owned(),

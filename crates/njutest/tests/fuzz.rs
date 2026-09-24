@@ -390,7 +390,6 @@ mod driving {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_backslash_in_an_artifact_name_is_normalized_after_the_real_file_is_read() {
         let dir = tree(&["parse"]);

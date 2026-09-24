@@ -37,7 +37,6 @@ use crate::report::ConclusionAccounting;
 pub enum Clock {
     /// The moment it actually is.
     Wall,
-    #[cfg(any(test, feature = "testkit"))]
     /// One that starts at `origin` and advances by `step` each reading, so a recording is the same bytes every time it is made.
     #[cfg(feature = "testkit")]
     Stepping {

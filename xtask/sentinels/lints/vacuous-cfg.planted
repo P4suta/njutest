@@ -13,3 +13,9 @@ const ACTIVE: bool = condition!(all());
 macro_rules! hidden { () => { #[cfg(any())] fn dormant() {} } }
 === macro-path-argument source crates/app/src/lib.rs
 macro_rules! condition { ($macro:path) => { $macro!(all()) } } condition!(cfg);
+=== implied-by-enclosing-module source crates/app/src/lib.rs
+#[cfg(unix)] mod posix { #[cfg(unix)] fn again() {} }
+=== implied-by-enclosing-all source crates/app/src/lib.rs
+#[cfg(all(test, unix))] mod tests { #[cfg(test)] fn again() {} }
+=== implied-inside-impl source crates/app/src/lib.rs
+struct Held; #[cfg(test)] impl Held { #[cfg(test)] fn again() {} }
