@@ -1960,6 +1960,7 @@ fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
     }
 }
 
+#[cfg(unix)]
 fn published(name: &str) -> serde_json::Value {
     let path = njutest_devkit::paths::workspace_root()
         .join("schema")
@@ -1968,6 +1969,7 @@ fn published(name: &str) -> serde_json::Value {
     njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON")
 }
 
+#[cfg(unix)]
 fn off_the_trace_schema(recording: &Path) -> Vec<String> {
     let registry = jsonschema::Registry::new()
         .add(
@@ -2001,6 +2003,7 @@ fn off_the_trace_schema(recording: &Path) -> Vec<String> {
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
 fn every_line_a_run_records_is_on_the_published_trace_schema_whole_or_sharded() {
     for extra in [&["--trace"][..], &["--trace", "--shard", "1/2"][..]] {
