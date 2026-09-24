@@ -318,6 +318,12 @@ snapshot_code!(
     "read the manifest the message names yourself: a run decides what it may copy, which targets carry a harness, and which lints a crate forbids from it, and an empty answer to any of those is a different run rather than a missing one"
 );
 snapshot_code!(
+    CAPDIR_NAME_REFUSED,
+    "RM1021",
+    "a name handed to a capability directory is not one path component",
+    "a store names its entries itself; a name that could reach a parent, a stream or a device is a defect in the caller, so report it"
+);
+snapshot_code!(
     DEP_INFO_UNREADABLE,
     "RM2001",
     "a dep-info file has no rule to read",
@@ -599,6 +605,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         ROOT_IS_NOT_THE_WORKSPACE,
         SNAPSHOT_LAYOUT,
         MANIFEST_UNREADABLE,
+        CAPDIR_NAME_REFUSED,
         DEP_INFO_UNREADABLE,
         DEP_INFO_MISSING,
         DISCOVER_FILE_UNREADABLE,
