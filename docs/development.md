@@ -201,7 +201,7 @@ proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 vio
 Where the recording does not carry enough to decide something again — which survivors a reviewer accepted, what a reused disposition was routed under,
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
-One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
+One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 1 with violations, 3 with none and something left `unaudited`, 0 only when every layer was decided, and 2 when the run directory could not be read at all, so a step that reads only the code cannot take an audit that looked at part of a run for one that looked at all of it.
 Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its ten layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed

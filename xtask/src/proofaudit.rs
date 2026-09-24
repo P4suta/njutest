@@ -23,6 +23,9 @@ pub const SCHEMA: &str = "njutest-assurance-report-v1";
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;
 
+/// The exit code an audit that found no violation and left something unaudited earns, kept apart so a step that reads only the code cannot take it for an audit that checked everything.
+pub const EXIT_UNAUDITED: u8 = 3;
+
 const KILLED: &str = "killed";
 const SURVIVED: &str = "survived";
 const UNREACHED: &str = "unreached";
@@ -245,7 +248,13 @@ impl Audit {
     /// A recording that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
-        u8::from(self.violations() > 0)
+        if self.violations() > 0 {
+            1
+        } else if self.unaudited() > 0 {
+            EXIT_UNAUDITED
+        } else {
+            0
+        }
     }
 
     fn standing(&self, standing: Standing) -> usize {

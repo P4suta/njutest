@@ -68,7 +68,7 @@ fn a_clean_run_is_silent_on_every_layer_it_can_re_decide() {
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.mutants, 2, "{audit}");
     assert_eq!(audit.rejections, 1, "{audit}");
-    assert_eq!(audit.exit_code(), 0, "{audit}");
+    assert_eq!(audit.exit_code(), undecided(&audit), "{audit}");
 }
 
 #[test]
@@ -546,7 +546,8 @@ fn a_ledger_that_explains_every_survivor_is_silent() {
 
 #[test]
 fn the_exit_code_follows_the_violations() {
-    assert_eq!(audited_with(&base(), &recording()).exit_code(), 0);
+    let clean = audited_with(&base(), &recording());
+    assert_eq!(clean.exit_code(), undecided(&clean), "{clean}");
     let broken = audited(&with(
         serde_json::json!({ "mutants": [{ "start_byte": 104 }] }),
     ));
@@ -863,7 +864,7 @@ fn every_committed_run_re_decides_with_nothing_the_audit_disagrees_with() {
         assert_eq!(audit.mutants, mutants, "{name}: {audit}");
         assert_eq!(audit.rejections, rejections, "{name}: {audit}");
         assert_eq!(audit.violations(), 0, "{name}: {audit}");
-        assert_eq!(audit.exit_code(), 0, "{name}");
+        assert_eq!(audit.exit_code(), undecided(&audit), "{name}");
     }
 }
 
@@ -1695,4 +1696,13 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
         violations(&audit, Layer::Proofs).is_empty(),
         "the select record agrees with the report: {audit}"
     );
+}
+
+/// The exit code an audit with no violation earns: 3 where it left anything unaudited, 0 only where it decided everything.
+fn undecided(audit: &Audit) -> u8 {
+    if audit.unaudited() > 0 {
+        xtask::proofaudit::EXIT_UNAUDITED
+    } else {
+        0
+    }
 }
