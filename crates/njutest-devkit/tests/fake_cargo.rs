@@ -149,24 +149,18 @@ fn a_scripted_command_writes_the_files_a_build_would_have_left_behind() {
 }
 
 #[test]
-fn the_fake_is_found_or_built_rather_than_leaving_a_suite_with_nothing_to_drive() {
-    let fake = njutest_devkit::fake_cargo::locate();
+fn a_test_runs_its_own_copy_of_the_fake_and_never_the_build_product() {
+    let own = tempfile::tempdir().expect("a directory of this test's own");
+    let fake = njutest_devkit::fake_cargo::example_in("fake_cargo", own.path());
+    let metadata = std::fs::symlink_metadata(&fake).expect("the fake's metadata");
     assert!(
-        std::fs::metadata(&fake)
-            .expect("the fake's metadata")
-            .is_file(),
-        "{}",
+        metadata.is_file(),
+        "the copy is a file of its own, not a link another test's build can rewrite under it: {}",
         fake.display()
     );
     assert!(
-        fake.parent()
-            .is_some_and(|directory| directory.ends_with("examples")),
-        "the fake is the example, beside the test binaries that drive it: {}",
+        fake.starts_with(own.path()),
+        "and it lives in the directory the test owns, which goes with the test: {}",
         fake.display()
-    );
-    assert_eq!(
-        njutest_devkit::fake_cargo::locate(),
-        fake,
-        "asking twice answers the same, whether or not the first ask had to build it"
     );
 }
