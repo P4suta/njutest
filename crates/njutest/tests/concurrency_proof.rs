@@ -9,7 +9,7 @@
 )]
 
 use njutest::concurrency::proof::{
-    Because, Evidence, PackageScan, Reach, Standing, Unproven, standing,
+    Because, Evidence, Harness, PackageScan, Reach, Standing, Threads, Unproven, standing,
 };
 use njutest::concurrency::scan::{Starts, scanned};
 
@@ -43,7 +43,7 @@ fn a_binary_whose_baseline_stayed_on_its_tests_and_whose_closure_starts_nothing_
     assert_eq!(
         standing(Evidence {
             reach: Reach::OnItsTests,
-            libtest: true,
+            harness: Harness::Libtest(Threads::One),
             packages: &[&quiet],
         }),
         Standing::SingleThreaded
@@ -63,7 +63,7 @@ fn a_spawn_anywhere_in_the_closure_makes_it_concurrent_and_says_where() {
     );
     let told = standing(Evidence {
         reach: Reach::OnItsTests,
-        libtest: true,
+        harness: Harness::Libtest(Threads::One),
         packages: &[&quiet, &spawning],
     });
     assert_eq!(
@@ -86,7 +86,7 @@ fn reach_off_the_tests_threads_is_concurrency_the_sources_did_not_show() {
     assert_eq!(
         standing(Evidence {
             reach: Reach::OffItsTests,
-            libtest: true,
+            harness: Harness::Libtest(Threads::One),
             packages: &[&quiet],
         }),
         Standing::Concurrent {
@@ -107,7 +107,7 @@ fn native_code_unread_sources_no_touch_and_another_harness_prove_nothing() {
     unread.unread.push("src/broken.rs".to_owned());
     let told = standing(Evidence {
         reach: Reach::NotRecorded,
-        libtest: false,
+        harness: Harness::Other,
         packages: &[&native, &linked, &unread],
     });
     let Standing::NotProven { why } = told else {
@@ -149,7 +149,7 @@ fn a_known_spawn_is_concurrent_even_where_something_else_could_not_be_read() {
     );
     let told = standing(Evidence {
         reach: Reach::OnItsTests,
-        libtest: true,
+        harness: Harness::Libtest(Threads::One),
         packages: &[&spawning, &native],
     });
     assert!(
@@ -193,4 +193,62 @@ fn a_package_is_read_whole_outside_its_build_output_and_what_cannot_be_read_is_n
         ["src/broken.rs", "src/latin1.rs"],
         "a file that was not read is named, never read as one that starts nothing"
     );
+}
+
+#[test]
+fn a_harness_that_runs_tests_side_by_side_is_concurrent_however_quiet_its_closure() {
+    let quiet = quiet();
+    assert_eq!(
+        standing(Evidence {
+            reach: Reach::OnItsTests,
+            harness: Harness::Libtest(Threads::Many),
+            packages: &[&quiet],
+        }),
+        Standing::Concurrent {
+            because: vec![Because::ParallelTests]
+        },
+        "two tests on two threads of one process interleave over whatever they share"
+    );
+}
+
+#[test]
+fn a_doctest_binary_is_never_proven_whatever_its_reach_says() {
+    let quiet = quiet();
+    assert_eq!(
+        standing(Evidence {
+            reach: Reach::OnItsTests,
+            harness: Harness::Doctest,
+            packages: &[&quiet],
+        }),
+        Standing::NotProven {
+            why: vec![Unproven::Doctest]
+        },
+        "rustdoc runs code the scan does not read, where no reach is recorded"
+    );
+}
+
+#[test]
+fn only_an_explicit_single_test_thread_is_one_thread() {
+    let threads = |args: &[&str]| {
+        njutest::concurrency::proof::threads_of(
+            &args.iter().map(|one| (*one).to_owned()).collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(threads(&["--test-threads=1"]), Threads::One);
+    assert_eq!(
+        threads(&["--nocapture", "--test-threads", "1"]),
+        Threads::One
+    );
+    assert_eq!(
+        threads(&[]),
+        Threads::Many,
+        "libtest's default is every processor"
+    );
+    assert_eq!(threads(&["--test-threads=4"]), Threads::Many);
+    assert_eq!(
+        threads(&["--test-threads=1", "--test-threads=1"]),
+        Threads::Many,
+        "a flag given twice is one libtest refuses, and nothing is read from it"
+    );
+    assert_eq!(threads(&["--test-threads"]), Threads::Many);
 }

@@ -1401,7 +1401,7 @@ fn concurrency_of(
     session: &rust_mutants::session::Session,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
-    let mut concurrency = super::concurrency::recorded(session);
+    let mut concurrency = super::concurrency::recorded(session, &mutating.request.test_args);
     if mutating.report.scope.shard.is_none() {
         super::concurrency::explored(
             session,

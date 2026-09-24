@@ -6,26 +6,52 @@
 use std::collections::BTreeMap;
 
 use crate::concurrency::explore::{Delayed, Ended, chosen, delayed};
-use crate::concurrency::proof::{Evidence, PackageScan, Reach, Standing, standing};
+use crate::concurrency::proof::{
+    Evidence, Harness, PackageScan, Reach, Standing, standing, threads_of,
+};
 use crate::report::concurrency::{ConcurrencyRecord, Exploration, Unexplored};
+use rust_mutants::execute::TargetKind;
 use rust_mutants::session::{Conditions, Observing, Perturbation, Request};
 
 /// How long a delayed guard holds each thread that reaches it, once.
 pub const PAUSE_MS: u64 = 100;
 
-/// One record per test binary the session measured, in binary order, each package of every closure read once.
+/// One record per test binary the session measured, in binary order, each package of every closure read once; `harness_args` are what every libtest binary was run with.
 #[must_use]
-pub fn recorded(session: &rust_mutants::session::Session) -> Vec<ConcurrencyRecord> {
-    let mut binaries: BTreeMap<String, (&str, bool)> = BTreeMap::new();
+pub fn recorded(
+    session: &rust_mutants::session::Session,
+    harness_args: &[String],
+) -> Vec<ConcurrencyRecord> {
+    let threads = threads_of(harness_args);
+    let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
-        binaries.insert(target.id.clone(), (target.package.as_str(), target.harness));
+        let harness = match (target.kind, target.harness) {
+            (TargetKind::Doc, _) => Harness::Doctest,
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                true,
+            ) => Harness::Libtest(threads),
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                false,
+            ) => Harness::Other,
+        };
+        binaries.insert(target.id.clone(), (target.package.as_str(), harness));
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
     let mut read: BTreeMap<String, PackageScan> = BTreeMap::new();
     binaries
         .into_iter()
-        .map(|(binary, (package, libtest))| {
+        .map(|(binary, (package, harness))| {
             let closure = metadata
                 .members()
                 .find(|member| member.name == package)
@@ -62,7 +88,7 @@ pub fn recorded(session: &rust_mutants::session::Session) -> Vec<ConcurrencyReco
             };
             let standing = standing(Evidence {
                 reach,
-                libtest,
+                harness,
                 packages: &packages,
             });
             let explored = match standing {

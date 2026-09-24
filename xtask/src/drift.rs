@@ -102,6 +102,10 @@ pub struct Touched {
     pub unreadable: usize,
     /// Every target whose baseline passed only when run again, so it was not measured under the conditions a control is.
     pub retried: BTreeSet<String>,
+    /// The harness arguments each target's baseline ran with, where its record carried them.
+    pub args: BTreeMap<String, Vec<String>>,
+    /// Each target the build produced: its kind, and whether libtest runs it.
+    pub kinds: BTreeMap<String, (String, bool)>,
 }
 
 /// Every touch record of one engine recording.
@@ -117,6 +121,35 @@ pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
             && let Some(target) = verify.get("target").and_then(Value::as_str)
         {
             touched.retried.insert(target.to_owned());
+        }
+        if event.get("type").and_then(Value::as_str) == Some("verify")
+            && let Some(verify) = event.get("verify")
+            && let Some(target) = verify.get("target").and_then(Value::as_str)
+            && let Some(args) = verify.get("args").and_then(Value::as_array)
+            && let Some(args) = args
+                .iter()
+                .map(|arg| arg.as_str().map(ToOwned::to_owned))
+                .collect::<Option<Vec<String>>>()
+        {
+            touched.args.insert(target.to_owned(), args);
+        }
+        if event.get("type").and_then(Value::as_str) == Some("build")
+            && let Some(details) = event
+                .get("build")
+                .and_then(|build| build.get("details"))
+                .and_then(Value::as_array)
+        {
+            for detail in details {
+                if let (Some(id), Some(kind), Some(harness)) = (
+                    detail.get("id").and_then(Value::as_str),
+                    detail.get("kind").and_then(Value::as_str),
+                    detail.get("harness").and_then(Value::as_bool),
+                ) {
+                    touched
+                        .kinds
+                        .insert(id.to_owned(), (kind.to_owned(), harness));
+                }
+            }
         }
         if event.get("type").and_then(Value::as_str) != Some("touch") {
             continue;

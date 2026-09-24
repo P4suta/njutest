@@ -2978,6 +2978,18 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "parallel-tests"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
             "kind",
             "package",
             "path",
@@ -3031,6 +3043,18 @@
           "properties": {
             "kind": {
               "const": "not-libtest"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "doctest"
             }
           }
         },
