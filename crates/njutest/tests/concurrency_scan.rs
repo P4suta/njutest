@@ -113,11 +113,3 @@ fn a_file_that_is_not_rust_is_refused_rather_than_read_as_starting_nothing() {
         "a file that was not read is not a file with nothing in it"
     );
 }
-
-#[test]
-fn every_kind_has_a_name_of_its_own() {
-    let mut names: Vec<&str> = Starts::ALL.iter().map(|one| one.name()).collect();
-    names.sort_unstable();
-    names.dedup();
-    assert_eq!(names.len(), Starts::ALL.len());
-}

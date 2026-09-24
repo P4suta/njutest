@@ -241,7 +241,8 @@
                 "detail": "doctests run once and are not routed to mutants"
               }
             ],
-            "drift": []
+            "drift": [],
+            "concurrency": []
           }
         ]
       }

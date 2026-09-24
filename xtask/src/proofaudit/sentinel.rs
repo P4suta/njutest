@@ -335,7 +335,14 @@ pub struct Perturbation {
 pub fn clean() -> Perturbation {
     Perturbation {
         name: "clean",
-        document: with(drifted("held")),
+        document: {
+            let mut document = with(drifted("held"));
+            merge(
+                &mut document,
+                json!({ "concurrency": [{ "target": TARGET, "standing": { "state": "single-threaded" } }] }),
+            );
+            document
+        },
         events: Some(routes()),
         engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
     }
@@ -475,6 +482,18 @@ impl Layer {
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
+                ..clean
+            }],
+            Self::Concurrency => vec![Perturbation {
+                name: "a binary whose baseline reached code off its tests' threads, proven single-threaded",
+                engine: Some(vec![
+                    {
+                        let mut loose = touch("baseline", &[0, 1]);
+                        merge(&mut loose, json!({ "touch": { "loose": 1 } }));
+                        loose
+                    },
+                    touch("control", &[0, 1]),
+                ]),
                 ..clean
             }],
         }

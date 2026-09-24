@@ -5,6 +5,7 @@
 
 pub mod across;
 pub mod audit;
+pub mod concurrency;
 pub mod drift;
 pub mod hollow;
 pub mod html;
@@ -1609,6 +1610,8 @@ pub struct BuildPartEvidence {
     limitations: Vec<Limitation>,
     /// Whether each target this source's baseline measured held its reach on a control.
     drift: Vec<drift::Drift>,
+    /// Whether each test binary this source's baseline measured is proven to run one thread.
+    concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
 
 impl BuildPartEvidence {
@@ -1634,6 +1637,7 @@ impl BuildPartEvidence {
             findings,
             limitations: report.limitations.clone(),
             drift: report.drift.clone(),
+            concurrency: report.concurrency.clone(),
         };
         validate_part_evidence(&evidence)?;
         Ok(evidence)
@@ -1658,6 +1662,7 @@ struct BuildPartEvidenceWire {
     findings: Vec<Finding>,
     limitations: Vec<Limitation>,
     drift: Vec<drift::Drift>,
+    concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
 
 impl<'de> Deserialize<'de> for BuildPartEvidence {
@@ -1681,6 +1686,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             findings: wire.findings,
             limitations: wire.limitations,
             drift: wire.drift,
+            concurrency: wire.concurrency,
         };
         validate_part_evidence(&held).map_err(serde::de::Error::custom)?;
         Ok(held)
@@ -1896,6 +1902,12 @@ pub enum PartLedgerError {
         /// The owning source.
         run_id: rust_mutants::id::RunId,
     },
+    /// A test binary's threads were recorded twice, or out of order.
+    #[error("source {run_id} records a test binary's threads twice or out of order")]
+    ConcurrencyOrder {
+        /// The owning source.
+        run_id: rust_mutants::id::RunId,
+    },
     /// Baseline evidence differed across shards.
     #[error("shard {shard} disagrees with shard 1 about {about}")]
     BaselineMismatch {
@@ -2061,6 +2073,11 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
         return Err(PartLedgerError::AccountingMismatch {
             run_id: part.run_id.clone(),
             about: "mutation",
+        });
+    }
+    if !concurrency::ordered(&part.concurrency) {
+        return Err(PartLedgerError::ConcurrencyOrder {
+            run_id: part.run_id.clone(),
         });
     }
     let mut target_ids = BTreeSet::new();
@@ -4525,6 +4542,8 @@ pub struct BuildReport {
     pub limitations: Vec<Limitation>,
     /// Whether each target its baseline measured reached, on an original-code control, what it reached on that baseline.
     pub drift: Vec<drift::Drift>,
+    /// Whether each test binary its baseline measured is proven to run one thread.
+    pub concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
 
 impl BuildReport {
@@ -4563,6 +4582,7 @@ impl BuildReport {
             findings: Vec::new(),
             limitations: Vec::new(),
             drift: Vec::new(),
+            concurrency: Vec::new(),
         }
     }
 

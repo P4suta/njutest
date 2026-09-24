@@ -1712,7 +1712,8 @@
         "mutants",
         "findings",
         "limitations",
-        "drift"
+        "drift",
+        "concurrency"
       ],
       "properties": {
         "run_id": {
@@ -1778,6 +1779,13 @@
             "$ref": "#/$defs/drift"
           },
           "description": "Whether each target this source's baseline measured reached, on an original-code control over the same passing tests, what it reached on that baseline (ADR 0025)."
+        },
+        "concurrency": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/concurrencyRecord"
+          },
+          "description": "Whether each test binary this source's baseline measured is proven to run one thread (ADR 0034)."
         }
       }
     },
@@ -2742,6 +2750,212 @@
             "$ref": "#/$defs/finding"
           },
           "description": "Run-wide findings derived without executing any one build, retained exactly once rather than copied into each source."
+        }
+      }
+    },
+    "concurrencyStarts": {
+      "description": "What one place in a linked package's source can start.",
+      "enum": [
+        "spawn",
+        "scope",
+        "parallel",
+        "runtime",
+        "native-code"
+      ]
+    },
+    "concurrencyBecause": {
+      "description": "One reason a test binary can run more than one thread.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "loose-reach"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "package",
+            "path",
+            "line",
+            "what"
+          ],
+          "properties": {
+            "kind": {
+              "const": "starts"
+            },
+            "package": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "what": {
+              "$ref": "#/$defs/concurrencyStarts"
+            }
+          }
+        }
+      ]
+    },
+    "concurrencyUnproven": {
+      "description": "One reason nothing is proven about a test binary's threads either way.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "no-touch"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "not-libtest"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "package",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "const": "unread"
+            },
+            "package": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "package",
+            "by"
+          ],
+          "properties": {
+            "kind": {
+              "const": "native-code"
+            },
+            "package": {
+              "type": "string",
+              "minLength": 1
+            },
+            "by": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "concurrencyStanding": {
+      "description": "What a run established about whether one test binary runs one thread.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "single-threaded"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "because"
+          ],
+          "properties": {
+            "state": {
+              "const": "concurrent"
+            },
+            "because": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/concurrencyBecause"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "why"
+          ],
+          "properties": {
+            "state": {
+              "const": "not-proven"
+            },
+            "why": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/concurrencyUnproven"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "concurrencyRecord": {
+      "description": "What a run established about one test binary's threads.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "standing"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standing": {
+          "$ref": "#/$defs/concurrencyStanding"
         }
       }
     }

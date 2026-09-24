@@ -4,7 +4,19 @@
 //! Every place one source file can start a thread, a process, or code the compiler cannot see, read from its syntax and failing closed.
 
 /// What one place in a source can start.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum Starts {
     /// A call or method whose name starts with `spawn`, on any receiver: a thread, a task, a scoped thread, or a process.
     Spawn,
@@ -15,21 +27,8 @@ pub enum Starts {
     /// An attribute or builder that starts an asynchronous runtime, whose workers are threads.
     Runtime,
     /// An `extern` block or a direct thread binding: code the compiler does not see, which can start threads without a token here saying so.
+    #[serde(rename = "native-code")]
     Native,
-}
-
-impl Starts {
-    /// The name a record gives it.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Spawn => "spawn",
-            Self::Scope => "scope",
-            Self::Parallel => "parallel",
-            Self::Runtime => "runtime",
-            Self::Native => "native-code",
-        }
-    }
 }
 
 /// One place a file can start something, and what.

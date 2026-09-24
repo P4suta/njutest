@@ -151,6 +151,9 @@ pub struct Package {
     /// What its manifest says it depends on, before anything is resolved.
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
+    /// The native library its manifest says it links, which is code no Rust source shows.
+    #[serde(default)]
+    pub links: Option<String>,
     #[serde(flatten)]
     external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }

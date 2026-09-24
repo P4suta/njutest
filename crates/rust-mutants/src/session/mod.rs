@@ -494,6 +494,12 @@ impl Session {
         self.packages.get(&index).map(String::as_str)
     }
 
+    /// What `cargo metadata` said about the copy this session measures, whose resolve names every package a binary links.
+    #[must_use]
+    pub const fn metadata(&self) -> &crate::cargo::Metadata {
+        self.workspace.metadata()
+    }
+
     /// The packages this session was told to measure, which is where a reader looks for a test to write.
     #[must_use]
     pub fn packages(&self) -> Vec<String> {

@@ -246,6 +246,17 @@ A target nothing was killed on is never confirmed, so it is never compared: `dri
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
 And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
 
+## What a run asks of a suite that runs more than one thread
+
+A schedule is not something a run explores yet, so a suite whose tests race each other passes on the schedule it happened to get ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+What a run does instead is prove, per test binary, where there is nothing to explore: its baseline reached no code off the threads its tests ran on, and no package in its dependency closure has a token that can start a thread, a task, a parallel iterator, a runtime, or a process, and none links native code or declares an `extern` block.
+Everything else is `schedule-not-explored`, naming the binaries in its closing list: `concurrent` where something says it can run more than one thread, and `not-proven` where something could not be looked at.
+
+Three things follow and are not hidden.
+The scan reads tokens, not types, so a function of a user's own named `spawn`, or a word in a string, makes a binary concurrent that runs one thread; that is a hole the report states, never a proof it makes.
+A doctest's code is a doc string the scan does not read and its run records no reach, so a doctest binary is never proven.
+And a thread given exactly the name of a test that passed is read as that test's, which is why the source scan, and not the reach alone, is what the proof rests on.
+
 ## What a run asks of a suite that talks about time
 
 A run does something to a suite that `cargo test` never does: it runs every target's baseline before it measures anything, and then measures mutants against a machine that is already busy.
