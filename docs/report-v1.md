@@ -182,7 +182,10 @@ A part concludes `PARTIAL`; only a complete, non-overlapping set of all parts ca
 The merge re-derives accounting,
 findings and verdict from the union instead of adding claims from the parts.
 A part judges an expectation only on the mutations it holds, so a `count` spread across parts is checked by the parts together;
-the merged expectation is the harshest standing any part gave it — `stale`, then `unmatched`, then `met`.
+it resolves the claim against the whole catalog, so `covered` is the whole claim's count in every part, and a claim that resolves to nothing is `unmatched` alike in every part.
+Every standing is a statement about each of the claim's mutations — every one of them has the claimed outcome — and the whole run names the first mutation in catalog order that contradicts it, or the first when none does.
+So the merged expectation is the part's answer naming the earliest contradicting mutation, or failing any, the earliest one held; a form that counted or asked for "at least one" would need its own merge, and is not one of these.
+The merge first puts its reports in shard order and refuses a set that is not every part of one catalog, each once, naming the part that is missing or repeated, so the merged document does not depend on the order the reports were offered in.
 A `stale-expectation` or `unmatched-expectation` finding is derived from its expectation, in a part and in a merge alike, and a document whose findings of those kinds are not exactly the ones its expectations earn is not read.
 
 JSON is canonical.

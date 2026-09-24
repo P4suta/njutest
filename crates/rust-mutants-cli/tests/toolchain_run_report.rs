@@ -1357,29 +1357,38 @@ fn a_claim_on_several_mutations_split_across_shards_merges_to_what_the_whole_run
         .expect("write");
         written.push(path);
     }
-    let mut arguments = vec!["merge".to_owned()];
-    arguments.extend(
-        written
-            .iter()
-            .map(|path| njutest_devkit::paths::utf8(path).to_owned()),
-    );
-    let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
-    let merged_output = rootless(&fixture, &borrowed);
-    let merged: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(&merged_output))
-        .unwrap_or_else(|error| panic!("one document: {error}: {}", stderr(&merged_output)));
-    let claims = |document: &serde_json::Value| -> Vec<(String, String)> {
-        document["expectations"]
+    let said = |document: &serde_json::Value| -> (String, Vec<String>) {
+        let mut findings: Vec<String> = document["findings"]
             .as_array()
-            .expect("expectations")
+            .expect("findings")
             .iter()
-            .map(|one| (one["id"].to_string(), one["standing"].to_string()))
-            .collect()
+            .map(ToString::to_string)
+            .collect();
+        findings.sort();
+        (document["expectations"].to_string(), findings)
     };
-    assert_eq!(
-        (claims(&merged), merged_output.status.code()),
-        (claims(&whole), whole_output.status.code()),
-        "one claim over two mutations is one claim however the catalog was divided: each part \
-         judges the mutations it holds, and the merge answers for the pair. {}",
-        stderr(&merged_output)
-    );
+    let mut orders = vec![written.clone()];
+    orders.push(written.iter().rev().cloned().collect());
+    for order in orders {
+        let mut arguments = vec!["merge".to_owned()];
+        arguments.extend(
+            order
+                .iter()
+                .map(|path| njutest_devkit::paths::utf8(path).to_owned()),
+        );
+        let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        let merged_output = rootless(&fixture, &borrowed);
+        let merged: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(
+            &merged_output,
+        ))
+        .unwrap_or_else(|error| panic!("one document: {error}: {}", stderr(&merged_output)));
+        assert_eq!(
+            (said(&merged), merged_output.status.code()),
+            (said(&whole), whole_output.status.code()),
+            "one claim over two mutations is one claim however the catalog was divided and in \
+             whatever order the parts are offered: each part judges the mutations it holds, and \
+             the merge answers for the pair as the whole run does. {}",
+            stderr(&merged_output)
+        );
+    }
 }

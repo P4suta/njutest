@@ -1234,6 +1234,16 @@ pub enum MergeError {
         /// The mutant two reports both claim.
         mutant: String,
     },
+    /// The reports are not every part of one catalog, each once.
+    #[error(transparent)]
+    Parts(#[from] crate::run::PartsError),
+    /// A part names a shard that is not one.
+    #[error("a report part names a shard that is not one: {error}")]
+    Shard {
+        /// Why the shard is not one.
+        #[source]
+        error: crate::run::ShardError,
+    },
     /// One part contradicts itself, so combining it would preserve a lie.
     #[error("a report part contradicts itself: {error}")]
     InvalidPart {
@@ -1249,13 +1259,21 @@ pub enum MergeError {
     Count(#[from] CountOverflow),
 }
 
-/// Every claim the parts state, one each: a claim is the same claim in every part, each part judged the mutations it held, and the answer for the whole is the harshest any part gave — contradicted, then unresolved, then met by a part that named a mutant.
-fn claims_of(parts: &[RunDocument]) -> Vec<ExpectationDocument> {
-    let severity = |one: &ExpectationDocument| match one.standing.as_str() {
-        "stale" => 3,
-        "unmatched" => 2,
-        _ if one.mutant.is_some() => 1,
-        _ => 0,
+/// Every claim the parts state, one each, answered as the whole run answers it.
+///
+/// A claim is the same claim in every part, and each part judged the mutations it held in catalog order and named the first that contradicted the claim, or the first it held when none did.
+/// The whole run names the first in catalog order across all of them, so the merged claim is the part's answer that names the earliest contradicting mutation, or failing any, the earliest held one.
+fn claims_of(parts: &[RunDocument], rows: &[RunMutantDocument]) -> Vec<ExpectationDocument> {
+    let at = |one: &ExpectationDocument| {
+        let position = match &one.mutant {
+            Some(mutant) => match rows.iter().find(|row| row.id == *mutant) {
+                Some(row) => row.index,
+                None => u32::MAX,
+            },
+            None if one.standing == "met" => u32::MAX,
+            None => 0,
+        };
+        (one.standing == "met", position)
     };
     let mut claims: Vec<ExpectationDocument> = Vec::new();
     for one in parts.iter().flat_map(|part| part.expectations.iter()) {
@@ -1267,7 +1285,7 @@ fn claims_of(parts: &[RunDocument]) -> Vec<ExpectationDocument> {
                 && held.covered == one.covered
         };
         match claims.iter_mut().find(|held| same(held)) {
-            Some(held) if severity(one) > severity(held) => *held = one.clone(),
+            Some(held) if at(one) < at(held) => *held = one.clone(),
             Some(_) => {}
             None => claims.push(one.clone()),
         }
@@ -1280,6 +1298,21 @@ fn claims_of(parts: &[RunDocument]) -> Vec<ExpectationDocument> {
 /// # Errors
 /// See [`MergeError`].
 pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
+    let whole = crate::run::Shard { index: 1, of: 1 };
+    let shards = parts
+        .iter()
+        .map(|part| match &part.run.shard {
+            Some(text) => crate::run::Shard::parse(text)
+                .map(|shard| (shard, part))
+                .map_err(|error| MergeError::Shard { error }),
+            None => Ok((whole, part)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let ordered: Vec<RunDocument> = crate::run::Shard::every_part(shards)?
+        .into_iter()
+        .cloned()
+        .collect();
+    let parts = ordered.as_slice();
     let first = parts.first().ok_or(MergeError::Nothing)?;
     for part in parts {
         part.validate()
@@ -1313,7 +1346,7 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
     merged.score = score_of(&accounting)?;
     merged.accounting = accounting;
     merged.mutants = mutants;
-    merged.expectations = claims_of(parts);
+    merged.expectations = claims_of(parts, &merged.mutants);
     let restated: Vec<FindingDocument> = merged
         .expectations
         .iter()

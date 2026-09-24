@@ -748,6 +748,38 @@ pub enum ShardError {
     },
 }
 
+/// Why some reports are not every part of one catalog, each once.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PartsError {
+    /// A part is absent.
+    #[error("shard {index}/{of} is missing, so these reports are not a whole")]
+    Missing {
+        /// The absent part, from one.
+        index: u32,
+        /// How many parts there are.
+        of: u32,
+    },
+    /// A part is offered more than once.
+    #[error("shard {index}/{of} is in more than one of these reports")]
+    Duplicate {
+        /// The repeated part, from one.
+        index: u32,
+        /// How many parts there are.
+        of: u32,
+    },
+    /// Two parts divide the catalog differently.
+    #[error("shard {index}/{actual} divides the catalog differently from /{expected}")]
+    Denominator {
+        /// The part that disagrees.
+        index: u32,
+        /// How many parts the first said there are.
+        expected: u32,
+        /// How many parts this one says there are.
+        actual: u32,
+    },
+}
+
 impl Shard {
     /// The shard `K/N` names.
     ///
@@ -764,6 +796,38 @@ impl Shard {
             return Err(ShardError::OutOfRange { index, of });
         }
         Ok(Self { index, of })
+    }
+
+    /// The parts in order, when they are every part of one catalog, each once.
+    ///
+    /// # Errors
+    /// See [`PartsError`].
+    pub fn every_part<T>(parts: impl IntoIterator<Item = (Self, T)>) -> Result<Vec<T>, PartsError> {
+        let mut by_index: std::collections::BTreeMap<u32, T> = std::collections::BTreeMap::new();
+        let mut of = None;
+        for (shard, part) in parts {
+            let expected = *of.get_or_insert(shard.of);
+            if shard.of != expected {
+                return Err(PartsError::Denominator {
+                    index: shard.index,
+                    expected,
+                    actual: shard.of,
+                });
+            }
+            if by_index.insert(shard.index, part).is_some() {
+                return Err(PartsError::Duplicate {
+                    index: shard.index,
+                    of: expected,
+                });
+            }
+        }
+        let Some(of) = of else {
+            return Ok(Vec::new());
+        };
+        match (1..=of).find(|index| !by_index.contains_key(index)) {
+            Some(index) => Err(PartsError::Missing { index, of }),
+            None => Ok(by_index.into_values().collect()),
+        }
     }
 
     /// Whether the mutant at this catalog index belongs to this part.

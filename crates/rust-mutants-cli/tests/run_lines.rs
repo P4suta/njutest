@@ -682,8 +682,9 @@ fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
             &stale_mutant,
             std::slice::from_ref(&shared),
             &["b noticed nothing", "a noticed nothing"],
+            "2/2",
         ),
-        findings_part(&stale_mutant, &[shared, stale], &[]),
+        findings_part(&stale_mutant, &[shared, stale], &[], "1/2"),
     ];
     let parts: Vec<RunDocument> = match parts.into_iter().collect() {
         Ok(parts) => parts,
@@ -724,8 +725,10 @@ fn findings_part(
     stale_mutant: &RunMutantDocument,
     claims: &[ExpectationDocument],
     skips: &[&str],
+    shard: &str,
 ) -> Result<RunDocument, rust_mutants_cli::report::run::DocumentError> {
     let mut document = document();
+    document.run.shard = Some(shard.to_owned());
     document.mutants = if claims.iter().any(|claim| claim.standing == "stale") {
         vec![stale_mutant.clone()]
     } else {
@@ -822,6 +825,108 @@ fn not_run(index: u32, reason: NotRunReason) -> RunMutantDocument {
     one.unreached = reason == NotRunReason::Unreached;
     one.not_run_reason = Some(reason);
     one
+}
+
+#[test]
+fn a_merge_is_the_same_document_in_whatever_order_its_parts_are_offered() {
+    let claimed = |row: &RunMutantDocument| {
+        let mut one = claim("one claim over three mutations", Some(row));
+        one.covered = Some(3);
+        one
+    };
+    let shard = |rows: Vec<RunMutantDocument>, claimed_row: usize, of: &str| {
+        let mut document = part(rows, 1, of);
+        let one = match document.mutants.get(claimed_row) {
+            Some(row) => claimed(row),
+            None => panic!("the claimed row is one of the part's rows"),
+        };
+        match one.finding() {
+            Ok(Some(finding)) => document.findings.push(finding),
+            other => panic!("a stale claim earns a finding: {other:?}"),
+        }
+        document.expectations = vec![one];
+        cohere(&mut document);
+        document
+    };
+    let parts = [
+        shard(
+            vec![
+                mutant(0, Outcome::Killed, true),
+                mutant(3, Outcome::Killed, false),
+            ],
+            1,
+            "1/3",
+        ),
+        shard(vec![mutant(1, Outcome::Killed, false)], 0, "2/3"),
+        shard(vec![mutant(2, Outcome::Killed, false)], 0, "3/3"),
+    ];
+    let orders: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let merged: Vec<String> = orders
+        .iter()
+        .map(|order| {
+            let offered: Vec<RunDocument> = order
+                .iter()
+                .filter_map(|&at| parts.get(at).cloned())
+                .collect();
+            let whole = rust_mutants_cli::report::run::merge(&offered)
+                .unwrap_or_else(|error| panic!("{order:?} must merge: {error:?}"));
+            serde_json::to_string(&whole).expect("renders")
+        })
+        .collect();
+    let Some(first) = merged.first() else {
+        panic!("six orders merged");
+    };
+    assert!(
+        merged.iter().all(|one| one == first),
+        "the merge is a function of the set of its parts, not of the order they arrive in"
+    );
+    assert!(
+        first.contains(&format!(
+            "\"mutant\":\"{}\",\"covered\"",
+            mutant(1, Outcome::Killed, false).id
+        )),
+        "and names what the whole run names, the first contradicting mutation in catalog \
+         order, though a later part holds it: {first}"
+    );
+}
+
+#[test]
+fn a_merge_names_the_part_it_is_missing_rather_than_a_row_it_cannot_explain() {
+    use rust_mutants::run::PartsError;
+    use rust_mutants_cli::report::run::MergeError;
+    let first = || part(vec![mutant(0, Outcome::Killed, true)], 1, "1/2");
+    let second = || part(vec![mutant(1, Outcome::Killed, true)], 1, "2/2");
+    let third = || part(vec![mutant(1, Outcome::Killed, true)], 1, "2/3");
+    let refused = |parts: &[RunDocument]| match rust_mutants_cli::report::run::merge(parts) {
+        Ok(merged) => panic!("an incomplete set of parts merged: {:?}", merged.run),
+        Err(error) => error,
+    };
+    assert_eq!(
+        refused(&[first()]),
+        MergeError::Parts(PartsError::Missing { index: 2, of: 2 }),
+        "one part alone is a whole with a part missing"
+    );
+    assert_eq!(
+        refused(&[first(), first(), second()]),
+        MergeError::Parts(PartsError::Duplicate { index: 1, of: 2 }),
+        "a part offered twice is said as such"
+    );
+    assert_eq!(
+        refused(&[first(), third()]),
+        MergeError::Parts(PartsError::Denominator {
+            index: 2,
+            expected: 2,
+            actual: 3
+        }),
+        "parts that divide the catalog differently are not parts of one whole"
+    );
 }
 
 #[test]
