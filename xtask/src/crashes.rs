@@ -1,30 +1,44 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a runner recording says about the crashes a run put, read from the stream alone (ADR 0035).
+//! What a runner recording says about the crashes a run put, read from the stream alone and decided again from it (ADR 0035).
 
 use serde_json::Value;
 
-/// One run of a test a crash was put to.
+/// One run of a test a crash was put to, in recording order.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Run {
     /// The crash a person types.
     pub crash: String,
+    /// The target the test is in.
+    pub target: String,
+    /// The test.
+    pub test: String,
     /// Which run: `crash`, `next` or `fresh`.
     pub stage: String,
     /// The exit status.
     pub exit_code: i64,
     /// What the engine made of it.
     pub outcome: String,
+    /// What a stopped run left.
+    pub left: Vec<String>,
+    /// What a next or fresh run failed.
+    pub failed: Vec<String>,
 }
 
-/// What the report says one call that writes came to.
+/// What a crash came to, as a report writes it and as this audit decides it again.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Site {
     /// The crash a person types.
     pub crash: String,
     /// The decision's wire name.
     pub decision: String,
+    /// The target and test it is about, where it names one.
+    pub on: String,
+    /// What the stop left, where it says.
+    pub left: Vec<String>,
+    /// What the next run failed, where it says.
+    pub failed: Vec<String>,
 }
 
 /// Every crash run a recording holds.
@@ -52,12 +66,16 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
         };
         crashed.runs.push(Run {
             crash: text(record, "crash"),
+            target: text(record, "target"),
+            test: text(record, "test"),
             stage: text(record, "stage"),
             exit_code: record
                 .get("exit_code")
                 .and_then(Value::as_i64)
-                .unwrap_or_default(),
+                .unwrap_or(-1),
             outcome: text(record, "outcome"),
+            left: texts(record, "left"),
+            failed: texts(record, "failed"),
         });
     }
     Ok(crashed)
@@ -66,88 +84,91 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
 /// One site as a report writes it.
 #[must_use]
 pub fn site(record: &Value) -> Site {
+    let decision = record.get("decision").cloned().unwrap_or_default();
     Site {
         crash: text(record, "display_id"),
-        decision: record
-            .get("decision")
-            .map(|decision| text(decision, "decision"))
-            .unwrap_or_default(),
+        decision: text(&decision, "decision"),
+        on: text(&decision, "on"),
+        left: texts(&decision, "left"),
+        failed: texts(&decision, "failed"),
     }
 }
 
-/// What the runs of one crash contradict about the decision the run gave it.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum Contradiction {
-    /// A decision that rests on a stop has no run that stopped.
-    #[error(
-        "the run says it is {decision}, and no run of it the recording holds stopped at the call"
-    )]
-    NeverStopped {
-        /// The decision given.
-        decision: String,
-    },
-    /// A decision about a next run has none, or one that came to something else.
-    #[error("the run says it is {decision}, and no next run of it came to {expected}")]
-    NextRun {
-        /// The decision given.
-        decision: String,
-        /// What the next run had to come to.
-        expected: &'static str,
-    },
-    /// A corrupt crash lacks its fresh pass or its second stop.
-    #[error(
-        "the run says it is corrupt, and the recording holds no passing fresh run and two failing next runs of it"
-    )]
-    Unconfirmed,
-    /// A crash said never to have stopped stopped.
-    #[error("the run says it was {decision}, and a run of it stopped at the call")]
-    Stopped {
-        /// The decision given.
-        decision: String,
-    },
-    /// A decision no crash can come to.
-    #[error("{decision:?} is no decision a crash can come to")]
-    Unknown {
-        /// The decision given.
-        decision: String,
-    },
-}
-
-/// Whether the runs of one crash support the decision the run gave it.
+/// What the ordered runs of one crash decide, by the run's own steps and none of its code.
 ///
-/// # Errors
-/// The [`Contradiction`] the runs hold.
-pub fn supports(site: &Site, runs: &[&Run]) -> Result<(), Contradiction> {
-    let stopped = runs
-        .iter()
-        .filter(|run| run.stage == "crash" && run.exit_code == CRASH_EXIT)
-        .count();
-    let next = |outcome: &str| {
-        runs.iter()
-            .filter(|run| run.stage == "next" && run.outcome == outcome)
-            .count()
+/// The first test that stopped at the call decides, a test that passed without stopping hands on to the next, and anything else is undecided.
+/// A report whose decision is not this one claims something its runs do not show.
+#[must_use]
+pub fn decided(crash: &str, runs: &[&Run]) -> Site {
+    let site = |decision: &str, on: String| Site {
+        crash: crash.to_owned(),
+        decision: decision.to_owned(),
+        on,
+        ..Site::default()
     };
-    let decision = site.decision.clone();
-    match site.decision.as_str() {
-        "restarted" | "unshared" | "corrupt" if stopped == 0 => {
-            Err(Contradiction::NeverStopped { decision })
+    let mut rest = runs;
+    while let Some((run, after)) = rest.split_first() {
+        let on = format!("{}::{}", run.target, run.test);
+        if run.stage != "crash" {
+            return site("undecided", on);
         }
-        "restarted" if next("survived") == 0 => Err(Contradiction::NextRun {
-            decision,
-            expected: "survived",
-        }),
-        "corrupt"
-            if next("killed") < 2
-                || !runs
-                    .iter()
-                    .any(|run| run.stage == "fresh" && run.outcome == "survived") =>
-        {
-            Err(Contradiction::Unconfirmed)
+        if run.exit_code != CRASH_EXIT {
+            if run.outcome == "survived" {
+                rest = after;
+                continue;
+            }
+            return site("undecided", on);
         }
-        "unreached" | "not-put" if stopped > 0 => Err(Contradiction::Stopped { decision }),
-        "restarted" | "unshared" | "corrupt" | "unreached" | "not-put" | "undecided" => Ok(()),
-        _ => Err(Contradiction::Unknown { decision }),
+        if run.left.is_empty() {
+            return site("unshared", on);
+        }
+        let stage = |offset: usize| after.get(offset).map(|one| (one.stage.as_str(), *one));
+        return match stage(0) {
+            Some(("next", next)) if next.outcome == "survived" => Site {
+                left: run.left.clone(),
+                ..site("restarted", on)
+            },
+            Some(("next", next)) if next.outcome == "killed" => {
+                let confirmed = matches!(stage(1), Some(("fresh", fresh)) if fresh.outcome == "survived")
+                    && matches!(stage(2), Some(("crash", again)) if again.exit_code == CRASH_EXIT)
+                    && matches!(stage(3), Some(("next", again)) if again.outcome == "killed");
+                if confirmed {
+                    Site {
+                        failed: next.failed.clone(),
+                        ..site("corrupt", on)
+                    }
+                } else {
+                    site("undecided", on)
+                }
+            }
+            _ => site("undecided", on),
+        };
     }
+    site("unreached", String::new())
+}
+
+/// Whether a report's record of a crash says what its runs decide, where it rests on runs at all.
+///
+/// `undecided` claims less than any run shows, so it agrees with every recording; a crash the compiler refused has no runs; and every other decision is the one the runs decide, with the same test, files and failures.
+#[must_use]
+pub fn agrees(reported: &Site, runs: &[&Run]) -> bool {
+    if reported.decision == "undecided" {
+        return true;
+    }
+    if runs.is_empty() {
+        return matches!(
+            reported.decision.as_str(),
+            "unreached" | "not-put" | "undecided"
+        );
+    }
+    let derived = decided(&reported.crash, runs);
+    derived.decision == reported.decision
+        && match derived.decision.as_str() {
+            "restarted" => derived.on == reported.on && derived.left == reported.left,
+            "corrupt" => derived.on == reported.on && derived.failed == reported.failed,
+            "unshared" => derived.on == reported.on,
+            _ => true,
+        }
 }
 
 /// One string field, or the empty string where the recording does not carry it.
@@ -156,5 +177,20 @@ fn text(value: &Value, key: &str) -> String {
         .get(key)
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+        .unwrap_or_default()
+}
+
+/// One list of strings, or none where the recording does not carry it.
+fn texts(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
         .unwrap_or_default()
 }

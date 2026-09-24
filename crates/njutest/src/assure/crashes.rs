@@ -56,42 +56,8 @@ pub fn put(
         session.close()?;
         return Ok(());
     }
-    let rejected: BTreeMap<String, String> = session
-        .rejections()
-        .iter()
-        .map(|rejection| (rejection.id.clone(), rejection.diagnostic.clone()))
-        .collect();
-    let root = request.root.display().to_string();
-    let mut records = Vec::new();
-    for mutant in session
-        .catalog()
-        .mutants()
-        .iter()
-        .filter(|mutant| request.shard.is_none_or(|shard| shard.holds(mutant.index)))
-    {
-        let decision = match rejected.get(mutant.id.as_str()) {
-            Some(diagnostic) => CrashDecision::NotPut {
-                diagnostic: crate::assure::run::first_line(diagnostic).replace(&root, "."),
-            },
-            None => decided(&session, mutant, watch)?,
-        };
-        let record = CrashRecord {
-            catalog_index: CatalogIndex::new(mutant.index),
-            id: mutant.id.to_string(),
-            display_id: mutant.display_id.to_string(),
-            path: mutant.candidate.path.clone(),
-            item: session.item_of(mutant.index).unwrap_or_default().to_owned(),
-            position: session.position(mutant).map(|at| crate::report::Position {
-                line: at.line,
-                column: at.byte_column,
-                character_column: at.char_column,
-            }),
-            decision,
-        };
-        watch.trace.crash(record.clone());
-        records.push(record);
-    }
-    if records.is_empty() {
+    let records = sites(&session, request, watch)?;
+    if session.catalog().mutants().is_empty() {
         report.limitations.push(Limitation::new(
             crate::limitation::CRASH_NO_SITE,
             "no measured file calls anything that writes, so there was nothing to stop after",
@@ -111,6 +77,71 @@ pub fn put(
     Ok(())
 }
 
+/// What every call that writes of the part comes to, one at a time; a stop that wrote into the tree leaves every later one undecided.
+fn sites(
+    session: &Session,
+    request: &Request,
+    watch: Watch<'_>,
+) -> Result<Vec<CrashRecord>, RunnerError> {
+    let rejected: BTreeMap<String, String> = session
+        .rejections()
+        .iter()
+        .map(|rejection| (rejection.id.clone(), rejection.diagnostic.clone()))
+        .collect();
+    let root = request.root.display().to_string();
+    let untouched = written(session)?;
+    let mut tainted = false;
+    let mut records = Vec::new();
+    for mutant in session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter(|mutant| request.shard.is_none_or(|shard| shard.holds(mutant.index)))
+    {
+        let decision = match rejected.get(mutant.id.as_str()) {
+            Some(diagnostic) => CrashDecision::NotPut {
+                diagnostic: crate::assure::run::first_line(diagnostic).replace(&root, "."),
+            },
+            None if tainted => CrashDecision::Undecided {
+                on: RULE.to_owned(),
+                why: "an earlier stop wrote into the tree under measurement, so every later run \
+                      starts over what it left there"
+                    .to_owned(),
+            },
+            None => {
+                let decision = decided(session, mutant, watch)?;
+                if written(session)? == untouched {
+                    decision
+                } else {
+                    tainted = true;
+                    CrashDecision::Undecided {
+                        on: RULE.to_owned(),
+                        why: "the stopped test wrote outside its scratch, into the tree under \
+                              measurement, where no next run could be told to start over it"
+                            .to_owned(),
+                    }
+                }
+            }
+        };
+        let record = CrashRecord {
+            catalog_index: CatalogIndex::new(mutant.index),
+            id: mutant.id.to_string(),
+            display_id: mutant.display_id.to_string(),
+            path: mutant.candidate.path.clone(),
+            item: session.item_of(mutant.index).unwrap_or_default().to_owned(),
+            position: session.position(mutant).map(|at| crate::report::Position {
+                line: at.line,
+                column: at.byte_column,
+                character_column: at.char_column,
+            }),
+            decision,
+        };
+        watch.trace.crash(record.clone());
+        records.push(record);
+    }
+    Ok(records)
+}
+
 /// What a crash at one call comes to: the first test that reaches it, target by target in name order, stopped there and run again over what it left.
 fn decided(
     session: &Session,
@@ -119,15 +150,12 @@ fn decided(
 ) -> Result<CrashDecision, RunnerError> {
     let mut asked = session.route(mutant).asked();
     asked.sort_by(|one, other| one.target.cmp(&other.target));
+    let mut unnamed = Vec::new();
     for reaches in asked {
         let tests = match reaches.tests {
             Asked::Every => {
-                return Ok(CrashDecision::Undecided {
-                    on: reaches.target,
-                    why: "which of its tests reaches the call is not known, so a stop would \
-                          stop every test of it at once and tear what the others were writing"
-                        .to_owned(),
-                });
+                unnamed.push(reaches.target);
+                continue;
             }
             Asked::These(tests) => tests,
         };
@@ -144,7 +172,34 @@ fn decided(
             }
         }
     }
-    Ok(CrashDecision::Unreached)
+    if unnamed.is_empty() {
+        return Ok(CrashDecision::Unreached);
+    }
+    Ok(CrashDecision::Undecided {
+        on: unnamed.join(", "),
+        why: "which of their tests reaches the call is not known, so a stop would stop every \
+              test at once and tear what the others were writing"
+            .to_owned(),
+    })
+}
+
+/// Every path of the tree under measurement that no longer matches what was instrumented.
+fn written(session: &Session) -> Result<std::collections::BTreeSet<String>, RunnerError> {
+    Ok(session
+        .changes()?
+        .iter()
+        .map(|drift| drift.rel_path().to_owned())
+        .collect())
+}
+
+/// What one run of a test with the crash active came to.
+enum Ran {
+    /// It stopped at the call, and this is the scratch it left.
+    Stopped(Kept),
+    /// It passed without reaching the call's stop, so another test is asked.
+    Passed,
+    /// It came to something else, which decides nothing either way.
+    Other(Outcome, i32),
 }
 
 /// One test a crash is put to.
@@ -169,21 +224,56 @@ impl Stopped<'_> {
             .test(Some(self.test.to_owned()))
     }
 
-    /// The test stopped at the call, or nothing where it did not stop there.
-    fn crashed(&self) -> Result<Option<Kept>, RunnerError> {
+    /// What the test came to with the crash active.
+    fn crashed(&self) -> Result<Ran, RunnerError> {
         let (result, kept) = self
             .session
             .exec_keeping(&self.request(self.mutant.id.as_str()), self.watch.cancel)?;
-        self.recorded("crash", result.exit_code, result.outcome());
-        Ok((result.exit_code == CRASH_EXIT).then_some(kept))
+        if result.exit_code == CRASH_EXIT {
+            let left = kept.left()?;
+            self.recorded(Recorded {
+                stage: "crash",
+                exit_code: result.exit_code,
+                outcome: result.outcome(),
+                left: &left,
+                failed: &[],
+            });
+            return Ok(Ran::Stopped(kept));
+        }
+        self.recorded(Recorded {
+            stage: "crash",
+            exit_code: result.exit_code,
+            outcome: result.outcome(),
+            left: &[],
+            failed: &[],
+        });
+        Ok(match result.outcome() {
+            Outcome::Survived => Ran::Passed,
+            other @ (Outcome::NotRun
+            | Outcome::Killed
+            | Outcome::StepLimitReached
+            | Outcome::Waited
+            | Outcome::Inconclusive
+            | Outcome::Errored) => Ran::Other(other, result.exit_code),
+        })
     }
 
     /// What the test comes to after a stop at the call, or nothing where it did not stop there.
     fn decided(&self) -> Result<Option<CrashDecision>, RunnerError> {
-        let Some(kept) = self.crashed()? else {
-            return Ok(None);
-        };
         let on = self.on();
+        let kept = match self.crashed()? {
+            Ran::Stopped(kept) => kept,
+            Ran::Passed => return Ok(None),
+            Ran::Other(outcome, exit_code) => {
+                return Ok(Some(CrashDecision::Undecided {
+                    on,
+                    why: format!(
+                        "the run came to {} with status {exit_code} and did not stop at the call",
+                        outcome.name()
+                    ),
+                }));
+            }
+        };
         let left = kept.left()?;
         if left.is_empty() {
             return Ok(Some(CrashDecision::Unshared { on }));
@@ -191,7 +281,13 @@ impl Stopped<'_> {
         let next = self
             .session
             .control_in(&self.request(""), &kept, self.watch.cancel)?;
-        self.recorded("next", next.exit_code, next.outcome());
+        self.recorded(Recorded {
+            stage: "next",
+            exit_code: next.exit_code,
+            outcome: next.outcome(),
+            left: &[],
+            failed: &next.failed_tests,
+        });
         Ok(Some(match next.outcome() {
             Outcome::Survived => CrashDecision::Restarted { on, left },
             Outcome::Killed => self.confirmed(on, next.failed_tests)?,
@@ -212,7 +308,13 @@ impl Stopped<'_> {
             .session
             .control(&self.request(""), self.watch.cancel, Observing::Nothing)?
             .result;
-        self.recorded("fresh", fresh.exit_code, fresh.outcome());
+        self.recorded(Recorded {
+            stage: "fresh",
+            exit_code: fresh.exit_code,
+            outcome: fresh.outcome(),
+            left: &[],
+            failed: &fresh.failed_tests,
+        });
         if fresh.outcome() != Outcome::Survived {
             return Ok(CrashDecision::Undecided {
                 on,
@@ -220,7 +322,7 @@ impl Stopped<'_> {
                     .to_owned(),
             });
         }
-        let Some(kept) = self.crashed()? else {
+        let Ran::Stopped(kept) = self.crashed()? else {
             return Ok(CrashDecision::Undecided {
                 on,
                 why: "a second run did not stop at the call".to_owned(),
@@ -229,7 +331,13 @@ impl Stopped<'_> {
         let again = self
             .session
             .control_in(&self.request(""), &kept, self.watch.cancel)?;
-        self.recorded("next", again.exit_code, again.outcome());
+        self.recorded(Recorded {
+            stage: "next",
+            exit_code: again.exit_code,
+            outcome: again.outcome(),
+            left: &[],
+            failed: &again.failed_tests,
+        });
         Ok(if again.outcome() == Outcome::Killed {
             CrashDecision::Corrupt { on, failed }
         } else {
@@ -241,16 +349,28 @@ impl Stopped<'_> {
     }
 
     /// One execution, as the recording holds it.
-    fn recorded(&self, stage: &str, exit_code: i32, outcome: Outcome) {
+    fn recorded(&self, run: Recorded<'_>) {
         self.watch.trace.crash_exec(crate::trace::CrashExecRecord {
             crash: self.mutant.display_id.to_string(),
             target: self.target.to_owned(),
             test: self.test.to_owned(),
-            stage: stage.to_owned(),
-            exit_code: i64::from(exit_code),
-            outcome: outcome.name().to_owned(),
+            stage: run.stage.to_owned(),
+            exit_code: i64::from(run.exit_code),
+            outcome: run.outcome.name().to_owned(),
+            left: run.left.to_vec(),
+            failed: run.failed.to_vec(),
         });
     }
+}
+
+/// One execution of a test a crash was put to, as the recording is told it.
+#[derive(Clone, Copy)]
+struct Recorded<'a> {
+    stage: &'a str,
+    exit_code: i32,
+    outcome: Outcome,
+    left: &'a [String],
+    failed: &'a [String],
 }
 
 /// What a run says when the tree it crashes gave no baseline, which leaves a run asked for crashes short of assured.

@@ -639,6 +639,8 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 stage: "crash".to_owned(),
                 exit_code: 93,
                 outcome: "killed".to_owned(),
+                left: vec!["count".to_owned()],
+                failed: Vec::new(),
             },
         },
         Payload::Crash {

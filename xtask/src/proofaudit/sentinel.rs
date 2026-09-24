@@ -109,9 +109,8 @@ pub fn base() -> Value {
 
 /// The defect planted for the crashes layer: a crash said to have restarted that no recorded run stopped at.
 fn crashes_planted(clean: Perturbation) -> Vec<Perturbation> {
-    vec![Perturbation {
-        name: "a crash said to have restarted that no recorded run stopped at",
-        document: with(json!({
+    let claimed = |decision: Value| {
+        with(json!({
             "crashes": [{
                 "catalog_index": 0,
                 "id": "d".repeat(64),
@@ -119,13 +118,61 @@ fn crashes_planted(clean: Perturbation) -> Vec<Perturbation> {
                 "path": "src/lib.rs",
                 "item": "save",
                 "position": null,
-                "decision": { "decision": "restarted", "on": TARGET, "left": ["count"] }
+                "decision": decision
             }],
             "accounting": { "crashes": { "sites": 1, "restarted": 1 } }
-        })),
-        events: Some(routes()),
-        ..clean
-    }]
+        }))
+    };
+    let unreached = with(json!({
+        "crashes": [{
+            "catalog_index": 0,
+            "id": "d".repeat(64),
+            "display_id": "d".repeat(20),
+            "path": "src/lib.rs",
+            "item": "save",
+            "position": null,
+            "decision": { "decision": "unreached" }
+        }],
+        "accounting": { "crashes": { "sites": 1, "unreached": 1 } }
+    }));
+    let run = |stage: &str, exit_code: i64, outcome: &str, left: &[&str]| {
+        json!({
+            "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
+            "type": "crash-exec",
+            "crash": {
+                "crash": "d".repeat(20), "target": TARGET, "test": "t", "stage": stage,
+                "exit_code": exit_code, "outcome": outcome, "left": left, "failed": []
+            }
+        })
+    };
+    let recorded = |runs: Vec<Value>| routes().into_iter().chain(runs).collect::<Vec<_>>();
+    vec![
+        Perturbation {
+            name: "a crash said to have restarted that no recorded run stopped at",
+            document: claimed(
+                json!({ "decision": "restarted", "on": format!("{TARGET}::t"), "left": ["count"] }),
+            ),
+            events: Some(routes()),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a crash said to be unreached whose recorded run waited",
+            document: unreached,
+            events: Some(recorded(vec![run("crash", 124, "waited", &[])])),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a crash said to have restarted whose stop left nothing",
+            document: claimed(
+                json!({ "decision": "restarted", "on": format!("{TARGET}::t"), "left": [] }),
+            ),
+            events: Some(recorded(vec![
+                run("crash", 93, "killed", &[]),
+                run("next", 0, "survived", &[]),
+            ])),
+            ..clean
+        },
+    ]
 }
 
 /// The defect planted for the dimensions layer: a whole-v1 run that names none of the dimensions its records leave a hole.
