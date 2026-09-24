@@ -1922,6 +1922,34 @@ fn off_the_trace_schema(recording: &Path) -> Vec<String> {
 }
 
 #[cfg(unix)]
+fn concluded(path: &Path) -> (Verdict, BTreeSet<(String, String)>, BTreeSet<String>) {
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    concluded_from(&text)
+}
+
+#[cfg(unix)]
+fn concluded_from(text: &str) -> (Verdict, BTreeSet<(String, String)>, BTreeSet<String>) {
+    let conclusion = njutest::report::json::parse(text)
+        .expect("a complete report reads back")
+        .conclusion()
+        .expect("it concludes");
+    (
+        conclusion.verdict,
+        conclusion
+            .findings
+            .iter()
+            .map(|finding| (finding.kind.name().to_owned(), finding.subject.clone()))
+            .collect(),
+        conclusion
+            .limitations
+            .iter()
+            .map(|limitation| limitation.name.clone())
+            .collect(),
+    )
+}
+
+#[cfg(unix)]
 #[test]
 fn every_line_a_run_records_is_on_the_published_trace_schema_whole_or_sharded() {
     for extra in [&["--trace"][..], &["--trace", "--shard", "1/2"][..]] {
@@ -1944,4 +1972,52 @@ fn every_line_a_run_records_is_on_the_published_trace_schema_whole_or_sharded() 
             "{extra:?}: a recording a reader must validate before it reads is written on its schema"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_catalog_measured_in_shards_and_merged_concludes_what_it_concludes_measured_whole() {
+    let fixture = fixture("fixture-hollow");
+    let whole = verify(&fixture, &["--no-cache"]);
+    assert_eq!(
+        whole.status.code(),
+        Some(2),
+        "{}",
+        njutest_devkit::process::strict_utf8(&whole.stderr)
+    );
+    let measured_whole = concluded(&latest(&fixture));
+    assert_eq!(
+        verify(&fixture, &["--no-cache", "--shard", "1/2"])
+            .status
+            .code(),
+        Some(2)
+    );
+    let one = latest(&fixture);
+    assert_eq!(
+        verify(&fixture, &["--no-cache", "--shard", "2/2"])
+            .status
+            .code(),
+        Some(2)
+    );
+    let two = latest(&fixture);
+    let merged = asked(
+        &of(&fixture.root, &[]),
+        &[
+            "merge",
+            one.to_str().expect("test protocol paths are UTF-8"),
+            two.to_str().expect("test protocol paths are UTF-8"),
+        ],
+    );
+    let measured_in_shards = concluded_from(&njutest_devkit::process::strict_utf8(&merged.stdout));
+    assert!(
+        measured_whole
+            .1
+            .iter()
+            .any(|(kind, _)| kind == "hollow-target"),
+        "the fixture exists to draw a hollow target: {measured_whole:?}"
+    );
+    assert_eq!(
+        measured_in_shards, measured_whole,
+        "how a catalog was divided among runs is not something its conclusion may depend on"
+    );
 }
