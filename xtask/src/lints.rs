@@ -6292,82 +6292,53 @@ fn implied(condition: &proc_macro2::TokenStream, held: &[String]) -> bool {
 }
 
 impl Visit<'_> for ImpliedCfg<'_> {
-    fn visit_item_mod(&mut self, item: &syn::ItemMod) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_mod(walk, item);
+    fn visit_file(&mut self, file: &syn::File) {
+        self.within(&file.attrs, |walk| syn::visit::visit_file(walk, file));
+    }
+
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
         });
     }
 
-    fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_impl(walk, item);
-        });
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
     }
 
-    fn visit_item_trait(&mut self, item: &syn::ItemTrait) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_trait(walk, item);
-        });
+    fn visit_trait_item(&mut self, item: &syn::TraitItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::TraitItem::Const(one) => &one.attrs,
+            syn::TraitItem::Fn(one) => &one.attrs,
+            syn::TraitItem::Type(one) => &one.attrs,
+            syn::TraitItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_trait_item(walk, item));
     }
 
-    fn visit_item_fn(&mut self, item: &syn::ItemFn) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_fn(walk, item);
-        });
-    }
-
-    fn visit_impl_item_fn(&mut self, item: &syn::ImplItemFn) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_impl_item_fn(walk, item);
-        });
-    }
-
-    fn visit_trait_item_fn(&mut self, item: &syn::TraitItemFn) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_trait_item_fn(walk, item);
-        });
-    }
-
-    fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_struct(walk, item);
-        });
-    }
-
-    fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_enum(walk, item);
-        });
-    }
-
-    fn visit_item_use(&mut self, item: &syn::ItemUse) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_use(walk, item);
-        });
-    }
-
-    fn visit_item_const(&mut self, item: &syn::ItemConst) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_const(walk, item);
-        });
-    }
-
-    fn visit_item_static(&mut self, item: &syn::ItemStatic) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_static(walk, item);
-        });
-    }
-
-    fn visit_item_type(&mut self, item: &syn::ItemType) {
-        self.within(&item.attrs, |walk| {
-            syn::visit::visit_item_type(walk, item);
+    fn visit_foreign_item(&mut self, item: &syn::ForeignItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ForeignItem::Fn(one) => &one.attrs,
+            syn::ForeignItem::Static(one) => &one.attrs,
+            syn::ForeignItem::Type(one) => &one.attrs,
+            syn::ForeignItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| {
+            syn::visit::visit_foreign_item(walk, item);
         });
     }
 
     fn visit_field(&mut self, field: &syn::Field) {
-        self.within(&field.attrs, |walk| {
-            syn::visit::visit_field(walk, field);
-        });
+        self.within(&field.attrs, |walk| syn::visit::visit_field(walk, field));
     }
 
     fn visit_variant(&mut self, variant: &syn::Variant) {
@@ -6376,17 +6347,30 @@ impl Visit<'_> for ImpliedCfg<'_> {
         });
     }
 
-    fn visit_stmt(&mut self, stmt: &syn::Stmt) {
-        match stmt {
-            syn::Stmt::Local(local) => {
-                self.within(&local.attrs, |walk| {
-                    syn::visit::visit_stmt(walk, stmt);
-                });
-            }
-            syn::Stmt::Item(_) | syn::Stmt::Expr(..) | syn::Stmt::Macro(_) => {
-                syn::visit::visit_stmt(self, stmt);
-            }
-        }
+    fn visit_local(&mut self, local: &syn::Local) {
+        self.within(&local.attrs, |walk| syn::visit::visit_local(walk, local));
+    }
+}
+
+/// The attributes of any item, every kind named, so a kind this walk forgot is a compile error rather than a hole.
+fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Const(one) => &one.attrs,
+        syn::Item::Enum(one) => &one.attrs,
+        syn::Item::ExternCrate(one) => &one.attrs,
+        syn::Item::Fn(one) => &one.attrs,
+        syn::Item::ForeignMod(one) => &one.attrs,
+        syn::Item::Impl(one) => &one.attrs,
+        syn::Item::Macro(one) => &one.attrs,
+        syn::Item::Mod(one) => &one.attrs,
+        syn::Item::Static(one) => &one.attrs,
+        syn::Item::Struct(one) => &one.attrs,
+        syn::Item::Trait(one) => &one.attrs,
+        syn::Item::TraitAlias(one) => &one.attrs,
+        syn::Item::Type(one) => &one.attrs,
+        syn::Item::Union(one) => &one.attrs,
+        syn::Item::Use(one) => &one.attrs,
+        _ => &[],
     }
 }
 

@@ -19,3 +19,16 @@ macro_rules! condition { ($macro:path) => { $macro!(all()) } } condition!(cfg);
 #[cfg(all(test, unix))] mod tests { #[cfg(test)] fn again() {} }
 === implied-inside-impl source crates/app/src/lib.rs
 struct Held; #[cfg(test)] impl Held { #[cfg(test)] fn again() {} }
+=== implied-by-the-file source crates/app/src/lib.rs
+#![cfg(unix)]
+#[cfg(unix)] fn again() {}
+=== implied-on-a-union source crates/app/src/lib.rs
+#[cfg(unix)] mod posix { #[cfg(unix)] union Bits { a: u32 } }
+=== implied-on-an-impl-const source crates/app/src/lib.rs
+struct Held; #[cfg(test)] impl Held { #[cfg(test)] const AGAIN: u8 = 0; }
+=== implied-on-a-trait-type source crates/app/src/lib.rs
+#[cfg(test)] trait Held { #[cfg(test)] type Again; }
+=== implied-on-a-foreign-item source crates/app/src/lib.rs
+#[cfg(unix)] mod posix { unsafe extern "C" { #[cfg(unix)] fn again(); } }
+=== implied-on-a-macro-rules source crates/app/src/lib.rs
+#[cfg(unix)] mod posix { #[cfg(unix)] macro_rules! again { () => {} } }
