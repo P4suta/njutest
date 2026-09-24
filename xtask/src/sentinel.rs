@@ -77,6 +77,12 @@ pub enum PlantedError {
     Nothing,
 }
 
+impl crate::error::Coded for PlantedError {
+    fn code(&self) -> crate::error::ErrorCode {
+        crate::error::SENTINEL_PLANTED
+    }
+}
+
 const HEADER: &str = "=== ";
 const FILE: &str = "--- ";
 

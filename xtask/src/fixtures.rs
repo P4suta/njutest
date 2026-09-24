@@ -79,6 +79,18 @@ pub enum CheckError {
     },
 }
 
+impl crate::error::Coded for CheckError {
+    fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::Walk { .. } | Self::Read { .. } => crate::error::FIXTURE_UNREADABLE,
+            Self::Symlink { .. } => crate::error::FIXTURE_SYMLINK,
+            Self::NonUtf8Path { .. } => crate::error::FIXTURE_PATH,
+            Self::NotAFixture { .. } => crate::error::NOT_A_FIXTURE,
+            Self::Config { .. } => crate::error::FIXTURE_CONFIG,
+        }
+    }
+}
+
 /// Every fixture under `dir`, as a `/`-joined name relative to it, in sorted order.
 ///
 /// A directory holding a `Cargo.toml` is a fixture.

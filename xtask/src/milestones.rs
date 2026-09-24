@@ -19,6 +19,12 @@ pub enum RegistryError {
     Empty,
 }
 
+impl crate::error::Coded for RegistryError {
+    fn code(&self) -> crate::error::ErrorCode {
+        crate::error::MILESTONE_REGISTRY
+    }
+}
+
 /// The milestone identifiers declared by the roadmap table.
 ///
 /// # Errors

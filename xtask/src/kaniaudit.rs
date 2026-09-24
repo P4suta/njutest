@@ -295,6 +295,27 @@ pub(crate) enum AuditError {
     Arithmetic(Harness),
 }
 
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::Read { .. } | Self::Json { .. } => crate::error::KANI_UNREADABLE,
+            Self::Metadata { .. } | Self::Project { .. } | Self::Toolchain { .. } => {
+                crate::error::KANI_CONTRACT
+            }
+            Self::Ledger { .. } | Self::Harness { .. } => crate::error::KANI_LEDGER,
+            Self::Execution { .. }
+            | Self::Properties { .. }
+            | Self::Backend { .. }
+            | Self::Summary { .. }
+            | Self::Result { .. }
+            | Self::Assertion { .. }
+            | Self::Cover { .. }
+            | Self::CheckId { .. } => crate::error::KANI_UNPROVEN,
+            Self::Arithmetic { .. } => crate::error::KANI_ARITHMETIC,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Ledger {
     HarnessMetadata,

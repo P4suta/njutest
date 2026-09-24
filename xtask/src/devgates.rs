@@ -448,3 +448,9 @@ pub struct LedgerError {
     /// What was wrong with it.
     pub reason: String,
 }
+
+impl crate::error::Coded for LedgerError {
+    fn code(&self) -> crate::error::ErrorCode {
+        crate::error::SEAM_LEDGER
+    }
+}

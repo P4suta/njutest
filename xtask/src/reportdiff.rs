@@ -47,6 +47,12 @@ pub enum DiffError {
     },
 }
 
+impl crate::error::Coded for DiffError {
+    fn code(&self) -> crate::error::ErrorCode {
+        crate::error::DIFF_UNREADABLE
+    }
+}
+
 /// Everything that differs, in a fixed order.
 ///
 /// # Errors

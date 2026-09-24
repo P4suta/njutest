@@ -143,6 +143,23 @@ pub enum AuditError {
     },
 }
 
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::Unreadable { .. } => crate::error::ENGINE_UNREADABLE,
+            Self::Unparsable { .. } => crate::error::ENGINE_UNPARSABLE,
+            Self::MalformedEvidence { .. } => crate::error::ENGINE_EVIDENCE,
+            Self::MalformedRecording { .. } | Self::UnsupportedTrace { .. } => {
+                crate::error::ENGINE_RECORDING
+            }
+            Self::MalformedLedger { .. } => crate::error::ENGINE_LEDGER,
+            Self::Unrecognised { .. } | Self::UnsupportedVersion { .. } => {
+                crate::error::ENGINE_UNRECOGNISED
+            }
+        }
+    }
+}
+
 /// What the re-decision was able to conclude about one thing it looked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Standing {
