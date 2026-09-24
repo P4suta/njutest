@@ -206,10 +206,12 @@ pub fn holes(rows: &[Row]) -> Vec<Finding> {
 /// What the run established along `dimension`.
 fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
     match dimension {
-        Dimension::Mutation => {
-            let (answered, holes) = evidence.mutations;
-            measured(answered, holes, named(evidence.limitations, "skipped-"))
-        }
+        Dimension::Mutation => match evidence.mutations {
+            (0, 0) => Column::NothingToAsk {
+                why: "no measured file has anything to mutate".to_owned(),
+            },
+            (answered, holes) => measured(answered, holes, named(evidence.limitations, "skipped-")),
+        },
         Dimension::Repeatable => repeatable(evidence.knobs),
         Dimension::Fault => fault(evidence),
         Dimension::Schedule => schedule(evidence.concurrency),
@@ -254,10 +256,19 @@ fn tallied(counted: impl Iterator<Item = Counted>, mut speaks_not_about: Vec<Str
         .iter()
         .filter(|one| matches!(one, Counted::Hole))
         .count();
+    let put = !counted.is_empty();
     speaks_not_about.extend(counted.into_iter().filter_map(|one| match one {
         Counted::SpeaksNotAbout(class) => Some(class),
         Counted::Answered | Counted::Hole => None,
     }));
+    if put && answered == 0 && holes == 0 {
+        return Column::Unmeasured {
+            why: format!(
+                "every record is of a class the column does not speak about: {}",
+                speaks_not_about.join("; ")
+            ),
+        };
+    }
     measured(answered, holes, speaks_not_about)
 }
 
@@ -273,6 +284,7 @@ fn repeatable(knobs: &[KnobRecord]) -> Column {
             | Standing::Broke { .. }
             | Standing::Moved { .. } => Counted::Answered,
             Standing::Uncompared { .. } | Standing::Unsettled { .. } => Counted::Hole,
+            Standing::NotPut { why } if why.another_machine_could() => Counted::Hole,
             Standing::NotPut { why } => Counted::SpeaksNotAbout(format!(
                 "{} on {} ({})",
                 record.knob.name(),
@@ -397,6 +409,11 @@ fn wire(evidence: &Evidence<'_>) -> Column {
         .iter()
         .filter(|limitation| limitation.name == crate::limitation::SEAM_NOT_WATCHED)
         .map(|_unwatched| Counted::Hole);
+    if evidence.seams.is_empty() && unwatched.clone().next().is_none() {
+        return Column::NothingToAsk {
+            why: "no seam was configured or asked a question".to_owned(),
+        };
+    }
     tallied(
         evidence
             .seams

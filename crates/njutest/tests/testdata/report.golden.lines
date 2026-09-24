@@ -18,7 +18,7 @@ DIMENSION	mutation	measured	catalogued=1	answered=1	holes=0
 DIMENSION	repeatable	not-asked
 DIMENSION	fault	not-asked
 DIMENSION	schedule	nothing-to-ask	no test binary ran
-DIMENSION	wire	measured	catalogued=0	answered=0	holes=0	speaks_not_about=a seam the configuration does not name, since a seam is only ever one it names
+DIMENSION	wire	nothing-to-ask	no seam was configured or asked a question
 DIMENSION	durable	not-asked
 SOUNDNESS	build=default	unsafe_items=0	packages_with_unsafe=0	was_executed=false
 VERDICT	INSUFFICIENT

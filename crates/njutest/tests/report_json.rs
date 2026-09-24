@@ -1236,3 +1236,29 @@ fn knob_records_that_repeat_or_cover_different_targets_are_refused() {
         );
     }
 }
+
+#[test]
+fn a_whole_report_whose_dimension_findings_were_deleted_is_still_not_assured() {
+    let report = populated_varying(&|source: &mut BuildReport| {
+        source.contract = njutest::config::Contract::WholeV1;
+        source
+            .findings
+            .retain(|finding| finding.kind != FindingKind::DimensionNotMeasured);
+    })
+    .expect("a whole-v1 report with no dimension finding stored");
+    let conclusion = report.conclusion().expect("a representable conclusion");
+    let mut named: Vec<&str> = conclusion
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::DimensionNotMeasured)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    named.sort_unstable();
+    assert_eq!(
+        named,
+        vec!["durable", "fault", "repeatable"],
+        "the holes are derived from the records a report holds, so a report that drops the \
+         findings naming them still names them"
+    );
+    assert_ne!(report.verdict(), Verdict::Assured);
+}

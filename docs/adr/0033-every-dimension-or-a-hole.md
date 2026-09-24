@@ -30,6 +30,8 @@ The tree's own rule — what was not measured is not claimed as measured — sto
    - `not-asked`: the run could have measured it and did not;
    - `nothing-to-ask`, with why: the run looked and there was nothing to put, as in a tree with no `?` in a measured file;
    Every record is placed as answered, a hole, or a class not spoken about by one exhaustive match over its decision, so a decision added later is one somebody places; `catalogued = answered + holes` holds by construction, and a count that would not fit is `unmeasured`.
+   A class not spoken about is one no run could put, such as an error type the engine does not make; what this machine lacked and another could put, such as a locale that is not installed, is a hole.
+   A column that holds records and none of them answered or open measured nothing, and is `unmeasured` rather than `measured` with a catalogue of zero; a tree with nothing to mutate, or a configuration that names no seam, is `nothing-to-ask`.
    Where a report holds several builds, a column is every build's counts added where each measured the dimension, and otherwise the column of the build that established least: a hole in any build is a hole of all of them.
 
 2. **The matrix is derived, never stored.** Each column is computed from the records the part already holds: the mutation accounting, the knob records, the fault records, the seam records.
@@ -39,6 +41,7 @@ The tree's own rule — what was not measured is not claimed as measured — sto
 3. **`whole-v1` asks every dimension, and a hole in any of them is not assured.** `whole-v1` runs the soundness phase as `deep-v1` does, puts every fault and every crash, sets every knob, and explores the schedules of every binary not proven to run one thread; the configuration layer does it, so every command reads the same configuration, and a document that says in so many words not to is refused rather than overridden.
    It concludes `INSUFFICIENT` whenever a column is `unmeasured` or `not-asked`, or is `measured` with a hole; `nothing-to-ask` and `speaks_not_about` are stated and are not holes.
    Each such column is a `dimension-not-measured` finding whose subject is the dimension's name, so the verdict is decided by findings as every other verdict is; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
+   A report's conclusion derives them from the records every time and ignores the ones a part stored, so a report that drops one still names it.
    Every other contract reads the matrix and is decided exactly as it was.
 
 4. **Contracts are answered by what they ask, never by comparing names.** The places that asked `contract == verified-v1` or `contract != deep-v1` now ask the contract what it runs — `runs_miri`, `proves_models`, `asks_every_dimension` — each an exhaustive match, so a contract added later is one the compiler makes somebody place.

@@ -6760,6 +6760,9 @@ fn projected_findings(
         }
         for part in build.parts.iter() {
             for finding in &part.findings {
+                if finding.kind == FindingKind::DimensionNotMeasured {
+                    continue;
+                }
                 let answered_by_model = finding.kind == FindingKind::SurvivingMutant
                     && affirmative.iter().any(|(full, display)| {
                         finding.subject == *full || finding.subject == *display
@@ -6782,11 +6785,8 @@ fn sharded(build: &BuildEvidence) -> bool {
         .any(|part| matches!(part.part, CatalogPart::Shard(_)))
 }
 
-/// The dimension findings of a build measured in parts, over every part's records, which no part raises on its own (ADR 0033).
+/// The dimension findings of a build, derived from every part's records rather than read from what a part stored, so a report cannot drop one (ADR 0033).
 fn merged_matrix_findings(build: &BuildEvidence) -> Vec<Finding> {
-    if !sharded(build) {
-        return Vec::new();
-    }
     let owned = MatrixEvidence::of(&[build]);
     matrix::holes(&matrix::rows(&owned.borrowed()))
 }

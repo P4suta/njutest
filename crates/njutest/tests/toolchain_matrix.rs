@@ -89,7 +89,7 @@ fn a_whole_run_asks_every_dimension_and_is_not_assured_while_one_is_a_hole() {
             "repeatable measured",
             "fault measured",
             "schedule measured",
-            "wire measured",
+            "wire nothing-to-ask",
             "durable nothing-to-ask",
         ],
         "every dimension is a row, and a whole run asks every one it can: {said}\n{}",
@@ -121,7 +121,7 @@ fn a_standard_run_shows_the_matrix_and_is_decided_as_it_was() {
             "repeatable not-asked",
             "fault not-asked",
             "schedule measured",
-            "wire measured",
+            "wire nothing-to-ask",
             "durable not-asked",
         ],
         "{said}"

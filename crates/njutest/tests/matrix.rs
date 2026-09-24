@@ -148,3 +148,92 @@ fn a_whole_contract_puts_every_fault_and_knob_and_refuses_a_document_that_says_n
         );
     }
 }
+
+const fn nothing() -> Evidence<'static> {
+    Evidence {
+        mutations: (1, 0),
+        knobs: &[],
+        faults: &[],
+        crashes: &[],
+        concurrency: &[],
+        seams: &[],
+        limitations: &[],
+        findings: &[],
+    }
+}
+
+#[test]
+fn a_knob_this_machine_could_not_put_is_a_hole_and_one_no_machine_puts_is_not() {
+    use njutest::report::knobs::{Knob, KnobRecord, NotPut, Standing};
+    let knob = |knob: Knob, why: NotPut| KnobRecord {
+        target: "pkg/test/it".to_owned(),
+        knob,
+        standing: Standing::NotPut { why },
+    };
+    let lacked = [
+        knob(Knob::Locale, NotPut::LocaleMissing),
+        knob(Knob::Timezone, NotPut::ZoneMissing),
+    ];
+    let repeatable = column(
+        &Evidence {
+            knobs: &lacked,
+            ..nothing()
+        },
+        Dimension::Repeatable,
+    );
+    assert_eq!(
+        counts(&repeatable),
+        Some((2, 0, 2)),
+        "another machine could put these, so a run on this one leaves them open: {repeatable:?}"
+    );
+    let inherent = [knob(Knob::Threads, NotPut::NotLibtest)];
+    let repeatable = column(
+        &Evidence {
+            knobs: &inherent,
+            ..nothing()
+        },
+        Dimension::Repeatable,
+    );
+    assert!(
+        matches!(repeatable, Column::Unmeasured { .. }),
+        "a column whose every record it cannot speak about measured nothing: {repeatable:?}"
+    );
+}
+
+#[test]
+fn a_column_that_put_nothing_does_not_read_as_measured() {
+    let refused = [fault(FaultDecision::NotPut {
+        diagnostic: "E0277".to_owned(),
+    })];
+    let faulted = column(
+        &Evidence {
+            faults: &refused,
+            ..nothing()
+        },
+        Dimension::Fault,
+    );
+    assert!(
+        matches!(faulted, Column::Unmeasured { .. }),
+        "every fault refused is nothing measured: {faulted:?}"
+    );
+    assert!(
+        matches!(
+            column(&nothing(), Dimension::Wire),
+            Column::NothingToAsk { .. }
+        ),
+        "a configuration that names no seam has no question to ask"
+    );
+    assert!(
+        matches!(
+            column(
+                &Evidence {
+                    mutations: (0, 0),
+                    ..nothing()
+                },
+                Dimension::Mutation
+            ),
+            Column::NothingToAsk { .. }
+        ),
+        "a tree with nothing to mutate has nothing to ask"
+    );
+}

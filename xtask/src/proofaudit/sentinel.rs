@@ -336,11 +336,36 @@ fn faults_and_besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
 
 /// The defect planted for the dimensions layer: a whole-v1 run that names none of the dimensions its records leave a hole.
 fn dimensions_planted(clean: Perturbation) -> Vec<Perturbation> {
-    vec![Perturbation {
-        name: "a whole-v1 run that names none of the dimensions it left a hole",
-        document: with(json!({ "contract": "whole-v1" })),
-        ..clean
-    }]
+    let mut unput = with(json!({ "contract": "whole-v1" }));
+    merge(
+        &mut unput,
+        json!({
+            "knobs": [{
+                "target": TARGET, "knob": "timezone",
+                "standing": { "state": "not-put", "why": "zone-missing" }
+            }]
+        }),
+    );
+    if let Some(findings) = unput.get_mut("findings").and_then(Value::as_array_mut) {
+        for dimension in ["fault", "durable"] {
+            findings.push(json!({
+                "kind": "dimension-not-measured", "subject": dimension,
+                "detail": "planted", "position": null
+            }));
+        }
+    }
+    vec![
+        Perturbation {
+            name: "a whole-v1 run that names none of the dimensions it left a hole",
+            document: with(json!({ "contract": "whole-v1" })),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a whole-v1 run that calls knobs this machine could not put measured",
+            document: unput,
+            ..clean
+        },
+    ]
 }
 
 /// The defects planted for the evidence beside a fault: a record the recording does not hold, and one its recorded runs do not support.

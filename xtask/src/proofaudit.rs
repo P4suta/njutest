@@ -2300,6 +2300,53 @@ fn dimensions(recording: &Recording<'_>, audit: &mut Audit) {
     }
 }
 
+/// Whether some test binary's schedules were neither shown to need none nor broken by a delay.
+fn schedules_holed(document: &serde_json::Value) -> bool {
+    rows(document, "concurrency").iter().any(|record| {
+        let explored = record.get("explored");
+        let state = explored
+            .and_then(|one| one.get("state"))
+            .and_then(serde_json::Value::as_str);
+        let why = explored
+            .and_then(|one| one.get("why"))
+            .and_then(serde_json::Value::as_str);
+        !matches!(
+            (state, why),
+            (Some("broke"), _) | (Some("unexplored"), Some("not-needed"))
+        )
+    })
+}
+
+/// Whether the knobs, whose standings are `knobs`, leave repeatability open: none put, one left undecided, or one this machine lacked and another could put.
+fn repeatable_holed(document: &serde_json::Value, knobs: &[String]) -> bool {
+    let lacked = rows(document, "knobs").iter().any(|record| {
+        record
+            .get("standing")
+            .and_then(|standing| standing.get("why"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|why| {
+                [
+                    "platform",
+                    "zone-missing",
+                    "locale-missing",
+                    "shell-missing",
+                ]
+                .contains(&why)
+            })
+    });
+    knobs.is_empty()
+        || lacked
+        || none_but_not_put(knobs)
+        || knobs
+            .iter()
+            .any(|one| one == "uncompared" || one == "unsettled")
+}
+
+/// Whether a dimension put records and every one of them is one it could not put, which measures nothing.
+fn none_but_not_put(decided: &[String]) -> bool {
+    !decided.is_empty() && decided.iter().all(|one| one == "not-put")
+}
+
 /// Every dimension the flat part's records leave a hole, by name, read without any of the runner's code.
 fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
     let document = recording.document;
@@ -2322,20 +2369,7 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
             .any(|row| field(row, "name").is_some_and(|said| said.starts_with(name)))
     };
     let mut holed = BTreeSet::new();
-    let schedules_holed = rows(document, "concurrency").iter().any(|record| {
-        let explored = record.get("explored");
-        let state = explored
-            .and_then(|one| one.get("state"))
-            .and_then(serde_json::Value::as_str);
-        let why = explored
-            .and_then(|one| one.get("why"))
-            .and_then(serde_json::Value::as_str);
-        !matches!(
-            (state, why),
-            (Some("broke"), _) | (Some("unexplored"), Some("not-needed"))
-        )
-    });
-    if schedules_holed {
+    if schedules_holed(document) {
         holed.insert("schedule");
     }
     if recording.mutants.iter().any(|mutant| {
@@ -2344,12 +2378,7 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
     }) {
         holed.insert("mutation");
     }
-    let knobs = state("knobs", "standing");
-    if knobs.is_empty()
-        || knobs
-            .iter()
-            .any(|one| one == "uncompared" || one == "unsettled")
-    {
+    if repeatable_holed(document, &state("knobs", "standing")) {
         holed.insert("repeatable");
     }
     let faults = state("faults", "decision");
@@ -2358,6 +2387,7 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
         .iter()
         .any(|finding| finding.subject == "fault-baseline-not-measured");
     if (faults.is_empty() && (unmeasured || !limited("fault-no-site")))
+        || none_but_not_put(&faults)
         || faults
             .iter()
             .any(|one| one == "waited" || one == "undecided")
@@ -2371,6 +2401,7 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
         .any(|finding| finding.subject == "crash-baseline-not-measured");
     if crashed_unmeasured
         || (crashes.is_empty() && !limited("crash-no-site"))
+        || none_but_not_put(&crashes)
         || crashes
             .iter()
             .any(|one| one == "unshared" || one == "undecided")
