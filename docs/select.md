@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Selecting the tests a change can reach
 
-**Status: implemented, with one gap that is not yet closed.** `njutest measure` and `njutest select`; a test that reads a source file as data is not yet found, and can be skipped for an edit to that file (see the end).
+**Status: implemented.** `njutest measure` and `njutest select`; what is not yet measured is listed at the end, and each such gap runs everything.
 
 `njutest select` says which test targets can notice what changed since the tree was measured, and proves the rest cannot.
 It skips a target only where the proof holds; anything it cannot place runs everything.
@@ -33,6 +33,10 @@ Two programs identical except at *p* run identically until *p* is first reached 
 A test that never entered the item holding *p* on the measured tree therefore runs the same on the changed one, and running it asks nothing the change could answer.
 `measure` records, for every target, which items anything of it entered ([ADR 0026](adr/0026-an-item-is-entered-where-its-body-starts.md)), and runs each target whole a second time to show that what it entered is a function of the target and not of the run ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
 A target whose second run reached something else, or could not be compared, is never skipped.
+
+Entering is not the only way a test depends on a file: a test that reads `src/quiet.rs` as text depends on it without running a line of it.
+So `measure` runs each target a third time with every source file that holds an item taken out of the copy, and puts them back after.
+A target that answers differently without them — a test fails, or another set passes — reads the tree, is `reads-tree`, and is never skipped.
 
 ## What a change is
 
@@ -66,8 +70,5 @@ The doc target is never measured, so it always runs.
 
 A selection says which targets need not run, never which need not compile: build everything, then run what it selected.
 `measure` is one instrumented build and two runs of every target; it is worth paying once and reusing for as long as nothing above moves.
-**A target that reads a source file as data can be skipped wrongly.**
-A test that reads `src/quiet.rs` as text and never enters an item of it is not recorded as depending on it, so an edit inside one of its bodies skips that test.
-A file that holds no item runs everything, but a file that holds items does not, and the measurement does not yet run each target a second time without the tree's source files to find the tests that read them.
-Until it does, a suite with such tests should not skip by `select`.
+A test that reads a source file only when one is missing, or reads it without its answer depending on the text, is not told apart from one that does not read it at all; the run without the files finds a test whose answer changes when the files are gone.
 A child process started with a cleared environment is noticed and its target runs ([ADR 0028](adr/0028-a-process-that-loses-the-environment-says-so.md)).

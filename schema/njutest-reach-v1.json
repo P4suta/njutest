@@ -313,6 +313,18 @@
               "const": "uncompared"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "reads-tree"
+            }
+          }
         }
       ]
     }

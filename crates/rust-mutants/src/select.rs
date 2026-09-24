@@ -181,6 +181,8 @@ pub enum Standing {
     },
     /// No second whole run of it was made.
     Uncompared,
+    /// A run of it without the tree's source files answered differently, so its tests read the tree as data and an edit it never entered can still move them.
+    ReadsTree,
 }
 
 /// Every standing but the one a selection may skip by.
@@ -195,6 +197,8 @@ pub enum Unheld {
     },
     /// No second whole run of it was made.
     Uncompared,
+    /// A run of it without the tree's source files answered differently, so its tests read the tree as data and an edit it never entered can still move them.
+    ReadsTree,
 }
 
 impl Standing {
@@ -258,6 +262,8 @@ pub struct Parts<'a> {
     pub touched: &'a Touched,
     /// What a second run of each target established.
     pub standing: &'a BTreeMap<String, Steadiness>,
+    /// The targets a run without the tree's source files answered differently for.
+    pub reading: &'a BTreeSet<String>,
 }
 
 impl Measurement {
@@ -280,10 +286,14 @@ impl Measurement {
                 .targets
                 .iter()
                 .map(|(target, record)| {
-                    let standing = parts
-                        .standing
-                        .get(target)
-                        .map_or(Standing::Uncompared, Standing::of);
+                    let standing = if parts.reading.contains(target) {
+                        Standing::ReadsTree
+                    } else {
+                        parts
+                            .standing
+                            .get(target)
+                            .map_or(Standing::Uncompared, Standing::of)
+                    };
                     (
                         target.clone(),
                         Target {
@@ -1204,6 +1214,7 @@ pub fn decide(
                         Decided::Run(Why::Unestablished(Unheld::NotMeasured { why }))
                     }
                     Standing::Uncompared => Decided::Run(Why::Unestablished(Unheld::Uncompared)),
+                    Standing::ReadsTree => Decided::Run(Why::Unestablished(Unheld::ReadsTree)),
                     Standing::Held => {
                         let entered: BTreeSet<u32> =
                             record.entered.intersection(items).copied().collect();
@@ -1295,6 +1306,7 @@ pub fn beta(x: u8) -> u8 {
                 settings: &BTreeMap::from([("build".to_owned(), "default".to_owned())]),
                 touched: &touched,
                 standing: &standing,
+                reading: &BTreeSet::new(),
             },
             [("demo", source)],
         )

@@ -3,7 +3,7 @@
 
 //! Measuring what each target of a tree enters, and whether a second whole run of it enters the same, for a selection to read.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use rust_mutants::select::{Measurement, Parts};
@@ -144,7 +144,7 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
         .map_err(rust_mutants::EngineError::from)?;
     as_copied(&workspace, &survey)?;
     let toolchain = workspace.toolchain().to_string();
-    let session = workspace.prepare(
+    let mut session = workspace.prepare(
         &PrepareOptions {
             verify: true,
             touch: true,
@@ -159,19 +159,7 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
         },
         watch.cancel,
     )?;
-    let mut standing = BTreeMap::new();
-    for target in session.touched().targets.keys() {
-        if watch.cancel.is_cancelled() {
-            return Err(RunnerError::Interrupted);
-        }
-        let request = Request::new(String::new()).with_target(target.as_str());
-        for observed in session
-            .control(&request, watch.cancel, Observing::Reach)?
-            .observed
-        {
-            standing.insert(observed.target, observed.steadiness);
-        }
-    }
+    let (standing, reading) = compared(&mut session, watch)?;
     let mut texts: Vec<(String, String)> = Vec::new();
     let mut sources = BTreeMap::new();
     for file in session.files() {
@@ -207,6 +195,7 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
             settings: &settings(config),
             touched: session.touched(),
             standing: &standing,
+            reading: &reading,
         },
         texts
             .iter()
@@ -217,6 +206,56 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
         measurement,
         sources,
     })
+}
+
+/// Runs every target the baseline recorded twice more, whole and alone: once as it was, to compare what it reached with the baseline, and once with every source file that holds an item taken out of the copy, to find the targets whose tests read the tree rather than only run it.
+///
+/// # Errors
+/// What the engine refuses, and an interruption.
+fn compared(
+    session: &mut rust_mutants::session::Session,
+    watch: Watch<'_>,
+) -> Result<
+    (
+        BTreeMap<String, rust_mutants::touch::Steadiness>,
+        BTreeSet<String>,
+    ),
+    RunnerError,
+> {
+    let absent: Vec<String> = session
+        .touched()
+        .items
+        .iter()
+        .map(|item| item.path.clone())
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+    let baselines: Vec<(String, BTreeSet<String>)> = session
+        .touched()
+        .targets
+        .iter()
+        .map(|(target, record)| (target.clone(), record.ran.iter().cloned().collect()))
+        .collect();
+    let mut standing = BTreeMap::new();
+    let mut reading = BTreeSet::new();
+    for (target, passed) in baselines {
+        if watch.cancel.is_cancelled() {
+            return Err(RunnerError::Interrupted);
+        }
+        let request = Request::new(String::new()).with_target(target.as_str());
+        for observed in session
+            .control(&request, watch.cancel, Observing::Reach)?
+            .observed
+        {
+            standing.insert(observed.target, observed.steadiness);
+        }
+        let without = session.control_without(&request, watch.cancel, &absent)?;
+        let answered: BTreeSet<String> = without.passed_tests.iter().cloned().collect();
+        if without.outcome() != rust_mutants::outcome::Outcome::Survived || answered != passed {
+            reading.insert(target);
+        }
+    }
+    Ok((standing, reading))
 }
 
 /// Holds the survey of the source to what the copy holds, so what a measurement says a file was is what the build read.

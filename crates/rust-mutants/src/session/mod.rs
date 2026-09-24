@@ -143,6 +143,9 @@ pub struct Observed {
     pub steadiness: crate::touch::Steadiness,
 }
 
+/// The directory beside the copy a run without some of the tree's files keeps them in until it puts them back.
+const ASIDE_NAME: &str = "aside";
+
 /// The file a control's guards append what they reached to, in the control's own scratch.
 const CONTROL_TOUCH_LOG: &str = "touch.log";
 
@@ -1301,6 +1304,57 @@ impl Session {
         } else {
             request.args.clone()
         }
+    }
+
+    /// Runs one target whole with nothing active and the files `absent` taken out of the copy, then puts each back exactly as it was: what a test reads of the tree, as opposed to what it runs, is what such a run answers differently.
+    ///
+    /// It takes the session exclusively, since nothing else may run while the copy is missing files.
+    ///
+    /// # Errors
+    /// What [`Self::control`] refuses, and a file that could not be moved aside or put back.
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the copy is missing files while this runs, and taking the session exclusively is \
+                  what keeps any other execution from running against it"
+    )]
+    pub fn control_without(
+        &mut self,
+        request: &Request,
+        cancel: &Cancel,
+        absent: &[String],
+    ) -> Result<MutantResult, EngineError> {
+        let root = self.workspace.snapshot_root().to_path_buf();
+        let aside = self.workspace.snapshot.dir().join(ASIDE_NAME);
+        std::fs::create_dir_all(&aside).map_err(|source| SessionError::WriteFailed {
+            path: aside.display().to_string(),
+            source,
+        })?;
+        let mut moved = Vec::new();
+        let mut taken = Ok(());
+        for (index, path) in absent.iter().enumerate() {
+            let (from, to) = (root.join(path), aside.join(index.to_string()));
+            if let Err(source) = std::fs::rename(&from, &to) {
+                taken = Err(SessionError::WriteFailed {
+                    path: from.display().to_string(),
+                    source,
+                });
+                break;
+            }
+            moved.push((from, to));
+        }
+        let ran = match taken {
+            Ok(()) => self
+                .control(request, cancel, Observing::Nothing)
+                .map(|ran| ran.result),
+            Err(error) => Err(error.into()),
+        };
+        for (from, to) in moved.iter().rev() {
+            std::fs::rename(to, from).map_err(|source| SessionError::WriteFailed {
+                path: from.display().to_string(),
+                source,
+            })?;
+        }
+        ran
     }
 
     /// Runs one target with no mutant active: the original control, recording what it reached where `observing` asks.

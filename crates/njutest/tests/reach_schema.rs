@@ -65,13 +65,18 @@ fn document(standing: Standing) -> Document {
 #[test]
 fn every_standing_a_measurement_can_record_is_one_the_schema_accepts() {
     let validator = validator();
-    let standings = [Standing::Held, Standing::Moved, Standing::Uncompared]
-        .into_iter()
-        .chain(
-            Unmeasured::ALL
-                .into_iter()
-                .map(|why| Standing::NotMeasured { why }),
-        );
+    let standings = [
+        Standing::Held,
+        Standing::Moved,
+        Standing::Uncompared,
+        Standing::ReadsTree,
+    ]
+    .into_iter()
+    .chain(
+        Unmeasured::ALL
+            .into_iter()
+            .map(|why| Standing::NotMeasured { why }),
+    );
     for standing in standings {
         let value = serde_json::to_value(document(standing)).expect("the document renders");
         let errors: Vec<String> = validator

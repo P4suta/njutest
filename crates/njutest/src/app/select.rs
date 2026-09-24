@@ -228,6 +228,9 @@ fn because(why: &Why, measured: &Measurement) -> String {
                 format!("a second run of it established nothing to compare ({why:?})")
             }
             Unheld::Uncompared => "no second run of it was made".to_owned(),
+            Unheld::ReadsTree => {
+                "its tests read the tree's source files as data, which no entry records".to_owned()
+            }
         },
         Why::Unmeasured => "the measurement holds nothing about it".to_owned(),
     }

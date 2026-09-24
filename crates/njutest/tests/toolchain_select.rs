@@ -273,3 +273,19 @@ fn a_measured_file_kept_wrong_is_written_again_rather_than_kept() {
          it unproven for as long as it stayed"
     );
 }
+
+#[test]
+fn a_target_that_reads_a_source_file_as_text_runs_for_an_edit_to_it() {
+    let fixture = fixture("fixture-reads-tree");
+    measured(&fixture);
+    edit(&fixture, "src/quiet.rs", "\"hush\"", "\"shh\"");
+    let skipped = skippable(&fixture);
+    assert!(
+        !skipped.contains("fixture-reads-tree/test/reads"),
+        "`reads` never enters `quiet`, yet it reads the file and fails on this edit: {skipped:?}"
+    );
+    assert!(
+        skipped.contains("fixture-reads-tree/test/enters"),
+        "and a target that neither enters nor reads it is still skipped: {skipped:?}"
+    );
+}
