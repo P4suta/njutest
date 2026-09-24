@@ -452,3 +452,72 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
         "naming what was asked for and where runs are kept: {message}"
     );
 }
+
+#[test]
+fn an_identity_the_newest_run_lacks_is_answered_with_the_runs_that_hold_it() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let stored = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
+    let holding = njutest_devkit::fixture::newest_run(&stored);
+    let holding = holding
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("a run directory name")
+        .to_owned();
+    let narrowed = against(
+        &fixture,
+        &[
+            "run",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--jobs",
+            "1",
+            "--ui",
+            "quiet",
+            "--file",
+            "src/testutil.rs",
+        ],
+    );
+    assert!(
+        narrowed.status.code().is_some_and(|code| code < 3),
+        "{narrowed:?}"
+    );
+
+    let output = against(&fixture, &["explain", "f0d2"]);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert!(
+        said.contains(&holding) && said.contains("--run"),
+        "a mutant the newest run did not catalog is one an earlier run may hold, and the answer \
+         names that run and how to ask it rather than only that the newest does not: {said}"
+    );
+}
+
+#[test]
+fn the_reproduce_line_explain_prints_reproduces_the_mutant_it_explains() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let explained = against(&fixture, &["explain", "f0d2"]);
+    let text = njutest_devkit::process::strict_utf8(&explained.stdout);
+    let line = text
+        .lines()
+        .find_map(|line| line.strip_prefix("REPRODUCE "))
+        .expect("explain says how to reproduce the mutant")
+        .trim()
+        .to_owned();
+    let words: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(words.first(), Some(&"rust-mutants"), "{line}");
+    let mut args: Vec<&str> = words.iter().skip(1).copied().collect();
+    args.extend(["--no-coverage", "--jobs", "1", "--ui", "quiet"]);
+    let reproduced = against(&fixture, &args);
+    let said = format!(
+        "{}{}",
+        njutest_devkit::process::strict_utf8(&reproduced.stdout),
+        njutest_devkit::process::strict_utf8(&reproduced.stderr)
+    );
+    assert!(
+        reproduced.status.code().is_some_and(|code| code < 2) && !said.contains("RM5003"),
+        "the line explain prints is the one a person copies to see the mutant again, so running \
+         it must measure that mutant rather than refuse it: `{line}` said {said}"
+    );
+}

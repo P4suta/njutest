@@ -1080,8 +1080,8 @@ fn whole(
         cancel,
         stdout,
     )?;
-    result.expectations =
-        run::verify(session, &expectations, &mut result.judged).map_err(EngineError::from)?;
+    result.expectations = run::verify(session, &expectations, &mut result.judged, options.shard)
+        .map_err(EngineError::from)?;
     let document = run_report::document(
         session,
         &result,
@@ -1542,13 +1542,26 @@ fn stored_explain(
     environment: &Environment,
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
-    let (scope, prefix, run, json) = asked;
+    let (scope, prefix, named, json) = asked;
     let settings = Settings::resolve(scope, environment)?;
     let directory = settings.report_directory();
-    let report = stored::report_of(&directory, run)?;
+    let report = stored::report_of(&directory, named)?;
     let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
+    if named.is_none() && !catalog.mutants.iter().any(|one| one.id.starts_with(prefix)) {
+        let holding = runs_holding(&directory, prefix)?;
+        if let Some(latest) = holding.last() {
+            return Err(CliError::ReportMissing {
+                message: format!(
+                    "the newest run does not catalog {prefix:?}; {} stored run(s) do: {}. \
+                     Ask one of them: `rust-mutants explain {prefix} --run {latest}`",
+                    holding.len(),
+                    holding.join(", ")
+                ),
+            });
+        }
+    }
     let stored = read_run_document(&report)?;
     let source = catalog
         .mutants
@@ -1566,6 +1579,23 @@ fn stored_explain(
         json,
         stdout,
     )
+}
+
+/// Every stored run, oldest first, whose catalog holds a mutant `prefix` names.
+fn runs_holding(directory: &Path, prefix: &str) -> Result<Vec<String>, CliError> {
+    let runs = stored::kept(directory)?.0;
+    let mut holding = Vec::new();
+    for run in runs {
+        let catalog: rust_mutants::report::catalog::CatalogDocument =
+            read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
+        if catalog.mutants.iter().any(|one| one.id.starts_with(prefix))
+            && let Some(name) = run.file_name().and_then(std::ffi::OsStr::to_str)
+        {
+            holding.push(name.to_owned());
+        }
+    }
+    holding.sort();
+    Ok(holding)
 }
 
 /// One stored document, or the reason it is not one this release reads.

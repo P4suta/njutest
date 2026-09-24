@@ -468,18 +468,17 @@ impl Run {
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
-                    detail: format!(
-                        "{:?} was expected to be {}, and the run says {}; the claim {:?} no longer holds",
-                        expectation.id,
-                        expectation.outcome.name(),
-                        actual.name(),
-                        expectation.reason
+                    detail: stale_detail(
+                        &expectation.id,
+                        expectation.outcome,
+                        *actual,
+                        &expectation.reason,
                     ),
                 }),
                 Standing::Unmatched { why } => findings.push(Finding {
                     kind: FindingKind::UnmatchedExpectation,
                     mutant: None,
-                    detail: format!("the expectation for {:?} verifies nothing: {why}", expectation.id),
+                    detail: unmatched_detail(&expectation.id, why),
                 }),
             }
         }
@@ -515,6 +514,20 @@ impl Run {
             EXIT_UNDETECTED
         }
     }
+}
+
+/// What a stale-expectation finding says about the claim it restates.
+pub(crate) fn stale_detail(id: &str, claimed: Outcome, actual: Outcome, reason: &str) -> String {
+    format!(
+        "{id:?} was expected to be {}, and the run says {}; the claim {reason:?} no longer holds",
+        claimed.name(),
+        actual.name()
+    )
+}
+
+/// What an unmatched-expectation finding says about the claim it restates.
+pub(crate) fn unmatched_detail(id: &str, why: &str) -> String {
+    format!("the expectation for {id:?} verifies nothing: {why}")
 }
 
 fn detail(kind: FindingKind, one: &Judged) -> String {
@@ -655,9 +668,9 @@ impl Filter {
             && self.ids.is_none()
     }
 
-    /// Whether this run is about `mutant`, which sits at `line`.
+    /// Whether this run is about `mutant`, which sits at `line` inside `item`.
     #[must_use]
-    pub fn selects(&self, mutant: &Mutant, line: u32) -> bool {
+    pub fn selects(&self, mutant: &Mutant, line: u32, item: Option<&str>) -> bool {
         let rule = mutant.candidate.rule.name;
         let family = mutant.candidate.rule.family.name();
         if self.skip_rules.iter().any(|one| one == rule) {
@@ -673,9 +686,12 @@ impl Filter {
             return false;
         }
         if let Some(ids) = &self.ids
-            && !ids
-                .iter()
-                .any(|prefix| mutant.id.as_str().starts_with(prefix.as_str()))
+            && !ids.iter().any(|selector| {
+                Locator::parse(selector).map_or_else(
+                    || mutant.id.as_str().starts_with(selector.as_str()),
+                    |name| name.describes(mutant, item, line),
+                )
+            })
         {
             return false;
         }
@@ -729,6 +745,38 @@ pub enum ShardError {
     },
 }
 
+/// Why some reports are not every part of one catalog, each once.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PartsError {
+    /// A part is absent.
+    #[error("shard {index}/{of} is missing, so these reports are not a whole")]
+    Missing {
+        /// The absent part, from one.
+        index: u32,
+        /// How many parts there are.
+        of: u32,
+    },
+    /// A part is offered more than once.
+    #[error("shard {index}/{of} is in more than one of these reports")]
+    Duplicate {
+        /// The repeated part, from one.
+        index: u32,
+        /// How many parts there are.
+        of: u32,
+    },
+    /// Two parts divide the catalog differently.
+    #[error("shard {index}/{actual} divides the catalog differently from /{expected}")]
+    Denominator {
+        /// The part that disagrees.
+        index: u32,
+        /// How many parts the first said there are.
+        expected: u32,
+        /// How many parts this one says there are.
+        actual: u32,
+    },
+}
+
 impl Shard {
     /// The shard `K/N` names.
     ///
@@ -745,6 +793,38 @@ impl Shard {
             return Err(ShardError::OutOfRange { index, of });
         }
         Ok(Self { index, of })
+    }
+
+    /// The parts in order, when they are every part of one catalog, each once.
+    ///
+    /// # Errors
+    /// See [`PartsError`].
+    pub fn every_part<T>(parts: impl IntoIterator<Item = (Self, T)>) -> Result<Vec<T>, PartsError> {
+        let mut by_index: std::collections::BTreeMap<u32, T> = std::collections::BTreeMap::new();
+        let mut of = None;
+        for (shard, part) in parts {
+            let expected = *of.get_or_insert(shard.of);
+            if shard.of != expected {
+                return Err(PartsError::Denominator {
+                    index: shard.index,
+                    expected,
+                    actual: shard.of,
+                });
+            }
+            if by_index.insert(shard.index, part).is_some() {
+                return Err(PartsError::Duplicate {
+                    index: shard.index,
+                    of: expected,
+                });
+            }
+        }
+        let Some(of) = of else {
+            return Ok(Vec::new());
+        };
+        match (1..=of).find(|index| !by_index.contains_key(index)) {
+            Some(index) => Err(PartsError::Missing { index, of }),
+            None => Ok(by_index.into_values().collect()),
+        }
     }
 
     /// Whether the mutant at this catalog index belongs to this part.
@@ -1509,7 +1589,7 @@ fn narrowed<'m>(
 fn filter_selects(session: &Session, mutant: &Mutant, filter: Option<&Filter>) -> bool {
     filter.filter(|one| !one.is_empty()).is_none_or(|filter| {
         let line = session.position(mutant).map_or(0, |at| at.line);
-        filter.selects(mutant, line)
+        filter.selects(mutant, line, session.item_of(mutant.index))
     })
 }
 
@@ -1620,12 +1700,15 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
 
 /// Resolves every declared expectation against what the run established, and marks the mutants a reviewer accounted for.
 ///
+/// A part of a sharded run judges only the mutations it holds, since the parts together hold each exactly once and the merge answers for the claim.
+///
 /// # Errors
 /// Refuses when one expectation resolves to more mutants than the durable coverage counter can represent.
 pub fn verify(
     session: &Session,
     expectations: &[Expectation],
     judged: &mut [Judged],
+    shard: Option<Shard>,
 ) -> Result<Vec<Verified>, SessionError> {
     let mut verified = Vec::with_capacity(expectations.len());
     let mut reasons: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
@@ -1656,7 +1739,13 @@ pub fn verify(
                 },
             ),
             Ok((mutants, moved)) => {
-                let ids: Vec<String> = mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+                let every: Vec<String> =
+                    mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+                let ids: Vec<String> = mutants
+                    .iter()
+                    .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
+                    .map(|mutant| mutant.id.to_string())
+                    .collect();
                 let (named, standing) = standing_of(judged, expectation.outcome, &ids);
                 let standing = match standing {
                     Standing::Met => moved.unwrap_or(Standing::Met),
@@ -1669,8 +1758,8 @@ pub fn verify(
                         one.expected = true;
                     }
                 }
-                let covered = u32::try_from(ids.len()).map_err(|_outside_range| {
-                    SessionError::ExpectationCoverageTooLarge { count: ids.len() }
+                let covered = u32::try_from(every.len()).map_err(|_outside_range| {
+                    SessionError::ExpectationCoverageTooLarge { count: every.len() }
                 })?;
                 (covered, named, standing)
             }

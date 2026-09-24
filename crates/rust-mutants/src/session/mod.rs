@@ -59,6 +59,16 @@ pub struct Locator {
 }
 
 impl Locator {
+    /// Whether this names `mutant`, whose item is `item` and which sits at `line`: the one reading of a name every command shares, so a name one of them prints is one every other accepts.
+    #[must_use]
+    pub fn describes(&self, mutant: &Mutant, item: Option<&str>, line: u32) -> bool {
+        mutant.candidate.path == self.path
+            && mutant.candidate.rule.name == self.rule
+            && (self.original.is_empty() || mutant.candidate.original == self.original.as_bytes())
+            && item.is_some_and(|item| names(item, &self.item))
+            && self.line.is_none_or(|wanted| wanted == line)
+    }
+
     /// How a claim written as this locator is named to a reader: every field that tells it apart from another, the line included.
     #[must_use]
     pub fn name(&self) -> String {
