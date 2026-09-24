@@ -92,10 +92,32 @@ pub fn opening(measuring: &Measuring<'_>) -> OpenOptions {
     }
 }
 
-/// What a run of this tree is compiled and started with, by name.
+/// What a run of this tree is compiled and started with, by name: what the configuration asks for, every cargo configuration file cargo would read from the tree's ancestors and its home, and the variables that point cargo elsewhere.
 #[must_use]
-pub fn settings(config: &Config) -> BTreeMap<String, String> {
+pub fn settings(measuring: &Measuring<'_>) -> BTreeMap<String, String> {
+    let config = measuring.config;
+    let vars = &measuring.environment.vars;
+    let pointing: Vec<String> = vars
+        .iter()
+        .filter_map(|(name, value)| {
+            let name = name.to_str()?;
+            let points = name.starts_with("CARGO_BUILD_")
+                || matches!(name, "CARGO_HOME" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN");
+            points.then(|| Some(format!("{name}={}", value.to_str()?)))?
+        })
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
     BTreeMap::from([
+        (
+            "cargo-configuration".to_owned(),
+            rust_mutants::cargo::config::fingerprint(
+                measuring.root,
+                rust_mutants::cargo::config::home(vars).as_deref(),
+            )
+            .into_inner(),
+        ),
+        ("cargo-environment".to_owned(), pointing.join("\u{1f}")),
         (
             "build".to_owned(),
             config
@@ -192,7 +214,7 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
             survey: &survey,
             inputs: session.inputs(),
             environment: &environment(measuring.environment, config)?,
-            settings: &settings(config),
+            settings: &settings(measuring),
             touched: session.touched(),
             standing: &standing,
             reading: &reading,

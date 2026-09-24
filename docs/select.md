@@ -54,6 +54,7 @@ An item whose tokens moved to another line or column is changed too, because a p
 Every target runs when any of these differs from the measurement, and `select` says which:
 
 - the toolchain, the build selection, the harness arguments, or the targets left out;
+- any cargo configuration file in an ancestor of the tree or in cargo's home, or a variable that points cargo elsewhere (`CARGO_BUILD_*`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN`);
 - a variable the run selects for its test processes, or one the compiler read through `env!`;
 - the rules the tree is read by;
 - a file the build read outside the tree;

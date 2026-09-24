@@ -93,7 +93,7 @@ pub fn selected(measuring: &Measuring<'_>) -> Result<(Selection, Measurement), R
             toolchain: &toolchain.to_string(),
             survey: &survey,
             environment: &measure::environment(environment, config)?,
-            settings: &measure::settings(config),
+            settings: &measure::settings(measuring),
             vars: &vars,
         },
     );

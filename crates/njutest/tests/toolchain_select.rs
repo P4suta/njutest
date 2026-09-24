@@ -312,3 +312,25 @@ fn an_edit_to_code_that_runs_inside_the_compiler_runs_every_target() {
         "and the reason names the file the compiler ran: {human}"
     );
 }
+
+#[test]
+fn cargo_configuration_outside_the_tree_that_changed_runs_every_target() {
+    let fixture = fixture("fixture-hollow");
+    measured(&fixture);
+    let above = fixture
+        .root
+        .parent()
+        .expect("the copy has a parent")
+        .join(".cargo");
+    std::fs::create_dir_all(&above).expect("mkdir");
+    std::fs::write(
+        above.join("config.toml"),
+        "[build]\nrustflags = [\"--cfg\", \"from_above\"]\n",
+    )
+    .expect("a configuration the build reads from an ancestor");
+    assert!(
+        skippable(&fixture).is_empty(),
+        "cargo reads configuration from every ancestor of the tree, which no survey of the \
+         tree sees, and the flags it adds compile every target differently"
+    );
+}
