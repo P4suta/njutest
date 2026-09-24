@@ -323,7 +323,7 @@ pub fn recorded_by(
             .remove("timestamp")
             .unwrap_or_else(|| json!("2026-09-06T00:00:00Z"));
         let elapsed_ms = payload.remove("elapsed_ms").unwrap_or_else(|| json!(at));
-        crate::schemas::completed(producer, &mut payload);
+        crate::specimen::completed(producer, &mut payload);
         let envelope = json!({
             "seq": seq,
             "timestamp": timestamp,

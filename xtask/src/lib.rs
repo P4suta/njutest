@@ -25,6 +25,7 @@ pub mod sbom;
 pub mod schemas;
 pub mod sentinel;
 pub mod shapes;
+mod specimen;
 pub mod strictjson;
 pub mod surface;
 pub mod wire;
