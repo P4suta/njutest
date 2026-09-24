@@ -93,6 +93,16 @@ pub enum Payload {
         /// The record.
         pair: crate::report::faults::BesideRun,
     },
+    /// One run of a test a crash was put to: stopped at the call, run again over what it left, or run in a fresh scratch.
+    CrashExec {
+        /// The record.
+        crash: CrashExecRecord,
+    },
+    /// What a run established about one call that writes a crash was asked at.
+    Crash {
+        /// The record, as the report holds it.
+        crash: crate::report::crashes::CrashRecord,
+    },
     /// What the probe pass measured for one target.
     ProbeExec {
         /// The record.
@@ -157,6 +167,8 @@ impl Payload {
             Self::Fault { .. } => "fault",
             Self::Beside { .. } => "beside",
             Self::BesideRun { .. } => "beside-run",
+            Self::CrashExec { .. } => "crash-exec",
+            Self::Crash { .. } => "crash",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
             Self::WireExec { .. } => "wire-exec",
@@ -440,6 +452,24 @@ pub struct FaultExecRecord {
     pub duration_ms: u64,
     /// Whether the machine was given to this execution, which a run does once when a budget expires.
     pub alone: bool,
+}
+
+/// One run of a test a crash was put to.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashExecRecord {
+    /// The crash a person types.
+    pub crash: String,
+    /// The target the test is in.
+    pub target: String,
+    /// The test.
+    pub test: String,
+    /// Which run it was: `crash`, stopped at the call; `next`, over what a crash left; or `fresh`, in a scratch of its own.
+    pub stage: String,
+    /// The exit status, which is how a stop at the call is told from a test that failed.
+    pub exit_code: i64,
+    /// What the engine made of it.
+    pub outcome: String,
 }
 
 /// What the probe pass measured for one target.

@@ -36,13 +36,15 @@ const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNNOTICED_FAULT: &str = "unnoticed-fault";
 const DIMENSION_NOT_MEASURED: &str = "dimension-not-measured";
+const CORRUPT_AFTER_CRASH: &str = "corrupt-after-crash";
 /// Every finding kind that is something wrong with the code under test, as `docs/report-v1.md` marks them, which is what lets a run conclude DEFECT.
-pub const DEFECT_KINDS: [&str; 5] = [
+pub const DEFECT_KINDS: [&str; 6] = [
     "build-failure",
     "failing-test",
     "undefined-behaviour",
     "broken-under-fault",
     "environment-dependent",
+    "corrupt-after-crash",
 ];
 const WAITED_MUTANT: &str = "waited-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
@@ -172,6 +174,8 @@ pub enum Layer {
     Faults,
     /// What each control started under a knob established, re-derived from the engine's perturbed-control records and held to what the report says of each.
     Knobs,
+    /// What each call that writes came to under a crash, re-derived from the recorded runs alone and held to the report's records and findings.
+    Crashes,
     /// Which dimensions a run that asks every one of them did not establish, re-derived from the records and held to the findings that name them.
     Dimensions,
 }
@@ -194,6 +198,7 @@ impl Layer {
             Self::Faults => "faults",
             Self::Knobs => "knobs",
             Self::Dimensions => "dimensions",
+            Self::Crashes => "crashes",
         }
     }
 }
@@ -469,6 +474,7 @@ pub fn audit_with(
         })
         .transpose()?;
     let faulted = read_runner(recorded_runner, crate::faults::read)?;
+    let crashed = read_runner(recorded_runner, crate::crashes::read)?;
     let engines = recorded
         .engines
         .iter()
@@ -504,6 +510,7 @@ pub fn audit_with(
     drift(&recording, &engines, &mut audit);
     faults(&recording, faulted.as_ref(), &mut audit);
     dimensions(&recording, &mut audit);
+    crashes(&recording, crashed.as_ref(), &mut audit);
     knobs::audited(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
@@ -555,6 +562,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "beside",
         "knobs",
         "seams",
+        "crashes",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -1942,6 +1950,60 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
     }
 }
 
+/// What each call that writes came to, re-derived from the recording's crash runs and held to the report, and each corrupt one held to its finding (ADR 0035).
+fn crashes(
+    recording: &Recording<'_>,
+    crashed: Option<&crate::crashes::Crashed>,
+    audit: &mut Audit,
+) {
+    let mut notes = Notes::on(audit, Layer::Crashes);
+    let reported: Vec<crate::crashes::Site> = rows(recording.document, "crashes")
+        .iter()
+        .map(crate::crashes::site)
+        .collect();
+    let corrupt: BTreeSet<&str> = reported
+        .iter()
+        .filter(|site| site.decision == "corrupt")
+        .map(|site| site.crash.as_str())
+        .collect();
+    let named: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == CORRUPT_AFTER_CRASH)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    for crash in corrupt.symmetric_difference(&named) {
+        notes.violated(
+            crash,
+            "the report's corrupt crashes and its corrupt-after-crash findings are not the same"
+                .to_owned(),
+        );
+    }
+    if reported.is_empty() {
+        return;
+    }
+    let Some(crashed) = crashed else {
+        notes.unaudited(
+            "crashes",
+            format!(
+                "the report holds {} crash site(s) and there is no recording to re-derive them from",
+                reported.len()
+            ),
+        );
+        return;
+    };
+    for site in &reported {
+        let runs: Vec<&crate::crashes::Run> = crashed
+            .runs
+            .iter()
+            .filter(|run| run.crash == site.crash)
+            .collect();
+        if let Err(why) = crate::crashes::supports(site, &runs) {
+            notes.violated(&site.crash, why.to_string());
+        }
+    }
+}
+
 /// The dimensions a `whole-v1` run did not establish, re-derived from the flat part's records and held to its `dimension-not-measured` findings in both directions (ADR 0033).
 fn dimensions(recording: &Recording<'_>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Dimensions);
@@ -1997,7 +2059,7 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
             .iter()
             .any(|row| field(row, "name").is_some_and(|said| said.starts_with(name)))
     };
-    let mut holed = BTreeSet::from(["schedule", "durable"]);
+    let mut holed = BTreeSet::from(["schedule"]);
     if recording.mutants.iter().any(|mutant| {
         ["waited", "step-limit-reached", "unconfirmed", "errored"]
             .contains(&mutant.outcome.as_str())
@@ -2023,6 +2085,19 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
             .any(|one| one == "waited" || one == "undecided")
     {
         holed.insert("fault");
+    }
+    let crashes = state("crashes", "decision");
+    let crashed_unmeasured = recording
+        .findings
+        .iter()
+        .any(|finding| finding.subject == "crash-baseline-not-measured");
+    if crashed_unmeasured
+        || (crashes.is_empty() && !limited("crash-no-site"))
+        || crashes
+            .iter()
+            .any(|one| one == "unshared" || one == "undecided")
+    {
+        holed.insert("durable");
     }
     let seams = state("seams", "answer");
     if limited("seam-not-watched") || seams.iter().any(|one| one == "unreached") {

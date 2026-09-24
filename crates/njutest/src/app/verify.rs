@@ -1526,6 +1526,7 @@ fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
 fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<LoadedConfig, LoadError> {
     let mut loaded = configured(arguments, workspace)?;
     loaded.config.faults.inject |= arguments.faults;
+    loaded.config.durability.crash |= arguments.crashes;
     Ok(loaded)
 }
 

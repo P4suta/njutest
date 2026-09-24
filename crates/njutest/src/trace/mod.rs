@@ -20,10 +20,10 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, FaultExecRecord,
-    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
-    RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord,
-    WireExecRecord,
+    ArtifactRecord, AskedRecord, CrashExecRecord, DischargeRecord, DriftRecord, Event, ExecRecord,
+    FaultExecRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord,
+    ProgressRecord, Read, RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord,
+    WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -400,6 +400,16 @@ impl Recorder {
     /// Records one pair of runs behind evidence beside a fault.
     pub fn beside_run(&self, record: crate::report::faults::BesideRun) {
         self.emit(Payload::BesideRun { pair: record });
+    }
+
+    /// Records one run of a test a crash was put to.
+    pub fn crash_exec(&self, record: CrashExecRecord) {
+        self.emit(Payload::CrashExec { crash: record });
+    }
+
+    /// Records what a run established about one call that writes a crash was asked at.
+    pub fn crash(&self, record: crate::report::crashes::CrashRecord) {
+        self.emit(Payload::Crash { crash: record });
     }
 
     /// Records what the probe pass measured for one target.

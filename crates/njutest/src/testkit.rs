@@ -312,6 +312,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
         Payload::Beside { .. } => "beside",
         Payload::BesideRun { .. } => "pair",
+        Payload::CrashExec { .. } | Payload::Crash { .. } => "crash",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -360,6 +361,10 @@ pub mod payload {
         Beside(&'a crate::report::faults::BesideRecord),
         /// A pair of runs behind evidence beside a fault.
         BesideRun(&'a crate::report::faults::BesideRun),
+        /// A run of a test a crash was put to.
+        CrashExec(&'a crate::trace::CrashExecRecord),
+        /// A crash site's decision.
+        Crash(&'a crate::report::crashes::CrashRecord),
         /// A probe execution.
         ProbeExec(&'a crate::trace::ProbeExecRecord),
         /// A wire exchange.
@@ -397,6 +402,8 @@ pub mod payload {
             Payload::Fault { fault } => Ref::Fault(fault),
             Payload::Beside { beside } => Ref::Beside(beside),
             Payload::BesideRun { pair } => Ref::BesideRun(pair),
+            Payload::CrashExec { crash } => Ref::CrashExec(crash),
+            Payload::Crash { crash } => Ref::Crash(crash),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
@@ -624,6 +631,30 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 with: "killed".to_owned(),
             },
         },
+        Payload::CrashExec {
+            crash: crate::trace::CrashExecRecord {
+                crash: "d".repeat(20),
+                target: "demo/test/counter".to_owned(),
+                test: "a_count_goes_up".to_owned(),
+                stage: "crash".to_owned(),
+                exit_code: 93,
+                outcome: "killed".to_owned(),
+            },
+        },
+        Payload::Crash {
+            crash: crate::report::crashes::CrashRecord {
+                catalog_index: crate::report::CatalogIndex::new(0),
+                id: "d".repeat(64),
+                display_id: "d".repeat(20),
+                path: "src/lib.rs".to_owned(),
+                item: "save".to_owned(),
+                position: None,
+                decision: crate::report::crashes::CrashDecision::Restarted {
+                    on: "demo/test/counter::a_count_goes_up".to_owned(),
+                    left: vec!["count".to_owned()],
+                },
+            },
+        },
         Payload::ProbeExec {
             probe: ProbeExecRecord {
                 target: "demo/lib/demo".to_owned(),
@@ -837,6 +868,7 @@ pub fn documented_specimen() -> crate::config::Config {
         },
         mutation: Mutation { equivalence: true },
         faults: Faults { inject: true },
+        durability: crate::config::Durability { crash: true },
         verification: Verification {
             unwind: Some(8),
             timeout: Some(Duration::from_mins(2)),

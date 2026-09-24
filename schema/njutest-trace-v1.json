@@ -394,6 +394,36 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "crash"],
+          "properties": {
+            "type": { "const": "crash-exec" },
+            "crash": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["crash", "target", "test", "stage", "exit_code", "outcome"],
+              "properties": {
+                "crash": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+                "target": { "type": "string", "minLength": 1 },
+                "test": { "type": "string", "minLength": 1 },
+                "stage": { "enum": ["crash", "next", "fresh"] },
+                "exit_code": { "type": "integer" },
+                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "crash"],
+          "properties": {
+            "type": { "const": "crash" },
+            "crash": { "$ref": "njutest-assurance-report-v1.json#/$defs/crash" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "probe"],
           "properties": {
             "type": { "const": "probe-exec" },

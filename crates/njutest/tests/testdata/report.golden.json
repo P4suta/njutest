@@ -134,6 +134,15 @@
                 "waited": 0,
                 "undecided": 0,
                 "not_put": 0
+              },
+              "crashes": {
+                "sites": 0,
+                "restarted": 0,
+                "corrupt": 0,
+                "unshared": 0,
+                "unreached": 0,
+                "undecided": 0,
+                "not_put": 0
               }
             },
             "resources": [
@@ -174,6 +183,7 @@
             ],
             "faults": [],
             "beside": [],
+            "crashes": [],
             "targets": [
               {
                 "id": "0123456789abcdef",

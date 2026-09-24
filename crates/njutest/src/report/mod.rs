@@ -5,6 +5,7 @@
 
 pub mod across;
 pub mod audit;
+pub mod crashes;
 pub mod drift;
 pub mod faults;
 pub mod hollow;
@@ -1603,6 +1604,8 @@ pub struct BuildPartEvidence {
     faults: Vec<faults::FaultRecord>,
     /// Every survivor of this source's part a target told apart only under a fault.
     beside: Vec<faults::BesideRecord>,
+    /// Every call that writes of this source's part a crash was asked at.
+    crashes: Vec<crashes::CrashRecord>,
     /// The baseline target facts, in canonical target order.
     targets: Vec<TargetRecord>,
     /// The SHA-256 of each file this source's mutants were read from, as it read them.
@@ -1639,6 +1642,7 @@ impl BuildPartEvidence {
             seams: report.seams.clone(),
             faults: report.faults.clone(),
             beside: report.beside.clone(),
+            crashes: report.crashes.clone(),
             targets: report.targets.clone(),
             sources: report.sources.clone(),
             mutants: report.mutants.clone(),
@@ -1665,6 +1669,7 @@ struct BuildPartEvidenceWire {
     seams: Vec<SeamRecord>,
     faults: Vec<faults::FaultRecord>,
     beside: Vec<faults::BesideRecord>,
+    crashes: Vec<crashes::CrashRecord>,
     targets: Vec<TargetRecord>,
     #[serde(deserialize_with = "sources_wire::deserialize")]
     sources: BTreeMap<String, rust_mutants::id::HexDigest>,
@@ -1692,6 +1697,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             seams: wire.seams,
             faults: wire.faults,
             beside: wire.beside,
+            crashes: wire.crashes,
             targets: wire.targets,
             sources: wire.sources,
             mutants: wire.mutants,
@@ -2066,6 +2072,14 @@ fn validate_part_catalog(part: &BuildPartEvidence) -> Result<(), PartLedgerError
             .iter()
             .map(|fault| fault.catalog_index)
             .collect::<Vec<_>>(),
+    )?;
+    validate_catalog_positions(
+        part,
+        &part
+            .crashes
+            .iter()
+            .map(|crash| crash.catalog_index)
+            .collect::<Vec<_>>(),
     )
 }
 
@@ -2155,6 +2169,35 @@ fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError
     Ok(())
 }
 
+/// Holds each dimension's stored counts to the records the part holds, and to adding up to its sites.
+fn validate_dimension_accounting(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    let faults = faults::FaultAccounting::of(&part.faults).map_err(|_too_wide| {
+        PartLedgerError::CountOverflow {
+            run_id: part.run_id.clone(),
+            about: "fault sites",
+        }
+    })?;
+    if faults != part.accounting.faults || !faults.adds_up() {
+        return Err(PartLedgerError::AccountingMismatch {
+            run_id: part.run_id.clone(),
+            about: "fault",
+        });
+    }
+    let crashes = crashes::CrashAccounting::of(&part.crashes).map_err(|_too_wide| {
+        PartLedgerError::CountOverflow {
+            run_id: part.run_id.clone(),
+            about: "crash sites",
+        }
+    })?;
+    if crashes != part.accounting.crashes || !crashes.adds_up() {
+        return Err(PartLedgerError::AccountingMismatch {
+            run_id: part.run_id.clone(),
+            about: "crash",
+        });
+    }
+    Ok(())
+}
+
 fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
     validate_part_catalog(part)?;
     let started = canonical_timestamp(part, "started", &part.timing.started)?;
@@ -2179,18 +2222,7 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
         });
     }
     validate_beside(part)?;
-    let faults = faults::FaultAccounting::of(&part.faults).map_err(|_too_wide| {
-        PartLedgerError::CountOverflow {
-            run_id: part.run_id.clone(),
-            about: "fault sites",
-        }
-    })?;
-    if faults != part.accounting.faults || !faults.adds_up() {
-        return Err(PartLedgerError::AccountingMismatch {
-            run_id: part.run_id.clone(),
-            about: "fault",
-        });
-    }
+    validate_dimension_accounting(part)?;
     validate_knob_records(part)?;
     let mut target_ids = BTreeSet::new();
     for target in &part.targets {
@@ -2708,6 +2740,8 @@ pub struct Accounting {
     pub soundness: SoundnessAccounting,
     /// The sites a fault was asked at.
     pub faults: faults::FaultAccounting,
+    /// The calls that write a crash was asked at.
+    pub crashes: crashes::CrashAccounting,
 }
 
 /// What became of one target.
@@ -4353,6 +4387,8 @@ pub enum FindingKind {
     BrokenUnderFault,
     /// A run that asks every dimension did not establish one of them.
     DimensionNotMeasured,
+    /// The next run failed over what a crash just after a call that writes left.
+    CorruptAfterCrash,
     /// A target that passed on its baseline failed on a control started with something the contract lets differ between machines set differently.
     EnvironmentDependent,
     /// A target reached something else on a control started with something the contract lets differ between machines set differently, so every proof read off its baseline is unfounded where that differs.
@@ -4397,6 +4433,7 @@ impl FindingKind {
             Self::UnnoticedFault => "unnoticed-fault",
             Self::BrokenUnderFault => "broken-under-fault",
             Self::DimensionNotMeasured => "dimension-not-measured",
+            Self::CorruptAfterCrash => "corrupt-after-crash",
             Self::EnvironmentDependent => "environment-dependent",
             Self::EnvironmentDependentReach => "environment-dependent-reach",
         }
@@ -4410,7 +4447,8 @@ impl FindingKind {
             | Self::FailingTest
             | Self::UndefinedBehaviour
             | Self::BrokenUnderFault
-            | Self::EnvironmentDependent => true,
+            | Self::EnvironmentDependent
+            | Self::CorruptAfterCrash => true,
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout
@@ -4670,6 +4708,8 @@ pub struct BuildReport {
     pub seams: Vec<SeamRecord>,
     /// Every site a fault was asked at, and what became of it.
     pub faults: Vec<faults::FaultRecord>,
+    /// Every call that writes a crash was asked at, and what became of it.
+    pub crashes: Vec<crashes::CrashRecord>,
     /// Every survivor a target told apart only once the call at its site failed.
     pub beside: Vec<faults::BesideRecord>,
     /// Every target it selected, slowest first.
@@ -4720,6 +4760,7 @@ impl BuildReport {
             seams: Vec::new(),
             faults: Vec::new(),
             beside: Vec::new(),
+            crashes: Vec::new(),
             targets: Vec::new(),
             sources: BTreeMap::new(),
             mutants: Vec::new(),
@@ -5421,6 +5462,8 @@ pub struct Conclusion {
     pub faults: Vec<faults::FaultRecord>,
     /// Every build's survivors told apart only under a fault, part by part.
     pub beside: Vec<faults::BesideRecord>,
+    /// Every build's crash sites, part by part.
+    pub crashes: Vec<crashes::CrashRecord>,
     /// What every build established along each dimension, one row per dimension.
     pub matrix: Vec<matrix::Row>,
     /// Every build's target facts.
@@ -6132,18 +6175,9 @@ impl Report {
                 .iter()
                 .flat_map(|build| build.baseline().seams.iter().cloned())
                 .collect(),
-            faults: self
-                .builds
-                .iter()
-                .flat_map(|build| build.parts.iter())
-                .flat_map(|part| part.faults.iter().cloned())
-                .collect(),
-            beside: self
-                .builds
-                .iter()
-                .flat_map(|build| build.parts.iter())
-                .flat_map(|part| part.beside.iter().cloned())
-                .collect(),
+            faults: part_records(&self.builds, |part| &part.faults),
+            beside: part_records(&self.builds, |part| &part.beside),
+            crashes: part_records(&self.builds, |part| &part.crashes),
             matrix: pooled_matrix(&self.builds),
             targets: self
                 .builds
@@ -6733,6 +6767,15 @@ fn merged_matrix_findings(build: &BuildEvidence) -> Vec<Finding> {
     matrix::holes(&matrix::rows(&owned.borrowed()))
 }
 
+/// Every record of one kind every part of every build holds, part by part.
+fn part_records<T: Clone>(builds: &BuildLedger, of: fn(&BuildPartEvidence) -> &[T]) -> Vec<T> {
+    builds
+        .iter()
+        .flat_map(|build| build.parts.iter())
+        .flat_map(|part| of(part).iter().cloned())
+        .collect()
+}
+
 /// One matrix for every build: each build's column where each measured the dimension, and otherwise the column of the build that established least.
 fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
     let per_build: Vec<Vec<matrix::Row>> = builds
@@ -6760,6 +6803,7 @@ struct MatrixEvidence {
     mutations: (usize, usize),
     knobs: Vec<knobs::KnobRecord>,
     faults: Vec<faults::FaultRecord>,
+    crashes: Vec<crashes::CrashRecord>,
     seams: Vec<SeamRecord>,
     limitations: Vec<Limitation>,
     findings: Vec<Finding>,
@@ -6783,6 +6827,9 @@ impl MatrixEvidence {
             faults: parts()
                 .flat_map(|part| part.faults.iter().cloned())
                 .collect(),
+            crashes: parts()
+                .flat_map(|part| part.crashes.iter().cloned())
+                .collect(),
             seams: builds
                 .iter()
                 .flat_map(|build| build.baseline().seams.iter().cloned())
@@ -6802,6 +6849,7 @@ impl MatrixEvidence {
             mutations: self.mutations,
             knobs: &self.knobs,
             faults: &self.faults,
+            crashes: &self.crashes,
             seams: &self.seams,
             limitations: &self.limitations,
             findings: &self.findings,

@@ -512,6 +512,9 @@ fn afterwards(
     if request.config.faults.inject {
         super::faults::put(request, environment, report, (notes, watch))?;
     }
+    if request.config.durability.crash {
+        super::crashes::put(request, environment, report, (notes, watch))?;
+    }
     driven(report, request, toolchain, (notes, watch))?;
     proposed(report, request, environment, (notes, watch))?;
     Ok(())
@@ -1898,6 +1901,13 @@ pub fn limitation_detail(name: &str) -> String {
         rust_mutants::limitation::DOCTESTS_NONE => {
             "the library documents no example, so its documentation target has nothing to \
              run and no mutation is routed to it"
+        }
+        crate::limitation::CRASH_NOT_PUT => {
+            "the compiler refused a crash, so nothing is claimed about a stop just after that call"
+        }
+        crate::limitation::CRASH_NO_SITE => {
+            "the run was asked for crashes and no measured file calls anything that writes, so \
+             there was nothing to stop after"
         }
         crate::limitation::FAULT_NO_SITE => {
             "the run was asked for faults and no measured file has a `?`, so there was no call \

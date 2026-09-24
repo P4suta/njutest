@@ -287,6 +287,11 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             "NJ-BROKEN-UNDER-FAULT",
             "a test wrote into the tree it was measured in once a call failed",
         ),
+        FindingKind::CorruptAfterCrash => (
+            Severity::Refusal,
+            "NJ-CORRUPT-AFTER-CRASH",
+            "a stop just after this call writes leaves what the next run cannot start over",
+        ),
         FindingKind::DimensionNotMeasured => (
             Severity::Limitation,
             "NJ-DIMENSION",

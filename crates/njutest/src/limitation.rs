@@ -76,9 +76,15 @@ pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 /// A run asked for faults found no `?` in a measured file, so there was no call to fail.
 pub const FAULT_NO_SITE: &str = "fault-no-site";
 
+/// A run asked for crashes could not put some, because the compiler refused them.
+pub const CRASH_NOT_PUT: &str = "crash-not-put";
+
+/// A run asked for crashes found no call that writes in a measured file, so there was nothing to stop after.
+pub const CRASH_NO_SITE: &str = "crash-no-site";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 24] = [
+pub const ALL: [&str; 26] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -101,6 +107,8 @@ pub const ALL: [&str; 24] = [
     DRIFT_NOT_MEASURED,
     FAULT_NOT_PUT,
     FAULT_NO_SITE,
+    CRASH_NOT_PUT,
+    CRASH_NO_SITE,
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
 ];

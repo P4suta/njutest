@@ -15,6 +15,15 @@
       "parts": [
         {
           "accounting": {
+            "crashes": {
+              "corrupt": 0,
+              "not_put": 0,
+              "restarted": 0,
+              "sites": 0,
+              "undecided": 0,
+              "unreached": 0,
+              "unshared": 0
+            },
             "faults": {
               "not_put": 0,
               "noticed": 0,
@@ -67,6 +76,7 @@
           },
           "beside": [],
           "candidates": [],
+          "crashes": [],
           "drift": [
             {
               "state": "held",

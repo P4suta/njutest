@@ -223,6 +223,8 @@ pub struct Config {
     pub fuzz: Fuzz,
     /// Whether a run fails the calls a `?` asks about.
     pub faults: Faults,
+    /// Whether a run stops the process just after each call that writes.
+    pub durability: Durability,
     /// What a run sets differently for one more control of each target, to ask whether the target's verdict and reach hold where it differs.
     pub repeatable: Repeatable,
     /// The integration resources a run may start, by name.
@@ -249,6 +251,7 @@ impl Default for Config {
             soundness: Soundness::default(),
             fuzz: Fuzz::default(),
             faults: Faults::default(),
+            durability: Durability::default(),
             repeatable: Repeatable::default(),
             resources: BTreeMap::new(),
             generation: None,
@@ -396,6 +399,15 @@ pub struct Faults {
     /// Put the faults.
     /// It costs a second instrumented build and baseline, and one execution for every `?` a test reaches.
     pub inject: bool,
+}
+
+/// Whether a run stops the process just after each call that writes, and asks whether the next run can start over what it left (ADR 0035).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Durability {
+    /// Stop after the calls.
+    /// It costs a third instrumented build and baseline, and three executions for every call that writes a test reaches.
+    pub crash: bool,
 }
 
 /// Bounds that exist only for the `verified-v1` contract.
@@ -922,6 +934,8 @@ impl Config {
         let every: Vec<crate::report::knobs::Knob> = crate::report::knobs::Knob::ALL.to_vec();
         let refused = if said("faults", "inject") && !self.faults.inject {
             Some("[faults] inject = false")
+        } else if said("durability", "crash") && !self.durability.crash {
+            Some("[durability] crash = false")
         } else if said("repeatable", "knobs") && self.repeatable.knobs != every {
             Some("[repeatable] knobs naming fewer than every knob")
         } else {
@@ -938,6 +952,7 @@ impl Config {
             ));
         }
         self.faults.inject = true;
+        self.durability.crash = true;
         self.repeatable.knobs = every;
         Ok(())
     }

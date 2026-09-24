@@ -124,6 +124,8 @@ pub struct Evidence<'a> {
     pub knobs: &'a [KnobRecord],
     /// What each fault site came to.
     pub faults: &'a [FaultRecord],
+    /// What each call that writes came to under a crash.
+    pub crashes: &'a [super::crashes::CrashRecord],
     /// What each seam question came to.
     pub seams: &'a [SeamRecord],
     /// What the run said it does not claim.
@@ -150,6 +152,7 @@ impl<'a> Evidence<'a> {
             mutations: (answered, holes),
             knobs: &report.knobs,
             faults: &report.faults,
+            crashes: &report.crashes,
             seams: &report.seams,
             limitations: &report.limitations,
             findings: &report.findings,
@@ -212,7 +215,8 @@ fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
         }
         Dimension::Repeatable => repeatable(evidence.knobs),
         Dimension::Fault => fault(evidence),
-        Dimension::Schedule | Dimension::Durable => Column::NotInThisRelease,
+        Dimension::Schedule => Column::NotInThisRelease,
+        Dimension::Durable => durable(evidence),
         Dimension::Wire => wire(evidence),
     }
 }
@@ -318,6 +322,51 @@ fn fault(evidence: &Evidence<'_>) -> Column {
             )),
         }),
         Vec::new(),
+    )
+}
+
+/// The crashes' column.
+fn durable(evidence: &Evidence<'_>) -> Column {
+    use super::crashes::CrashDecision;
+    if evidence
+        .findings
+        .iter()
+        .any(|finding| finding.subject == crate::assure::crashes::NOT_MEASURED)
+    {
+        return Column::Unmeasured {
+            why: "the tree with every call that writes guarded gave no baseline".to_owned(),
+        };
+    }
+    if evidence.crashes.is_empty() {
+        if evidence
+            .limitations
+            .iter()
+            .any(|limitation| limitation.name == crate::limitation::CRASH_NO_SITE)
+        {
+            return Column::NothingToAsk {
+                why: "no measured file calls anything that writes".to_owned(),
+            };
+        }
+        return Column::NotAsked;
+    }
+    tallied(
+        evidence
+            .crashes
+            .iter()
+            .map(|record| match &record.decision {
+                CrashDecision::Restarted { .. }
+                | CrashDecision::Corrupt { .. }
+                | CrashDecision::Unreached => Counted::Answered,
+                CrashDecision::Unshared { .. } | CrashDecision::Undecided { .. } => Counted::Hole,
+                CrashDecision::NotPut { .. } => Counted::SpeaksNotAbout(format!(
+                    "a call the compiler would not stop after, at {}",
+                    record.place()
+                )),
+            }),
+        vec![
+            "whether the next run read what the stop left".to_owned(),
+            "writes the system had not yet flushed to disk".to_owned(),
+        ],
     )
 }
 

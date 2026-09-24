@@ -855,3 +855,44 @@ fn every_fault_decision_is_one_the_schema_publishes_and_the_page_documents() {
         );
     }
 }
+
+#[test]
+fn every_crash_decision_is_one_the_schema_publishes_and_the_page_documents() {
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&page("schema/njutest-assurance-report-v1.json"))
+            .expect("the report schema is JSON");
+    let published: std::collections::BTreeSet<&str> = schema
+        .pointer("/$defs/crashDecision/oneOf")
+        .and_then(serde_json::Value::as_array)
+        .expect("a crash decision is one of a closed list")
+        .iter()
+        .filter_map(|arm| arm.pointer("/properties/decision/const"))
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let every = njutest::report::crashes::CrashDecision::every();
+    let produced: std::collections::BTreeSet<&str> = every
+        .iter()
+        .map(njutest::report::crashes::CrashDecision::name)
+        .collect();
+    assert_eq!(
+        published, produced,
+        "the schema and the set it publishes are one list"
+    );
+    let text = page("docs/report-v1.md");
+    let undocumented: Vec<&&str> = produced
+        .iter()
+        .filter(|name| !text.contains(&format!("| `{name}` |")))
+        .collect();
+    assert!(
+        undocumented.is_empty(),
+        "docs/report-v1.md has no row for {undocumented:?}"
+    );
+    for decision in &every {
+        let wire = serde_json::to_value(decision).expect("a decision serialises");
+        assert_eq!(
+            wire.get("decision").and_then(serde_json::Value::as_str),
+            Some(decision.name()),
+            "the wire tag is the name"
+        );
+    }
+}

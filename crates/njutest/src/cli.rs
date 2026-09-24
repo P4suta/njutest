@@ -275,6 +275,10 @@ pub struct Verify {
     /// Implies --changed.
     #[arg(long, value_name = "REV")]
     pub changed_from: Option<String>,
+    /// Stop the process just after each call that writes, and say whether the next run starts over what it left.
+    /// Turns `[durability] crash` on for this run; it cannot turn it off.
+    #[arg(long)]
+    pub crashes: bool,
     /// Fail every call a `?` asks about, one at a time, and say which failures the suite noticed.
     /// Turns `[faults] inject` on for this run; it cannot turn it off.
     #[arg(long)]

@@ -271,6 +271,14 @@ A knob asked for and not put — no such zone in the time zone database, no such
 A knob whose controls established nothing to compare — a record that did not read back, other tests passing, a baseline that passed only on retry, a control that errored or ran out of time — is `knob-not-compared`, one per knob and reason, naming the targets.
 And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
 
+## What a run asks of a program that keeps state
+
+Crashes are opt-in, and a run not asked for them says nothing about a stop between two writes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+A crash stops the process just after a call that writes and runs the test that reached it again over what it left, so `restarted` says the next run passed over those files, not that it read them: a test that keeps its state under a name it picks afresh every run reads nothing its predecessor left.
+The stop is a process ending, so what it wrote is in the system's cache and on disk to every next run; a power failure that loses unflushed writes is not modelled.
+A call a target reaches without the run knowing which of its tests reaches it is `undecided`, because stopping every test of the target at once would tear what the others were writing.
+The compiler refusing a crash is stated in `crash-not-put`, and a tree with no call that writes in `crash-no-site`.
+
 ## What a run asks of a suite that talks about time
 
 A run does something to a suite that `cargo test` never does: it runs every target's baseline before it measures anything, and then measures mutants against a machine that is already busy.

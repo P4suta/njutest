@@ -48,13 +48,14 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are eighteen kinds, and every report carries the stable name:
+There are nineteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
 | `build-failure` | the workspace does not compile | yes |
 | `failing-test` | a test fails with nothing active | yes |
 | `undefined-behaviour` | the interpreter found unsoundness | yes |
+| `corrupt-after-crash` | the next run failed over what a stop just after a call that writes left, where a fresh run passed and a second stop failed it again | yes |
 | `broken-under-fault` | a test wrote into the tree under measurement while a fault failed a call, which it did not do while none did | yes |
 | `surviving-mutant` | every reaching test passed with the mutation active | no |
 | `target-missing` | a selected target could not be measured | no |
@@ -213,6 +214,26 @@ A part whose records repeat a knob for a target, or put two knobs on different t
 
 A part that measured the whole catalog raises `environment-dependent`, a defect, about each target a knob broke, `environment-dependent-reach` about each whose reach a knob moved, counting what rests on its baseline by the rule `unstable-baseline` counts with, and states `knob-not-put` and `knob-not-compared`.
 A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` rather than `PARTIAL` where a knob broke or moved a target; a merge raises them from the combined records of every part, keeping of two records of one knob and target the one that says more.
+
+## Crashes
+
+Every part carries `crashes`, one record per call that writes a crash was asked at, in catalog order, and empty unless the run was asked for crashes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+A crash site is a call that writes in a measured file, discovered by the rule `crash-after-write` alone; under it the call runs and the process stops at once.
+The first test that reaches the call, target by target in name order, is stopped there and run again with nothing active in the scratch the stop left, and each record carries one closed `decision`:
+
+| `decision` | what it says | carries |
+| --- | --- | --- |
+| `restarted` | the next run passed over the files the stop left | `on`, the target and test; `left`, those files |
+| `corrupt` | the next run failed, a fresh run passed, and a second stop failed the next run again | `on`; `failed`, the tests |
+| `unshared` | the stopped run left nothing in its scratch | `on` |
+| `unreached` | no test that reached the call stopped at it | |
+| `undecided` | a run could not be decided, or which test reaches the call is not known | `on`, `why` |
+| `not-put` | the compiler refused the crash | `diagnostic` |
+
+`accounting.crashes` counts the records, and `restarted + corrupt + unshared + unreached + undecided + not_put` equals `sites`.
+Every `corrupt` record raises a `corrupt-after-crash` finding, a defect; every `unshared` or `undecided` one a `not-measured` finding.
+`restarted` says the next run passed over what the stop left, not that it read it, and a stop here is a process stopping, not the power failing; the durable column says it does not speak about either.
+A tree with no call that writes in a measured file states `crash-no-site`, and one whose crashed baseline could not be measured raises a `not-measured` finding about `crash-baseline-not-measured`.
 
 ## The matrix
 

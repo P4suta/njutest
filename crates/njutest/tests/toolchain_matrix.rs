@@ -90,19 +90,19 @@ fn a_whole_run_asks_every_dimension_and_is_not_assured_while_one_is_a_hole() {
             "fault measured",
             "schedule not-in-this-release",
             "wire measured",
-            "durable not-in-this-release",
+            "durable nothing-to-ask",
         ],
         "every dimension is a row, and a whole run asks every one it can: {said}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     assert!(
         said.contains("VERDICT\tINSUFFICIENT"),
-        "two dimensions this release does not measure are holes: {said}"
+        "schedules, which this release does not measure, are a hole: {said}"
     );
     assert!(
         said.contains("FINDING\tdimension-not-measured\tschedule\t")
-            && said.contains("FINDING\tdimension-not-measured\tdurable\t"),
-        "and each is a finding that names it: {said}"
+            && !said.contains("FINDING\tdimension-not-measured\tdurable\t"),
+        "and a finding names it, while durability, which found no call that writes, is not: {said}"
     );
 }
 
@@ -119,7 +119,7 @@ fn a_standard_run_shows_the_matrix_and_is_decided_as_it_was() {
             "fault not-asked",
             "schedule not-in-this-release",
             "wire measured",
-            "durable not-in-this-release",
+            "durable not-asked",
         ],
         "{said}"
     );

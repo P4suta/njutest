@@ -45,7 +45,7 @@ The tree's own rule — what was not measured is not claimed as measured — sto
 4. **Contracts are answered by what they ask, never by comparing names.** The places that asked `contract == verified-v1` or `contract != deep-v1` now ask the contract what it runs — `runs_miri`, `proves_models`, `asks_every_dimension` — each an exhaustive match, so a contract added later is one the compiler makes somebody place.
 
 5. **The default does not change yet.** The plan makes `whole-v1` the default for a run that names no contract.
-   Until schedules and durability are measured, every `whole-v1` run is `INSUFFICIENT` by construction, and a default that nothing can satisfy is not a strict answer but a useless one.
+   Until schedules are measured, every `whole-v1` run is `INSUFFICIENT` by construction, and a default that nothing can satisfy is not a strict answer but a useless one; durability is measured by [ADR 0035](0035-a-crash-is-a-stop-the-next-run-has-to-survive.md).
    The default moves to `whole-v1` in the change that ships the last `not-in-this-release` column; `standard-v1`, `deep-v1` and `verified-v1` stay what they are today.
 
 ## Consequences

@@ -107,6 +107,27 @@ pub fn base() -> Value {
     })
 }
 
+/// The defect planted for the crashes layer: a crash said to have restarted that no recorded run stopped at.
+fn crashes_planted(clean: Perturbation) -> Vec<Perturbation> {
+    vec![Perturbation {
+        name: "a crash said to have restarted that no recorded run stopped at",
+        document: with(json!({
+            "crashes": [{
+                "catalog_index": 0,
+                "id": "d".repeat(64),
+                "display_id": "d".repeat(20),
+                "path": "src/lib.rs",
+                "item": "save",
+                "position": null,
+                "decision": { "decision": "restarted", "on": TARGET, "left": ["count"] }
+            }],
+            "accounting": { "crashes": { "sites": 1, "restarted": 1 } }
+        })),
+        events: Some(routes()),
+        ..clean
+    }]
+}
+
 /// The defect planted for the dimensions layer: a whole-v1 run that names none of the dimensions its records leave a hole.
 fn dimensions_planted(clean: Perturbation) -> Vec<Perturbation> {
     vec![Perturbation {
@@ -686,6 +707,7 @@ impl Layer {
                 .chain(besides_planted(&clean))
                 .collect(),
             Self::Dimensions => dimensions_planted(clean),
+            Self::Crashes => crashes_planted(clean),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
