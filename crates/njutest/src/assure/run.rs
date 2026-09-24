@@ -1408,21 +1408,24 @@ fn concurrency_of(
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
     let mut concurrency = super::concurrency::recorded(session, &mutating.request.test_args);
-    if mutating.report.scope.shard.is_none() {
-        super::concurrency::explored(
-            session,
-            &mut concurrency,
-            (
-                mutating.request.config.schedules.explore,
-                &super::knobs::passing(mutating.baseline),
-            ),
-            watch.cancel,
-        )?;
-        mutating
-            .report
-            .findings
-            .extend(crate::report::concurrency::found(&concurrency));
-    }
+    let whole = mutating.report.scope.shard.is_none();
+    super::concurrency::explored(
+        session,
+        &mut concurrency,
+        (
+            if whole {
+                mutating.request.config.schedules.explore
+            } else {
+                0
+            },
+            &super::knobs::passing(mutating.baseline),
+        ),
+        watch.cancel,
+    )?;
+    mutating
+        .report
+        .findings
+        .extend(crate::report::concurrency::found(&concurrency));
     mutating
         .report
         .limitations
