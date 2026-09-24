@@ -633,8 +633,9 @@ fn drift(
         notes.unaudited(
             "drift",
             format!(
-                "{} touch record(s) do not say which run they were measured on or what it \
-                 reached, so what they would have shown cannot be counted as agreement",
+                "{} touch record(s) do not say which run they were measured on, which mutation \
+                 a repair ran, or what it reached, so what they would have shown cannot be \
+                 counted as agreement",
                 touched.unreadable
             ),
         );
@@ -806,7 +807,7 @@ fn repaired(
         return;
     };
     let moved = crate::drift::standings(touched);
-    let paired = paired(repairs, routing, touched, &mut notes);
+    let paired = paired(recording, repairs, (routing, touched), &mut notes);
     for repair in repairs {
         one_repair(recording, (repair, &moved, routing), &paired, &mut notes);
     }
@@ -828,47 +829,70 @@ fn repaired(
     }
 }
 
-/// Each repair execution against a moved target, in the runner's order, paired with the engine's repair touch record of that target in the same order; a target whose counts differ pairs nothing and is a violation.
+/// Each repair's last execution against its moved target, paired with the one engine repair touch record naming that mutation and target; a repair touch no repair names, or a repair two of them name, is a violation.
 fn paired<'a>(
+    recording: &Recording<'_>,
     repairs: &[crate::repair::Repair],
-    routing: &'a crate::route::Routing,
-    touched: &'a crate::drift::Touched,
+    (routing, touched): (&'a crate::route::Routing, &'a crate::drift::Touched),
     notes: &mut Notes<'_>,
 ) -> Vec<(&'a crate::route::Exec, Option<&'a crate::drift::Touch>)> {
-    let targets: BTreeSet<&str> = repairs.iter().map(|one| one.target.as_str()).collect();
-    let mut pairs = Vec::new();
-    for target in targets {
-        let execs: Vec<&crate::route::Exec> = routing
-            .execs
+    let full = |display: &str| {
+        recording
+            .mutants
             .iter()
-            .filter(|exec| {
-                exec.target == target
-                    && repairs
-                        .iter()
-                        .any(|one| one.mutant == exec.mutant && one.target == target)
-            })
-            .collect();
-        let reach_records: Vec<&crate::drift::Touch> = touched
-            .touches
-            .iter()
-            .filter(|touch| {
-                touch.target == target && touch.measured == crate::drift::Measured::Repair
-            })
-            .collect();
-        if reach_records.is_empty() {
-            pairs.extend(execs.into_iter().map(|exec| (exec, None)));
-        } else if reach_records.len() == execs.len() {
-            pairs.extend(execs.into_iter().zip(reach_records.into_iter().map(Some)));
-        } else {
+            .find(|row| row.display_id == display)
+            .map(|row| row.id.clone())
+    };
+    let repair_touches: Vec<&crate::drift::Touch> = touched
+        .touches
+        .iter()
+        .filter(|touch| touch.measured == crate::drift::Measured::Repair)
+        .collect();
+    for touch in &repair_touches {
+        let claimed = repairs.iter().any(|repair| {
+            repair.target == touch.target
+                && full(&repair.mutant).is_none_or(|id| touch.mutant.as_ref() == Some(&id))
+        });
+        if !claimed {
             notes.violated(
-                target,
+                &touch.target,
                 format!(
-                    "the runner ran {} repair execution(s) against {target} and the engine \
-                     recorded {} repair touch record(s), so they cannot be told apart",
-                    execs.len(),
-                    reach_records.len()
+                    "the engine recorded a repair touch of {} against {}, and no repair record \
+                     says that mutation was run again there",
+                    touch.mutant.as_deref().unwrap_or_default(),
+                    touch.target
                 ),
             );
+        }
+    }
+    let mut pairs = Vec::new();
+    for repair in repairs {
+        let id = full(&repair.mutant);
+        let Some(exec) = routing.execs.iter().rev().find(|exec| {
+            exec.target == repair.target
+                && (exec.mutant == repair.mutant || id.as_ref() == Some(&exec.mutant))
+        }) else {
+            continue;
+        };
+        let naming: Vec<&crate::drift::Touch> = repair_touches
+            .iter()
+            .copied()
+            .filter(|touch| {
+                touch.target == repair.target && touch.mutant.is_some() && touch.mutant == id
+            })
+            .collect();
+        match naming.as_slice() {
+            [] => pairs.push((exec, None)),
+            [one] => pairs.push((exec, Some(*one))),
+            several => notes.violated(
+                &repair.mutant,
+                format!(
+                    "{} repair touch records name it against {}, so which one its repair \
+                     reached through cannot be told",
+                    several.len(),
+                    repair.target
+                ),
+            ),
         }
     }
     pairs

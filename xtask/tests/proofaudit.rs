@@ -2293,3 +2293,95 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
          {said:?}"
     );
 }
+
+fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String> {
+    let mut events = routes();
+    for mutant in repaired {
+        events.push(serde_json::json!({
+            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": TARGET, "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+        events.push(serde_json::json!({
+            "type": "repair",
+            "repair": {
+                "mutant": mutant, "target": TARGET,
+                "was": "survived", "now": "survived", "reached": "reached"
+            }
+        }));
+    }
+    let laid = sentinel::Perturbation {
+        name: "repair",
+        document: with(sentinel::drifted("moved")),
+        events: Some(events),
+        engine: Some(engine),
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit =
+        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+fn repair_touch(mutant: &str, reached: &[u32]) -> serde_json::Value {
+    let mut touch = sentinel::touch("repair", reached);
+    merge(
+        &mut touch,
+        serde_json::json!({ "touch": { "mutant": mutant } }),
+    );
+    touch
+}
+
+#[test]
+fn a_repair_touch_is_paired_with_the_repair_that_names_its_mutant_and_nothing_else() {
+    let moved = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+        ]
+    };
+    let mut named = moved();
+    named.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], named);
+    assert!(
+        !said.iter().any(|line| line.contains("repair touch")),
+        "the one repair touch names the one repaired mutant: {said:?}"
+    );
+    let mut stray = moved();
+    stray.push(repair_touch(&"a".repeat(64), &[1]));
+    stray.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], stray);
+    assert!(
+        said.iter()
+            .any(|line| line.contains(&"a".repeat(64)) && line.contains("no repair record")),
+        "a repair touch naming a mutant no repair record names is refused by name, not counted: \
+         {said:?}"
+    );
+}
+
+#[test]
+fn a_repair_touch_that_names_no_mutation_is_unread_rather_than_paired_by_position() {
+    let engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+        sentinel::touch("repair", &[1]),
+    ];
+    let audit = drift_audit(with(sentinel::drifted("moved")), engine);
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Drift
+                && remark.standing == Standing::Unaudited
+                && remark.detail.contains("which mutation a repair ran")),
+        "{audit}"
+    );
+}

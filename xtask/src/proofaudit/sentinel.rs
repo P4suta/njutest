@@ -219,6 +219,7 @@ pub fn touch(measured: &str, reached: &[u32]) -> Value {
         "touch": {
             "target": TARGET,
             "measured": measured,
+            "mutant": null,
             "tests": 1,
             "sites": reached.len(),
             "loose": 0,
