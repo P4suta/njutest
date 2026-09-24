@@ -164,14 +164,22 @@ mod explored {
     use std::collections::BTreeSet;
 
     use serde_json::json;
-    use xtask::concurrency::{Explored, Run, agrees_explored, replayed};
+    use xtask::concurrency::{Context, Explored, Run, agrees_explored, replayed};
     use xtask::knobs::Ended;
 
     fn run(delayed: Option<u64>, ended: Ended, failed: &[&str]) -> Run {
         Run {
             delayed,
+            confirms: None,
             ended,
             failed: failed.iter().map(|one| (*one).to_owned()).collect(),
+        }
+    }
+
+    fn confirming(site: u64, ended: Ended, failed: &[&str]) -> Run {
+        Run {
+            confirms: Some(site),
+            ..run(None, ended, failed)
         }
     }
 
@@ -179,13 +187,26 @@ mod explored {
         let mut runs = vec![run(Some(site), Ended::Failed, &["t"])];
         for _ in 0..5 {
             runs.push(run(Some(site), Ended::Failed, &["t"]));
-            runs.push(run(None, Ended::Passed, &[]));
+            runs.push(confirming(site, Ended::Passed, &[]));
         }
         runs
     }
 
+    const fn concurrent(runs: &[Run]) -> Context {
+        Context {
+            single_threaded: false,
+            passing: true,
+            reached: 2,
+            asked_any: !runs.is_empty(),
+        }
+    }
+
+    fn holds_in(report: &serde_json::Value, runs: &[Run], context: Context) -> bool {
+        replayed(runs).is_ok_and(|derived| agrees_explored(report, &derived, context).is_ok())
+    }
+
     fn holds(report: &serde_json::Value, runs: &[Run]) -> bool {
-        replayed(runs).is_ok_and(|derived| agrees_explored(report, &derived).is_ok())
+        holds_in(report, runs, concurrent(runs))
     }
 
     #[test]
@@ -205,7 +226,7 @@ mod explored {
         let flaky = [
             run(Some(7), Ended::Failed, &["t"]),
             run(Some(7), Ended::Failed, &["t"]),
-            run(None, Ended::Passed, &[]),
+            confirming(7, Ended::Passed, &[]),
             run(Some(7), Ended::Failed, &["t", "other"]),
         ];
         assert!(
@@ -215,7 +236,7 @@ mod explored {
         let dirty = [
             run(Some(7), Ended::Failed, &["t"]),
             run(Some(7), Ended::Failed, &["t"]),
-            run(None, Ended::Failed, &["t"]),
+            confirming(7, Ended::Failed, &["t"]),
         ];
         assert!(
             !holds(&broke, &dirty),
@@ -262,9 +283,82 @@ mod explored {
             "nothing runs after a schedule broke"
         );
         assert!(
-            replayed(&[run(None, Ended::Passed, &[])]).is_err(),
+            replayed(&[confirming(3, Ended::Passed, &[])]).is_err(),
             "an undelayed control before any delayed one is none the procedure starts"
         );
+        let mut elsewhere = broke_at(4);
+        if let Some(last) = elsewhere.last_mut() {
+            last.confirms = Some(9);
+        }
+        assert!(
+            replayed(&elsewhere).is_err(),
+            "the undelayed half of a round names the site it confirms"
+        );
         assert!(!holds(&json!({ "state": "explored" }), &passed));
+    }
+
+    #[test]
+    fn why_a_binary_was_not_explored_is_the_one_its_baseline_and_standing_give() {
+        let unexplored = |why: &str| json!({ "state": "unexplored", "why": why });
+        let quiet = concurrent(&[]);
+        assert!(
+            !holds_in(&unexplored("not-needed"), &[], quiet),
+            "a binary that may race is not one whose schedules need no exploring"
+        );
+        let proven = Context {
+            single_threaded: true,
+            ..quiet
+        };
+        assert!(holds_in(&unexplored("not-needed"), &[], proven));
+        assert!(
+            !holds_in(
+                &json!({ "state": "broke", "site": 7, "path": "p", "line": 1, "failed": ["t"], "rounds": 5 }),
+                &broke_at(7),
+                proven
+            ),
+            "a binary proven single-threaded has no schedule to break"
+        );
+        assert!(holds_in(
+            &unexplored("not-passing"),
+            &[],
+            Context {
+                passing: false,
+                ..quiet
+            }
+        ));
+        assert!(holds_in(
+            &unexplored("no-site"),
+            &[],
+            Context {
+                reached: 0,
+                ..quiet
+            }
+        ));
+        assert!(
+            !holds_in(
+                &unexplored("not-asked"),
+                &[],
+                Context {
+                    asked_any: true,
+                    ..quiet
+                }
+            ),
+            "in a run that delayed guards, a binary that could have been explored was asked"
+        );
+        let passed = [
+            run(Some(1), Ended::Passed, &[]),
+            run(Some(2), Ended::Passed, &[]),
+        ];
+        assert!(
+            !holds_in(
+                &json!({ "state": "sampled", "asked": 5, "delayed": [1, 2] }),
+                &passed,
+                Context {
+                    reached: 10,
+                    ..concurrent(&passed)
+                }
+            ),
+            "five asked of ten reached is five delayed, so two is not what five asked for"
+        );
     }
 }
