@@ -28,13 +28,24 @@ pub const RESULT: &str = "test result: ";
 /// What such a line says next when a test of the binary failed.
 pub const FAILED: &str = "FAILED";
 
+/// What the recording kept of one run's output, held to the size and digest its exec record gives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kept {
+    /// The copy is the output the record describes, and it is text.
+    Whole(String),
+    /// The copy is not the output the record describes: its size or its digest differs.
+    Mismatched,
+    /// The copy is the output the record describes, and it is not text.
+    NotText,
+}
+
 /// One recorded run of a program, and what it said where the recording kept it.
 #[derive(Debug, Clone, Copy)]
-pub struct Said<'a> {
+struct Said<'a> {
     /// The run's exec record.
-    pub exec: &'a Value,
-    /// What it printed, where the recording kept a copy the audit could read whole.
-    pub output: Option<&'a str>,
+    exec: &'a Value,
+    /// What it printed, where the recording kept a copy the audit could read.
+    output: Option<&'a Kept>,
 }
 
 /// What one interpretation came to.
@@ -112,9 +123,11 @@ fn ended(exec: &Value) -> (String, Option<i64>) {
     (kind, code)
 }
 
-/// What the interpretation `run` came to, with the toolchain's answer `probe` where it was asked, or nothing where what it said was not kept whole.
+/// What the interpretation `run` came to, with the toolchain's answer `probe` where it was asked, or nothing where what it said was not kept as text.
 fn came(run: Said<'_>, probe: Option<&Value>) -> Option<Came> {
-    let said = run.output?;
+    let Some(Kept::Whole(said)) = run.output else {
+        return None;
+    };
     let (kind, code) = ended(run.exec);
     if kind == "not-started" || ABSENT.iter().any(|marker| said.contains(marker)) {
         return Some(Came::Absent);
@@ -147,7 +160,7 @@ fn came(run: Said<'_>, probe: Option<&Value>) -> Option<Came> {
 pub(super) fn audited(
     recording: &Recording<'_>,
     execs: Option<&[Value]>,
-    outputs: &[(String, String)],
+    outputs: &[(String, Kept)],
     audit: &mut Audit,
 ) {
     let mut notes = Notes::on(audit, Layer::Soundness);
@@ -162,12 +175,12 @@ pub(super) fn audited(
         }
         return;
     };
-    let said = |exec: &Value| -> Option<String> {
+    let said = |exec: &Value| -> Option<&Kept> {
         let kept = field(exec, "output_path")?;
         outputs
             .iter()
-            .find(|(path, _text)| *path == kept)
-            .map(|(_path, text)| text.clone())
+            .find(|(path, _kept)| *path == kept)
+            .map(|(_path, kept)| kept)
     };
     let runs: Vec<&Value> = execs.iter().filter(|exec| interprets(exec)).collect();
     let probe = execs.iter().find(|exec| asks_for_the_interpreter(exec));
@@ -175,13 +188,16 @@ pub(super) fn audited(
         [] => never_ran(&reported, &mut notes),
         [one] => {
             let output = said(one);
-            match came(
-                Said {
-                    exec: one,
-                    output: output.as_deref(),
-                },
-                probe,
-            ) {
+            if output == Some(&Kept::Mismatched) {
+                notes.violated(
+                    "soundness",
+                    "the output the recording kept of the interpreter's run is not the output its \
+                     exec record gives the size and digest of"
+                        .to_owned(),
+                );
+                return;
+            }
+            match came(Said { exec: one, output }, probe) {
                 Some(derived) => compared(&reported, derived, &mut notes),
                 None => notes.unaudited(
                     "soundness",

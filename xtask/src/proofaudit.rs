@@ -390,8 +390,8 @@ pub struct Recorded<'a> {
     pub runner: Option<(&'a str, &'a str)>,
     /// Every configured build's engine recording, in namespace order.
     pub engines: &'a [(String, String)],
-    /// What each run the audit re-derives from said, by the path the runner's recording gives its kept output, where that copy is whole.
-    pub outputs: &'a [(String, String)],
+    /// What the recording kept of each run the audit re-derives from, by the path its exec record gives, held to that record's size and digest.
+    pub outputs: &'a [(String, soundness::Kept)],
 }
 
 /// Re-decides a report against what the run recorded beside it and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.

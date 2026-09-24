@@ -510,24 +510,49 @@ impl Layer {
     }
 }
 
-/// A recorded run of the interpreter over the suite that ended with `code`, whose kept output is at `output/1.txt`.
-fn interpreted(code: i64) -> Value {
+/// A recorded run of the interpreter over the suite that ended with `code` and said `said`, kept at `output/1.txt` with its size and digest.
+fn interpreted(code: i64, said: &str) -> Value {
+    use sha2::Digest as _;
     json!({
         "type": "exec",
         "exec": {
             "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
             "dir": null, "env_names": [], "timeout_ms": null,
             "stopped": { "kind": "exited", "exit": { "kind": "code", "value": code } },
-            "duration_ms": 1, "output_bytes": 1, "output_sha256": null,
+            "duration_ms": 1, "output_bytes": said.len(),
+            "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
             "output_truncated": false, "output_path": "output/1.txt", "error": null
         }
     })
 }
 
+/// What cargo-miri prints when it cannot start the test binary it built.
+const SETUP_FAILED: &str =
+    "thread 'main' panicked at cargo-miri/src/util.rs:132:9:\nfailed to run `cd /gone`\n";
+
+/// What Miri prints when every test it ran passed.
+const PASSED: &str = "test result: ok. 1 passed; 0 failed; 0 ignored\n";
+
+/// The report saying the suite was interpreted and a test failed under the interpreter.
+fn failing_under_the_interpreter() -> Value {
+    with(json!({
+        "accounting": { "soundness": { "executed": true } },
+        "findings": [{}, {
+            "kind": "failing-test",
+            "subject": "soundness",
+            "detail": "a test fails under the interpreter that passes without it",
+            "position": null
+        }]
+    }))
+}
+
 /// The lies about soundness the soundness layer must refuse.
 fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
-    let mut events = routes();
-    events.push(interpreted(101));
+    let with_run = |code: i64, said: &str| {
+        let mut events = routes();
+        events.push(interpreted(code, said));
+        Some(events)
+    };
     vec![
         Perturbation {
             name: "a suite said to be interpreted with no run of the interpreter recorded",
@@ -536,19 +561,18 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
         },
         Perturbation {
             name: "a test failing under an interpreter that ran no test",
-            document: with(json!({
-                "accounting": { "soundness": { "executed": true } },
-                "findings": [{}, {
-                    "kind": "failing-test",
-                    "subject": "soundness",
-                    "detail": "a test fails under the interpreter that passes without it",
-                    "position": null
-                }]
-            })),
-            events: Some(events),
+            document: failing_under_the_interpreter(),
+            events: with_run(101, SETUP_FAILED),
+            outputs: vec![("output/1.txt", SETUP_FAILED)],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an interpreter's kept output rewritten after the run",
+            document: failing_under_the_interpreter(),
+            events: with_run(0, PASSED),
             outputs: vec![(
                 "output/1.txt",
-                "thread 'main' panicked at cargo-miri/src/util.rs:132:9:\nfailed to run `cd /gone`\n",
+                "test result: FAILED. 0 passed; 1 failed; 0 ignored\n",
             )],
             ..clean.clone()
         },
