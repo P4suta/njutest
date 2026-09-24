@@ -53,7 +53,6 @@ equivalence = false             # ask the compiler whether it renders each survi
 
 [cache]
 max_bytes = 5368709120          # 5 GiB
-ttl = "720h"                    # 30 days
 
 [reports]
 keep = 20                       # run directories kept

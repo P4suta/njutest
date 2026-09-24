@@ -696,7 +696,7 @@ fn keep_records_the_decision_in_the_marker_and_cleanup_becomes_a_no_op() {
     assert!(read_marker(&dir).expect("marker").kept);
     snap.cleanup().expect("cleanup is a no-op after keep");
     assert!(path_exists(&dir.join(TREE_NAME).join("Cargo.toml")).expect("inspect kept manifest"));
-    let swept = tempowner::sweep(&fx.dest, &[DIR_PREFIX], now()).expect("sweep");
+    let swept = tempowner::sweep(&fx.dest, &[DIR_PREFIX]).expect("sweep");
     assert_eq!(swept.kept, 1);
     assert!(swept.removed.is_empty());
     fs::remove_dir_all(&dir).expect("tidy");

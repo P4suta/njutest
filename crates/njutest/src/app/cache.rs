@@ -6,8 +6,6 @@
 use std::io::Write;
 use std::path::Path;
 
-use jiff::Timestamp;
-
 use crate::cache::store::Store;
 use crate::cli::{Cache, EXIT_ASSURED, EXIT_ERROR, Environment};
 use crate::config::Config;
@@ -30,11 +28,7 @@ pub fn run(
             return Ok(EXIT_ERROR);
         }
     };
-    let store = Store::new(
-        &environment.cache_directory,
-        config.cache.max_bytes,
-        config.cache.ttl,
-    );
+    let store = Store::new(&environment.cache_directory, config.cache.max_bytes);
     if let Some(destination) = arguments.export.as_ref() {
         return said(carry(&store, destination, Direction::Out), stdout, stderr);
     }
@@ -42,7 +36,7 @@ pub fn run(
         return said(carry(&store, source, Direction::In), stdout, stderr);
     }
     let collected = if arguments.gc {
-        match store.collect(Timestamp::now()) {
+        match store.collect() {
             Ok(collected) => collected,
             Err(error) => {
                 super::complain(stderr, &error, error.code())?;
@@ -77,8 +71,7 @@ pub fn run(
         stdout,
         &if arguments.gc {
             format!(
-                "collected {} expired, {} evicted, {} bytes",
-                collected.expired.len(),
+                "collected {} evicted, {} bytes",
                 collected.evicted.len(),
                 collected.bytes
             )
@@ -87,7 +80,7 @@ pub fn run(
         },
     )?;
     temporary(environment, arguments.gc, stdout)?;
-    if let Err(error) = preserved(&root, stdout) {
+    if let Err(error) = preserved(&root, arguments.release_kept, stdout) {
         super::complain(stderr, &error, crate::error::CACHE_CORRUPT)?;
         return Ok(EXIT_ERROR);
     }
@@ -148,11 +141,16 @@ fn said(
     }
 }
 
-/// What runs preserved on purpose and is still there.
-/// The ledger names a directory; the directory's own marker says whether it may be removed, so this reports rather than collects.
-fn preserved(root: &Path, stdout: &mut dyn Write) -> std::io::Result<()> {
-    let ledger = crate::kept::read(root)?;
-    let left = crate::kept::forget_gone(&ledger);
+/// What runs preserved on purpose and is still there, released first when asked.
+/// The ledger names a directory; the directory's own marker says whether it may be removed, so a release takes only what vouches for itself.
+fn preserved(root: &Path, release: bool, stdout: &mut dyn Write) -> std::io::Result<()> {
+    let left = if release {
+        let (removed, left) = crate::kept::release(root)?;
+        super::say(stdout, &format!("released  {removed} kept directories"))?;
+        left
+    } else {
+        crate::kept::forget_gone(&crate::kept::read(root)?)
+    };
     super::say(
         stdout,
         &format!("kept      {} directories", left.kept.len()),
@@ -180,7 +178,6 @@ fn temporary(
             rust_mutants::snapshot::DIR_PREFIX,
             crate::scratch::DIR_PREFIX,
         ],
-        Timestamp::now(),
         if collect { &remove } else { &nothing },
     )?;
     super::say(
@@ -194,15 +191,5 @@ fn temporary(
             swept.kept
         ),
     )?;
-    if swept.unreached > 0 {
-        super::say(
-            stdout,
-            &format!(
-                "          {} left for the next sweep; something is holding a directory \
-                 open, and a sweep cannot take it back",
-                swept.unreached
-            ),
-        )?;
-    }
     Ok(())
 }

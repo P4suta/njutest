@@ -8,7 +8,6 @@ mod lock;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -22,8 +21,6 @@ pub const SCHEMA: &str = "rust-mutants-temp-owner-v1";
 pub const LOCK_NAME: &str = "owner.lock";
 /// The JSON marker file inside a claimed directory.
 pub const MARKER_NAME: &str = "owner.json";
-/// How long an unowned directory must have been untouched before [`sweep`] treats it as a leftover.
-pub const LEGACY_MAX_AGE: Duration = Duration::from_hours(24);
 
 /// What a claimed directory is for.
 /// A scratch belongs to one run and goes away with it; a cache is meant to outlive the run that filled it, which is what makes a second run fast.
@@ -35,7 +32,7 @@ pub enum Role {
     /// A sweep reclaims it as soon as nobody holds its lock.
     Scratch,
     /// A build cache.
-    /// A sweep spares it however old it is; only a caller that asks for it by name reclaims it.
+    /// A sweep spares it while the tree it is keyed to exists; only a caller that asks for it by name reclaims it sooner.
     Cache,
 }
 
@@ -365,27 +362,22 @@ pub struct SweepResult {
     /// The directories that could not be judged or removed.
     /// A failure does not stop the sweep of the others.
     pub failures: Vec<SweepFailure>,
-    /// How many prefixed directories the sweep never reached, because it had spent its budget.
-    pub unreached: usize,
 }
-
-/// How long a sweep spends before it leaves the rest for the next one.
-pub const SWEEP_BUDGET: Duration = Duration::from_secs(10);
 
 /// Removes every abandoned directory directly under `parent` whose name begins with one of `prefixes`.
 ///
 /// # Errors
 /// Returns the failure to read `parent` itself.
-pub fn sweep(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<SweepResult> {
-    sweep_with(parent, prefixes, now, &|dir: &Path| fs::remove_dir_all(dir))
+pub fn sweep(parent: &Path, prefixes: &[&str]) -> io::Result<SweepResult> {
+    sweep_with(parent, prefixes, &|dir: &Path| fs::remove_dir_all(dir))
 }
 
 /// Removes every unlocked directory under `parent` whose name is prefixed, caches included.
 ///
 /// # Errors
 /// Returns the failure to read `parent` itself.
-pub fn reclaim(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<SweepResult> {
-    reclaim_with(parent, prefixes, now, &|dir: &Path| fs::remove_dir_all(dir))
+pub fn reclaim(parent: &Path, prefixes: &[&str]) -> io::Result<SweepResult> {
+    reclaim_with(parent, prefixes, &|dir: &Path| fs::remove_dir_all(dir))
 }
 
 /// [`reclaim`] with its removal operation as an argument.
@@ -395,18 +387,61 @@ pub fn reclaim(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<S
 pub fn reclaim_with(
     parent: &Path,
     prefixes: &[&str],
-    now: Timestamp,
     remove: &dyn Fn(&Path) -> io::Result<()>,
 ) -> io::Result<SweepResult> {
     collect(
         parent,
         &Pass {
             prefixes,
-            now,
             remove,
             caches_too: true,
         },
     )
+}
+
+/// What [`release_kept`] did with one directory a run kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Released {
+    /// Its marker said it was kept, nobody held it, and it is gone.
+    Removed,
+    /// Somebody holds its lock, so it is theirs.
+    Live,
+    /// It has no marker saying it was kept, so a path naming it is not authority to delete it.
+    Unvouched,
+}
+
+/// Removes `dir` if its own marker says a run kept it and nobody holds its lock: the explicit end of a keep, which no sweep and no clock supplies.
+///
+/// # Errors
+/// The lock or the directory could not be inspected, or the removal failed.
+pub fn release_kept(dir: &Path) -> io::Result<Released> {
+    release_kept_with(dir, &|dir: &Path| fs::remove_dir_all(dir))
+}
+
+/// [`release_kept`] with its removal as an argument, so a directory that refuses to go can be tested without a filesystem persuaded into refusing.
+///
+/// # Errors
+/// See [`release_kept`].
+pub fn release_kept_with(
+    dir: &Path,
+    remove: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<Released> {
+    let vouched = match read_marker(dir) {
+        Ok(marker) => marker.kept,
+        Err(_missing_or_unreadable) => false,
+    };
+    if !vouched {
+        return Ok(Released::Unvouched);
+    }
+    match acquire(&lock_path(dir))? {
+        None => Ok(Released::Live),
+        Some(mut lock) => {
+            lock.release()?;
+            remove(dir)?;
+            Ok(Released::Removed)
+        }
+    }
 }
 
 /// [`sweep`] with its removal operation as an argument, so the "one directory refuses to go" case can be tested without a filesystem persuaded into failing.
@@ -416,14 +451,12 @@ pub fn reclaim_with(
 pub fn sweep_with(
     parent: &Path,
     prefixes: &[&str],
-    now: Timestamp,
     remove: &dyn Fn(&Path) -> io::Result<()>,
 ) -> io::Result<SweepResult> {
     collect(
         parent,
         &Pass {
             prefixes,
-            now,
             remove,
             caches_too: false,
         },
@@ -436,7 +469,6 @@ pub fn sweep_with(
 /// Propagating it would throw away everything the pass had already established — every directory removed, every byte counted, every other failure — and answer with the temporary root's name, which is not the directory that refused.
 struct Pass<'a> {
     prefixes: &'a [&'a str],
-    now: Timestamp,
     remove: &'a dyn Fn(&Path) -> io::Result<()>,
     /// Whether a build cache nobody holds counts as reclaimable.
     caches_too: bool,
@@ -449,32 +481,18 @@ fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
         Err(error) => return Err(error),
     };
     let mut result = SweepResult::default();
-    let started = std::time::Instant::now();
-    let collecting = Collecting {
-        parent,
-        pass,
-        started: &started,
-    };
     for entry in entries {
-        collect_entry(entry, &collecting, &mut result)?;
+        collect_entry(entry, parent, pass, &mut result)?;
     }
     Ok(result)
 }
 
-struct Collecting<'a, 'pass> {
-    parent: &'a Path,
-    pass: &'a Pass<'pass>,
-    started: &'a std::time::Instant,
-}
-
 fn collect_entry(
     entry: io::Result<fs::DirEntry>,
-    collecting: &Collecting<'_, '_>,
+    parent: &Path,
+    pass: &Pass<'_>,
     result: &mut SweepResult,
 ) -> io::Result<()> {
-    let parent = collecting.parent;
-    let pass = collecting.pass;
-    let started = collecting.started;
     let entry = match entry {
         Ok(entry) => entry,
         Err(source) => {
@@ -507,12 +525,8 @@ fn collect_entry(
     if !entry_type.is_dir() {
         return Ok(());
     }
-    if started.elapsed() >= SWEEP_BUDGET {
-        result.unreached = checked_count(result.unreached, "unreached directories")?;
-        return Ok(());
-    }
     let dir = parent.join(name);
-    let verdict = cache_verdict(judge(&dir, &entry, pass.now), &dir, pass.caches_too);
+    let verdict = cache_verdict(judge(&dir), &dir, pass.caches_too);
     record_verdict(result, verdict, dir, pass.remove)
 }
 
@@ -594,13 +608,13 @@ enum Verdict {
     Kept,
     /// The marker says it is a build cache, which outlives the run that filled it.
     Cache,
-    /// Left alone without being counted: an unowned directory too young to judge.
+    /// Left alone without being counted: a directory with no marker, which names no owner to ask.
     /// Not a fact about a live owner, so not a number in the result.
     Spared,
 }
 
 /// A marker that cannot be read at all is treated as a marker that does not say kept, deliberately: the lock has already answered the only question that matters, and a half-written marker must not make a dead directory immortal.
-fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
+fn judge(dir: &Path) -> io::Result<Verdict> {
     match read_marker(dir) {
         Ok(marker) if marker.kept => return Ok(Verdict::Kept),
         Ok(marker) if marker.role == Role::Cache => {
@@ -608,7 +622,7 @@ fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict
                 return Ok(Verdict::Cache);
             }
         }
-        Err(MarkerError::Missing { .. }) => return legacy(entry, now),
+        Err(MarkerError::Missing { .. }) => return Ok(Verdict::Spared),
         Ok(_) | Err(_) => {}
     }
     match acquire(&lock_path(dir))? {
@@ -629,26 +643,6 @@ fn orphaned(keyed_to: Option<&str>) -> io::Result<bool> {
         Ok(_metadata) => Ok(false),
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(true),
         Err(source) => Err(source),
-    }
-}
-
-/// A directory with no marker at all: one created before this convention, or one whose marker was lost.
-/// Age is the only evidence there is, and a young one is left alone because it may be a run in progress.
-fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
-    let modified = match entry.metadata() {
-        Ok(metadata) => metadata.modified()?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Verdict::Spared),
-        Err(error) => return Err(error),
-    };
-    let modified = Timestamp::try_from(modified).map_err(io::Error::other)?;
-    let Some(age) = now.as_second().checked_sub(modified.as_second()) else {
-        return Ok(Verdict::Spared);
-    };
-    let max_age = i64::try_from(LEGACY_MAX_AGE.as_secs()).map_err(io::Error::other)?;
-    if age < max_age {
-        Ok(Verdict::Spared)
-    } else {
-        Ok(Verdict::Abandoned)
     }
 }
 

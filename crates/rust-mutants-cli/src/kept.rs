@@ -122,16 +122,16 @@ impl Ledger {
         F: Fn(&Path) -> std::io::Result<()>,
     {
         let ledger = Self::read(directory)?;
-        let started = std::time::Instant::now();
         let mut removed = 0usize;
         let mut left = Self::default();
         for entry in ledger.kept {
             if entry_kind(&entry.path)? == EntryKind::Missing {
                 continue;
             }
-            if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET
-                || remove(&entry.path).is_err()
-            {
+            if !matches!(
+                rust_mutants::tempowner::release_kept_with(&entry.path, remove),
+                Ok(rust_mutants::tempowner::Released::Removed)
+            ) {
                 left.kept.push(entry);
                 continue;
             }

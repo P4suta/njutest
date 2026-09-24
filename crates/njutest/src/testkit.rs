@@ -761,7 +761,6 @@ pub fn documented_specimen() -> crate::config::Config {
         },
         cache: Cache {
             max_bytes: 5_368_709_120,
-            ttl: Duration::from_hours(24 * 30),
         },
         mutation: Mutation { equivalence: true },
         verification: Verification {

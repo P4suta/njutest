@@ -98,8 +98,35 @@ pub fn record(
         ledger.kept.retain(|kept| kept.path != entry.path);
         ledger.kept.push(entry);
     }
+    write(root, &ledger)
+}
+
+/// Removes every directory the ledger names whose own marker says a run kept it and which nobody holds, writes back the rest, and says how many went.
+///
+/// # Errors
+/// The ledger could not be read or written, or a directory could not be inspected or removed.
+pub fn release(root: &Path) -> std::io::Result<(usize, Ledger)> {
+    let ledger = forget_gone(&read(root)?);
+    let mut removed = 0_usize;
+    let mut left = Ledger::default();
+    for entry in ledger.kept {
+        match rust_mutants::tempowner::release_kept(Path::new(&entry.path))? {
+            rust_mutants::tempowner::Released::Removed => {
+                removed = removed.checked_add(1).ok_or_else(|| {
+                    std::io::Error::other("the released-directory count does not fit usize")
+                })?;
+            }
+            _held_or_unvouched => left.kept.push(entry),
+        }
+    }
+    write(root, &left)?;
+    Ok((removed, left))
+}
+
+/// Writes `ledger` where [`read`] finds it, and returns that path.
+fn write(root: &Path, ledger: &Ledger) -> std::io::Result<PathBuf> {
     let path = path(root);
-    let text = serde_json::to_string_pretty(&ledger).map_err(std::io::Error::other)?;
+    let text = serde_json::to_string_pretty(ledger).map_err(std::io::Error::other)?;
     rust_mutants::replace::file(&path, format!("{text}\n").as_bytes())
         .map_err(|failure| failure.source)?;
     Ok(path)

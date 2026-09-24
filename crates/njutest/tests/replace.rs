@@ -119,7 +119,7 @@ fn take_checkpoint(root: &Path) -> Option<String> {
 }
 
 fn store(root: &Path) -> njutest::cache::store::Store {
-    njutest::cache::store::Store::new(root, 64 * 1024 * 1024, Duration::from_hours(24))
+    njutest::cache::store::Store::new(root, 64 * 1024 * 1024)
 }
 
 fn put_report(root: &Path, round: u64) -> Option<String> {

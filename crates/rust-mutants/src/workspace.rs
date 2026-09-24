@@ -760,7 +760,7 @@ impl Workspace {
         };
         let parent = TemporaryRoot::open(&options.temp_directory)?;
         let now = jiff::Timestamp::now();
-        let swept = match tempowner::sweep(parent.path(), &SWEPT_PREFIXES, now) {
+        let swept = match tempowner::sweep(parent.path(), &SWEPT_PREFIXES) {
             Ok(swept) => swept,
             Err(source) => SweepResult {
                 failures: vec![tempowner::SweepFailure {

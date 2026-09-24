@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use jiff::Timestamp;
-use njutest::kept::{Ledger, SCHEMA, forget_gone, path, read, record};
+use njutest::kept::{Ledger, SCHEMA, forget_gone, path, read, record, release};
 
 fn when() -> Timestamp {
     Timestamp::from_second(1_700_000_000).expect("a timestamp")
@@ -92,4 +92,57 @@ fn a_directory_that_is_gone_stops_being_reported() {
     let left = forget_gone(&ledger);
     assert_eq!(left.kept.len(), 1);
     assert_eq!(left.kept[0].path, there.display().to_string());
+}
+
+#[test]
+fn releasing_takes_what_the_directory_says_was_kept_and_writes_back_the_rest() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let kept = temp.path().join("njutest-run-kept");
+    let unmarked = temp.path().join("njutest-run-unmarked");
+    for dir in [&kept, &unmarked] {
+        std::fs::create_dir_all(dir).expect("mkdir");
+    }
+    rust_mutants::tempowner::claim(&kept, when())
+        .expect("claims")
+        .keep()
+        .expect("keeps");
+    record(
+        root.path(),
+        "run-1",
+        when(),
+        &[kept.clone(), unmarked.clone()],
+    )
+    .expect("recorded");
+
+    let (removed, left) = release(root.path()).expect("released");
+
+    assert_eq!(
+        removed, 1,
+        "the one directory that vouches for its keep goes"
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(&kept)
+            .map_err(|error| error.kind())
+            .err(),
+        Some(std::io::ErrorKind::NotFound),
+        "and it is gone"
+    );
+    assert!(
+        std::fs::symlink_metadata(&unmarked).is_ok_and(|metadata| metadata.is_dir()),
+        "a path in the ledger is not authority to delete: the directory has to say it was kept"
+    );
+    assert_eq!(
+        left.kept
+            .iter()
+            .map(|entry| PathBuf::from(&entry.path))
+            .collect::<Vec<_>>(),
+        [unmarked],
+        "what it would not take stays named"
+    );
+    assert_eq!(
+        read(root.path()).expect("reads"),
+        left,
+        "and that is what it wrote back"
+    );
 }

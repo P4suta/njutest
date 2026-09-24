@@ -156,17 +156,24 @@ fn a_directory_that_went_away_stops_being_reported() {
 }
 
 #[test]
-fn clearing_removes_what_the_ledger_names_and_says_how_many() {
+fn clearing_removes_what_the_ledger_names_and_the_directory_vouches_for_and_says_how_many() {
     let dir = tempfile::tempdir().expect("tempdir");
     let one = made(dir.path(), "one");
     let two = made(dir.path(), "two");
+    for kept in [&one, &two] {
+        rust_mutants::tempowner::claim(kept, jiff::Timestamp::now())
+            .expect("claims")
+            .keep()
+            .expect("keeps");
+    }
+    let unmarked = made(dir.path(), "unmarked");
     let ledger = Ledger::record(
         dir.path(),
         "20260101T000000000Z",
-        &[one.clone(), two.clone()],
+        &[one.clone(), two.clone(), unmarked.clone()],
     )
     .expect("the ledger");
-    assert_eq!(ledger.kept.len(), 2, "both directories were recorded");
+    assert_eq!(ledger.kept.len(), 3, "every directory was recorded");
 
     let (removed, left) = Ledger::clear(dir.path()).expect("the ledger");
     assert_eq!(
@@ -175,18 +182,23 @@ fn clearing_removes_what_the_ledger_names_and_says_how_many() {
             left.kept.len(),
             test_missing(&one),
             test_missing(&two),
+            test_missing(&unmarked),
         ),
-        (2, 0, true, true),
-        "clearing takes what the ledger names, all of it, and says how many: a person \
-         freeing a disk needs the number to know whether it was worth it"
+        (2, 1, true, true, false),
+        "clearing takes what the ledger names and the directory itself says was kept, and \
+         says how many: a ledger is an editable file, and a path in it is not authority for \
+         a recursive delete"
     );
-    assert!(
+    assert_eq!(
         Ledger::read(dir.path())
             .expect("the cleared ledger reads")
             .kept
-            .is_empty(),
-        "and what it wrote back is what the next run reads: a ledger still naming \
-         directories that are gone sends the next person looking for them"
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<PathBuf>>(),
+        vec![unmarked],
+        "and what it wrote back is what the next run reads: the directory it would not take, \
+         and none that are gone"
     );
 }
 

@@ -1149,11 +1149,7 @@ fn evidence_of(
 
 /// The store of earlier answers, bounded the way the configuration says.
 fn store_of(environment: &Environment, config: &Config) -> Store {
-    Store::new(
-        &environment.cache_directory,
-        config.cache.max_bytes,
-        config.cache.ttl,
-    )
+    Store::new(&environment.cache_directory, config.cache.max_bytes)
 }
 
 /// Waits for whatever run is already establishing this identity, so the same work is not done twice at once.

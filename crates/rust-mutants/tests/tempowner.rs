@@ -16,11 +16,12 @@ use std::time::{Duration, SystemTime};
 
 use jiff::Timestamp;
 use rust_mutants::tempowner::{
-    ClaimError, LEGACY_MAX_AGE, LOCK_NAME, MARKER_NAME, MarkerError, Role, SCHEMA, acquire, claim,
-    claim_cache, claim_cache_of, lock_path, marker_path, read_marker, reclaim, sweep, sweep_with,
+    ClaimError, LOCK_NAME, MARKER_NAME, MarkerError, Released, Role, SCHEMA, acquire, claim,
+    claim_cache, claim_cache_of, lock_path, marker_path, read_marker, reclaim, release_kept, sweep,
+    sweep_with,
 };
 
-/// The real clock: the legacy rule compares against real modification times.
+/// The time a claim records, which no sweep reads.
 fn now() -> Timestamp {
     Timestamp::now()
 }
@@ -183,12 +184,12 @@ fn age(dir: &Path, by: Duration) {
 #[test]
 fn a_missing_parent_is_a_machine_on_which_nothing_has_run_yet() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let result = sweep(&temp.path().join("nowhere"), &["rust-mutants-snap-"], now()).expect("ok");
+    let result = sweep(&temp.path().join("nowhere"), &["rust-mutants-snap-"]).expect("ok");
     assert!(result.removed.is_empty() && result.failures.is_empty());
 }
 
 #[test]
-fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
+fn the_sweep_removes_only_abandoned_owned_directories_wearing_a_prefix_however_old_the_rest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let parent = temp.path();
     let abandoned = make(parent, "rust-mutants-snap-dead");
@@ -202,10 +203,10 @@ fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
     claim(&kept, now()).expect("claims").keep().expect("keeps");
     let young = make(parent, "rust-mutants-snap-young");
     let old = make(parent, "rust-mutants-snap-old");
-    age(&old, LEGACY_MAX_AGE + Duration::from_secs(60));
+    age(&old, Duration::from_hours(24 * 365));
     let unrelated = make(parent, "somebody-else");
     let unrelated_old = make(parent, "somebody-else-old");
-    age(&unrelated_old, LEGACY_MAX_AGE * 2);
+    age(&unrelated_old, Duration::from_hours(24 * 365));
     let file_with_prefix = parent.join("rust-mutants-snap-file");
     fs::write(&file_with_prefix, b"not a directory").expect("write");
     let other_prefix = make(parent, "rust-mutants-api-dead");
@@ -214,16 +215,17 @@ fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
         .release()
         .expect("releases other-prefix owner");
 
-    let result = sweep(parent, &["rust-mutants-snap-", "rust-mutants-api-"], now()).expect("ok");
+    let result = sweep(parent, &["rust-mutants-snap-", "rust-mutants-api-"]).expect("ok");
 
     let mut removed = result.removed.clone();
     removed.sort();
     assert_eq!(
         removed,
-        [other_prefix.clone(), abandoned.clone(), old.clone()]
+        [other_prefix.clone(), abandoned.clone()],
+        "a directory with no marker names no owner to ask, so no age makes it anybody's to remove"
     );
     assert!(
-        result.removed_bytes >= 3 * 1024 && result.removed_bytes < 3 * 1024 + 1024,
+        result.removed_bytes >= 2 * 1024 && result.removed_bytes < 2 * 1024 + 1024,
         "{}",
         result.removed_bytes
     );
@@ -232,13 +234,13 @@ fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
     assert!(result.failures.is_empty(), "{:?}", result.failures);
     assert!(
         !exists(&abandoned).expect("inspect abandoned")
-            && !exists(&old).expect("inspect old")
             && !exists(&other_prefix).expect("inspect other prefix")
     );
     assert!(
         exists(&live).expect("inspect live")
             && exists(&kept).expect("inspect kept")
             && exists(&young).expect("inspect young")
+            && exists(&old).expect("inspect old")
             && exists(&unrelated).expect("inspect unrelated")
             && exists(&unrelated_old).expect("inspect unrelated old")
     );
@@ -267,7 +269,7 @@ fn a_directory_that_refuses_to_go_does_not_stop_the_sweep_of_the_others() {
             fs::remove_dir_all(dir)
         }
     };
-    let result = sweep_with(parent, &["rust-mutants-snap-"], now(), &remove).expect("ok");
+    let result = sweep_with(parent, &["rust-mutants-snap-"], &remove).expect("ok");
     assert_eq!(result.removed, std::slice::from_ref(&willing));
     assert_eq!(result.failures.len(), 1);
     assert_eq!(result.failures[0].dir, stubborn);
@@ -282,7 +284,7 @@ fn a_half_written_marker_does_not_make_a_dead_directory_immortal() {
     let parent = temp.path();
     let dir = make(parent, "rust-mutants-snap-half");
     fs::write(marker_path(&dir), b"{\"schema\":\"rust-mut").expect("write");
-    let result = sweep(parent, &["rust-mutants-snap-"], now()).expect("ok");
+    let result = sweep(parent, &["rust-mutants-snap-"]).expect("ok");
     assert_eq!(result.removed, std::slice::from_ref(&dir));
 }
 
@@ -307,7 +309,6 @@ fn a_cache_survives_a_sweep_and_is_reclaimed_only_when_asked() {
     let swept = sweep(
         parent.path(),
         &["rust-mutants-target-", "rust-mutants-snap-"],
-        now,
     )
     .expect("sweep");
     assert_eq!(
@@ -322,7 +323,7 @@ fn a_cache_survives_a_sweep_and_is_reclaimed_only_when_asked() {
     );
     assert!(!is_directory(&scratch).expect("inspect scratch"));
 
-    let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"], now).expect("reclaim");
+    let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"]).expect("reclaim");
     assert_eq!(reclaimed.removed.len(), 1, "{reclaimed:?}");
     assert!(
         !is_directory(&cache).expect("inspect reclaimed cache"),
@@ -339,7 +340,7 @@ fn a_cache_a_run_is_using_is_not_reclaimed() {
     let mut owner = claim_cache(&cache, now, "rust-mutants-target-owner-v1")
         .expect("a fresh directory is claimable");
 
-    let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"], now).expect("reclaim");
+    let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"]).expect("reclaim");
     assert!(reclaimed.removed.is_empty(), "{reclaimed:?}");
     assert_eq!(reclaimed.live, 1);
     assert!(is_directory(&cache).expect("inspect live cache"));
@@ -379,7 +380,7 @@ fn a_cache_whose_tree_is_gone_is_collected_rather_than_kept_for_a_run_that_canno
         .release()
         .expect("release orphan cache");
 
-    let swept = sweep(parent, &["rust-mutants-target-"], now()).expect("sweep");
+    let swept = sweep(parent, &["rust-mutants-target-"]).expect("sweep");
     assert!(
         exists(&living).expect("inspect living cache"),
         "a cache the next run of that tree can still hit is what a cache is for"
@@ -407,7 +408,7 @@ fn a_cache_that_names_no_tree_is_spared_as_it_always_was() {
         .release()
         .expect("release cache");
 
-    let swept = sweep(parent, &["rust-mutants-target-"], now()).expect("sweep");
+    let swept = sweep(parent, &["rust-mutants-target-"]).expect("sweep");
     assert!(
         exists(&dir).expect("inspect unkeyed cache"),
         "a marker written before caches said what they are keyed to says nothing about whether \
@@ -457,4 +458,37 @@ fn a_directory_with_nothing_in_it_and_one_that_is_not_there_are_both_nothing() {
          both a sweep and a cache ask this while something else is removing what they \
          are counting, and neither may stop because the answer moved"
     );
+}
+
+#[test]
+fn a_keep_is_released_only_where_the_directory_vouches_for_it_and_nobody_holds_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let parent = temp.path();
+    let kept = make(parent, "rust-mutants-snap-kept");
+    claim(&kept, now()).expect("claims").keep().expect("keeps");
+    let held = make(parent, "rust-mutants-snap-held");
+    claim(&held, now()).expect("claims").keep().expect("keeps");
+    let mut holder = acquire(&lock_path(&held))
+        .expect("inspects the lock")
+        .expect("a kept directory's lock is free until somebody takes it");
+    let unmarked = make(parent, "rust-mutants-snap-unmarked");
+
+    assert_eq!(
+        release_kept(&kept).expect("released"),
+        Released::Removed,
+        "a kept directory whose owner is gone goes when somebody asks"
+    );
+    assert_eq!(
+        release_kept(&held).expect("inspected"),
+        Released::Live,
+        "a directory somebody still holds is theirs, kept or not"
+    );
+    assert_eq!(
+        release_kept(&unmarked).expect("inspected"),
+        Released::Unvouched,
+        "a path in a ledger is not authority to delete: the directory has to say it was kept"
+    );
+    assert!(!exists(&kept).expect("inspect kept"));
+    assert!(exists(&held).expect("inspect held") && exists(&unmarked).expect("inspect unmarked"));
+    holder.release().expect("releases");
 }

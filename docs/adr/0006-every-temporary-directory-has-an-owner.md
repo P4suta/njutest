@@ -8,6 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-05, inherited from goatest ADR 0006 (accepted 2026-09-04) and shared with the `tempowner` convention of every engine in the family.
+Amended 2026-09-25: nothing is judged by time any more (decisions 5 and 9).
 
 ## Context
 
@@ -26,12 +27,14 @@ Two questions must be answerable about a directory found in a temporary root: *w
 3. **The lock is the liveness signal, not the pid.** A claimed directory holds `owner.lock`, an exclusive advisory lock held open for the whole run.
    A lock that can be taken means its holder is gone; a pid wraps.
 4. **The marker is for people, and for one bit.** `owner.json` is a `njutest-temp-owner-v1` document naming the run, the process, the start time, the repository, and `kept`.
-   The sweep reads only `kept`.
-5. **An unowned directory is judged by age, and 24 hours is the number.**
+   The sweep reads `kept`, the role, and the tree a cache is keyed to.
+5. **An unowned directory is nobody's to remove.** A directory with no marker names no owner whose lock could say it is gone, so no sweep touches it, however old; the machine-wide collector that reads the same markers leaves it alone for the same reason.
+   Age was the evidence here once, and it removed trees a paused run was about to read.
 6. **Sweeping is what a run does before it writes, and what `cache gc` does on demand.** The engine sweeps its own prefixes in `Workspace::open`; the runner reports that rather than duplicating it.
 7. **A keep is recorded where it outlives the run**, in `.njutest/kept-temp-v1.json`, so a successful untraced run still accounts for what it left behind.
 8. **The ledger names a directory; the directory says whether it may be removed.** A recursive delete is not something a path in an editable file may authorize; the marker must vouch for it.
-9. **`[cache] ttl` bounds a keep, and nothing else does.**
+9. **A keep ends when somebody ends it**, with `njutest cache --release-kept` or `rust-mutants cache --kept`, which take only a directory whose own marker says it was kept, and a cache ends when the tree it is keyed to is gone or when a caller reclaims it by name.
+   No sweep has a time budget either: it looks at every prefixed directory, because one it did not reach would be one it said nothing about.
 10. **None of this can fail a run.**
 
 ## Consequences

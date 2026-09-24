@@ -1015,7 +1015,7 @@ fn destination(
             .with_source(source));
         }
     }
-    let sweep_observation = tempowner::sweep(parent, &[name.as_str()], now).map_err(|source| {
+    let sweep_observation = tempowner::sweep(parent, &[name.as_str()]).map_err(|source| {
         SnapshotError::new(
             SnapshotErrorKind::Destination,
             parent.display().to_string(),

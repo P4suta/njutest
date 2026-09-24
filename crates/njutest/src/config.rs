@@ -29,9 +29,6 @@ const fn default_steps() -> u64 {
 /// How much of the outcome cache is kept when the file does not say.
 pub const DEFAULT_CACHE_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
-/// How long a cached outcome is kept when the file does not say.
-pub const DEFAULT_CACHE_TTL: Duration = Duration::from_hours(720);
-
 /// Where a run writes, unless the configuration says otherwise.
 pub const DEFAULT_REPORTS_DIRECTORY: &str = "reports";
 
@@ -456,16 +453,12 @@ pub enum VerificationError {
 pub struct Cache {
     /// How much of the outcome cache is kept.
     pub max_bytes: u64,
-    /// How long a cached outcome is kept.
-    #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
-    pub ttl: Duration,
 }
 
 impl Default for Cache {
     fn default() -> Self {
         Self {
             max_bytes: DEFAULT_CACHE_MAX_BYTES,
-            ttl: DEFAULT_CACHE_TTL,
         }
     }
 }
@@ -987,7 +980,6 @@ fn duration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::E
 #[must_use]
 pub fn skeleton() -> String {
     let timeout = DEFAULT_TIMEOUT.as_secs() / 60;
-    let ttl = DEFAULT_CACHE_TTL.as_secs() / 3600;
     format!(
         "\
 # njutest configuration. Every key below is optional; what is shown is the
@@ -1030,7 +1022,6 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\" | \"verified-v
 
 [cache]
 # max_bytes = {max_bytes}
-# ttl = \"{ttl}h\"
 
 [reports]
 # keep = {keep}                       # run directories kept

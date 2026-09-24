@@ -12,8 +12,8 @@
 use std::time::Duration;
 
 use njutest::config::{
-    Acceptance, Config, ConfigErrorKind, Contract, DEFAULT_CACHE_MAX_BYTES, DEFAULT_CACHE_TTL,
-    DEFAULT_REPORTS_KEEP, DEFAULT_TIMEOUT, FILE_NAME, parse_duration, skeleton,
+    Acceptance, Config, ConfigErrorKind, Contract, DEFAULT_CACHE_MAX_BYTES, DEFAULT_REPORTS_KEEP,
+    DEFAULT_TIMEOUT, FILE_NAME, parse_duration, skeleton,
 };
 
 fn load(text: &str) -> Result<Config, njutest::config::ConfigError> {
@@ -36,7 +36,6 @@ fn the_defaults_are_the_numbers_the_contract_states() {
     assert_eq!(config.execution.timeout, DEFAULT_TIMEOUT);
     assert_eq!(config.execution.jobs, 0);
     assert_eq!(config.cache.max_bytes, DEFAULT_CACHE_MAX_BYTES);
-    assert_eq!(config.cache.ttl, DEFAULT_CACHE_TTL);
     assert_eq!(config.reports.keep, DEFAULT_REPORTS_KEEP);
     assert!(!config.fuzz.run);
     assert_eq!(config.fuzz.max_total_time, Duration::from_secs(60));
@@ -126,7 +125,6 @@ fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
     for exact_default in [
         "# timeout = \"10m\"",
         "# max_bytes = 5368709120",
-        "# ttl = \"720h\"",
         "# keep = 20",
         "# max_total_time = \"60s\"",
     ] {
@@ -135,6 +133,16 @@ fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
             "the rendered default is part of the init contract: {exact_default}"
         );
     }
+}
+
+#[test]
+fn a_time_to_live_for_answers_is_refused_rather_than_ignored() {
+    let error = expect_error("version = 1\n[cache]\nttl = \"720h\"\n");
+    assert!(
+        error.to_string().contains("ttl"),
+        "an answer is keyed by what it answers and never expires, so a file that still bounds \
+         it by age is told so rather than believed: {error}"
+    );
 }
 
 #[test]
@@ -352,7 +360,6 @@ skip_targets = ["fixture-app/test/cli"]
 
 [cache]
 max_bytes = 1024
-ttl = "24h"
 
 [reports]
 keep = 5
@@ -389,7 +396,6 @@ ticket = "QA-123"
     assert_eq!(config.execution.jobs, 3);
     assert_eq!(config.execution.skip_targets, ["fixture-app/test/cli"]);
     assert_eq!(config.cache.max_bytes, 1024);
-    assert_eq!(config.cache.ttl, Duration::from_hours(24));
     assert_eq!(config.reports.keep, 5);
     assert_eq!(config.soundness.sanitizers, ["thread"]);
 

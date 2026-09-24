@@ -24,7 +24,7 @@ Two programs collecting the same class of state cannot agree about liveness from
 1. rust-mutants' stable target directory is the only persistent compiled build cache used by a verification.
    Its lifecycle, locking, and collection belong to the engine.
 2. njutest owns no persistent compiled layer.
-   Its `[cache]` table controls only outcome answers: `max_bytes`, `ttl`, export, and import.
+   Its `[cache]` table controls only outcome answers: `max_bytes`, export, and import.
 3. Cargo started from a test process remains isolated with `CARGO_TARGET_DIR` under that run's `Scratch`.
    This is disposable process isolation, not a cache shared across runs.
 4. `njutest cache` neither reports nor collects compiled artifacts.

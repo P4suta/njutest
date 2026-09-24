@@ -55,15 +55,6 @@ pub enum ScratchError {
         #[source]
         source: ClaimError,
     },
-    /// The bounded sweep could not reach every candidate directory.
-    #[error(
-        "{}: the scratch sweep left {unreached} candidate directories unexamined",
-        error::SCRATCH_UNUSABLE.code
-    )]
-    SweepIncomplete {
-        /// How many candidates the sweep budget did not reach.
-        unreached: usize,
-    },
 }
 
 impl ScratchError {
@@ -71,9 +62,7 @@ impl ScratchError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::Unusable { .. } | Self::Ownership { .. } | Self::SweepIncomplete { .. } => {
-                error::SCRATCH_UNUSABLE
-            }
+            Self::Unusable { .. } | Self::Ownership { .. } => error::SCRATCH_UNUSABLE,
         }
     }
 }
@@ -95,21 +84,15 @@ impl Scratch {
     /// [`ScratchError::Unusable`] when a directory cannot be made.
     /// Failing to claim one is not an error: see [`Scratch::is_claimed`].
     pub fn create(parent: &Path, run_id: &RunId, now: Timestamp) -> Result<Self, ScratchError> {
-        let mut swept = tempowner::sweep(parent, &[DIR_PREFIX], now).map_err(|source| {
-            ScratchError::Unusable {
+        let mut swept =
+            tempowner::sweep(parent, &[DIR_PREFIX]).map_err(|source| ScratchError::Unusable {
                 path: parent.to_path_buf(),
                 source,
-            }
-        })?;
+            })?;
         if let Some(failure) = swept.failures.pop() {
             return Err(ScratchError::Unusable {
                 path: failure.dir,
                 source: failure.source,
-            });
-        }
-        if swept.unreached != 0 {
-            return Err(ScratchError::SweepIncomplete {
-                unreached: swept.unreached,
             });
         }
         let dir = parent.join(format!("{DIR_PREFIX}{run_id}"));

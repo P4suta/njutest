@@ -12,7 +12,6 @@
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
-use jiff::Timestamp;
 use njutest::cache::lock::{self, LeaseError};
 use njutest::cache::store::{CacheError, Store};
 use njutest::report::{Provenance, Report, RunKind, TargetRecord, TargetStatus, Verdict};
@@ -125,7 +124,7 @@ fn report(run_id: &str, identity: &str) -> Report {
 }
 
 fn store(root: &std::path::Path) -> Store {
-    Store::new(root, 1024 * 1024, Duration::from_hours(24))
+    Store::new(root, 1024 * 1024)
 }
 
 #[test]
@@ -237,9 +236,8 @@ fn the_store_says_what_it_holds_and_collects_what_it_should_not() {
     assert_eq!(status.entries, 4);
     assert!(status.bytes > 0);
 
-    let bounded = Store::new(dir.path(), 1, Duration::from_hours(24));
-    let collected = bounded.collect(Timestamp::now()).expect("collected");
-    assert!(collected.expired.is_empty(), "nothing was old");
+    let bounded = Store::new(dir.path(), 1);
+    let collected = bounded.collect().expect("collected");
     assert_eq!(
         collected.evicted.len(),
         4,
@@ -249,52 +247,35 @@ fn the_store_says_what_it_holds_and_collects_what_it_should_not() {
 }
 
 #[test]
-fn an_answer_older_than_the_time_to_live_is_not_an_answer_any_more() {
+fn no_age_makes_an_answer_stop_being_one() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let store = Store::new(dir.path(), 1024 * 1024, Duration::from_secs(60));
+    let store = Store::new(dir.path(), 1024 * 1024);
     let identity = "c".repeat(64);
     store.put(&report("run-1", &identity)).expect("stored");
+    let path = store.entry(&digest(&identity));
+    let a_century_ago = std::time::SystemTime::now()
+        .checked_sub(Duration::from_hours(24 * 365 * 100))
+        .expect("a century ago is representable");
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("the entry opens")
+        .set_modified(a_century_ago)
+        .expect("the entry is backdated");
 
-    let later = Timestamp::now()
-        .checked_add(jiff::Span::new().hours(2))
-        .expect("two hours from now");
-    let collected = store.collect(later).expect("collected");
-    assert_eq!(collected.expired.len(), 1);
-    assert!(collected.evicted.is_empty());
-    assert!(store.get(&digest(&identity)).expect("a miss").is_none());
+    let collected = store.collect().expect("collected");
+
+    assert_eq!(
+        collected,
+        njutest::cache::store::Collected::default(),
+        "an answer is keyed by what it answers, so it is as true a century on; only the size \
+         bound removes one"
+    );
+    assert!(store.get(&digest(&identity)).expect("a hit").is_some());
 }
 
 #[test]
-fn expiration_and_size_bounds_include_their_exact_edges() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let identity = "c".repeat(64);
-    let ttl = Store::new(dir.path(), u64::MAX, Duration::from_secs(60));
-    ttl.put(&report("run-1", &identity)).expect("stored");
-    let path = ttl.entry(&digest(&identity));
-    let modified = Timestamp::try_from(
-        std::fs::metadata(&path)
-            .expect("entry metadata")
-            .modified()
-            .expect("entry modification time"),
-    )
-    .expect("a representable modification time");
-    let just_before = modified
-        .checked_add(jiff::Span::new().seconds(59))
-        .expect("59 seconds later");
-    assert!(
-        ttl.collect(just_before)
-            .expect("collected before the edge")
-            .expired
-            .is_empty(),
-        "an answer is live until its entire TTL has elapsed"
-    );
-    let edge = modified
-        .checked_add(jiff::Span::new().seconds(60))
-        .expect("60 seconds later");
-    let expired = ttl.collect(edge).expect("collected at the edge");
-    assert_eq!(expired.expired, [path]);
-    assert!(expired.bytes > 0, "removed bytes are accounted for");
-
+fn the_size_bound_includes_its_exact_edge() {
     let sizes = tempfile::tempdir().expect("tempdir");
     let unbounded = store(sizes.path());
     for (run, byte) in [("run-1", 'd'), ("run-2", 'e')] {
@@ -303,34 +284,25 @@ fn expiration_and_size_bounds_include_their_exact_edges() {
     }
     let before = unbounded.status().expect("two entries");
     assert_eq!(before.entries, 2);
-    let exact = Store::new(sizes.path(), before.bytes, Duration::ZERO);
+    let exact = Store::new(sizes.path(), before.bytes);
     assert!(
-        exact
-            .collect(Timestamp::now())
-            .expect("exactly bounded")
-            .evicted
-            .is_empty(),
+        exact.collect().expect("exactly bounded").evicted.is_empty(),
         "a store whose entries equal its byte bound is within the bound"
     );
-    let one_byte_short = Store::new(sizes.path(), before.bytes.saturating_sub(1), Duration::ZERO);
-    let evicted = one_byte_short
-        .collect(Timestamp::now())
-        .expect("one byte over the bound");
+    let one_byte_short = Store::new(sizes.path(), before.bytes.saturating_sub(1));
+    let evicted = one_byte_short.collect().expect("one byte over the bound");
     assert_eq!(evicted.evicted.len(), 1);
     assert!(evicted.bytes > 0);
     assert_eq!(unbounded.status().expect("one entry remains").entries, 1);
 }
 
 #[test]
-fn zero_ttl_and_zero_size_bound_both_mean_unbounded() {
+fn a_zero_size_bound_means_unbounded() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let kept = Store::new(dir.path(), 0, Duration::ZERO);
+    let kept = Store::new(dir.path(), 0);
     let identity = "c".repeat(64);
     kept.put(&report("run-1", &identity)).expect("stored");
-    let far_future = Timestamp::now()
-        .checked_add(jiff::Span::new().hours(24 * 365 * 100))
-        .expect("a century later");
-    let collected = kept.collect(far_future).expect("unbounded collection");
+    let collected = kept.collect().expect("unbounded collection");
     assert_eq!(collected, njutest::cache::store::Collected::default());
     assert_eq!(kept.status().expect("still stored").entries, 1);
 }
@@ -498,7 +470,7 @@ fn listing_failures_and_non_file_entries_fail_closed_for_every_store_operation()
         Err(CacheError::Unusable { .. })
     ));
     assert!(matches!(
-        unusable.collect(Timestamp::now()),
+        unusable.collect(),
         Err(CacheError::Unusable { .. })
     ));
     assert!(matches!(
@@ -511,10 +483,7 @@ fn listing_failures_and_non_file_entries_fail_closed_for_every_store_operation()
     std::fs::create_dir_all(corrupt.entry(&digest(&"a".repeat(64))))
         .expect("a directory named like an entry");
     assert!(matches!(corrupt.status(), Err(CacheError::Corrupt { .. })));
-    assert!(matches!(
-        corrupt.collect(Timestamp::now()),
-        Err(CacheError::Corrupt { .. })
-    ));
+    assert!(matches!(corrupt.collect(), Err(CacheError::Corrupt { .. })));
     assert!(matches!(
         corrupt.export(&mut Vec::new()),
         Err(CacheError::Corrupt { .. })

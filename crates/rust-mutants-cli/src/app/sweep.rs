@@ -7,7 +7,6 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::path::Path;
 
-use jiff::Timestamp;
 use rust_mutants::{snapshot, tempowner, workspace};
 
 use super::write;
@@ -59,14 +58,6 @@ impl CacheSummary<'_> {
                 projection: "cache",
                 field: "the temporary-directory cleanup failure count",
             })?;
-        let never_inspected = self
-            .snapshots
-            .unreached
-            .checked_add(self.caches.unreached)
-            .ok_or(CliError::ProjectionOverflow {
-                projection: "cache",
-                field: "the uninspected temporary-directory count",
-            })?;
         let mut text = format!(
             "temp         {}\ncaches       {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots    {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes     {} records, {} bytes, at {}\nmeasurements {}\nfailures     {}\n",
             self.parent.display(),
@@ -100,7 +91,6 @@ impl CacheSummary<'_> {
             );
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
-        text.push_str(&unreached(never_inspected));
         Ok(text)
     }
 }
@@ -130,22 +120,21 @@ pub(super) fn cache(
         )?;
         return Ok(0);
     }
-    let now = Timestamp::now();
     let scratch = [snapshot::DIR_PREFIX, workspace::SCRATCH_DIR_PREFIX];
     let caches = [workspace::TARGET_DIR_PREFIX];
     let nothing = |_dir: &Path| Ok(());
     let (left, taken) = match (asked.gc, asked.all) {
         (true, true) => (
-            tempowner::sweep(parent, &scratch, now),
-            tempowner::reclaim(parent, &caches, now),
+            tempowner::sweep(parent, &scratch),
+            tempowner::reclaim(parent, &caches),
         ),
         (true, false) => (
-            tempowner::sweep(parent, &scratch, now),
-            tempowner::sweep(parent, &caches, now),
+            tempowner::sweep(parent, &scratch),
+            tempowner::sweep(parent, &caches),
         ),
         (false, _) => (
-            tempowner::sweep_with(parent, &scratch, now, &nothing),
-            tempowner::reclaim_with(parent, &caches, now, &nothing),
+            tempowner::sweep_with(parent, &scratch, &nothing),
+            tempowner::reclaim_with(parent, &caches, &nothing),
         ),
     };
     let left = left.map_err(|source| CliError::writing(parent, source))?;
@@ -176,19 +165,6 @@ fn cache_unreadable(path: &Path, source: std::io::Error) -> CliError {
         path: path.to_path_buf(),
         source,
     }
-}
-
-/// What a sweep that spent its budget says, which is what it did not look at rather than what it failed to remove.
-fn unreached(count: usize) -> String {
-    if count == 0 {
-        return String::new();
-    }
-    format!(
-        "unreached    {count} left for the next sweep; it spent its {} seconds on the ones \
-         before them\n             try: something is holding a directory open, and a sweep \
-         cannot take it back\n",
-        tempowner::SWEEP_BUDGET.as_secs()
-    )
 }
 
 /// What measuring trees established, which a run of an unchanged tree reads instead of measuring again.

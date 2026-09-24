@@ -4,7 +4,6 @@
 //! The answers earlier runs reached, keyed by the identity of what they were about.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use jiff::Timestamp;
 use rust_mutants::id::HexDigest;
@@ -99,8 +98,6 @@ pub struct Status {
 /// What a collection removed.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Collected {
-    /// The entries removed for being older than the time to live.
-    pub expired: Vec<PathBuf>,
     /// The entries removed to bring the store under its size, oldest first.
     pub evicted: Vec<PathBuf>,
     /// How many bytes went away.
@@ -112,17 +109,15 @@ pub struct Collected {
 pub struct Store {
     root: PathBuf,
     max_bytes: u64,
-    ttl: Duration,
 }
 
 impl Store {
-    /// A store under `cache_directory`, bounded by `max_bytes` and `ttl`.
+    /// A store under `cache_directory`, bounded by `max_bytes`.
     #[must_use]
-    pub fn new(cache_directory: &Path, max_bytes: u64, ttl: Duration) -> Self {
+    pub fn new(cache_directory: &Path, max_bytes: u64) -> Self {
         Self {
             root: cache_directory.join(LAYOUT),
             max_bytes,
-            ttl,
         }
     }
 
@@ -252,39 +247,13 @@ impl Store {
         Ok(status)
     }
 
-    /// Removes what has expired, then the oldest of what is left until the store is under its size.
+    /// Removes the least recently written answers until the store is under its size; an answer is keyed by what it answers, so its age says nothing about whether it is still true.
     ///
     /// # Errors
     /// The store's own directory could not be listed.
-    pub fn collect(&self, now: Timestamp) -> Result<Collected, CacheError> {
-        let entries = self.entries()?;
+    pub fn collect(&self) -> Result<Collected, CacheError> {
+        let mut remaining = self.entries()?;
         let mut collected = Collected::default();
-        let mut remaining = Vec::new();
-        for entry in entries {
-            let age = now
-                .as_second()
-                .checked_sub(entry.modified.as_second())
-                .ok_or(CacheError::Arithmetic {
-                    operation: "computing cache entry age",
-                })?
-                .max(0);
-            let age = u64::try_from(age).map_err(|_negative| CacheError::Arithmetic {
-                operation: "representing cache entry age",
-            })?;
-            if self.ttl > Duration::ZERO && age >= self.ttl.as_secs() {
-                remove(&entry)?;
-                collected.bytes =
-                    collected
-                        .bytes
-                        .checked_add(entry.bytes)
-                        .ok_or(CacheError::Arithmetic {
-                            operation: "summing expired cache bytes",
-                        })?;
-                collected.expired.push(entry.path);
-            } else {
-                remaining.push(entry);
-            }
-        }
         if self.max_bytes == 0 {
             return Ok(collected);
         }

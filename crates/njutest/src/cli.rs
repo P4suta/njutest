@@ -209,9 +209,12 @@ pub struct Cache {
     /// The working directory by default.
     #[arg(long, value_name = "DIR")]
     pub directory: Option<PathBuf>,
-    /// Remove what has expired, then the oldest of what is left until the store is under its size.
+    /// Remove the least recently written answers until the store is under its size.
     #[arg(long)]
     pub gc: bool,
+    /// Remove every directory a run kept that its own marker vouches for and nobody holds.
+    #[arg(long)]
+    pub release_kept: bool,
     /// Write every answer this machine holds to FILE, one to a line, for another machine to read.
     #[arg(long, value_name = "FILE")]
     pub export: Option<PathBuf>,
