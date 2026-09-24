@@ -1526,10 +1526,6 @@ fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
 fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<LoadedConfig, LoadError> {
     let mut loaded = configured(arguments, workspace)?;
     loaded.config.faults.inject |= arguments.faults;
-    if loaded.config.contract.asks_every_dimension() {
-        loaded.config.faults.inject = true;
-        loaded.config.repeatable.knobs = crate::report::knobs::Knob::ALL.to_vec();
-    }
     Ok(loaded)
 }
 

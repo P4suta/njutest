@@ -26,10 +26,12 @@ The tree's own rule — what was not measured is not claimed as measured — sto
 1. **A dimension is a closed set, and every one of them is a column.** `Dimension` is `mutation`, `repeatable`, `fault`, `schedule`, `wire`, `durable`, derived `AllVariants`.
    Each column comes to one closed `Column`:
    - `measured`, with `catalogued` (what the dimension could have asked), `answered` (what it decided), `holes` (what it put and could not decide), and `speaks_not_about` (the classes it cannot put at all, each named, never counted into a hole);
-   - `not-asked`: the run could have measured it and was not asked to;
-   - `nothing-to-ask`, with why: there is no seam configured to watch, for instance;
+   - `unmeasured`, with why: the run was asked and could not measure the dimension at all, as when the tree with every fault guarded gives no baseline;
+   - `not-asked`: the run could have measured it and did not;
+   - `nothing-to-ask`, with why: the run looked and there was nothing to put, as in a tree with no `?` in a measured file;
    - `not-in-this-release`: no measurement of the dimension exists yet.
-     `catalogued = answered + holes` for every measured column, which the conclusion checks.
+   Every record is placed as answered, a hole, or a class not spoken about by one exhaustive match over its decision, so a decision added later is one somebody places; `catalogued = answered + holes` holds by construction, and a count that would not fit is `unmeasured`.
+   Where a report holds several builds, a column is every build's counts added where each measured the dimension, and otherwise the column of the build that established least: a hole in any build is a hole of all of them.
 
 2. **The matrix is derived, never stored.** Each column is computed from the records the part already holds: the mutation accounting, the knob records, the fault records, the seam records.
    A stored column would be a second copy of those records that a reader could find disagreeing with them.

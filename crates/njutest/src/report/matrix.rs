@@ -96,7 +96,7 @@ impl Column {
                 "the {name} dimension was asked and could not be measured: {why}"
             )),
             Self::NotAsked => Some(format!(
-                "the {name} dimension was not asked, and a run that asks every dimension \
+                "the {name} dimension was not measured, and a run that asks every dimension \
                  establishes nothing along one it did not measure"
             )),
             Self::NotInThisRelease => Some(format!(
@@ -232,64 +232,69 @@ fn measured(answered: usize, holes: usize, speaks_not_about: Vec<String>) -> Col
     )
 }
 
+/// Where one record of a dimension falls: decided, put and not decided, or of a class the dimension cannot put at all.
+enum Counted {
+    /// Decided.
+    Answered,
+    /// Put and not decided.
+    Hole,
+    /// Of a class the dimension does not speak about, named.
+    SpeaksNotAbout(String),
+}
+
+/// A measured column from every record's place, each classified by one exhaustive match so that a decision added later is one somebody has to place.
+fn tallied(counted: impl Iterator<Item = Counted>, mut speaks_not_about: Vec<String>) -> Column {
+    let counted: Vec<Counted> = counted.collect();
+    let answered = counted
+        .iter()
+        .filter(|one| matches!(one, Counted::Answered))
+        .count();
+    let holes = counted
+        .iter()
+        .filter(|one| matches!(one, Counted::Hole))
+        .count();
+    speaks_not_about.extend(counted.into_iter().filter_map(|one| match one {
+        Counted::SpeaksNotAbout(class) => Some(class),
+        Counted::Answered | Counted::Hole => None,
+    }));
+    measured(answered, holes, speaks_not_about)
+}
+
 /// The knobs' column.
 fn repeatable(knobs: &[KnobRecord]) -> Column {
     if knobs.is_empty() {
         return Column::NotAsked;
     }
-    let answered = knobs
-        .iter()
-        .filter(|record| {
-            matches!(
-                record.standing,
-                Standing::Stable
-                    | Standing::Passed
-                    | Standing::Broke { .. }
-                    | Standing::Moved { .. }
-            )
-        })
-        .count();
-    let holes = knobs
-        .iter()
-        .filter(|record| {
-            matches!(
-                record.standing,
-                Standing::Uncompared { .. } | Standing::Unsettled { .. }
-            )
-        })
-        .count();
-    let speaks_not_about = knobs
-        .iter()
-        .filter_map(|record| match &record.standing {
-            Standing::NotPut { why } => Some(format!(
+    tallied(
+        knobs.iter().map(|record| match &record.standing {
+            Standing::Stable
+            | Standing::Passed
+            | Standing::Broke { .. }
+            | Standing::Moved { .. } => Counted::Answered,
+            Standing::Uncompared { .. } | Standing::Unsettled { .. } => Counted::Hole,
+            Standing::NotPut { why } => Counted::SpeaksNotAbout(format!(
                 "{} on {} ({})",
                 record.knob.name(),
                 record.target,
                 why.said()
             )),
-            Standing::Stable
-            | Standing::Passed
-            | Standing::Broke { .. }
-            | Standing::Moved { .. }
-            | Standing::Uncompared { .. }
-            | Standing::Unsettled { .. } => None,
-        })
-        .collect();
-    measured(answered, holes, speaks_not_about)
+        }),
+        Vec::new(),
+    )
 }
 
 /// The faults' column.
 fn fault(evidence: &Evidence<'_>) -> Column {
+    if evidence
+        .findings
+        .iter()
+        .any(|finding| finding.subject == crate::assure::faults::NOT_MEASURED)
+    {
+        return Column::Unmeasured {
+            why: "the tree with every fault site guarded gave no baseline".to_owned(),
+        };
+    }
     if evidence.faults.is_empty() {
-        if evidence
-            .findings
-            .iter()
-            .any(|finding| finding.subject == crate::assure::faults::NOT_MEASURED)
-        {
-            return Column::Unmeasured {
-                why: "the tree with every fault site guarded gave no baseline".to_owned(),
-            };
-        }
         if evidence
             .limitations
             .iter()
@@ -301,69 +306,106 @@ fn fault(evidence: &Evidence<'_>) -> Column {
         }
         return Column::NotAsked;
     }
-    let answered = evidence
-        .faults
-        .iter()
-        .filter(|record| {
-            matches!(
-                record.decision,
-                FaultDecision::Noticed { .. } | FaultDecision::Unnoticed | FaultDecision::Unreached
-            )
-        })
-        .count();
-    let holes = evidence
-        .faults
-        .iter()
-        .filter(|record| {
-            matches!(
-                record.decision,
-                FaultDecision::Waited { .. } | FaultDecision::Undecided { .. }
-            )
-        })
-        .count();
-    let speaks_not_about = evidence
-        .faults
-        .iter()
-        .filter(|record| matches!(record.decision, FaultDecision::NotPut { .. }))
-        .map(|record| {
-            format!(
+    tallied(
+        evidence.faults.iter().map(|record| match &record.decision {
+            FaultDecision::Noticed { .. } | FaultDecision::Unnoticed | FaultDecision::Unreached => {
+                Counted::Answered
+            }
+            FaultDecision::Waited { .. } | FaultDecision::Undecided { .. } => Counted::Hole,
+            FaultDecision::NotPut { .. } => Counted::SpeaksNotAbout(format!(
                 "an error type the engine does not make, at {}",
                 record.place()
-            )
-        })
-        .collect();
-    measured(answered, holes, speaks_not_about)
+            )),
+        }),
+        Vec::new(),
+    )
 }
 
-/// The seams' column.
+/// The seams' column: every question decided or not, and every configured seam that could not be watched as a hole of its own.
 fn wire(evidence: &Evidence<'_>) -> Column {
-    let unwatched = named(evidence.limitations, crate::limitation::SEAM_NOT_WATCHED).len();
-    let answered = evidence
-        .seams
+    let unwatched = evidence
+        .limitations
         .iter()
-        .filter(|seam| seam.decision != SeamDecision::Unreached)
-        .count();
-    let unreached = evidence
-        .seams
-        .iter()
-        .filter(|seam| seam.decision == SeamDecision::Unreached)
-        .count();
-    unwatched.checked_add(unreached).map_or_else(
-        || Column::Unmeasured {
-            why: "more was put than a count can hold".to_owned(),
-        },
-        |holes| {
-            measured(
-                answered,
-                holes,
-                vec![
-                    "a seam the configuration does not name, since a seam is only ever one it \
-                     names"
-                        .to_owned(),
-                ],
-            )
-        },
+        .filter(|limitation| limitation.name == crate::limitation::SEAM_NOT_WATCHED)
+        .map(|_unwatched| Counted::Hole);
+    tallied(
+        evidence
+            .seams
+            .iter()
+            .map(|seam| match seam.decision {
+                SeamDecision::Tests { .. }
+                | SeamDecision::Proved { .. }
+                | SeamDecision::Unnoticed => Counted::Answered,
+                SeamDecision::Unreached => Counted::Hole,
+            })
+            .chain(unwatched),
+        vec![
+            "a seam the configuration does not name, since a seam is only ever one it names"
+                .to_owned(),
+        ],
     )
+}
+
+/// One column for several builds: every build's counts where each measured the dimension, and otherwise the column of the build that established least, so a hole in any build is a hole of all of them.
+#[must_use]
+pub fn pooled(columns: Vec<Column>) -> Column {
+    let mut pooled: Option<Column> = None;
+    for column in columns {
+        pooled = Some(match (pooled, column) {
+            (None, column) => column,
+            (
+                Some(Column::Measured {
+                    catalogued,
+                    answered,
+                    holes,
+                    mut speaks_not_about,
+                }),
+                Column::Measured {
+                    catalogued: more,
+                    answered: more_answered,
+                    holes: more_holes,
+                    speaks_not_about: more_classes,
+                },
+            ) => {
+                speaks_not_about.extend(more_classes);
+                speaks_not_about.dedup();
+                match (
+                    catalogued.checked_add(more),
+                    answered.checked_add(more_answered),
+                    holes.checked_add(more_holes),
+                ) {
+                    (Some(catalogued), Some(answered), Some(holes)) => Column::Measured {
+                        catalogued,
+                        answered,
+                        holes,
+                        speaks_not_about,
+                    },
+                    _ => Column::Unmeasured {
+                        why: "more was put than a count can hold".to_owned(),
+                    },
+                }
+            }
+            (Some(one), other) => {
+                if weight(&other) > weight(&one) {
+                    other
+                } else {
+                    one
+                }
+            }
+        });
+    }
+    pooled.unwrap_or(Column::NotAsked)
+}
+
+/// How little a column establishes, so the one that establishes least stands for several.
+const fn weight(column: &Column) -> u8 {
+    match column {
+        Column::NothingToAsk { .. } => 0,
+        Column::Measured { .. } => 1,
+        Column::NotInThisRelease => 2,
+        Column::NotAsked => 3,
+        Column::Unmeasured { .. } => 4,
+    }
 }
 
 /// Every limitation whose name starts with `prefix`, by name.

@@ -6144,9 +6144,7 @@ impl Report {
                 .flat_map(|build| build.parts.iter())
                 .flat_map(|part| part.beside.iter().cloned())
                 .collect(),
-            matrix: matrix::rows(
-                &MatrixEvidence::of(&self.builds.iter().collect::<Vec<_>>()).borrowed(),
-            ),
+            matrix: pooled_matrix(&self.builds),
             targets: self
                 .builds
                 .iter()
@@ -6733,6 +6731,28 @@ fn merged_matrix_findings(build: &BuildEvidence) -> Vec<Finding> {
     }
     let owned = MatrixEvidence::of(&[build]);
     matrix::holes(&matrix::rows(&owned.borrowed()))
+}
+
+/// One matrix for every build: each build's column where each measured the dimension, and otherwise the column of the build that established least.
+fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
+    let per_build: Vec<Vec<matrix::Row>> = builds
+        .iter()
+        .map(|build| matrix::rows(&MatrixEvidence::of(&[build]).borrowed()))
+        .collect();
+    matrix::Dimension::ALL
+        .into_iter()
+        .map(|dimension| matrix::Row {
+            dimension,
+            column: matrix::pooled(
+                per_build
+                    .iter()
+                    .flat_map(|rows| rows.iter())
+                    .filter(|row| row.dimension == dimension)
+                    .map(|row| row.column.clone())
+                    .collect(),
+            ),
+        })
+        .collect()
 }
 
 /// Every record of some builds a matrix is read off, gathered from every part.

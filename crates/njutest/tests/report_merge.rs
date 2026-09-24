@@ -995,3 +995,39 @@ fn a_shard_holds_evidence_about_its_survivor_beside_a_fault_another_shard_holds(
         );
     }
 }
+
+#[test]
+fn a_merge_of_whole_parts_names_each_dimension_they_left_a_hole_once() {
+    let whole = |source: &mut BuildReport| source.contract = Contract::WholeV1;
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &whole,
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &whole,
+    );
+    let conclusion = super_whole(&[one, two]);
+    let mut named: Vec<&str> = conclusion
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::DimensionNotMeasured)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    named.sort_unstable();
+    assert_eq!(
+        named,
+        vec!["durable", "fault", "repeatable", "schedule"],
+        "no part raises a dimension finding, and the merge raises each once over every part"
+    );
+}
+
+fn super_whole(parts: &[ShardReport]) -> njutest::report::Conclusion {
+    whole("the-whole", parts)
+        .conclusion()
+        .expect("a representable conclusion")
+}

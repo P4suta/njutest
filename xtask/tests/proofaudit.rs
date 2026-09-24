@@ -2643,3 +2643,43 @@ fn a_part_of_a_catalog_records_its_knobs_and_is_not_held_to_findings_it_does_not
          {shard}"
     );
 }
+
+#[test]
+fn a_whole_run_that_names_exactly_the_dimensions_it_left_a_hole_is_not_refused() {
+    let mut document = base();
+    let finding = |dimension: &str| {
+        serde_json::json!({
+            "kind": "dimension-not-measured",
+            "subject": dimension,
+            "detail": "not established",
+            "position": null
+        })
+    };
+    merge(
+        &mut document,
+        serde_json::json!({
+            "contract": "whole-v1",
+            "findings": [
+                {},
+                finding("repeatable"),
+                finding("fault"),
+                finding("schedule"),
+                finding("durable")
+            ]
+        }),
+    );
+    let audit = audited(&document);
+    assert!(
+        !audit.violated(Layer::Dimensions),
+        "the records leave repeatable, fault, schedule and durable a hole and the findings name \
+         exactly those: {audit}"
+    );
+    merge(
+        &mut document,
+        serde_json::json!({ "findings": [{}, {}, {}, {}, {"subject": "wire"}] }),
+    );
+    assert!(
+        audited(&document).violated(Layer::Dimensions),
+        "and naming a dimension the records establish is refused"
+    );
+}

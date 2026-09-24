@@ -896,11 +896,50 @@ impl Config {
     /// # Errors
     /// See [`ConfigErrorKind`].
     pub fn parse(text: &str, path: &Path) -> Result<Self, ConfigError> {
-        let config: Self = toml::from_str(text).map_err(|error| {
+        let mut config: Self = toml::from_str(text).map_err(|error| {
             ConfigError::new(ConfigErrorKind::Unparsable, path, one_line(&error))
         })?;
         config.validate(path)?;
+        config.asked_everything(text, path)?;
         Ok(config)
+    }
+
+    /// Puts every fault and every knob where the contract asks every dimension, and refuses a document that says, in so many words, not to (ADR 0033).
+    fn asked_everything(&mut self, text: &str, path: &Path) -> Result<(), ConfigError> {
+        if !self.contract.asks_every_dimension() {
+            return Ok(());
+        }
+        let written: toml::Table = toml::from_str(text).map_err(|error: toml::de::Error| {
+            ConfigError::new(ConfigErrorKind::Unparsable, path, one_line(&error))
+        })?;
+        let said = |section: &str, key: &str| {
+            written
+                .get(section)
+                .and_then(toml::Value::as_table)
+                .and_then(|table| table.get(key))
+                .is_some()
+        };
+        let every: Vec<crate::report::knobs::Knob> = crate::report::knobs::Knob::ALL.to_vec();
+        let refused = if said("faults", "inject") && !self.faults.inject {
+            Some("[faults] inject = false")
+        } else if said("repeatable", "knobs") && self.repeatable.knobs != every {
+            Some("[repeatable] knobs naming fewer than every knob")
+        } else {
+            None
+        };
+        if let Some(said) = refused {
+            return Err(ConfigError::new(
+                ConfigErrorKind::Invalid,
+                path,
+                format!(
+                    "contract = \"whole-v1\" asks every dimension, and {said} asks the run not \
+                     to measure one of them; drop the key, or name another contract"
+                ),
+            ));
+        }
+        self.faults.inject = true;
+        self.repeatable.knobs = every;
+        Ok(())
     }
 
     /// Whether everything the document says can be honoured.
