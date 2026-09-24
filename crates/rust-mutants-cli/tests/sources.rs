@@ -47,6 +47,7 @@ fn mutant(path: &str, digest: &str) -> RunMutantDocument {
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
+        lingered: false,
         expected: false,
         unreached: false,
         source_run_id: None,

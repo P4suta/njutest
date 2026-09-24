@@ -474,6 +474,14 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
 
 /// A wall-clock expiry the run believed, against the serial retry that is what believing one takes.
 fn retried(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
+    if row.lingered && row.outcome == WAITED {
+        notes.violated(
+            &row.display_id,
+            "the row says its harness had already answered when the clock ended the process, and \
+             that the clock decided it; a verdict the harness gave is not a wait"
+                .to_owned(),
+        );
+    }
     let waited = execs.iter().filter(|exec| exec.outcome == WAITED).count();
     if row.outcome == WAITED && (waited < 2 || !row.retried) {
         notes.violated(

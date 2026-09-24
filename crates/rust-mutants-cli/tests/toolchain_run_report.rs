@@ -1315,3 +1315,43 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         stderr(&merged)
     );
 }
+
+#[test]
+fn a_mutant_a_test_noticed_before_another_hung_is_killed_and_names_that_test() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    assert_eq!(
+        against_schema("rust-mutants-run-report-v1.json", &report),
+        Vec::<String>::new()
+    );
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_naming: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| {
+            row["outcome"] == "waited"
+                && row["killed_by"]
+                    .as_array()
+                    .is_some_and(|named| !named.is_empty())
+        })
+        .collect();
+    assert!(
+        waited_naming.is_empty(),
+        "a row that names the test that noticed it is not one the clock decided: {waited_naming:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["outcome"] == "killed"
+                && row["killed_by"].as_array().is_some_and(|named| {
+                    named.iter().any(|one| one == "a_says_the_answer_is_ready")
+                })
+        }),
+        "the mutation that made one test fail and the other hang was noticed by the one that \
+         failed: {rows:#?}"
+    );
+}

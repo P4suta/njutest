@@ -263,6 +263,10 @@ impl Target {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states, and the wire shape is the schema's"
+)]
 struct Mutant {
     index: u64,
     id: String,
@@ -301,6 +305,7 @@ struct Mutant {
     #[serde(deserialize_with = "required_option")]
     _signal: Option<i64>,
     retried: bool,
+    lingered: bool,
     #[serde(deserialize_with = "required_option")]
     not_run_reason: Option<NotRunReason>,
     #[serde(deserialize_with = "required_option")]
@@ -397,6 +402,7 @@ impl Mutant {
             _killed_by: _,
             _signal: _,
             retried,
+            lingered,
             not_run_reason,
             route,
             _identical: _,
@@ -424,6 +430,7 @@ impl Mutant {
             target,
             tests_run,
             retried,
+            lingered,
             expected,
             unreached,
             not_run_reason,

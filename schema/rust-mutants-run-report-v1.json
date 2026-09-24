@@ -345,6 +345,7 @@
           "signal",
           "step_notice",
           "retried",
+          "lingered",
           "not_run_reason",
           "route",
           "identical",
@@ -588,6 +589,10 @@
             "type": "boolean",
             "description": "A timeout is believed only after a serial retry timed out again."
           },
+          "lingered": {
+            "type": "boolean",
+            "description": "The harness had already answered when the clock ended the process: the outcome is the harness's, from a process that would not end."
+          },
           "expected": {
             "type": "boolean"
           },
@@ -616,6 +621,13 @@
             },
             "then": {"properties": {"step_notice": {"type": "object"}}},
             "else": {"properties": {"step_notice": {"type": "null"}}}
+          },
+          {
+            "if": {
+              "required": ["outcome"],
+              "properties": {"outcome": {"const": "killed"}}
+            },
+            "else": {"properties": {"killed_by": {"maxItems": 0}}}
           }
         ]
       }

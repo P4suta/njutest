@@ -92,6 +92,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -132,6 +133,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -172,6 +174,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -212,6 +215,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -252,6 +256,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -292,6 +297,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -332,6 +338,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -372,6 +379,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -412,6 +420,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -452,6 +461,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -492,6 +502,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -532,6 +543,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -572,6 +584,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -612,6 +625,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -652,6 +666,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -692,6 +707,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",

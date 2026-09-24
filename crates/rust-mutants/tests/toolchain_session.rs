@@ -1086,6 +1086,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
             failed_tests: Vec::new(),
             signal: None,
             retried: false,
+            lingered: false,
             expected: false,
             not_run_reason: None,
             route: None,

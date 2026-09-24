@@ -547,6 +547,10 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
 
 /// One mutant row, as a reader sees it.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states"
+)]
 struct Row {
     index: u64,
     route: Option<RouteDecision>,
@@ -565,6 +569,7 @@ struct Row {
     target: String,
     tests_run: Option<u64>,
     retried: bool,
+    lingered: bool,
     expected: bool,
     unreached: bool,
     not_run_reason: Option<NotRunReason>,

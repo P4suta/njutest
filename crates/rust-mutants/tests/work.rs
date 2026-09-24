@@ -89,6 +89,7 @@ fn row(index: u32, extra: &serde_json::Value) -> serde_json::Value {
         "killed_by": [],
         "signal": null,
         "retried": false,
+        "lingered": false,
         "not_run_reason": null,
         "route": null,
         "identical": "not-measured",
@@ -279,6 +280,7 @@ fn a_confirming_retry_is_one_pair_started_twice() {
             &serde_json::json!({
                 "outcome": "waited",
                 "retried": true,
+                "lingered": false,
                 "route": {
                     "granularity": "all",
                     "reaching": ["demo/test/one"],

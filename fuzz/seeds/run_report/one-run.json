@@ -106,6 +106,7 @@
         "tests::max_picks_the_larger"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -152,6 +153,7 @@
         "tests::max_picks_the_larger"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -198,6 +200,7 @@
         "tests::max_picks_the_larger"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -244,6 +247,7 @@
         "tests::max_picks_the_larger"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -287,6 +291,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "discharged",
       "route": {
         "granularity": "discharged",
@@ -335,6 +340,7 @@
         "tests::max_picks_the_larger"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -381,6 +387,7 @@
         "tests::max_picks_the_larger"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -427,6 +434,7 @@
         "even_numbers_are_even"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -473,6 +481,7 @@
         "even_numbers_are_even"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -519,6 +528,7 @@
         "even_numbers_are_even"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -565,6 +575,7 @@
         "even_numbers_are_even"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -611,6 +622,7 @@
         "even_numbers_are_even"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -657,6 +669,7 @@
         "even_numbers_are_even"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [

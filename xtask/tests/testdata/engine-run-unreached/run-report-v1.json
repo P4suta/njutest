@@ -99,6 +99,7 @@
         "tests::doubling_two_is_four"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -145,6 +146,7 @@
         "tests::doubling_two_is_four"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -191,6 +193,7 @@
         "tests::doubling_two_is_four"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -237,6 +240,7 @@
         "tests::doubling_two_is_four"
       ],
       "retried": false,
+      "lingered": false,
       "route": {
         "granularity": "block",
         "reaching": [
@@ -280,6 +284,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -320,6 +325,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -360,6 +366,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -400,6 +407,7 @@
       "duration_ms": 0,
       "tests_run": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",

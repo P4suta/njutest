@@ -2091,6 +2091,7 @@ mod kani_laws {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            lingered: false,
         }
     }
 
@@ -2476,6 +2477,7 @@ const fn unreached() -> MutantResult {
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
+        lingered: false,
     }
 }
 
@@ -2507,6 +2509,7 @@ mod tests {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            lingered: false,
         }
     }
 
