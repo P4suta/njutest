@@ -214,21 +214,57 @@ pub fn was_put(fault: &str, decision: &str) -> Value {
 /// One touch record the engine writes about `target`, measured on `measured` over the one test `lib::works`, having reached `reached`.
 #[must_use]
 pub fn touch(measured: &str, reached: &[u32]) -> Value {
+    json!({ "type": "touch", "touch": touched(measured, reached) })
+}
+
+/// The record of [`touch`] without its event.
+fn touched(measured: &str, reached: &[u32]) -> Value {
     json!({
-        "type": "touch",
-        "touch": {
+        "target": TARGET,
+        "measured": measured,
+        "tests": 1,
+        "sites": reached.len(),
+        "loose": 0,
+        "infected": 0,
+        "passed": ["lib::works"],
+        "summary": { "protocol": "libtest", "tests_run": 1 },
+        "reached_sites": reached,
+        "entered_bodies": [],
+        "infected_sites": []
+    })
+}
+
+/// One control of [`TARGET`] the engine started with `TZ` set, which came to `outcome` with `failed` failing and `reach` becoming of its reach.
+#[must_use]
+pub fn perturbed(outcome: &str, failed: &[&str], reach: &Value) -> Value {
+    json!({
+        "type": "perturbed-control",
+        "perturbed": {
             "target": TARGET,
-            "measured": measured,
-            "tests": 1,
-            "sites": reached.len(),
-            "loose": 0,
-            "infected": 0,
-            "passed": ["lib::works"],
-            "summary": { "protocol": "libtest", "tests_run": 1 },
-            "reached_sites": reached,
-            "entered_bodies": [],
-            "infected_sites": []
+            "perturbation": {
+                "environment": [{ "name": "TZ", "value": "Australia/Lord_Howe" }],
+                "launcher": null,
+                "arguments": []
+            },
+            "outcome": outcome,
+            "failed_tests": failed,
+            "duration_ms": 5,
+            "reach": reach
         }
+    })
+}
+
+/// The reach of a control that recorded having reached `reached` over the one test `lib::works`.
+#[must_use]
+pub fn recorded_reach(reached: &[u32]) -> Value {
+    json!({ "state": "recorded", "touch": touched("control", reached) })
+}
+
+/// The report's knob record about [`TARGET`] under the time zone, in the standing `state` names.
+#[must_use]
+pub fn knobbed(state: &str) -> Value {
+    json!({
+        "knobs": [{ "target": TARGET, "knob": "timezone", "standing": { "state": state } }]
     })
 }
 
@@ -333,11 +369,17 @@ pub struct Perturbation {
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
 #[must_use]
 pub fn clean() -> Perturbation {
+    let mut document = with(drifted("held"));
+    merge(&mut document, knobbed("stable"));
     Perturbation {
         name: "clean",
-        document: with(drifted("held")),
+        document,
         events: Some(routes()),
-        engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
+        engine: Some(vec![
+            touch("baseline", &[0, 1]),
+            touch("control", &[0, 1]),
+            perturbed("survived", &[], &recorded_reach(&[0, 1])),
+        ]),
     }
 }
 
@@ -475,6 +517,15 @@ impl Layer {
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
+                ..clean
+            }],
+            Self::Knobs => vec![Perturbation {
+                name: "a control a knob broke, recorded as stable",
+                engine: Some(vec![
+                    touch("baseline", &[0, 1]),
+                    touch("control", &[0, 1]),
+                    perturbed("killed", &["lib::works"], &json!({ "state": "not-read" })),
+                ]),
                 ..clean
             }],
         }

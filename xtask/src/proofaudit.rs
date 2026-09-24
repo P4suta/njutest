@@ -5,6 +5,7 @@
 //!
 //! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
+mod knobs;
 pub mod sentinel;
 
 use std::collections::BTreeMap;
@@ -157,6 +158,8 @@ pub enum Layer {
     Model,
     /// Which targets reached something different on a control than on their baseline, re-derived from the engine's touch records and held to what the report says of each.
     Drift,
+    /// What each control started under a knob established, re-derived from the engine's perturbed-control records and held to what the report says of each.
+    Knobs,
 }
 
 impl Layer {
@@ -174,6 +177,7 @@ impl Layer {
             Self::Wire => "wire",
             Self::Model => "model",
             Self::Drift => "drift",
+            Self::Knobs => "knobs",
         }
     }
 }
@@ -437,12 +441,16 @@ pub fn audit_with(
         .engines
         .iter()
         .map(|(recording_path, text)| {
-            crate::drift::read(text).map_err(|source| AuditError::MalformedRecording {
+            let malformed = |source| AuditError::MalformedRecording {
                 path: recording_path.clone(),
                 source,
+            };
+            Ok(Engine {
+                touched: crate::drift::read(text).map_err(malformed)?,
+                perturbed: crate::knobs::read(text).map_err(malformed)?,
             })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, AuditError>>()?;
     let mut audit = Audit {
         run_id: recording.run_id.clone(),
         mutants: recording.mutants.len(),
@@ -462,6 +470,7 @@ pub fn audit_with(
     wire(&recording, watched.as_ref(), &mut audit);
     models(&recording, run, &mut audit);
     drift(&recording, &engines, &mut audit);
+    knobs::audited(&recording, &engines, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -508,6 +517,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "mutants",
         "limitations",
         "drift",
+        "knobs",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -535,7 +545,16 @@ const UNSTABLE_BASELINE: &str = "unstable-baseline";
 const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
 /// Which targets moved between their baseline and a control, re-derived from the engine's touch records and held to the report's records, findings, and limitation.
-fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &mut Audit) {
+/// What one engine recording holds, as the layers that re-derive from it read it.
+#[derive(Debug)]
+struct Engine {
+    /// Every touch record.
+    touched: crate::drift::Touched,
+    /// Every perturbed control.
+    perturbed: crate::knobs::Perturbations,
+}
+
+fn drift(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Drift);
     let recorded = recording.document.get("drift").map(|rows| {
         rows.as_array()
@@ -561,7 +580,7 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
             );
             return;
         }
-        ([one], _) => one,
+        ([one], _) => &one.touched,
         (several, _) => {
             notes.unaudited(
                 "drift",
@@ -747,12 +766,18 @@ fn held_to_limitation(
     }
 }
 
-/// Whether a limitation's detail names `target` in its closing list, which is how a report names the targets a limitation is about.
+/// Whether a limitation's detail names `target` in its closing list.
 fn listed(detail: &str, target: &str) -> bool {
+    named(detail).contains(&target)
+}
+
+/// The targets a limitation's detail names in its closing list, which is how a report names the targets a limitation is about.
+fn named(detail: &str) -> Vec<&str> {
     detail
         .rsplit_once(" (")
         .and_then(|(_, list)| list.strip_suffix(')'))
-        .is_some_and(|list| list.split(", ").any(|one| one == target))
+        .map(|list| list.split(", ").collect())
+        .unwrap_or_default()
 }
 
 #[derive(Debug)]
