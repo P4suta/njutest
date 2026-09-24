@@ -241,6 +241,8 @@ A pair is planted for every form of evidence a proof reads, derived from the clo
 | `never-infected:is-some-default` | `return-some-default` over `Some` of the default | the same rule over `Some` of anything else |
 | `never-infected:is-true` | `return-true` where the value is already `true` | the same rule where it is `false` |
 | `never-infected:inert-comparison` | `le-to-lt` where the two sides are never equal | the same rule where the test makes them equal |
+| `coverage` | the `reach` pair's function no test calls, as `unreached` by the coverage measurement alone | the `reach` pair's function the unit test calls, to `lib` |
+| `equivalence` | `add-to-sub` over `n + 0`, which the compiler renders identically, called `identical` | the same rule over `n + 1`, which it renders, never called `identical` |
 
 The planted crate is built by the compiler the tree under test resolves to, named by path: the run's located toolchain is handed to the sentinels, and its sysroot's own `cargo`, `rustc` (as `RUSTC`) and `rustdoc` (as `RUSTDOC`) build the planted crate, so no toolchain file, rustup override or version-manager shim in the scratch directory decides which compiler answers.
 That holds by construction where the run's `rustc` names its sysroot, which rustup's and a system toolchain's both do; where it names none, the planted crate is built by the `cargo` and `rustc` the run located on `PATH`, which a directory-sensitive shim could answer for differently.
@@ -253,9 +255,10 @@ No setting skips the sentinels.
 A run answered whole from the store runs nothing and removes nothing, so it plants nothing either.
 They cost one more prepared session per configured build — a copy, a build, the instrumented build, and one run of a three-test suite — and no mutant execution.
 
-They do not yet cover everything that removes work.
-`[mutation] equivalence` is not sentineled: its premise is two builds per mutation, and planting for it would add those builds to every run rather than to the runs that asked for the layer.
-Neither is routing by coverage alone, which a run uses only when the guards recorded nothing; the sentinels prepare with the run's own switches, and a run whose guards measure routes by them.
+Every layer that removes work is sentineled in the runs that could use it.
+Routing by coverage alone is what a run falls back to where the guards recorded nothing, so wherever the planted session's coverage measurement placed anything, the `coverage` pair is also routed by that measurement alone, in the same session and at no further cost; a run whose coverage measured nothing never routes by it, and plants nothing for it.
+`[mutation] equivalence` costs builds of a tree of its own, so its pair is planted only in a run that asked for the layer: a second small crate, built at `opt-level = 2` in its test profile, where the layer must call `n + 0` made `n - 0` identical and must not call `n + 1` made `n - 1` so.
+A layer a control withdrew calls nothing identical and so removes nothing, which neither half counts against; a layer still in service that renders the first, or calls the second identical, ends the run with `NJ5009` like any other.
 
 ## Mutation confirmation
 

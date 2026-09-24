@@ -760,28 +760,25 @@ impl Session {
     /// Which targets could notice this mutation, and what the answer rests on.
     #[must_use]
     pub fn route(&self, mutant: &Mutant) -> Route {
-        let targets: Vec<&str> = self
-            .targets
-            .iter()
-            .map(|target| target.id.as_str())
-            .collect();
-        let measurable: Vec<&str> = self
-            .targets
-            .iter()
-            .filter(|target| target.kind != TargetKind::Doc)
-            .map(|target| target.id.as_str())
-            .collect();
-        let among = Routing {
-            targets: &targets,
-            measurable: &measurable,
-            also_reaching: &self.documenting(mutant),
-        };
         if self.verified.touched.measured() {
+            let (targets, measurable, also_reaching) = self.among(mutant);
+            let among = Routing {
+                targets: &targets,
+                measurable: &measurable,
+                also_reaching: &also_reaching,
+            };
             return self.discharging(
                 mutant,
                 Route::by_touch(&self.verified.touched, mutant.index, &among),
             );
         }
+        self.route_by_coverage(mutant)
+    }
+
+    /// Which targets the coverage measurement alone puts at this mutation, which is how a run routes when the guards recorded nothing.
+    #[must_use]
+    pub fn route_by_coverage(&self, mutant: &Mutant) -> Route {
+        let (targets, measurable, also_reaching) = self.among(mutant);
         let Some(position) = self.position(mutant) else {
             return Route::All {
                 reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
@@ -795,9 +792,35 @@ impl Session {
                 line: position.line,
                 column: position.byte_column,
             },
-            &among,
+            &Routing {
+                targets: &targets,
+                measurable: &measurable,
+                also_reaching: &also_reaching,
+            },
         );
         self.discharging(mutant, decided)
+    }
+
+    /// Whether the coverage measurement placed anything, which is when a run could route by it.
+    #[must_use]
+    pub fn measured_by_coverage(&self) -> bool {
+        self.reached.measured()
+    }
+
+    /// Every target, the ones a measurement can place, and the ones routed to `mutant` by another rule.
+    fn among(&self, mutant: &Mutant) -> (Vec<&str>, Vec<&str>, Vec<&str>) {
+        let targets = self
+            .targets
+            .iter()
+            .map(|target| target.id.as_str())
+            .collect();
+        let measurable = self
+            .targets
+            .iter()
+            .filter(|target| target.kind != TargetKind::Doc)
+            .map(|target| target.id.as_str())
+            .collect();
+        (targets, measurable, self.documenting(mutant))
     }
 
     /// What one execution a caller did not decide a route for is narrowed to.

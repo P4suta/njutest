@@ -49,6 +49,7 @@ fn every_layer_routes_the_mutant_planted_for_it_and_leaves_the_one_beside_it() {
             toolchain: &run,
             open,
             options: &touching(),
+            equivalence: false,
         },
         &root,
         &Cancel::new(),
@@ -77,7 +78,7 @@ fn every_layer_routes_the_mutant_planted_for_it_and_leaves_the_one_beside_it() {
         .iter()
         .map(|one| one.expectation.planted)
         .collect();
-    for planted in Planted::every() {
+    for planted in Planted::routing() {
         assert_eq!(
             layers.iter().filter(|one| **one == planted).count(),
             2,
@@ -211,10 +212,71 @@ fn a_planted_crate_another_compiler_would_build_stops_the_run_rather_than_vouchi
             toolchain: &run,
             open,
             options: &touching(),
+            equivalence: false,
         },
         &temp.path().join("planted"),
         &Cancel::new(),
     )
     .expect_err("a planted session built by another compiler vouches for nothing about this run");
     assert_eq!(refused.code().code, "RM5008", "{refused}");
+}
+
+#[test]
+fn a_run_that_routes_by_coverage_or_asks_equivalence_has_each_sighted_too() {
+    let temp = tempfile::tempdir().expect("a temporary directory");
+    let root = temp.path().join("planted");
+    let open = opening(&njutest_devkit::paths::cargo_binary(), temp.path());
+    let run = located(&njutest_devkit::paths::cargo_binary(), &open.env);
+    let sighted = rust_mutants::sentinel::sighted(
+        rust_mutants::sentinel::Run {
+            toolchain: &run,
+            open,
+            options: &PrepareOptions::default(),
+            equivalence: true,
+        },
+        &root,
+        &Cancel::new(),
+    )
+    .expect("the planted crates prepare");
+    let said: Vec<String> = sighted
+        .sightings
+        .iter()
+        .map(|one| {
+            format!(
+                "{} {} expected {} routed {}",
+                one.expectation.planted,
+                one.expectation.mutant,
+                one.expectation.expected,
+                one.routed()
+            )
+        })
+        .collect();
+    assert!(sighted.blind().is_none(), "{said:#?}");
+    if njutest_devkit::reproducible::builds_the_same_twice() {
+        let compared: Vec<String> = sighted
+            .sightings
+            .iter()
+            .filter(|one| one.expectation.planted == Planted::Equivalence)
+            .map(rust_mutants::sentinel::Sighting::routed)
+            .collect();
+        assert_eq!(
+            compared,
+            ["identical", "differs"],
+            "a machine that builds one tree the same way twice keeps the layer in service, so \
+             the pair is told apart by what the compiler did and not passed because nothing was \
+             said: {said:#?}"
+        );
+    }
+    for planted in [Planted::Coverage, Planted::Equivalence] {
+        assert_eq!(
+            sighted
+                .sightings
+                .iter()
+                .filter(|one| one.expectation.planted == planted)
+                .count(),
+            2,
+            "a run that measures coverage could route by it, and one that asks the equivalence \
+             layer removes survivors by it, so each is asked about its pair: {said:#?}"
+        );
+    }
 }

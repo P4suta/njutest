@@ -35,6 +35,7 @@ pub fn stood(
                 ..crate::assure::run::opening(request, environment)
             },
             options: &crate::assure::run::preparing(request)?,
+            equivalence: request.config.mutation.equivalence,
         },
         &scratch.sentinel_dir(),
         watch.cancel,
