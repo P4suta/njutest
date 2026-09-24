@@ -165,14 +165,21 @@ fn open_dir_at_self(dir: &File) -> io::Result<File> {
 
 pub(super) fn privacy(dir: &File) -> io::Result<Privacy> {
     let stat = rustix::fs::fstat(dir).map_err(io::Error::from)?;
-    if stat.st_uid != rustix::process::geteuid().as_raw() {
-        return Ok(Privacy::ForeignOwner);
-    }
-    let permissions = Mode::from_raw_mode(stat.st_mode) & (Mode::all());
-    if permissions == Mode::RWXU {
-        Ok(Privacy::OwnerOnly)
+    Ok(privacy_of(
+        stat.st_uid,
+        rustix::process::geteuid().as_raw(),
+        Mode::from_raw_mode(stat.st_mode),
+    ))
+}
+
+/// Who may reach into a directory `owner` owns with `permissions`, asked by the user `me`.
+fn privacy_of(owner: u32, me: u32, permissions: Mode) -> Privacy {
+    if owner != me {
+        Privacy::ForeignOwner
+    } else if permissions & Mode::all() == Mode::RWXU {
+        Privacy::OwnerOnly
     } else {
-        Ok(Privacy::Loose)
+        Privacy::Loose
     }
 }
 
@@ -270,4 +277,26 @@ fn restore(dir: &File, aside: &str, held: &std::ffi::CStr) -> io::Result<()> {
     Err(io::Error::other(
         "an entry changed identity as it was set aside, and was put back",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use rustix::fs::Mode;
+
+    use super::{Privacy, privacy_of};
+
+    #[test]
+    fn a_directory_another_user_owns_is_never_one_to_tighten() {
+        assert_eq!(
+            privacy_of(41, 42, Mode::RWXU),
+            Privacy::ForeignOwner,
+            "owner-only bits do not make another user's directory ours"
+        );
+        assert_eq!(
+            privacy_of(42, 42, Mode::from_raw_mode(0o755)),
+            Privacy::Loose,
+            "our own open directory is one to tighten"
+        );
+        assert_eq!(privacy_of(42, 42, Mode::RWXU), Privacy::OwnerOnly);
+    }
 }

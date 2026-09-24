@@ -16,6 +16,20 @@ use serde::Deserialize;
 
 use crate::error::{self, ErrorCode};
 use crate::report::{Report, ReportDocument, json};
+#[cfg(unix)]
+use rust_mutants::capdir::{Dir, Kind, Name, Privacy, Status};
+
+/// One path component the store names, refused as input when it is not one.
+#[cfg(unix)]
+fn name(text: &str) -> io::Result<Name<'_>> {
+    Name::new(text).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))
+}
+
+/// Whether a failure says the entry is not there.
+#[cfg(unix)]
+fn absent(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+}
 
 /// Where the runs of one report directory live, and the only thing that knows the layout.
 ///
@@ -27,9 +41,9 @@ pub struct Store {
     root: PathBuf,
     configured: crate::config::ReportDirectory,
     #[cfg(unix)]
-    workspace: std::fs::File,
+    workspace: Dir,
     #[cfg(unix)]
-    report_root: std::sync::Arc<std::sync::OnceLock<std::fs::File>>,
+    report_root: std::sync::Arc<std::sync::OnceLock<Dir>>,
 }
 
 /// One workspace directory held before its configuration is read.
@@ -39,7 +53,7 @@ pub struct Store {
 pub(crate) struct WorkspaceRoot {
     path: PathBuf,
     #[cfg(unix)]
-    directory: std::fs::File,
+    directory: Dir,
 }
 
 /// Which default configuration source supplied one held workspace.
@@ -61,7 +75,7 @@ pub(crate) struct LoadedConfiguration {
 #[cfg(unix)]
 #[derive(Debug)]
 struct StoreRoot {
-    directory: std::fs::File,
+    directory: Dir,
 }
 
 #[cfg(unix)]
@@ -77,7 +91,7 @@ enum StoreRootState {
 #[cfg(unix)]
 #[derive(Debug)]
 struct RunsRoot {
-    directory: std::fs::File,
+    directory: Dir,
 }
 
 #[cfg(unix)]
@@ -99,7 +113,7 @@ pub(crate) struct StoredRun {
     display: PathBuf,
     said_document: String,
     #[cfg(unix)]
-    directory: std::fs::File,
+    directory: Dir,
 }
 
 /// A closed file name that a stored report is allowed to expose.
@@ -156,10 +170,10 @@ struct PublicationFile {
 #[cfg(unix)]
 #[derive(Debug)]
 struct RunCapability {
-    root: std::fs::File,
-    directory: std::fs::File,
-    staging_parent: std::fs::File,
-    published_parent: std::fs::File,
+    root: Dir,
+    directory: Dir,
+    staging_parent: Dir,
+    published_parent: Dir,
 }
 
 /// Hosts without the Unix handle-relative backend refuse publication.
@@ -387,23 +401,17 @@ impl RunCapability {
         true
     }
 
-    fn claim_beneath(root: &std::fs::File, name: &str) -> io::Result<Self> {
-        Self::claim_beneath_with_root(root, root.try_clone(), name)
+    fn claim_beneath(root: &Dir, run: &str) -> io::Result<Self> {
+        Self::claim_beneath_with_root(root, root.try_clone(), run)
     }
 
     fn claim_beneath_with_root(
-        root: &std::fs::File,
-        retained_root: io::Result<std::fs::File>,
-        name: &str,
+        root: &Dir,
+        retained_root: io::Result<Dir>,
+        run: &str,
     ) -> io::Result<Self> {
-        use rustix::fs::AtFlags;
-
         let retained_root = retained_root?;
-        let root_identity = rustix::fs::fstat(root).map_err(io::Error::from)?;
-        let retained_identity = rustix::fs::fstat(&retained_root).map_err(io::Error::from)?;
-        if root_identity.st_dev != retained_identity.st_dev
-            || root_identity.st_ino != retained_identity.st_ino
-        {
+        if root.status()?.identity != retained_root.status()?.identity {
             return Err(io::Error::other(
                 "the retained report-root capability does not match its source",
             ));
@@ -414,45 +422,41 @@ impl RunCapability {
         let published_parent = ensure_directory_at(root, RUNS_NAME)?;
         require_private_directory(&published_parent)?;
         ensure_private_marker(&published_parent)?;
-        ensure_writable_spelling_at(&published_parent, name)?;
-        match rustix::fs::statat(&published_parent, name, AtFlags::SYMLINK_NOFOLLOW) {
-            Ok(_occupied) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "the final run namespace already exists",
-                ));
-            }
-            Err(rustix::io::Errno::NOENT) => {}
-            Err(error) => return Err(io::Error::from(error)),
+        ensure_writable_spelling_at(&published_parent, run)?;
+        if published_parent.status_at(name(run)?)?.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "the final run namespace already exists",
+            ));
         }
-        let directory = create_private_claim_directory(&staging_parent, name)?;
+        let directory = create_private_claim_directory(&staging_parent, run)?;
         let capability = Self {
             root: retained_root,
             directory,
             staging_parent,
             published_parent,
         };
-        if let Err(primary) = rustix::fs::fsync(&capability.directory).map_err(io::Error::from) {
+        if let Err(primary) = capability.directory.sync() {
             return Err(claim_cleanup_error(
                 primary,
-                capability.remove_entry(false, name),
+                capability.remove_entry(false, run),
             ));
         }
-        if let Err(primary) = rustix::fs::fsync(&capability.staging_parent).map_err(io::Error::from)
-        {
+        if let Err(primary) = capability.staging_parent.sync() {
             return Err(claim_cleanup_error(
                 primary,
-                capability.remove_entry(false, name),
+                capability.remove_entry(false, run),
             ));
         }
         Ok(capability)
     }
 
-    fn write_new(&self, _staging: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
-        use rustix::fs::{Mode, OFlags};
-
+    fn write_new(&self, _staging: &Path, file_name: &str, bytes: &[u8]) -> io::Result<()> {
         if !matches!(
-            Path::new(name).components().collect::<Vec<_>>().as_slice(),
+            Path::new(file_name)
+                .components()
+                .collect::<Vec<_>>()
+                .as_slice(),
             [std::path::Component::Normal(_)]
         ) {
             return Err(io::Error::new(
@@ -460,14 +464,7 @@ impl RunCapability {
                 "publication file name is not one ordinary path component",
             ));
         }
-        let descriptor = rustix::fs::openat(
-            &self.directory,
-            name,
-            OFlags::WRONLY | OFlags::CLOEXEC | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW,
-            Mode::RUSR | Mode::WUSR,
-        )
-        .map_err(io::Error::from)?;
-        let mut file = std::fs::File::from(descriptor);
+        let mut file = self.directory.create_file(name(file_name)?)?;
         file.write_all(bytes)?;
         file.sync_all()
     }
@@ -482,41 +479,24 @@ impl RunCapability {
         relative: &Path,
         expected: u64,
     ) -> io::Result<Vec<u8>> {
-        use rustix::fs::{Mode, OFlags};
-
-        let mut directory = rustix::fs::openat(
-            &self.directory,
-            ".",
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)?;
+        let mut directory = self.directory.try_clone()?;
         let mut components = relative.components().peekable();
         while let Some(component) = components.next() {
-            let std::path::Component::Normal(name) = component else {
-                return Err(io::Error::new(
+            let entry = match component {
+                std::path::Component::Normal(entry) => entry.to_str(),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "model artifact path is not canonical beneath the run capability",
-                ));
-            };
-            if components.peek().is_some() {
-                directory = rustix::fs::openat(
-                    &directory,
-                    name,
-                    OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-                    Mode::empty(),
                 )
-                .map_err(io::Error::from)?;
+            })?;
+            if components.peek().is_some() {
+                directory = open_directory_at(&directory, entry)?;
                 continue;
             }
-            let descriptor = rustix::fs::openat(
-                &directory,
-                name,
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-                Mode::empty(),
-            )
-            .map_err(io::Error::from)?;
-            return read_regular_artifact(descriptor, expected);
+            return read_regular_artifact(directory.open_file(name(entry)?)?, expected);
         }
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -527,19 +507,10 @@ impl RunCapability {
     fn read_publication_file(
         &self,
         _staging: &Path,
-        name: &str,
+        file_name: &str,
         expected: u64,
     ) -> io::Result<Vec<u8>> {
-        use rustix::fs::{Mode, OFlags};
-
-        let descriptor = rustix::fs::openat(
-            &self.directory,
-            name,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)?;
-        read_regular_artifact(descriptor, expected)
+        read_regular_artifact(self.directory.open_file(name(file_name)?)?, expected)
     }
 
     fn validate_closed_tree(
@@ -567,7 +538,7 @@ impl RunCapability {
             }
         }
 
-        let root = reopen_directory(&self.directory)?;
+        let root = self.directory.try_clone()?;
         let mut saw_model = false;
         for name in directory_names(&root)? {
             if name == "model" && !expected_model.is_empty() {
@@ -593,17 +564,10 @@ impl RunCapability {
         Ok(())
     }
 
-    fn publish(&self, name: &str) -> io::Result<()> {
-        use rustix::fs::RenameFlags;
-
-        rustix::fs::renameat_with(
-            &self.staging_parent,
-            name,
-            &self.published_parent,
-            name,
-            RenameFlags::NOREPLACE,
-        )
-        .map_err(io::Error::from)
+    fn publish(&self, run: &str) -> io::Result<()> {
+        let run = name(run)?;
+        self.staging_parent
+            .rename_noreplace(run, &self.published_parent, run)
     }
 
     fn validate_run_spelling(&self, name: &str) -> io::Result<()> {
@@ -616,20 +580,16 @@ impl RunCapability {
     /// # Errors
     /// Returns the typed refusal for a replaced or non-directory namespace.
     fn require_runs_binding(&self) -> io::Result<()> {
-        use rustix::fs::{AtFlags, FileType};
-
-        let named = rustix::fs::statat(&self.root, RUNS_NAME, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(io::Error::from)?;
-        let held = rustix::fs::fstat(&self.published_parent).map_err(io::Error::from)?;
-        if named.st_dev != held.st_dev
-            || named.st_ino != held.st_ino
-            || !FileType::from_raw_mode(named.st_mode).is_dir()
-        {
-            return Err(io::Error::other(
+        let named = self.root.status_at(name(RUNS_NAME)?)?;
+        let held = self.published_parent.status()?;
+        match named {
+            Some(named) if named.identity == held.identity && named.kind == Kind::Directory => {
+                Ok(())
+            }
+            Some(_) | None => Err(io::Error::other(
                 "the runs namespace no longer names the held publication parent",
-            ));
+            )),
         }
-        Ok(())
     }
 
     fn published_entry_matches(&self, name: &str) -> io::Result<bool> {
@@ -640,55 +600,30 @@ impl RunCapability {
         self.entry_matches(&self.staging_parent, name)
     }
 
-    fn entry_matches(&self, parent: &std::fs::File, name: &str) -> io::Result<bool> {
-        use rustix::fs::{Mode, OFlags};
-
-        let named = rustix::fs::openat(
-            parent,
-            name,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)?;
-        let expected = rustix::fs::fstat(&self.directory).map_err(io::Error::from)?;
-        let actual = rustix::fs::fstat(&named).map_err(io::Error::from)?;
-        Ok(expected.st_dev == actual.st_dev && expected.st_ino == actual.st_ino)
+    fn entry_matches(&self, parent: &Dir, run: &str) -> io::Result<bool> {
+        let named = open_directory_at(parent, run)?;
+        Ok(self.directory.status()?.identity == named.status()?.identity)
     }
 
     fn sync_parent(&self, published: bool) -> io::Result<()> {
-        let directory = if published {
-            &self.published_parent
+        if published {
+            self.published_parent.sync()
         } else {
-            &self.staging_parent
-        };
-        rustix::fs::fsync(directory).map_err(io::Error::from)
+            self.staging_parent.sync()
+        }
     }
 
-    fn remove_entry(&self, published: bool, name: &str) -> io::Result<()> {
-        use rustix::fs::{AtFlags, RenameFlags};
-
+    fn remove_entry(&self, published: bool, run: &str) -> io::Result<()> {
         let parent = if published {
             &self.published_parent
         } else {
             &self.staging_parent
         };
-        let quarantine = quarantine_named_entry(parent, name, ".njutest-cleanup")?;
-        let quarantined = rustix::fs::openat(
-            parent,
-            &quarantine,
-            rustix::fs::OFlags::RDONLY
-                | rustix::fs::OFlags::CLOEXEC
-                | rustix::fs::OFlags::DIRECTORY
-                | rustix::fs::OFlags::NOFOLLOW,
-            rustix::fs::Mode::empty(),
-        )
-        .map_err(io::Error::from)?;
-        let expected = rustix::fs::fstat(&self.directory).map_err(io::Error::from)?;
-        let actual = rustix::fs::fstat(&quarantined).map_err(io::Error::from)?;
-        if expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino {
-            rustix::fs::renameat_with(parent, &quarantine, parent, name, RenameFlags::NOREPLACE)
-                .map_err(io::Error::from)?;
-            rustix::fs::fsync(parent).map_err(io::Error::from)?;
+        let quarantine = quarantine_named_entry(parent, run, ".njutest-cleanup")?;
+        let quarantined = open_directory_at(parent, &quarantine)?;
+        if self.directory.status()?.identity != quarantined.status()?.identity {
+            parent.rename_noreplace(name(&quarantine)?, parent, name(run)?)?;
+            parent.sync()?;
             return Err(io::Error::other(
                 "the owned run-directory name no longer refers to the held directory",
             ));
@@ -699,217 +634,128 @@ impl RunCapability {
                 "the quarantined run directory changed identity during cleanup",
             ));
         }
-        rustix::fs::unlinkat(parent, &quarantine, AtFlags::REMOVEDIR).map_err(io::Error::from)?;
-        rustix::fs::fsync(parent).map_err(io::Error::from)
+        parent.remove_dir(name(&quarantine)?)?;
+        parent.sync()
     }
 }
 
 #[cfg(unix)]
-fn open_configured_root(workspace: &std::fs::File, configured: &Path) -> io::Result<std::fs::File> {
+fn open_configured_root(workspace: &Dir, configured: &Path) -> io::Result<Dir> {
     let mut current = workspace.try_clone()?;
-    let mut components = configured.components();
-    let Some(first) = components.next() else {
+    for component in configured_components(configured)? {
+        current = ensure_directory_at(&current, component)?;
+    }
+    Ok(current)
+}
+
+/// The components of a configured workspace-relative report directory, refused unless each is one plain UTF-8 name.
+#[cfg(unix)]
+fn configured_components(configured: &Path) -> io::Result<Vec<&str>> {
+    let components = configured
+        .components()
+        .map(|component| {
+            let std::path::Component::Normal(entry) = component else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "the configured report directory is not canonical workspace-relative",
+                ));
+            };
+            entry.to_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "the configured report directory is not UTF-8",
+                )
+            })
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    if components.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "the configured report directory is empty",
         ));
-    };
-    for component in std::iter::once(first).chain(components) {
-        let std::path::Component::Normal(name) = component else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "the configured report directory is not canonical workspace-relative",
-            ));
-        };
-        let name = name.to_str().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "the configured report directory is not UTF-8",
-            )
-        })?;
-        current = ensure_directory_at(&current, name)?;
     }
-    Ok(current)
+    Ok(components)
 }
 
 #[cfg(unix)]
 enum ExistingStoreRoot {
     Missing,
-    Present(std::fs::File),
+    Present(Dir),
 }
 
 #[cfg(unix)]
 fn open_existing_configured_root(
-    workspace: &std::fs::File,
+    workspace: &Dir,
     configured: &Path,
 ) -> io::Result<ExistingStoreRoot> {
-    use rustix::fs::{Mode, OFlags};
-
     let mut current = workspace.try_clone()?;
-    let mut components = configured.components();
-    let Some(first) = components.next() else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the configured report directory is empty",
-        ));
-    };
-    for component in std::iter::once(first).chain(components) {
-        let std::path::Component::Normal(name) = component else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "the configured report directory is not canonical workspace-relative",
-            ));
-        };
-        let name = name.to_str().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "the configured report directory is not UTF-8",
-            )
-        })?;
-        current = match rustix::fs::openat(
-            &current,
-            name,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-            Mode::empty(),
-        ) {
-            Ok(directory) => std::fs::File::from(directory),
-            Err(rustix::io::Errno::NOENT) => return Ok(ExistingStoreRoot::Missing),
-            Err(error) => return Err(io::Error::from(error)),
+    for component in configured_components(configured)? {
+        current = match open_directory_at(&current, component) {
+            Ok(directory) => directory,
+            Err(error) if absent(&error) => return Ok(ExistingStoreRoot::Missing),
+            Err(error) => return Err(error),
         };
     }
     Ok(ExistingStoreRoot::Present(current))
 }
 
 #[cfg(unix)]
-fn ensure_directory_at(parent: &std::fs::File, name: &str) -> io::Result<std::fs::File> {
-    use rustix::fs::{AtFlags, Mode, OFlags};
-
-    let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW;
-    match rustix::fs::openat(parent, name, flags, Mode::empty()) {
-        Ok(directory) => return Ok(std::fs::File::from(directory)),
-        Err(error) if error != rustix::io::Errno::NOENT => return Err(io::Error::from(error)),
+fn ensure_directory_at(parent: &Dir, entry: &str) -> io::Result<Dir> {
+    let entry_name = name(entry)?;
+    match parent.open_dir(entry_name) {
+        Ok(directory) => return Ok(directory),
+        Err(error) if !absent(&error) => return Err(error),
         Err(_missing) => {}
     }
-    if let Err(error) = rustix::fs::mkdirat(parent, name, Mode::RUSR | Mode::WUSR | Mode::XUSR)
-        && error != rustix::io::Errno::EXIST
-    {
-        return Err(io::Error::from(error));
-    }
-    let created =
-        rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io::Error::from)?;
-    let cleanup_created = |primary: io::Error| {
-        claim_cleanup_error(primary, remove_empty_if_identity(parent, name, &created))
+    let directory = match parent.create_private_dir_exclusive(entry_name) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            return parent.open_dir(entry_name);
+        }
+        Err(error) => return Err(error),
     };
-    let directory = rustix::fs::openat(parent, name, flags, Mode::empty())
-        .map(std::fs::File::from)
-        .map_err(io::Error::from)
-        .map_err(&cleanup_created)?;
-    let opened = rustix::fs::fstat(&directory)
-        .map_err(io::Error::from)
-        .map_err(&cleanup_created)?;
-    if opened.st_dev != created.st_dev || opened.st_ino != created.st_ino {
-        return Err(cleanup_created(io::Error::other(
-            "a newly-created report directory changed identity while it was opened",
-        )));
-    }
-    rustix::fs::fsync(&directory)
-        .map_err(io::Error::from)
-        .map_err(&cleanup_created)?;
-    rustix::fs::fsync(parent)
-        .map_err(io::Error::from)
-        .map_err(&cleanup_created)?;
+    let created = directory.status()?;
+    let cleanup_created = |primary: io::Error| {
+        claim_cleanup_error(primary, remove_empty_if_identity(parent, entry, &created))
+    };
+    directory.sync().map_err(&cleanup_created)?;
+    parent.sync().map_err(&cleanup_created)?;
     Ok(directory)
 }
 
 #[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PrivateDirectoryState {
-    Ready,
-    Tighten,
-    ForeignOwner,
-}
-/// The mode bits as a fixed width, whichever width this platform's `st_mode` has.
-#[cfg(target_os = "macos")]
-fn mode_bits(mode: u16) -> u32 {
-    u32::from(mode)
-}
-
-/// The mode bits as a fixed width, whichever width this platform's `st_mode` has.
-#[cfg(all(unix, not(target_os = "macos")))]
-const fn mode_bits(mode: u32) -> u32 {
-    mode
-}
-
-#[cfg(unix)]
-const fn private_directory_state(
-    owner: u32,
-    effective_owner: u32,
-    mode: u32,
-) -> PrivateDirectoryState {
-    if owner != effective_owner {
-        PrivateDirectoryState::ForeignOwner
-    } else if mode & 0o7777 == 0o700 {
-        PrivateDirectoryState::Ready
-    } else {
-        PrivateDirectoryState::Tighten
-    }
-}
-
-#[cfg(unix)]
-fn require_private_directory(directory: &std::fs::File) -> io::Result<()> {
-    use rustix::fs::FileType;
-
-    let mut metadata = rustix::fs::fstat(directory).map_err(io::Error::from)?;
-    if FileType::from_raw_mode(metadata.st_mode) != FileType::Directory {
+fn require_private_directory(directory: &Dir) -> io::Result<()> {
+    if directory.status()?.kind != Kind::Directory {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "a private report namespace is not a directory",
         ));
     }
-    match private_directory_state(
-        metadata.st_uid,
-        rustix::process::geteuid().as_raw(),
-        mode_bits(metadata.st_mode),
-    ) {
-        PrivateDirectoryState::Ready => {}
-        PrivateDirectoryState::ForeignOwner => {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "a private report namespace is owned by another user",
-            ));
-        }
-        PrivateDirectoryState::Tighten => {
-            rustix::fs::fchmod(
-                directory,
-                rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR | rustix::fs::Mode::XUSR,
-            )
-            .map_err(io::Error::from)?;
-            rustix::fs::fsync(directory).map_err(io::Error::from)?;
-            metadata = rustix::fs::fstat(directory).map_err(io::Error::from)?;
-            if private_directory_state(
-                metadata.st_uid,
-                rustix::process::geteuid().as_raw(),
-                mode_bits(metadata.st_mode),
-            ) != PrivateDirectoryState::Ready
-            {
-                return Err(io::Error::new(
+    match directory.privacy()? {
+        Privacy::OwnerOnly => Ok(()),
+        Privacy::ForeignOwner => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "a private report namespace is owned by another user",
+        )),
+        Privacy::Loose => {
+            directory.restrict_to_owner()?;
+            directory.sync()?;
+            if directory.privacy()? == Privacy::OwnerOnly {
+                Ok(())
+            } else {
+                Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "a same-owner report namespace could not be tightened to owner-only access",
-                ));
+                ))
             }
         }
     }
-    Ok(())
 }
 
 #[cfg(unix)]
-fn create_private_claim_directory(
-    parent: &std::fs::File,
-    final_name: &str,
-) -> io::Result<std::fs::File> {
-    use rustix::fs::{AtFlags, Mode, OFlags, RenameFlags};
-
+fn create_private_claim_directory(parent: &Dir, final_name: &str) -> io::Result<Dir> {
     const ATTEMPTS: usize = 8;
+    let final_entry = name(final_name)?;
     for _attempt in 0..ATTEMPTS {
         let mut token = [0_u8; 16];
         getrandom::fill(&mut token).map_err(|error| {
@@ -918,54 +764,24 @@ fn create_private_claim_directory(
             ))
         })?;
         let temporary = format!(".njutest-claim-{}", hex::encode(token));
-        match rustix::fs::mkdirat(parent, &temporary, Mode::RUSR | Mode::WUSR | Mode::XUSR) {
-            Ok(()) => {}
-            Err(rustix::io::Errno::EXIST) => continue,
-            Err(error) => return Err(io::Error::from(error)),
-        }
-        let created = rustix::fs::statat(parent, &temporary, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(io::Error::from)?;
+        let temporary_entry = name(&temporary)?;
+        let directory = match parent.create_private_dir_exclusive(temporary_entry) {
+            Ok(directory) => directory,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let created = directory.status()?;
         let cleanup_temporary = |primary: io::Error| {
             claim_cleanup_error(
                 primary,
                 remove_empty_if_identity(parent, &temporary, &created),
             )
         };
-        let directory = rustix::fs::openat(
-            parent,
-            &temporary,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map(std::fs::File::from)
-        .map_err(io::Error::from)
-        .map_err(&cleanup_temporary)?;
-        let opened = rustix::fs::fstat(&directory)
-            .map_err(io::Error::from)
-            .map_err(&cleanup_temporary)?;
-        let named = rustix::fs::statat(parent, &temporary, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(io::Error::from)
-            .map_err(&cleanup_temporary)?;
-        if opened.st_dev != created.st_dev
-            || opened.st_ino != created.st_ino
-            || opened.st_dev != named.st_dev
-            || opened.st_ino != named.st_ino
-        {
-            return Err(cleanup_temporary(io::Error::other(
-                "the unpredictable private claim changed identity while it was opened",
-            )));
-        }
         if let Err(error) = require_private_directory(&directory) {
             return Err(cleanup_temporary(error));
         }
-        if let Err(error) = rustix::fs::renameat_with(
-            parent,
-            &temporary,
-            parent,
-            final_name,
-            RenameFlags::NOREPLACE,
-        ) {
-            return Err(cleanup_temporary(io::Error::from(error)));
+        if let Err(error) = parent.rename_noreplace(temporary_entry, parent, final_entry) {
+            return Err(cleanup_temporary(error));
         }
         let cleanup_final = |primary: io::Error| {
             claim_cleanup_error(
@@ -973,15 +789,14 @@ fn create_private_claim_directory(
                 remove_empty_if_identity(parent, final_name, &created),
             )
         };
-        let final_entry = rustix::fs::statat(parent, final_name, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(io::Error::from)
-            .map_err(&cleanup_final)?;
-        if opened.st_dev != final_entry.st_dev || opened.st_ino != final_entry.st_ino {
-            return Err(cleanup_final(io::Error::other(
-                "the atomic private claim name does not refer to the created directory",
-            )));
+        match parent.status_at(final_entry).map_err(&cleanup_final)? {
+            Some(named) if named.identity == created.identity => return Ok(directory),
+            Some(_) | None => {
+                return Err(cleanup_final(io::Error::other(
+                    "the atomic private claim name does not refer to the created directory",
+                )));
+            }
         }
-        return Ok(directory);
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
@@ -990,16 +805,14 @@ fn create_private_claim_directory(
 }
 
 #[cfg(unix)]
-fn ensure_private_marker(directory: &std::fs::File) -> io::Result<()> {
-    use rustix::fs::{Mode, OFlags};
-
+fn ensure_private_marker(directory: &Dir) -> io::Result<()> {
     const MARKER: &str = ".gitignore";
     const CONTENTS: &[u8] = b"*\n";
-    let read_flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
-    match rustix::fs::openat(directory, MARKER, read_flags, Mode::empty()) {
-        Ok(descriptor) => {
+    let marker_name = name(MARKER)?;
+    match directory.open_file(marker_name) {
+        Ok(file) => {
             let bytes = read_regular_artifact(
-                descriptor,
+                file,
                 u64::try_from(CONTENTS.len()).map_err(|_outside_wire| {
                     io::Error::new(io::ErrorKind::InvalidData, "private marker length overflow")
                 })?,
@@ -1012,25 +825,18 @@ fn ensure_private_marker(directory: &std::fs::File) -> io::Result<()> {
                 "the private report-directory marker has unexpected bytes",
             ));
         }
-        Err(error) if error != rustix::io::Errno::NOENT => return Err(io::Error::from(error)),
+        Err(error) if !absent(&error) => return Err(error),
         Err(_missing) => {}
     }
-    let descriptor = rustix::fs::openat(
-        directory,
-        MARKER,
-        OFlags::WRONLY | OFlags::CLOEXEC | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW,
-        Mode::RUSR | Mode::WUSR,
-    )
-    .map_err(io::Error::from)?;
-    let mut marker = std::fs::File::from(descriptor);
+    let mut marker = directory.create_file(marker_name)?;
     marker.write_all(CONTENTS)?;
     marker.sync_all()?;
-    rustix::fs::fsync(directory).map_err(io::Error::from)
+    directory.sync()
 }
 
 #[cfg(unix)]
-fn ensure_writable_spelling_at(directory: &std::fs::File, name: &str) -> io::Result<()> {
-    let wanted = StoredRunId::try_from(name).map_err(|error| {
+fn ensure_writable_spelling_at(directory: &Dir, run: &str) -> io::Result<()> {
+    let wanted = StoredRunId::try_from(run).map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("the writable run name is not canonical: {error}"),
@@ -1049,9 +855,7 @@ fn ensure_writable_spelling_at(directory: &std::fs::File, name: &str) -> io::Res
             )
         })?;
         let opened = open_directory_at(directory, &existing)?;
-        let metadata = rustix::fs::fstat(&opened).map_err(io::Error::from)?;
-        if rustix::fs::FileType::from_raw_mode(metadata.st_mode) != rustix::fs::FileType::Directory
-        {
+        if opened.status()?.kind != Kind::Directory {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "a stored run is not one real directory",
@@ -1078,57 +882,33 @@ fn claim_cleanup_error(primary: io::Error, cleanup: io::Result<()>) -> io::Error
 }
 
 #[cfg(unix)]
-fn remove_empty_if_identity(
-    parent: &std::fs::File,
-    name: &str,
-    expected: &rustix::fs::Stat,
-) -> io::Result<()> {
-    use rustix::fs::{AtFlags, RenameFlags};
-
-    let actual =
-        rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io::Error::from)?;
-    if expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino {
-        return Err(io::Error::other(
-            "the failed claim name no longer refers to the directory that was created",
-        ));
+fn remove_empty_if_identity(parent: &Dir, entry: &str, expected: &Status) -> io::Result<()> {
+    let entry_name = name(entry)?;
+    let gone = || {
+        io::Error::other("the failed claim name no longer refers to the directory that was created")
+    };
+    match parent.status_at(entry_name)? {
+        Some(actual) if actual.identity == expected.identity => {}
+        Some(_) | None => return Err(gone()),
     }
-    let quarantine = quarantine_named_entry(parent, name, ".njutest-empty-cleanup")?;
-    let quarantined = rustix::fs::statat(parent, &quarantine, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(io::Error::from)?;
-    if expected.st_dev != quarantined.st_dev || expected.st_ino != quarantined.st_ino {
-        let restore =
-            rustix::fs::renameat_with(parent, &quarantine, parent, name, RenameFlags::NOREPLACE)
-                .map_err(io::Error::from);
-        return Err(claim_cleanup_error(
-            io::Error::other("the failed claim entry changed before it was quarantined"),
-            restore,
-        ));
+    let quarantine = quarantine_named_entry(parent, entry, ".njutest-empty-cleanup")?;
+    let quarantine_name = name(&quarantine)?;
+    match parent.status_at(quarantine_name)? {
+        Some(quarantined) if quarantined.identity == expected.identity => {}
+        Some(_) | None => {
+            let restore = parent.rename_noreplace(quarantine_name, parent, entry_name);
+            return Err(claim_cleanup_error(
+                io::Error::other("the failed claim entry changed before it was quarantined"),
+                restore,
+            ));
+        }
     }
-    rustix::fs::unlinkat(parent, &quarantine, AtFlags::REMOVEDIR).map_err(io::Error::from)?;
-    rustix::fs::fsync(parent).map_err(io::Error::from)
+    parent.remove_dir(quarantine_name)?;
+    parent.sync()
 }
 
 #[cfg(unix)]
-fn quarantine_named_entry(
-    directory: &impl std::os::fd::AsFd,
-    original: &str,
-    stem: &str,
-) -> io::Result<String> {
-    let original = std::ffi::CString::new(original).map_err(|_embedded_nul| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "a cleanup entry name contains an embedded NUL byte",
-        )
-    })?;
-    quarantine_entry(directory, &original, stem)
-}
-
-#[cfg(unix)]
-fn quarantine_entry(
-    directory: &impl std::os::fd::AsFd,
-    original: &std::ffi::CStr,
-    stem: &str,
-) -> io::Result<String> {
+fn quarantine_named_entry(directory: &Dir, original: &str, stem: &str) -> io::Result<String> {
     quarantine_entry_with(directory, original, stem, || {
         let mut token = [0_u8; 16];
         getrandom::fill(&mut token).map_err(|error| {
@@ -1142,32 +922,25 @@ fn quarantine_entry(
 
 #[cfg(unix)]
 fn quarantine_entry_with<F>(
-    directory: &impl std::os::fd::AsFd,
-    original: &std::ffi::CStr,
+    directory: &Dir,
+    original: &str,
     stem: &str,
     mut token: F,
 ) -> io::Result<String>
 where
     F: FnMut() -> io::Result<[u8; 16]>,
 {
-    use rustix::fs::RenameFlags;
-
     const ATTEMPTS: usize = 8;
+    let original_name = name(original)?;
     for _attempt in 0..ATTEMPTS {
         let candidate = format!("{stem}-{}", hex::encode(token()?));
-        if original.to_bytes() == candidate.as_bytes() {
+        if original == candidate {
             continue;
         }
-        match rustix::fs::renameat_with(
-            directory,
-            original,
-            directory,
-            &candidate,
-            RenameFlags::NOREPLACE,
-        ) {
+        match directory.rename_noreplace(original_name, directory, name(&candidate)?) {
             Ok(()) => return Ok(candidate),
-            Err(rustix::io::Errno::EXIST) => {}
-            Err(error) => return Err(io::Error::from(error)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
         }
     }
     Err(io::Error::new(
@@ -1177,27 +950,18 @@ where
 }
 
 #[cfg(unix)]
-fn named_directory_matches(
-    parent: &std::fs::File,
-    name: &str,
-    expected: &impl std::os::fd::AsFd,
-) -> io::Result<bool> {
-    let actual = open_directory_at(parent, name)?;
-    let expected = rustix::fs::fstat(expected).map_err(io::Error::from)?;
-    let actual = rustix::fs::fstat(&actual).map_err(io::Error::from)?;
-    Ok(expected.st_dev == actual.st_dev && expected.st_ino == actual.st_ino)
+fn named_directory_matches(parent: &Dir, entry: &str, expected: &Dir) -> io::Result<bool> {
+    let actual = open_directory_at(parent, entry)?;
+    Ok(expected.status()?.identity == actual.status()?.identity)
 }
 
 #[cfg(unix)]
-fn require_same_directory(expected: &std::fs::File, actual: &std::fs::File) -> io::Result<()> {
-    use rustix::fs::FileType;
-
-    let expected = rustix::fs::fstat(expected).map_err(io::Error::from)?;
-    let actual = rustix::fs::fstat(actual).map_err(io::Error::from)?;
-    if FileType::from_raw_mode(expected.st_mode) != FileType::Directory
-        || FileType::from_raw_mode(actual.st_mode) != FileType::Directory
-        || expected.st_dev != actual.st_dev
-        || expected.st_ino != actual.st_ino
+fn require_same_directory(expected: &Dir, actual: &Dir) -> io::Result<()> {
+    let expected = expected.status()?;
+    let actual = actual.status()?;
+    if expected.kind != Kind::Directory
+        || actual.kind != Kind::Directory
+        || expected.identity != actual.identity
     {
         return Err(io::Error::other(
             "the configured report root changed identity while it was bound",
@@ -1207,19 +971,9 @@ fn require_same_directory(expected: &std::fs::File, actual: &std::fs::File) -> i
 }
 
 #[cfg(unix)]
-fn read_regular_artifact(descriptor: std::os::fd::OwnedFd, expected: u64) -> io::Result<Vec<u8>> {
-    use rustix::fs::FileType;
-
-    let metadata = rustix::fs::fstat(&descriptor).map_err(io::Error::from)?;
-    let retained_size = u64::try_from(metadata.st_size).map_err(|_negative_or_outside| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "model artifact has an unrepresentable filesystem size",
-        )
-    })?;
-    if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile
-        || retained_size != expected
-    {
+fn read_regular_artifact(file: std::fs::File, expected: u64) -> io::Result<Vec<u8>> {
+    let status = rust_mutants::capdir::file_status(&file)?;
+    if status.kind != Kind::File || status.len != expected {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "model artifact is not one regular file of the retained size",
@@ -1231,7 +985,7 @@ fn read_regular_artifact(descriptor: std::os::fd::OwnedFd, expected: u64) -> io:
             "model artifact size is unbounded",
         )
     })?;
-    let mut file = std::fs::File::from(descriptor);
+    let mut file = file;
     let mut bytes = Vec::new();
     io::Read::by_ref(&mut file)
         .take(limit)
@@ -1253,73 +1007,47 @@ fn read_regular_artifact(descriptor: std::os::fd::OwnedFd, expected: u64) -> io:
 }
 
 #[cfg(unix)]
-fn open_directory(path: &Path) -> io::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags};
-
-    rustix::fs::open(
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-        Mode::empty(),
-    )
-    .map(std::fs::File::from)
-    .map_err(io::Error::from)
+fn open_directory(path: &Path) -> io::Result<Dir> {
+    Dir::open(path)
 }
 
 #[cfg(unix)]
-fn read_optional_config_at(
-    workspace: &std::fs::File,
-    path: &Path,
-) -> Result<Option<String>, StoreError> {
-    use rustix::fs::{Mode, OFlags};
-
-    let descriptor = match rustix::fs::openat(
-        workspace,
-        crate::config::FILE_NAME,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-        Mode::empty(),
-    ) {
-        Ok(descriptor) => descriptor,
-        Err(rustix::io::Errno::NOENT) => return Ok(None),
-        Err(error) => {
+fn read_optional_config_at(workspace: &Dir, path: &Path) -> Result<Option<String>, StoreError> {
+    let opened = name(crate::config::FILE_NAME).and_then(|file| workspace.open_file(file));
+    let file = match opened {
+        Ok(file) => file,
+        Err(error) if absent(&error) => return Ok(None),
+        Err(source) => {
             return Err(StoreError::NotKept {
                 path: path.display().to_string(),
-                source: io::Error::from(error),
+                source,
             });
         }
     };
-    read_configuration_descriptor(descriptor, path).map(Some)
+    read_configuration_descriptor(file, path).map(Some)
 }
 
 #[cfg(unix)]
-fn read_configuration_descriptor(
-    descriptor: std::os::fd::OwnedFd,
-    path: &Path,
-) -> Result<String, StoreError> {
-    use rustix::fs::FileType;
-
+fn read_configuration_descriptor(file: std::fs::File, path: &Path) -> Result<String, StoreError> {
     const MAX_CONFIG_BYTES: u64 = 1_048_576;
-    let metadata = rustix::fs::fstat(&descriptor).map_err(|error| StoreError::NotKept {
-        path: path.display().to_string(),
-        source: io::Error::from(error),
-    })?;
-    let size =
-        u64::try_from(metadata.st_size).map_err(|_negative_or_outside| StoreError::UnsafePath {
-            path: path.to_path_buf(),
-            message: "the configuration has an unrepresentable size".to_owned(),
+    let status =
+        rust_mutants::capdir::file_status(&file).map_err(|source| StoreError::NotKept {
+            path: path.display().to_string(),
+            source,
         })?;
-    if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile {
+    if status.kind != Kind::File {
         return Err(StoreError::UnsafePath {
             path: path.to_path_buf(),
             message: "the configuration is not one regular file".to_owned(),
         });
     }
-    if size > MAX_CONFIG_BYTES {
+    if status.len > MAX_CONFIG_BYTES {
         return Err(StoreError::UnsafePath {
             path: path.to_path_buf(),
             message: format!("the configuration exceeds {MAX_CONFIG_BYTES} bytes"),
         });
     }
-    let bytes = read_regular_artifact(descriptor, size).map_err(|source| StoreError::NotKept {
+    let bytes = read_regular_artifact(file, status.len).map_err(|source| StoreError::NotKept {
         path: path.display().to_string(),
         source,
     })?;
@@ -1347,7 +1075,7 @@ pub(crate) fn read_configuration(path: &Path) -> Result<String, StoreError> {
             path: path.display().to_string(),
             source: io::Error::from(error),
         })?;
-        read_configuration_descriptor(descriptor, path)
+        read_configuration_descriptor(std::fs::File::from(descriptor), path)
     }
     #[cfg(not(unix))]
     {
@@ -1360,126 +1088,65 @@ pub(crate) fn read_configuration(path: &Path) -> Result<String, StoreError> {
 
 #[cfg(unix)]
 fn read_optional_regular_at(
-    directory: &std::fs::File,
-    name: &str,
+    directory: &Dir,
+    file_name: &str,
     path: &Path,
 ) -> Result<Option<Vec<u8>>, StoreError> {
-    use rustix::fs::{FileType, Mode, OFlags};
-
     const MAX_STORED_FILE_BYTES: u64 = 67_108_864;
-    let descriptor = match rustix::fs::openat(
-        directory,
-        name,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-        Mode::empty(),
-    ) {
-        Ok(descriptor) => descriptor,
-        Err(rustix::io::Errno::NOENT) => return Ok(None),
-        Err(error) => {
-            return Err(StoreError::NotKept {
-                path: path.display().to_string(),
-                source: io::Error::from(error),
-            });
-        }
-    };
-    let metadata = rustix::fs::fstat(&descriptor).map_err(|error| StoreError::NotKept {
+    let not_kept = |source: io::Error| StoreError::NotKept {
         path: path.display().to_string(),
-        source: io::Error::from(error),
-    })?;
-    let size =
-        u64::try_from(metadata.st_size).map_err(|_negative_or_outside| StoreError::UnsafePath {
-            path: path.to_path_buf(),
-            message: "the stored report file has an unrepresentable size".to_owned(),
-        })?;
-    if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile {
+        source,
+    };
+    let file = match name(file_name).and_then(|entry| directory.open_file(entry)) {
+        Ok(file) => file,
+        Err(error) if absent(&error) => return Ok(None),
+        Err(source) => return Err(not_kept(source)),
+    };
+    let status = rust_mutants::capdir::file_status(&file).map_err(not_kept)?;
+    if status.kind != Kind::File {
         return Err(StoreError::UnsafePath {
             path: path.to_path_buf(),
             message: "the stored report entry is not one regular file".to_owned(),
         });
     }
-    if size > MAX_STORED_FILE_BYTES {
+    if status.len > MAX_STORED_FILE_BYTES {
         return Err(StoreError::UnsafePath {
             path: path.to_path_buf(),
             message: format!("the stored report file exceeds {MAX_STORED_FILE_BYTES} bytes"),
         });
     }
-    read_regular_artifact(descriptor, size)
+    read_regular_artifact(file, status.len)
         .map(Some)
-        .map_err(|source| StoreError::NotKept {
-            path: path.display().to_string(),
-            source,
-        })
+        .map_err(not_kept)
 }
 
 #[cfg(unix)]
-fn reopen_directory(directory: &impl std::os::fd::AsFd) -> io::Result<std::fs::File> {
-    open_directory_at(directory, ".")
+fn open_directory_at(directory: &Dir, entry: &str) -> io::Result<Dir> {
+    directory.open_dir(name(entry)?)
 }
 
 #[cfg(unix)]
-fn open_directory_at(directory: &impl std::os::fd::AsFd, name: &str) -> io::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags};
-
-    rustix::fs::openat(
-        directory,
-        name,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW,
-        Mode::empty(),
-    )
-    .map(std::fs::File::from)
-    .map_err(io::Error::from)
+fn directory_names(directory: &Dir) -> io::Result<Vec<String>> {
+    directory.entries()
 }
 
 #[cfg(unix)]
-fn directory_names(directory: &impl std::os::fd::AsFd) -> io::Result<Vec<String>> {
-    use rustix::fs::Dir;
-
-    let scan = reopen_directory(directory)?;
-    let mut entries = Dir::read_from(&scan).map_err(io::Error::from)?;
-    let mut names = Vec::new();
-    while let Some(entry) = entries.read() {
-        let entry = entry.map_err(io::Error::from)?;
-        let bytes = entry.file_name().to_bytes();
-        if matches!(bytes, b"." | b"..") {
-            continue;
-        }
-        let name = std::str::from_utf8(bytes).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("sealed report entry name is not UTF-8: {error}"),
-            )
-        })?;
-        names.push(name.to_owned());
-    }
-    Ok(names)
-}
-
-#[cfg(unix)]
-fn require_regular_at(directory: &impl std::os::fd::AsFd, name: &str) -> io::Result<()> {
-    use rustix::fs::{FileType, Mode, OFlags};
-
-    let opened = rustix::fs::openat(
-        directory,
-        name,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
-    .map_err(io::Error::from)?;
-    let metadata = rustix::fs::fstat(&opened).map_err(io::Error::from)?;
-    if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile {
-        return Err(io::Error::new(
+fn require_regular_at(directory: &Dir, entry: &str) -> io::Result<()> {
+    match directory.status_at(name(entry)?)? {
+        Some(status) if status.kind == Kind::File => Ok(()),
+        Some(_other) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("sealed report entry {name:?} is not one regular file"),
-        ));
+            format!("sealed report entry {entry:?} is not one regular file"),
+        )),
+        None => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("sealed report entry {entry:?} is missing"),
+        )),
     }
-    Ok(())
 }
 
 #[cfg(unix)]
-fn validate_model_names(
-    directory: &impl std::os::fd::AsFd,
-    expected: &mut BTreeSet<String>,
-) -> io::Result<()> {
+fn validate_model_names(directory: &Dir, expected: &mut BTreeSet<String>) -> io::Result<()> {
     for name in directory_names(directory)? {
         if !expected.remove(&name) {
             return Err(io::Error::new(
@@ -1493,93 +1160,8 @@ fn validate_model_names(
 }
 
 #[cfg(unix)]
-fn remove_open_tree(directory: &impl std::os::fd::AsFd) -> io::Result<()> {
-    use rustix::fs::Dir;
-
-    let scan = reopen_directory(directory)?;
-    let mut entries = Dir::read_from(&scan).map_err(io::Error::from)?;
-    while let Some(entry) = entries.read() {
-        let entry = entry.map_err(io::Error::from)?;
-        let name = entry.file_name();
-        if name.to_bytes() == b"." || name.to_bytes() == b".." {
-            continue;
-        }
-        remove_named_entry(directory, name)?;
-    }
-    rustix::fs::fsync(directory).map_err(io::Error::from)
-}
-
-#[cfg(unix)]
-fn remove_named_entry(directory: &impl std::os::fd::AsFd, name: &std::ffi::CStr) -> io::Result<()> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags};
-
-    let before =
-        rustix::fs::statat(directory, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io::Error::from)?;
-    let quarantine = quarantine_entry(directory, name, ".njutest-remove")?;
-    let after = rustix::fs::statat(directory, &quarantine, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(io::Error::from)?;
-    if before.st_dev != after.st_dev || before.st_ino != after.st_ino {
-        return restore_mismatched_entry(directory, name, &quarantine);
-    }
-    let kind = FileType::from_raw_mode(after.st_mode);
-    if kind == FileType::Directory {
-        let child = rustix::fs::openat(
-            directory,
-            &quarantine,
-            OFlags::RDONLY
-                | OFlags::CLOEXEC
-                | OFlags::DIRECTORY
-                | OFlags::NOFOLLOW
-                | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)?;
-        let opened = rustix::fs::fstat(&child).map_err(io::Error::from)?;
-        if opened.st_dev != after.st_dev || opened.st_ino != after.st_ino {
-            return restore_mismatched_entry(directory, name, &quarantine);
-        }
-        remove_open_tree(&child)?;
-        let final_named = rustix::fs::statat(directory, &quarantine, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(io::Error::from)?;
-        if final_named.st_dev != opened.st_dev || final_named.st_ino != opened.st_ino {
-            return Err(io::Error::other(
-                "a quarantined child directory changed identity during cleanup",
-            ));
-        }
-        rustix::fs::unlinkat(directory, &quarantine, AtFlags::REMOVEDIR)
-            .map_err(io::Error::from)?;
-    } else {
-        let final_named = rustix::fs::statat(directory, &quarantine, AtFlags::SYMLINK_NOFOLLOW)
-            .map_err(io::Error::from)?;
-        if final_named.st_dev != after.st_dev || final_named.st_ino != after.st_ino {
-            return Err(io::Error::other(
-                "a quarantined child entry changed identity during cleanup",
-            ));
-        }
-        rustix::fs::unlinkat(directory, &quarantine, AtFlags::empty()).map_err(io::Error::from)?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn restore_mismatched_entry(
-    directory: &impl std::os::fd::AsFd,
-    original: &std::ffi::CStr,
-    quarantine: &str,
-) -> io::Result<()> {
-    use rustix::fs::RenameFlags;
-
-    rustix::fs::renameat_with(
-        directory,
-        quarantine,
-        directory,
-        original,
-        RenameFlags::NOREPLACE,
-    )
-    .map_err(io::Error::from)?;
-    Err(io::Error::other(
-        "a cleanup entry changed identity before it was quarantined",
-    ))
+fn remove_open_tree(directory: &Dir) -> io::Result<()> {
+    directory.remove_contents()
 }
 
 #[cfg(not(unix))]
@@ -2137,7 +1719,7 @@ impl Store {
     }
 
     #[cfg(unix)]
-    fn open_or_create_root(&self) -> Result<std::fs::File, StoreError> {
+    fn open_or_create_root(&self) -> Result<Dir, StoreError> {
         if let Some(directory) = self.bound_root()? {
             return Ok(directory);
         }
@@ -2152,10 +1734,10 @@ impl Store {
     }
 
     #[cfg(unix)]
-    fn bound_root(&self) -> Result<Option<std::fs::File>, StoreError> {
+    fn bound_root(&self) -> Result<Option<Dir>, StoreError> {
         self.report_root
             .get()
-            .map(std::fs::File::try_clone)
+            .map(Dir::try_clone)
             .transpose()
             .map_err(|source| StoreError::NotKept {
                 path: self.root.display().to_string(),
@@ -2164,7 +1746,7 @@ impl Store {
     }
 
     #[cfg(unix)]
-    fn bind_root(&self, candidate: std::fs::File) -> Result<std::fs::File, StoreError> {
+    fn bind_root(&self, candidate: Dir) -> Result<Dir, StoreError> {
         if let Some(bound) = self.report_root.get() {
             require_same_directory(bound, &candidate).map_err(|source| StoreError::NotKept {
                 path: self.root.display().to_string(),
@@ -2972,38 +2554,28 @@ fn retain_checked_directory(
 }
 
 #[cfg(unix)]
-fn sync_open_tree(directory: &impl std::os::fd::AsFd) -> io::Result<()> {
-    use rustix::fs::{Dir, FileType, Mode, OFlags};
-
-    let scan = reopen_directory(directory)?;
-    let mut entries = Dir::read_from(&scan).map_err(io::Error::from)?;
-    while let Some(entry) = entries.read() {
-        let entry = entry.map_err(io::Error::from)?;
-        let name = entry.file_name();
-        if name.to_bytes() == b"." || name.to_bytes() == b".." {
-            continue;
-        }
-        let opened = rustix::fs::openat(
-            directory,
-            name,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)?;
-        let metadata = rustix::fs::fstat(&opened).map_err(io::Error::from)?;
-        match FileType::from_raw_mode(metadata.st_mode) {
-            FileType::RegularFile => {
-                rustix::fs::fsync(&opened).map_err(io::Error::from)?;
+fn sync_open_tree(directory: &Dir) -> io::Result<()> {
+    for entry in directory.entries()? {
+        let entry_name = name(&entry)?;
+        match directory.status_at(entry_name)?.map(|status| status.kind) {
+            Some(Kind::File) => {
+                let file = directory.open_file(entry_name)?;
+                if rust_mutants::capdir::file_status(&file)?.kind != Kind::File {
+                    return Err(io::Error::other(format!(
+                        "unpublished report entry {entry:?} changed kind while it was synced"
+                    )));
+                }
+                file.sync_all()?;
             }
-            FileType::Directory => sync_open_tree(&opened)?,
-            _ => {
+            Some(Kind::Directory) => sync_open_tree(&directory.open_dir(entry_name)?)?,
+            Some(Kind::Other) | None => {
                 return Err(io::Error::other(format!(
-                    "unpublished report entry {name:?} is neither a regular file nor a directory"
+                    "unpublished report entry {entry:?} is neither a regular file nor a directory"
                 )));
             }
         }
     }
-    rustix::fs::fsync(directory).map_err(io::Error::from)
+    directory.sync()
 }
 
 /// Removes the oldest run directories beyond `keep`, newest first by name — which is chronological, because that is what a run identity is for.
@@ -3091,16 +2663,10 @@ fn retain_with_capability(store: &Store, keep: u32) -> Result<Vec<PathBuf>, Stor
 /// # Errors
 /// Returns the refusal for a run whose name changed identity first.
 #[cfg(unix)]
-fn quarantine_retained_run(
-    runs: &std::fs::File,
-    candidate: &str,
-    held: &std::fs::File,
-) -> io::Result<(String, std::fs::File)> {
+fn quarantine_retained_run(runs: &Dir, candidate: &str, held: &Dir) -> io::Result<(String, Dir)> {
     let quarantine = quarantine_named_entry(runs, candidate, RETENTION_STEM)?;
     let quarantined = open_directory_at(runs, &quarantine)?;
-    let expected = rustix::fs::fstat(held).map_err(io::Error::from)?;
-    let actual = rustix::fs::fstat(&quarantined).map_err(io::Error::from)?;
-    if expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino {
+    if held.status()?.identity != quarantined.status()?.identity {
         return Err(io::Error::other(
             "the retained run name changed identity before quarantine",
         ));
@@ -3113,20 +2679,15 @@ fn quarantine_retained_run(
 /// # Errors
 /// Returns the refusal for a run that changed identity while it was removed.
 #[cfg(unix)]
-fn destroy_quarantined_run(
-    runs: &std::fs::File,
-    quarantine: &str,
-    quarantined: &std::fs::File,
-) -> io::Result<()> {
+fn destroy_quarantined_run(runs: &Dir, quarantine: &str, quarantined: &Dir) -> io::Result<()> {
     remove_open_tree(quarantined)?;
     if !named_directory_matches(runs, quarantine, quarantined)? {
         return Err(io::Error::other(
             "the retained run changed identity while it was removed",
         ));
     }
-    rustix::fs::unlinkat(runs, quarantine, rustix::fs::AtFlags::REMOVEDIR)
-        .map_err(io::Error::from)?;
-    rustix::fs::fsync(runs).map_err(io::Error::from)
+    runs.remove_dir(name(quarantine)?)?;
+    runs.sync()
 }
 
 /// Which index names `candidate` now, read after the candidate is unreachable by name so a pointer written since the protection census is seen.
@@ -3167,11 +2728,8 @@ fn index_now_names(
 /// # Errors
 /// Returns the refusal when the original name was taken while it was away.
 #[cfg(unix)]
-fn restore_from_quarantine(runs: &std::fs::File, quarantine: &str, name: &str) -> io::Result<()> {
-    use rustix::fs::RenameFlags;
-
-    rustix::fs::renameat_with(runs, quarantine, runs, name, RenameFlags::NOREPLACE)
-        .map_err(io::Error::from)
+fn restore_from_quarantine(runs: &Dir, quarantine: &str, run: &str) -> io::Result<()> {
+    runs.rename_noreplace(name(quarantine)?, runs, name(run)?)
 }
 
 #[cfg(not(unix))]
@@ -3315,54 +2873,29 @@ fn open_stored_run(
 }
 
 #[cfg(unix)]
-fn read_index_at(
-    root: &std::fs::File,
-    index: Index,
-    path: &Path,
-) -> Result<Option<String>, StoreError> {
-    use rustix::fs::{Mode, OFlags};
-
+fn read_index_at(root: &Dir, index: Index, path: &Path) -> Result<Option<String>, StoreError> {
     const MAX_INDEX_BYTES: u64 = 65_536;
-    let descriptor = match rustix::fs::openat(
-        root,
-        index.file(),
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-        Mode::empty(),
-    ) {
-        Ok(descriptor) => descriptor,
-        Err(rustix::io::Errno::NOENT) => return Ok(None),
-        Err(error) => {
-            return Err(StoreError::Index {
-                path: path.to_path_buf(),
-                message: io::Error::from(error).to_string(),
-            });
-        }
+    let refused = |message: String| StoreError::Index {
+        path: path.to_path_buf(),
+        message,
     };
-    let metadata = rustix::fs::fstat(&descriptor).map_err(|error| StoreError::Index {
-        path: path.to_path_buf(),
-        message: io::Error::from(error).to_string(),
-    })?;
-    let size =
-        u64::try_from(metadata.st_size).map_err(|_negative_or_outside| StoreError::Index {
-            path: path.to_path_buf(),
-            message: "index size is not representable".to_owned(),
-        })?;
-    if size > MAX_INDEX_BYTES {
-        return Err(StoreError::Index {
-            path: path.to_path_buf(),
-            message: format!("index exceeds the {MAX_INDEX_BYTES}-byte protocol boundary"),
-        });
+    let file = match name(index.file()).and_then(|entry| root.open_file(entry)) {
+        Ok(file) => file,
+        Err(error) if absent(&error) => return Ok(None),
+        Err(error) => return Err(refused(error.to_string())),
+    };
+    let status =
+        rust_mutants::capdir::file_status(&file).map_err(|error| refused(error.to_string()))?;
+    if status.len > MAX_INDEX_BYTES {
+        return Err(refused(format!(
+            "index exceeds the {MAX_INDEX_BYTES}-byte protocol boundary"
+        )));
     }
-    let bytes = read_regular_artifact(descriptor, size).map_err(|error| StoreError::Index {
-        path: path.to_path_buf(),
-        message: error.to_string(),
-    })?;
+    let bytes =
+        read_regular_artifact(file, status.len).map_err(|error| refused(error.to_string()))?;
     String::from_utf8(bytes)
         .map(Some)
-        .map_err(|error| StoreError::Index {
-            path: path.to_path_buf(),
-            message: error.to_string(),
-        })
+        .map_err(|error| refused(error.to_string()))
 }
 
 #[cfg(unix)]
@@ -3405,102 +2938,57 @@ fn stored_spellings_at(
 }
 
 #[cfg(unix)]
-fn read_named_regular(directory: &std::fs::File, name: &str, expected: u64) -> io::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags};
-
-    let descriptor = rustix::fs::openat(
-        directory,
-        name,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
-    .map_err(io::Error::from)?;
-    read_regular_artifact(descriptor, expected)
+fn read_named_regular(directory: &Dir, entry: &str, expected: u64) -> io::Result<Vec<u8>> {
+    read_regular_artifact(directory.open_file(name(entry)?)?, expected)
 }
 
 #[cfg(unix)]
 fn write_index(authority: &RunDirectory, index: Index, bytes: &[u8]) -> Result<(), StoreError> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags};
-
     let store = &authority.store;
     let root = &authority.capability.root;
-    let name = index.file();
-    match rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(metadata) if FileType::from_raw_mode(metadata.st_mode) == FileType::RegularFile => {}
-        Ok(_unsafe_type) => {
+    let not_kept = |path: String| move |source: io::Error| StoreError::NotKept { path, source };
+    let index_path = store.index(index).display().to_string();
+    let index_name = name(index.file()).map_err(not_kept(index_path.clone()))?;
+    match root
+        .status_at(index_name)
+        .map_err(not_kept(index_path.clone()))?
+    {
+        Some(status) if status.kind != Kind::File => {
             return Err(StoreError::UnsafePath {
                 path: store.index(index),
                 message: "the index target is not one regular file".to_owned(),
             });
         }
-        Err(rustix::io::Errno::NOENT) => {}
-        Err(error) => {
-            return Err(StoreError::NotKept {
-                path: store.index(index).display().to_string(),
-                source: io::Error::from(error),
-            });
-        }
+        Some(_) | None => {}
     }
     authority
         .capability
         .require_runs_binding()
-        .map_err(|source| StoreError::NotKept {
-            path: store.index(index).display().to_string(),
-            source,
-        })?;
-    let run_scoped_temporary = format!(".{name}.new-{}", authority.run_id.as_str());
-    let descriptor = rustix::fs::openat(
-        root,
-        &run_scoped_temporary,
-        OFlags::WRONLY | OFlags::CLOEXEC | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW,
-        Mode::RUSR | Mode::WUSR,
-    )
-    .map_err(|source| StoreError::NotKept {
-        path: store.root.join(&run_scoped_temporary).display().to_string(),
-        source: io::Error::from(source),
-    })?;
-    let mut file = std::fs::File::from(descriptor);
+        .map_err(not_kept(index_path.clone()))?;
+    let run_scoped_temporary = format!(".{}.new-{}", index.file(), authority.run_id.as_str());
+    let temporary_path = store.root.join(&run_scoped_temporary).display().to_string();
+    let temporary_name = name(&run_scoped_temporary).map_err(not_kept(temporary_path.clone()))?;
+    let mut file = root
+        .create_file(temporary_name)
+        .map_err(not_kept(temporary_path.clone()))?;
     file.write_all(bytes)
-        .map_err(|source| StoreError::NotKept {
-            path: store.root.join(&run_scoped_temporary).display().to_string(),
-            source,
-        })?;
-    file.sync_all().map_err(|source| StoreError::NotKept {
-        path: store.root.join(&run_scoped_temporary).display().to_string(),
-        source,
-    })?;
-    rustix::fs::renameat_with(
-        root,
-        &run_scoped_temporary,
-        root,
-        name,
-        RenameFlags::empty(),
-    )
-    .map_err(|source| StoreError::NotKept {
-        path: store.index(index).display().to_string(),
-        source: io::Error::from(source),
-    })?;
-    let expected = rustix::fs::fstat(&file).map_err(|source| StoreError::NotKept {
-        path: store.index(index).display().to_string(),
-        source: io::Error::from(source),
-    })?;
-    let published =
-        rustix::fs::statat(root, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|source| {
-            StoreError::NotKept {
-                path: store.index(index).display().to_string(),
-                source: io::Error::from(source),
-            }
-        })?;
-    if expected.st_dev != published.st_dev || expected.st_ino != published.st_ino {
-        return Err(StoreError::UnsafePath {
-            path: store.index(index),
-            message: "the index name changed identity during atomic replacement".to_owned(),
-        });
+        .map_err(not_kept(temporary_path.clone()))?;
+    file.sync_all().map_err(not_kept(temporary_path))?;
+    root.rename_replace(temporary_name, root, index_name)
+        .map_err(not_kept(index_path.clone()))?;
+    let expected =
+        rust_mutants::capdir::file_status(&file).map_err(not_kept(index_path.clone()))?;
+    match root.status_at(index_name).map_err(not_kept(index_path))? {
+        Some(published) if published.identity == expected.identity => {}
+        Some(_) | None => {
+            return Err(StoreError::UnsafePath {
+                path: store.index(index),
+                message: "the index name changed identity during atomic replacement".to_owned(),
+            });
+        }
     }
-    rustix::fs::fsync(root).map_err(|source| StoreError::NotKept {
-        path: store.root.display().to_string(),
-        source: io::Error::from(source),
-    })
+    root.sync()
+        .map_err(not_kept(store.root.display().to_string()))
 }
 
 #[cfg(not(unix))]
@@ -4156,9 +3644,7 @@ mod tests {
             .expect("hostile quarantine collision");
         }
         let mut hostile_tokens = tokens;
-        let original = std::ffi::CString::new("owned").expect("ordinary fixture name");
-
-        let result = super::quarantine_entry_with(&held, &original, ".njutest-remove", || {
+        let result = super::quarantine_entry_with(&held, "owned", ".njutest-remove", || {
             hostile_tokens
                 .pop_front()
                 .ok_or_else(|| std::io::Error::other("the bounded collision fixture was exhausted"))
@@ -4716,19 +4202,6 @@ mod tests {
             );
         }
         claimed.abort().expect("remove the migrated claim");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn foreign_owner_is_never_treated_as_a_migratable_private_namespace() {
-        assert_eq!(
-            super::private_directory_state(41, 42, 0o700),
-            super::PrivateDirectoryState::ForeignOwner
-        );
-        assert_eq!(
-            super::private_directory_state(42, 42, 0o755),
-            super::PrivateDirectoryState::Tighten
-        );
     }
 
     #[cfg(unix)]
