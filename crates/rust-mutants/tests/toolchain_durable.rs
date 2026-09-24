@@ -57,7 +57,7 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
             njutest_devkit::process::strict_utf8(&crashed.output)
         );
         assert!(
-            kept.stopped(),
+            kept.stop().noticed(),
             "the runtime said it stopped at this call, which is what makes the status a stop"
         );
         assert!(
@@ -133,7 +133,7 @@ fn a_test_that_ends_with_the_stop_status_itself_is_not_a_stop() {
         njutest_devkit::process::strict_utf8(&ran.output)
     );
     assert!(
-        !kept.stopped(),
+        !kept.stop().noticed(),
         "a status the program chose is not a stop the runtime made, so nothing is decided on it"
     );
     session.close().expect("close");

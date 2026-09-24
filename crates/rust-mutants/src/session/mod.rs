@@ -218,12 +218,30 @@ const CONTROL_TOUCH_LOG: &str = "touch.log";
 /// One control process's question: which target, asked how, for how long.
 /// A scratch directory a run left, kept so a next run can start over what it holds.
 #[derive(Debug)]
-pub struct Kept(PathBuf, bool);
+pub struct Kept(PathBuf, Stop);
+
+/// Whether a run stopped at the call its crash was put at, which only the engine can say yes to: it says so only where it verified the runtime's notice itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stop(bool);
+
+impl Stop {
+    /// A run that was not one a crash was put to, which stopped at nothing.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self(false)
+    }
+
+    /// Whether the engine verified that the run stopped at the call.
+    #[must_use]
+    pub const fn noticed(self) -> bool {
+        self.0
+    }
+}
 
 impl Kept {
     /// Whether the run stopped at the call its crash was put at.
     #[must_use]
-    pub const fn stopped(&self) -> bool {
+    pub const fn stop(&self) -> Stop {
         self.1
     }
 
@@ -1381,7 +1399,7 @@ impl Session {
                     mutant.id
                 )
             });
-        Ok((result, Kept(tmp, stopped)))
+        Ok((result, Kept(tmp, Stop(stopped))))
     }
 
     /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.

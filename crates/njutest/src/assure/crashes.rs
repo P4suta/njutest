@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use rust_mutants::catalog::Mutant;
 use rust_mutants::instrument::CRASH_EXIT;
 use rust_mutants::outcome::Outcome;
-use rust_mutants::session::{Asked, Kept, Observing, Request as ExecRequest, Session};
+use rust_mutants::session::{Asked, Kept, Observing, Request as ExecRequest, Session, Stop};
 
 use crate::assure::baseline::{self, Reporting};
 use crate::assure::run::Request;
@@ -261,13 +261,13 @@ impl Stopped<'_> {
         let (result, kept) = self
             .session
             .exec_keeping(&self.request(self.mutant.id.as_str()), self.watch.cancel)?;
-        if result.exit_code == CRASH_EXIT && kept.stopped() {
+        if result.exit_code == CRASH_EXIT && kept.stop().noticed() {
             let left = kept.left()?;
             self.recorded(Recorded {
                 stage: "crash",
                 exit_code: result.exit_code,
                 outcome: result.outcome(),
-                noticed: true,
+                stop: kept.stop(),
                 left: &left,
                 failed: &[],
             });
@@ -277,7 +277,7 @@ impl Stopped<'_> {
             stage: "crash",
             exit_code: result.exit_code,
             outcome: result.outcome(),
-            noticed: false,
+            stop: kept.stop(),
             left: &[],
             failed: &[],
         });
@@ -319,7 +319,7 @@ impl Stopped<'_> {
             stage: "next",
             exit_code: next.exit_code,
             outcome: next.outcome(),
-            noticed: false,
+            stop: Stop::none(),
             left: &[],
             failed: &next.failed_tests,
         });
@@ -366,7 +366,7 @@ impl Stopped<'_> {
             stage: "fresh",
             exit_code: fresh.exit_code,
             outcome: fresh.outcome(),
-            noticed: false,
+            stop: Stop::none(),
             left: &[],
             failed: &fresh.failed_tests,
         });
@@ -390,7 +390,7 @@ impl Stopped<'_> {
             stage: "next",
             exit_code: again.exit_code,
             outcome: again.outcome(),
-            noticed: false,
+            stop: Stop::none(),
             left: &[],
             failed: &again.failed_tests,
         });
@@ -412,7 +412,7 @@ impl Stopped<'_> {
             stage: run.stage.to_owned(),
             exit_code: i64::from(run.exit_code),
             outcome: run.outcome.name().to_owned(),
-            noticed: run.noticed,
+            noticed: run.stop.noticed(),
             left: run.left.to_vec(),
             failed: run.failed.to_vec(),
         });
@@ -436,7 +436,7 @@ struct Recorded<'a> {
     stage: &'a str,
     exit_code: i32,
     outcome: Outcome,
-    noticed: bool,
+    stop: Stop,
     left: &'a [String],
     failed: &'a [String],
 }

@@ -451,8 +451,10 @@ mod {{MODULE}} {
     }
 
     // The notice is what tells the supervisor this status is a stop the
-    // runtime made rather than one a test chose; a notice that cannot be
-    // published leaves the status alone, which decides nothing.
+    // runtime made rather than one a test chose. A notice that cannot be
+    // published still stops the process, so the state is torn all the
+    // same; the status alone then decides nothing, and the crash is left
+    // undecided rather than read as a stop nobody confirmed.
     fn publish_crash_notice() -> __rm_std::option::Option<()> {
         let path = __rm_std::env::var("{{CRASH_NOTICE_ENV}}").ok()?;
         let nonce = __rm_std::env::var("{{CRASH_NONCE_ENV}}").ok()?;
