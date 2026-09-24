@@ -9,7 +9,7 @@ use std::path::Path;
 
 use rustix::fs::{AtFlags, FileType, Mode, OFlags, RenameFlags};
 
-use super::{Identity, Kind, Name, Privacy, Status};
+use super::{Identity, Kind, Name, Privacy, REMOVAL_DEPTH, Status};
 
 const DIRECTORY: OFlags = OFlags::RDONLY
     .union(OFlags::CLOEXEC)
@@ -37,6 +37,12 @@ pub(super) fn open_file(dir: &File, name: Name<'_>) -> io::Result<File> {
     )
     .map(File::from)
     .map_err(io::Error::from)
+}
+
+pub(super) fn open_entry(dir: &File, name: Name<'_>) -> io::Result<(File, Kind)> {
+    let handle = open_file(dir, name)?;
+    let kind = file_status(&handle)?.kind;
+    Ok((handle, kind))
 }
 
 pub(super) fn create_file(dir: &File, name: Name<'_>) -> io::Result<File> {
@@ -165,17 +171,168 @@ fn open_dir_at_self(dir: &File) -> io::Result<File> {
 
 pub(super) fn privacy(dir: &File) -> io::Result<Privacy> {
     let stat = rustix::fs::fstat(dir).map_err(io::Error::from)?;
-    if stat.st_uid != rustix::process::geteuid().as_raw() {
-        return Ok(Privacy::ForeignOwner);
-    }
-    let others = Mode::RWXG | Mode::RWXO;
-    if Mode::from_raw_mode(stat.st_mode).intersects(others) {
-        Ok(Privacy::Wider)
+    Ok(privacy_of(
+        stat.st_uid,
+        rustix::process::geteuid().as_raw(),
+        Mode::from_raw_mode(stat.st_mode),
+    ))
+}
+
+/// Who may reach into a directory `owner` owns with `permissions`, asked by the user `me`.
+fn privacy_of(owner: u32, me: u32, permissions: Mode) -> Privacy {
+    if owner != me {
+        Privacy::ForeignOwner
+    } else if permissions & Mode::all() == Mode::RWXU {
+        Privacy::OwnerOnly
     } else {
-        Ok(Privacy::OwnerOnly)
+        Privacy::Loose
     }
 }
 
 pub(super) fn restrict_to_owner(dir: &File) -> io::Result<()> {
     rustix::fs::fchmod(dir, Mode::RWXU).map_err(io::Error::from)
+}
+
+pub(super) fn remove_contents(dir: &File) -> io::Result<()> {
+    remove_contents_at(dir, 0)
+}
+
+fn remove_contents_at(dir: &File, depth: usize) -> io::Result<()> {
+    let scan = open_dir_at_self(dir)?;
+    let mut listing = rustix::fs::Dir::read_from(&scan).map_err(io::Error::from)?;
+    while let Some(entry) = listing.read() {
+        let entry = entry.map_err(io::Error::from)?;
+        let held = entry.file_name();
+        if matches!(held.to_bytes(), b"." | b"..") {
+            continue;
+        }
+        remove_entry(dir, held, depth)?;
+    }
+    sync(dir)
+}
+
+const fn same(a: &rustix::fs::Stat, b: &rustix::fs::Stat) -> bool {
+    a.st_dev == b.st_dev && a.st_ino == b.st_ino
+}
+
+fn remove_entry(dir: &File, held: &std::ffi::CStr, depth: usize) -> io::Result<()> {
+    let before = match rustix::fs::statat(dir, held, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(before) => before,
+        Err(rustix::io::Errno::NOENT) => return Ok(()),
+        Err(errno) => return Err(io::Error::from(errno)),
+    };
+    if FileType::from_raw_mode(before.st_mode) == FileType::Directory && depth >= REMOVAL_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("a tree deeper than {REMOVAL_DEPTH} directories is not emptied"),
+        ));
+    }
+    let aside = rename_aside(dir, held)?;
+    let after = rustix::fs::statat(dir, aside.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(io::Error::from)?;
+    if !same(&before, &after) {
+        return restore(dir, &aside, held);
+    }
+    if FileType::from_raw_mode(after.st_mode) == FileType::Directory {
+        let child = rustix::fs::openat(
+            dir,
+            aside.as_str(),
+            DIRECTORY | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(io::Error::from)?;
+        let opened = rustix::fs::fstat(&child).map_err(io::Error::from)?;
+        if !same(&opened, &after) {
+            return restore(dir, &aside, held);
+        }
+        let deeper = depth
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("the removal depth cannot be counted"))?;
+        remove_contents_at(&child, deeper)?;
+        let named = rustix::fs::statat(dir, aside.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io::Error::from)?;
+        if !same(&named, &opened) {
+            return Err(io::Error::other(
+                "a directory set aside for removal changed identity while it was emptied",
+            ));
+        }
+        rustix::fs::unlinkat(dir, aside.as_str(), AtFlags::REMOVEDIR).map_err(io::Error::from)
+    } else {
+        let named = rustix::fs::statat(dir, aside.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io::Error::from)?;
+        if !same(&named, &after) {
+            return Err(io::Error::other(
+                "an entry set aside for removal changed identity before it was removed",
+            ));
+        }
+        rustix::fs::unlinkat(dir, aside.as_str(), AtFlags::empty()).map_err(io::Error::from)
+    }
+}
+
+fn rename_aside(dir: &File, held: &std::ffi::CStr) -> io::Result<String> {
+    const ATTEMPTS: usize = 8;
+    for _attempt in 0..ATTEMPTS {
+        let mut token = [0_u8; 16];
+        getrandom::fill(&mut token).map_err(|error| {
+            io::Error::other(format!("no token to set an entry aside: {error}"))
+        })?;
+        let aside = format!(".capdir-remove-{}", hex::encode(token));
+        if held.to_bytes() == aside.as_bytes() {
+            continue;
+        }
+        match rustix::fs::renameat_with(dir, held, dir, aside.as_str(), RenameFlags::NOREPLACE) {
+            Ok(()) => return Ok(aside),
+            Err(rustix::io::Errno::EXIST) => {}
+            Err(errno) => return Err(io::Error::from(errno)),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("no free name to set an entry aside after {ATTEMPTS} attempts"),
+    ))
+}
+
+fn restore(dir: &File, aside: &str, held: &std::ffi::CStr) -> io::Result<()> {
+    rustix::fs::renameat_with(dir, aside, dir, held, RenameFlags::NOREPLACE)
+        .map_err(io::Error::from)?;
+    Err(io::Error::other(
+        "an entry changed identity as it was set aside, and was put back",
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use rustix::fs::Mode;
+
+    use super::{Privacy, privacy_of, remove_entry};
+
+    #[test]
+    fn a_directory_another_user_owns_is_never_one_to_tighten() {
+        assert_eq!(
+            privacy_of(41, 42, Mode::RWXU),
+            Privacy::ForeignOwner,
+            "owner-only bits do not make another user's directory ours"
+        );
+        assert_eq!(
+            privacy_of(42, 42, Mode::from_raw_mode(0o755)),
+            Privacy::Loose,
+            "our own open directory is one to tighten"
+        );
+        assert_eq!(privacy_of(42, 42, Mode::RWXU), Privacy::OwnerOnly);
+    }
+
+    #[test]
+    fn an_entry_gone_before_it_was_reached_counts_as_removed() {
+        let Ok(temp) = tempfile::tempdir() else {
+            panic!("a temporary directory");
+        };
+        let Ok(dir) = std::fs::File::open(temp.path()) else {
+            panic!("the directory held");
+        };
+        assert!(
+            remove_entry(&dir, c"already-gone", 0).is_ok(),
+            "another remover getting there first is not a failure of this one"
+        );
+    }
 }
