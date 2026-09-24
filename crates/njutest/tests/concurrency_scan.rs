@@ -167,10 +167,11 @@ fn brackets_in_comments_and_literals_are_not_nesting() {
 #[test]
 fn a_chain_the_parser_would_recurse_through_without_a_bracket_is_read_on_a_small_stack() {
     let source = format!(
-        "fn a() -> bool {{ {}true }}\nfn b() {{ std::thread::spawn(|| {{}}); }}\ntype T = {}u8{};\n",
+        "fn a() -> bool {{ {}true }}\nfn b() {{ std::thread::spawn(|| {{}}); }}\ntype T = {}u8{};\nconst C: u8 = 1{};\n",
         "!".repeat(20_000),
         "Vec<".repeat(5_000),
-        ">".repeat(5_000)
+        ">".repeat(5_000),
+        "+1".repeat(100_000)
     );
     let found = std::thread::scope(|scope| {
         std::thread::Builder::new()

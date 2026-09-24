@@ -543,17 +543,41 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
     Ok(serde_json::Value::Object(flat))
 }
 
+/// Every binary the engine built that the report records nothing about, each a violation.
+fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes: &mut Notes<'_>) {
+    for target in touched.kinds.keys() {
+        if !rows
+            .iter()
+            .any(|row| field(row, "target").as_deref() == Some(target.as_str()))
+        {
+            notes.violated(
+                target,
+                format!(
+                    "the engine built {target} and the report, which measured mutants, records \
+                     nothing about its threads, so it is neither proven nor named as a hole"
+                ),
+            );
+        }
+    }
+}
+
 /// Each test binary the report calls single-threaded, or concurrent for reach off its tests' threads, held to what the engine's baseline touch record says it reached there.
 ///
 /// The source half of the proof is a scan of every package the binary links, which this audit does not repeat, so it is said to be unaudited rather than read as agreement.
 fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Concurrency);
     let rows = rows(recording.document, "concurrency");
-    if rows.is_empty() {
+    let executed = recording
+        .document
+        .pointer("/accounting/mutants/executed")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|executed| executed > 0);
+    if rows.is_empty() && !executed {
         return;
     }
     let touched = match engines {
         [one] => &one.touched,
+        [] if rows.is_empty() => return,
         [] | [_, _, ..] => {
             notes.unaudited(
                 "concurrency",
@@ -566,6 +590,7 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
             return;
         }
     };
+    unrecorded(rows, touched, &mut notes);
     let mut proven: Vec<String> = Vec::new();
     for row in rows {
         let target = field(row, "target").unwrap_or_default();

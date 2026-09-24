@@ -107,6 +107,32 @@ fn a_standing_is_held_to_every_reason_the_recording_witnesses() {
 }
 
 #[test]
+fn a_reason_or_a_thread_count_no_run_gives_is_refused() {
+    let single = json!({ "state": "single-threaded" });
+    assert!(
+        !holds(
+            &json!({ "state": "concurrent", "because": [{ "kind": "banana" }] }),
+            &libtest("1", Some(0))
+        ),
+        "a reason no run gives is no reason"
+    );
+    for skipped in [
+        vec!["--skip".to_owned(), "--test-threads=1".to_owned()],
+        vec!["--".to_owned(), "--test-threads=1".to_owned()],
+    ] {
+        let witnessed = Witnessed {
+            loose: Some(0),
+            kind: Some(("lib".to_owned(), true)),
+            args: Some(skipped),
+        };
+        assert!(
+            !holds(&single, &witnessed),
+            "a `--test-threads=1` libtest reads as something else is no single thread"
+        );
+    }
+}
+
+#[test]
 fn a_binary_the_recording_says_too_little_about_is_not_derived() {
     assert_eq!(
         derived(&Witnessed {
