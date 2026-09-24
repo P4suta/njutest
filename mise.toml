@@ -65,7 +65,7 @@ run = "bash scripts/doctor.sh"
 
 [tasks.build]
 description = "Build every crate and every target"
-run = "cargo build --locked --workspace --all-targets"
+run = "cargo build --locked --workspace --all-targets --all-features"
 
 [tasks.fmt]
 description = "Format Rust and TOML"
@@ -142,7 +142,7 @@ run = "cargo clippy --locked --workspace --all-targets --features njutest/testki
 description = "Build the scripted cargo the suite drives, which no test build produces"
 # `cargo test --all-targets` builds an example as a test harness rather than as
 # the program it is, so a suite that drives one has to ask for it plainly.
-run = "cargo build --locked --examples -p rust-mutants"
+run = "cargo build --locked --examples --workspace --all-features --profile test"
 
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
@@ -168,7 +168,7 @@ run_windows = 'cargo nextest run --locked --workspace --all-targets --all-featur
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
-run = "cargo test --locked --workspace --doc"
+run = "cargo test --locked --workspace --all-features --doc"
 
 [tasks.test]
 description = "Run the complete suite: every target through nextest, then the doctests"
@@ -177,7 +177,7 @@ run = ["mise run test:fast", "mise run test:slow", "mise run test:doc"]
 [tasks."kani:verified"]
 description = "Run the generated-harness and strict-result protocol suite with the pinned Kani 0.68 installation"
 depends = ["kani:laws"]
-run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked -p njutest --lib real_kani_068 -- --test-threads=1"
+run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked --workspace --all-features --lib real_kani_068 -- --test-threads=1"
 
 [tasks."kani:laws"]
 description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation"
@@ -224,7 +224,7 @@ set -euo pipefail
 cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
-cargo build --locked --examples -p rust-mutants
+cargo build --locked --examples --workspace --all-features --profile test
 cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
 cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
@@ -434,6 +434,6 @@ description = "Say whether a recording is complete: it begins, it ends, and it l
 shell = "bash -c"
 run = """
 set -euo pipefail
-cargo build --bin rust-mutants
+cargo build --workspace --all-features --bin rust-mutants
 ./target/debug/rust-mutants trace check "$@"
 """
