@@ -166,7 +166,8 @@ fn replayed(kind: FindingKind) -> Replayable {
         | FindingKind::WireUnnoticed
         | FindingKind::UnstableBaseline
         | FindingKind::EnvironmentDependent
-        | FindingKind::EnvironmentDependentReach => Replayable::Site(Vec::new()),
+        | FindingKind::EnvironmentDependentReach
+        | FindingKind::ScheduleDependent => Replayable::Site(Vec::new()),
     }
 }
 
@@ -208,7 +209,8 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
         | FindingKind::UnstableBaseline
         | FindingKind::EnvironmentDependent
         | FindingKind::EnvironmentDependentReach
-        | FindingKind::UnnoticedFault => match outcome {
+        | FindingKind::UnnoticedFault
+        | FindingKind::ScheduleDependent => match outcome {
             Measured::Survived => Outcome::Reproduced,
             Measured::Killed => Outcome::Resolved,
             Measured::NotRun

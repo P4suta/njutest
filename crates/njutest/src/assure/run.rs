@@ -1412,6 +1412,37 @@ fn run_mutation(
     model.capture(session, &mutation.judged, tree_written)?;
     record(mutating.report, &mutation, &accepted.ids)?;
     mutating.report.findings.extend(accepted.findings);
+    concurrency_of(mutating, session, watch)?;
+    Ok(())
+}
+
+/// Whether each test binary runs one thread, and what delaying the guards of those that may not found, into the report: exploring only in a whole run, since a shard's binaries are every part's.
+fn concurrency_of(
+    mutating: &mut Mutating<'_>,
+    session: &rust_mutants::session::Session,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    let mut concurrency = super::concurrency::recorded(session);
+    if mutating.report.scope.shard.is_none() {
+        super::concurrency::explored(
+            session,
+            &mut concurrency,
+            (
+                mutating.request.config.schedules.explore,
+                &super::knobs::passing(mutating.baseline),
+            ),
+            watch.cancel,
+        )?;
+        mutating
+            .report
+            .findings
+            .extend(crate::report::concurrency::found(&concurrency));
+    }
+    mutating
+        .report
+        .limitations
+        .extend(crate::report::concurrency::limited(&concurrency));
+    mutating.report.concurrency = concurrency;
     Ok(())
 }
 

@@ -49,6 +49,7 @@ Answered builds cannot be represented in that field.
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
 There are nineteen kinds, and every report carries the stable name:
+There are sixteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -71,6 +72,7 @@ There are nineteen kinds, and every report carries the stable name:
 | `dimension-not-measured` | a `whole-v1` run did not establish the dimension its subject names | no |
 | `environment-dependent` | a target that passed on its baseline failed on a control started with a knob put | yes |
 | `environment-dependent-reach` | a target reached something else on a control started with a knob put, over the same passing tests | no |
+| `schedule-dependent` | a test binary failed with one guard delayed, twice more, and passed without the delay | yes |
 
 The last column is derived from the same closed `FindingKind` that decides the verdict.
 A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.
@@ -214,6 +216,18 @@ A part whose records repeat a knob for a target, or put two knobs on different t
 
 A part that measured the whole catalog raises `environment-dependent`, a defect, about each target a knob broke, `environment-dependent-reach` about each whose reach a knob moved, counting what rests on its baseline by the rule `unstable-baseline` counts with, and states `knob-not-put` and `knob-not-compared`.
 A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` rather than `PARTIAL` where a knob broke or moved a target; a merge raises them from the combined records of every part, keeping of two records of one knob and target the one that says more.
+## Concurrency
+
+Every part carries `concurrency`, one `{ target, standing }` per test binary the run measured, in binary order ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+`standing` is closed by its `state`:
+`single-threaded` where the binary's baseline reached nothing off its tests' threads and no package of its closure can start a thread or runs native code;
+`concurrent` with every reason that holds in `because`, each `loose-reach` or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
+and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
+`explored` says what delaying its guards found, closed by `state`: `unexplored` with `why` (`not-needed` for a single-threaded binary, `not-asked`, `not-passing`, `no-site`), `sampled` with every guard `delayed` and those whose controls were `undecided`, or `broke` with the `site`, its `path` and `line`, and the tests that `failed`.
+A delay broke a binary only where its tests failed with the delay twice more and passed without it; the part then raises `schedule-dependent` about it, a defect, and a shard explores nothing.
+A part whose records name a binary twice or out of order is refused.
+
+A part states `schedule-not-explored` naming every binary that is not `single-threaded`: no schedule is explored yet, so each is a hole.
 
 ## Crashes
 

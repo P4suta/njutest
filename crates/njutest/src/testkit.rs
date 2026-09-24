@@ -895,6 +895,7 @@ pub fn documented_specimen() -> crate::config::Config {
                 crate::report::knobs::Knob::Threads,
             ],
         },
+        schedules: crate::config::Schedules { explore: 2 },
         resources: BTreeMap::from([(
             "api".to_owned(),
             Resource {

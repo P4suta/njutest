@@ -134,6 +134,8 @@ pub struct Perturbation {
     pub launcher: Option<execute::Launcher>,
     /// How the harness schedules the tests.
     pub schedule: execute::Schedule,
+    /// The guard each thread pauses at the first time it reaches it, which is how one schedule of the program is chosen.
+    pub delay: Option<execute::Delay>,
 }
 
 impl Perturbation {
@@ -144,6 +146,7 @@ impl Perturbation {
             environment: Vec::new(),
             launcher: None,
             schedule: execute::Schedule::AsConfigured,
+            delay: None,
         }
     }
 
@@ -168,6 +171,10 @@ impl Perturbation {
                 .iter()
                 .map(|argument| (*argument).to_owned())
                 .collect(),
+            delay: self.delay.map(|delay| crate::trace::DelayRecord {
+                site: delay.site,
+                pause_ms: delay.pause_ms,
+            }),
         }
     }
 }
@@ -627,6 +634,12 @@ impl Session {
     #[must_use]
     pub fn package_of(&self, index: u32) -> Option<&str> {
         self.packages.get(&index).map(String::as_str)
+    }
+
+    /// What `cargo metadata` said about the copy this session measures, whose resolve names every package a binary links.
+    #[must_use]
+    pub const fn metadata(&self) -> &crate::cargo::Metadata {
+        self.workspace.metadata()
     }
 
     /// The packages this session was told to measure, which is where a reader looks for a test to write.
@@ -1772,7 +1785,12 @@ impl Session {
             .with_scratch(own)
             .in_scratch(self.scratch_working_directory)
             .with_overlay(perturbation.environment.clone())
-            .with_launcher(perturbation.launcher);
+            .with_launcher(perturbation.launcher)
+            .with_delay(
+                perturbation
+                    .delay
+                    .map(|delay| (delay, self.catalog.digest())),
+            );
         if let Some(test) = &once.request.test {
             exec = exec.with_test(test.clone());
         }

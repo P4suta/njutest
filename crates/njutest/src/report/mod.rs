@@ -5,6 +5,7 @@
 
 pub mod across;
 pub mod audit;
+pub mod concurrency;
 pub mod crashes;
 pub mod drift;
 pub mod faults;
@@ -1621,6 +1622,8 @@ pub struct BuildPartEvidence {
     drift: Vec<drift::Drift>,
     /// What each knob asked for established about each target whose baseline passed.
     knobs: Vec<knobs::KnobRecord>,
+    /// Whether each test binary this source's baseline measured is proven to run one thread.
+    concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
 
 impl BuildPartEvidence {
@@ -1650,6 +1653,7 @@ impl BuildPartEvidence {
             limitations: report.limitations.clone(),
             drift: report.drift.clone(),
             knobs: report.knobs.clone(),
+            concurrency: report.concurrency.clone(),
         };
         validate_part_evidence(&evidence)?;
         Ok(evidence)
@@ -1678,6 +1682,7 @@ struct BuildPartEvidenceWire {
     limitations: Vec<Limitation>,
     drift: Vec<drift::Drift>,
     knobs: Vec<knobs::KnobRecord>,
+    concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
 
 impl<'de> Deserialize<'de> for BuildPartEvidence {
@@ -1705,6 +1710,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             limitations: wire.limitations,
             drift: wire.drift,
             knobs: wire.knobs,
+            concurrency: wire.concurrency,
         };
         validate_part_evidence(&held).map_err(serde::de::Error::custom)?;
         Ok(held)
@@ -1929,6 +1935,12 @@ pub enum PartLedgerError {
     /// Target rows were duplicated or not in their canonical order.
     #[error("source {run_id} has target rows that are duplicate or out of canonical order")]
     TargetOrder {
+        /// The owning source.
+        run_id: rust_mutants::id::RunId,
+    },
+    /// A test binary's threads were recorded twice, or out of order.
+    #[error("source {run_id} records a test binary's threads twice or out of order")]
+    ConcurrencyOrder {
         /// The owning source.
         run_id: rust_mutants::id::RunId,
     },
@@ -2224,6 +2236,11 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
     validate_beside(part)?;
     validate_dimension_accounting(part)?;
     validate_knob_records(part)?;
+    if !concurrency::ordered(&part.concurrency) {
+        return Err(PartLedgerError::ConcurrencyOrder {
+            run_id: part.run_id.clone(),
+        });
+    }
     let mut target_ids = BTreeSet::new();
     for target in &part.targets {
         if !target_ids.insert(target.id.as_str()) {
@@ -4393,6 +4410,8 @@ pub enum FindingKind {
     EnvironmentDependent,
     /// A target reached something else on a control started with something the contract lets differ between machines set differently, so every proof read off its baseline is unfounded where that differs.
     EnvironmentDependentReach,
+    /// A test binary that passed on its baseline failed, twice more, with one guard delayed, and passed again without the delay: its verdict depends on the schedule its threads get.
+    ScheduleDependent,
 }
 
 /// Which configured-build evidence raised a finding.
@@ -4436,6 +4455,7 @@ impl FindingKind {
             Self::CorruptAfterCrash => "corrupt-after-crash",
             Self::EnvironmentDependent => "environment-dependent",
             Self::EnvironmentDependentReach => "environment-dependent-reach",
+            Self::ScheduleDependent => "schedule-dependent",
         }
     }
 
@@ -4448,7 +4468,8 @@ impl FindingKind {
             | Self::UndefinedBehaviour
             | Self::BrokenUnderFault
             | Self::EnvironmentDependent
-            | Self::CorruptAfterCrash => true,
+            | Self::CorruptAfterCrash
+            | Self::ScheduleDependent => true,
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout
@@ -4726,6 +4747,8 @@ pub struct BuildReport {
     pub drift: Vec<drift::Drift>,
     /// What each knob asked for established about each target whose baseline passed.
     pub knobs: Vec<knobs::KnobRecord>,
+    /// Whether each test binary its baseline measured is proven to run one thread.
+    pub concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
 
 impl BuildReport {
@@ -4768,6 +4791,7 @@ impl BuildReport {
             limitations: Vec::new(),
             drift: Vec::new(),
             knobs: Vec::new(),
+            concurrency: Vec::new(),
         }
     }
 
@@ -6804,6 +6828,7 @@ struct MatrixEvidence {
     knobs: Vec<knobs::KnobRecord>,
     faults: Vec<faults::FaultRecord>,
     crashes: Vec<crashes::CrashRecord>,
+    concurrency: Vec<concurrency::ConcurrencyRecord>,
     seams: Vec<SeamRecord>,
     limitations: Vec<Limitation>,
     findings: Vec<Finding>,
@@ -6830,6 +6855,9 @@ impl MatrixEvidence {
             crashes: parts()
                 .flat_map(|part| part.crashes.iter().cloned())
                 .collect(),
+            concurrency: parts()
+                .flat_map(|part| part.concurrency.iter().cloned())
+                .collect(),
             seams: builds
                 .iter()
                 .flat_map(|build| build.baseline().seams.iter().cloned())
@@ -6850,6 +6878,7 @@ impl MatrixEvidence {
             knobs: &self.knobs,
             faults: &self.faults,
             crashes: &self.crashes,
+            concurrency: &self.concurrency,
             seams: &self.seams,
             limitations: &self.limitations,
             findings: &self.findings,

@@ -1486,7 +1486,8 @@
                   "required": [
                     "arguments",
                     "environment",
-                    "launcher"
+                    "launcher",
+                    "delay"
                   ],
                   "properties": {
                     "environment": {
@@ -1524,6 +1525,31 @@
                         "type": "string",
                         "minLength": 1
                       }
+                    },
+                    "delay": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "pause_ms",
+                            "site"
+                          ],
+                          "properties": {
+                            "site": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "pause_ms": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        }
+                      ]
                     }
                   }
                 },

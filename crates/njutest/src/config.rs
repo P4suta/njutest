@@ -227,6 +227,8 @@ pub struct Config {
     pub durability: Durability,
     /// What a run sets differently for one more control of each target, to ask whether the target's verdict and reach hold where it differs.
     pub repeatable: Repeatable,
+    /// Which schedules to explore of each test binary not proven to run one thread.
+    pub schedules: Schedules,
     /// The integration resources a run may start, by name.
     pub resources: BTreeMap<String, Resource>,
     /// The provider that writes candidate tests.
@@ -253,6 +255,7 @@ impl Default for Config {
             faults: Faults::default(),
             durability: Durability::default(),
             repeatable: Repeatable::default(),
+            schedules: Schedules::default(),
             resources: BTreeMap::new(),
             generation: None,
             acceptance: Vec::new(),
@@ -565,6 +568,14 @@ pub struct Soundness {
 pub struct Repeatable {
     /// The knobs to put, by name.
     pub knobs: Vec<crate::report::knobs::Knob>,
+}
+
+/// Which schedules a run explores of each test binary not proven to run one thread: nothing unless asked, since each schedule is one more run of the binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Schedules {
+    /// How many guards of each such binary to delay, one schedule each.
+    pub explore: u32,
 }
 
 /// The fuzz targets a run may drive.

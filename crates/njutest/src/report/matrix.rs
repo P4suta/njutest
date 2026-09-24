@@ -126,6 +126,8 @@ pub struct Evidence<'a> {
     pub faults: &'a [FaultRecord],
     /// What each call that writes came to under a crash.
     pub crashes: &'a [super::crashes::CrashRecord],
+    /// What each test binary established about whether it runs one thread, and what exploring its schedules found.
+    pub concurrency: &'a [super::concurrency::ConcurrencyRecord],
     /// What each seam question came to.
     pub seams: &'a [SeamRecord],
     /// What the run said it does not claim.
@@ -153,6 +155,7 @@ impl<'a> Evidence<'a> {
             knobs: &report.knobs,
             faults: &report.faults,
             crashes: &report.crashes,
+            concurrency: &report.concurrency,
             seams: &report.seams,
             limitations: &report.limitations,
             findings: &report.findings,
@@ -215,7 +218,7 @@ fn column(dimension: Dimension, evidence: &Evidence<'_>) -> Column {
         }
         Dimension::Repeatable => repeatable(evidence.knobs),
         Dimension::Fault => fault(evidence),
-        Dimension::Schedule => Column::NotInThisRelease,
+        Dimension::Schedule => schedule(evidence.concurrency),
         Dimension::Durable => durable(evidence),
         Dimension::Wire => wire(evidence),
     }
@@ -320,6 +323,29 @@ fn fault(evidence: &Evidence<'_>) -> Column {
                 "an error type the engine does not make, at {}",
                 record.place()
             )),
+        }),
+        Vec::new(),
+    )
+}
+
+/// The schedules' column: a binary proven to run one thread, or one a delayed guard broke, is answered; a sample of schedules that all passed, and a binary no schedule of which was explored, is a hole (ADR 0034).
+fn schedule(records: &[super::concurrency::ConcurrencyRecord]) -> Column {
+    use super::concurrency::{Exploration, Unexplored};
+    if records.is_empty() {
+        return Column::NothingToAsk {
+            why: "no test binary ran".to_owned(),
+        };
+    }
+    tallied(
+        records.iter().map(|record| match &record.explored {
+            Exploration::Unexplored {
+                why: Unexplored::NotNeeded,
+            }
+            | Exploration::Broke { .. } => Counted::Answered,
+            Exploration::Sampled { .. }
+            | Exploration::Unexplored {
+                why: Unexplored::NotAsked | Unexplored::NotPassing | Unexplored::NoSite,
+            } => Counted::Hole,
         }),
         Vec::new(),
     )

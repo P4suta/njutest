@@ -15,24 +15,6 @@
       "parts": [
         {
           "accounting": {
-            "crashes": {
-              "corrupt": 0,
-              "not_put": 0,
-              "restarted": 0,
-              "sites": 0,
-              "undecided": 0,
-              "unreached": 0,
-              "unshared": 0
-            },
-            "faults": {
-              "not_put": 0,
-              "noticed": 0,
-              "sites": 0,
-              "undecided": 0,
-              "unnoticed": 0,
-              "unreached": 0,
-              "waited": 0
-            },
             "mutants": {
               "accepted": 0,
               "cataloged": 14,
@@ -74,9 +56,44 @@
               "skipped": 0
             }
           },
-          "beside": [],
           "candidates": [],
-          "crashes": [],
+          "concurrency": [
+            {
+              "explored": {
+                "state": "unexplored",
+                "why": "not-asked"
+              },
+              "standing": {
+                "state": "not-proven",
+                "why": [
+                  {
+                    "kind": "no-touch"
+                  }
+                ]
+              },
+              "target": "<volatile>"
+            },
+            {
+              "explored": {
+                "state": "unexplored",
+                "why": "not-needed"
+              },
+              "standing": {
+                "state": "single-threaded"
+              },
+              "target": "<volatile>"
+            },
+            {
+              "explored": {
+                "state": "unexplored",
+                "why": "not-needed"
+              },
+              "standing": {
+                "state": "single-threaded"
+              },
+              "target": "<volatile>"
+            }
+          ],
           "drift": [
             {
               "state": "held",
@@ -87,7 +104,6 @@
               "target": "<volatile>"
             }
           ],
-          "faults": [],
           "findings": [
             {
               "detail": "no test could have noticed gt-to-ge at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",
@@ -179,6 +195,10 @@
             {
               "detail": "1 place was not mutated: test-code",
               "name": "skipped-test-code"
+            },
+            {
+              "detail": "1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-baseline/doc/fixture_baseline)",
+              "name": "schedule-not-explored"
             }
           ],
           "mutants": [

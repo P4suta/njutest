@@ -48,6 +48,8 @@ pub struct Touch {
     pub bodies: BTreeSet<u64>,
     /// Every mutation anything of it saw its guard's two branches differ over.
     pub infected: BTreeSet<u64>,
+    /// How many sites it reached on a thread no test answers for.
+    pub loose: u64,
 }
 
 impl Touch {
@@ -150,6 +152,7 @@ pub(crate) fn touch(record: &Value) -> Option<Touch> {
             .iter()
             .map(|test| test.as_str().map(ToOwned::to_owned))
             .collect::<Option<BTreeSet<String>>>()?,
+        loose: record.get("loose")?.as_u64()?,
         reached: indices(record.get("reached_sites")?)?,
         bodies: indices(record.get("entered_bodies")?)?,
         infected: indices(record.get("infected_sites")?)?,

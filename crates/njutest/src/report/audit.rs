@@ -813,6 +813,7 @@ fn validate_build_parts<'a>(
             limitations: part.limitations.clone(),
             drift: part.drift.clone(),
             knobs: part.knobs.clone(),
+            concurrency: part.concurrency.clone(),
         };
         flat.verdict = flat.concluded();
         for failure in validate_flat(&flat) {

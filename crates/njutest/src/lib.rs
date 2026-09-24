@@ -11,6 +11,7 @@ pub mod build;
 pub mod cache;
 pub mod checkpoint;
 pub mod cli;
+pub mod concurrency;
 pub mod config;
 pub mod coverage;
 pub mod error;

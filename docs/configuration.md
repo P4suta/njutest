@@ -73,6 +73,9 @@ targets = []                   # empty = every target the tree holds
 [repeatable]
 knobs = []                     # e.g. ["timezone", "locale", "temp-directory", "home", "umask", "columns", "threads"]
 
+[schedules]
+explore = 0                    # guards to delay per test binary not proven single-threaded; 0 = none
+
 [soundness]                     # deep-v1 only
 miri_flags = []
 sanitizers = []                 # e.g. ["thread"] on nightly
@@ -102,6 +105,9 @@ expires = "2026-12-31T00:00:00Z"
 owner = "quality-team"
 ticket = "QA-123"
 ```
+
+`[schedules] explore` asks for up to that many schedules of every test binary not proven to run one thread whose baseline passed: each delays one guard its baseline reached by 100 ms, the first time each thread reaches it, and a delay that makes the tests fail twice more while they pass without it is `schedule-dependent`, a defect ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+Empty by default, because each schedule is one more run of the binary.
 
 `[repeatable] knobs` asks for one more control of every target whose baseline passed per knob, each started with one thing the contract lets differ between machines set differently: `timezone` (TZ=Australia/Lord_Howe), `locale` (LC_ALL=tr_TR.UTF-8), `temp-directory` (an empty temporary directory whose path holds a space), `home` (an empty home directory, with cargo's and rustup's kept), `umask` (077), `columns` (COLUMNS=37 LINES=11), and `threads` (`--test-threads=1`).
 Empty by default, because each knob is one more run of every target.

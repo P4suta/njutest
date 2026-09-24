@@ -658,6 +658,14 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
         "/$defs/knobStanding/oneOf/6/properties/why",
         names(&njutest::report::knobs::NotPut::ALL),
     ));
+    rows.push((
+        "/$defs/concurrencyStarts",
+        names(&njutest::concurrency::scan::Starts::ALL),
+    ));
+    rows.push((
+        "/$defs/concurrencyExploration/oneOf/0/properties/why",
+        names(&njutest::report::concurrency::Unexplored::ALL),
+    ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
         .map(|(pointer, names)| {

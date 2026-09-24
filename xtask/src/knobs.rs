@@ -51,6 +51,9 @@ impl Knob {
 
     /// Whether `started` is this knob put, by this audit's own reading of what each knob sets, written without the runner's.
     fn puts(self, started: &Started) -> bool {
+        if started.delayed.is_some() {
+            return false;
+        }
         let names: Vec<&str> = started
             .environment
             .iter()
@@ -99,6 +102,8 @@ pub struct Started {
     pub launcher: Option<String>,
     /// The harness arguments added.
     pub arguments: Vec<String>,
+    /// The catalog index of the guard it paused its threads at, which makes it a schedule and never a knob.
+    pub delayed: Option<u64>,
 }
 
 impl Started {
@@ -254,6 +259,10 @@ fn started(record: &Value) -> Option<Started> {
             text => Some(text.as_str()?.to_owned()),
         },
         arguments: strings(record.get("arguments")?)?,
+        delayed: match record.get("delay")? {
+            Value::Null => None,
+            delay => Some(delay.get("site")?.as_u64()?),
+        },
     })
 }
 

@@ -314,6 +314,12 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             "this test target passes here and fails where something a machine may set \
              differently is set differently",
         ),
+        FindingKind::ScheduleDependent => (
+            Severity::Refusal,
+            "NJ-SCHEDULE",
+            "this test binary passes on the schedule its threads usually get and fails when one \
+             of them is late",
+        ),
         FindingKind::EnvironmentDependentReach => (
             Severity::Limitation,
             "NJ-ENVIRONMENT-REACH",
