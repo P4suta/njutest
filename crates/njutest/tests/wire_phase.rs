@@ -294,3 +294,109 @@ fn a_target_that_failed_once_and_not_again_is_not_a_detection() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_confirmation_the_run_could_not_put_is_asked_again_rather_than_read_as_not_reproducing() {
+    let held = watching!();
+    let mut asked: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    let done = measure(
+        &Measuring {
+            observed: &observed(),
+            before: &before(&["pkg/test/it"]),
+        },
+        |fault| {
+            let times = asked.entry(fault.id.clone()).or_default();
+            *times = times.saturating_add(1);
+            if *times == 2 {
+                njutest::wire::settle::Asked::NotPut
+            } else {
+                njutest::wire::settle::Asked::Answered(vec![answered("pkg/test/it", false)])
+            }
+        },
+        njutest::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("the fault catalogue derives");
+    assert!(
+        done.seams.iter().all(|row| row.decision
+            == njutest::report::SeamDecision::Tests {
+                noticed_by: "pkg/test/it".to_owned()
+            }),
+        "the confirming run never reached the exchange the fault names, so it asked nothing, \
+         and a question nobody asked cannot contradict the detection: it is asked again. \
+         Reading it as a target that stopped failing turned a busy machine into a README \
+         row that moved: {:?}",
+        done.seams
+            .iter()
+            .map(|row| &row.decision)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_question_the_run_could_not_put_is_put_again_a_bounded_number_of_times() {
+    let held = watching!();
+    let mut asked: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let done = measure(
+        &Measuring {
+            observed: &observed(),
+            before: &before(&["pkg/test/it"]),
+        },
+        |fault| {
+            let times = asked.entry(fault.id.clone()).or_default();
+            *times = times.saturating_add(1);
+            njutest::wire::settle::Asked::NotPut
+        },
+        njutest::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("the fault catalogue derives");
+    assert!(
+        !asked.is_empty()
+            && asked
+                .values()
+                .all(|times| *times == njutest::assure::wire::PUT_ATTEMPTS),
+        "a question nothing reached is put again, and only so many times, so a suite that \
+         never reaches a seam ends rather than runs forever: {asked:?}"
+    );
+    let subjects: Vec<&String> = done.findings.iter().map(|one| &one.subject).collect();
+    assert!(
+        subjects.contains(&&njutest::assure::wire::NOT_PUT.to_owned())
+            && !subjects.contains(&&njutest::assure::wire::NOT_REPRODUCED.to_owned()),
+        "and it says the question was not put, rather than that a target stopped failing: \
+         {subjects:?}"
+    );
+}
+
+#[test]
+fn a_first_question_the_run_could_not_put_is_asked_again_before_it_is_a_hole() {
+    let held = watching!();
+    let mut asked: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    let done = measure(
+        &Measuring {
+            observed: &observed(),
+            before: &before(&["pkg/test/it"]),
+        },
+        |fault| {
+            let times = asked.entry(fault.id.clone()).or_default();
+            *times = times.saturating_add(1);
+            if *times == 1 {
+                njutest::wire::settle::Asked::NotPut
+            } else {
+                njutest::wire::settle::Asked::Answered(vec![answered("pkg/test/it", false)])
+            }
+        },
+        njutest::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("the fault catalogue derives");
+    assert!(
+        done.seams.iter().all(|row| row.decision
+            == njutest::report::SeamDecision::Tests {
+                noticed_by: "pkg/test/it".to_owned()
+            }),
+        "the first run never reached the exchange, so it was asked again, and the tests that \
+         noticed it then are the answer: {:?}",
+        done.seams
+            .iter()
+            .map(|row| &row.decision)
+            .collect::<Vec<_>>()
+    );
+}

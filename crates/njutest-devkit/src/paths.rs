@@ -122,6 +122,22 @@ pub fn text_in_json(text: &str) -> String {
         .to_owned()
 }
 
+/// How many toolchain tests nextest runs at once, whoever starts it; `.config/nextest.toml` holds the same number.
+pub const TOOLCHAIN_TESTS_AT_ONCE: usize = 4;
+
+/// The jobs a cargo started by a test may use: this machine's share for one of [`TOOLCHAIN_TESTS_AT_ONCE`] tests, never fewer than one.
+#[must_use]
+pub fn nested_build_jobs() -> usize {
+    let cores = match std::thread::available_parallelism() {
+        Ok(cores) => cores.get(),
+        Err(_unknown) => 1,
+    };
+    cores
+        .checked_div(TOOLCHAIN_TESTS_AT_ONCE)
+        .unwrap_or(1)
+        .max(1)
+}
+
 /// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out.
 #[must_use]
 pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
@@ -138,14 +154,29 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
     let outer_coverage = vars
         .iter()
         .any(|(name, _value)| same_name(name, std::ffi::OsStr::new("CARGO_LLVM_COV")));
-    vars.into_iter()
+    let mut kept: Vec<(std::ffi::OsString, std::ffi::OsString)> = vars
+        .into_iter()
         .filter(|(name, _value)| {
             let reserved = composed
                 .iter()
+                .chain(std::iter::once(&JOBS))
                 .any(|reserved| same_name(name, std::ffi::OsStr::new(reserved)));
             !(reserved || (outer_coverage && cargo_llvm_cov_owns(name)))
         })
-        .collect()
+        .collect();
+    kept.push(jobs());
+    kept
+}
+
+/// The variable a nested cargo reads its job count from.
+const JOBS: &str = "CARGO_BUILD_JOBS";
+
+/// This machine's share of cores for one nested cargo, as the variable that says it.
+fn jobs() -> (std::ffi::OsString, std::ffi::OsString) {
+    (
+        std::ffi::OsString::from(JOBS),
+        std::ffi::OsString::from(nested_build_jobs().to_string()),
+    )
 }
 
 /// Whether two environment variable names are one name on this platform.
@@ -199,6 +230,7 @@ pub fn environment_for_a_toolchain_run(
     if let Some(cache) = compilation_cache() {
         kept.push((std::ffi::OsString::from(WRAPPER), cache));
     }
+    kept.push(jobs());
     kept
 }
 
