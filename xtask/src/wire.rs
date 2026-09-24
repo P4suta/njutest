@@ -69,7 +69,7 @@ pub struct Watched {
 }
 
 /// Why the independent audit could not mint the identity that the producer is required to mint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityError {
     /// A length-prefixed identity field lies outside the v1 recipe.
     #[error("the {field} identity field has {bytes} bytes; the v1 recipe permits at most u32::MAX")]
@@ -79,6 +79,16 @@ pub enum IdentityError {
         /// Its exact byte length.
         bytes: usize,
     },
+    /// An http exchange the recording gives no method, path, or status for, so nothing it spoke can be named.
+    #[error(
+        "the http exchange {seq} of {capability} carries no method, path, or status to name it by"
+    )]
+    Unspoken {
+        /// The capability it went over.
+        capability: String,
+        /// Its sequence number.
+        seq: u64,
+    },
 }
 
 /// Everything the recording says about the seams, read from the stream alone.
@@ -87,17 +97,22 @@ pub enum IdentityError {
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
 pub fn read(recorded: &str) -> Result<Watched, crate::route::ReadError> {
     let mut watched = Watched::default();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
+    for (at, event) in crate::route::events(recorded, crate::schemas::Producer::Runner)?
+        .into_iter()
+        .enumerate()
+    {
+        let placed = |cause| crate::route::ReadError {
+            line: at.saturating_add(1),
+            cause,
+        };
         match text(&event, "type").as_deref() {
             Some("wire-exchange") => {
-                if let Some(record) = event.get("exchange") {
-                    watched.exchanges.push(exchange(record));
-                }
+                let record = crate::route::required(&event, "exchange", Some).map_err(placed)?;
+                watched.exchanges.push(exchange(record).map_err(placed)?);
             }
             Some("wire-exec") => {
-                if let Some(record) = event.get("wire") {
-                    watched.execs.push(exec(record));
-                }
+                let record = crate::route::required(&event, "wire", Some).map_err(placed)?;
+                watched.execs.push(exec(record).map_err(placed)?);
             }
             _ => {}
         }
@@ -129,12 +144,15 @@ pub fn licensed(exchange: &Exchange) -> Result<Vec<(String, String)>, IdentityEr
 /// Returns [`IdentityError::FieldTooLong`] when any field lies outside the length-prefixed v1 identity recipe.
 pub fn identity(exchange: &Exchange, rule: &str) -> Result<String, IdentityError> {
     let spoken = if exchange.wire == "http" {
-        format!(
-            "http {} {} {}",
-            exchange.method.clone().unwrap_or_default(),
-            exchange.path.clone().unwrap_or_default(),
-            exchange.status.unwrap_or_default()
-        )
+        let (Some(method), Some(path), Some(status)) =
+            (&exchange.method, &exchange.path, exchange.status)
+        else {
+            return Err(IdentityError::Unspoken {
+                capability: exchange.capability.clone(),
+                seq: exchange.seq,
+            });
+        };
+        format!("http {method} {path} {status}")
     } else {
         "raw".to_owned()
     };
@@ -163,31 +181,39 @@ fn field_length(field: &'static str, bytes: usize) -> Result<u32, IdentityError>
 }
 
 /// One exchange, as the recording writes it.
-fn exchange(record: &Value) -> Exchange {
-    let read = record.get("read").unwrap_or(&Value::Null);
-    Exchange {
-        capability: text(record, "capability").unwrap_or_default(),
-        seq: number(record, "seq").unwrap_or_default(),
-        wire: text(read, "wire").unwrap_or_default(),
+fn exchange(record: &Value) -> Result<Exchange, crate::route::ReadCause> {
+    use crate::route::required;
+    let read = required(record, "read", Some)?;
+    Ok(Exchange {
+        capability: required(record, "capability", owned)?,
+        seq: required(record, "seq", Value::as_u64)?,
+        wire: required(read, "wire", owned)?,
         method: text(read, "method"),
         path: text(read, "path"),
         status: number(read, "status").and_then(|one| match u16::try_from(one) {
             Ok(status) => Some(status),
             Err(_) => None,
         }),
-    }
+    })
 }
 
-fn exec(record: &Value) -> Exec {
-    let answer = record.get("answer").unwrap_or(&Value::Null);
-    Exec {
-        fault: text(record, "fault").unwrap_or_default(),
-        capability: text(record, "capability").unwrap_or_default(),
-        seq: number(record, "seq").unwrap_or_default(),
-        rule: text(record, "rule").unwrap_or_default(),
-        decision: text(answer, "decision").unwrap_or_default(),
+/// One execution of a fault, as the recording writes it.
+fn exec(record: &Value) -> Result<Exec, crate::route::ReadCause> {
+    use crate::route::required;
+    let answer = required(record, "answer", Some)?;
+    Ok(Exec {
+        fault: required(record, "fault", owned)?,
+        capability: required(record, "capability", owned)?,
+        seq: required(record, "seq", Value::as_u64)?,
+        rule: required(record, "rule", owned)?,
+        decision: required(answer, "decision", owned)?,
         noticed_by: text(answer, "noticed_by"),
-    }
+    })
+}
+
+/// A string, owned.
+fn owned(value: &Value) -> Option<String> {
+    value.as_str().map(ToOwned::to_owned)
 }
 
 /// One string field, or nothing where the recording does not carry it.

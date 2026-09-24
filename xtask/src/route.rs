@@ -38,6 +38,29 @@ pub enum ReadCause {
     /// The published schema itself does not compile.
     #[error(transparent)]
     Schema(#[from] crate::schemas::SchemaError),
+    /// A field a reader needs is not there, or is not the type it reads, although the line passed its schema.
+    #[error("the record has no {field} a reader can read")]
+    Absent {
+        /// The field, as a path from the record.
+        field: String,
+    },
+}
+
+/// The field `key` of `record`, which every line on its schema carries.
+///
+/// # Errors
+/// [`ReadCause::Absent`] where it is not there or is not what `read` takes.
+pub(crate) fn required<'a, T>(
+    record: &'a Value,
+    key: &str,
+    read: impl FnOnce(&'a Value) -> Option<T>,
+) -> Result<T, ReadCause> {
+    record
+        .get(key)
+        .and_then(read)
+        .ok_or_else(|| ReadCause::Absent {
+            field: key.to_owned(),
+        })
 }
 
 /// Every granularity a route can be decided at.

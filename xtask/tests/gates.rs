@@ -540,6 +540,13 @@ fn a_reader_is_held_to_exactly_its_ceiling() {
             .any(|one| one.contains("lower the ceiling to 3")),
         "a fall is kept by lowering the ceiling to it, or the next change can spend it: {below:?}"
     );
+    let fallen: std::collections::BTreeMap<String, usize> =
+        std::iter::once(("xtask/src/wire.rs".to_owned(), 0)).collect();
+    let none = xtask::defaulted::held(&fallen, "3 xtask/src/wire.rs\n").expect_err("fallen");
+    assert!(
+        none.iter().any(|one| one.contains("remove its line")),
+        "{none:?}"
+    );
     let unnamed = xtask::defaulted::held(&counted, "").expect_err("unnamed");
     assert!(
         unnamed.iter().any(|one| one.contains("ceiling of 0")),

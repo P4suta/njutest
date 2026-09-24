@@ -108,6 +108,11 @@ pub fn held(counted: &BTreeMap<String, usize>, written: &str) -> Result<usize, V
                  {ceiling}: read the field the schema requires, or match on its absence and say \
                  what that means"
             ));
+        } else if *count == 0 && ceiling > 0 {
+            refused.push(format!(
+                "{file} is down to none from a ceiling of {ceiling}: remove its line so the fall \
+                 stays"
+            ));
         } else if *count < ceiling {
             refused.push(format!(
                 "{file} is down to {count} from a ceiling of {ceiling}: lower the ceiling to \

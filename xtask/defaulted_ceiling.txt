@@ -11,4 +11,3 @@
 25 xtask/src/proofaudit.rs
 3 xtask/src/proofaudit/sentinel.rs
 8 xtask/src/route.rs
-10 xtask/src/wire.rs

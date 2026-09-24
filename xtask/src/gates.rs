@@ -2757,9 +2757,7 @@ pub fn defaulted(root: &Path) -> Result<String, GateFailure> {
             .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
         let count = crate::defaulted::defaulted_in(&text)
             .map_err(|error| GateFailure(format!("{relative}: {error}")))?;
-        if count > 0 {
-            counted.insert(relative, count);
-        }
+        counted.insert(relative, count);
     }
     let ceiling = root.join("xtask/defaulted_ceiling.txt");
     let written = std::fs::read_to_string(&ceiling)
