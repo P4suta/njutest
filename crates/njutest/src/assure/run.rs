@@ -13,6 +13,7 @@ use crate::assure::baseline;
 use crate::assure::equivalence;
 use crate::assure::model;
 use crate::assure::mutation::{self, MutationOptions, Subject};
+use crate::assure::sentinel;
 use crate::build::Cargo;
 use crate::cli::Environment;
 use crate::config::{Acceptance, Config};
@@ -166,6 +167,8 @@ pub fn run(
         set_environment(&mut held, "CARGO_BUILD_TARGET", toolchain.host());
     }
     let environment = &held;
+
+    sentinel::stood((request, &toolchain), environment, &scratch, (notes, watch))?;
 
     notes.phase("baseline")?;
     watch.trace.stage("baseline");
@@ -1448,43 +1451,56 @@ fn prepare(
     environment: &Environment,
     watch: Watch<'_>,
 ) -> Result<rust_mutants::session::Session, RunnerError> {
-    let include = narrowing(request).map_err(rust_mutants::EngineError::from)?;
     let workspace = rust_mutants::workspace::Workspace::open(
         &request.root,
-        rust_mutants::workspace::OpenOptions {
-            allow_outside: Vec::new(),
-            cargo: None,
-            search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
-            env: environment.vars.clone(),
-            temp_directory: environment.temp_directory.clone(),
-            report_directory: Some(request.config.reports.directory.as_str().to_owned()),
-            exclude: Vec::new(),
-            keep_temp: request.keep_temp,
-            offline: request.cargo.offline,
-            locked: request.cargo.locked,
-            trace: request.engine_trace.clone(),
-        },
+        opening(request, environment),
         watch.cancel,
     )?;
-    Ok(workspace.prepare(
-        &rust_mutants::session::PrepareOptions {
-            packages: request.packages.clone(),
-            include,
-            exclude: request.config.project.excluded(),
-            build: request.build.clone(),
-            harness_args: request.test_args.clone(),
-            verify: true,
-            failing: rust_mutants::session::Failing::Exclude,
-            build_timeout: request.config.execution.build_timeout,
-            mutant_timeout: rust_mutants::session::Timeout::Fixed(request.config.execution.timeout),
-            mutant_steps: (request.config.execution.steps > 0)
-                .then_some(request.config.execution.steps),
-            skip_targets: request.config.execution.skip_targets.clone(),
-            coverage: request.config.execution.coverage,
-            ..crate::assure::engine::switches()
-        },
-        watch.cancel,
-    )?)
+    Ok(workspace.prepare(&preparing(request)?, watch.cancel)?)
+}
+
+/// How the engine opens a tree for this run: which cargo, in which environment, and where it copies it.
+pub fn opening(
+    request: &Request,
+    environment: &Environment,
+) -> rust_mutants::workspace::OpenOptions {
+    rust_mutants::workspace::OpenOptions {
+        allow_outside: Vec::new(),
+        cargo: None,
+        search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
+        env: environment.vars.clone(),
+        temp_directory: environment.temp_directory.clone(),
+        report_directory: Some(request.config.reports.directory.as_str().to_owned()),
+        exclude: Vec::new(),
+        keep_temp: request.keep_temp,
+        offline: request.cargo.offline,
+        locked: request.cargo.locked,
+        trace: request.engine_trace.clone(),
+    }
+}
+
+/// Every switch this run prepares the tree with, which is also what decides how the engine routes a mutant.
+///
+/// # Errors
+/// Returns the engine's refusal of a pattern the configuration or the change set narrowed the run to.
+pub fn preparing(request: &Request) -> Result<rust_mutants::session::PrepareOptions, RunnerError> {
+    let include = narrowing(request).map_err(rust_mutants::EngineError::from)?;
+    Ok(rust_mutants::session::PrepareOptions {
+        packages: request.packages.clone(),
+        include,
+        exclude: request.config.project.excluded(),
+        build: request.build.clone(),
+        harness_args: request.test_args.clone(),
+        verify: true,
+        failing: rust_mutants::session::Failing::Exclude,
+        build_timeout: request.config.execution.build_timeout,
+        mutant_timeout: rust_mutants::session::Timeout::Fixed(request.config.execution.timeout),
+        mutant_steps: (request.config.execution.steps > 0)
+            .then_some(request.config.execution.steps),
+        skip_targets: request.config.execution.skip_targets.clone(),
+        coverage: request.config.execution.coverage,
+        ..crate::assure::engine::switches()
+    })
 }
 
 /// Where this run reads and writes what is established about individual mutants, or nothing when it may not.

@@ -1,0 +1,13 @@
+pub fn clamp(value: i32, limit: i32) -> i32 {
+    if value <= limit {
+        return value;
+    }
+    limit
+}
+
+pub fn clamp_entered(value: i32, limit: i32) -> i32 {
+    if value <= limit {
+        return value;
+    }
+    limit
+}

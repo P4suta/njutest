@@ -1,0 +1,7 @@
+pub fn ok_zero(n: u32) -> Result<u32, String> {
+    Ok(n)
+}
+
+pub fn ok_seven(n: u32) -> Result<u32, String> {
+    Ok(n)
+}
