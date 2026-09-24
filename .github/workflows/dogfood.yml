@@ -33,6 +33,10 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   shard:
     name: shard ${{ matrix.shard }} of 4

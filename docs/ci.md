@@ -57,6 +57,10 @@ A page that neither side notices is one a reader of the book cannot reach.
 `cargo deny` and `cargo audit` in `ci.yml` ask the same question of the graph that is already here, on every push; dependency review asks it of the difference, and says so on the pull request.
 Secret scanning, push protection, Dependabot security updates, and private vulnerability reporting are repository settings rather than workflows, and are on.
 
+Every workflow declares `shell: bash` as its default, which GitHub runs as `bash -e -o pipefail` on each of the three platforms, and no step or composite action names another shell (`cargo test -p xtask --test workflows`).
+Without that default a Linux or macOS step runs in `bash -e`, where `njutest verify | tee out` has the status of `tee`, and a Windows step runs in PowerShell, which goes on past a native command that failed.
+The first let the `soundness` job read on after an exit code nobody had looked at; the second once reported a failing test as a cancelled job forty-five minutes later.
+
 The required checks are the ones `ci-success` gathers.
 `mutation.yml` and `dogfood.yml` are the two independent measurements of how strong this suite is, and neither gates a pull request: a survivor is a test to write or an acceptance to record with a reason, which is work to schedule rather than a push to block.
 

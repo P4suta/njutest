@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! That a step which can run on Windows says which shell it is written for.
+//! That the workflows say what they run in, and read only what the schemas declare.
 
 #![expect(
     clippy::panic,
@@ -20,6 +20,20 @@ fn workflows() -> Vec<PathBuf> {
         .map(|entry| entry.unwrap_or_else(|error| panic!("entry under {}: {error}", dir.display())))
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|one| one == "yml"))
+        .collect();
+    found.sort();
+    found
+}
+
+/// The composite actions the workflows use, one `action.yml` each.
+fn actions() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/actions");
+    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
+        .map(|entry| entry.unwrap_or_else(|error| panic!("entry under {}: {error}", dir.display())))
+        .map(|entry| entry.path().join("action.yml"))
         .collect();
     found.sort();
     found
@@ -47,24 +61,12 @@ fn jobs(source: &str) -> Vec<(String, String)> {
     found
 }
 
-/// The steps of one job body, each as the lines from its `- ` to the next one's.
-fn steps(body: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for line in body.lines() {
-        if line.trim_start().starts_with("- ") && line.starts_with("      ") {
-            found.push(String::new());
-        }
-        if let Some(last) = found.last_mut() {
-            last.push_str(line);
-            last.push('\n');
-        }
-    }
-    found
-}
+/// What a workflow says its steps run in when a step says nothing: `bash`, which GitHub runs as `bash -e -o pipefail` on every runner.
+const DEFAULT_SHELL: &str = "defaults:\n  run:\n    shell: bash\n";
 
 #[test]
-fn a_step_that_can_run_on_windows_says_which_shell_it_is_written_for() {
-    let mut silent = Vec::new();
+fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe() {
+    let mut loose = Vec::new();
     for path in workflows() {
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
@@ -72,37 +74,39 @@ fn a_step_that_can_run_on_windows_says_which_shell_it_is_written_for() {
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
             .unwrap_or_else(|| panic!("a workflow file name is not UTF-8: {}", path.display()));
-        for (job, body) in jobs(&source) {
-            if !body.contains("windows-") {
-                continue;
-            }
-            for step in steps(&body) {
-                let runs = step
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("run:"));
-                let said = step
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("shell:"));
-                if runs && !said {
-                    let name = step
-                        .lines()
-                        .find_map(|line| line.trim_start().strip_prefix("- name: "))
-                        .unwrap_or("(unnamed)")
-                        .to_owned();
-                    silent.push(format!("{file}: {job}: {name}"));
-                }
+        if !source.contains(DEFAULT_SHELL) {
+            loose.push(format!("{file}: no top-level `{DEFAULT_SHELL}`"));
+        }
+    }
+    for path in workflows().into_iter().chain(actions()) {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        for (at, line) in source.lines().enumerate() {
+            let other = line
+                .trim_start()
+                .trim_start_matches("- ")
+                .strip_prefix("shell:")
+                .map(str::trim)
+                .filter(|shell| *shell != "bash");
+            if let Some(shell) = other {
+                loose.push(format!(
+                    "{}:{}: `shell: {shell}`",
+                    path.display(),
+                    at.saturating_add(1)
+                ));
             }
         }
     }
 
     assert!(
-        silent.is_empty(),
-        "a step of a job that can run on Windows takes PowerShell unless it says \
-         otherwise, and there a native command that fails does not stop the script: the \
-         step runs on, and its status becomes the last command's. That is how a failing \
-         test was reported forty-five minutes later as a cancelled job, and how one \
-         could have been reported as a pass. Say `shell: bash`, which every runner has. \
-         {silent:?}"
+        loose.is_empty(),
+        "a step with no shell of its own takes `bash -e {{0}}` on Linux and macOS, where a \
+         command piped into `tee` has its status replaced by tee's, and PowerShell on \
+         Windows, where a failing native command does not stop the script. The first let \
+         `njutest verify` exit with any code at all while the soundness job read on; the \
+         second reported a failing test forty-five minutes later as a cancelled job. \
+         Declare `shell: bash` as the workflow's default, which GitHub runs with \
+         `-o pipefail` on every runner, and override it with nothing else. {loose:?}"
     );
 }
 

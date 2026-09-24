@@ -26,6 +26,10 @@ env:
   # The suites drive a real cargo against the fixture projects; nothing may reach a registry from inside a test.
   CARGO_NET_OFFLINE: "true"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     name: test (${{ matrix.os }})
@@ -328,7 +332,7 @@ jobs:
           ./target/release/njutest verify \
             --directory "$RUNNER_TEMP/interpreted" --offline --locked --no-cache --ui=plain \
             | tee "$RUNNER_TEMP/interpreted.out" \
-            || test "${PIPESTATUS[0]}" -eq 1
+            || case "${PIPESTATUS[0]}" in 1 | 2) ;; *) exit 1 ;; esac
       # The run says where it wrote, so this never has to know the layout.
       - name: The run says it interpreted the suite
         run: |
