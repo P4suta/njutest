@@ -178,6 +178,26 @@ enum Ending {
     TimedOut,
 }
 
+/// Records that the interpreter ended without a test result, which says nothing about the suite.
+fn ran_no_test(interpreted: &mut Interpreted) {
+    interpreted.executed = false;
+    interpreted.limitations.push(Limitation::new(
+        crate::limitation::MIRI_RAN_NO_TEST,
+        "the interpreter ended without a test result that says a test failed or every one \
+         passed, so its status is its own trouble and not the suite's",
+    ));
+    interpreted.findings.push(Finding {
+        kind: FindingKind::NotMeasured,
+        subject: "soundness".to_owned(),
+        detail: "the interpreter ran no test to a result, so nothing is claimed about the unsafe \
+                 the suite holds"
+            .to_owned(),
+        origin: crate::report::FindingOrigin::Global,
+        path: None,
+        position: None,
+    });
+}
+
 /// What one Miri run means.
 fn read(said: &str, ending: Ending) -> Interpreted {
     let mut interpreted = Interpreted {
@@ -223,15 +243,23 @@ fn read(said: &str, ending: Ending) -> Interpreted {
         });
         return interpreted;
     }
-    if ending == Ending::Failed {
-        interpreted.findings.push(Finding {
+    let results: Vec<&str> = said
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("test result: "))
+        .collect();
+    let failed = results.iter().any(|result| result.starts_with("FAILED"));
+    let passed = !results.is_empty() && !failed;
+    match ending {
+        Ending::Failed if failed => interpreted.findings.push(Finding {
             kind: FindingKind::FailingTest,
             subject: "soundness".to_owned(),
             detail: "a test fails under the interpreter that passes without it".to_owned(),
             origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
-        });
+        }),
+        Ending::Passed if passed => {}
+        Ending::Failed | Ending::Passed | Ending::TimedOut => ran_no_test(&mut interpreted),
     }
     interpreted
 }

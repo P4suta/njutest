@@ -232,6 +232,8 @@ They are what the run says about its own footing, and each is stated fail-closed
   A run that met any of these and said nothing recorded no seam, raised no finding and stated no limitation, so a reader read the wire dimension as covered when nothing about it had been measured.
 - The interpreter ran out of the time it was given (`miri-timed-out`).
   This is not a claim that it found nothing: a budget that expired is a question nobody answered, which is why it is a limitation and never a pass.
+- The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
+  Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 

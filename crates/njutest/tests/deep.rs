@@ -191,7 +191,7 @@ fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
-            env: saying("no undefined behaviour", 0),
+            env: saying("test result: ok. 1 passed; 0 failed; 0 ignored", 0),
             packages: &[],
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
@@ -248,7 +248,7 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
-            env: saying("no undefined behaviour", 0),
+            env: saying("test result: ok. 1 passed; 0 failed; 0 ignored", 0),
             packages: &packages,
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
@@ -294,7 +294,7 @@ fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
-    let mut env = saying("no undefined behaviour", 0);
+    let mut env = saying("test result: ok. 1 passed; 0 failed; 0 ignored", 0);
     env.push((
         std::ffi::OsString::from("MIRIFLAGS"),
         std::ffi::OsString::from("-Zmiri-from-the-outside"),
@@ -346,7 +346,7 @@ fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given(
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
-    let mut env = saying("no undefined behaviour", 0);
+    let mut env = saying("test result: ok. 1 passed; 0 failed; 0 ignored", 0);
     env.push((
         std::ffi::OsString::from("MIRIFLAGS"),
         std::ffi::OsString::from("-Zmiri-from-the-outside"),
@@ -387,7 +387,7 @@ fn an_interpreter_that_runs_out_of_time_has_interpreted_nothing() {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
-    let mut env = saying("no undefined behaviour", 0);
+    let mut env = saying("test result: ok. 1 passed; 0 failed; 0 ignored", 0);
     env.push((
         std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
         std::ffi::OsString::from("5"),
@@ -548,5 +548,43 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
         done.findings.is_empty(),
         "a suite the interpreter never finished says nothing about the program, and a \
          finding here would be one nobody can act on: {done:?}"
+    );
+}
+
+#[test]
+fn an_interpreter_that_ran_no_test_found_nothing_to_fail_and_interpreted_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let setup_failed = "WARNING: Ignoring `RUSTC_WRAPPER` environment variable\n\
+                        thread 'main' panicked at src/tools/miri/cargo-miri/src/util.rs:132:9:\n\
+                        failed to run `cd \"/gone\" && env ...`";
+    let done = interpreted(setup_failed, 101, dir.path()).expect("ran");
+    assert!(!done.executed, "{done:?}");
+    assert!(
+        !done
+            .findings
+            .iter()
+            .any(|finding| finding.kind == FindingKind::FailingTest),
+        "no test ran, so no test failed: an exit status with no test result under it is the \
+         interpreter's own trouble, and a verdict of DEFECT on it blames the suite: {done:?}"
+    );
+    assert_eq!(
+        done.findings.first().map(|one| one.kind),
+        Some(FindingKind::NotMeasured),
+        "{done:?}"
+    );
+    assert_eq!(
+        done.limitations.first().map(|one| one.name.clone()),
+        Some("miri-ran-no-test".to_owned()),
+        "{done:?}"
+    );
+    let said_nothing = interpreted("   Compiling demo v0.1.0\n", 0, dir.path()).expect("ran");
+    assert!(
+        !said_nothing.executed,
+        "a run that says it passed and ran no test interpreted nothing: {said_nothing:?}"
+    );
+    assert_eq!(
+        said_nothing.findings.first().map(|one| one.kind),
+        Some(FindingKind::NotMeasured),
+        "{said_nothing:?}"
     );
 }
