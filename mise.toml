@@ -260,11 +260,40 @@ cargo xtask sbom --output "$install_root/njutest.cdx.json"
 
 [tasks.deny]
 description = "Check licenses, advisories, bans, and sources"
-run = "cargo deny --locked --all-features check"
+run = [
+  "cargo deny --locked --all-features fetch db",
+  "cargo deny --locked --all-features check --disable-fetch",
+]
 
 [tasks.audit]
 description = "Check the dependency graph against the RustSec advisory database"
-run = "cargo audit --deny warnings"
+shell = "bash -c"
+run = """
+set -uo pipefail
+db="${CARGO_TARGET_DIR:-target}/advisory-db"
+fetched=false
+for attempt in 1 2 3 4 5; do
+  if [ -d "${db}/.git" ]; then
+    git -C "${db}" fetch --quiet --depth 1 origin main && git -C "${db}" reset --quiet --hard FETCH_HEAD && fetched=true
+  else
+    rm -rf "${db}"
+    git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "${db}" && fetched=true
+  fi
+  status=$?
+  [ "${fetched}" = true ] && break
+  echo "audit: fetching the advisory database exited ${status} on attempt ${attempt} of 5" >&2
+  sleep $((attempt * 5))
+done
+if [ "${fetched}" = false ]; then
+  [ -d "${db}/.git" ] || { echo "audit: no advisory database was ever fetched into ${db}" >&2; exit 1; }
+  echo "audit: checking against the copy in ${db}, last updated $(git -C "${db}" log -1 --format=%cI), not a fresh one" >&2
+fi
+cargo audit --no-fetch --deny warnings --db "${db}" || {
+  status=$?
+  echo "audit: cargo audit exited ${status}; its own output above says why" >&2
+  exit "${status}"
+}
+"""
 
 [tasks."fuzz:clippy"]
 description = "Lint every cargo-fuzz target with the root workspace's exact rustc and Clippy policy"
@@ -328,15 +357,18 @@ description = "Run every local gate a push waits for, the ones that answer quick
 # `build` is not here because `test:fast` runs `--all-targets`, which builds the same thing and then runs it.
 # What a push compiles is twice over: once with clippy's fingerprints and once with the test harness's.
 # Everything else reuses one of those.
-run = [
-  "mise run fmt:check",
-  "mise run lint",
-  "mise run test:fast",
-  "mise run test:doc",
-  "mise run kani:verified",
-  "mise run deny",
-  "mise run audit",
-]
+shell = "bash -c"
+run = """
+set -uo pipefail
+step() { "$@" || { status=$?; echo "check: '$*' failed with exit ${status}" >&2; exit "${status}"; }; }
+step mise run fmt:check
+step mise run lint
+step mise run test:fast
+step mise run test:doc
+step mise run kani:verified
+step mise run deny
+step mise run audit
+"""
 
 # Every target triple this machine can read without the machine.
 #
