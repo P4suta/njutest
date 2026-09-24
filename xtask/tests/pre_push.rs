@@ -691,7 +691,7 @@ fn two_gates_take_turns_on_one_machine() {
 fn a_check_that_outlives_its_budget_is_stopped_with_everything_it_started() {
     let repository = Repository::new(
         "printf '%s\\n' \"$*\" >> \"$CALLS\"; \
-         if [ \"$(wc -l < \"$CALLS\")\" -gt 1 ]; then \
+         if [ \"$(wc -l < \"$CALLS\")\" -gt 0 ]; then \
            ( trap '' TERM; exec sleep 600 ) & printf '%s\\n' $! > \"$TURNS/sleeper\"; wait; \
          fi",
     );
@@ -857,5 +857,63 @@ fn a_commit_is_checked_again_under_different_build_settings() {
         repository.calls() > checked,
         "a pass under one set of build flags answered for another: {}",
         stderr(&again)
+    );
+}
+
+#[test]
+fn a_push_runs_the_check_once() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let output = repository.push(&repository.head);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        repository.calls(),
+        1,
+        "the gate ran the whole check twice, once to warm and once to measure, which is the \
+         suite, the doctests, Kani, deny and audit twice for every push: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn a_check_that_goes_quiet_is_stopped_and_one_that_talks_is_not() {
+    let quiet: [(&str, &std::ffi::OsStr); 1] = [("NJUTEST_PUSH_QUIET_SECONDS", "2".as_ref())];
+    let silent = Repository::new("sleep 30");
+    let stopped = silent.push_with(
+        silent.directory.path(),
+        &update(&silent.head, &"0".repeat(40), "\n"),
+        &quiet,
+    );
+    assert_eq!(
+        stopped.status.code(),
+        Some(124),
+        "a check that said nothing past its quiet ran on: {}",
+        stderr(&stopped)
+    );
+    assert!(
+        stderr(&stopped).contains("said nothing"),
+        "{}",
+        stderr(&stopped)
+    );
+
+    let talking =
+        Repository::new("for i in 1 2 3 4 5 6 7 8; do echo \"still working $i\"; sleep 0.5; done");
+    let finished = talking.push_with(
+        talking.directory.path(),
+        &update(&talking.head, &"0".repeat(40), "\n"),
+        &quiet,
+    );
+    assert!(
+        finished.status.success(),
+        "a check that kept saying something was stopped for how long it took (ADR 0026): {}",
+        stderr(&finished)
+    );
+    let heard = format!(
+        "{}{}",
+        String::from_utf8(finished.stdout.clone()).expect("UTF-8 output"),
+        stderr(&finished)
+    );
+    assert!(
+        heard.contains("still working 8"),
+        "what the check said did not reach the person pushing: {heard}"
     );
 }

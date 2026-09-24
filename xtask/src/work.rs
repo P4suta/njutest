@@ -21,10 +21,15 @@ const GRACE: Duration = Duration::from_secs(5);
 pub enum Ended {
     /// It exited by itself.
     Exited(ExitStatus),
-    /// It outlived its budget and was stopped with everything in its group.
+    /// It outlived its ceiling and was stopped with everything in its group.
     OverBudget {
         /// How long it had run when it was stopped.
         elapsed: Duration,
+    },
+    /// It said nothing for longer than its bound allows and was stopped with everything in its group.
+    Quiet {
+        /// How long it had been silent when it was stopped.
+        silent: Duration,
     },
     /// This process was asked to stop, and stopped the work first.
     Interrupted {
@@ -125,14 +130,34 @@ const STOPPING: [i32; 3] = [
 #[cfg(not(unix))]
 const STOPPING: [i32; 2] = [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM];
 
-/// Runs `command` in a process group of its own until it exits, `limit` passes, or one of `stops` is raised.
+/// How long work may run, bounded by quiet first (ADR 0026) and by a ceiling behind it.
+pub struct Bound<'a> {
+    /// The longest the work may run at all, however much it says.
+    pub ceiling: Duration,
+    /// The longest the work may go without saying anything.
+    pub quiet: Duration,
+    /// Passes on whatever the work has said since it was last asked, and answers whether it said anything.
+    pub heard: &'a mut dyn FnMut() -> std::io::Result<bool>,
+}
+
+impl std::fmt::Debug for Bound<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Bound")
+            .field("ceiling", &self.ceiling)
+            .field("quiet", &self.quiet)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Runs `command` in a process group of its own until it exits, its `bound` is passed, or one of `stops` is raised.
 /// `started` hears the process id of the group's leader as soon as there is one.
 ///
 /// # Errors
 /// Returns a [`WorkError`] when the work cannot be started, watched, or stopped, or when `started` cannot record it.
 pub fn run<F>(
     command: &mut Command,
-    limit: Option<Duration>,
+    mut bound: Option<&mut Bound<'_>>,
     stops: &Stops,
     started: F,
 ) -> Result<Ended, WorkError>
@@ -144,21 +169,34 @@ where
         started(leader).map_err(|source| WorkError::Watch { source })?;
     }
     let began = Instant::now();
+    let mut last_heard = began;
     loop {
-        if let Some(status) = group.try_wait()? {
+        let exited = group.try_wait()?;
+        if let Some(bound) = bound.as_deref_mut()
+            && (bound.heard)().map_err(|source| WorkError::Watch { source })?
+        {
+            last_heard = Instant::now();
+        }
+        if let Some(status) = exited {
             return Ok(Ended::Exited(status));
         }
         if let Some(signal) = stops.raised() {
             group.stop()?;
             return Ok(Ended::Interrupted { signal });
         }
-        if let Some(limit) = limit
-            && began.elapsed() >= limit
-        {
-            group.stop()?;
-            return Ok(Ended::OverBudget {
-                elapsed: began.elapsed(),
-            });
+        if let Some(bound) = bound.as_deref() {
+            if last_heard.elapsed() >= bound.quiet {
+                group.stop()?;
+                return Ok(Ended::Quiet {
+                    silent: last_heard.elapsed(),
+                });
+            }
+            if began.elapsed() >= bound.ceiling {
+                group.stop()?;
+                return Ok(Ended::OverBudget {
+                    elapsed: began.elapsed(),
+                });
+            }
         }
         std::thread::sleep(POLL);
     }

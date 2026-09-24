@@ -50,6 +50,9 @@ The gate was a Bash script, and the rule that decides what may run on the machin
 - On Windows nothing reads a process's start time without an unsafe call, so the leader is not recorded, waiting markers are never swept, and a holder killed outright lets the next run in at once; there the lane is only the lock.
 - The work a lane admits has no terminal input: it runs apart from the terminal's foreground group, and a program that stopped to read one would hold the lane for ever.
 - The gate starts the compilation cache's server itself before the check, with an idle timeout longer than the check's budgets, so stopping the check's group never stops the server every session shares.
+- The leader is recorded just after the work starts, so a holder killed in the milliseconds between the two lets the next run in; the gap is known and left open.
+- A process that inherits `NJUTEST_SLOT_HELD` from an ancestor holding the lane and then has it taken away waits for that ancestor's leader, which is waiting for it; nothing in this repository strips the variable, so the case is known and left open.
+- The gate is one pass: the warming pass that ran the whole check a second time is gone, and the check is bounded by quiet first and a ceiling behind it, as ADR 0026 decides for a mutation.
 - A narrowed run can still coincide with a whole one.
   Whether that costs anything is a count to take before widening the lane to it.
 - The four feature-set builds, and the Developer Tools setting on a new machine, are separate decisions: the first is a change to `mise.toml`, the second is recorded in [the limitation](../limitations.md#on-macos-measure-what-an-execution-costs-before-measuring-anything-else) and [development](../development.md#one-machine-several-sessions).

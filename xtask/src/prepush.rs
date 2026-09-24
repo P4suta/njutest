@@ -52,7 +52,7 @@ pub enum PrePushError {
     },
     /// The push names an object other than the checked-out commit.
     #[error(
-        "{local_ref} names {local}, but the checked-out commit is {head}\ncheck out the exact commit being pushed before running its gate"
+        "{local_ref} names {local}, but the checked-out commit is {head}\ncheck out the exact commit being pushed before running its gate, or push another worktree's branch from that worktree"
     )]
     NotHead {
         /// The local ref being pushed.
@@ -117,15 +117,15 @@ pub enum PrePushError {
         /// How it ended.
         status: String,
     },
-    /// The warming pass outlived its own budget and was stopped.
+    /// The check said nothing for longer than the gate allows and was stopped (ADR 0026).
     #[error(
-        "the warming pass passed its {budget}s budget and was stopped at {elapsed}s\nit compiles and runs everything once outside the check's budget; raise NJUTEST_PUSH_WARMING_SECONDS in a commit that says why"
+        "the check said nothing for {silent}s, past the {quiet}s it may go quiet, and was stopped with everything it started\na check that is working says something; find what it was waiting for, or raise NJUTEST_PUSH_QUIET_SECONDS in a commit that says why"
     )]
-    Warming {
-        /// The budget, in seconds.
-        budget: u64,
-        /// When it was stopped, in seconds.
-        elapsed: u64,
+    Quiet {
+        /// The quiet it was allowed, in seconds.
+        quiet: u64,
+        /// How long it had been silent, in seconds.
+        silent: u64,
     },
     /// The gate was asked to stop, and stopped the check with everything it started first.
     #[error("stopped by signal {signal}; the check and everything it started were stopped first")]
@@ -203,7 +203,7 @@ impl PrePushError {
     #[must_use]
     pub fn exit_code(&self) -> u8 {
         match self {
-            Self::Budget { .. } | Self::Warming { .. } => 124,
+            Self::Budget { .. } | Self::Quiet { .. } => 124,
             Self::Interrupted { signal } => interrupted(*signal),
             Self::Lane { source } => match source.signal() {
                 Some(signal) => interrupted(signal),
@@ -359,14 +359,29 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    fn pass(&self, quiet: bool, limit: Duration) -> Result<Ended, PrePushError> {
+    /// Runs the check once, its output passed on as it arrives, stopped when it goes quiet for too long or runs past the ceiling.
+    fn pass(&self, progress: &mut dyn Write) -> Result<Ended, PrePushError> {
+        let log = self.place.home.join("check.log");
+        let written = std::fs::File::create(&log).map_err(|source| io_error(&log, source))?;
+        let also = written
+            .try_clone()
+            .map_err(|source| io_error(&log, source))?;
         let mut command = self.place.check_command(&self.tools, self.head, self.lanes);
-        command.stdin(Stdio::null());
-        if quiet {
-            command.stdout(Stdio::null()).stderr(Stdio::null());
-        }
+        command.stdin(Stdio::null()).stdout(written).stderr(also);
+        let mut reading = std::fs::File::open(&log).map_err(|source| io_error(&log, source))?;
+        let mut heard = || -> std::io::Result<bool> {
+            let mut said = Vec::new();
+            std::io::Read::read_to_end(&mut reading, &mut said)?;
+            progress.write_all(&said)?;
+            Ok(!said.is_empty())
+        };
+        let mut bound = work::Bound {
+            ceiling: self.settings.budget,
+            quiet: self.settings.quiet,
+            heard: &mut heard,
+        };
         let held = self.held;
-        work::run(&mut command, Some(limit), self.stops, |leader| {
+        work::run(&mut command, Some(&mut bound), self.stops, |leader| {
             held.iter().try_for_each(|lane| lane.working_on(leader))
         })
         .map_err(|source| PrePushError::Work { source })
@@ -375,22 +390,18 @@ impl Run<'_> {
 
 fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
     run.place.require_exact(&run.tools, run.head)?;
-    match run.pass(true, run.settings.warming)? {
-        Ended::Exited(_decides_nothing) => {}
-        Ended::OverBudget { elapsed } => {
-            return Err(PrePushError::Warming {
-                budget: run.settings.warming.as_secs(),
-                elapsed: elapsed.as_secs(),
-            });
-        }
-        Ended::Interrupted { signal } => return Err(PrePushError::Interrupted { signal }),
-    }
     let started = Instant::now();
-    match run.pass(false, run.settings.budget)? {
+    match run.pass(progress)? {
         Ended::Exited(status) if status.success() => {}
         Ended::Exited(status) => {
             return Err(PrePushError::Failed {
                 status: status.to_string(),
+            });
+        }
+        Ended::Quiet { silent } => {
+            return Err(PrePushError::Quiet {
+                quiet: run.settings.quiet.as_secs(),
+                silent: silent.as_secs(),
             });
         }
         Ended::OverBudget { elapsed } => {
@@ -406,7 +417,7 @@ fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
         say(
             progress,
             &format!(
-                "pre-push: the gate passed in {}s, over the {}s a warm run should beat\npre-push: that is the reading to act on while it is still cheap. A first run after a merge is expected here; a second one that is still slow means something stopped being cached",
+                "pre-push: the gate passed in {}s, over the {}s a warm run should beat\npre-push: a first run after a merge is expected here; a second one that is still slow means something stopped being cached",
                 elapsed.as_secs(),
                 run.settings.expected.as_secs()
             ),
@@ -443,10 +454,7 @@ fn serve_the_cache(
     if !settings.cached {
         return Ok(());
     }
-    let idle = settings
-        .warming
-        .saturating_add(settings.budget)
-        .saturating_add(Duration::from_secs(600));
+    let idle = settings.budget.saturating_add(Duration::from_secs(600));
     let started = tools
         .command("sccache")
         .apart()
@@ -546,7 +554,7 @@ fn verify(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Settings {
     budget: Duration,
-    warming: Duration,
+    quiet: Duration,
     expected: Duration,
     base_ref: String,
     cache: PathBuf,
@@ -556,8 +564,8 @@ struct Settings {
 impl Settings {
     fn from_environment(environment: &[(OsString, OsString)]) -> Result<Self, PrePushError> {
         Ok(Self {
-            budget: seconds(environment, "NJUTEST_PUSH_BUDGET_SECONDS", 600)?,
-            warming: seconds(environment, "NJUTEST_PUSH_WARMING_SECONDS", 1800)?,
+            budget: seconds(environment, "NJUTEST_PUSH_BUDGET_SECONDS", 3600)?,
+            quiet: seconds(environment, "NJUTEST_PUSH_QUIET_SECONDS", 600)?,
             expected: seconds(environment, "NJUTEST_PUSH_EXPECTED_SECONDS", 420)?,
             base_ref: match lanes::variable(environment, "NJUTEST_COMMITTED_BASE_REF") {
                 Some(named) => text_of("NJUTEST_COMMITTED_BASE_REF", named)?.to_owned(),

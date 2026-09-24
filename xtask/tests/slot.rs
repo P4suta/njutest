@@ -162,6 +162,13 @@ fn a_killed_holder_keeps_the_lane_until_the_work_it_started_has_ended() {
         until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
+    let record = machine.slots.path().join("heavy.holder");
+    assert!(
+        until(Duration::from_secs(60), || {
+            std::fs::read_to_string(&record).is_ok_and(|text| text.contains("leader="))
+        }),
+        "the holder never recorded the work it started"
+    );
     let pid = holder.id().expect("a live holder").to_string();
     let killed = Command::new("kill")
         .args(["-KILL", &pid])

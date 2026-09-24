@@ -380,7 +380,7 @@ fn slot(
     match ran {
         Ok(work::Ended::Exited(status)) => ExitCode::from(exit_status(status)),
         Ok(work::Ended::Interrupted { signal }) => ExitCode::from(signalled_code(signal)),
-        Ok(work::Ended::OverBudget { .. }) => ExitCode::from(124),
+        Ok(work::Ended::OverBudget { .. } | work::Ended::Quiet { .. }) => ExitCode::from(124),
         Err(failure) => after_output(writeln!(stderr, "slot: {failure}"), ExitCode::from(127)),
     }
 }
