@@ -17,6 +17,7 @@ Commands:
   spec         Say, item by item, what a run found pinned and what it found free
   accept       Record that a reviewer looked at a surviving mutant
   review       Go through one run's gaps, one at a time, deciding as you read
+  next         The cheapest gap in the tests, one at a time, with the checked test that closes it
   fix          Say what repairs a run was offered, and write the ones that hold up
   replay       Put one finding back to the tests and say whether it is still there
   trace        Read what a run recorded
