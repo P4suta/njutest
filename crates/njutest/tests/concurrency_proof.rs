@@ -564,3 +564,56 @@ fn a_file_the_compiler_read_is_code_wherever_an_include_asks_for_it_however_spac
         );
     }
 }
+
+#[test]
+fn the_runtime_every_measured_binary_carries_starts_nothing() {
+    let scripted = rust_mutants::testkit::compile::ScriptedCompile::from_source(
+        "src/lib.rs",
+        "pub fn gate(a: u8, b: u8) -> bool { a > 1 && b < 9 }\npub fn add(a: u8) -> u8 { a + 1 }\n",
+        rust_mutants::rule::Tier::All,
+    );
+    let rendered = rust_mutants::instrument::render(&rust_mutants::instrument::Rendering {
+        module: rust_mutants::instrument::MODULE_STEM,
+        catalog_digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        placements: scripted.placements(),
+        markers: &[],
+        newline: "\n",
+    })
+    .expect("a small catalog renders");
+    let found = scanned("runtime.rs", &rendered).expect("the runtime is Rust's tokens");
+    assert!(
+        found.is_empty(),
+        "every measured binary is built from the instrumented tree, which adds this module to every \
+         mutated crate, while the proof reads the pristine sources: whatever the runtime starts no \
+         scan of them would see, so it must start nothing: {found:?}"
+    );
+}
+
+#[test]
+fn a_package_the_build_compiled_nothing_of_is_not_linked_unless_the_build_said_nothing() {
+    let closure = vec!["used 1.0.0".to_owned(), "windows-only 1.0.0".to_owned()];
+    let mut compiled = njutest::concurrency::read::Compiled::default();
+    compiled.inputs.insert(
+        "used 1.0.0".to_owned(),
+        std::iter::once(std::path::PathBuf::from("/used/src/lib.rs")).collect(),
+    );
+    let (linked, left_out) = njutest::assure::concurrency::linked(&closure, &compiled);
+    assert_eq!(
+        (
+            linked.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+            left_out.iter().map(|id| id.as_str()).collect::<Vec<_>>()
+        ),
+        (vec!["used 1.0.0"], vec!["windows-only 1.0.0"]),
+        "a package the build compiled no unit of for this target is not in any binary, and reading \
+         it could only call a provable binary concurrent for code that is not there"
+    );
+    let (linked, left_out) = njutest::assure::concurrency::linked(
+        &closure,
+        &njutest::concurrency::read::Compiled::default(),
+    );
+    assert!(
+        linked.len() == 2 && left_out.is_empty(),
+        "a build that reported no unit at all says nothing about what it compiled, so nothing is \
+         left out on its word"
+    );
+}
