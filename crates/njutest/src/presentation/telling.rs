@@ -164,10 +164,36 @@ fn said(finding: &Finding, report: &Conclusion, sources: &Sources) -> Diagnostic
         severity,
         code,
         title: title.to_owned(),
-        at: mutant.map(|one| site(one, sources)),
+        at: mutant
+            .map(|one| site(one, sources))
+            .or_else(|| placed(finding, sources)),
         notes: vec![beyond(&finding.detail, mutant)],
-        actions: mutant.map(answering).unwrap_or_default(),
+        actions: mutant.map_or_else(|| followed(finding), answering),
     }
+}
+
+/// Where a finding about no mutation is, drawn from the place it names itself.
+fn placed(finding: &Finding, sources: &Sources) -> Option<Site> {
+    let (path, at) = (finding.path.as_ref()?, finding.position?);
+    Some(Site {
+        path: path.clone(),
+        line: at.line,
+        column: at.column,
+        excerpt: sources.at(path, at.line),
+        label: "failed here".to_owned(),
+        width: 1,
+    })
+}
+
+/// What a reader can type to follow a finding about no mutation back through the run's recording.
+fn followed(finding: &Finding) -> Vec<Action> {
+    if finding.kind != FindingKind::UnnoticedFault {
+        return Vec::new();
+    }
+    vec![Action {
+        said: "why".to_owned(),
+        command: format!("njutest why fault {}", finding.subject),
+    }]
 }
 
 /// What a detail says beyond what the drawing already shows.
@@ -239,12 +265,26 @@ fn locator(mutant: &ProjectedMutant) -> String {
 /// A mutation nothing reached and a mutation every test ran past are one kind of finding in the report and two different things to be told, so the mutant's own outcome decides between them.
 ///
 /// Matched without a catch-all, so a finding kind added later is one the compiler makes somebody decide how to show rather than one that quietly reads as "the run found something".
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm for every finding kind, matched without a catch-all, is as long as the set is"
+)]
 const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &'static str) {
     match kind {
         FindingKind::WireUnnoticed => (
             Severity::Gap,
             "NJ-WIRE",
             "the suite carried on through what a seam was asked",
+        ),
+        FindingKind::UnnoticedFault => (
+            Severity::Gap,
+            "NJ-UNNOTICED-FAULT",
+            "a call failed here and no test noticed",
+        ),
+        FindingKind::BrokenUnderFault => (
+            Severity::Refusal,
+            "NJ-BROKEN-UNDER-FAULT",
+            "a test wrote into the tree it was measured in once a call failed",
         ),
         FindingKind::HollowTarget => (
             Severity::Gap,

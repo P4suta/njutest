@@ -427,6 +427,17 @@ pub struct Subject<'a> {
     pub session: &'a Session,
     /// Every target the baseline measured.
     pub baseline: &'a [Measured],
+    /// What the session's catalog puts to the tests, which decides what the recording calls each execution.
+    pub perturbing: Perturbing,
+}
+
+/// What a catalog puts at each of its sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Perturbing {
+    /// A change to the program, whose executions, routes, probes and controls every reader of mutations reads.
+    Mutants,
+    /// A failed call, whose executions are recorded as fault executions and nothing else, so no reader of mutations ever counts one (ADR 0032).
+    Faults,
 }
 
 /// What to measure and how.
@@ -533,7 +544,9 @@ pub fn run_resuming(
             })?;
     }
 
-    record_probe(watch, session, baseline)?;
+    if subject.perturbing == Perturbing::Mutants {
+        record_probe(watch, session, baseline)?;
+    }
 
     let catalog = session.catalog();
     let rejected: BTreeMap<&str, &str> = session
@@ -624,7 +637,9 @@ fn establish(
         let route = session.route(mutant);
         routing = Some(crate::report::Routing::of(&route));
         let consulted = reuse(options, &route, mutant.id.as_str());
-        record_route(watch, mutant, &route, &consulted);
+        if judging.subject.perturbing == Perturbing::Mutants {
+            record_route(watch, mutant, &route, &consulted);
+        }
         if let Consulted::Believed {
             disposition,
             run_id,
@@ -1258,6 +1273,7 @@ fn against(
             request: &request,
             result: &result,
             alone: false,
+            perturbing: judging.subject.perturbing,
         },
     )?;
     if quiet_measurement_due(result.outcome(), watch.cancel.is_cancelled()) {
@@ -1272,6 +1288,7 @@ fn against(
                 request: &request,
                 result: &result,
                 alone: true,
+                perturbing: judging.subject.perturbing,
             },
         )?;
     }
@@ -1327,7 +1344,7 @@ fn confirm(
 ) -> Result<Result<(), Unconfirmed>, crate::error::RunnerError> {
     if let Some(failure) = judging
         .controls
-        .ask(judging.subject.session, request, judging.watch)?
+        .ask(judging.subject, request, judging.watch)?
     {
         return Ok(Err(Unconfirmed::ControlFailed { detail: failure }));
     }
@@ -1411,10 +1428,11 @@ impl Controls {
     /// Why this test fails on the original, or nothing when it passes, running the control once for every asker of the same question.
     fn ask(
         &self,
-        session: &Session,
+        subject: Subject<'_>,
         request: &Request,
         watch: Watch<'_>,
     ) -> Result<Option<String>, crate::error::RunnerError> {
+        let session = subject.session;
         let slot = Arc::clone(
             self.asked
                 .lock()
@@ -1429,7 +1447,9 @@ impl Controls {
             Some(known) => known.clone(),
             None => {
                 let control = session.control(request, watch.cancel, Observing::Reach)?;
-                self.observe(request, &control.observed, watch)?;
+                if subject.perturbing == Perturbing::Mutants {
+                    self.observe(request, &control.observed, watch)?;
+                }
                 let original = if control.result.outcome() == Outcome::Survived {
                     Original::Passed
                 } else {
@@ -1495,6 +1515,8 @@ struct Ran<'a> {
     result: &'a MutantResult,
     /// Whether the machine was given to it, which a run does once when a budget expires.
     alone: bool,
+    /// Which record the execution is.
+    perturbing: Perturbing,
 }
 
 /// One mutation execution, as the recording holds it.
@@ -1506,20 +1528,30 @@ fn record_exec(
     let duration_ms = u64::try_from(milliseconds).map_err(|_outside_wire_range| {
         crate::assure::run::RunInvariantError::MutationDurationOutsideWire { milliseconds }
     })?;
-    watch.trace.mutant_exec(crate::trace::MutantExecRecord {
-        mutant: ran.mutant.display_id.to_string(),
-        target: ran
-            .measured
-            .map_or_else(|| SUITE.to_owned(), |one| one.target.name()),
-        args: ran.request.args.clone(),
-        outcome: ran.result.outcome().name().to_owned(),
-        step_boundary: ran
-            .result
-            .step_notice()
-            .and_then(|notice| crate::report::StepBoundary::new(notice.limit(), notice.observed())),
-        duration_ms,
-        alone: ran.alone,
-    });
+    let target = ran
+        .measured
+        .map_or_else(|| SUITE.to_owned(), |one| one.target.name());
+    match ran.perturbing {
+        Perturbing::Mutants => watch.trace.mutant_exec(crate::trace::MutantExecRecord {
+            mutant: ran.mutant.display_id.to_string(),
+            target,
+            args: ran.request.args.clone(),
+            outcome: ran.result.outcome().name().to_owned(),
+            step_boundary: ran.result.step_notice().and_then(|notice| {
+                crate::report::StepBoundary::new(notice.limit(), notice.observed())
+            }),
+            duration_ms,
+            alone: ran.alone,
+        }),
+        Perturbing::Faults => watch.trace.fault_exec(crate::trace::FaultExecRecord {
+            fault: ran.mutant.display_id.to_string(),
+            target,
+            args: ran.request.args.clone(),
+            outcome: ran.result.outcome().name().to_owned(),
+            duration_ms,
+            alone: ran.alone,
+        }),
+    }
     Ok(())
 }
 

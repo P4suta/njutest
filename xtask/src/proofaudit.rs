@@ -33,6 +33,7 @@ const UNCONFIRMED: &str = "unconfirmed";
 const ERRORED: &str = "errored";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
+const UNNOTICED_FAULT: &str = "unnoticed-fault";
 const WAITED_MUTANT: &str = "waited-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
 const FAILING_TEST: &str = "failing-test";
@@ -157,6 +158,8 @@ pub enum Layer {
     Model,
     /// Which targets reached something different on a control than on their baseline, re-derived from the engine's touch records and held to what the report says of each.
     Drift,
+    /// What each fault site came to, re-derived from the fault executions alone and held to the report's records, counts and findings.
+    Faults,
 }
 
 impl Layer {
@@ -174,6 +177,7 @@ impl Layer {
             Self::Wire => "wire",
             Self::Model => "model",
             Self::Drift => "drift",
+            Self::Faults => "faults",
         }
     }
 }
@@ -433,6 +437,14 @@ pub fn audit_with(
             })
         })
         .transpose()?;
+    let faulted = recorded_runner
+        .map(|(recording_path, text)| {
+            crate::faults::read(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()?;
     let engines = recorded
         .engines
         .iter()
@@ -462,6 +474,7 @@ pub fn audit_with(
     wire(&recording, watched.as_ref(), &mut audit);
     models(&recording, run, &mut audit);
     drift(&recording, &engines, &mut audit);
+    faults(&recording, faulted.as_ref(), &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -508,6 +521,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "mutants",
         "limitations",
         "drift",
+        "faults",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -1824,6 +1838,122 @@ fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit
         }
     }
     gaps(recording, &put, &mut notes);
+}
+
+/// What each fault site came to, re-derived from the recording's fault executions and held to the report (ADR 0032).
+fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Faults);
+    let reported: Vec<crate::faults::Site> = rows(recording.document, "faults")
+        .iter()
+        .map(crate::faults::site)
+        .collect();
+    fault_counts(recording, &reported, &mut notes);
+    fault_findings(recording, &reported, &mut notes);
+    if reported.is_empty() {
+        return;
+    }
+    let Some(faulted) = faulted else {
+        notes.unaudited(
+            "faults",
+            format!(
+                "the report holds {} fault site(s) and there is no recording to re-derive them from",
+                reported.len()
+            ),
+        );
+        return;
+    };
+    let recorded: BTreeMap<&str, &crate::faults::Site> = faulted
+        .sites
+        .iter()
+        .map(|site| (site.fault.as_str(), site))
+        .collect();
+    for site in &reported {
+        if recorded.get(site.fault.as_str()) != Some(&site) {
+            notes.violated(
+                &site.fault,
+                "the report's record of this fault is not the one the recording holds".to_owned(),
+            );
+        }
+        let execs: Vec<&crate::faults::Exec> = faulted
+            .execs
+            .iter()
+            .filter(|exec| exec.fault == site.fault)
+            .collect();
+        if let Err(why) = crate::faults::supports(site, &execs) {
+            notes.violated(&site.fault, why.to_string());
+        }
+    }
+}
+
+/// The fault counts, re-derived from the report's own records, since a part whose six decisions do not add up to its sites is refused whatever the recording says.
+fn fault_counts(
+    recording: &Recording<'_>,
+    reported: &[crate::faults::Site],
+    notes: &mut Notes<'_>,
+) {
+    for (column_name, decision) in [
+        ("noticed", "noticed"),
+        ("unnoticed", "unnoticed"),
+        ("unreached", "unreached"),
+        ("waited", "waited"),
+        ("undecided", "undecided"),
+        ("not_put", "not-put"),
+    ] {
+        let expected = reported
+            .iter()
+            .filter(|site| site.decision == decision)
+            .count();
+        if column(recording.document, "faults", column_name) != size(expected) {
+            notes.violated(
+                column_name,
+                format!(
+                    "the report's fault records hold {expected} {decision} site(s), and its \
+                     count says otherwise"
+                ),
+            );
+        }
+    }
+    if column(recording.document, "faults", "sites") != size(reported.len()) {
+        notes.violated(
+            "sites",
+            format!(
+                "the report holds {} fault record(s), and its count of sites says otherwise",
+                reported.len()
+            ),
+        );
+    }
+}
+
+/// The failures nothing noticed, held to the findings that name them, in both directions.
+fn fault_findings(
+    recording: &Recording<'_>,
+    reported: &[crate::faults::Site],
+    notes: &mut Notes<'_>,
+) {
+    let unnoticed: BTreeSet<&str> = reported
+        .iter()
+        .filter(|site| site.decision == "unnoticed")
+        .map(|site| site.fault.as_str())
+        .collect();
+    let named: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == UNNOTICED_FAULT)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    for fault in unnoticed.difference(&named) {
+        notes.violated(
+            fault,
+            "nothing noticed this fault, and no finding says so".to_owned(),
+        );
+    }
+    for fault in named.difference(&unnoticed) {
+        notes.violated(
+            fault,
+            "a finding says nothing noticed this fault, and the report records no such site"
+                .to_owned(),
+        );
+    }
 }
 
 /// The questions the recording says nothing noticed, held to the findings that name them.

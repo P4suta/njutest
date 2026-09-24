@@ -1,0 +1,163 @@
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! What a runner recording says about the faults a run put, read from the stream alone (ADR 0032).
+
+use serde_json::Value;
+
+/// One fault run against one target.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Exec {
+    /// The fault a person types.
+    pub fault: String,
+    /// The target it ran against.
+    pub target: String,
+    /// What the execution established, as the engine names outcomes.
+    pub outcome: String,
+}
+
+/// What the run said one fault site came to.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Site {
+    /// The fault a person types.
+    pub fault: String,
+    /// The decision's wire name.
+    pub decision: String,
+    /// The target that noticed, where one did.
+    pub by: Option<String>,
+}
+
+/// Every fault execution and every site decision a recording holds.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Faulted {
+    /// Every execution, in recording order.
+    pub execs: Vec<Exec>,
+    /// Every site decision, in recording order.
+    pub sites: Vec<Site>,
+}
+
+/// Everything the recording says about the faults.
+///
+/// # Errors
+/// A corrupt non-empty line is rejected rather than disappearing from the evidence.
+pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
+    let mut faulted = Faulted::default();
+    for event in crate::route::events(recorded)? {
+        let Some(record) = event.get("fault") else {
+            continue;
+        };
+        match event.get("type").and_then(Value::as_str) {
+            Some("fault-exec") => faulted.execs.push(Exec {
+                fault: text(record, "fault"),
+                target: text(record, "target"),
+                outcome: text(record, "outcome"),
+            }),
+            Some("fault") => faulted.sites.push(site(record)),
+            _ => {}
+        }
+    }
+    Ok(faulted)
+}
+
+/// One site as a report or a recording writes it.
+#[must_use]
+pub fn site(record: &Value) -> Site {
+    let decision = record.get("decision").cloned().unwrap_or_default();
+    Site {
+        fault: text(record, "display_id"),
+        decision: text(&decision, "decision"),
+        by: decision
+            .get("by")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+    }
+}
+
+/// What the executions of a fault contradict about the decision the run gave it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Contradiction {
+    /// A target was named as noticing and no execution failed on it.
+    #[error(
+        "the run says {by} noticed it, and the recording holds no execution of it that failed on {by}"
+    )]
+    NoticedWithoutFailure {
+        /// The target named.
+        by: String,
+    },
+    /// A decision that rests on executions has none.
+    #[error("the run says it is {decision}, and the recording holds no execution of it")]
+    NothingRan {
+        /// The decision given.
+        decision: String,
+    },
+    /// Nothing is said to have noticed a fault an execution failed on.
+    #[error(
+        "the run says nothing noticed it, and the recording holds an execution of it that failed"
+    )]
+    UnnoticedThoughFailed,
+    /// A fault said never to have run ran.
+    #[error("the run says it was {decision}, and the recording holds {runs} execution(s) of it")]
+    RanThough {
+        /// The decision given.
+        decision: String,
+        /// How many executions the recording holds.
+        runs: usize,
+    },
+    /// A bound is said to have expired and no execution was stopped by one.
+    #[error(
+        "the run says a bound expired on it, and no execution of it the recording holds was stopped by one"
+    )]
+    WaitedWithoutBound,
+    /// A decision no fault can come to.
+    #[error("{decision:?} is no decision a fault can come to")]
+    Unknown {
+        /// The decision given.
+        decision: String,
+    },
+}
+
+/// Whether the executions of one fault support the decision the run gave it.
+///
+/// # Errors
+/// The [`Contradiction`] the executions hold.
+pub fn supports(site: &Site, execs: &[&Exec]) -> Result<(), Contradiction> {
+    let outcomes: Vec<&str> = execs.iter().map(|one| one.outcome.as_str()).collect();
+    let ran = !execs.is_empty();
+    match site.decision.as_str() {
+        "noticed" => {
+            let by = site.by.clone().unwrap_or_default();
+            if execs
+                .iter()
+                .any(|one| one.target == by && one.outcome == "killed")
+            {
+                Ok(())
+            } else {
+                Err(Contradiction::NoticedWithoutFailure { by })
+            }
+        }
+        "unnoticed" | "undecided" if !ran => Err(Contradiction::NothingRan {
+            decision: site.decision.clone(),
+        }),
+        "unnoticed" if outcomes.contains(&"killed") => Err(Contradiction::UnnoticedThoughFailed),
+        "unreached" | "not-put" if ran => Err(Contradiction::RanThough {
+            decision: site.decision.clone(),
+            runs: execs.len(),
+        }),
+        "waited" if !outcomes.contains(&"waited") && !outcomes.contains(&"step_limit_reached") => {
+            Err(Contradiction::WaitedWithoutBound)
+        }
+        "unnoticed" | "unreached" | "not-put" | "waited" | "undecided" => Ok(()),
+        other => Err(Contradiction::Unknown {
+            decision: other.to_owned(),
+        }),
+    }
+}
+
+/// One string field, or the empty string where the recording does not carry it.
+fn text(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_default()
+}

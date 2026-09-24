@@ -335,6 +335,36 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "fault"],
+          "properties": {
+            "type": { "const": "fault-exec" },
+            "fault": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "target", "args", "outcome", "duration_ms", "alone"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "args": { "type": "array", "items": { "type": "string" } },
+                "outcome": { "enum": ["not_run", "killed", "survived", "step_limit_reached", "waited", "inconclusive", "errored"] },
+                "duration_ms": { "type": "integer", "minimum": 0 },
+                "alone": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "fault"],
+          "properties": {
+            "type": { "const": "fault" },
+            "fault": { "$ref": "njutest-assurance-report-v1.json#/$defs/fault" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "probe"],
           "properties": {
             "type": { "const": "probe-exec" },

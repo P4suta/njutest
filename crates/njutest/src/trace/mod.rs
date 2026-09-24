@@ -20,9 +20,10 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, MutantExecRecord,
-    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord,
-    RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
+    ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, FaultExecRecord,
+    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
+    RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord,
+    WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -379,6 +380,16 @@ impl Recorder {
     /// Records one mutant run against one target.
     pub fn mutant_exec(&self, record: MutantExecRecord) {
         self.emit(Payload::MutantExec { mutant: record });
+    }
+
+    /// Records one fault run against one target.
+    pub fn fault_exec(&self, record: FaultExecRecord) {
+        self.emit(Payload::FaultExec { fault: record });
+    }
+
+    /// Records what a run established about one site a fault was asked at.
+    pub fn fault(&self, record: crate::report::faults::FaultRecord) {
+        self.emit(Payload::Fault { fault: record });
     }
 
     /// Records what the probe pass measured for one target.

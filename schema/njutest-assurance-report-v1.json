@@ -423,7 +423,8 @@
       "required": [
         "targets",
         "mutants",
-        "soundness"
+        "soundness",
+        "faults"
       ],
       "properties": {
         "targets": {
@@ -588,6 +589,43 @@
             "executed": {
               "type": "boolean",
               "description": "False under standard-v1, where the phase is a static inventory and a non-empty one is a limitation."
+            }
+          }
+        },
+        "faults": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Every site a fault was asked at has exactly one decision, so noticed + unnoticed + unreached + waited + undecided + not_put equals sites.",
+          "required": [
+            "sites",
+            "noticed",
+            "unnoticed",
+            "unreached",
+            "waited",
+            "undecided",
+            "not_put"
+          ],
+          "properties": {
+            "sites": {
+              "$ref": "#/$defs/count"
+            },
+            "noticed": {
+              "$ref": "#/$defs/count"
+            },
+            "unnoticed": {
+              "$ref": "#/$defs/count"
+            },
+            "unreached": {
+              "$ref": "#/$defs/count"
+            },
+            "waited": {
+              "$ref": "#/$defs/count"
+            },
+            "undecided": {
+              "$ref": "#/$defs/count"
+            },
+            "not_put": {
+              "$ref": "#/$defs/count"
             }
           }
         }
@@ -812,6 +850,153 @@
           "properties": {
             "decision": {
               "const": "unreached"
+            }
+          }
+        }
+      ]
+    },
+    "faults": {
+      "description": "Every site of the part a fault was asked at, in catalog order, with its closed decision (ADR 0032).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fault"
+      }
+    },
+    "fault": {
+      "description": "One call a `?` asks about, failed once by a fault.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_index",
+        "id",
+        "display_id",
+        "path",
+        "item",
+        "position",
+        "decision"
+      ],
+      "properties": {
+        "catalog_index": {
+          "$ref": "#/$defs/count",
+          "description": "The dense zero-based position in the catalog of faults, which is what shard membership is a function of."
+        },
+        "id": {
+          "$ref": "#/$defs/fullDigest"
+        },
+        "display_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item": {
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "decision": {
+          "$ref": "#/$defs/faultDecision"
+        }
+      }
+    },
+    "faultDecision": {
+      "description": "What the suite did with one call failing: a closed set of its own, in which nothing is a kill and nothing is proved.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "by"
+          ],
+          "properties": {
+            "decision": {
+              "const": "noticed"
+            },
+            "by": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "const": "unnoticed"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "const": "unreached"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on"
+          ],
+          "properties": {
+            "decision": {
+              "const": "waited"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "on",
+            "why"
+          ],
+          "properties": {
+            "decision": {
+              "const": "undecided"
+            },
+            "on": {
+              "type": "string",
+              "minLength": 1
+            },
+            "why": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "diagnostic"
+          ],
+          "properties": {
+            "decision": {
+              "const": "not-put"
+            },
+            "diagnostic": {
+              "type": "string"
             }
           }
         }
@@ -1258,7 +1443,9 @@
             "undefined-behaviour",
             "hollow-target",
             "wire-unnoticed",
-            "unstable-baseline"
+            "unstable-baseline",
+            "unnoticed-fault",
+            "broken-under-fault"
           ]
         },
         "subject": {
@@ -1707,6 +1894,7 @@
         "resources",
         "candidates",
         "seams",
+        "faults",
         "targets",
         "sources",
         "mutants",
@@ -1739,6 +1927,9 @@
         },
         "seams": {
           "$ref": "#/$defs/seams"
+        },
+        "faults": {
+          "$ref": "#/$defs/faults"
         },
         "targets": {
           "type": "array",

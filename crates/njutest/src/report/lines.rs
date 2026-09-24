@@ -257,6 +257,23 @@ fn accounting(report: &Conclusion, out: &mut String) {
         ],
     );
     out.push('\n');
+    let faults = report.accounting.faults;
+    if faults.sites > 0 {
+        record(
+            out,
+            "FAULTS",
+            &[
+                &format!("sites={}", faults.sites),
+                &format!("noticed={}", faults.noticed),
+                &format!("unnoticed={}", faults.unnoticed),
+                &format!("unreached={}", faults.unreached),
+                &format!("waited={}", faults.waited),
+                &format!("undecided={}", faults.undecided),
+                &format!("not_put={}", faults.not_put),
+            ],
+        );
+        out.push('\n');
+    }
     for measured in &report.accounting.soundness_by_build {
         let soundness = measured.accounting();
         record(

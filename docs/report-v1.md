@@ -48,13 +48,14 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are thirteen kinds, and every report carries the stable name:
+There are fifteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
 | `build-failure` | the workspace does not compile | yes |
 | `failing-test` | a test fails with nothing active | yes |
 | `undefined-behaviour` | the interpreter found unsoundness | yes |
+| `broken-under-fault` | a test wrote into the tree under measurement while a fault failed a call, which it did not do while none did | yes |
 | `surviving-mutant` | every reaching test passed with the mutation active | no |
 | `target-missing` | a selected target could not be measured | no |
 | `timeout` | a non-mutation phase exhausted its time bound | no |
@@ -65,6 +66,7 @@ There are thirteen kinds, and every report carries the stable name:
 | `hollow-target` | a target was put to mutations and noticed none | no |
 | `wire-unnoticed` | a seam fault was put and nothing noticed | no |
 | `unstable-baseline` | a target reached something on an original-code control that it did not reach on its baseline, over the same passing tests | no |
+| `unnoticed-fault` | a call a `?` asks about failed and every test that reached it passed | no |
 
 The last column is derived from the same closed `FindingKind` that decides the verdict.
 A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.
@@ -162,6 +164,27 @@ and `not-measured` with one closed `why`: `no-control` (nothing confirmed a kill
 A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
+
+## Faults
+
+Every part carries `faults`, one record per site a fault was asked at, in catalog order, and empty unless the run was asked for faults ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+A fault site is a `?` in a measured file; its catalog is its own, discovered by the rule `inject-error` alone, so `catalog_index` counts faults and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
+A record carries the fault's `id` and `display_id`, its `path`, `item` and `position`, and one closed `decision`:
+
+| `decision` | what it says | carries |
+| --- | --- | --- |
+| `noticed` | a test failed with the call failing and passed on the unchanged program, and failed again on a second run | `by`, the first target in target order that noticed |
+| `unnoticed` | every test that reached the site passed with the call failing | |
+| `unreached` | no test reached the site | |
+| `waited` | a bound expired with the call failing before a test finished | `on` |
+| `undecided` | a test failed with the call failing and the run could not confirm it, or could not run the test | `on`, `why` |
+| `not-put` | the compiler refused the fault, because the site propagates an error type the engine does not make | `diagnostic`, the compiler's first line |
+
+Nothing here is a kill, and nothing is proved: a fault changes what the program is given, never the program, and no discharge is applied to a fault's route.
+`accounting.faults` counts the records, and `noticed + unnoticed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
+Every `unnoticed` record raises one `unnoticed-fault` finding naming its `display_id`.
+`not-put` records are stated as one `fault-not-put` limitation naming each compiler error class with its sites, and `waited` and `undecided` ones as one `fault-not-decided` limitation.
+A tree whose faulted baseline could not be measured states `fault-baseline-not-measured` and carries no records.
 
 ## Sources
 

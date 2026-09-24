@@ -486,7 +486,7 @@ pub fn opened(
     Ok(())
 }
 
-/// What a run does once it has measured: drive the fuzz targets, and ask for repairs for what it found.
+/// What a run does once it has measured: fail the calls it was asked to, drive the fuzz targets, and ask for repairs for what it found.
 fn afterwards(
     report: &mut BuildReport,
     within: (&Request, &Environment, &rust_mutants::cargo::Toolchain),
@@ -494,6 +494,9 @@ fn afterwards(
 ) -> Result<(), RunnerError> {
     let (request, environment, toolchain) = within;
     let (notes, watch) = telling;
+    if request.config.faults.inject {
+        super::faults::put(request, environment, report, (notes, watch))?;
+    }
     driven(report, request, toolchain, (notes, watch))?;
     proposed(report, request, environment, (notes, watch))?;
     Ok(())
@@ -1340,6 +1343,7 @@ fn run_mutation(
         Subject {
             session,
             baseline: &mutating.baseline.targets,
+            perturbing: mutation::Perturbing::Mutants,
         },
         &MutationOptions {
             test_args: mutating.request.test_args.clone(),

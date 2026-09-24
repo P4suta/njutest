@@ -1524,6 +1524,16 @@ fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
 
 /// The configuration this run answers to.
 fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<LoadedConfig, LoadError> {
+    let mut loaded = configured(arguments, workspace)?;
+    loaded.config.faults.inject |= arguments.faults;
+    Ok(loaded)
+}
+
+/// The configuration the invocation named, or the workspace's, as it was written.
+fn configured(
+    arguments: &Verify,
+    workspace: &reports::WorkspaceRoot,
+) -> Result<LoadedConfig, LoadError> {
     match &arguments.config {
         Some(path) => {
             let text = reports::read_configuration(path)?;

@@ -47,6 +47,9 @@ target = ""                     # target triple; empty = the host
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
 
+[faults]
+inject = false                  # fail each call a `?` asks about and ask what noticed; --faults sets it
+
 [verification]                  # verified-v1 only; both keys are mandatory and nonzero
 # unwind = 8                    # maximum loop unwind for every proof harness
 # timeout = "2m"               # wall-clock ceiling for one checker process
@@ -135,6 +138,10 @@ It stays available because an independent second opinion is worth having when th
 `[execution] skip_targets` is the narrow escape hatch for a process whose tests inspect the instrumented tree itself, or otherwise fail for the same known reason under every mutation.
 Each entry is the stable target id a report and `njutest plan` name, such as `pkg/test/ui`.
 An id the workspace does not declare is an error, and every id that is left out is recorded as `target-skipped-by-configuration`; it is never a silent pass.
+
+`[faults] inject` fails, one at a time, every call a `?` in a measured file asks about, and asks the suite whether it noticed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+It is off by default because it costs a second instrumented build and baseline of the tree, and one execution for every `?` a test reaches.
+`njutest verify --faults` turns it on for one run whatever the file says, and the run's identity carries the answer, so a run with faults never reads back one without.
 
 `[execution] features`, `all_features` and `no_default_features` are the words cargo would have been given, and every command of a run is given them: the baseline, the mutation phase, the equivalence layer, `plan`, `replay` and `fix`.
 Cargo compiles a different program for a different feature set, so a run that measured the default build while the project ships another would put a verdict on a program nobody runs.

@@ -309,6 +309,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Artifact { .. } => "artifact",
         Payload::Route { .. } => "route",
         Payload::MutantExec { .. } => "mutant",
+        Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -348,6 +349,10 @@ pub mod payload {
         Route(&'a crate::trace::RouteRecord),
         /// A mutation execution.
         MutantExec(&'a crate::trace::MutantExecRecord),
+        /// A fault execution.
+        FaultExec(&'a crate::trace::FaultExecRecord),
+        /// A fault site's decision.
+        Fault(&'a crate::report::faults::FaultRecord),
         /// A probe execution.
         ProbeExec(&'a crate::trace::ProbeExecRecord),
         /// A wire exchange.
@@ -379,6 +384,8 @@ pub mod payload {
             Payload::Artifact { .. } => Ref::Artifact,
             Payload::Route { route } => Ref::Route(route),
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
+            Payload::FaultExec { fault } => Ref::FaultExec(fault),
+            Payload::Fault { fault } => Ref::Fault(fault),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
@@ -561,6 +568,33 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 alone: true,
             },
         },
+        Payload::FaultExec {
+            fault: crate::trace::FaultExecRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                args: vec!["--exact".to_owned(), "tests::one".to_owned()],
+                outcome: "killed".to_owned(),
+                duration_ms: 5,
+                alone: false,
+            },
+        },
+        Payload::Fault {
+            fault: crate::report::faults::FaultRecord {
+                catalog_index: crate::report::CatalogIndex::new(0),
+                id: "a".repeat(64),
+                display_id: "a".repeat(20),
+                path: "src/lib.rs".to_owned(),
+                item: "load".to_owned(),
+                position: Some(crate::report::Position {
+                    line: 13,
+                    column: 16,
+                    character_column: 16,
+                }),
+                decision: crate::report::faults::FaultDecision::Noticed {
+                    by: "demo/test/calls".to_owned(),
+                },
+            },
+        },
         Payload::ProbeExec {
             probe: ProbeExecRecord {
                 target: "demo/lib/demo".to_owned(),
@@ -734,8 +768,8 @@ pub fn documented_specimen() -> crate::config::Config {
     use std::time::Duration;
 
     use crate::config::{
-        Acceptance, Cache, Config, Configuration, Contract, Execution, Fuzz, Generation, Mutation,
-        Project, Reports, Resource, Soundness, Verification,
+        Acceptance, Cache, Config, Configuration, Contract, Execution, Faults, Fuzz, Generation,
+        Mutation, Project, Reports, Resource, Soundness, Verification,
     };
 
     Config {
@@ -764,6 +798,7 @@ pub fn documented_specimen() -> crate::config::Config {
             ttl: Duration::from_hours(24 * 30),
         },
         mutation: Mutation { equivalence: true },
+        faults: Faults { inject: true },
         verification: Verification {
             unwind: Some(8),
             timeout: Some(Duration::from_mins(2)),

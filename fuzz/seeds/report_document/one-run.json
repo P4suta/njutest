@@ -125,6 +125,15 @@
                 "unsafe_items": 3,
                 "packages_with_unsafe": 1,
                 "executed": true
+              },
+              "faults": {
+                "sites": 0,
+                "noticed": 0,
+                "unnoticed": 0,
+                "unreached": 0,
+                "waited": 0,
+                "undecided": 0,
+                "not_put": 0
               }
             },
             "resources": [
@@ -163,6 +172,7 @@
                 }
               }
             ],
+            "faults": [],
             "targets": [
               {
                 "id": "0123456789abcdef",

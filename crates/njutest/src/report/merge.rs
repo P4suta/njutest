@@ -117,6 +117,7 @@ pub fn merge(
         resources: first_source.resources.clone(),
         candidates: first_source.candidates.clone(),
         seams: first_source.seams.clone(),
+        faults: first_source.faults.clone(),
         targets: first_source.targets.clone(),
         sources: first_source.sources.clone(),
         mutants: first_source.mutants.clone(),

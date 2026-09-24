@@ -6,6 +6,7 @@
 pub mod across;
 pub mod audit;
 pub mod drift;
+pub mod faults;
 pub mod hollow;
 pub mod html;
 pub mod json;
@@ -1596,6 +1597,8 @@ pub struct BuildPartEvidence {
     candidates: Vec<CandidateRecord>,
     /// Every seam question this source put.
     seams: Vec<SeamRecord>,
+    /// Every site of this source's part a fault was asked at.
+    faults: Vec<faults::FaultRecord>,
     /// The baseline target facts, in canonical target order.
     targets: Vec<TargetRecord>,
     /// The SHA-256 of each file this source's mutants were read from, as it read them.
@@ -1628,6 +1631,7 @@ impl BuildPartEvidence {
             resources: report.resources.clone(),
             candidates: report.candidates.clone(),
             seams: report.seams.clone(),
+            faults: report.faults.clone(),
             targets: report.targets.clone(),
             sources: report.sources.clone(),
             mutants: report.mutants.clone(),
@@ -1651,6 +1655,7 @@ struct BuildPartEvidenceWire {
     resources: Vec<ResourceRecord>,
     candidates: Vec<CandidateRecord>,
     seams: Vec<SeamRecord>,
+    faults: Vec<faults::FaultRecord>,
     targets: Vec<TargetRecord>,
     #[serde(deserialize_with = "sources_wire::deserialize")]
     sources: BTreeMap<String, rust_mutants::id::HexDigest>,
@@ -1675,6 +1680,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             resources: wire.resources,
             candidates: wire.candidates,
             seams: wire.seams,
+            faults: wire.faults,
             targets: wire.targets,
             sources: wire.sources,
             mutants: wire.mutants,
@@ -2013,24 +2019,47 @@ impl PartLedger {
 }
 
 fn validate_part_catalog(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
-    for pair in part.mutants.windows(2) {
+    validate_catalog_positions(
+        part,
+        &part
+            .mutants
+            .iter()
+            .map(|mutant| mutant.catalog_index)
+            .collect::<Vec<_>>(),
+    )?;
+    validate_catalog_positions(
+        part,
+        &part
+            .faults
+            .iter()
+            .map(|fault| fault.catalog_index)
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Holds one catalog's positions to strictly ascending order and to the part's shard, so no position is in two parts.
+fn validate_catalog_positions(
+    part: &BuildPartEvidence,
+    positions: &[CatalogIndex],
+) -> Result<(), PartLedgerError> {
+    for pair in positions.windows(2) {
         let [previous, actual] = pair else {
             continue;
         };
-        if previous.catalog_index >= actual.catalog_index {
+        if previous >= actual {
             return Err(PartLedgerError::CatalogOutOfOrder {
                 run_id: part.run_id.clone(),
-                previous: previous.catalog_index.get(),
-                actual: actual.catalog_index.get(),
+                previous: previous.get(),
+                actual: actual.get(),
             });
         }
     }
     if let CatalogPart::Shard(shard) = part.part {
-        for mutant in &part.mutants {
-            if !shard.holds(mutant.catalog_index) {
+        for index in positions {
+            if !shard.holds(*index) {
                 return Err(PartLedgerError::CatalogOutsideShard {
                     run_id: part.run_id.clone(),
-                    index: mutant.catalog_index.get(),
+                    index: index.get(),
                     shard: shard.index(),
                     of: shard.of(),
                 });
@@ -2061,6 +2090,18 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
         return Err(PartLedgerError::AccountingMismatch {
             run_id: part.run_id.clone(),
             about: "mutation",
+        });
+    }
+    let faults = faults::FaultAccounting::of(&part.faults).map_err(|_too_wide| {
+        PartLedgerError::CountOverflow {
+            run_id: part.run_id.clone(),
+            about: "fault sites",
+        }
+    })?;
+    if faults != part.accounting.faults || !faults.adds_up() {
+        return Err(PartLedgerError::AccountingMismatch {
+            run_id: part.run_id.clone(),
+            about: "fault",
         });
     }
     let mut target_ids = BTreeSet::new();
@@ -2577,6 +2618,8 @@ pub struct Accounting {
     pub mutants: MutantAccounting,
     /// The soundness inventory.
     pub soundness: SoundnessAccounting,
+    /// The sites a fault was asked at.
+    pub faults: faults::FaultAccounting,
 }
 
 /// What became of one target.
@@ -4216,6 +4259,10 @@ pub enum FindingKind {
     WireUnnoticed,
     /// A target reached something on an original-code control that it did not reach on its baseline, so every proof read off its baseline is unfounded.
     UnstableBaseline,
+    /// A call a `?` asks about failed and every test that reached it passed.
+    UnnoticedFault,
+    /// A test wrote into the tree under measurement while a fault failed a call, which it did not do while none did.
+    BrokenUnderFault,
 }
 
 /// Which configured-build evidence raised a finding.
@@ -4253,6 +4300,8 @@ impl FindingKind {
             Self::HollowTarget => "hollow-target",
             Self::WireUnnoticed => "wire-unnoticed",
             Self::UnstableBaseline => "unstable-baseline",
+            Self::UnnoticedFault => "unnoticed-fault",
+            Self::BrokenUnderFault => "broken-under-fault",
         }
     }
 
@@ -4260,7 +4309,10 @@ impl FindingKind {
     #[must_use]
     pub const fn is_defect(self) -> bool {
         match self {
-            Self::BuildFailure | Self::FailingTest | Self::UndefinedBehaviour => true,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::UndefinedBehaviour
+            | Self::BrokenUnderFault => true,
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout
@@ -4270,7 +4322,8 @@ impl FindingKind {
             | Self::UnmatchedAcceptance
             | Self::HollowTarget
             | Self::WireUnnoticed
-            | Self::UnstableBaseline => false,
+            | Self::UnstableBaseline
+            | Self::UnnoticedFault => false,
         }
     }
 }
@@ -4459,6 +4512,8 @@ pub struct ConclusionAccounting {
     pub mutants: MutantAccounting,
     /// One exact soundness inventory per configured build, in request order.
     pub soundness_by_build: Vec<BuildSoundness>,
+    /// The fault sites of every build and part, counted by what became of each.
+    pub faults: faults::FaultAccounting,
 }
 
 impl ConclusionTiming {
@@ -4513,6 +4568,8 @@ pub struct BuildReport {
     pub candidates: Vec<CandidateRecord>,
     /// Every question a watched seam licensed, and what became of it.
     pub seams: Vec<SeamRecord>,
+    /// Every site a fault was asked at, and what became of it.
+    pub faults: Vec<faults::FaultRecord>,
     /// Every target it selected, slowest first.
     pub targets: Vec<TargetRecord>,
     /// The SHA-256 of each file its mutants were read from, as it read them, by workspace-relative path.
@@ -4557,6 +4614,7 @@ impl BuildReport {
             resources: Vec::new(),
             candidates: Vec::new(),
             seams: Vec::new(),
+            faults: Vec::new(),
             targets: Vec::new(),
             sources: BTreeMap::new(),
             mutants: Vec::new(),
@@ -5253,6 +5311,8 @@ pub struct Conclusion {
     pub candidates: Vec<CandidateRecord>,
     /// Every build's seam facts.
     pub seams: Vec<SeamRecord>,
+    /// Every build's fault sites, part by part.
+    pub faults: Vec<faults::FaultRecord>,
     /// Every build's target facts.
     pub targets: Vec<TargetRecord>,
     /// The mutation lattice projection, for presentation only.
@@ -5957,6 +6017,12 @@ impl Report {
                 .iter()
                 .flat_map(|build| build.baseline().seams.iter().cloned())
                 .collect(),
+            faults: self
+                .builds
+                .iter()
+                .flat_map(|build| build.parts.iter())
+                .flat_map(|part| part.faults.iter().cloned())
+                .collect(),
             targets: self
                 .builds
                 .iter()
@@ -6587,10 +6653,16 @@ fn projected_accounting(
             accounting: build.baseline().accounting.soundness,
         })
         .collect();
+    let faulted: Vec<faults::FaultRecord> = builds
+        .iter()
+        .flat_map(|build| build.parts.iter())
+        .flat_map(|part| part.faults.iter().cloned())
+        .collect();
     Ok(ConclusionAccounting {
         targets: count_targets(&targets)?,
         mutants: count_projected_mutants(builds.catalog_count(), mutants)?,
         soundness_by_build,
+        faults: faults::FaultAccounting::of(&faulted)?,
     })
 }
 

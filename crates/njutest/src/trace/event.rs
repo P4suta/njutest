@@ -73,6 +73,16 @@ pub enum Payload {
         /// The record.
         mutant: MutantExecRecord,
     },
+    /// One fault put to one target, which no reader of mutant executions ever sees.
+    FaultExec {
+        /// The record.
+        fault: FaultExecRecord,
+    },
+    /// What a run established about one site a fault was asked at.
+    Fault {
+        /// The record, as the report holds it.
+        fault: crate::report::faults::FaultRecord,
+    },
     /// What the probe pass measured for one target.
     ProbeExec {
         /// The record.
@@ -128,6 +138,8 @@ impl Payload {
             Self::Artifact { .. } => "artifact",
             Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
+            Self::FaultExec { .. } => "fault-exec",
+            Self::Fault { .. } => "fault",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
             Self::WireExec { .. } => "wire-exec",
@@ -388,6 +400,24 @@ pub struct MutantExecRecord {
     /// The checked step boundary, present exactly when `outcome` is `step_limit_reached`.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub step_boundary: Option<crate::report::StepBoundary>,
+    /// How long it took.
+    pub duration_ms: u64,
+    /// Whether the machine was given to this execution, which a run does once when a budget expires.
+    pub alone: bool,
+}
+
+/// One fault run against one target.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultExecRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// The target it ran against.
+    pub target: String,
+    /// The arguments the target was given, verbatim.
+    pub args: Vec<String>,
+    /// What the run established.
+    pub outcome: String,
     /// How long it took.
     pub duration_ms: u64,
     /// Whether the machine was given to this execution, which a run does once when a budget expires.

@@ -64,6 +64,10 @@ Options:
       --changed-from <REV>
           The revision to compare against. Implies --changed
 
+      --faults
+          Fail every call a `?` asks about, one at a time, and say which failures the suite noticed.
+          Wins over `[faults] inject`
+
       --shard <K/N>
           Judge only one part of the catalog, as `K/N`. Every part measures the whole baseline;
           `njutest merge` combines what they judged

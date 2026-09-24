@@ -10,6 +10,7 @@ pub mod deps;
 pub mod devgates;
 pub mod drift;
 pub mod engineaudit;
+pub mod faults;
 pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;

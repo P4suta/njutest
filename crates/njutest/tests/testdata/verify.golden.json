@@ -15,6 +15,15 @@
       "parts": [
         {
           "accounting": {
+            "faults": {
+              "not_put": 0,
+              "noticed": 0,
+              "sites": 0,
+              "undecided": 0,
+              "unnoticed": 0,
+              "unreached": 0,
+              "waited": 0
+            },
             "mutants": {
               "accepted": 0,
               "cataloged": 14,
@@ -67,6 +76,7 @@
               "target": "<volatile>"
             }
           ],
+          "faults": [],
           "findings": [
             {
               "detail": "no test could have noticed gt-to-ge at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",

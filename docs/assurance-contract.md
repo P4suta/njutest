@@ -87,6 +87,16 @@ A mutation is measured against a suite that passes.
 A run whose baseline saw a target fail reports that and measures no mutation: there is nothing for a mutation to change about a test that was going to fail anyway.
 A future performance contract must be explicit rather than treating ordinary benchmarks as tests.
 
+## Failed calls
+
+A run asked for faults (`[faults] inject`, or `--faults`) fails, one at a time, every call a `?` in a measured file asks about, and asks the suite whether it noticed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+The faults are catalogued, built and run in a session of their own, so no mutation's catalog, route, execution, control or verdict ever holds one, and a run's mutation verdict is the same with faults as without.
+A fault is put only to the tests that reached its `?`, because two programs identical up to the site run identically until it is reached; no other proof is applied to a fault, since every other proof is read off the program without the fault.
+A fault is `noticed` only when a test failed with it, passed on the unchanged program, and failed with it again.
+Every fault every reaching test passed is an `unnoticed-fault` finding and makes the run `INSUFFICIENT`, never `DEFECT`: it changes what the program is given, not the program, and says only that no test asserts what happens when that call fails.
+A test that wrote into the tree under measurement while faults were put, when its baseline did not, is `broken-under-fault`, which is a `DEFECT`.
+A fault the compiler refuses — its site propagates an error type the engine does not make — is `not-put` and is stated, never counted as anything the suite did.
+
 ## Mutation routing
 
 A target is a test binary: a library's own tests, one integration test, a binary's own tests, an example, a procedural macro crate's own tests, or a library's documented examples.

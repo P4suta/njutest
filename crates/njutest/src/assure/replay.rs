@@ -110,6 +110,7 @@ pub fn replay(
             skip_targets: replaying.skip_targets.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
+            operators: catalogued_by(kind),
             ..crate::assure::engine::switches()
         },
         watch.cancel,
@@ -130,6 +131,28 @@ pub fn replay(
     outcome
 }
 
+/// The rules the catalog a finding's subject is in was discovered by, where they are not the tier's.
+fn catalogued_by(kind: FindingKind) -> Vec<String> {
+    match kind {
+        FindingKind::UnnoticedFault | FindingKind::BrokenUnderFault => {
+            vec![crate::assure::faults::RULE.to_owned()]
+        }
+        FindingKind::BuildFailure
+        | FindingKind::FailingTest
+        | FindingKind::TargetMissing
+        | FindingKind::SurvivingMutant
+        | FindingKind::Timeout
+        | FindingKind::WaitedMutant
+        | FindingKind::StepLimitReachedMutant
+        | FindingKind::NotMeasured
+        | FindingKind::UnmatchedAcceptance
+        | FindingKind::UndefinedBehaviour
+        | FindingKind::HollowTarget
+        | FindingKind::WireUnnoticed
+        | FindingKind::UnstableBaseline => Vec::new(),
+    }
+}
+
 /// Whether the finding is still what the tests say.
 ///
 /// A clock expiry reproduces a clock-expiry finding, and a verified step boundary reproduces a step-boundary finding.
@@ -146,6 +169,7 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
             | Measured::Inconclusive
             | Measured::Errored => Outcome::Inconclusive,
         },
+        FindingKind::BrokenUnderFault => Outcome::Inconclusive,
         FindingKind::StepLimitReachedMutant => match outcome {
             Measured::StepLimitReached => Outcome::Reproduced,
             Measured::Killed | Measured::Survived => Outcome::Resolved,
@@ -162,7 +186,8 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
         | FindingKind::UndefinedBehaviour
         | FindingKind::HollowTarget
         | FindingKind::WireUnnoticed
-        | FindingKind::UnstableBaseline => match outcome {
+        | FindingKind::UnstableBaseline
+        | FindingKind::UnnoticedFault => match outcome {
             Measured::Survived => Outcome::Reproduced,
             Measured::Killed => Outcome::Resolved,
             Measured::NotRun

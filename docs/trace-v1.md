@@ -32,6 +32,8 @@ A test serializes closed specimens and compares this table in both directions.
 | `artifact` | `kind`, `path`, `bytes` | a retained file or directory |
 | `route` | `mutant`, `granularity`, `fallback`, `reaching`, `tests`, `discharged`, `considered`, `reused`, `refused` | one mutation route: `all`, `block`, `test`, `discharged`, or `unreached`; fallback `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete`; reuse refusal `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`, `key-changed`, `not-passing`, `target-entered`, or `nothing-routed` |
 | `mutant-exec` | `mutant`, `target`, `args`, `outcome`, `step_boundary`, `duration_ms`, `alone` | one target execution; the checked boundary exists only for `step_limit_reached` |
+| `fault-exec` | `fault`, `target`, `args`, `outcome`, `duration_ms`, `alone` | one target execution with a fault failing a call; no reader of mutant executions, routes, probes or drift reads one |
+| `fault` | `catalog_index`, `id`, `display_id`, `path`, `item`, `position`, `decision` | what one fault site came to, exactly as the report's `faults` holds it |
 | `probe-exec` | `target`, `outcome`, `infected` | one infection measurement |
 | `wire-exchange` | `capability`, `seq`, `during`, `duration_ms`, `read`, `request_bytes`, `response_bytes` | one raw or HTTP exchange; `read` is the closed `wire`/`method`/`path`/`status` object |
 | `wire-exec` | `fault`, `capability`, `seq`, `rule`, `answer` | one licensed seam fault and its nested closed decision |

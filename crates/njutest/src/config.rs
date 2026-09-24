@@ -191,6 +191,8 @@ pub struct Config {
     pub soundness: Soundness,
     /// The fuzz targets a run may drive.
     pub fuzz: Fuzz,
+    /// Whether a run fails the calls a `?` asks about.
+    pub faults: Faults,
     /// The integration resources a run may start, by name.
     pub resources: BTreeMap<String, Resource>,
     /// The provider that writes candidate tests.
@@ -214,6 +216,7 @@ impl Default for Config {
             reports: Reports::default(),
             soundness: Soundness::default(),
             fuzz: Fuzz::default(),
+            faults: Faults::default(),
             resources: BTreeMap::new(),
             generation: None,
             acceptance: Vec::new(),
@@ -351,6 +354,15 @@ pub struct Mutation {
     /// Ask the compiler whether it renders each surviving mutation identically to the code it mutates.
     /// It costs two builds of a tree of its own for every survivor whose premises hold, and it removes a finding only where no test could have noticed the mutation.
     pub equivalence: bool,
+}
+
+/// Whether a run fails, one at a time, every call a `?` asks about, and asks the suite what it noticed (ADR 0032).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Faults {
+    /// Put the faults.
+    /// It costs a second instrumented build and baseline, and one execution for every `?` a test reaches.
+    pub inject: bool,
 }
 
 /// Bounds that exist only for the `verified-v1` contract.

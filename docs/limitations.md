@@ -246,6 +246,19 @@ A target nothing was killed on is never confirmed, so it is never compared: `dri
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
 And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
 
+## What a run asks of a call that can fail
+
+Faults are opt-in, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+A run that is asked pays a second instrumented build and baseline of the tree, and one execution for every `?` a test reaches.
+
+Three things are not claimed, and each is stated.
+A `?` whose error type is not one of the six the engine makes — `std::io::Error`, `Utf8Error`, `FromUtf8Error`, `ParseIntError`, `ParseFloatError`, `TryFromIntError` — or that propagates an `Option` is refused by the compiler under the fault and named in `fault-not-put`, one entry per compiler error class; a user's own error type is never injected, because guessing its constructor would inject something the program never returns.
+A fault a bound expired on, or whose failure did not reproduce, is named in `fault-not-decided`.
+And a caller that swallows the injected error reads as `unnoticed`, which is what the suite could tell: where the error went is not recorded yet.
+
+A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
+A tree whose faulted build or baseline could not be measured states `fault-baseline-not-measured` and puts nothing.
+
 ## What a run asks of a suite that talks about time
 
 A run does something to a suite that `cargo test` never does: it runs every target's baseline before it measures anything, and then measures mutants against a machine that is already busy.

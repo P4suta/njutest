@@ -18,6 +18,8 @@ pub const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 pub const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 /// The one target the specimen run tested with.
 pub const TARGET: &str = "pkg/test/lib";
+/// The display identity of the fault a planted defect puts.
+pub const FAULTED: &str = "cccccccccccccccccccc";
 /// The question about the status of the one exchange [`went_past`] holds.
 pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
 
@@ -49,8 +51,13 @@ pub fn base() -> Value {
                 "model_noticed": 0,
                 "model_proved": 0
             },
-            "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false }
+            "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false },
+            "faults": {
+                "sites": 0, "noticed": 0, "unnoticed": 0, "unreached": 0,
+                "waited": 0, "undecided": 0, "not_put": 0
+            }
         },
+        "faults": [],
         "targets": [
             {
                 "id": "3f2a1b0c9d8e7f60",
@@ -97,6 +104,41 @@ pub fn base() -> Value {
             }
         ],
         "limitations": []
+    })
+}
+
+/// A route and an execution for each mutant of [`base`], then one fault the one target ran and passed.
+fn fault_put_and_passed() -> Vec<Value> {
+    routes()
+        .into_iter()
+        .chain([
+            json!({
+                "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+                "type": "fault-exec",
+                "fault": {
+                    "fault": FAULTED, "target": TARGET, "args": [],
+                    "outcome": "survived", "duration_ms": 5, "alone": false
+                }
+            }),
+            json!({
+                "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
+                "type": "fault",
+                "fault": unnoticed_fault()
+            }),
+        ])
+        .collect()
+}
+
+/// One fault site every test that reached it passed.
+fn unnoticed_fault() -> Value {
+    json!({
+        "catalog_index": 0,
+        "id": "c".repeat(64),
+        "display_id": FAULTED,
+        "path": "src/lib.rs",
+        "item": "load",
+        "position": { "line": 13, "column": 16, "character_column": 16 },
+        "decision": { "decision": "unnoticed" }
     })
 }
 
@@ -470,6 +512,15 @@ impl Layer {
             Self::Model => vec![Perturbation {
                 name: "a verified-v1 survivor with no model record",
                 document: with(json!({ "contract": "verified-v1" })),
+                ..clean
+            }],
+            Self::Faults => vec![Perturbation {
+                name: "a failed call nothing noticed that no finding names",
+                document: with(json!({
+                    "faults": [unnoticed_fault()],
+                    "accounting": { "faults": { "sites": 1, "unnoticed": 1 } }
+                })),
+                events: Some(fault_put_and_passed()),
                 ..clean
             }],
             Self::Drift => vec![Perturbation {

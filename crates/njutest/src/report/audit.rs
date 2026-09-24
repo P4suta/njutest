@@ -803,6 +803,7 @@ fn validate_build_parts<'a>(
             resources: part.resources.clone(),
             candidates: part.candidates.clone(),
             seams: part.seams.clone(),
+            faults: part.faults.clone(),
             targets: part.targets.clone(),
             sources: part.sources.clone(),
             mutants: part.mutants.clone(),
