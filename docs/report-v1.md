@@ -193,7 +193,7 @@ and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `doctest
 A delay broke a binary only where, in each of five rounds, a delayed control failed exactly the same tests and an undelayed one passed; the part then raises `schedule-dependent` about it, a defect, and a shard explores nothing.
 A part whose records name a binary twice or out of order is refused.
 
-A part states `schedule-not-explored` naming every binary that is not `single-threaded`: no schedule is explored yet, so each is a hole.
+A part states `schedule-not-explored` naming every binary that is not `single-threaded` and was not explored, `schedule-sampled` naming every one whose delays all passed, and `schedule-undecided` naming every one whose delays settled nothing; each is a hole.
 
 ## Sources
 
