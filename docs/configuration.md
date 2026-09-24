@@ -97,6 +97,10 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`[repeatable] knobs` asks for one more control of every target whose baseline passed per knob, each started with one thing the contract lets differ between machines set differently: `timezone` (TZ=Australia/Lord_Howe), `locale` (LC_ALL=tr_TR.UTF-8), `temp-directory` (an empty temporary directory whose path holds a space), `home` (an empty home directory, with cargo's and rustup's kept), `umask` (077), `columns` (COLUMNS=37 LINES=11), and `threads` (`--test-threads=1`).
+Empty by default, because each knob is one more run of every target.
+A knob this machine cannot put is stated as `knob-not-put` rather than skipped silently; most CI images install no Turkish locale, so there `locale` is not put.
+
 `[verification]` belongs only to `contract = "verified-v1"`.
 Both `unwind` (the nonzero loop-unwind bound) and `timeout` (the verifier process ceiling, representable as at least one whole millisecond) are mandatory there; the other contracts reject the section instead of silently ignoring proof settings.
 

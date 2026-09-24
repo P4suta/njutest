@@ -165,6 +165,23 @@ A part that measured the whole catalog raises `unstable-baseline` about each mov
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
 
+## Knobs
+
+Every part carries `knobs`, one record per knob the configuration asked for and per target whose baseline passed, each `{ target, knob, standing }`: what one more control of that target, started with one thing the contract lets differ between machines set differently, established against the baseline.
+`knob` is one of `timezone`, `locale`, `temp-directory`, `home`, `umask`, `columns`, `threads`.
+`standing` is closed by its `state`:
+`stable` (it passed the tests its baseline passed and reached the same three unions drift compares),
+`passed` (it passed, and is a target that records no reach to compare, as a doctest run through cargo is),
+`broke` with the tests that `failed`,
+`moved` with the `reach` it gained and lost in each union,
+`uncompared` with drift's closed `why`,
+`unsettled` with `errored` or `waited`,
+and `not-put` with `why`: `platform`, `zone-missing`, `locale-missing`, `shell-missing`, `through-cargo`, or `not-libtest`.
+A part whose records repeat a knob for a target, or put two knobs on different targets, is refused, since every knob asked for is put once on every passing target.
+
+A part that measured the whole catalog raises `environment-dependent`, a defect, about each target a knob broke, `environment-dependent-reach` about each whose reach a knob moved, counting what rests on its baseline by the rule `unstable-baseline` counts with, and states `knob-not-put` and `knob-not-compared`.
+A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` rather than `PARTIAL` where a knob broke or moved a target; a merge raises them from the combined records of every part, keeping of two records of one knob and target the one that says more.
+
 ## Sources
 
 Every part carries `sources`, one `{ path, digest }` per file its mutants were read from, in path order: the SHA-256 of the file's bytes as the run read them, taken from the catalog, which already refuses two digests for one file.
