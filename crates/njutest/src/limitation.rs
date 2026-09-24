@@ -36,6 +36,9 @@ pub const MIRI_UNSUPPORTED: &str = "miri-unsupported";
 /// The interpreter ran out of the time it was given, which is not a claim that it found nothing.
 pub const MIRI_TIMED_OUT: &str = "miri-timed-out";
 
+/// The toolchain has no interpreter, and the contract names the soundness it could not establish rather than refusing the run.
+pub const MIRI_UNAVAILABLE: &str = "miri-unavailable";
+
 /// A sanitizer the run was asked for could not be run, so nothing it would have found is claimed.
 pub const SANITIZER_UNAVAILABLE: &str = "sanitizer-unavailable";
 
@@ -88,9 +91,12 @@ pub const SCHEDULE_NOT_EXPLORED: &str = "schedule-not-explored";
 /// A test binary passed every schedule a delayed guard made, which is a sample of its schedules and never all of them.
 pub const SCHEDULE_SAMPLED: &str = "schedule-sampled";
 
+/// A test binary no delay broke, where the controls of at least one delayed guard settled nothing.
+pub const SCHEDULE_UNDECIDED: &str = "schedule-undecided";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 28] = [
+pub const ALL: [&str; 30] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -102,6 +108,7 @@ pub const ALL: [&str; 28] = [
     SOUNDNESS_SOURCE_UNREADABLE,
     MIRI_UNSUPPORTED,
     MIRI_TIMED_OUT,
+    MIRI_UNAVAILABLE,
     SANITIZER_UNAVAILABLE,
     SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED,
     FUZZ_NOT_EXECUTED,
@@ -119,4 +126,5 @@ pub const ALL: [&str; 28] = [
     KNOB_NOT_COMPARED,
     SCHEDULE_NOT_EXPLORED,
     SCHEDULE_SAMPLED,
+    SCHEDULE_UNDECIDED,
 ];

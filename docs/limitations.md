@@ -232,6 +232,9 @@ They are what the run says about its own footing, and each is stated fail-closed
   A run that met any of these and said nothing recorded no seam, raised no finding and stated no limitation, so a reader read the wire dimension as covered when nothing about it had been measured.
 - The interpreter ran out of the time it was given (`miri-timed-out`).
   This is not a claim that it found nothing: a budget that expired is a question nobody answered, which is why it is a limitation and never a pass.
+- The toolchain has no interpreter and the contract is `whole-v1` (`miri-unavailable`).
+  `whole-v1` names each thing it could not establish rather than refusing the run, so the soundness nothing interpreted is a limitation beside a `not-measured` finding, and the run is not `ASSURED`.
+  `deep-v1` promises interpretation, and there the same toolchain ends the run with `NJ7001`.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 
@@ -275,7 +278,9 @@ And the working directory and the order of the tests are not knobs: cargo's cont
 A schedule is not something a run explores yet, so a suite whose tests race each other passes on the schedule it happened to get ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
 What a run does instead is prove, per test binary, where there is nothing to explore: its baseline reached no code off the threads its tests ran on, and no package in its dependency closure has a token that can start a thread, a task, a parallel iterator, a runtime, or a process, and none links native code or declares an `extern` block.
 Everything else is `schedule-not-explored`, naming the binaries in its closing list: `concurrent` where something says it can run more than one thread, and `not-proven` where something could not be looked at.
-Asked for with `[schedules] explore`, a run delays up to that many guards of each such binary whose baseline passed, one schedule each; a binary that passed every one is `schedule-sampled`, because a sample of its schedules is not all of them, and one a delay broke twice more while it passed without the delay is `schedule-dependent`.
+Asked for with `[schedules] explore`, a run delays up to that many guards of each such binary whose baseline passed, one schedule each; a binary that passed every one is `schedule-sampled`, because a sample of its schedules is not all of them, and one a delay broke in five rounds, failing the same tests with the delay and passing without it each time, is `schedule-dependent`.
+A binary no delay broke where the controls of some delayed guard ran past their bound, errored, or failed in a way no round confirmed is `schedule-undecided`: it passed no sample of that schedule and showed no failure of it.
+A delay pauses each operating-system thread of the test process once, the first time it reaches the guard, so a thread a pool or the harness reuses across tests pauses only for the first test that reaches the guard on it.
 
 Three things follow and are not hidden.
 The scan reads tokens, not types, so a function of a user's own named `spawn`, or a word in a string, makes a binary concurrent that runs one thread; that is a hole the report states, never a proof it makes.

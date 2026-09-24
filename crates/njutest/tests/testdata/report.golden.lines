@@ -17,7 +17,7 @@ WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
 DIMENSION	mutation	measured	catalogued=1	answered=1	holes=0
 DIMENSION	repeatable	not-asked
 DIMENSION	fault	not-asked
-DIMENSION	schedule	nothing-to-ask	no test binary ran
+DIMENSION	schedule	measured	catalogued=1	answered=0	holes=1
 DIMENSION	wire	nothing-to-ask	no seam was configured or asked a question
 DIMENSION	durable	not-asked
 SOUNDNESS	build=default	unsafe_items=0	packages_with_unsafe=0	was_executed=false

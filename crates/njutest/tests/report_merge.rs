@@ -1021,8 +1021,9 @@ fn a_merge_of_whole_parts_names_each_dimension_they_left_a_hole_once() {
     named.sort_unstable();
     assert_eq!(
         named,
-        vec!["durable", "fault", "repeatable"],
-        "no part raises a dimension finding, and the merge raises each once over every part"
+        vec!["durable", "fault", "repeatable", "schedule"],
+        "no part raises a dimension finding, and the merge raises each once over every part, the \
+         schedule among them since a binary passed in each part with no record of its threads"
     );
 }
 
@@ -1030,4 +1031,66 @@ fn super_whole(parts: &[ShardReport]) -> njutest::report::Conclusion {
     whole("the-whole", parts)
         .conclusion()
         .expect("a representable conclusion")
+}
+
+#[test]
+fn parts_whose_baselines_disagree_about_a_binarys_threads_are_not_one_catalog() {
+    use njutest::concurrency::proof::{Because, Standing};
+    use njutest::report::concurrency::ConcurrencyRecord;
+    let standing = |standing: Standing| {
+        move |source: &mut BuildReport| {
+            source.concurrency = vec![ConcurrencyRecord {
+                target: "pkg/lib/pkg".to_owned(),
+                standing: standing.clone(),
+                explored: njutest::report::concurrency::Exploration::Unexplored {
+                    why: njutest::report::concurrency::Unexplored::NotAsked,
+                },
+            }];
+        }
+    };
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &standing(Standing::SingleThreaded),
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &standing(Standing::Concurrent {
+            because: vec![Because::LooseReach],
+        }),
+    );
+    let refused = refused_as(&[one, two]);
+    assert!(
+        refused.to_string().contains("concurrency"),
+        "loose reach only one shard's baseline saw is not dropped for the first shard's proof: {refused}"
+    );
+}
+
+#[test]
+fn a_part_whose_concurrency_records_leave_out_a_binary_it_measured_is_refused() {
+    use njutest::concurrency::proof::Standing;
+    use njutest::report::concurrency::ConcurrencyRecord;
+    let refused = tried_part(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &|source| {
+            source.concurrency = vec![ConcurrencyRecord {
+                target: "other/lib/other".to_owned(),
+                standing: Standing::SingleThreaded,
+                explored: njutest::report::concurrency::Exploration::Unexplored {
+                    why: njutest::report::concurrency::Unexplored::NotNeeded,
+                },
+            }];
+        },
+        &|_| {},
+    )
+    .expect_err("a binary it measured has no record");
+    assert!(
+        refused.to_string().contains("pkg/lib/pkg"),
+        "a measured binary with no record is neither proven nor named as a hole: {refused}"
+    );
 }

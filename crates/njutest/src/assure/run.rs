@@ -46,6 +46,12 @@ pub enum RunInvariantError {
         /// The phase whose bound could not be formed.
         phase: &'static str,
     },
+    /// A guard a baseline reached, and a delay there broke, is one the catalog cannot place.
+    #[error("the baseline reached guard {site}, which the catalog cannot place")]
+    UnplacedSite {
+        /// The guard's catalog index.
+        site: u32,
+    },
     /// A checkpoint's attempt counter reached the end of its wire range.
     #[error("the checkpoint attempt counter exceeds u32")]
     AttemptOverflow,
@@ -445,6 +451,11 @@ fn deepened(
             timeout: Some(request.config.execution.timeout),
             offline: request.cargo.offline,
             locked: request.cargo.locked,
+            absent: if request.config.contract.asks_every_dimension() {
+                super::deep::Absent::Hole
+            } else {
+                super::deep::Absent::Refused
+            },
         },
         watch,
     )?;
@@ -1422,7 +1433,7 @@ fn concurrency_of(
     session: &rust_mutants::session::Session,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
-    let mut concurrency = super::concurrency::recorded(session);
+    let mut concurrency = super::concurrency::recorded(session, &mutating.request.test_args);
     if mutating.report.scope.shard.is_none() {
         super::concurrency::explored(
             session,

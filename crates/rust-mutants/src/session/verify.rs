@@ -68,7 +68,7 @@ pub(super) fn verify(
         let replayed = replay(
             &recalled.verified,
             &recalled.tests_run,
-            targets,
+            (targets, &building.options.harness_args),
             &workspace.trace,
         );
         phase.end();
@@ -174,6 +174,7 @@ fn verify_target(
         outcome: result.outcome().name().to_owned(),
         tests_run: result.tests_run(),
         duration_ms: duration_millis(result.duration)?,
+        args: building.options.harness_args.clone(),
         remembered: false,
         retried,
     });
@@ -772,7 +773,7 @@ fn answer_digest(
 fn replay(
     verified: &Verified,
     tests_run: &BTreeMap<String, Option<u32>>,
-    targets: &mut [TestTarget],
+    (targets, harness_args): (&mut [TestTarget], &[String]),
     trace: &crate::trace::Recorder,
 ) -> Result<(), EngineError> {
     for target in targets {
@@ -787,6 +788,7 @@ fn replay(
                 .copied()
                 .and_then(std::convert::identity),
             duration_ms: duration_millis(baseline.duration)?,
+            args: harness_args.to_vec(),
             remembered: true,
             retried: false,
         });

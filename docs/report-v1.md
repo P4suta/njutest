@@ -220,10 +220,10 @@ A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` 
 Every part carries `concurrency`, one `{ target, standing }` per test binary the run measured, in binary order ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
 `standing` is closed by its `state`:
 `single-threaded` where the binary's baseline reached nothing off its tests' threads and no package of its closure can start a thread or runs native code;
-`concurrent` with every reason that holds in `because`, each `loose-reach` or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
-and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
-`explored` says what delaying its guards found, closed by `state`: `unexplored` with `why` (`not-needed` for a single-threaded binary, `not-asked`, `not-passing`, `no-site`), `sampled` with every guard `delayed` and those whose controls were `undecided`, or `broke` with the `site`, its `path` and `line`, and the tests that `failed`.
-A delay broke a binary only where its tests failed with the delay twice more and passed without it; the part then raises `schedule-dependent` about it, a defect, and a shard explores nothing.
+`concurrent` with every reason that holds in `because`, each `loose-reach`, `parallel-tests` (libtest ran its tests on more than one thread, which it does unless the run passes `--test-threads=1`), or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
+and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `doctest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
+`explored` says what delaying its guards found, closed by `state`: `unexplored` with `why` (`not-needed` for a single-threaded binary, `not-asked`, `not-passing`, `no-site`), `sampled` with the number of guards `asked` for and every guard `delayed` where each delayed control passed, `undecided` with `asked`, `delayed`, and those whose controls settled nothing or whose failure no round confirmed as `undecided`, or `broke` with the `site`, its `path` and `line`, the tests that `failed`, and the confirming `rounds`.
+A delay broke a binary only where, in each of five rounds, a delayed control failed exactly the same tests and an undelayed one passed; the part then raises `schedule-dependent` about it, a defect, and a shard explores nothing.
 A part whose records name a binary twice or out of order is refused.
 
 A part states `schedule-not-explored` naming every binary that is not `single-threaded`: no schedule is explored yet, so each is a hole.

@@ -49,6 +49,17 @@ pub struct Interpreting<'a> {
     /// Whether cargo may change the lock file.
     /// A phase that let it would measure a dependency set the baseline never saw, and would write into the tree under measurement.
     pub locked: bool,
+    /// What a toolchain with no interpreter means to the contract the run answers.
+    pub absent: Absent,
+}
+
+/// What a toolchain with no interpreter means to a contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Absent {
+    /// The contract promises interpretation, so a run that cannot interpret cannot answer it.
+    Refused,
+    /// The contract names each thing it could not establish, so the soundness nothing interpreted is a hole it names.
+    Hole,
 }
 
 /// What interpreting the suite established.
@@ -107,15 +118,13 @@ pub fn interpret(
         source,
     })?;
     if ran.error().is_some() || absent(said) {
-        return Err(RunnerError::MiriMissing {
-            message: absence(said, ran.error()),
-        });
+        return unavailable(interpreting.absent, absence(said, ran.error()));
     }
     if !ran.timed_out()
         && ran.conventional_exit_code() != 0
         && let Some(absence) = missing(interpreting, watch)?
     {
-        return Err(RunnerError::MiriMissing { message: absence });
+        return unavailable(interpreting.absent, absence);
     }
     let ending = if ran.timed_out() {
         Ending::TimedOut
@@ -125,6 +134,30 @@ pub fn interpret(
         Ending::Failed
     };
     Ok(read(said, ending))
+}
+
+/// What a toolchain with no interpreter, which said `message`, comes to under a contract that treats it as `absent` says.
+fn unavailable(absent: Absent, message: String) -> Result<Interpreted, RunnerError> {
+    match absent {
+        Absent::Refused => Err(RunnerError::MiriMissing { message }),
+        Absent::Hole => Ok(Interpreted {
+            executed: false,
+            findings: vec![Finding {
+                kind: FindingKind::NotMeasured,
+                subject: "soundness".to_owned(),
+                detail: "nothing interpreted the suite, so nothing is claimed about the unsafe it \
+                         holds"
+                    .to_owned(),
+                origin: crate::report::FindingOrigin::Global,
+                path: None,
+                position: None,
+            }],
+            limitations: vec![Limitation::new(
+                crate::limitation::MIRI_UNAVAILABLE,
+                &format!("the toolchain has no interpreter: {message}"),
+            )],
+        }),
+    }
 }
 
 /// What the toolchain says when it has no interpreter, asked once the run it was given has failed.

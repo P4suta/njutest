@@ -1944,6 +1944,14 @@ pub enum PartLedgerError {
         /// The owning source.
         run_id: rust_mutants::id::RunId,
     },
+    /// A test binary the part measured has no concurrency record, so it is neither proven nor named as a hole.
+    #[error("source {run_id} measured {target} and records nothing about its threads")]
+    ConcurrencyMissing {
+        /// The owning source.
+        run_id: rust_mutants::id::RunId,
+        /// The binary.
+        target: String,
+    },
     /// Baseline evidence differed across shards.
     #[error("shard {shard} disagrees with shard 1 about {about}")]
     BaselineMismatch {
@@ -2168,6 +2176,17 @@ fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError
             )));
         }
     }
+    if let Some((knob, covered)) = by_knob.iter().next()
+        && let Some(target) = part.targets.iter().find(|target| {
+            target.status == TargetStatus::Passed && !covered.contains(target.name.as_str())
+        })
+    {
+        return Err(refused(format!(
+            "{} passed its baseline and {} was not put on it",
+            target.name,
+            knob.name()
+        )));
+    }
     let mut knobs = by_knob.iter();
     if let Some((first, covered)) = knobs.next()
         && let Some((other, _)) = knobs.find(|(_, targets)| *targets != covered)
@@ -2210,6 +2229,29 @@ fn validate_dimension_accounting(part: &BuildPartEvidence) -> Result<(), PartLed
     Ok(())
 }
 
+/// Whether `part` records each binary's threads once, in order, and every binary it measured.
+fn validate_concurrency_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    if !concurrency::ordered(&part.concurrency) {
+        return Err(PartLedgerError::ConcurrencyOrder {
+            run_id: part.run_id.clone(),
+        });
+    }
+    if !part.concurrency.is_empty()
+        && let Some(target) = part.targets.iter().find(|target| {
+            !part
+                .concurrency
+                .iter()
+                .any(|record| record.target == target.name)
+        })
+    {
+        return Err(PartLedgerError::ConcurrencyMissing {
+            run_id: part.run_id.clone(),
+            target: target.name.clone(),
+        });
+    }
+    Ok(())
+}
+
 fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
     validate_part_catalog(part)?;
     let started = canonical_timestamp(part, "started", &part.timing.started)?;
@@ -2236,11 +2278,7 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
     validate_beside(part)?;
     validate_dimension_accounting(part)?;
     validate_knob_records(part)?;
-    if !concurrency::ordered(&part.concurrency) {
-        return Err(PartLedgerError::ConcurrencyOrder {
-            run_id: part.run_id.clone(),
-        });
-    }
+    validate_concurrency_records(part)?;
     let mut target_ids = BTreeSet::new();
     for target in &part.targets {
         if !target_ids.insert(target.id.as_str()) {
@@ -2549,6 +2587,7 @@ fn baseline_matches(
         ),
         ("resources", first.resources == part.resources),
         ("seam evidence", first.seams == part.seams),
+        ("concurrency records", first.concurrency == part.concurrency),
     ] {
         if !agrees {
             return Err(PartLedgerError::BaselineMismatch { shard, about });
@@ -6825,6 +6864,7 @@ fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
 /// Every record of some builds a matrix is read off, gathered from every part.
 struct MatrixEvidence {
     mutations: (usize, usize),
+    targets: Vec<TargetRecord>,
     knobs: Vec<knobs::KnobRecord>,
     faults: Vec<faults::FaultRecord>,
     crashes: Vec<crashes::CrashRecord>,
@@ -6848,6 +6888,9 @@ impl MatrixEvidence {
             .count();
         Self {
             mutations: (answered, holes),
+            targets: parts()
+                .flat_map(|part| part.targets.iter().cloned())
+                .collect(),
             knobs: knobs::combined(parts().flat_map(|part| part.knobs.iter())),
             faults: parts()
                 .flat_map(|part| part.faults.iter().cloned())
@@ -6875,6 +6918,7 @@ impl MatrixEvidence {
     fn borrowed(&self) -> matrix::Evidence<'_> {
         matrix::Evidence {
             mutations: self.mutations,
+            targets: &self.targets,
             knobs: &self.knobs,
             faults: &self.faults,
             crashes: &self.crashes,

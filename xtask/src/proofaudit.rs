@@ -591,13 +591,62 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
     Ok(serde_json::Value::Object(flat))
 }
 
+/// Every binary the engine built that the report records nothing about, each a violation.
+fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes: &mut Notes<'_>) {
+    if touched.kinds.is_empty() {
+        notes.unaudited(
+            "concurrency",
+            "the engine recording holds no build record, so which binaries a run measured, and \
+             so which records the report owes, is not known"
+                .to_owned(),
+        );
+    }
+    let mut unverified = Vec::new();
+    for target in touched.kinds.keys() {
+        if !touched.verified.contains(target) {
+            unverified.push(target.as_str());
+            continue;
+        }
+        if touched.passing.contains(target)
+            && !rows
+                .iter()
+                .any(|row| field(row, "target").as_deref() == Some(target.as_str()))
+        {
+            notes.violated(
+                target,
+                format!(
+                    "the engine built {target} and its baseline passed, and the report, which \
+                     measured mutants, records nothing about its threads, so it is neither proven \
+                     nor named as a hole"
+                ),
+            );
+        }
+    }
+    if !unverified.is_empty() {
+        notes.unaudited(
+            "concurrency",
+            format!(
+                "the engine built {} and recorded no baseline of them, so whether they were skipped \
+                 by name or their record is missing, and so whether the report owes a thread \
+                 record for them, is not known",
+                unverified.join(", ")
+            ),
+        );
+    }
+}
+
 /// Each test binary the report calls single-threaded, or concurrent for reach off its tests' threads, held to what the engine's baseline touch record says it reached there.
 ///
 /// The source half of the proof is a scan of every package the binary links, which this audit does not repeat, so it is said to be unaudited rather than read as agreement.
 fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Concurrency);
     let rows = rows(recording.document, "concurrency");
-    if rows.is_empty() {
+    let executed = recording
+        .document
+        .pointer("/accounting/mutants/executed")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|executed| executed > 0);
+    if rows.is_empty() && !executed {
         return;
     }
     let touched = match engines {
@@ -614,54 +663,45 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
             return;
         }
     };
+    unrecorded(rows, touched, &mut notes);
     let mut proven: Vec<String> = Vec::new();
     for row in rows {
         let target = field(row, "target").unwrap_or_default();
         let standing = row.get("standing").unwrap_or(&serde_json::Value::Null);
-        let state = field(standing, "state").unwrap_or_default();
-        let said_loose = standing
-            .get("because")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|because| {
-                because
-                    .iter()
-                    .any(|one| field(one, "kind").as_deref() == Some("loose-reach"))
-            });
-        let loose = touched
-            .touches
-            .iter()
-            .rev()
-            .find(|touch| {
-                touch.measured == crate::drift::Measured::Baseline && touch.target == target
-            })
-            .map(|touch| touch.loose);
-        match (state.as_str(), loose) {
-            ("single-threaded", Some(0)) => proven.push(target.clone()),
-            ("single-threaded", Some(sites)) => notes.violated(
-                &target,
-                format!(
-                    "the report proves {target} single-threaded, and its baseline reached {sites} \
-                     site(s) on a thread no test answers for"
-                ),
-            ),
-            ("single-threaded", None) => notes.violated(
-                &target,
-                format!(
-                    "the report proves {target} single-threaded, and the engine recorded no \
-                     baseline reach for it to rest on"
-                ),
-            ),
-            ("concurrent", Some(0)) if said_loose => notes.violated(
-                &target,
-                format!(
-                    "the report says {target} reached code off its tests' threads, and its \
-                     baseline reached nothing there"
-                ),
-            ),
-            (_, _) => {}
+        let witnessed = crate::concurrency::Witnessed {
+            loose: touched
+                .touches
+                .iter()
+                .rev()
+                .find(|touch| {
+                    touch.measured == crate::drift::Measured::Baseline && touch.target == target
+                })
+                .map(|touch| touch.loose),
+            kind: touched.kinds.get(&target).cloned(),
+            args: touched.args.get(&target).cloned(),
+        };
+        let derived = match crate::concurrency::derived(&witnessed) {
+            Ok(derived) => derived,
+            Err(why) => {
+                notes.violated(
+                    &target,
+                    format!(
+                        "the report gives {target} a standing the recording cannot rest: {why}"
+                    ),
+                );
+                continue;
+            }
+        };
+        match crate::concurrency::agrees(standing, &derived) {
+            Ok(()) => {
+                if field(standing, "state").as_deref() == Some("single-threaded") {
+                    proven.push(target.clone());
+                }
+            }
+            Err(why) => notes.violated(&target, format!("{target}: {why}")),
         }
     }
-    explorations(rows, &engine_of(engines), &mut notes);
+    explorations(rows, engines, &mut notes);
     if !proven.is_empty() {
         notes.unaudited(
             "concurrency",
@@ -674,98 +714,70 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
     }
 }
 
-/// The delayed controls of the one engine recording, where there is one.
 fn engine_of(engines: &[Engine]) -> Vec<&crate::knobs::Perturbed> {
     match engines {
         [one] => one
             .perturbed
             .controls
             .iter()
-            .filter(|control| control.started.delayed.is_some())
+            .filter(|control| match control.started.role() {
+                crate::knobs::Role::Delayed | crate::knobs::Role::Undelayed => true,
+                crate::knobs::Role::Knob(_) | crate::knobs::Role::Unknown => false,
+            })
             .collect(),
         [] | [_, _, ..] => Vec::new(),
     }
 }
 
-/// Each binary the report says a delayed guard broke, or only sampled, held to the delayed controls the engine recorded for it.
-///
-/// A broke needs three failing controls with that guard delayed, the first and the two that repeat it; a sample needs a control for every guard it names.
-fn explorations(
-    rows: &[serde_json::Value],
-    delayed: &[&crate::knobs::Perturbed],
-    notes: &mut Notes<'_>,
-) {
-    let ran = |target: &str, site: u64| {
-        delayed
-            .iter()
-            .filter(|control| control.target == target && control.started.delayed == Some(site))
-            .collect::<Vec<_>>()
+/// What each binary's exploration came to, replayed from the controls the engine started for it in the order it recorded them, held to the report exactly, and why one with none was not explored, derived from its baseline (ADR 0034).
+fn explorations(rows: &[serde_json::Value], engines: &[Engine], notes: &mut Notes<'_>) {
+    let [engine] = engines else {
+        return;
     };
+    let explored = engine_of(engines);
+    let touched = &engine.touched;
     for row in rows {
         let target = field(row, "target").unwrap_or_default();
-        let explored = row.get("explored").unwrap_or(&serde_json::Value::Null);
-        match field(explored, "state").as_deref() {
-            Some("broke") => {
-                let Some(site) = explored.get("site").and_then(serde_json::Value::as_u64) else {
-                    notes.violated(
-                        &target,
-                        format!(
-                            "the report says a delayed guard broke {target} and names no guard"
-                        ),
-                    );
-                    continue;
-                };
-                let failing = ran(&target, site)
-                    .into_iter()
-                    .filter(|control| control.ended == crate::knobs::Ended::Failed)
-                    .count();
-                if failing < 3 {
-                    notes.violated(
-                        &target,
-                        format!(
-                            "the report says delaying guard {site} broke {target}, and the engine \
-                             recorded {failing} failing control(s) with it delayed where a broken \
-                             schedule needs three"
-                        ),
-                    );
+        let runs: Vec<crate::concurrency::Run> = explored
+            .iter()
+            .filter(|control| control.target == target)
+            .map(|control| crate::concurrency::Run {
+                delayed: control.started.delayed,
+                confirms: control.started.confirms,
+                ended: control.ended,
+                failed: control.failed.clone(),
+            })
+            .collect();
+        let context = crate::concurrency::Context {
+            single_threaded: row
+                .get("standing")
+                .and_then(|standing| field(standing, "state"))
+                .as_deref()
+                == Some("single-threaded"),
+            passing: touched.passing.contains(&target),
+            reached: touched
+                .touches
+                .iter()
+                .rev()
+                .find(|touch| {
+                    touch.measured == crate::drift::Measured::Baseline && touch.target == target
+                })
+                .map_or(0, |touch| touch.reached.len()),
+            asked_any: !explored.is_empty(),
+        };
+        let reported = row.get("explored").unwrap_or(&serde_json::Value::Null);
+        match crate::concurrency::replayed(&runs) {
+            Ok(derived) => {
+                if let Err(why) = crate::concurrency::agrees_explored(reported, &derived, context) {
+                    notes.violated(&target, format!("{target}: {why}"));
                 }
             }
-            Some("sampled") => {
-                let sites: Vec<u64> = explored
-                    .get("delayed")
-                    .and_then(serde_json::Value::as_array)
-                    .map(|sites| sites.iter().filter_map(serde_json::Value::as_u64).collect())
-                    .unwrap_or_default();
-                for site in sites {
-                    let controls = ran(&target, site);
-                    if controls.is_empty() {
-                        notes.violated(
-                            &target,
-                            format!(
-                                "the report says guard {site} of {target} was delayed, and the \
-                                 engine recorded no control with it delayed"
-                            ),
-                        );
-                    }
-                    if controls
-                        .iter()
-                        .any(|control| control.ended == crate::knobs::Ended::Failed)
-                        && controls.len() >= 3
-                        && controls
-                            .iter()
-                            .all(|control| control.ended == crate::knobs::Ended::Failed)
-                    {
-                        notes.violated(
-                            &target,
-                            format!(
-                                "the report calls {target} only sampled, and every control with \
-                                 guard {site} delayed failed, three times"
-                            ),
-                        );
-                    }
-                }
-            }
-            _ => {}
+            Err(why) => notes.violated(
+                &target,
+                format!(
+                    "{target}: the controls the engine recorded for it are not an exploration: {why}"
+                ),
+            ),
         }
     }
 }
@@ -2308,21 +2320,29 @@ fn dimensions(recording: &Recording<'_>, audit: &mut Audit) {
     }
 }
 
-/// Whether some test binary's schedules were neither shown to need none nor broken by a delay.
+/// Whether some test binary's schedules were neither shown to need none nor broken by a delay, or a target passed with no record of its threads at all.
 fn schedules_holed(document: &serde_json::Value) -> bool {
-    rows(document, "concurrency").iter().any(|record| {
-        let explored = record.get("explored");
-        let state = explored
-            .and_then(|one| one.get("state"))
-            .and_then(serde_json::Value::as_str);
-        let why = explored
-            .and_then(|one| one.get("why"))
-            .and_then(serde_json::Value::as_str);
-        !matches!(
-            (state, why),
-            (Some("broke"), _) | (Some("unexplored"), Some("not-needed"))
-        )
-    })
+    let records = rows(document, "concurrency");
+    let unrecorded = rows(document, "targets").iter().any(|target| {
+        field(target, "status").as_deref() == Some("passed")
+            && !records
+                .iter()
+                .any(|record| field(record, "target") == field(target, "name"))
+    });
+    unrecorded
+        || records.iter().any(|record| {
+            let explored = record.get("explored");
+            let state = explored
+                .and_then(|one| one.get("state"))
+                .and_then(serde_json::Value::as_str);
+            let why = explored
+                .and_then(|one| one.get("why"))
+                .and_then(serde_json::Value::as_str);
+            !matches!(
+                (state, why),
+                (Some("broke"), _) | (Some("unexplored"), Some("not-needed"))
+            )
+        })
 }
 
 /// Whether the knobs, whose standings are `knobs`, leave repeatability open: none put, one left undecided, or one this machine lacked and another could put.
@@ -2394,7 +2414,8 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
         .findings
         .iter()
         .any(|finding| finding.subject == "fault-baseline-not-measured");
-    if (faults.is_empty() && (unmeasured || !limited("fault-no-site")))
+    if unmeasured
+        || (faults.is_empty() && !limited("fault-no-site"))
         || none_but_not_put(&faults)
         || faults
             .iter()

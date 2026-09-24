@@ -24,6 +24,8 @@ pub struct PackageScan {
 pub enum Because {
     /// Its baseline reached code on a thread that is not one of its tests.
     LooseReach,
+    /// Its harness runs its tests on more than one thread at once, so two of them interleave over whatever they share.
+    ParallelTests,
     /// A package it links can start one here.
     Starts {
         /// The package.
@@ -45,6 +47,8 @@ pub enum Unproven {
     NoTouch,
     /// Its harness is not libtest, which is what names each test's thread.
     NotLibtest,
+    /// It is a crate's documentation examples, which rustdoc compiles from doc strings the scan does not read and runs where no reach is recorded.
+    Doctest,
     /// A file of a package it links was not read.
     Unread {
         /// The package.
@@ -90,13 +94,98 @@ pub enum Reach {
     OffItsTests,
 }
 
+/// What runs a binary's tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Harness {
+    /// Libtest, which names each test's thread after the test, on as many threads as it is given.
+    Libtest(Threads),
+    /// Rustdoc, running a crate's documentation examples.
+    Doctest,
+    /// Anything else, which names no thread.
+    Other,
+}
+
+/// How many threads libtest runs a binary's tests on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Threads {
+    /// One, because the run passes `--test-threads=1`.
+    One,
+    /// Any other number, which is libtest's default of every processor.
+    Many,
+}
+
+/// The libtest options that take the next word as their value.
+const LIBTEST_VALUED: [&str; 7] = [
+    "--test-threads",
+    "--skip",
+    "--logfile",
+    "--format",
+    "--color",
+    "-Z",
+    "--shuffle-seed",
+];
+
+/// The libtest options that take no value.
+const LIBTEST_FLAGS: [&str; 17] = [
+    "--include-ignored",
+    "--ignored",
+    "--force-run-in-process",
+    "--exclude-should-panic",
+    "--test",
+    "--bench",
+    "--list",
+    "--nocapture",
+    "--no-capture",
+    "--show-output",
+    "--exact",
+    "-q",
+    "--quiet",
+    "--shuffle",
+    "--report-time",
+    "--ensure-time",
+    "--fail-fast",
+];
+
+/// How many threads libtest runs tests on under the harness arguments `args`, read the way libtest reads them: an option that takes a value takes the next word, `--` ends the options, and one only where exactly one `--test-threads` names 1 and no option this reading does not know comes before it.
+#[must_use]
+pub fn threads_of(args: &[String]) -> Threads {
+    const MANY: Threads = Threads::Many;
+    let mut named = Vec::new();
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        if word == "--" {
+            break;
+        }
+        if let Some((flag, value)) = word.split_once('=')
+            && flag.starts_with("--")
+        {
+            if flag == "--test-threads" {
+                named.push(Some(value));
+            } else if !LIBTEST_VALUED.contains(&flag) {
+                return MANY;
+            }
+        } else if LIBTEST_VALUED.contains(&word.as_str()) {
+            let value = words.next().map(String::as_str);
+            if word == "--test-threads" {
+                named.push(value);
+            }
+        } else if word.starts_with('-') && !LIBTEST_FLAGS.contains(&word.as_str()) {
+            return MANY;
+        }
+    }
+    match named.as_slice() {
+        [Some("1")] => Threads::One,
+        _ => Threads::Many,
+    }
+}
+
 /// What is known about one binary: where its baseline reached code, whether its harness is libtest, and what every package it links can start.
 #[derive(Debug, Clone, Copy)]
 pub struct Evidence<'a> {
     /// Where its baseline reached code.
     pub reach: Reach,
-    /// Whether its harness is libtest.
-    pub libtest: bool,
+    /// What runs its tests.
+    pub harness: Harness,
     /// Every package in its closure.
     pub packages: &'a [&'a PackageScan],
 }
@@ -111,8 +200,11 @@ pub fn standing(evidence: Evidence<'_>) -> Standing {
         Reach::OnItsTests => {}
         Reach::NotRecorded => why.push(Unproven::NoTouch),
     }
-    if !evidence.libtest {
-        why.push(Unproven::NotLibtest);
+    match evidence.harness {
+        Harness::Libtest(Threads::One) => {}
+        Harness::Libtest(Threads::Many) => because.push(Because::ParallelTests),
+        Harness::Doctest => why.push(Unproven::Doctest),
+        Harness::Other => why.push(Unproven::NotLibtest),
     }
     for scan in evidence.packages {
         why.extend(scan.unread.iter().map(|path| Unproven::Unread {

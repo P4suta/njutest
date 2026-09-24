@@ -1400,6 +1400,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "args",
                 "duration_ms",
                 "outcome",
                 "remembered",
@@ -1426,6 +1427,12 @@
                 "duration_ms": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 },
                 "remembered": {
                   "type": "boolean"
@@ -1487,7 +1494,8 @@
                     "arguments",
                     "environment",
                     "launcher",
-                    "delay"
+                    "delay",
+                    "confirms"
                   ],
                   "properties": {
                     "environment": {
@@ -1550,6 +1558,13 @@
                           }
                         }
                       ]
+                    },
+                    "confirms": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
                     }
                   }
                 },

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use njutest::concurrency::explore::{Delayed, Ended, chosen, delayed};
+use njutest::concurrency::explore::{CONFIRMING_ROUNDS, Ended, chosen, clean, repeats};
 
 #[test]
 fn every_site_is_chosen_when_there_are_no_more_than_asked_for() {
@@ -34,30 +34,37 @@ fn a_cap_spreads_the_sites_across_the_reach_the_same_way_every_time() {
 }
 
 #[test]
-fn a_failure_is_believed_only_when_it_repeats_and_the_undelayed_control_passes() {
-    let failed = || Ended::Failed(vec!["a_message_arrives_in_time".to_owned()]);
+fn a_failure_is_believed_only_where_every_round_repeats_it_exactly_and_passes_without_the_delay() {
+    let failed =
+        |tests: &[&str]| Ended::Failed(tests.iter().map(|one| (*one).to_owned()).collect());
+    let first = ["tests::b".to_owned(), "tests::a".to_owned()];
     assert_eq!(
-        delayed(&failed(), &[failed(), failed()], Some(&Ended::Passed)),
-        Delayed::Broke {
-            failed: vec!["a_message_arrives_in_time".to_owned()]
-        }
+        CONFIRMING_ROUNDS, 5,
+        "a test failing at any rate regardless of the delay passes as broken at most once in about a thousand sites"
     );
-    assert_eq!(
-        delayed(&failed(), &[failed(), Ended::Passed], Some(&Ended::Passed)),
-        Delayed::Undecided,
-        "a failure the same schedule does not repeat is a flake, not a schedule"
+    assert!(
+        repeats(&first, &failed(&["tests::a", "tests::b"])),
+        "the same tests, in any order"
     );
-    assert_eq!(
-        delayed(&failed(), &[failed(), failed()], Some(&failed())),
-        Delayed::Undecided,
-        "a test that fails without the delay too is broken on every schedule"
+    assert!(
+        !repeats(&first, &failed(&["tests::a"])),
+        "a different set of failing tests is another failure, not this one again"
     );
-    assert_eq!(
-        delayed(&Ended::Unsettled, &[], None),
-        Delayed::Undecided,
+    assert!(!repeats(
+        &first,
+        &failed(&["tests::a", "tests::b", "tests::c"])
+    ));
+    assert!(!repeats(&first, &Ended::Passed));
+    assert!(
+        !repeats(&first, &Ended::Unsettled),
         "a control that ran past its bound under a pause established nothing"
     );
-    assert_eq!(delayed(&Ended::Passed, &[], None), Delayed::Passed);
+    assert!(clean(&Ended::Passed));
+    assert!(
+        !clean(&failed(&["tests::a"])),
+        "a test that fails without the delay too is broken on every schedule"
+    );
+    assert!(!clean(&Ended::Unsettled));
 }
 
 fn record(
@@ -84,13 +91,14 @@ fn a_sample_is_stated_as_one_and_a_broken_schedule_is_a_defect_naming_its_guard(
                 path: "src/lib.rs".to_owned(),
                 line: 9,
                 failed: vec!["tests::a_message_arrives_in_time".to_owned()],
+                rounds: CONFIRMING_ROUNDS,
             },
         ),
         record(
             "pkg/lib/sampled",
             Exploration::Sampled {
+                asked: 4,
                 delayed: vec![1, 2],
-                undecided: Vec::new(),
             },
         ),
     ];
@@ -136,5 +144,41 @@ fn a_sample_is_stated_as_one_and_a_broken_schedule_is_a_defect_naming_its_guard(
             .iter()
             .any(|(name, _)| *name == njutest::limitation::SCHEDULE_NOT_EXPLORED),
         "a binary that was explored is not unexplored: {named:?}"
+    );
+}
+
+#[test]
+fn a_binary_whose_delays_settled_nothing_is_neither_sampled_nor_broken() {
+    use njutest::report::concurrency::{Exploration, found, limited};
+    let records = [record(
+        "pkg/lib/undecided",
+        Exploration::Undecided {
+            asked: 4,
+            delayed: vec![5, 6],
+            undecided: vec![5, 6],
+        },
+    )];
+    assert!(
+        found(&records).is_empty(),
+        "nothing broke, so nothing is a defect"
+    );
+    let limitations = limited(&records);
+    let named: Vec<(&str, &str)> = limitations
+        .iter()
+        .map(|one| (one.name.as_str(), one.detail.as_str()))
+        .collect();
+    assert!(
+        named.iter().any(
+            |(name, detail)| *name == njutest::limitation::SCHEDULE_UNDECIDED
+                && detail.ends_with("(pkg/lib/undecided)")
+        ),
+        "a binary whose delays settled nothing is not said to have passed them: {named:?}"
+    );
+    assert!(
+        named.iter().all(
+            |(name, detail)| *name != njutest::limitation::SCHEDULE_SAMPLED
+                || !detail.contains("pkg/lib/undecided")
+        ),
+        "{named:?}"
     );
 }
