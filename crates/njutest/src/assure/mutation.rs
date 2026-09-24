@@ -630,6 +630,14 @@ fn establish(
     {
         saved
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
+        if judging.subject.perturbing == Perturbing::Faults {
+            watch
+                .trace
+                .fault_rejected(crate::trace::FaultRejectedRecord {
+                    fault: mutant.display_id.to_string(),
+                    diagnostic: crate::assure::run::first_line(diagnostic),
+                });
+        }
         Disposition::Rejected {
             diagnostic: (*diagnostic).to_owned(),
         }
@@ -637,8 +645,16 @@ fn establish(
         let route = session.route(mutant);
         routing = Some(crate::report::Routing::of(&route));
         let consulted = reuse(options, &route, mutant.id.as_str());
-        if judging.subject.perturbing == Perturbing::Mutants {
-            record_route(watch, mutant, &route, &consulted);
+        match judging.subject.perturbing {
+            Perturbing::Mutants => record_route(watch, mutant, &route, &consulted),
+            Perturbing::Faults => watch.trace.fault_route(crate::trace::FaultRouteRecord {
+                fault: mutant.display_id.to_string(),
+                reaching: route
+                    .reaching()
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            }),
         }
         if let Consulted::Believed {
             disposition,

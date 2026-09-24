@@ -78,6 +78,16 @@ pub enum Payload {
         /// The record.
         fault: FaultExecRecord,
     },
+    /// Which targets reach one fault, which no reader of mutant routes ever sees.
+    FaultRoute {
+        /// The record.
+        route: FaultRouteRecord,
+    },
+    /// A fault the compiler refused, so it was never put.
+    FaultRejected {
+        /// The record.
+        rejected: FaultRejectedRecord,
+    },
     /// What the original code did on the target a fault's detection is confirmed against.
     FaultControl {
         /// The record.
@@ -145,6 +155,8 @@ impl Payload {
             Self::MutantExec { .. } => "mutant-exec",
             Self::FaultExec { .. } => "fault-exec",
             Self::FaultControl { .. } => "fault-control",
+            Self::FaultRoute { .. } => "fault-route",
+            Self::FaultRejected { .. } => "fault-rejected",
             Self::Fault { .. } => "fault",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
@@ -420,6 +432,26 @@ pub enum FaultRole {
     First,
     /// The execution that asked again after a failure, with the control between.
     Confirmation,
+}
+
+/// Which targets reach one fault.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultRouteRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// Every target whose baseline reached the site, which is empty where nothing did.
+    pub reaching: Vec<String>,
+}
+
+/// A fault the compiler refused.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultRejectedRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// The first line of what the compiler said.
+    pub diagnostic: String,
 }
 
 /// What the original code did on one target, answered for one fault's confirmation.

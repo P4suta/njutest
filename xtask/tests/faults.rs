@@ -3,7 +3,7 @@
 
 //! What the executions a recording holds of one fault say its decision can be.
 
-use xtask::faults::{Contradiction, Control, Exec, Site, supports};
+use xtask::faults::{Contradiction, Control, Evidence, Exec, Site, supports};
 
 fn site(decision: &str, by: Option<&str>) -> Site {
     Site {
@@ -27,7 +27,25 @@ fn ran(outcomes: &[(&str, &str)]) -> Vec<Exec> {
 
 fn asked(decision: &str, by: Option<&str>, outcomes: &[(&str, &str)]) -> Result<(), Contradiction> {
     let execs = ran(outcomes);
-    supports(&site(decision, by), &execs.iter().collect::<Vec<_>>(), &[])
+    supports(
+        &site(decision, by),
+        &Evidence {
+            execs: execs.iter().collect(),
+            ..Evidence::default()
+        },
+    )
+}
+
+/// What a site with nothing run says against a route reaching `reaching`, or a refusal where `reaching` is nothing.
+fn routed(decision: &str, reaching: Option<&[String]>) -> Result<(), Contradiction> {
+    supports(
+        &site(decision, None),
+        &Evidence {
+            reaching,
+            rejected: reaching.is_none(),
+            ..Evidence::default()
+        },
+    )
 }
 
 /// A failure on `t`, the control on `t` answering `passed`, and a confirmation coming to `again`.
@@ -46,8 +64,11 @@ fn confirmed(passed: bool, again: &str) -> Result<(), Contradiction> {
     };
     supports(
         &site("noticed", Some("t")),
-        &execs.iter().collect::<Vec<_>>(),
-        &[&control],
+        &Evidence {
+            execs: execs.iter().collect(),
+            controls: vec![&control],
+            ..Evidence::default()
+        },
     )
 }
 
@@ -92,7 +113,23 @@ fn every_decision_is_held_to_the_executions_it_rests_on() {
             "undecided where every run passed",
             asked("undecided", None, &[("t", "survived")]),
         ),
-        ("unreached with nothing run", asked("unreached", None, &[])),
+        (
+            "unreached with no route recorded",
+            asked("unreached", None, &[]),
+        ),
+        (
+            "not-put with no refusal recorded",
+            asked("not-put", None, &[]),
+        ),
+        (
+            "unreached where the route reached nothing",
+            routed("unreached", Some(&[])),
+        ),
+        (
+            "unreached where the route reached a target",
+            routed("unreached", Some(&["t".to_owned()])),
+        ),
+        ("not-put the compiler refused", routed("not-put", None)),
         (
             "not-put that ran",
             asked("not-put", None, &[("t", "survived")]),
@@ -132,6 +169,9 @@ fn every_decision_is_held_to_the_executions_it_rests_on() {
             "unnoticed with nothing run",
             "unnoticed beside a run that waited",
             "undecided where every run passed",
+            "unreached with no route recorded",
+            "not-put with no refusal recorded",
+            "unreached where the route reached a target",
             "not-put that ran",
             "waited where nothing was bounded",
             "a decision no fault has",

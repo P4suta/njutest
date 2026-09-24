@@ -311,6 +311,8 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::MutantExec { .. } => "mutant",
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
         Payload::FaultControl { .. } => "control",
+        Payload::FaultRoute { .. } => "route",
+        Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -354,6 +356,10 @@ pub mod payload {
         FaultExec(&'a crate::trace::FaultExecRecord),
         /// A fault confirmation's control.
         FaultControl(&'a crate::trace::FaultControlRecord),
+        /// A fault's route.
+        FaultRoute(&'a crate::trace::FaultRouteRecord),
+        /// A fault the compiler refused.
+        FaultRejected(&'a crate::trace::FaultRejectedRecord),
         /// A fault site's decision.
         Fault(&'a crate::report::faults::FaultRecord),
         /// A probe execution.
@@ -389,6 +395,8 @@ pub mod payload {
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
             Payload::FaultExec { fault } => Ref::FaultExec(fault),
             Payload::FaultControl { control } => Ref::FaultControl(control),
+            Payload::FaultRoute { route } => Ref::FaultRoute(route),
+            Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
             Payload::Fault { fault } => Ref::Fault(fault),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
@@ -581,6 +589,18 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 outcome: "killed".to_owned(),
                 duration_ms: 5,
                 alone: false,
+            },
+        },
+        Payload::FaultRoute {
+            route: crate::trace::FaultRouteRecord {
+                fault: "abcdef".to_owned(),
+                reaching: vec!["demo/test/calls".to_owned()],
+            },
+        },
+        Payload::FaultRejected {
+            rejected: crate::trace::FaultRejectedRecord {
+                fault: "abcdef".to_owned(),
+                diagnostic: "error[E0308]: mismatched types".to_owned(),
             },
         },
         Payload::FaultControl {

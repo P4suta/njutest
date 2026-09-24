@@ -1889,17 +1889,7 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
                 "the report's record of this fault is not the one the recording holds".to_owned(),
             );
         }
-        let execs: Vec<&crate::faults::Exec> = faulted
-            .execs
-            .iter()
-            .filter(|exec| exec.fault == site.fault)
-            .collect();
-        let controls: Vec<&crate::faults::Control> = faulted
-            .controls
-            .iter()
-            .filter(|control| control.fault == site.fault)
-            .collect();
-        if let Err(why) = crate::faults::supports(site, &execs, &controls) {
+        if let Err(why) = crate::faults::supports(site, &faulted.evidence(&site.fault)) {
             notes.violated(&site.fault, why.to_string());
         }
     }

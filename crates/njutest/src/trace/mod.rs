@@ -21,9 +21,10 @@ use sha2::{Digest as _, Sha256};
 pub use event::SCHEMA;
 pub use event::{
     ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord,
-    FaultControlRecord, FaultExecRecord, FaultRole, MutantExecRecord, NoteRecord, Payload,
-    PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord, RunAccounting, RunRecord,
-    SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
+    FaultControlRecord, FaultExecRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord,
+    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
+    RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord,
+    WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -385,6 +386,16 @@ impl Recorder {
     /// Records one fault run against one target.
     pub fn fault_exec(&self, record: FaultExecRecord) {
         self.emit(Payload::FaultExec { fault: record });
+    }
+
+    /// Records which targets reach one fault.
+    pub fn fault_route(&self, record: FaultRouteRecord) {
+        self.emit(Payload::FaultRoute { route: record });
+    }
+
+    /// Records a fault the compiler refused.
+    pub fn fault_rejected(&self, record: FaultRejectedRecord) {
+        self.emit(Payload::FaultRejected { rejected: record });
     }
 
     /// Records what the original code did on the target a fault's detection is confirmed against.

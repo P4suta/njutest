@@ -357,6 +357,40 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "route"],
+          "properties": {
+            "type": { "const": "fault-route" },
+            "route": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "reaching"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "reaching": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "rejected"],
+          "properties": {
+            "type": { "const": "fault-rejected" },
+            "rejected": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fault", "diagnostic"],
+              "properties": {
+                "fault": { "type": "string", "minLength": 1 },
+                "diagnostic": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "control"],
           "properties": {
             "type": { "const": "fault-control" },

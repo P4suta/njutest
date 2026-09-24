@@ -47,6 +47,10 @@ pub struct Faulted {
     pub execs: Vec<Exec>,
     /// Every control a confirmation asked, in recording order.
     pub controls: Vec<Control>,
+    /// Which targets reach each fault the run routed, by fault.
+    pub routes: Vec<(String, Vec<String>)>,
+    /// Every fault the compiler refused.
+    pub rejected: Vec<String>,
     /// Every site decision, in recording order.
     pub sites: Vec<Site>,
 }
@@ -58,6 +62,30 @@ pub struct Faulted {
 pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
     let mut faulted = Faulted::default();
     for event in crate::route::events(recorded)? {
+        let kind = event.get("type").and_then(Value::as_str);
+        if kind == Some("fault-route")
+            && let Some(record) = event.get("route")
+        {
+            let reaching = record
+                .get("reaching")
+                .and_then(Value::as_array)
+                .map(|targets| {
+                    targets
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            faulted.routes.push((text(record, "fault"), reaching));
+            continue;
+        }
+        if kind == Some("fault-rejected")
+            && let Some(record) = event.get("rejected")
+        {
+            faulted.rejected.push(text(record, "fault"));
+            continue;
+        }
         if event.get("type").and_then(Value::as_str) == Some("fault-control")
             && let Some(record) = event.get("control")
         {
@@ -96,6 +124,40 @@ pub fn site(record: &Value) -> Site {
             .get("by")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+    }
+}
+
+/// Everything a recording holds about one fault.
+#[derive(Debug, Clone, Default)]
+pub struct Evidence<'a> {
+    /// Every execution of it.
+    pub execs: Vec<&'a Exec>,
+    /// Every control its confirmations asked.
+    pub controls: Vec<&'a Control>,
+    /// The targets that reach it, where the run routed it.
+    pub reaching: Option<&'a [String]>,
+    /// Whether the compiler refused it.
+    pub rejected: bool,
+}
+
+impl Faulted {
+    /// Everything this recording holds about `fault`.
+    #[must_use]
+    pub fn evidence(&self, fault: &str) -> Evidence<'_> {
+        Evidence {
+            execs: self.execs.iter().filter(|one| one.fault == fault).collect(),
+            controls: self
+                .controls
+                .iter()
+                .filter(|one| one.fault == fault)
+                .collect(),
+            reaching: self
+                .routes
+                .iter()
+                .find(|(routed, _)| routed == fault)
+                .map(|(_, reaching)| reaching.as_slice()),
+            rejected: self.rejected.iter().any(|one| one == fault),
+        }
     }
 }
 
@@ -153,6 +215,14 @@ pub enum Contradiction {
         "the run says a bound expired on it, and no execution of it the recording holds was stopped by one"
     )]
     WaitedWithoutBound,
+    /// A fault said to be reached by nothing whose route the recording does not hold as reaching nothing.
+    #[error(
+        "the run says nothing reached it, and the recording holds no route of it that reached nothing"
+    )]
+    UnreachedWithoutRoute,
+    /// A fault said not to have been put that the recording holds no refusal of.
+    #[error("the run says the compiler refused it, and the recording holds no refusal of it")]
+    NotPutWithoutRefusal,
     /// A decision no fault can come to.
     #[error("{decision:?} is no decision a fault can come to")]
     Unknown {
@@ -165,7 +235,8 @@ pub enum Contradiction {
 ///
 /// # Errors
 /// The [`Contradiction`] the executions hold.
-pub fn supports(site: &Site, execs: &[&Exec], controls: &[&Control]) -> Result<(), Contradiction> {
+pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradiction> {
+    let (execs, controls) = (evidence.execs.as_slice(), evidence.controls.as_slice());
     let ran = !execs.is_empty();
     let failed = execs.iter().find(|one| one.outcome != "survived");
     let bounded = execs
@@ -210,6 +281,14 @@ pub fn supports(site: &Site, execs: &[&Exec], controls: &[&Control]) -> Result<(
             decision: site.decision.clone(),
             runs: execs.len(),
         }),
+        "unreached"
+            if evidence
+                .reaching
+                .is_none_or(|reaching| !reaching.is_empty()) =>
+        {
+            Err(Contradiction::UnreachedWithoutRoute)
+        }
+        "not-put" if !evidence.rejected => Err(Contradiction::NotPutWithoutRefusal),
         "waited" if !bounded => Err(Contradiction::WaitedWithoutBound),
         "unreached" | "not-put" | "waited" | "undecided" => Ok(()),
         other => Err(Contradiction::Unknown {
