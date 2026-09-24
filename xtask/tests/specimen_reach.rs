@@ -15,18 +15,16 @@ fn only_a_sentinel_completes_a_specimen() {
         }
         let text = std::fs::read_to_string(path).expect("a source file");
         if text.contains("specimen::completed(") {
-            callers.push(
-                path.strip_prefix(&root)
-                    .expect("under src")
-                    .display()
-                    .to_string(),
-            );
+            callers.push(path.strip_prefix(&root).expect("under src").to_path_buf());
         }
     }
     callers.sort();
     assert_eq!(
         callers,
-        ["engineaudit/sentinel.rs", "proofaudit/sentinel.rs"],
+        [
+            std::path::Path::new("engineaudit").join("sentinel.rs"),
+            std::path::Path::new("proofaudit").join("sentinel.rs"),
+        ],
         "a reader that completed its input before checking it would pass the schema law on anything"
     );
 }
