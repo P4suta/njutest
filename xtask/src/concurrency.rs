@@ -83,6 +83,12 @@ pub enum ContradictionError {
         /// The reasons for concurrency.
         because: BTreeSet<&'static str>,
     },
+    /// A proven binary that names a reason it is not.
+    #[error("it is reported single-threaded, and it names reasons in `{list}`")]
+    ProvenWithReasons {
+        /// The list that should not be there.
+        list: &'static str,
+    },
     /// A reason no run gives.
     #[error("{kind:?} is no reason a run gives")]
     Reason {
@@ -210,8 +216,11 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
     };
     match state.as_str() {
         "single-threaded" => {
-            if standing.get("because").is_some() || standing.get("why").is_some() {
-                Err(ContradictionError::Unknown { state })
+            if let Some(list) = ["because", "why"]
+                .into_iter()
+                .find(|list| standing.get(*list).is_some())
+            {
+                Err(ContradictionError::ProvenWithReasons { list })
             } else if derived.because.is_empty() && derived.why.is_empty() {
                 Ok(())
             } else {
