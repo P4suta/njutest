@@ -224,6 +224,39 @@ On a project that leaves it at the default the layer proves almost nothing, and 
 This removes findings and never executions.
 Every test that reaches the mutation has already run by the time the layer does, and turning the layer off leaves the finding in place.
 
+### A run stands on its sentinels
+
+A layer that removes executions is believed only after it has been seen to remove what it must.
+Before the baseline, every run writes a small crate the engine ships into its own scratch directory, never into the tree under test, prepares it with the switches that decide this run's routes, and asks the engine how it routes the mutants planted there, running none of them.
+Each layer is planted as a pair made by one rule: a mutant it must remove, and a mutant of the same rule it must leave to a named target, whose test produces exactly the evidence the layer reads.
+A layer that went blind to that evidence removes the second as well, which is the unsound direction — a survivor reported where a test would have killed, or a change reported as unnoticed that was noticed — and a layer that stopped removing keeps the first; both end the run.
+A pair is planted for every form of evidence a proof reads, derived from the closed sets rather than listed: one for the reach measurement, one for the branch proof, one for each question a probe asks of a return replacement, and one for the guard on an inert comparison, so a proof or a question added without a pair does not compile.
+
+| Layer | Must remove | Must leave, and to whom |
+| --- | --- | --- |
+| `reach` | a function no test calls, as `unreached` | a function the library's own unit test calls, to `lib` |
+| `branch-never-taken` | a comparison guarding a body the test never enters | the same comparison where the test enters the body, to the tests |
+| `never-infected:is-default` | `return-default` where the value is already the default | the same rule where it is not |
+| `never-infected:is-ok-default` | `return-ok-default` over `Ok` of the default | the same rule over `Ok` of anything else |
+| `never-infected:is-some-default` | `return-some-default` over `Some` of the default | the same rule over `Some` of anything else |
+| `never-infected:is-true` | `return-true` where the value is already `true` | the same rule where it is `false` |
+| `never-infected:inert-comparison` | `le-to-lt` where the two sides are never equal | the same rule where the test makes them equal |
+
+The planted crate is built by the compiler the tree under test resolves to, named by path: the run's located toolchain is handed to the sentinels, and its sysroot's own `cargo`, `rustc` (as `RUSTC`) and `rustdoc` (as `RUSTDOC`) build the planted crate, so no toolchain file, rustup override or version-manager shim in the scratch directory decides which compiler answers.
+That holds by construction where the run's `rustc` names its sysroot, which rustup's and a system toolchain's both do; where it names none, the planted crate is built by the `cargo` and `rustc` the run located on `PATH`, which a directory-sensitive shim could answer for differently.
+Either way a planted session that reports another `rustc` stops the run with `RM5008` rather than vouching for a layer with another compiler's answer.
+The caller's harness arguments are not carried over, because they name and select the caller's tests and would select the planted ones out of the measurement; what a layer reads is attributed by test thread, which no harness argument changes.
+
+Every answer is a `sentinel` event of the trace.
+The first planted mutant a layer did not route as it must ends the run in `ERROR` with `NJ5009`, naming the layer, the mutant, what was due, and what the engine did: nothing that layer would remove from the run is believed, and a run that believed it would report a survivor as never reached or never run a test that would have killed it.
+No setting skips the sentinels.
+A run answered whole from the store runs nothing and removes nothing, so it plants nothing either.
+They cost one more prepared session per configured build — a copy, a build, the instrumented build, and one run of a three-test suite — and no mutant execution.
+
+They do not yet cover everything that removes work.
+`[mutation] equivalence` is not sentineled: its premise is two builds per mutation, and planting for it would add those builds to every run rather than to the runs that asked for the layer.
+Neither is routing by coverage alone, which a run uses only when the guards recorded nothing; the sentinels prepare with the run's own switches, and a run whose guards measure routes by them.
+
 ## Mutation confirmation
 
 A mutant is `killed` only after:
@@ -388,6 +421,41 @@ The exception is `accepted`, which is a fact about a reviewer rather than about 
 No score crosses a merge at all: two ratios over different denominators average into a number no run observed.
 
 Every run's identity carries its shard, so a part never reads back the whole's stored answer and a whole never reads back a part's.
+
+## What a specification says
+
+`njutest spec [SUBJECT]` reads one stored run and lists, for every item the subject names, each change the run made inside it and where that change stands.
+It runs nothing and establishes nothing: every line is a projection of the report.
+
+| Section | What it means | The decisions it holds |
+| --- | --- | --- |
+| what is pinned | every build noticed the change or found it to be the same program, and at least one noticed it: a target's tests failed on it, the compiler refused it, or the model checker found an input that tells the two apart | `killed`, `compile-rejected`, `model-noticed` |
+| what is left free | some build noticed nothing of a change that makes a different program there, and every build established something | `survived`, `unreached` |
+| what is the same program | every build found the change to be the same program | `equivalent`, `model-proved` |
+| what the run could not tell | some build established nothing about it | `step-limit-reached`, `waited`, `unconfirmed`, `errored` |
+
+A change is listed under the section its builds decided together, which is the same lattice minimum the verdict reads, so a change one build noticed and another did not is free, and a change that waited in any build is in the last section.
+What each build established is on the lines beneath it.
+An attempt that established nothing is in neither of the first two sections: it is not a chance the tests were given and did not take.
+
+Each line says only what the run established.
+
+- A kill names the target that noticed, the targets asked before it with what each answered, and how many targets reach the change and were never asked.
+  It never says *only*: the mutation phase stops at the first target that notices, so that target is the first in route order and not a distinguished one ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
+- A free change a proof removed every target of names the proof and says to check the proof rather than to write a test ([ADR 0004](adr/0004-proof-layers-not-budgets.md)).
+- A change nothing executes says so, which is a different gap from one the tests ran and did not notice.
+- An answer read back from an earlier run names that run and claims nothing about who else it asked, because the route beside it is this run's and the answer is the earlier one's.
+  An answer inherited from a checkpoint without a route says the record does not say what ran it.
+- A change a reviewer accepted says so.
+- A change left free that rests on a target whose baseline reach moved on a control says that target's reach is not a measurement: the route kept the target off the change, and ADR 0025 found that what the target reaches is not a function of it.
+  The rule is `report::drift::rests_on`, the one the `unstable-baseline` finding counts with, so the page and the finding cannot disagree about which changes rest on a move.
+
+A subject is a file, written whole or by its last components (`src/lib.rs`, `lib.rs`); an item as the source names it (`retry`, `Baseline::retry`), which also names every item inside it; or `PATH:ITEM`.
+An item is matched segment by segment, so `retry` does not name `retry_all`, and every item that matches is listed under its own path rather than merged with the others.
+A subject the run made no change in is refused with `NJ6006`, naming the run and how much of the workspace it asked about, rather than drawn as an item with nothing pinned and nothing free.
+A part's report is refused as every command that needs a complete report refuses it: it holds a slice of the catalog, so what it says an item pins and leaves free would not be the item's.
+Merge the parts first.
+The command exits 0 whatever the specification says, because it describes and does not judge.
 
 ## DEFECT, INSUFFICIENT, and ERROR
 

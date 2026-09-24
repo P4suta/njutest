@@ -193,6 +193,7 @@ fn populated_draft(vary: &dyn Fn(&mut BuildReport)) -> BuildReport {
         packages_with_unsafe: 1,
         executed: true,
     };
+    njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
     vary(&mut source);
     source

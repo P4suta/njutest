@@ -77,6 +77,8 @@ What changes is that it stops being the thing a person is shown by default.
 **A stale excerpt is refused rather than drawn.** The excerpt is read from the file now and the run recorded the digest of the file then.
 When they differ,
 the diagnostic says the file has changed rather than drawing a line that was never the one the run measured — the same reason a locator names a mutation by where it is rather than by a digest of the bytes around it.
+Until 2026-09-24 the run recorded no such digest, and what stood in for the comparison was whether the line still held the text the run replaced, so an edited line that still held a `>` was drawn as the one measured.
+The report now records each file's digest (`parts[].sources`), and a measured line is a type only a file matching it can produce.
 
 **The cost is a layer.** Three modules that format a report become one that builds a value and several that draw it, and until the last of them moves, the old path and the new one both exist.
 The lint gate that refuses a second account of the layout is the model for how that ends: the old formatter goes when nothing calls it, and a test says nothing does.

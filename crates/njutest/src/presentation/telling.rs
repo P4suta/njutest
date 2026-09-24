@@ -102,32 +102,22 @@ fn blind(report: &Conclusion, sources: &Sources) -> Vec<Place> {
     places
 }
 
-/// One place, with the lines that hold its blind spots and a line of room on each side.
+/// One place, with the lines that hold its blind spots and a line of room on each side, as the run measured them.
+///
+/// Whether the lines are drawn is the file's standing against the digest the run recorded, never a guess from what a line holds: a file edited after the run is `Edited` whatever its lines still say.
 fn drawn(path: &str, item: &str, spots: Vec<Spot>, sources: &Sources) -> Place {
     let first = spots.iter().map(|one| one.line).min().unwrap_or(1);
     let last = spots.iter().map(|one| one.line).max().unwrap_or(1);
-    let excerpt = sources.span(path, first.saturating_sub(1).max(1), last.saturating_add(1));
-    let moved = spots.iter().any(|spot| {
-        !spot.was.is_empty()
-            && !excerpt
-                .iter()
-                .any(|(line, text)| *line == spot.line && text.contains(&spot.was))
-    });
-    let instead = if excerpt.is_empty() {
-        Some(super::Missing::Unreadable)
-    } else if moved {
-        Some(super::Missing::Moved)
-    } else {
-        None
-    };
+    let (excerpt, instead) =
+        match sources.span(path, first.saturating_sub(1).max(1), last.saturating_add(1)) {
+            Ok(lines) if lines.iter().any(|(line, _text)| *line == last) => (lines, None),
+            Ok(_short) => (Vec::new(), Some(super::Missing::NoSuchLine)),
+            Err(missing) => (Vec::new(), Some(missing)),
+        };
     Place {
         item: item.to_owned(),
         path: path.to_owned(),
-        excerpt: if instead.is_some() {
-            Vec::new()
-        } else {
-            excerpt
-        },
+        excerpt,
         instead,
         spots,
     }
@@ -199,7 +189,7 @@ fn beyond(detail: &str, mutant: Option<&ProjectedMutant>) -> String {
 
 /// Where a mutation is, and what the run did to the line it is on.
 fn site(mutant: &ProjectedMutant, sources: &Sources) -> Site {
-    let excerpt = sources.at(mutant.path(), mutant.position().line, mutant.original());
+    let excerpt = sources.at(mutant.path(), mutant.position().line);
     Site {
         path: mutant.path().to_owned(),
         line: mutant.position().line,

@@ -17,4 +17,5 @@ pub mod route;
 pub mod run;
 pub mod sanitize;
 pub mod schedule;
+pub mod sentinel;
 pub mod wire;

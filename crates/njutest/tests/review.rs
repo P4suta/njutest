@@ -50,7 +50,10 @@ fn told(spots: Vec<Spot>) -> Told {
         places: vec![Place {
             item: "sign".to_owned(),
             path: "src/lib.rs".to_owned(),
-            excerpt: vec![(8, "    if n > 0 {".to_owned())],
+            excerpt: vec![(
+                8,
+                njutest::presentation::MeasuredLine::specimen("    if n > 0 {"),
+            )],
             instead: None,
             spots,
         }],
