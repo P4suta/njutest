@@ -15,6 +15,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
+autotests = false
 
 [package.metadata.njutest]
 surface = "incidental"
@@ -63,3 +64,123 @@ rust-mutants-cli = { path = ".", features = ["testkit"] }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/suite.rs"
+
+[[test]]
+name = "toolchain_annotated"
+path = "tests/toolchain_annotated.rs"
+
+[[test]]
+name = "toolchain_build_script"
+path = "tests/toolchain_build_script.rs"
+
+[[test]]
+name = "toolchain_cache"
+path = "tests/toolchain_cache.rs"
+
+[[test]]
+name = "toolchain_changed"
+path = "tests/toolchain_changed.rs"
+
+[[test]]
+name = "toolchain_cli_contract"
+path = "tests/toolchain_cli_contract.rs"
+
+[[test]]
+name = "toolchain_crlf"
+path = "tests/toolchain_crlf.rs"
+
+[[test]]
+name = "toolchain_custom_harness"
+path = "tests/toolchain_custom_harness.rs"
+
+[[test]]
+name = "toolchain_diagnostics"
+path = "tests/toolchain_diagnostics.rs"
+
+[[test]]
+name = "toolchain_differential"
+path = "tests/toolchain_differential.rs"
+
+[[test]]
+name = "toolchain_docs"
+path = "tests/toolchain_docs.rs"
+
+[[test]]
+name = "toolchain_doctest"
+path = "tests/toolchain_doctest.rs"
+
+[[test]]
+name = "toolchain_errors"
+path = "tests/toolchain_errors.rs"
+
+[[test]]
+name = "toolchain_explain"
+path = "tests/toolchain_explain.rs"
+
+[[test]]
+name = "toolchain_fates"
+path = "tests/toolchain_fates.rs"
+
+[[test]]
+name = "toolchain_hang"
+path = "tests/toolchain_hang.rs"
+
+[[test]]
+name = "toolchain_interrupt"
+path = "tests/toolchain_interrupt.rs"
+
+[[test]]
+name = "toolchain_outside"
+path = "tests/toolchain_outside.rs"
+
+[[test]]
+name = "toolchain_outside_dep"
+path = "tests/toolchain_outside_dep.rs"
+
+[[test]]
+name = "toolchain_panics"
+path = "tests/toolchain_panics.rs"
+
+[[test]]
+name = "toolchain_projections"
+path = "tests/toolchain_projections.rs"
+
+[[test]]
+name = "toolchain_reports"
+path = "tests/toolchain_reports.rs"
+
+[[test]]
+name = "toolchain_run_filter"
+path = "tests/toolchain_run_filter.rs"
+
+[[test]]
+name = "toolchain_run_progress"
+path = "tests/toolchain_run_progress.rs"
+
+[[test]]
+name = "toolchain_run_report"
+path = "tests/toolchain_run_report.rs"
+
+[[test]]
+name = "toolchain_run_stream"
+path = "tests/toolchain_run_stream.rs"
+
+[[test]]
+name = "toolchain_targets"
+path = "tests/toolchain_targets.rs"
+
+[[test]]
+name = "toolchain_trace"
+path = "tests/toolchain_trace.rs"
+
+[[test]]
+name = "toolchain_verify"
+path = "tests/toolchain_verify.rs"
+
+[[test]]
+name = "toolchain_work"
+path = "tests/toolchain_work.rs"

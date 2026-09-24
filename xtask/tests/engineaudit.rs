@@ -8,7 +8,6 @@
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking and reads as a table"
 )]
-#![recursion_limit = "256"]
 
 use std::path::Path;
 

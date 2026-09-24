@@ -50,7 +50,7 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 | `dependency-review.yml` | what a pull request adds to the dependency graph, refused at moderate severity in any scope | on a pull request |
 | `scorecard.yml` | the OpenSSF Scorecard of this repository, published | every push to `main`, and weekly |
 
-The `book` job builds `docs/` with mdbook, which refuses a summary that names a page the repository does not hold; `cargo test -p xtask --test docs` refuses the other direction, a page the summary does not name.
+The `book` job builds `docs/` with mdbook, which refuses a summary that names a page the repository does not hold; `cargo test -p xtask --test suite docs::` refuses the other direction, a page the summary does not name.
 A page that neither side notices is one a reader of the book cannot reach.
 
 `codeql.yml`, `dependency-review.yml`, and `scorecard.yml` answer about the supply chain rather than about this code: what a query finds in it, what a change adds to the graph below it, and what the posture of the repository looks like from outside.
