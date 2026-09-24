@@ -6539,6 +6539,37 @@ pub fn whole_catalog(drift: &[drift::Drift], rows: &[MutantRecord]) -> WholeCata
     }
 }
 
+/// Every unmatched-acceptance finding among `findings` whose subject names exactly one of `rows`, with the mutation it names: the catalog resolves it, so calling it unmatched contradicts the rows.
+///
+/// Only the whole catalog decides it, so a run measured whole asks it of its own rows and a merge asks it of every part's rows together; one shard's rows could miss the mutation the acceptance names.
+#[must_use]
+pub fn acceptances_the_catalog_resolves(
+    findings: &[Finding],
+    rows: &[MutantRecord],
+) -> Vec<(String, String)> {
+    findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::UnmatchedAcceptance)
+        .filter_map(|finding| {
+            let subject = finding.subject.as_str();
+            let valid = (rust_mutants::id::MIN_PREFIX_LENGTH..=rust_mutants::id::ID_HEX_LENGTH)
+                .contains(&subject.len())
+                && subject
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            if !valid {
+                return None;
+            }
+            let mut matches = rows.iter().filter(|row| row.id.starts_with(subject));
+            let mutant = matches.next()?;
+            matches
+                .next()
+                .is_none()
+                .then(|| (finding.subject.clone(), mutant.id.clone()))
+        })
+        .collect()
+}
+
 /// Whether a build was measured in parts, which is when what only the whole catalog decides is raised over the combined records rather than by a part.
 fn sharded(build: &BuildEvidence) -> bool {
     build

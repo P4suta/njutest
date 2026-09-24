@@ -845,3 +845,33 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
     );
     assert_eq!(whole.verdict(), Verdict::Insufficient);
 }
+
+#[test]
+fn a_merge_refuses_an_acceptance_called_unmatched_that_its_catalog_resolves() {
+    let claimed = Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "bbbbbbbb",
+        "no mutant matches this acceptance",
+    );
+    let one = part_stated(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &|_| {},
+        &|source| source.findings.push(claimed.clone()),
+    );
+    let two = part_stated(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &|_| {},
+        &|source| source.findings.push(claimed.clone()),
+    );
+    let refused = refused_as(&[one, two]);
+    assert!(
+        refused.to_string().contains("bbbbbbbb"),
+        "the acceptance names exactly one mutant of the whole catalog, the one the second part \
+         holds, so a whole run would refuse to call it unmatched, and a merge of its parts \
+         does too: {refused}"
+    );
+}
