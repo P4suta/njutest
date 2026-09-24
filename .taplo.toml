@@ -16,7 +16,7 @@ include = [
   "fuzz/**/*.toml",
   "xtask/**/*.toml",
 ]
-exclude = ["target/**", "fixtures/**/target/**"]
+exclude = ["**/target/**"]
 
 [formatting]
 align_entries = false
