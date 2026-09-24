@@ -808,8 +808,17 @@ fn repaired(
     };
     let moved = crate::drift::standings(touched);
     let paired = paired(recording, repairs, (routing, touched), &mut notes);
-    for repair in repairs {
-        one_repair(recording, (repair, &moved, routing), &paired, &mut notes);
+    for (at, repair) in repairs.iter().enumerate() {
+        let before = repairs
+            .get(..at)
+            .and_then(|earlier| earlier.iter().rev().find(|one| one.mutant == repair.mutant))
+            .map(|earlier| earlier.now.as_str());
+        one_repair(
+            recording,
+            (repair, before, &moved, routing),
+            &paired,
+            &mut notes,
+        );
     }
     for row in &recording.mutants {
         if let Some(last) = repairs
@@ -898,9 +907,9 @@ fn paired<'a>(
     pairs
 }
 
-/// Whether a repair's disposition rested on its target: the target moved, the route did not put it, and what it was is what the route made it.
+/// Whether a repair's disposition rested on its target: the target moved, the route did not put it, and what it was is what the last earlier repair of it made it, or its route where none did.
 fn rested(
-    repair: &crate::repair::Repair,
+    (repair, before): (&crate::repair::Repair, Option<&str>),
     (moved, routing): (
         &BTreeMap<String, crate::drift::Standing>,
         &crate::route::Routing,
@@ -927,16 +936,18 @@ fn rested(
             ),
         );
     }
-    let expected_was = if route.is_some_and(|route| route.granularity == UNREACHED) {
-        UNREACHED
-    } else {
-        SURVIVED
+    let (expected_was, by) = match before {
+        Some(now) => (now, "the repair of it before this one made it"),
+        None if route.is_some_and(|route| route.granularity == UNREACHED) => {
+            (UNREACHED, "its route makes it")
+        }
+        None => (SURVIVED, "its route makes it"),
     };
     if repair.was != expected_was {
         notes.violated(
             subject,
             format!(
-                "the repair says it was {}, and its route makes it {expected_was}",
+                "the repair says it was {}, and {by} {expected_was}",
                 repair.was
             ),
         );
@@ -946,8 +957,9 @@ fn rested(
 /// One repair held to what its target, route, last execution and touch record decide.
 fn one_repair(
     recording: &Recording<'_>,
-    (repair, moved, routing): (
+    (repair, before, moved, routing): (
         &crate::repair::Repair,
+        Option<&str>,
         &BTreeMap<String, crate::drift::Standing>,
         &crate::route::Routing,
     ),
@@ -955,7 +967,7 @@ fn one_repair(
     notes: &mut Notes<'_>,
 ) {
     let subject = &repair.mutant;
-    rested(repair, (moved, routing), notes);
+    rested((repair, before), (moved, routing), notes);
     let Some((last, touch)) = paired
         .iter()
         .rev()
