@@ -201,12 +201,7 @@ where
         Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
         Task::Sweep { budget_seconds } => {
-            return match sweep_report(process, Duration::from_secs(budget_seconds)) {
-                Ok(done) => after_output(writeln!(stdout, "{done}"), ExitCode::SUCCESS),
-                Err(failure) => {
-                    after_output(writeln!(stderr, "sweep: {failure}"), ExitCode::FAILURE)
-                }
-            };
+            return sweep(process, Duration::from_secs(budget_seconds), stdout, stderr);
         }
     };
     let root = gates::workspace_root();
@@ -327,7 +322,26 @@ fn audit_run(
     }
 }
 
-/// Holds `lane` while `command` runs, and answers with the command's own exit status.
+/// Sweeps within `budget` and says what it did, failing where it left something it meant to take.
+fn sweep(
+    process: &Process<'_>,
+    budget: Duration,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    match sweep_report(process, budget) {
+        Ok(done) => after_output(
+            writeln!(stdout, "{done}"),
+            if done.fell_short() {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            },
+        ),
+        Err(failure) => after_output(writeln!(stderr, "sweep: {failure}"), ExitCode::FAILURE),
+    }
+}
+
 /// Sweeps this repository's idle build output and temporary directories.
 fn sweep_report(
     process: &Process<'_>,
@@ -347,6 +361,7 @@ fn sweep_report(
     sweep::sweep(&request)
 }
 
+/// Holds `lane` while `command` runs, and answers with the command's own exit status.
 fn slot(
     lane: &str,
     command: &[OsString],

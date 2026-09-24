@@ -264,6 +264,11 @@ Switch the applications that start the sessions on under System Settings → Pri
 Every worktree builds into its own `target/`, and a day of sessions leaves dozens of them, each tens of gigabytes; the disk filled on 2026-09-24 and every session stopped at once.
 `cargo xtask sweep` takes back what nobody has written for six hours (thirty minutes when less than 15% of the disk is free): the `target/` of any worktree of this repository, the per-worktree gate trees the gate made before it had one, and the directories this repository's tests and gates leave in `TMPDIR`.
 It moves each into a `.njutest-trash` directory on the same volume, which takes it out of use at once, and then removes files until its budget runs out; what is left waits for the next sweep.
+Idle is not unused, because a test binary running out of `target/` writes nothing there, so the sweep also asks the operating system (`lsof`) what every process has as its working directory, runs, or holds open, and leaves any worktree or directory under which something is held; where nothing can say, it takes nothing.
+A directory it takes needs that answer as a value, so there is no path from idleness alone to a removal.
+The `TMPDIR` names it takes are only those this repository's tests, devkit and gates make (`xtask::sweep::OURS`), and a test holds that no crate the product ships makes any of them, because njutest run on somebody's own project makes directories of its own there.
+A directory that will not move is named and the rest are still taken, and the command's status says it left something.
+The trash of a worktree's `target/` is `.njutest-trash` inside that worktree, which is ignored, rather than in the directory that holds the worktrees.
 Nobody has to remember it: the push gate sweeps for thirty seconds when it ends, and every merge sweeps for five.
 Source is never taken, and neither is a directory some other program made.
 

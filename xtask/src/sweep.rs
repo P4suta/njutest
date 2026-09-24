@@ -25,8 +25,16 @@ pub const AFTER_A_PUSH: Duration = Duration::from_secs(30);
 /// The name of the directory taken things wait in, one per volume, until they are removed.
 pub const TRASH: &str = ".njutest-trash";
 
-/// The prefixes of the temporary directories this repository's tests and gates make.
-const OURS: [&str; 2] = ["njutest-", "rust-mutants-"];
+/// The prefixes of the temporary directories only this repository's tests, devkit and gates make; the product makes others for somebody's own runs, and those are not this repository's to take.
+pub const OURS: [&str; 7] = [
+    "njutest-commands-",
+    "njutest-devkit-",
+    "njutest-fake-cargo-",
+    "njutest-fixture-",
+    "njutest-pre-push-",
+    "njutest-repo-",
+    "rust-mutants-stored-",
+];
 
 /// The prefix of the per-worktree gate trees the gate made before it had one tree per repository.
 const GATE_TREE: &str = "njutest-pre-push-";
@@ -51,6 +59,12 @@ pub struct Request<'a> {
 pub struct Swept {
     /// Every directory it took.
     pub taken: Vec<PathBuf>,
+    /// Every idle directory it left because a process works in it or holds something under it.
+    pub in_use: Vec<PathBuf>,
+    /// Every directory it meant to take and could not, with what the system said.
+    pub failed: Vec<(PathBuf, String)>,
+    /// Whether nothing could say which directories are in use, so nothing idle was taken.
+    pub blind: bool,
     /// How many files and directories it removed.
     pub removed: u64,
     /// Whether taken things are still waiting in a trash directory because the budget ran out.
@@ -75,7 +89,27 @@ impl std::fmt::Display for Swept {
                 "; the budget ran out and the rest waits in {TRASH} for the next sweep"
             )?;
         }
+        if self.blind {
+            write!(
+                formatter,
+                "; nothing could say which directories a process is using, so nothing idle was taken"
+            )?;
+        }
+        for kept in &self.in_use {
+            write!(formatter, "\n  kept, in use: {}", kept.display())?;
+        }
+        for (path, said) in &self.failed {
+            write!(formatter, "\n  could not take {}: {said}", path.display())?;
+        }
         Ok(())
+    }
+}
+
+impl Swept {
+    /// Whether it left something it meant to take, which the command's status says.
+    #[must_use]
+    pub const fn fell_short(&self) -> bool {
+        !self.failed.is_empty()
     }
 }
 
@@ -119,29 +153,49 @@ pub fn sweep(request: &Request<'_>) -> Result<Swept, SweepError> {
     };
     let mut trashes: Vec<PathBuf> = vec![request.temp.join(TRASH)];
     let mut forgotten = false;
+    let mut idle_ones: Vec<(PathBuf, PathBuf, PathBuf)> = Vec::new();
     for worktree in worktrees(request)? {
-        let (candidate, trash) = match gate_directory(&worktree, request.temp) {
-            Some(gate) => (gate, request.temp.join(TRASH)),
-            None => {
-                let Some(parent) = worktree.parent() else {
-                    continue;
-                };
-                (worktree.join("target"), parent.join(TRASH))
-            }
+        let (candidate, holder, trash) = match gate_directory(&worktree, request.temp) {
+            Some(gate) => (gate.clone(), gate, request.temp.join(TRASH)),
+            None => (
+                worktree.join("target"),
+                worktree.clone(),
+                worktree.join(TRASH),
+            ),
         };
         if unwritten_for(&candidate, request.now).is_some_and(|quiet| quiet >= idle) {
-            take(&candidate, &trash, request.now)?;
-            forgotten |= candidate.starts_with(request.temp);
-            swept.taken.push(candidate);
-            if !trashes.contains(&trash) {
-                trashes.push(trash);
-            }
+            idle_ones.push((candidate, holder, trash));
         }
     }
     for leftover in ours(request.temp)? {
-        if unwritten_for(&leftover, request.now).is_some_and(|quiet| quiet >= idle) {
-            take(&leftover, &request.temp.join(TRASH), request.now)?;
-            swept.taken.push(leftover);
+        let already = idle_ones
+            .iter()
+            .any(|(candidate, _holder, _trash)| *candidate == leftover);
+        if !already && unwritten_for(&leftover, request.now).is_some_and(|quiet| quiet >= idle) {
+            idle_ones.push((leftover.clone(), leftover, request.temp.join(TRASH)));
+        }
+    }
+    if idle_ones.is_empty() {
+        return Ok(swept);
+    }
+    let Some(held) = Held::now() else {
+        swept.blind = true;
+        return Ok(swept);
+    };
+    for (candidate, holder, trash) in idle_ones {
+        let Some(unheld) = held.release(&candidate, &holder) else {
+            swept.in_use.push(candidate);
+            continue;
+        };
+        match take(unheld, &trash, request.now) {
+            Ok(()) => {
+                forgotten |= candidate.starts_with(request.temp);
+                swept.taken.push(candidate);
+                if !trashes.contains(&trash) {
+                    trashes.push(trash);
+                }
+            }
+            Err(failure) => swept.failed.push((candidate, failure.to_string())),
         }
     }
     if forgotten {
@@ -154,6 +208,68 @@ pub fn sweep(request: &Request<'_>) -> Result<Swept, SweepError> {
         swept.unfinished |= !finished;
     }
     Ok(swept)
+}
+
+/// `path` with every link resolved, which is how the operating system names what a process holds, or `path` as it is where it cannot be resolved.
+fn canonical(path: &Path) -> PathBuf {
+    match std::fs::canonicalize(path) {
+        Ok(resolved) => resolved,
+        Err(_unresolved) => path.to_path_buf(),
+    }
+}
+
+/// Every path some process on this machine has as its working directory, runs, or holds open, at one moment.
+struct Held(Vec<PathBuf>);
+
+/// A directory no process held when [`Held`] was read, which is the only thing [`take`] accepts.
+struct Unheld(PathBuf);
+
+impl Held {
+    /// What is held now, or nothing where nothing could say.
+    fn now() -> Option<Self> {
+        in_use().map(Self)
+    }
+
+    /// `candidate`, where no process works in or holds anything under `holder`, the directory whose use keeps it.
+    fn release(&self, candidate: &Path, holder: &Path) -> Option<Unheld> {
+        let holder = canonical(holder);
+        (!self.0.iter().any(|open| open.starts_with(&holder)))
+            .then(|| Unheld(candidate.to_path_buf()))
+    }
+}
+
+/// Every path some process on this machine has as its working directory, runs, or holds open, or nothing where nothing could say.
+#[cfg(unix)]
+fn in_use() -> Option<Vec<PathBuf>> {
+    use std::os::unix::ffi::OsStrExt;
+    let listed = match Command::new("lsof")
+        .args(["-w", "-n", "-P", "-F", "n"])
+        .output()
+    {
+        Ok(listed) => listed,
+        Err(_no_lsof) => return None,
+    };
+    if listed.stdout.is_empty() {
+        return None;
+    }
+    Some(
+        listed
+            .stdout
+            .split(|&byte| byte == b'\n')
+            .filter_map(|line| line.strip_prefix(b"n/"))
+            .map(|rest| {
+                let mut named = b"/".to_vec();
+                named.extend_from_slice(rest);
+                PathBuf::from(std::ffi::OsStr::from_bytes(&named))
+            })
+            .collect(),
+    )
+}
+
+/// Every path in use, which this platform cannot say, so nothing idle is taken.
+#[cfg(not(unix))]
+const fn in_use() -> Option<Vec<PathBuf>> {
+    None
 }
 
 /// Whether the volume `path` is on has less than [`PRESSURE_PERCENT`] of its space free.
@@ -289,7 +405,8 @@ fn unwritten_for(path: &Path, now: SystemTime) -> Option<Duration> {
 }
 
 /// Moves `path` into `trash` on the same volume, which takes it out of use at once whatever its size.
-fn take(path: &Path, trash: &Path, now: SystemTime) -> Result<(), SweepError> {
+fn take(Unheld(path): Unheld, trash: &Path, now: SystemTime) -> Result<(), SweepError> {
+    let path = path.as_path();
     std::fs::create_dir_all(trash).map_err(|source| SweepError::Io {
         path: trash.to_path_buf(),
         source,

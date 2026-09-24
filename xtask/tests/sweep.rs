@@ -210,3 +210,156 @@ fn build_output_and_temporaries_nobody_touched_go_and_nothing_else_does() {
         "what was taken is gone within the budget, not moved aside and kept: {trash:?}"
     );
 }
+
+/// A process that sits with its working directory at `at` until it is dropped.
+struct Sitting(std::process::Child);
+
+impl Sitting {
+    fn at(at: &Path) -> Self {
+        Self(
+            Command::new("sleep")
+                .arg("600")
+                .current_dir(at)
+                .spawn()
+                .expect("a process to sit there"),
+        )
+    }
+}
+
+impl Drop for Sitting {
+    fn drop(&mut self) {
+        self.0.kill().expect("the sitting process stops");
+        self.0.wait().expect("and is reaped");
+    }
+}
+
+#[test]
+fn build_output_a_process_is_using_stays_however_long_nothing_wrote_it() {
+    let machine = Machine::new();
+    let running = machine.root().join("running");
+    machine.worktree(&running);
+    built(&running.join("target"));
+    aged(&running.join("target"));
+    let sitting = Sitting::at(&running.join("target").join("debug"));
+    let held = machine.temp().join("njutest-commands-held");
+    std::fs::create_dir_all(held.join("fixture-baseline")).expect("a test's directory");
+    aged(&held);
+    let holding = Sitting::at(&held.join("fixture-baseline"));
+    let across = machine.root().join("across");
+    machine.worktree(&across);
+    built(&across.join("target"));
+    aged(&across.join("target"));
+    let beside = Sitting::at(&across);
+
+    let swept = machine.sweep();
+    let said = format!(
+        "{}{}",
+        String::from_utf8(swept.stdout.clone()).expect("the sweep writes text"),
+        String::from_utf8(swept.stderr.clone()).expect("the sweep writes text")
+    );
+    drop(sitting);
+    drop(holding);
+    drop(beside);
+    assert!(swept.status.success(), "{said}");
+    assert!(
+        present(&running.join("target")),
+        "a test binary running out of build output writes nothing there, and taking it from under \
+         the run fails every test it starts next: {said}"
+    );
+    assert!(
+        present(&held),
+        "a test's directory a process still works in is not a leak however old: {said}"
+    );
+    assert!(
+        present(&across.join("target")),
+        "a session sitting in a worktree is about to build or run there: {said}"
+    );
+}
+
+#[test]
+fn a_directory_that_cannot_be_taken_leaves_the_rest_to_be_taken() {
+    use std::os::unix::fs::PermissionsExt;
+    let machine = Machine::new();
+    let stuck = machine.temp().join("njutest-commands-stuck");
+    std::fs::create_dir_all(&stuck).expect("a leftover");
+    aged(&stuck);
+    let later = machine.temp().join("njutest-fixture-later");
+    std::fs::create_dir_all(&later).expect("a leftover");
+    aged(&later);
+    let idle = machine.root().join("idle");
+    machine.worktree(&idle);
+    built(&idle.join("target"));
+    aged(&idle.join("target"));
+    let trash = machine.temp().join(".njutest-trash");
+    std::fs::create_dir_all(&trash).expect("the trash");
+    std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(0o500)).expect("sealed");
+    let swept = machine.sweep();
+    std::fs::set_permissions(&trash, std::fs::Permissions::from_mode(0o700)).expect("unsealed");
+    let said = format!(
+        "{}{}",
+        String::from_utf8(swept.stdout.clone()).expect("the sweep writes text"),
+        String::from_utf8(swept.stderr.clone()).expect("the sweep writes text")
+    );
+    assert!(
+        !present(&idle.join("target")),
+        "what the sweep could take it took, though another directory would not go: {said}"
+    );
+    assert!(
+        said.contains("njutest-commands-stuck"),
+        "and it names what it could not take rather than stopping at it: {said}"
+    );
+    assert!(
+        !swept.status.success(),
+        "a sweep that left something it meant to take says so in its status: {said}"
+    );
+}
+
+#[test]
+fn a_directory_the_product_makes_for_somebody_s_own_run_is_not_this_repository_s() {
+    let machine = Machine::new();
+    let theirs = machine.temp().join("rust-mutants-target-abc");
+    std::fs::create_dir_all(&theirs).expect("a user's run directory");
+    aged(&theirs);
+    let provider = machine.temp().join("njutest-provider-output-abc");
+    std::fs::create_dir_all(&provider).expect("a user's run directory");
+    aged(&provider);
+    let swept = machine.sweep();
+    assert!(swept.status.success());
+    assert!(
+        present(&theirs) && present(&provider),
+        "njutest run on another project makes directories with these names too, and only the \
+         names this repository's tests and gates make are its to take"
+    );
+}
+
+#[test]
+fn every_name_the_sweep_takes_is_one_only_this_repository_s_own_tests_and_gates_make() {
+    let root = xtask::gates::workspace_root();
+    let mut shipped = Vec::new();
+    for crate_dir in std::fs::read_dir(root.join("crates")).expect("the crates") {
+        let crate_dir = crate_dir.expect("a crate").path();
+        if crate_dir.ends_with("njutest-devkit") {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(crate_dir.join("src")) {
+            let entry = entry.expect("a source entry");
+            if entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+            {
+                let text = std::fs::read_to_string(entry.path()).expect("a source file");
+                for prefix in xtask::sweep::OURS {
+                    if text.contains(&format!("\"{prefix}")) {
+                        shipped.push(format!("{} names {prefix}", entry.path().display()));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        shipped.is_empty(),
+        "a name the product makes is one it makes for somebody's own run on this machine too, so \
+         the sweep would take that run's directory: {shipped:?}"
+    );
+}

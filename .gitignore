@@ -10,3 +10,4 @@ target/
 *.profdata
 /.handoff.md
 /.opencode/
+/.njutest-trash/
