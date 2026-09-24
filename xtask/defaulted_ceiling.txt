@@ -8,6 +8,6 @@
 2 xtask/src/engineaudit/ledger.rs
 1 xtask/src/engineaudit/mod.rs
 3 xtask/src/engineaudit/recording.rs
-25 xtask/src/proofaudit.rs
+22 xtask/src/proofaudit.rs
 3 xtask/src/proofaudit/sentinel.rs
 2 xtask/src/route.rs

@@ -109,6 +109,20 @@ impl Checker {
         Ok(Self { validator })
     }
 
+    /// The schema a complete assurance report is held to.
+    ///
+    /// # Errors
+    /// [`SchemaError`] where the published schema does not compile.
+    pub fn assurance_report() -> Result<Self, SchemaError> {
+        let report = parsed(
+            "report",
+            include_str!("../../schema/njutest-assurance-report-v1.json"),
+        )?;
+        Ok(Self {
+            validator: jsonschema::validator_for(&report).map_err(uncompiled("report"))?,
+        })
+    }
+
     /// The schema the engine's stored run report is held to.
     ///
     /// # Errors
