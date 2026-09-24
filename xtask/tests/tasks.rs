@@ -1001,6 +1001,41 @@ fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
     );
 }
 
+#[test]
+fn a_nested_toolchain_run_shares_the_machine_with_the_ones_beside_it() {
+    let config = repository(".config/nextest.toml");
+    let grouped = format!(
+        "max-threads = {}",
+        njutest_devkit::paths::TOOLCHAIN_TESTS_AT_ONCE
+    );
+    assert!(
+        config.contains("[test-groups]")
+            && config.contains(&grouped)
+            && config.contains("test-group = \"toolchain\""),
+        "a toolchain suite run by any nextest invocation, not only `mise run test:slow`, runs at \
+         most {} of its tests at once, each starting its own cargo: {config}",
+        njutest_devkit::paths::TOOLCHAIN_TESTS_AT_ONCE
+    );
+    for environment in [
+        njutest_devkit::paths::environment_for_a_run(),
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[]),
+    ] {
+        let jobs: Vec<_> = environment
+            .iter()
+            .filter(|(name, _value)| name == "CARGO_BUILD_JOBS")
+            .map(|(_name, value)| value.clone())
+            .collect();
+        assert_eq!(
+            jobs,
+            [std::ffi::OsString::from(
+                njutest_devkit::paths::nested_build_jobs().to_string()
+            )],
+            "a cargo a test starts takes every core as its own, so the tests running beside it \
+             multiply the machine by their number"
+        );
+    }
+}
+
 /// Every command in `place` that compiles the workspace in the dev profile for a build or a test.
 fn dev_builds(place: &str) -> Vec<String> {
     repository(place)

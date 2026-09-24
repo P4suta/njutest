@@ -270,3 +270,49 @@ fn a_proofaudit_perturbation_found_does_not_stand_for_one_that_is_not() {
     };
     assert!(said.contains("`inert`"), "{said}");
 }
+
+#[test]
+fn every_outcome_a_report_can_claim_is_refused_when_its_executions_say_otherwise() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("schema/njutest-assurance-report-v1.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let schema = xtask::strictjson::from_str(&text)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let mut outcomes: Vec<String> = schema
+        .pointer("/$defs/answered/properties/outcome/enum")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("the schema no longer lists the outcomes a row answers with"))
+        .iter()
+        .filter_map(|value| value.as_str().map(str::to_owned))
+        .collect();
+    outcomes.sort();
+    assert!(
+        outcomes.len() > 8,
+        "the outcomes are read from the schema so that the one somebody adds next is covered \
+         the day it arrives: {outcomes:?}"
+    );
+    let mut believed = Vec::new();
+    for outcome in &outcomes {
+        let Some(lie) = proofaudit::sentinel::lie(outcome) else {
+            believed.push(format!("{outcome}: nothing is planted for it"));
+            continue;
+        };
+        let laid = lie
+            .lay()
+            .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
+        let audit = xtask::gates::proofaudit(laid.run(), laid.trace())
+            .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
+        if audit.violations() == 0 {
+            believed.push(format!("{outcome}: `{}` drew no violation", lie.name));
+        }
+    }
+    assert!(
+        believed.is_empty(),
+        "a report that claims an outcome its own executions contradict, and agrees with itself \
+         everywhere else, is the lie an audit that only counts cannot see. Every outcome the \
+         schema allows has one planted (`proofaudit::sentinel::lie`), and some layer has to \
+         refuse it: {believed:#?}"
+    );
+}
