@@ -239,21 +239,50 @@ impl Installed {
     }
 }
 
-/// The fake, as `cargo build --examples` leaves it beside the test binaries.
+/// The example named `name`, copied into `into`, a directory the test owns, and the copy's path.
+///
+/// A test never runs the build product itself: another test's build can rewrite it while this one runs, so the copy is the test's own and nothing else writes it.
 ///
 /// # Panics
-/// When the example is not there and cannot be built, with the command that builds it.
+/// When the example is not there and cannot be built, or no stable copy of it could be taken.
 #[must_use]
-pub fn locate() -> PathBuf {
-    example("fake_cargo")
+pub fn example_in(name: &str, into: &Path) -> PathBuf {
+    let at = into.join(exe(name));
+    copied(&example(name), &at);
+    at
 }
 
-/// The example named `name`, as `cargo build --examples` leaves it beside the test binaries.
+/// Copies `from` to `at`, again where `from` changed while it was being read, and refuses after a few tries rather than keeping a torn copy.
+fn copied(from: &Path, at: &Path) {
+    let stamp = |path: &Path| match std::fs::metadata(path)
+        .and_then(|metadata| Ok((metadata.len(), metadata.modified()?)))
+    {
+        Ok(stamp) => Some(stamp),
+        Err(_unreadable) => None,
+    };
+    let stable = std::iter::repeat_n((), 5).any(|()| {
+        let before = stamp(from);
+        let wrote = std::fs::copy(from, at);
+        let after = stamp(from);
+        matches!(
+            (before, wrote),
+            (Some(before), Ok(wrote)) if Some(before) == after && wrote == before.0
+        )
+    });
+    assert!(
+        stable,
+        "{} kept changing while it was copied into {}: something rebuilds it while tests run",
+        from.display(),
+        at.display()
+    );
+}
+
+/// The example named `name`, as `cargo build --examples` leaves it beside the test binaries; a shared build product no test runs directly.
 ///
 /// # Panics
 /// When the example is not there and cannot be built, with the command that builds it.
 #[must_use]
-pub fn example(name: &str) -> PathBuf {
+fn example(name: &str) -> PathBuf {
     let current = std::env::current_exe().expect("the test binary's own path");
     let deps = current.parent().expect("the deps directory");
     let profile = deps.parent().expect("the profile directory");
@@ -315,7 +344,6 @@ pub fn install(script: &Script) -> Installed {
         .expect("a temporary directory");
     let bin = dir.path().join("bin");
     std::fs::create_dir_all(&bin).expect("the program directory");
-    let fake = locate();
     let mut programs: Vec<String> = script
         .invocations
         .iter()
@@ -325,6 +353,7 @@ pub fn install(script: &Script) -> Installed {
     programs.push("rustc".to_owned());
     programs.sort();
     programs.dedup();
+    let fake = example_in("fake_cargo", dir.path());
     for program in &programs {
         place(&fake, &bin.join(exe(program)));
     }
@@ -349,16 +378,16 @@ fn nested(path: &Path) -> String {
     crate::paths::in_json(Path::new(&crate::paths::in_json(path)))
 }
 
+/// Puts the test's own copy of the fake at `at`, a link to a file only this test holds.
 #[cfg(unix)]
 fn place(fake: &Path, at: &Path) {
     std::os::unix::fs::symlink(fake, at).expect("the fake in place");
 }
 
+/// Puts the test's own copy of the fake at `at`.
 #[cfg(not(unix))]
 fn place(fake: &Path, at: &Path) {
-    let copied = std::fs::copy(fake, at).expect("the fake in place");
-    let expected = std::fs::metadata(fake).expect("the fake's metadata").len();
-    assert_eq!(copied, expected, "the complete fake was copied into place");
+    copied(fake, at);
 }
 
 fn regular_file(path: &Path) -> std::io::Result<bool> {
