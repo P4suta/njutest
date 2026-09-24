@@ -114,6 +114,7 @@ Empty by default, because each knob is one more run of every target.
 A knob this machine cannot put is stated as `knob-not-put` rather than skipped silently; most CI images install no Turkish locale, so there `locale` is not put.
 
 `contract = "whole-v1"`, the default, asks every dimension a run can measure: it puts every fault, crash and knob, explores eight schedules of every binary not proven to run one thread, runs the soundness phase as `deep-v1` does, and is not `ASSURED` while any dimension is a hole ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+So a `whole-v1` run is `ASSURED` only where every test binary is proven to run one thread — run with `-- --test-threads=1`, over a closure that starts no thread — because an explored schedule is a sample and a sample is a hole; an `INSUFFICIENT` `whole-v1` run of a suite with threads is the contract answering, and its schedule row names which binary is concurrent and why.
 A document that turns one of those off in so many words, such as `[schedules] explore = 0`, is refused rather than overridden; name `standard-v1` to ask less.
 
 `[verification]` belongs only to `contract = "verified-v1"`.

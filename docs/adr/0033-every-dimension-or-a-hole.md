@@ -42,6 +42,7 @@ The tree's own rule — what was not measured is not claimed as measured — sto
    It concludes `INSUFFICIENT` whenever a column is `unmeasured` or `not-asked`, or is `measured` with a hole; `nothing-to-ask` and `speaks_not_about` are stated and are not holes.
    Each such column is a `dimension-not-measured` finding whose subject is the dimension's name, so the verdict is decided by findings as every other verdict is; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
    A report's conclusion derives them from the records every time and ignores the ones a part stored, so a report that drops one still names it.
+   The schedule column makes this strict for any suite with threads: a binary is answered only when it is proven to run one thread (`-- --test-threads=1` over a closure that starts no thread) or a delay broke it, since a sample of schedules is a hole ([ADR 0034](0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)), so an `INSUFFICIENT` `whole-v1` run is the contract answering rather than the tool failing, and the schedule row names which binary and why.
    Every other contract reads the matrix and is decided exactly as it was.
 
 4. **Contracts are answered by what they ask, never by comparing names.** The places that asked `contract == verified-v1` or `contract != deep-v1` now ask the contract what it runs — `runs_miri`, `proves_models`, `asks_every_dimension` — each an exhaustive match, so a contract added later is one the compiler makes somebody place.

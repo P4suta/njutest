@@ -115,7 +115,9 @@ const fn harness_of(target: &rust_mutants::execute::TestTarget, threads: Threads
     }
 }
 
-/// Delays up to `explore` guards of every binary not proven to run one thread whose baseline passed, one schedule each, and records what that found.
+/// Explores what it can of every binary not proven to run one thread, and says why it cannot of the rest.
+///
+/// A binary whose baseline did not pass or reached no guard is said so whatever was asked; every other one has up to `explore` guards delayed, one schedule each.
 ///
 /// # Errors
 /// The engine's refusal to run a control.
@@ -125,9 +127,6 @@ pub fn explored(
     (explore, passing): (u32, &std::collections::BTreeSet<String>),
     cancel: &rust_mutants::runner::Cancel,
 ) -> Result<(), crate::error::RunnerError> {
-    if explore == 0 {
-        return Ok(());
-    }
     let touched = &session.verified().touched.targets;
     for record in records {
         match record.explored {
@@ -155,6 +154,9 @@ pub fn explored(
             record.explored = Exploration::Unexplored {
                 why: Unexplored::NoSite,
             };
+            continue;
+        }
+        if explore == 0 {
             continue;
         }
         record.explored = schedules(
