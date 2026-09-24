@@ -859,10 +859,7 @@ fn identity(surroundings: &Surroundings<'_>) -> Result<String, PrePushError> {
     let mut building: Vec<&(OsString, OsString)> = surroundings
         .environment
         .iter()
-        .filter(|(name, _value)| {
-            let name = name.as_encoded_bytes();
-            name.starts_with(b"CARGO_") || name.starts_with(b"RUST")
-        })
+        .filter(|(name, _value)| shapes_the_build(name))
         .collect();
     building.sort();
     for (name, value) in building {
@@ -872,6 +869,13 @@ fn identity(surroundings: &Surroundings<'_>) -> Result<String, PrePushError> {
         digest.update(b"\n");
     }
     Ok(hex::encode(digest.finalize()))
+}
+
+/// Whether a variable is one that changes what cargo builds, and so part of what a remembered pass answers for.
+#[must_use]
+pub fn shapes_the_build(name: &OsStr) -> bool {
+    let name = name.as_encoded_bytes();
+    name.starts_with(b"CARGO_") || name.starts_with(b"RUST")
 }
 
 fn short(bytes: &[u8]) -> String {
