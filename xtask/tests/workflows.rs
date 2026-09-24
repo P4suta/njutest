@@ -505,3 +505,248 @@ fn a_workflow_that_reads_a_report_names_paths_the_schema_declares() {
          accounting is per build and per part: {unresolved:?}"
     );
 }
+
+/// Every page a reader copies commands and workflows from: the book and the README.
+fn pages() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut found: Vec<PathBuf> = walkdir::WalkDir::new(root.join("docs"))
+        .into_iter()
+        .map(|entry| entry.unwrap_or_else(|error| panic!("docs: {error}")))
+        .map(walkdir::DirEntry::into_path)
+        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        .collect();
+    found.push(root.join("README.md"));
+    found.sort();
+    found
+}
+
+/// The text a workflow step can end in that turns its failure into a success.
+const SWALLOWED: [&str; 4] = ["|| true", "|| :", "|| exit 0", "continue-on-error: true"];
+
+#[test]
+fn no_step_turns_its_own_failure_into_a_success() {
+    let mut swallowing = Vec::new();
+    for path in workflows().into_iter().chain(actions()).chain(pages()) {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let steps = path.extension().is_some_and(|extension| extension == "md");
+        let mut inside = !steps;
+        for (at, line) in source.lines().enumerate() {
+            if steps && line.trim_start().starts_with("```") {
+                inside = line.trim_start().starts_with("```yaml");
+                continue;
+            }
+            if !inside {
+                continue;
+            }
+            if let Some(swallowed) = SWALLOWED
+                .iter()
+                .find(|swallowed| line.contains(**swallowed))
+            {
+                swallowing.push(format!(
+                    "{}:{}: `{swallowed}`",
+                    path.display(),
+                    at.saturating_add(1)
+                ));
+            }
+        }
+    }
+    assert!(
+        swallowing.is_empty(),
+        "a step that cannot fail says nothing when it goes wrong: the dogfood parts passed a \
+         flag the engine does not have, every part refused to run, and `|| true` reported each \
+         one as a part that measured. Accept the exit codes that are answers by name, as the \
+         soundness step does with `case`, and let every other one fail. {swallowing:?}"
+    );
+}
+
+/// Every long option a help golden lists for `program`'s `command`, with whether it takes a value.
+fn options(program: &str, command: Option<&str>) -> Option<Vec<(String, bool)>> {
+    let crate_dir = match program {
+        "njutest" => "crates/njutest",
+        _ => "crates/rust-mutants-cli",
+    };
+    let name = command.map_or_else(
+        || "help.golden".to_owned(),
+        |command| format!("help-{command}.golden"),
+    );
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(crate_dir)
+        .join("tests/testdata")
+        .join(name);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => panic!("{}: {error}", path.display()),
+    };
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let mut words = line.split_whitespace().peekable();
+        while let Some(word) = words.next() {
+            let written = word.trim_end_matches(',');
+            let (flag, optional) = written
+                .split_once("[=")
+                .map_or((written, false), |(flag, _value)| (flag, true));
+            if flag.starts_with("--") && flag.len() > 2 {
+                let valued = optional || words.peek().is_some_and(|next| next.starts_with('<'));
+                found.push((flag.to_owned(), valued));
+            }
+        }
+    }
+    Some(found)
+}
+
+/// The commands a text runs, one logical line each: a line continued by `\`, or a folded YAML block, is one line.
+fn logical_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut folded: Option<usize> = None;
+    for line in source.lines() {
+        let indent = line.len().saturating_sub(line.trim_start().len());
+        if let Some(depth) = folded {
+            if !line.trim().is_empty() && indent >= depth {
+                current.push(' ');
+                current.push_str(line.trim());
+                continue;
+            }
+            lines.push(std::mem::take(&mut current));
+            folded = None;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.ends_with(": >-") || trimmed.ends_with(": >") {
+            folded = Some(indent.saturating_add(1));
+            continue;
+        }
+        if let Some(continued) = trimmed.strip_suffix('\\') {
+            current.push_str(continued);
+            current.push(' ');
+            continue;
+        }
+        current.push_str(trimmed);
+        lines.push(std::mem::take(&mut current));
+    }
+    lines.push(current);
+    lines
+}
+
+/// The programs this repository ships.
+const PROGRAMS: [&str; 2] = ["njutest", "rust-mutants"];
+
+/// Whether `word` names a subcommand of `program`'s `command`, whose own flags no golden lists.
+fn nests(program: &str, command: Option<&str>, word: &str) -> bool {
+    let crate_dir = match program {
+        "njutest" => "crates/njutest",
+        _ => "crates/rust-mutants-cli",
+    };
+    let Some(command) = command else {
+        return false;
+    };
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(crate_dir)
+        .join("tests/testdata")
+        .join(format!("help-{command}.golden"));
+    std::fs::read_to_string(path).is_ok_and(|text| {
+        text.split_once("Commands:")
+            .is_some_and(|(_before, listed)| {
+                listed
+                    .lines()
+                    .skip(1)
+                    .take_while(|line| !line.trim().is_empty())
+                    .any(|line| line.split_whitespace().next() == Some(word))
+            })
+    })
+}
+
+/// Every flag `line` passes to one of this repository's programs, as program, command, and the flag as written.
+fn invocations(line: &str) -> Vec<(String, Option<String>, String)> {
+    let spaced = line.replace(['`', '(', ')'], " ` ");
+    let words: Vec<&str> = spaced.split_whitespace().collect();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(word) = words.get(at) {
+        at = at.saturating_add(1);
+        let Some(program) = PROGRAMS.iter().copied().find(|program| {
+            *word == *program
+                || ["/release/", "/debug/", "/bin/"]
+                    .iter()
+                    .any(|built| word.ends_with(&format!("{built}{program}")))
+        }) else {
+            continue;
+        };
+        let installed = at >= 2
+            && words
+                .get(at.saturating_sub(2))
+                .is_some_and(|before| *before == "install");
+        if installed {
+            continue;
+        }
+        let command = words
+            .get(at)
+            .filter(|next| options(program, Some(next)).is_some())
+            .map(|next| (*next).to_owned());
+        if command.is_some() {
+            at = at.saturating_add(1);
+        }
+        let nested = words.get(at).is_some_and(|next| {
+            !next.starts_with('-')
+                && next.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                && command.is_some()
+                && nests(program, command.as_deref(), next)
+        });
+        if nested {
+            continue;
+        }
+        while let Some(word) = words.get(at) {
+            if ["`", "|", "||", "&&", ";", ">", "2>&1"].contains(word) {
+                break;
+            }
+            let flag = word.trim_end_matches([',', '.', ':', ';', '"', '\'']);
+            if flag.starts_with("--") && flag.len() > 2 {
+                found.push((program.to_owned(), command.clone(), flag.to_owned()));
+            }
+            at = at.saturating_add(1);
+        }
+    }
+    found
+}
+
+#[test]
+fn every_flag_a_workflow_or_a_page_passes_is_one_the_command_has() {
+    let mut unknown = Vec::new();
+    for path in workflows().into_iter().chain(actions()).chain(pages()) {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        for line in logical_lines(&source) {
+            for (program, command, written) in invocations(&line) {
+                let (flag, given) = written
+                    .split_once('=')
+                    .map_or((written.as_str(), false), |(flag, _value)| (flag, true));
+                let mut known = options(&program, None)
+                    .unwrap_or_else(|| panic!("{program} has no top-level help golden"));
+                if let Some(of_command) = command
+                    .as_deref()
+                    .and_then(|command| options(&program, Some(command)))
+                {
+                    known.extend(of_command);
+                }
+                let accepted = known
+                    .iter()
+                    .any(|(name, valued)| name == flag && (*valued || !given));
+                if !accepted {
+                    unknown.push(format!(
+                        "{}: `{program} {} {written}`",
+                        path.display(),
+                        command.as_deref().unwrap_or("")
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        unknown.is_empty(),
+        "a flag the command does not have is refused when it runs, and a page that shows one \
+         teaches a reader to be refused; the help goldens are what the command has. {unknown:#?}"
+    );
+}
