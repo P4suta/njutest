@@ -237,11 +237,95 @@ fn interrupted(signal: i32) -> u8 {
     }
 }
 
-/// Checks the commit being pushed and says whether it may go.
+/// Checks the commit being pushed and says whether it may go, its progress passed on through a relay so a stream that takes no more never decides the answer.
 ///
 /// # Errors
 /// Returns a [`PrePushError`] naming what was refused, or what kept the gate from answering.
 pub fn gate(
+    surroundings: &Surroundings<'_>,
+    updates: &mut dyn BufRead,
+    progress: &mut dyn Write,
+) -> Result<Passed, PrePushError> {
+    let mut relay = Relay::new(progress);
+    let answer = decide(surroundings, updates, &mut relay);
+    if relay.dropped > 0 {
+        let unshown = relay.dropped;
+        relay.refused = false;
+        say(
+            &mut relay,
+            &format!(
+                "pre-push: {unshown} bytes of progress could not be shown, since the stream took no more; the check's own log in the gate's cache holds all of it"
+            ),
+        )?;
+    }
+    answer
+}
+
+/// Passes progress on to a stream that may refuse it, as a non-blocking pipe does when its reader falls behind: it retries a refusal for a while, then drops what still will not go and counts it, and never fails, because showing the work is not the work.
+struct Relay<'a> {
+    out: &'a mut dyn Write,
+    /// Bytes that could not be passed on.
+    dropped: u64,
+    /// Whether the stream has already refused for longer than [`Relay::PATIENCE`], after which a write is tried once and not waited for.
+    refused: bool,
+}
+
+impl<'a> Relay<'a> {
+    /// How many times a refused write is retried, a millisecond apart, before its remainder is dropped.
+    const PATIENCE: u32 = 1000;
+
+    /// A relay onto `out`.
+    fn new(out: &'a mut dyn Write) -> Self {
+        Self {
+            out,
+            dropped: 0,
+            refused: false,
+        }
+    }
+}
+
+impl Write for Relay<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut at = 0_usize;
+        let mut waited = 0_u32;
+        while let Some(rest) = buf.get(at..).filter(|rest| !rest.is_empty()) {
+            match self.out.write(rest) {
+                Ok(0) => break,
+                Ok(written) => at = at.saturating_add(written),
+                Err(interrupted) if interrupted.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(full)
+                    if full.kind() == std::io::ErrorKind::WouldBlock
+                        && !self.refused
+                        && waited < Self::PATIENCE =>
+                {
+                    waited = waited.saturating_add(1);
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(_refused) => break,
+            }
+        }
+        let unshown = buf.len().saturating_sub(at);
+        if unshown > 0 {
+            self.refused = true;
+            let unshown = match u64::try_from(unshown) {
+                Ok(unshown) => unshown,
+                Err(_wider_than_a_count) => u64::MAX,
+            };
+            self.dropped = self.dropped.saturating_add(unshown);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self.out.flush() {
+            Ok(()) => Ok(()),
+            Err(_unflushed) => Ok(()),
+        }
+    }
+}
+
+/// [`gate`] after its progress has been given a relay.
+fn decide(
     surroundings: &Surroundings<'_>,
     updates: &mut dyn BufRead,
     progress: &mut dyn Write,
