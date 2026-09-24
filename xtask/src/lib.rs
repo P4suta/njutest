@@ -29,6 +29,7 @@ pub mod shapes;
 pub mod strictjson;
 pub mod surface;
 pub mod wire;
+pub mod work;
 
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Write};
@@ -335,36 +336,52 @@ fn slot(
             return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::FAILURE);
         }
     };
+    let stops = match work::Stops::arm() {
+        Ok(stops) => stops,
+        Err(failure) => {
+            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::FAILURE);
+        }
+    };
     let holder = lanes::Holder {
         worktree: process.directory.to_path_buf(),
-        revision: lanes::revision_of(process.directory),
+        revision: lanes::revision_of(process.directory, process.environment),
         command: command
             .iter()
             .map(|word| word.display().to_string())
             .collect::<Vec<_>>()
             .join(" "),
     };
-    let held = match lanes.hold(named, &holder, stderr) {
+    let request = lanes::Request {
+        lane: named,
+        holder: &holder,
+        stops: &stops,
+    };
+    let held = match lanes.hold(&request, stderr) {
         Ok(held) => held,
         Err(failure) => {
-            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::FAILURE);
+            let code = failure.signal().map_or(1, signalled_code);
+            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::from(code));
         }
     };
-    let ran = Command::new(program)
+    let mut running = Command::new(program);
+    running
         .args(arguments)
-        .env(lanes::HELD, lanes.held_with(named))
-        .status();
+        .env(lanes::HELD, lanes.held_with(named));
+    let ran = work::run(&mut running, None, &stops, |leader| held.working_on(leader));
     drop(held);
     match ran {
-        Ok(status) => ExitCode::from(exit_status(status)),
-        Err(source) => after_output(
-            writeln!(
-                stderr,
-                "slot: {} could not be started: {source}",
-                program.display()
-            ),
-            ExitCode::from(127),
-        ),
+        Ok(work::Ended::Exited(status)) => ExitCode::from(exit_status(status)),
+        Ok(work::Ended::Interrupted { signal }) => ExitCode::from(signalled_code(signal)),
+        Ok(work::Ended::OverBudget { .. }) => ExitCode::from(124),
+        Err(failure) => after_output(writeln!(stderr, "slot: {failure}"), ExitCode::from(127)),
+    }
+}
+
+/// The exit status a shell reports for a process `signal` ended.
+fn signalled_code(signal: i32) -> u8 {
+    match signal.checked_add(128).map(u8::try_from) {
+        Some(Ok(code)) => code,
+        Some(Err(_)) | None => 1,
     }
 }
 

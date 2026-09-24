@@ -692,7 +692,7 @@ fn a_check_that_outlives_its_budget_is_stopped_with_everything_it_started() {
     let repository = Repository::new(
         "printf '%s\\n' \"$*\" >> \"$CALLS\"; \
          if [ \"$(wc -l < \"$CALLS\")\" -gt 1 ]; then \
-           sleep 600 & printf '%s\\n' $! > \"$TURNS/sleeper\"; wait; \
+           ( trap '' TERM; exec sleep 600 ) & printf '%s\\n' $! > \"$TURNS/sleeper\"; wait; \
          fi",
     );
     let mut command = isolated(env!("CARGO_BIN_EXE_xtask"));
@@ -738,4 +738,104 @@ fn a_check_that_outlives_its_budget_is_stopped_with_everything_it_started() {
         "the budget stopped the check but left what the check started running, so the next push \
          shares the machine with a build nobody is waiting for"
     );
+}
+
+const TAKES_TURNS: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; \
+     mkdir \"$TURNS/inside\" 2>/dev/null || { : > \"$TURNS/overlapped\"; exit 97; }; \
+     while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done; \
+     rmdir \"$TURNS/inside\"";
+
+/// Whether any file under `root` is a run waiting for the lane `lane`.
+fn waiting_under(root: &Path, lane: &str) -> bool {
+    let prefix = format!("{lane}.waiting.");
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        if !present(&directory) {
+            continue;
+        }
+        for entry in std::fs::read_dir(&directory).expect("a readable scratch directory") {
+            let entry = entry.expect("a readable scratch entry");
+            let name = entry.file_name();
+            let name = name.to_str().expect("a UTF-8 scratch name");
+            if name.starts_with(&prefix) {
+                return true;
+            }
+            if entry.file_type().expect("an entry's type").is_dir() && name != "tree" {
+                pending.push(entry.path());
+            }
+        }
+    }
+    false
+}
+
+#[test]
+fn a_second_push_of_a_commit_that_passed_while_it_waited_is_not_checked_again() {
+    let repository = Repository::new(TAKES_TURNS);
+    let line = update(&repository.head, &"0".repeat(40), "\n");
+    let first = repository.launch(repository.directory.path(), &line, &[]);
+    assert!(
+        until(Duration::from_secs(120), || present(
+            &repository.turns.join("inside")
+        )),
+        "the first gate never started its check"
+    );
+    let second = repository.launch(repository.directory.path(), &line, &[]);
+    assert!(
+        until(Duration::from_secs(120), || waiting_in(&repository.slots)),
+        "the second gate did not queue behind the first"
+    );
+    std::fs::write(repository.turns.join("go"), "").expect("the first check's release");
+    let first = first.wait_with_output().expect("the first gate's answer");
+    let calls = repository.calls();
+    let second = second.wait_with_output().expect("the second gate's answer");
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert_eq!(
+        repository.calls(),
+        calls,
+        "the second push waited for the first and then checked the same commit again: {}",
+        stderr(&second)
+    );
+    assert!(
+        stderr(&second).contains("already passed"),
+        "{}",
+        stderr(&second)
+    );
+}
+
+#[test]
+fn two_gates_of_one_repository_take_turns_even_inside_a_held_lane() {
+    let repository = Repository::new(TAKES_TURNS);
+    let (linked, linked_head) = repository.link("linked");
+    let held: [(&str, &std::ffi::OsStr); 1] = [("NJUTEST_SLOT_HELD", "heavy".as_ref())];
+    let first = repository.launch(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &held,
+    );
+    assert!(
+        until(Duration::from_secs(120), || present(
+            &repository.turns.join("inside")
+        )),
+        "the first gate never started its check"
+    );
+    let second = repository.launch(&linked, &update(&linked_head, &"0".repeat(40), "\n"), &held);
+    assert!(
+        until(Duration::from_secs(120), || {
+            waiting_under(&repository.scratch.path().join("cache"), "tree")
+                || present(&repository.turns.join("overlapped"))
+        }),
+        "the second gate neither waited nor ran"
+    );
+    std::fs::write(repository.turns.join("go"), "").expect("the first check's release");
+    let first = first.wait_with_output().expect("the first gate's answer");
+    let second = second.wait_with_output().expect("the second gate's answer");
+    assert!(
+        !present(&repository.turns.join("overlapped")),
+        "two gates wrote one repository's tree at once because the environment said the heavy \
+         lane was already held: {}",
+        stderr(&second)
+    );
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(second.status.success(), "{}", stderr(&second));
 }

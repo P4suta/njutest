@@ -6,22 +6,17 @@
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-use crate::lanes::{self, Holder, Lane, LaneError, Lanes};
+use crate::lanes::{self, Held, Holder, Lane, LaneError, Lanes, Request};
+use crate::work::{self, Ended, Stops, WorkError};
 
 /// The object id Git gives a ref that is being deleted, or one the remote does not have yet.
 const ZERO: &str = "0000000000000000000000000000000000000000";
-
-/// How often the gate looks at the check it is waiting for.
-const POLL: Duration = Duration::from_millis(200);
-
-/// How long a check that was asked to stop has before it is killed.
-const GRACE: Duration = Duration::from_secs(5);
 
 /// How long a pass answers for a second push of the same commit against the same base.
 const REMEMBERED: Duration = Duration::from_secs(3600);
@@ -122,6 +117,29 @@ pub enum PrePushError {
         /// How it ended.
         status: String,
     },
+    /// The warming pass outlived its own budget and was stopped.
+    #[error(
+        "the warming pass passed its {budget}s budget and was stopped at {elapsed}s\nit compiles and runs everything once outside the check's budget; raise NJUTEST_PUSH_WARMING_SECONDS in a commit that says why"
+    )]
+    Warming {
+        /// The budget, in seconds.
+        budget: u64,
+        /// When it was stopped, in seconds.
+        elapsed: u64,
+    },
+    /// The gate was asked to stop, and stopped the check with everything it started first.
+    #[error("stopped by signal {signal}; the check and everything it started were stopped first")]
+    Interrupted {
+        /// The signal.
+        signal: i32,
+    },
+    /// The check could not be started, watched, or stopped.
+    #[error(transparent)]
+    Work {
+        /// Why.
+        #[from]
+        source: WorkError,
+    },
     /// A program the gate needs could not be started.
     #[error("{program} could not be started: {source}")]
     Start {
@@ -183,9 +201,14 @@ pub enum PrePushError {
 impl PrePushError {
     /// The exit status the hook reports this refusal with.
     #[must_use]
-    pub const fn exit_code(&self) -> u8 {
+    pub fn exit_code(&self) -> u8 {
         match self {
-            Self::Budget { .. } => 124,
+            Self::Budget { .. } | Self::Warming { .. } => 124,
+            Self::Interrupted { signal } => interrupted(*signal),
+            Self::Lane { source } => match source.signal() {
+                Some(signal) => interrupted(signal),
+                None => 1,
+            },
             Self::Incomplete { .. }
             | Self::NotHead { .. }
             | Self::UnknownRemote { .. }
@@ -200,9 +223,17 @@ impl PrePushError {
             | Self::Setting { .. }
             | Self::NotText { .. }
             | Self::Nowhere
-            | Self::Lane { .. }
+            | Self::Work { .. }
             | Self::Progress { .. } => 1,
         }
+    }
+}
+
+/// The exit status a shell reports for a process a signal ended.
+fn interrupted(signal: i32) -> u8 {
+    match signal.checked_add(128).map(u8::try_from) {
+        Some(Ok(code)) => code,
+        Some(Err(_)) | None => 1,
     }
 }
 
@@ -233,23 +264,34 @@ pub fn gate(
         ],
     )?;
     let memory = place.memory(&head, base.as_deref(), &identity(surroundings.executable)?);
+    let passed = || {
+        format!(
+            "pre-push: {head} against {} already passed this gate within the hour; it is not run again",
+            base.as_deref().unwrap_or("no base")
+        )
+    };
     if remembered(&memory)? {
-        say(
-            progress,
-            &format!(
-                "pre-push: {head} against {} already passed this gate within the hour; it is not run again",
-                base.as_deref().unwrap_or("no base")
-            ),
-        )?;
+        say(progress, &passed())?;
         return Ok(Passed::Remembered);
     }
-    let lanes = Lanes::from_environment(surroundings.environment)?;
+    let stops = Stops::arm()?;
     let holder = Holder {
         worktree: here.to_path_buf(),
-        revision: lanes::revision_of(here),
+        revision: lanes::revision_of(here, surroundings.environment),
         command: format!("the pre-push gate for {head}"),
     };
-    let turn = lanes.hold(Lane::Heavy, &holder, progress)?;
+    let lanes = Lanes::from_environment(surroundings.environment)?;
+    let asking = Request {
+        lane: Lane::Heavy,
+        holder: &holder,
+        stops: &stops,
+    };
+    let (turn, tree) = take_lanes(&lanes, &place, asking, progress)?;
+    if remembered(&memory)? {
+        say(progress, &passed())?;
+        return Ok(Passed::Remembered);
+    }
+    serve_the_cache(&tools, &settings, progress)?;
     place.prepare(&tools, here, &head)?;
     let run = Run {
         tools,
@@ -257,9 +299,13 @@ pub fn gate(
         head: &head,
         settings: &settings,
         lanes: &lanes,
+        stops: &stops,
+        held: [&turn, &tree],
     };
     let checked = check(&run, progress);
-    if let Err(failure) = tools.restore(&place.tree) {
+    let restored = tools.restore(&place.tree);
+    checked?;
+    if let Err(failure) = restored {
         say(
             progress,
             &format!(
@@ -267,10 +313,34 @@ pub fn gate(
             ),
         )?;
     }
-    checked?;
     remember(&memory, &head)?;
+    drop(tree);
     drop(turn);
     Ok(Passed::Checked)
+}
+
+/// Takes this machine's heavy lane, then this repository's tree lane, which is taken whatever the environment says is already held.
+fn take_lanes(
+    lanes: &Lanes,
+    place: &Place,
+    asking: Request<'_>,
+    progress: &mut dyn Write,
+) -> Result<(Held, Held), PrePushError> {
+    let turn = lanes.hold(
+        &Request {
+            lane: Lane::Heavy,
+            ..asking
+        },
+        progress,
+    )?;
+    let tree = Lanes::at(place.home.clone()).hold(
+        &Request {
+            lane: Lane::Tree,
+            ..asking
+        },
+        progress,
+    )?;
+    Ok((turn, tree))
 }
 
 /// Everything one check of one pushed commit is about.
@@ -281,188 +351,94 @@ struct Run<'a> {
     head: &'a str,
     settings: &'a Settings,
     lanes: &'a Lanes,
+    stops: &'a Stops,
+    held: [&'a Held; 2],
+}
+
+impl Run<'_> {
+    fn pass(&self, quiet: bool, limit: Duration) -> Result<Ended, PrePushError> {
+        let mut command = self.place.check_command(&self.tools, self.head, self.lanes);
+        command.stdin(Stdio::null());
+        if quiet {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+        let held = self.held;
+        work::run(&mut command, Some(limit), self.stops, |leader| {
+            held.iter().try_for_each(|lane| lane.working_on(leader))
+        })
+        .map_err(|source| PrePushError::Work { source })
+    }
 }
 
 fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
     run.place.require_exact(&run.tools, run.head)?;
-    let warming = Instant::now();
-    let warmed = run
-        .place
-        .check_command(&run.tools, run.head, run.lanes)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    let spent = warming.elapsed().as_secs();
-    let line = match warmed {
-        Ok(_decides_nothing) => {
-            format!("pre-push: compiled in {spent}s, which the budget does not count")
-        }
-        Err(source) => {
-            format!("pre-push: the warming pass could not start after {spent}s: {source}")
-        }
-    };
-    say(progress, &line)?;
-    within_budget(
-        run.place.check_command(&run.tools, run.head, run.lanes),
-        run.settings,
-        progress,
-    )?;
-    run.place.require_exact(&run.tools, run.head)
-}
-
-fn within_budget(
-    mut command: Command,
-    settings: &Settings,
-    progress: &mut dyn Write,
-) -> Result<(), PrePushError> {
-    grouped(&mut command);
-    let started = Instant::now();
-    let mut check = Check::launch(command.stdin(Stdio::null()))?;
-    let status = loop {
-        if let Some(status) = check.try_wait()? {
-            break status;
-        }
-        if started.elapsed() >= settings.budget {
-            check.stop()?;
-            return Err(PrePushError::Budget {
-                budget: settings.budget.as_secs(),
-                elapsed: started.elapsed().as_secs(),
+    match run.pass(true, run.settings.warming)? {
+        Ended::Exited(_decides_nothing) => {}
+        Ended::OverBudget { elapsed } => {
+            return Err(PrePushError::Warming {
+                budget: run.settings.warming.as_secs(),
+                elapsed: elapsed.as_secs(),
             });
         }
-        std::thread::sleep(POLL);
-    };
-    if !status.success() {
-        return Err(PrePushError::Failed {
-            status: status.to_string(),
-        });
+        Ended::Interrupted { signal } => return Err(PrePushError::Interrupted { signal }),
+    }
+    let started = Instant::now();
+    match run.pass(false, run.settings.budget)? {
+        Ended::Exited(status) if status.success() => {}
+        Ended::Exited(status) => {
+            return Err(PrePushError::Failed {
+                status: status.to_string(),
+            });
+        }
+        Ended::OverBudget { elapsed } => {
+            return Err(PrePushError::Budget {
+                budget: run.settings.budget.as_secs(),
+                elapsed: elapsed.as_secs(),
+            });
+        }
+        Ended::Interrupted { signal } => return Err(PrePushError::Interrupted { signal }),
     }
     let elapsed = started.elapsed();
-    if elapsed >= settings.expected {
+    if elapsed >= run.settings.expected {
         say(
             progress,
             &format!(
                 "pre-push: the gate passed in {}s, over the {}s a warm run should beat\npre-push: that is the reading to act on while it is still cheap. A first run after a merge is expected here; a second one that is still slow means something stopped being cached",
                 elapsed.as_secs(),
-                settings.expected.as_secs()
+                run.settings.expected.as_secs()
             ),
         )?;
     }
-    Ok(())
+    run.place.require_exact(&run.tools, run.head)
 }
 
-/// The budgeted check, owned so that it and everything in its process group are reaped on every path.
-#[derive(Debug)]
-struct Check {
-    child: Option<Child>,
-}
-
-impl Check {
-    fn launch(command: &mut Command) -> Result<Self, PrePushError> {
-        command
-            .spawn()
-            .map(|child| Self { child: Some(child) })
-            .map_err(|source| PrePushError::Start {
-                program: "mise run check".to_owned(),
-                source,
-            })
+/// Starts the compilation cache's server in the gate's own process group, when the check compiles through it, so stopping the check's group never stops a server every session shares.
+fn serve_the_cache(
+    tools: &Tools<'_>,
+    settings: &Settings,
+    progress: &mut dyn Write,
+) -> Result<(), PrePushError> {
+    if !settings.cached {
+        return Ok(());
     }
-
-    fn try_wait(&mut self) -> Result<Option<ExitStatus>, PrePushError> {
-        let Some(child) = self.child.as_mut() else {
-            return Ok(None);
-        };
-        let status = child
-            .try_wait()
-            .map_err(|source| io_error("the check", source))?;
-        if status.is_some() {
-            self.child = None;
-        }
-        Ok(status)
-    }
-
-    fn stop(&mut self) -> Result<(), PrePushError> {
-        let Some(child) = self.child.as_mut() else {
-            return Ok(());
-        };
-        signal_group(child, Stop::Ask)?;
-        let asked = Instant::now();
-        while asked.elapsed() < GRACE {
-            if self.try_wait()?.is_some() {
-                return Ok(());
-            }
-            std::thread::sleep(POLL);
-        }
-        let Some(child) = self.child.as_mut() else {
-            return Ok(());
-        };
-        signal_group(child, Stop::Kill)?;
-        child
-            .wait()
-            .map_err(|source| io_error("the check", source))?;
-        self.child = None;
-        Ok(())
-    }
-}
-
-impl Drop for Check {
-    fn drop(&mut self) {
-        if self.stop().is_err() {
-            std::process::abort();
-        }
-    }
-}
-
-/// How hard a check that outlived its budget is stopped.
-#[derive(Debug, Clone, Copy)]
-enum Stop {
-    /// `SIGTERM` to its whole process group.
-    Ask,
-    /// `SIGKILL` to its whole process group.
-    Kill,
-}
-
-#[cfg(unix)]
-fn grouped(command: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-const fn grouped(_command: &mut Command) {}
-
-#[cfg(unix)]
-fn signal_group(child: &mut Child, how: Stop) -> Result<(), PrePushError> {
-    let signal = match how {
-        Stop::Ask => rustix::process::Signal::TERM,
-        Stop::Kill => rustix::process::Signal::KILL,
-    };
-    let group = match i32::try_from(child.id()) {
-        Ok(raw) => rustix::process::Pid::from_raw(raw),
-        Err(_beyond_a_pid) => None,
-    };
-    let Some(group) = group else {
-        return signal_alone(child, how);
-    };
-    match rustix::process::kill_process_group(group, signal) {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(errno) => Err(io_error(
-            "the check's process group",
-            std::io::Error::from(errno),
-        )),
-    }
-}
-
-#[cfg(not(unix))]
-fn signal_group(child: &mut Child, how: Stop) -> Result<(), PrePushError> {
-    signal_alone(child, how)
-}
-
-fn signal_alone(child: &mut Child, how: Stop) -> Result<(), PrePushError> {
-    match how {
-        Stop::Ask => Ok(()),
-        Stop::Kill => child.kill().map_err(|source| io_error("the check", source)),
+    let idle = settings
+        .warming
+        .saturating_add(settings.budget)
+        .saturating_add(Duration::from_secs(600));
+    let started = tools
+        .command("sccache")
+        .arg("--start-server")
+        .env("SCCACHE_IDLE_TIMEOUT", idle.as_secs().to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match started {
+        Ok(_running_either_way) => Ok(()),
+        Err(source) => say(
+            progress,
+            &format!("pre-push: sccache could not be started ahead of the check: {source}"),
+        ),
     }
 }
 
@@ -547,21 +523,26 @@ fn verify(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Settings {
     budget: Duration,
+    warming: Duration,
     expected: Duration,
     base_ref: String,
     cache: PathBuf,
+    cached: bool,
 }
 
 impl Settings {
     fn from_environment(environment: &[(OsString, OsString)]) -> Result<Self, PrePushError> {
         Ok(Self {
             budget: seconds(environment, "NJUTEST_PUSH_BUDGET_SECONDS", 600)?,
+            warming: seconds(environment, "NJUTEST_PUSH_WARMING_SECONDS", 1800)?,
             expected: seconds(environment, "NJUTEST_PUSH_EXPECTED_SECONDS", 420)?,
             base_ref: match lanes::variable(environment, "NJUTEST_COMMITTED_BASE_REF") {
                 Some(named) => text_of("NJUTEST_COMMITTED_BASE_REF", named)?.to_owned(),
                 None => "origin/main".to_owned(),
             },
             cache: cache_root(environment).ok_or(PrePushError::Nowhere)?,
+            cached: lanes::variable(environment, "RUSTC_WRAPPER")
+                .is_none_or(|wrapper| Path::new(wrapper).ends_with("sccache")),
         })
     }
 }

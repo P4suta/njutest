@@ -244,7 +244,10 @@ The tree is checked out in place, so only the files that differ from the last pu
 **One whole-workspace run at a time.** `cargo xtask slot heavy -- <command>` runs a command once this machine's `heavy` lane is free and holds the lane until the command ends; the pre-push gate takes the same lane before it touches its tree.
 A run that has to wait says whom it is waiting for — pid, worktree, revision, command, and the load when that run started — and repeats it every thirty seconds.
 The lane is an operating-system lock held by the xtask process and closed on exec, so a daemon started along the way (the compilation cache's server, Git's file monitor) cannot carry it off, and a holder that dies, however it dies, lets the next run in.
-Inside a held lane `NJUTEST_SLOT_HELD` names it, and asking for it again passes straight through, which is how `mise run check` under the gate does not wait for the gate.
+Inside a held lane `NJUTEST_SLOT_HELD` names it, and asking for it again passes straight through: the gate hands it to its check, so a `cargo xtask slot heavy` somewhere inside the check does not wait for the gate.
+The gate's tree has a lane of its own, taken whatever `NJUTEST_SLOT_HELD` says, so two gates never write one tree at once.
+The work a lane admits runs in a process group of its own; `SIGINT`, `SIGTERM` and `SIGHUP` stop that whole group before the holder ends, and a budget stops it with `SIGTERM`, then `SIGKILL` after five seconds.
+The lane's record names the work's leader and when it started, and the next run waits for that leader to end, so a holder killed outright still keeps its work from sharing the machine.
 A narrowed run — one crate, one test binary, one filter — does not take the lane: it is the inner loop, and queueing it behind a push would cost more than it saves.
 Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextest run --workspace --all-targets --all-features`.
 

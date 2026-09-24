@@ -20,7 +20,7 @@ mod product;
 pub(crate) use product::{
     Process, Streams, deps, devgates, drift, engineaudit, fixtures, lanes, lints, milestones,
     modelaudit, proofaudit, release, reportdiff, route, run_from, sbom, sentinel, shapes,
-    strictjson, surface, wire,
+    strictjson, surface, wire, work,
 };
 
 #[path = "../../../xtask/src/main.rs"]

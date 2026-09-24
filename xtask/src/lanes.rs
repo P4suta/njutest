@@ -12,6 +12,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
+use crate::work::Stops;
+
 /// The variable that names the lanes a process already holds, so a run inside one never waits for itself.
 pub const HELD: &str = "NJUTEST_SLOT_HELD";
 
@@ -24,8 +26,10 @@ const REPORT: Duration = Duration::from_secs(30);
 /// A lane a run can queue for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
-    /// A run that compiles or tests the whole workspace.
+    /// A run that compiles or tests the whole workspace, one per machine.
     Heavy,
+    /// The gate's tree and build, one per repository, taken whatever [`HELD`] says.
+    Tree,
 }
 
 impl Lane {
@@ -34,10 +38,11 @@ impl Lane {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Heavy => "heavy",
+            Self::Tree => "tree",
         }
     }
 
-    /// The lane `name` spells, if it spells one.
+    /// The machine-wide lane `name` spells, if it spells one.
     #[must_use]
     pub fn named(name: &str) -> Option<Self> {
         match name {
@@ -56,6 +61,17 @@ pub struct Holder {
     pub revision: String,
     /// What the run runs.
     pub command: String,
+}
+
+/// One run asking for one lane.
+#[derive(Debug, Clone, Copy)]
+pub struct Request<'a> {
+    /// The lane.
+    pub lane: Lane,
+    /// Who is asking, for the record and for whoever waits behind it.
+    pub holder: &'a Holder,
+    /// The signals that end the wait.
+    pub stops: &'a Stops,
 }
 
 /// Why a lane could not be held.
@@ -92,9 +108,32 @@ pub enum LaneError {
         /// The output failure.
         source: std::io::Error,
     },
+    /// This process was asked to stop while it waited.
+    #[error("stopped by signal {signal} while waiting for the {lane} lane")]
+    Interrupted {
+        /// The lane.
+        lane: &'static str,
+        /// The signal.
+        signal: i32,
+    },
 }
 
-/// Where this machine keeps its lanes, and which of them the running process already holds.
+impl LaneError {
+    /// The signal that ended the wait, when one did.
+    #[must_use]
+    pub const fn signal(&self) -> Option<i32> {
+        match self {
+            Self::Interrupted { signal, .. } => Some(*signal),
+            Self::NotText { .. }
+            | Self::Nowhere
+            | Self::Io { .. }
+            | Self::Lock { .. }
+            | Self::Progress { .. } => None,
+        }
+    }
+}
+
+/// Where lanes are kept, and which of them the running process already holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lanes {
     directory: PathBuf,
@@ -102,7 +141,7 @@ pub struct Lanes {
 }
 
 impl Lanes {
-    /// The lanes the environment names: `NJUTEST_SLOT_DIR`, else under the state directory, with [`HELD`] saying which are already held.
+    /// The machine's lanes as the environment names them: `NJUTEST_SLOT_DIR`, else under the state directory, with [`HELD`] saying which are already held.
     ///
     /// # Errors
     /// Returns [`LaneError::Nowhere`] when the environment names no directory for them.
@@ -127,6 +166,15 @@ impl Lanes {
         Ok(Self { directory, held })
     }
 
+    /// Lanes kept in `directory` that nothing already holds, such as one repository's gate tree.
+    #[must_use]
+    pub const fn at(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            held: Vec::new(),
+        }
+    }
+
     /// The value of [`HELD`] for a child of a process that holds `lane`.
     #[must_use]
     pub fn held_with(&self, lane: Lane) -> String {
@@ -137,80 +185,102 @@ impl Lanes {
         held.join(",")
     }
 
-    /// Waits until `lane` is free, telling `progress` whom it waits for, and holds it until the answer is dropped.
+    /// Waits until the lane is free and the work its last holder left behind has ended, telling `progress` whom it waits for, and holds the lane until the answer is dropped.
     ///
     /// # Errors
-    /// Returns a [`LaneError`] when the lane's files cannot be written or its lock cannot be taken at all.
-    pub fn hold(
-        &self,
-        lane: Lane,
-        holder: &Holder,
-        progress: &mut dyn Write,
-    ) -> Result<Held, LaneError> {
+    /// Returns a [`LaneError`] when the lane's files cannot be written, its lock cannot be taken, or a signal ends the wait.
+    pub fn hold(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<Held, LaneError> {
+        let lane = request.lane;
         if self.held.iter().any(|name| name == lane.name()) {
-            return Ok(Held { lock: None });
+            return Ok(Held {
+                lock: None,
+                record: None,
+            });
         }
         std::fs::create_dir_all(&self.directory).map_err(|source| io(&self.directory, source))?;
         let lock_path = self.directory.join(format!("{}.lock", lane.name()));
         let record = self.directory.join(format!("{}.holder", lane.name()));
-        let lock = OpenOptions::new()
+        let place = Place {
+            directory: &self.directory,
+            lock: &lock_path,
+            record: &record,
+        };
+        let lock = place.take(request, progress)?;
+        place.outlast(request, progress)?;
+        std::fs::write(&record, record_of(request.holder)).map_err(|source| io(&record, source))?;
+        Ok(Held {
+            lock: Some(lock),
+            record: Some(record),
+        })
+    }
+}
+
+/// The files one lane lives in.
+#[derive(Debug, Clone, Copy)]
+struct Place<'a> {
+    directory: &'a Path,
+    lock: &'a Path,
+    record: &'a Path,
+}
+
+impl Place<'_> {
+    fn open(&self) -> Result<File, LaneError> {
+        OpenOptions::new()
             .create(true)
-            .append(true)
-            .open(&lock_path)
-            .map_err(|source| io(&lock_path, source))?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => {
-                let queue = Queue {
-                    lane,
-                    lock: &lock,
-                    record: &record,
-                };
-                self.wait(&queue, holder, progress)?;
-            }
-            Err(TryLockError::Error(source)) => {
-                return Err(LaneError::Lock {
-                    path: lock_path.display().to_string(),
-                    source,
-                });
-            }
-        }
-        std::fs::write(&record, record_of(holder)).map_err(|source| io(&record, source))?;
-        Ok(Held { lock: Some(lock) })
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.lock)
+            .map_err(|source| io(self.lock, source))
     }
 
-    fn wait(
-        &self,
-        queue: &Queue<'_>,
-        holder: &Holder,
-        progress: &mut dyn Write,
-    ) -> Result<(), LaneError> {
-        let Queue { lane, lock, record } = *queue;
-        let marker = self
-            .directory
-            .join(format!("{}.waiting.{}", lane.name(), std::process::id()));
-        std::fs::write(&marker, &holder.command).map_err(|source| io(&marker, source))?;
-        say(
-            progress,
-            &format!(
-                "slot: waiting for the {} lane, held by {}",
-                lane.name(),
-                describe(record)
-            ),
-        )?;
+    fn take(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<File, LaneError> {
+        let marker = self.directory.join(format!(
+            "{}.waiting.{}",
+            request.lane.name(),
+            std::process::id()
+        ));
+        let mut announced = false;
         let started = Instant::now();
         let mut reported = started;
-        let taken = loop {
-            std::thread::sleep(POLL);
+        loop {
+            let lock = self.open()?;
             match lock.try_lock() {
-                Ok(()) => break Ok(()),
-                Err(TryLockError::WouldBlock) => {}
+                Ok(()) if self.still_named(&lock)? => {
+                    if announced {
+                        std::fs::remove_file(&marker).map_err(|source| io(&marker, source))?;
+                    }
+                    return Ok(lock);
+                }
+                Ok(()) | Err(TryLockError::WouldBlock) => {}
                 Err(TryLockError::Error(source)) => {
-                    break Err(LaneError::Lock {
-                        path: record.display().to_string(),
+                    return Err(LaneError::Lock {
+                        path: self.lock.display().to_string(),
                         source,
                     });
                 }
+            }
+            drop(lock);
+            if !announced {
+                announced = true;
+                self.forget_the_dead(request.lane)?;
+                std::fs::write(&marker, &request.holder.command)
+                    .map_err(|source| io(&marker, source))?;
+                say(
+                    progress,
+                    &format!(
+                        "slot: waiting for the {} lane, held by {}",
+                        request.lane.name(),
+                        describe(self.record)
+                    ),
+                )?;
+            }
+            if let Some(signal) = request.stops.raised() {
+                std::fs::remove_file(&marker).map_err(|source| io(&marker, source))?;
+                return Err(LaneError::Interrupted {
+                    lane: request.lane.name(),
+                    signal,
+                });
             }
             if reported.elapsed() >= REPORT {
                 reported = Instant::now();
@@ -218,25 +288,90 @@ impl Lanes {
                     progress,
                     &format!(
                         "slot: still waiting for the {} lane after {}, held by {}; load now {}",
-                        lane.name(),
+                        request.lane.name(),
                         span(started.elapsed().as_secs()),
-                        describe(record),
+                        describe(self.record),
                         load()
                     ),
                 )?;
             }
-        };
-        std::fs::remove_file(&marker).map_err(|source| io(&marker, source))?;
-        taken
+            std::thread::sleep(POLL);
+        }
     }
-}
 
-/// A lane another run holds, as the run waiting for it sees it.
-#[derive(Debug, Clone, Copy)]
-struct Queue<'a> {
-    lane: Lane,
-    lock: &'a File,
-    record: &'a Path,
+    /// Whether the locked file is still the one the lane's path names, so a lock file somebody removed cannot let two runs in.
+    #[cfg(unix)]
+    fn still_named(&self, lock: &File) -> Result<bool, LaneError> {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let held = lock.metadata().map_err(|source| io(self.lock, source))?;
+        match std::fs::metadata(self.lock) {
+            Ok(named) => Ok(named.dev() == held.dev() && named.ino() == held.ino()),
+            Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(io(self.lock, source)),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn still_named(&self, _lock: &File) -> Result<bool, LaneError> {
+        Ok(true)
+    }
+
+    /// Removes the waiting markers of runs that are no longer alive to wait.
+    fn forget_the_dead(&self, lane: Lane) -> Result<(), LaneError> {
+        let prefix = format!("{}.waiting.", lane.name());
+        let entries =
+            std::fs::read_dir(self.directory).map_err(|source| io(self.directory, source))?;
+        for entry in entries {
+            let entry = entry.map_err(|source| io(self.directory, source))?;
+            let name = entry.file_name();
+            let Some(pid) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix(prefix.as_str()))
+                .and_then(number)
+            else {
+                continue;
+            };
+            if started_at(pid).is_none() {
+                match std::fs::remove_file(entry.path()) {
+                    Ok(()) => {}
+                    Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(source) => return Err(io(&entry.path(), source)),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Waits for the work the last holder started to end, when that holder died before its work did.
+    fn outlast(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<(), LaneError> {
+        let Some((pid, born)) = leader_of(self.record) else {
+            return Ok(());
+        };
+        let started = Instant::now();
+        let mut reported: Option<Instant> = None;
+        while started_at(pid).as_deref() == Some(born.as_str()) {
+            if let Some(signal) = request.stops.raised() {
+                return Err(LaneError::Interrupted {
+                    lane: request.lane.name(),
+                    signal,
+                });
+            }
+            if reported.is_none_or(|last| last.elapsed() >= REPORT) {
+                reported = Some(Instant::now());
+                say(
+                    progress,
+                    &format!(
+                        "slot: the {} lane is free, but the work its last holder started (pid {pid}) is still running; waited {} so far",
+                        request.lane.name(),
+                        span(started.elapsed().as_secs())
+                    ),
+                )?;
+            }
+            std::thread::sleep(POLL);
+        }
+        Ok(())
+    }
 }
 
 /// A lane this process holds; dropping it lets the next run in, which overwrites the record when it starts.
@@ -248,6 +383,31 @@ pub struct Held {
         reason = "the file is held for what dropping it does: the operating system releases the lock"
     )]
     lock: Option<File>,
+    record: Option<PathBuf>,
+}
+
+impl Held {
+    /// Records the process that leads the work this lane admitted, so a holder that dies before its work cannot let the next run in over it.
+    ///
+    /// # Errors
+    /// Returns the filesystem failure when the record cannot be rewritten.
+    pub fn working_on(&self, leader: u32) -> std::io::Result<()> {
+        let Some(record) = &self.record else {
+            return Ok(());
+        };
+        let Some(born) = started_at(leader) else {
+            return Ok(());
+        };
+        let text = std::fs::read_to_string(record)?;
+        let mut kept: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.starts_with("leader="))
+            .collect();
+        let leading = format!("leader={leader} {born}");
+        kept.push(&leading);
+        kept.push("");
+        std::fs::write(record, kept.join("\n"))
+    }
 }
 
 /// The value of `name` in `environment`, when it is set to something.
@@ -259,18 +419,58 @@ pub fn variable<'a>(environment: &'a [(OsString, OsString)], name: &str) -> Opti
         .map(|(_key, value)| value.as_os_str())
 }
 
-/// The branch and short commit of the checkout at `directory`, or a dash for each that cannot be read.
+/// The branch and short commit of the checkout at `directory`, or a dash for each that cannot be read; no `GIT_*` variable of `environment` reaches the git it asks.
 #[must_use]
-pub fn revision_of(directory: &Path) -> String {
+pub fn revision_of(directory: &Path, environment: &[(OsString, OsString)]) -> String {
     let ask = |arguments: &[&str]| {
-        answer(Command::new("git").args(arguments).current_dir(directory))
-            .unwrap_or_else(|| "-".to_owned())
+        let mut git = Command::new("git");
+        for (name, _value) in environment {
+            if name.as_encoded_bytes().starts_with(b"GIT_") {
+                git.env_remove(name);
+            }
+        }
+        answer(git.args(arguments).current_dir(directory)).unwrap_or_else(|| "-".to_owned())
     };
     format!(
         "{} {}",
         ask(&["rev-parse", "--abbrev-ref", "HEAD"]),
         ask(&["rev-parse", "--short", "HEAD"])
     )
+}
+
+/// When the process `pid` started, as the operating system spells it, so a recycled pid is not taken for the process that had it.
+#[cfg(target_os = "linux")]
+fn started_at(pid: u32) -> Option<String> {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(_gone) => return None,
+    };
+    let after_name = stat.rsplit_once(')')?.1;
+    after_name.split_whitespace().nth(19).map(str::to_owned)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn started_at(pid: u32) -> Option<String> {
+    answer(Command::new("ps").args(["-o", "lstart=", "-p", &pid.to_string()]))
+        .filter(|started| !started.is_empty())
+}
+
+/// The leader the record names and when it started.
+fn leader_of(record: &Path) -> Option<(u32, String)> {
+    let text = match std::fs::read_to_string(record) {
+        Ok(text) => text,
+        Err(_no_record) => return None,
+    };
+    let line = text.lines().find_map(|line| line.strip_prefix("leader="))?;
+    let (pid, born) = line.split_once(' ')?;
+    Some((number(pid)?, born.to_owned()))
+}
+
+fn number(text: &str) -> Option<u32> {
+    match text.parse::<u32>() {
+        Ok(number) => Some(number),
+        Err(_not_a_pid) => None,
+    }
 }
 
 fn answer(command: &mut Command) -> Option<String> {

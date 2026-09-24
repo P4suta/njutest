@@ -152,10 +152,12 @@ fn a_run_inside_a_held_lane_does_not_wait_for_itself() {
 }
 
 #[test]
-fn a_killed_holder_lets_the_next_run_in() {
+fn a_killed_holder_keeps_the_lane_until_the_work_it_started_has_ended() {
     let machine = Machine::new();
-    let mut holder =
-        machine.run("mkdir \"$TURNS/inside\"; while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done");
+    let mut holder = machine.run(
+        "echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
+         while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done",
+    );
     assert!(
         until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
@@ -166,15 +168,58 @@ fn a_killed_holder_lets_the_next_run_in() {
         .status()
         .expect("kill");
     assert!(killed.success(), "the holder could not be killed");
-    let mut next = machine.run("true");
-    let ended = finished_within(Duration::from_secs(60), &mut next);
-    machine.release();
     holder.wait().expect("the killed holder is reaped");
+    let mut next = machine.run("true");
+    let early = finished_within(Duration::from_secs(3), &mut next);
+    machine.release();
+    let late = finished_within(Duration::from_secs(60), &mut next);
     assert!(
-        ended.is_some_and(|status| status.success()),
-        "a holder that died without letting go kept the lane: every later run on the machine \
-         would wait for a process that no longer exists"
+        early.is_none(),
+        "the next run went in while the work the killed holder started was still running in the \
+         lane, which is two runs on the machine and two writers in the gate's tree"
     );
+    assert!(
+        late.is_some_and(|status| status.success()),
+        "once the orphaned work ended, the next run never got the lane"
+    );
+}
+
+#[test]
+fn a_run_asked_to_stop_stops_its_work_first() {
+    for signal in ["-TERM", "-INT"] {
+        let machine = Machine::new();
+        let mut command = machine.command(
+            "echo $$ > \"$TURNS/work\"; mkdir \"$TURNS/inside\"; \
+             while [ ! -e \"$TURNS/go\" ]; do sleep 0.05; done",
+        );
+        let mut run = SupervisedChild::launch(&mut command).expect("a run in the lane");
+        assert!(
+            until(Duration::from_secs(60), || machine.marker("inside")),
+            "the run never started"
+        );
+        let unread = run.take_stderr();
+        drop(unread);
+        let pid = run.id().expect("a live run").to_string();
+        let sent = Command::new("kill")
+            .args([signal, &pid])
+            .status()
+            .expect("kill");
+        assert!(sent.success(), "{signal} could not be sent");
+        let ended = finished_within(Duration::from_secs(60), &mut run);
+        let work = std::fs::read_to_string(machine.turns.path().join("work"))
+            .expect("the work said who it is");
+        let alive = Command::new("kill")
+            .args(["-0", work.trim()])
+            .status()
+            .expect("kill -0");
+        machine.release();
+        assert!(ended.is_some(), "{signal}: the run did not end");
+        assert!(
+            !alive.success(),
+            "{signal}: the run ended and left its work running without the lane, even with \
+             nobody reading what it would have said"
+        );
+    }
 }
 
 #[test]
