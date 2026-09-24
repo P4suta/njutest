@@ -23,6 +23,9 @@ pub const RULE: &str = "inject-error";
 /// What the finding is about when the tree it faults would not give a baseline.
 pub const NOT_MEASURED: &str = "fault-baseline-not-measured";
 
+/// What a finding is about when the tree was written while faults were put and no execution is tied to the write.
+pub const UNATTRIBUTED: &str = "fault-write-unattributed";
+
 /// Puts every fault the tree holds to the tests, and writes what became of each into `report`.
 ///
 /// The faults are asked in a session of their own, so no catalog, route, execution or control of the mutation phase ever holds one.
@@ -84,24 +87,12 @@ pub fn put(
         watch.trace.fault(record.clone());
     }
     report.beside = beside(&session, report, watch)?;
-    let after = written(&session)?;
-    let broke: Vec<&String> = after.difference(&before).collect();
-    if !broke.is_empty() {
-        report.findings.push(Finding::new(
-            FindingKind::BrokenUnderFault,
-            RULE,
-            &format!(
-                "a test wrote into the tree it was measured in while calls it made were \
-                 failing, where nothing had written before any failed: what the program does \
-                 when a call fails reaches past the place it was asked to work in ({})",
-                broke
-                    .iter()
-                    .map(|path| path.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ));
-    }
+    report.findings.extend(writes(
+        &session,
+        (&judged.judged, &before),
+        &request.test_args,
+        watch,
+    )?);
     report.accounting.faults = FaultAccounting::of(&records)?;
     report
         .findings
@@ -228,6 +219,177 @@ fn written(
         .iter()
         .map(|drift| drift.rel_path().to_owned())
         .collect())
+}
+
+/// What the tree says the faults wrote: a `broken-under-fault` finding for each path one fault is tied to, and one `not-measured` finding naming the rest.
+fn writes(
+    session: &rust_mutants::session::Session,
+    (judged, before): (&[Judged], &std::collections::BTreeSet<String>),
+    test_args: &[String],
+    watch: Watch<'_>,
+) -> Result<Vec<Finding>, RunnerError> {
+    let mut found = Vec::new();
+    let after = written(session)?;
+    let broke: Vec<&String> = after.difference(before).collect();
+    let added = added(session)?;
+    let mut unattributed: Vec<&str> = Vec::new();
+    let mut runs = 0_usize;
+    for path in broke {
+        let by = if added.contains(path) {
+            attributed(session, (judged, path), test_args, (&mut runs, watch))?
+        } else {
+            None
+        };
+        match by {
+            Some((fault, target)) => found.push(Finding::new(
+                FindingKind::BrokenUnderFault,
+                &fault,
+                &format!(
+                    "{target}, run alone with this fault failing a call, wrote {path} into the tree \
+                     it was measured in, and run alone without it did not: what the program does \
+                     when that call fails reaches past the place it was asked to work in"
+                ),
+            )),
+            None => unattributed.push(path),
+        }
+    }
+    if !unattributed.is_empty() {
+        found.push(Finding::new(
+            FindingKind::NotMeasured,
+            UNATTRIBUTED,
+            &format!(
+                "a test wrote into the tree it was measured in while calls it made were \
+                 failing, where nothing had written before any failed ({}); no fault run alone \
+                 was seen to write it where its test without the fault did not, so which failed \
+                 call wrote it, and whether the test's own failure did, is not established, and \
+                 nothing is concluded about it",
+                unattributed.join(", ")
+            ),
+        ));
+    }
+    Ok(found)
+}
+
+/// How many executions attribution may run, alone and one after another, before the paths it has not reached stay unattributed.
+const ATTRIBUTION_RUNS: usize = 64;
+
+/// The paths of the tree a test created, which are the ones attribution can remove and watch come back.
+fn added(
+    session: &rust_mutants::session::Session,
+) -> Result<std::collections::BTreeSet<String>, RunnerError> {
+    Ok(session
+        .changes()?
+        .iter()
+        .filter(|drift| matches!(drift, rust_mutants::snapshot::Drift::Added { .. }))
+        .map(|drift| drift.rel_path().to_owned())
+        .collect())
+}
+
+/// Whether the path at `path` is absent now, removing the file first; nothing where it cannot tell.
+fn cleared(path: &std::path::Path) -> Option<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Some(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(()),
+        Err(_unremovable) => None,
+    }
+}
+
+/// The fault and target that wrote `path`: a fault run alone that writes it where the same target run alone without it does not, recorded run by run, within [`ATTRIBUTION_RUNS`].
+fn attributed(
+    session: &rust_mutants::session::Session,
+    (judged, path): (&[Judged], &str),
+    args: &[String],
+    (runs, watch): (&mut usize, Watch<'_>),
+) -> Result<Option<(String, String)>, RunnerError> {
+    let at = session.snapshot_root().join(path);
+    for one in judged {
+        let Some(routing) = one.routing.as_ref() else {
+            continue;
+        };
+        for asked in &routing.answered {
+            if *runs >= ATTRIBUTION_RUNS || watch.cancel.is_cancelled() || cleared(&at).is_none() {
+                return Ok(None);
+            }
+            *runs = runs.saturating_add(1);
+            let request = rust_mutants::session::Request::new(one.id.as_str())
+                .with_args(args.to_vec())
+                .with_target(asked.target.clone());
+            let faulted = session.exec(&request, watch.cancel)?;
+            recorded_run(
+                watch,
+                (one, &asked.target, &request),
+                (&faulted, crate::trace::FaultRole::Attribution),
+            )?;
+            let Ok(wrote) = at.try_exists() else {
+                return Ok(None);
+            };
+            let passed = faulted.outcome() == Outcome::Survived;
+            let unfaulted = if wrote && passed {
+                if cleared(&at).is_none() {
+                    return Ok(None);
+                }
+                let control = session.control(
+                    &request,
+                    watch.cancel,
+                    rust_mutants::session::Observing::Nothing,
+                )?;
+                recorded_run(
+                    watch,
+                    (one, &asked.target, &request),
+                    (&control.result, crate::trace::FaultRole::AttributionControl),
+                )?;
+                let Ok(again) = at.try_exists() else {
+                    return Ok(None);
+                };
+                if again {
+                    crate::trace::Unfaulted::Wrote
+                } else {
+                    crate::trace::Unfaulted::DidNotWrite
+                }
+            } else {
+                crate::trace::Unfaulted::NotAsked
+            };
+            watch
+                .trace
+                .fault_attribution(crate::trace::FaultAttributionRecord {
+                    fault: one.display_id.clone(),
+                    target: asked.target.clone(),
+                    path: path.to_owned(),
+                    faulted: wrote,
+                    passed,
+                    unfaulted,
+                });
+            if wrote && passed && unfaulted == crate::trace::Unfaulted::DidNotWrite {
+                return Ok(Some((one.display_id.clone(), asked.target.clone())));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Records one execution attribution ran, as the fault execution it is.
+fn recorded_run(
+    watch: Watch<'_>,
+    (one, target, request): (&Judged, &str, &rust_mutants::session::Request),
+    (result, role): (
+        &rust_mutants::execute::MutantResult,
+        crate::trace::FaultRole,
+    ),
+) -> Result<(), RunnerError> {
+    let milliseconds = result.duration.as_millis();
+    let duration_ms = u64::try_from(milliseconds).map_err(|_outside_wire_range| {
+        crate::assure::run::RunInvariantError::MutationDurationOutsideWire { milliseconds }
+    })?;
+    watch.trace.fault_exec(crate::trace::FaultExecRecord {
+        fault: one.display_id.clone(),
+        role,
+        target: target.to_owned(),
+        args: request.args.clone(),
+        outcome: result.outcome().name().to_owned(),
+        duration_ms,
+        alone: true,
+    });
+    Ok(())
 }
 
 /// The session every fault site of the tree is guarded in, with its one run with nothing active.

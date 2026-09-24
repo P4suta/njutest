@@ -94,7 +94,8 @@ The faults are catalogued, built and run in a session of their own, so no mutati
 A fault is put only to the tests that reached its `?`, because two programs identical up to the site run identically until it is reached; no other proof is applied to a fault, since every other proof is read off the program without the fault.
 A fault is `noticed` only when a test failed with it, passed on the unchanged program, and failed with it again.
 Every fault every reaching test passed is an `unnoticed-fault` finding and makes the run `INSUFFICIENT`, never `DEFECT`: it changes what the program is given, not the program, and says only that no test asserts what happens when that call fails.
-A path of the tree under measurement first written while faults were put is `broken-under-fault`, which is a `DEFECT`; a path already written before any fault was put is not.
+A path of the tree under measurement first written while faults were put is a `not-measured` finding about `fault-write-unattributed`, since the faulted executions share one tree and run at once; a path already written before any fault was put is not named.
+`broken-under-fault`, which is a `DEFECT`, is reserved for a write tied to one fault, which a fault run alone makes and the same test run alone without it does not.
 A fault the run put and could not decide is a `not-measured` finding, so such a run is not `ASSURED`.
 A fault the compiler refuses — its site propagates an error type the engine does not make — is `not-put` and is stated, never counted as anything the suite did.
 
