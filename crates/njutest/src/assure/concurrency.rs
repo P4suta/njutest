@@ -41,6 +41,7 @@ pub fn recorded(
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
+    let compiled = crate::concurrency::read::Compiled::read(session.target_dir());
     let mut read: BTreeMap<String, PackageScan> = BTreeMap::new();
     binaries
         .into_iter()
@@ -64,7 +65,7 @@ pub fn recorded(
                             found: Vec::new(),
                             unread: vec!["Cargo.toml".to_owned()],
                         },
-                        crate::concurrency::read::package,
+                        |package| crate::concurrency::read::package(package, &compiled),
                     );
                     read.insert(id.clone(), scan);
                 }

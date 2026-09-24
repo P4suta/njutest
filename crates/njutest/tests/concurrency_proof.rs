@@ -177,7 +177,11 @@ fn a_package_is_read_whole_outside_its_build_output_and_what_cannot_be_read_is_n
         std::fs::write(at, text).expect("written");
     }
     std::fs::write(root.join("src/latin1.rs"), [0xff_u8, 0xfe]).expect("written");
-    let scan = njutest::concurrency::read::directory("pkg@1.0.0", false, root);
+    let scan = njutest::concurrency::read::compiled_directory(
+        ("pkg@1.0.0", false),
+        root,
+        (&[], &njutest::concurrency::read::Compiled::default()),
+    );
     let places: Vec<(&str, usize)> = scan
         .found
         .iter()
@@ -270,5 +274,137 @@ fn only_an_explicit_single_test_thread_is_one_thread() {
         threads(&["--unheard-of", "--test-threads=1"]),
         Threads::Many,
         "an option this reading does not know may take the next word, so nothing is read past it"
+    );
+}
+
+#[test]
+fn a_file_the_compiler_read_is_scanned_wherever_it_lives() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("pkg");
+    let generated = dir.path().join("out");
+    for (at, text) in [
+        (root.join("src/lib.rs"), "pub fn quiet() {}\n"),
+        (
+            root.join(".gen/hidden.rs"),
+            "pub fn hidden() { std::thread::spawn(|| {}); }\n",
+        ),
+        (
+            generated.join("gen.rs"),
+            "pub fn generated() { std::thread::spawn(|| {}); }\n",
+        ),
+    ] {
+        std::fs::create_dir_all(at.parent().expect("a parent")).expect("created");
+        std::fs::write(at, text).expect("written");
+    }
+    let mut compiled = njutest::concurrency::read::Compiled::default();
+    compiled.sources.insert(
+        "pkg".to_owned(),
+        [
+            root.join("src/lib.rs"),
+            root.join(".gen/hidden.rs"),
+            generated.join("gen.rs"),
+            generated.join("gone.rs"),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let scan = njutest::concurrency::read::compiled_directory(
+        ("pkg@1.0.0", false),
+        &root,
+        (&["pkg".to_owned()], &compiled),
+    );
+    let files: std::collections::BTreeSet<&str> = scan
+        .found
+        .iter()
+        .map(|(path, _found)| path.as_str())
+        .collect();
+    assert!(
+        files.contains(".gen/hidden.rs") && files.iter().any(|path| path.ends_with("out/gen.rs")),
+        "a file the compiler read is a source of the crate whatever directory it is in: a \
+         hidden directory `#[path]` points into, or the OUT_DIR a build script wrote into and \
+         `include!` pulled in. {files:?}"
+    );
+    assert!(
+        scan.unread.iter().any(|path| path.ends_with("out/gone.rs")),
+        "and a file the compiler read that is not there to scan is named as unread: {:?}",
+        scan.unread
+    );
+}
+
+#[test]
+fn a_build_script_that_asks_the_linker_for_a_library_links_native_code() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("pkg");
+    std::fs::create_dir_all(root.join("src")).expect("created");
+    std::fs::write(root.join("src/lib.rs"), "pub fn quiet() {}\n").expect("written");
+    let mut compiled = njutest::concurrency::read::Compiled::default();
+    compiled.linking.insert("pkg".to_owned());
+    let scan = njutest::concurrency::read::compiled_directory(
+        ("pkg@1.0.0", false),
+        &root,
+        (&["pkg".to_owned()], &compiled),
+    );
+    assert!(
+        scan.links,
+        "an object a build script links can start a thread from its constructor with no \
+         `extern` and no `links` key anywhere in the package"
+    );
+}
+
+#[test]
+fn a_file_read_as_data_is_not_a_source_and_one_read_as_code_is() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("pkg");
+    std::fs::create_dir_all(root.join("src")).expect("created");
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "#![doc = include_str!(\"../README.md\")]\npub fn quiet() {}\n",
+    )
+    .expect("written");
+    std::fs::write(
+        root.join("README.md"),
+        "Call `std::thread::spawn` yourself.\n",
+    )
+    .expect("written");
+    let mut compiled = njutest::concurrency::read::Compiled::default();
+    compiled.sources.insert(
+        "pkg".to_owned(),
+        [root.join("src/lib.rs"), root.join("README.md")]
+            .into_iter()
+            .collect(),
+    );
+    let scan = njutest::concurrency::read::compiled_directory(
+        ("pkg@1.0.0", false),
+        &root,
+        (&["pkg".to_owned()], &compiled),
+    );
+    assert!(
+        scan.found.is_empty() && scan.unread.is_empty(),
+        "a README a crate documents itself with is data the compiler read, not code: {scan:?}"
+    );
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "include!(\"../gen.in\");\npub fn quiet() {}\n",
+    )
+    .expect("written");
+    std::fs::write(
+        root.join("gen.in"),
+        "pub fn go() { std::thread::spawn(|| {}); }\n",
+    )
+    .expect("written");
+    compiled.sources.insert(
+        "pkg".to_owned(),
+        [root.join("src/lib.rs"), root.join("gen.in")]
+            .into_iter()
+            .collect(),
+    );
+    let scan = njutest::concurrency::read::compiled_directory(
+        ("pkg@1.0.0", false),
+        &root,
+        (&["pkg".to_owned()], &compiled),
+    );
+    assert!(
+        scan.found.iter().any(|(path, _found)| path == "gen.in"),
+        "while a file `include!` pulls in is code, whatever it is named: {scan:?}"
     );
 }
