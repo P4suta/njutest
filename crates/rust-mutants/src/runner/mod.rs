@@ -129,7 +129,7 @@ pub struct Spec {
     /// The child's working directory.
     /// `None` means this process's directory.
     pub dir: Option<PathBuf>,
-    /// The child's complete environment.
+    /// The child's complete environment, but for [`PRESENTATION`], which the runner sets over it.
     /// `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
     pub env: Option<Vec<(OsString, OsString)>>,
     /// Bounds the child's wall-clock run time.
@@ -1003,6 +1003,13 @@ fn resolved(spec: &Spec, program: &OsString) -> io::Result<OsString> {
         .map_err(|unfound| io::Error::new(io::ErrorKind::NotFound, unfound.to_string()))
 }
 
+/// What every child is told about presenting its output, over whatever its environment says, since the engine reads what it writes.
+pub const PRESENTATION: [(&str, &str); 3] = [
+    ("CARGO_TERM_COLOR", "never"),
+    ("CARGO_TERM_QUIET", "false"),
+    ("CARGO_TERM_VERBOSE", "false"),
+];
+
 /// A command with its pipes attached: the merged reader, and the structured stdout reader with its cap when the spec asked for one.
 struct Wired {
     command: Command,
@@ -1024,6 +1031,7 @@ fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
         command.env_clear();
         command.envs(env.iter().map(|(key, value)| (key, value)));
     }
+    command.envs(PRESENTATION);
     command.stdin(Stdio::null());
     let structured = if let Some(limit) = spec.structured_stdout {
         let (reader, writer) = io::pipe()?;
