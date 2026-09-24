@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 use njutest_devkit::process::SupervisedChild;
 use njutest_devkit::result::{ResultState, result_state};
 
+const SAYS_A_GREAT_DEAL: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*\" in 'run check') head -c 1048576 /dev/zero | tr '\\0' x; echo ;; *) exit 99 ;; esac";
+
 const ACCEPTS_THE_CHECK: &str =
     "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*\" in 'run check') ;; *) exit 99 ;; esac";
 
@@ -187,6 +189,19 @@ impl Repository {
         line: &str,
         handed: &[(&str, &std::ffi::OsStr)],
     ) -> SupervisedChild {
+        Self::start(self.command(directory, handed, Stdio::piped()), line)
+    }
+
+    fn launch_to(&self, directory: &Path, line: &str, told: Stdio) -> SupervisedChild {
+        Self::start(self.command(directory, &[], told), line)
+    }
+
+    fn command(
+        &self,
+        directory: &Path,
+        handed: &[(&str, &std::ffi::OsStr)],
+        told: Stdio,
+    ) -> Command {
         let mut command = isolated(env!("CARGO_BIN_EXE_xtask"));
         for (name, _value) in std::env::vars_os() {
             if xtask::prepush::shapes_the_build(&name) {
@@ -207,10 +222,14 @@ impl Repository {
             .envs(handed.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(told);
         if let Some(base) = &self.base {
             command.env("NJUTEST_COMMITTED_BASE_REF", base);
         }
+        command
+    }
+
+    fn start(mut command: Command, line: &str) -> SupervisedChild {
         let mut child = SupervisedChild::launch(&mut command).expect("the pre-push gate");
         child
             .take_stdin()
@@ -920,5 +939,35 @@ fn a_check_that_goes_quiet_is_stopped_and_one_that_talks_is_not() {
     assert!(
         heard.contains("still working 8"),
         "what the check said did not reach the person pushing: {heard}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hook_whose_stderr_takes_no_more_still_answers_for_the_check() {
+    let repository = Repository::new(SAYS_A_GREAT_DEAL);
+    let (mut reader, writer) = std::io::pipe().expect("a pipe for the hook's stderr");
+    let flags = rustix::fs::fcntl_getfl(&writer).expect("the pipe's flags");
+    rustix::fs::fcntl_setfl(&writer, flags | rustix::fs::OFlags::NONBLOCK)
+        .expect("a pipe that refuses rather than waits, as git's can");
+    let child = repository.launch_to(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        Stdio::from(writer),
+    );
+    let answered = child.wait_with_output().expect("the gate's answer");
+    let mut shown = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut shown).expect("what the hook showed");
+    let shown = String::from_utf8(shown).expect("the hook writes text");
+    assert!(
+        answered.status.success(),
+        "a check that passed passed, however much of its output a full pipe refused: showing the \
+         output is not the check. {}: {}",
+        answered.status,
+        shown
+            .lines()
+            .filter(|line| line.starts_with("pre-push:"))
+            .collect::<Vec<_>>()
+            .join(" / ")
     );
 }
