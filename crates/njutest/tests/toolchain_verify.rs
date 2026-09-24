@@ -183,12 +183,7 @@ fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
     let output = verify(&fixture, &[]);
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     let document = document(&fixture);
-    let hollow: Vec<&serde_json::Value> = document["builds"][0]["parts"][0]["findings"]
-        .as_array()
-        .unwrap_or_else(|| panic!("the report lists findings: {document}\n{stderr}"))
-        .iter()
-        .filter(|one| one["kind"] == "hollow-target")
-        .collect();
+    let hollow = findings_of(&fixture, "hollow-target");
 
     assert_eq!(
         hollow.len(),
@@ -217,13 +212,37 @@ fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
 
 /// Every finding of `kind` the one whole part of a report raised.
 #[cfg(unix)]
-fn findings_of<'a>(document: &'a serde_json::Value, kind: &str) -> Vec<&'a serde_json::Value> {
-    document["builds"][0]["parts"][0]["findings"]
-        .as_array()
-        .unwrap_or_else(|| panic!("the report lists findings: {document}"))
-        .iter()
-        .filter(|one| one["kind"] == kind)
-        .collect()
+fn findings_of(fixture: &Fixture, kind: &str) -> Vec<serde_json::Value> {
+    concluded_json(fixture, |conclusion| {
+        serde_json::to_value(&conclusion.findings).expect("findings render")
+    })
+    .into_iter()
+    .filter(|one| one["kind"] == kind)
+    .collect()
+}
+
+/// Every limitation named `name` the latest run's conclusion states.
+#[cfg(unix)]
+fn limitations_of(fixture: &Fixture, name: &str) -> Vec<serde_json::Value> {
+    concluded_json(fixture, |conclusion| {
+        serde_json::to_value(&conclusion.limitations).expect("limitations render")
+    })
+    .into_iter()
+    .filter(|one| one["name"] == name)
+    .collect()
+}
+
+/// What `render` makes of the latest complete run's conclusion, as the rows a reader is shown.
+#[cfg(unix)]
+fn concluded_json(
+    fixture: &Fixture,
+    render: impl Fn(&njutest::report::Conclusion) -> serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let njutest::report::ReportDocument::Complete(report) = parsed(fixture) else {
+        panic!("a run of the whole catalog writes a complete document");
+    };
+    let conclusion = report.conclusion().expect("the report concludes");
+    render(&conclusion).as_array().cloned().unwrap_or_default()
 }
 
 #[cfg(unix)]
@@ -234,7 +253,7 @@ fn a_target_whose_reach_moved_between_its_baseline_and_a_control_is_an_unstable_
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     let document = document(&fixture);
     let target = "fixture-drifts/lib/fixture_drifts";
-    let unstable = findings_of(&document, "unstable-baseline");
+    let unstable = findings_of(&fixture, "unstable-baseline");
     assert_eq!(
         unstable.len(),
         1,
@@ -292,12 +311,7 @@ fn a_target_no_kill_was_confirmed_on_is_one_whose_drift_was_not_measured() {
         "the library's kills were confirmed by a control that reached what its baseline did, \
          and nothing was ever confirmed on `smoke`, so nothing compared it"
     );
-    let limitation: Vec<&serde_json::Value> = part["limitations"]
-        .as_array()
-        .unwrap_or_else(|| panic!("the report lists limitations: {document}"))
-        .iter()
-        .filter(|one| one["name"] == njutest::limitation::DRIFT_NOT_MEASURED)
-        .collect();
+    let limitation = limitations_of(&fixture, njutest::limitation::DRIFT_NOT_MEASURED);
     assert_eq!(limitation.len(), 1, "{document}");
     let detail = limitation[0]["detail"].as_str().unwrap_or_default();
     assert!(
@@ -305,7 +319,7 @@ fn a_target_no_kill_was_confirmed_on_is_one_whose_drift_was_not_measured() {
         "the limitation names the one target it is about and says how many: {detail}"
     );
     assert!(
-        findings_of(&document, "unstable-baseline").is_empty(),
+        findings_of(&fixture, "unstable-baseline").is_empty(),
         "a target whose drift was not measured is not one that moved: {document}"
     );
 }
@@ -1319,9 +1333,11 @@ fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
         "every kill was inherited, so no control ran this run, and a comparison the \
          interrupted run made was against a baseline this run measured again: {part}"
     );
+    let (_, _, concluded_limitations) = concluded(&latest(&fixture));
     assert!(
-        names(&report).contains(&njutest::limitation::DRIFT_NOT_MEASURED.to_owned()),
-        "and the run says so rather than claiming a hold it did not observe: {report}"
+        concluded_limitations.contains(&njutest::limitation::DRIFT_NOT_MEASURED.to_owned()),
+        "and the run says so rather than claiming a hold it did not observe: \
+         {concluded_limitations:?}"
     );
 }
 
@@ -1970,77 +1986,87 @@ fn a_run_that_reads_an_answer_back_says_it_the_way_a_run_that_established_one_do
 }
 
 #[cfg(unix)]
-fn concluded(path: &Path) -> (Verdict, BTreeSet<(String, String)>, BTreeSet<String>) {
+fn concluded(path: &Path) -> (Verdict, Vec<(String, String)>, Vec<String>) {
     let text =
         std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     concluded_from(&text)
 }
 
 #[cfg(unix)]
-fn concluded_from(text: &str) -> (Verdict, BTreeSet<(String, String)>, BTreeSet<String>) {
+fn concluded_from(text: &str) -> (Verdict, Vec<(String, String)>, Vec<String>) {
     let conclusion = njutest::report::json::parse(text)
         .expect("a complete report reads back")
         .conclusion()
         .expect("it concludes");
-    (
-        conclusion.verdict,
-        conclusion
-            .findings
-            .iter()
-            .map(|finding| (finding.kind.name().to_owned(), finding.subject.clone()))
-            .collect(),
-        conclusion
-            .limitations
-            .iter()
-            .map(|limitation| limitation.name.clone())
-            .collect(),
-    )
+    let mut findings: Vec<(String, String)> = conclusion
+        .findings
+        .iter()
+        .map(|finding| (finding.kind.name().to_owned(), finding.subject.clone()))
+        .collect();
+    findings.sort();
+    let mut limitations: Vec<String> = conclusion
+        .limitations
+        .iter()
+        .map(|limitation| limitation.name.clone())
+        .collect();
+    limitations.sort();
+    (conclusion.verdict, findings, limitations)
 }
 
 #[cfg(unix)]
 #[test]
 fn a_catalog_measured_in_shards_and_merged_concludes_what_it_concludes_measured_whole() {
-    let fixture = fixture("fixture-hollow");
-    let whole = verify(&fixture, &["--no-cache"]);
-    assert_eq!(
-        whole.status.code(),
-        Some(2),
-        "{}",
-        njutest_devkit::process::strict_utf8(&whole.stderr)
-    );
-    let measured_whole = concluded(&latest(&fixture));
-    assert_eq!(
-        verify(&fixture, &["--no-cache", "--shard", "1/2"])
-            .status
-            .code(),
-        Some(2)
-    );
-    let one = latest(&fixture);
-    assert_eq!(
-        verify(&fixture, &["--no-cache", "--shard", "2/2"])
-            .status
-            .code(),
-        Some(2)
-    );
-    let two = latest(&fixture);
-    let merged = asked(
-        &of(&fixture.root, &[]),
-        &[
-            "merge",
-            one.to_str().expect("test protocol paths are UTF-8"),
-            two.to_str().expect("test protocol paths are UTF-8"),
-        ],
-    );
-    let measured_in_shards = concluded_from(&njutest_devkit::process::strict_utf8(&merged.stdout));
-    assert!(
-        measured_whole
-            .1
-            .iter()
-            .any(|(kind, _)| kind == "hollow-target"),
-        "the fixture exists to draw a hollow target: {measured_whole:?}"
-    );
-    assert_eq!(
-        measured_in_shards, measured_whole,
-        "how a catalog was divided among runs is not something its conclusion may depend on"
-    );
+    for name in ["fixture-hollow", "fixture-hollow-only"] {
+        let fixture = fixture(name);
+        let whole = verify(&fixture, &["--no-cache"]);
+        assert_eq!(
+            whole.status.code(),
+            Some(2),
+            "{name}: {}",
+            njutest_devkit::process::strict_utf8(&whole.stderr)
+        );
+        let measured_whole = concluded(&latest(&fixture));
+        assert!(
+            matches!(
+                verify(&fixture, &["--no-cache", "--shard", "1/2"])
+                    .status
+                    .code(),
+                Some(0 | 2)
+            ),
+            "{name}: the first shard answers"
+        );
+        let one = latest(&fixture);
+        assert!(
+            matches!(
+                verify(&fixture, &["--no-cache", "--shard", "2/2"])
+                    .status
+                    .code(),
+                Some(0 | 2)
+            ),
+            "{name}: the second shard answers"
+        );
+        let two = latest(&fixture);
+        let merged = asked(
+            &of(&fixture.root, &[]),
+            &[
+                "merge",
+                one.to_str().expect("test protocol paths are UTF-8"),
+                two.to_str().expect("test protocol paths are UTF-8"),
+            ],
+        );
+        let measured_in_shards =
+            concluded_from(&njutest_devkit::process::strict_utf8(&merged.stdout));
+        assert!(
+            measured_whole
+                .1
+                .iter()
+                .any(|(kind, _)| kind == "hollow-target"),
+            "{name}: the fixture exists to draw a hollow target: {measured_whole:?}"
+        );
+        assert_eq!(
+            measured_in_shards, measured_whole,
+            "{name}: how a catalog was divided among runs is not something its conclusion may \
+             depend on"
+        );
+    }
 }

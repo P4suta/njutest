@@ -4236,6 +4236,25 @@ pub enum FindingOrigin {
 }
 
 impl FindingKind {
+    /// Whether only the whole catalog decides it, so no part carries it and every conclusion derives it over all the parts of a build.
+    #[must_use]
+    pub const fn catalog_wide(self) -> bool {
+        match self {
+            Self::HollowTarget | Self::UnstableBaseline => true,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::TargetMissing
+            | Self::SurvivingMutant
+            | Self::Timeout
+            | Self::WaitedMutant
+            | Self::StepLimitReachedMutant
+            | Self::NotMeasured
+            | Self::UnmatchedAcceptance
+            | Self::UndefinedBehaviour
+            | Self::WireUnnoticed => false,
+        }
+    }
+
     /// The name this carries in a report, which is the one a person greps for.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -5964,17 +5983,7 @@ impl Report {
                 .collect(),
             mutants,
             findings,
-            limitations: self
-                .builds
-                .iter()
-                .flat_map(|build| {
-                    build
-                        .parts
-                        .iter()
-                        .flat_map(|part| part.limitations.iter().cloned())
-                        .chain(merged_whole_catalog(build).limitations)
-                })
-                .collect(),
+            limitations: self.builds.iter().flat_map(stated_by).collect(),
             sources: self
                 .builds
                 .iter()
@@ -6502,14 +6511,24 @@ fn projected_findings(
         .collect();
     let mut projected = global_findings.to_vec();
     for build in builds.iter() {
-        projected.extend(merged_whole_catalog(build).findings);
+        let from = projected.len();
+        projected.extend(catalog_of(build).findings);
         for part in build.parts.iter() {
-            for finding in &part.findings {
+            for finding in part
+                .findings
+                .iter()
+                .filter(|finding| !finding.kind.catalog_wide())
+            {
                 let answered_by_model = finding.kind == FindingKind::SurvivingMutant
                     && affirmative.iter().any(|(full, display)| {
                         finding.subject == *full || finding.subject == *display
                     });
-                if answered_by_model {
+                let stated = projected.iter().skip(from).any(|one| {
+                    one.kind == finding.kind
+                        && one.subject == finding.subject
+                        && one.detail == finding.detail
+                });
+                if answered_by_model || stated {
                     continue;
                 }
                 projected.push(finding.clone());
@@ -6570,22 +6589,27 @@ pub fn acceptances_the_catalog_resolves(
         .collect()
 }
 
-/// Whether a build was measured in parts, which is when what only the whole catalog decides is raised over the combined records rather than by a part.
-fn sharded(build: &BuildEvidence) -> bool {
-    build
+/// Every limitation `build` states: each its parts state, once however many parts state it, and what only the whole catalog decides.
+fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
+    let mut stated: Vec<Limitation> = Vec::new();
+    for limitation in build
         .parts
         .iter()
-        .any(|part| matches!(part.part, CatalogPart::Shard(_)))
+        .flat_map(|part| part.limitations.iter())
+        .filter(|limitation| limitation.name != crate::limitation::DRIFT_NOT_MEASURED)
+    {
+        if !stated.contains(limitation) {
+            stated.push(limitation.clone());
+        }
+    }
+    stated.extend(catalog_of(build).limitations);
+    stated
 }
 
-/// What only the whole catalog decides about a build measured in parts, over every part's records; nothing for a build measured whole, whose part raised it already.
-fn merged_whole_catalog(build: &BuildEvidence) -> WholeCatalog {
-    if !sharded(build) {
-        return WholeCatalog {
-            findings: Vec::new(),
-            limitations: Vec::new(),
-        };
-    }
+/// What only the whole catalog decides about `build`, over every part's records together, whether it was measured whole or in shards: the one place a conclusion gets it, so no producer can store it or forget it.
+///
+/// Each finding names the part holding the record it rests on; one no part holds is left run-wide rather than credited to a part that did not see it.
+fn catalog_of(build: &BuildEvidence) -> WholeCatalog {
     let records = drift::combined(build.parts.iter().flat_map(|part| part.drift.iter()));
     let rows: Vec<MutantRecord> = build
         .parts
@@ -6594,12 +6618,7 @@ fn merged_whole_catalog(build: &BuildEvidence) -> WholeCatalog {
         .collect();
     let mut whole = whole_catalog(&records, &rows);
     for finding in &mut whole.findings {
-        if let Some(part) = build
-            .parts
-            .iter()
-            .find(|part| saw(part, finding))
-            .or_else(|| build.parts.iter().next())
-        {
+        if let Some(part) = build.parts.iter().find(|part| saw(part, finding)) {
             finding.origin = FindingOrigin::Source {
                 build: build.name.clone(),
                 run_id: part.run_id.clone(),
