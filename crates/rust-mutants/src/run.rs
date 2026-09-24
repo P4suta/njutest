@@ -658,9 +658,9 @@ impl Filter {
             && self.ids.is_none()
     }
 
-    /// Whether this run is about `mutant`, which sits at `line`.
+    /// Whether this run is about `mutant`, which sits at `line` inside `item`.
     #[must_use]
-    pub fn selects(&self, mutant: &Mutant, line: u32) -> bool {
+    pub fn selects(&self, mutant: &Mutant, line: u32, item: Option<&str>) -> bool {
         let rule = mutant.candidate.rule.name;
         let family = mutant.candidate.rule.family.name();
         if self.skip_rules.iter().any(|one| one == rule) {
@@ -676,9 +676,12 @@ impl Filter {
             return false;
         }
         if let Some(ids) = &self.ids
-            && !ids
-                .iter()
-                .any(|prefix| mutant.id.as_str().starts_with(prefix.as_str()))
+            && !ids.iter().any(|selector| {
+                Locator::parse(selector).map_or_else(
+                    || mutant.id.as_str().starts_with(selector.as_str()),
+                    |name| name.describes(mutant, item, line),
+                )
+            })
         {
             return false;
         }
@@ -1512,7 +1515,7 @@ fn narrowed<'m>(
 fn filter_selects(session: &Session, mutant: &Mutant, filter: Option<&Filter>) -> bool {
     filter.filter(|one| !one.is_empty()).is_none_or(|filter| {
         let line = session.position(mutant).map_or(0, |at| at.line);
-        filter.selects(mutant, line)
+        filter.selects(mutant, line, session.item_of(mutant.index))
     })
 }
 
