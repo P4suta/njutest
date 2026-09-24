@@ -342,6 +342,30 @@ fn a_program_the_activated_environment_names_is_one_every_job_has() {
     );
 }
 
+#[test]
+fn what_the_setup_action_downloads_is_restored_before_it_is_fetched() {
+    let setup = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/actions/setup-rust/action.yml");
+    let source = std::fs::read_to_string(&setup)
+        .unwrap_or_else(|error| panic!("{}: {error}", setup.display()));
+    let activation = source
+        .find("jdx/mise-action")
+        .expect("this law is about the step that fetches mise");
+    let before = source.get(..activation).unwrap_or_default();
+    let restored = before
+        .rfind("actions/cache@")
+        .and_then(|at| before.get(at..))
+        .is_some_and(|step| step.contains(".local/share/mise") && step.contains("mise.toml"));
+    assert!(
+        restored,
+        "mise-action saves its cache only after it installs, and this action installs \
+         nothing through it, so no job ever found one: every job fetched mise from GitHub \
+         releases, and one HTTP 500 there cost the whole pipeline. The mise directory is \
+         restored by a cache keyed on mise.toml before the step that would fetch it"
+    );
+}
+
 /// Whether `pointer` names something the report schema declares, following `$ref`, `oneOf`, and arrays.
 fn resolves(schema: &serde_json::Value, node: &serde_json::Value, pointer: &[&str]) -> bool {
     let Some((head, rest)) = pointer.split_first() else {
