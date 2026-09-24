@@ -20,12 +20,12 @@ use sha2::{Digest as _, Sha256};
 #[cfg(feature = "testkit")]
 pub use event::SCHEMA;
 pub use event::{
-    ArtifactRecord, AskedRecord, CrashAsked, CrashExecRecord, CrashStep, CrashStepRecord,
-    DischargeRecord, DriftRecord, Event, ExecRecord, FaultAttributionRecord, FaultControlRecord,
-    FaultExecRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord, MutantExecRecord,
-    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord,
-    RunAccounting, RunRecord, SentinelRecord, StartRecord, Unfaulted, WireExchangeRecord,
-    WireExecRecord,
+    ArtifactRecord, AskedRecord, CrashAsked, CrashExecRecord, CrashNoticeRecord, CrashStep,
+    CrashStepRecord, DischargeRecord, DriftRecord, Event, ExecRecord, FaultAttributionRecord,
+    FaultControlRecord, FaultExecRecord, FaultRejectedRecord, FaultRole, FaultRouteRecord,
+    MutantExecRecord, NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read,
+    RouteRecord, RunAccounting, RunRecord, SentinelRecord, StartRecord, Unfaulted,
+    WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};

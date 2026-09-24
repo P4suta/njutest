@@ -581,6 +581,9 @@ pub struct CrashExecRecord {
     pub outcome: String,
     /// Whether the runtime published the notice that it stopped at the call, which is what makes the exit status a stop rather than a status the test chose.
     pub noticed: bool,
+    /// What the engine issued a `crash` run and found published, which `noticed` is decided on and an audit decides again; nothing on a `next` or `fresh` run.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub issued: Option<CrashNoticeRecord>,
     /// The files a stopped run left in its scratch, on a `crash` run that stopped; empty otherwise.
     pub left: Vec<String>,
     /// The tests a `next` or `fresh` run failed.
@@ -623,6 +626,21 @@ pub struct CrashAsked {
     /// The tests that reach the call, or nothing where which of them does is not known.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub tests: Option<Vec<String>>,
+}
+
+/// What the engine issued one crashed run, and what it read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrashNoticeRecord {
+    /// The mutation the run had active, in full.
+    pub mutant: String,
+    /// The catalog it was of.
+    pub catalog: String,
+    /// The nonce issued to this run alone.
+    pub nonce: String,
+    /// The notice's text as read, or nothing where none was published.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub read: Option<String>,
 }
 
 /// What the probe pass measured for one target.

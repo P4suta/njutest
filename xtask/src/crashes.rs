@@ -20,13 +20,46 @@ pub struct Run {
     pub exit_code: i64,
     /// What the engine made of it.
     pub outcome: String,
-    /// Whether the runtime published the notice that it stopped at the call.
+    /// Whether the runner says the runtime published the notice that it stopped at the call.
     pub noticed: bool,
+    /// What the engine issued a `crash` run and read back, which the stop is decided on again; nothing on another run.
+    pub issued: Option<Issued>,
     /// What a stopped run left.
     pub left: Vec<String>,
     /// What a next or fresh run failed.
     pub failed: Vec<String>,
 }
+
+/// What the engine issued one crashed run: the mutation, the catalog, the nonce, and the notice it read back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issued {
+    /// The mutation the run had active, in full.
+    pub mutant: String,
+    /// The catalog it was of.
+    pub catalog: String,
+    /// The nonce issued to this run alone.
+    pub nonce: String,
+    /// The notice as read, or nothing where none was published.
+    pub read: Option<String>,
+}
+
+impl Issued {
+    /// Whether the runtime published exactly the notice this run was issued: the schema, its own nonce, the catalog and the mutation.
+    #[must_use]
+    pub fn published(&self) -> bool {
+        self.read.as_deref()
+            == Some(
+                format!(
+                    "{NOTICE_SCHEMA}\t{}\t{}\t{}\n",
+                    self.nonce, self.catalog, self.mutant
+                )
+                .as_str(),
+            )
+    }
+}
+
+/// The first field of every crash notice, written out again from the engine's contract rather than read from its code.
+pub const NOTICE_SCHEMA: &str = "rust-mutants-crash-notice-v1";
 
 /// One target a route asked, with its tests where the route names them.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +146,17 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
                         .push((String::new(), Step::Unread("crash-exec".to_owned())));
                     continue;
                 };
+                let issued = match issued(record) {
+                    Said::Nothing => None,
+                    Said::Whole(issued) => Some(issued),
+                    Said::Unwhole => {
+                        crashed.steps.push((
+                            text(record, "crash"),
+                            Step::Unread("crash-exec without a whole `issued`".to_owned()),
+                        ));
+                        continue;
+                    }
+                };
                 let Some(noticed) = record.get("noticed").and_then(Value::as_bool) else {
                     crashed.steps.push((
                         text(record, "crash"),
@@ -132,6 +176,7 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
                             .unwrap_or(-1),
                         outcome: text(record, "outcome"),
                         noticed,
+                        issued,
                         left: texts(record, "left"),
                         failed: texts(record, "failed"),
                     }),
@@ -189,6 +234,86 @@ fn routed_as(taken: &Value) -> Option<Vec<Asked>> {
             })
         })
         .collect()
+}
+
+/// What a crash-exec record says the engine issued its run.
+enum Said {
+    /// It says `null`: the run was not a crashed one.
+    Nothing,
+    /// It says in full.
+    Whole(Issued),
+    /// The field is missing or not whole, which is read as nothing it can be held to.
+    Unwhole,
+}
+
+/// What a crash-exec record says the engine issued its run.
+fn issued(record: &Value) -> Said {
+    let Some(said) = record.get("issued") else {
+        return Said::Unwhole;
+    };
+    if said.is_null() {
+        return Said::Nothing;
+    }
+    let field = |key: &str| said.get(key).and_then(Value::as_str).map(ToOwned::to_owned);
+    let read = match said.get("read") {
+        Some(Value::Null) => None,
+        Some(Value::String(read)) => Some(read.clone()),
+        Some(Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) | None => {
+            return Said::Unwhole;
+        }
+    };
+    match (said, field("mutant"), field("catalog"), field("nonce")) {
+        (Value::Null, _, _, _) => Said::Nothing,
+        (Value::Object(_), Some(mutant), Some(catalog), Some(nonce)) => Said::Whole(Issued {
+            mutant,
+            catalog,
+            nonce,
+            read,
+        }),
+        (
+            Value::Object(_)
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_),
+            _,
+            _,
+            _,
+        ) => Said::Unwhole,
+    }
+}
+
+/// Every place what the engine issued the crashed runs disagrees with the report or with itself: a run of a crash issued another mutation than the report's site names, or a nonce issued twice.
+#[must_use]
+pub fn issued_disagreements(
+    ids: &BTreeMap<String, String>,
+    crashed: &Crashed,
+) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut nonces: BTreeMap<&str, &str> = BTreeMap::new();
+    for (crash, step) in &crashed.steps {
+        let Step::Ran(Run {
+            issued: Some(issued),
+            ..
+        }) = step
+        else {
+            continue;
+        };
+        if ids.get(crash).is_some_and(|id| *id != issued.mutant) {
+            found.push((
+                crash.clone(),
+                "a run of this crash was issued another mutation than the report's site names"
+                    .to_owned(),
+            ));
+        }
+        if let Some(earlier) = nonces.insert(issued.nonce.as_str(), crash.as_str()) {
+            found.push((
+                crash.clone(),
+                format!("a run of this crash carries the nonce already issued a run of {earlier}"),
+            ));
+        }
+    }
+    found
 }
 
 /// One site as a report writes it.
@@ -287,6 +412,27 @@ impl<'b> Cursor<'_, 'b> {
         };
         match next {
             Step::Ran(run) if run.target == target && run.test == test && run.stage == stage => {
+                if run.noticed != stopped(run) {
+                    return Err(unmade(&format!(
+                        "a {stage} run of {target}::{test} says the runtime {} its notice and \
+                         what the engine issued and read back says otherwise",
+                        if run.noticed {
+                            "published"
+                        } else {
+                            "did not publish"
+                        }
+                    )));
+                }
+                if (stage == "crash") != run.issued.is_some() {
+                    return Err(unmade(&format!(
+                        "a {stage} run of {target}::{test} {} what the engine issued it",
+                        if run.issued.is_some() {
+                            "carries"
+                        } else {
+                            "does not carry"
+                        }
+                    )));
+                }
                 self.rest = rest;
                 Ok(run)
             }
@@ -385,8 +531,8 @@ fn confirmed(
 }
 
 /// Whether a run stopped at the call: the stop's exit status, and the runtime's notice that it made it.
-const fn stopped(run: &Run) -> bool {
-    run.exit_code == CRASH_EXIT && run.noticed
+fn stopped(run: &Run) -> bool {
+    run.exit_code == CRASH_EXIT && run.issued.as_ref().is_some_and(Issued::published)
 }
 
 /// Every place a report's crash sites and the recorded steps disagree, each with the crash it is about.

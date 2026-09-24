@@ -3,7 +3,7 @@
 
 //! A crash's decision is re-derived from its ordered steps exactly, so a report cannot claim more, or less, than they show.
 
-use xtask::crashes::{Asked, Crashed, Run, Site, Step, Unmade, decided, disagreements};
+use xtask::crashes::{Asked, Crashed, Issued, Run, Site, Step, Unmade, decided, disagreements};
 
 fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
     let (exit_code, outcome) = match ended {
@@ -24,6 +24,24 @@ fn run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Step {
         exit_code,
         outcome: outcome.to_owned(),
         noticed: ended == "stopped",
+        issued: (stage == "crash").then(|| {
+            let issued = Issued {
+                mutant: "d".repeat(64),
+                catalog: "c".repeat(64),
+                nonce: "0".repeat(32),
+                read: None,
+            };
+            let read = (ended == "stopped").then(|| {
+                format!(
+                    "{}\t{}\t{}\t{}\n",
+                    xtask::crashes::NOTICE_SCHEMA,
+                    issued.nonce,
+                    issued.catalog,
+                    issued.mutant
+                )
+            });
+            Issued { read, ..issued }
+        }),
         left,
         failed,
     })
@@ -272,5 +290,28 @@ fn once_a_stop_wrote_into_the_tree_every_later_crash_is_left_alone() {
         )
         .is_empty(),
         "a later crash that ran over the written tree is refused"
+    );
+}
+
+#[test]
+fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
+    let line = |issued: &str| {
+        format!(
+            "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"failed\":[]}}}}}}\n"
+        )
+    };
+    let read = |issued: &str| {
+        xtask::crashes::read(&line(issued)).expect("a recording this audit can read")
+    };
+    assert!(
+        matches!(
+            read("null").steps.as_slice(),
+            [(_, Step::Ran(Run { issued: None, .. }))]
+        ),
+        "`null` is a run nothing was issued, which is every run but a crashed one"
+    );
+    assert!(
+        matches!(read("{}").steps.as_slice(), [(_, Step::Unread(_))]),
+        "a record that is not whole is read as nothing it can be held to"
     );
 }

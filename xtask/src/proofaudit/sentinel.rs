@@ -157,15 +157,109 @@ fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
     } else {
         (&[], files)
     };
+    let issued = (stage == "crash").then(|| {
+        json!({
+            "mutant": "d".repeat(64), "catalog": "c".repeat(64), "nonce": "0".repeat(32),
+            "read": (ended == "stopped").then(|| notice(&"0".repeat(32)))
+        })
+    });
     json!({
         "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
         "type": "crash-exec",
         "crash": {
             "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
             "exit_code": exit_code, "outcome": outcome, "noticed": ended == "stopped",
-            "left": left, "failed": failed
+            "issued": issued, "left": left, "failed": failed
         }
     })
+}
+
+/// The defects planted for the crashes layer about the evidence a stop is decided on: a notice the engine never read, one naming another run's nonce, and a run issued another mutation.
+fn crashes_planted_against_evidence(clean: &Perturbation) -> Vec<Perturbation> {
+    let on = format!("{TARGET}::t");
+    let restarted = json!({ "decision": "restarted", "on": on, "left": ["count"] });
+    let planted = |name: &'static str, document: Value, events: Vec<Value>| Perturbation {
+        name,
+        document,
+        events: Some(events),
+        ..clean.clone()
+    };
+    vec![
+        planted(
+            "a stop claimed over a run whose engine read no notice",
+            crash_reported(&restarted, "restarted", None),
+            reissued(crash_recorded(crash_restarted()), |issued| {
+                issued["read"] = Value::Null;
+            }),
+        ),
+        planted(
+            "a stop claimed over a notice that carries another run's nonce",
+            crash_reported(&restarted, "restarted", None),
+            reissued(crash_recorded(crash_restarted()), |issued| {
+                issued["read"] = json!(notice(&"f".repeat(32)));
+            }),
+        ),
+        planted(
+            "a stop claimed over a run issued another mutation than the site",
+            crash_reported(&restarted, "restarted", None),
+            reissued(crash_recorded(crash_restarted()), |issued| {
+                let other = format!(
+                    "{}\t{}\t{}\t{}\n",
+                    crate::crashes::NOTICE_SCHEMA,
+                    issued["nonce"].as_str().unwrap_or_default(),
+                    "c".repeat(64),
+                    "e".repeat(64)
+                );
+                issued["mutant"] = json!("e".repeat(64));
+                issued["read"] = json!(other);
+            }),
+        ),
+    ]
+}
+
+/// `events` with what the engine issued every crashed run changed by `change`.
+fn reissued(mut events: Vec<Value>, change: impl Fn(&mut Value)) -> Vec<Value> {
+    for event in &mut events {
+        if let Some(issued) = event
+            .get_mut("crash")
+            .and_then(|crash| crash.get_mut("issued"))
+            .filter(|issued| issued.is_object())
+        {
+            change(issued);
+        }
+    }
+    events
+}
+
+/// The notice the runtime publishes for a run of [`CRASHED`] issued `nonce`.
+fn notice(nonce: &str) -> String {
+    format!(
+        "{}\t{nonce}\t{}\t{}\n",
+        crate::crashes::NOTICE_SCHEMA,
+        "c".repeat(64),
+        "d".repeat(64)
+    )
+}
+
+/// `events` with every crashed run issued a nonce of its own, and the notice it published naming that nonce.
+fn nonced(mut events: Vec<Value>) -> Vec<Value> {
+    let mut next = 0_u32;
+    for event in &mut events {
+        let Some(issued) = event
+            .get_mut("crash")
+            .and_then(|crash| crash.get_mut("issued"))
+            .filter(|issued| issued.is_object())
+        else {
+            continue;
+        };
+        next = next.checked_add(1).unwrap_or(next);
+        let nonce = format!("{next:032x}");
+        if issued.get("read").is_some_and(Value::is_string) {
+            issued["read"] = json!(notice(&nonce));
+        }
+        issued["nonce"] = json!(nonce);
+    }
+    events
 }
 
 /// The specimen's recording with the route that asks the one test `t`, and `runs` after it.
@@ -173,7 +267,9 @@ fn crash_recorded(runs: Vec<Value>) -> Vec<Value> {
     let route = crash_step(&json!({
         "kind": "route", "asked": [{ "target": TARGET, "tests": ["t"] }]
     }));
-    numbered(routes().into_iter().chain([route]).chain(runs).collect())
+    numbered(nonced(
+        routes().into_iter().chain([route]).chain(runs).collect(),
+    ))
 }
 
 /// A stop of `t` that left `count`, and a next run that passed over it.
@@ -265,6 +361,7 @@ fn crashes_planted(clean: &Perturbation) -> Vec<Perturbation> {
     ]
     .into_iter()
     .chain(crashes_planted_against_order(clean))
+    .chain(crashes_planted_against_evidence(clean))
     .collect()
 }
 

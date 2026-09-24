@@ -689,6 +689,17 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 exit_code: 93,
                 outcome: "killed".to_owned(),
                 noticed: true,
+                issued: Some(crate::trace::CrashNoticeRecord {
+                    mutant: "d".repeat(64),
+                    catalog: "c".repeat(64),
+                    nonce: "e".repeat(32),
+                    read: Some(format!(
+                        "rust-mutants-crash-notice-v1\t{}\t{}\t{}\n",
+                        "e".repeat(32),
+                        "c".repeat(64),
+                        "d".repeat(64)
+                    )),
+                }),
                 left: vec!["count".to_owned()],
                 failed: Vec::new(),
             },

@@ -218,7 +218,40 @@ const CONTROL_TOUCH_LOG: &str = "touch.log";
 /// One control process's question: which target, asked how, for how long.
 /// A scratch directory a run left, kept so a next run can start over what it holds.
 #[derive(Debug)]
-pub struct Kept(PathBuf, Stop);
+pub struct Kept(PathBuf, Stop, Notice);
+
+/// What the engine issued a crashed run and what it found published, which is the evidence a stop is decided on: the audit decides it again from exactly this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    /// The mutation the run had active, in full.
+    pub mutant: String,
+    /// The catalog it was of.
+    pub catalog: String,
+    /// The nonce issued to this run alone.
+    pub nonce: String,
+    /// The notice's text as the engine read it, or nothing where none was published or it could not be read.
+    pub read: Option<String>,
+}
+
+impl Notice {
+    /// The one text a notice of this run can be: the schema, the nonce issued to it, the catalog and the mutation.
+    #[must_use]
+    pub fn expected(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}\n",
+            crate::instrument::CRASH_NOTICE_SCHEMA,
+            self.nonce,
+            self.catalog,
+            self.mutant
+        )
+    }
+
+    /// Whether the runtime published exactly that text.
+    #[must_use]
+    pub fn published(&self) -> bool {
+        self.read.as_deref() == Some(self.expected().as_str())
+    }
+}
 
 /// Whether a run stopped at the call its crash was put at, which only the engine can say yes to: it says so only where it verified the runtime's notice itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +276,12 @@ impl Kept {
     #[must_use]
     pub const fn stop(&self) -> Stop {
         self.1
+    }
+
+    /// What the stop was decided on.
+    #[must_use]
+    pub const fn notice(&self) -> &Notice {
+        &self.2
     }
 
     /// Every file and directory the run left in this scratch directory, a directory named with a trailing `/`, relative to it and in path order; the engine keeps its own files elsewhere, so every one of them is the run's.
@@ -1390,16 +1429,17 @@ impl Session {
             exec = exec.with_test(test.clone());
         }
         let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
-        let stopped = result.exit_code == crate::instrument::CRASH_EXIT
-            && std::fs::read_to_string(&notice).is_ok_and(|said| {
-                said == format!(
-                    "{}\t{nonce}\t{}\t{}\n",
-                    crate::instrument::CRASH_NOTICE_SCHEMA,
-                    self.catalog.digest(),
-                    mutant.id
-                )
-            });
-        Ok((result, Kept(tmp, Stop(stopped))))
+        let evidence = Notice {
+            mutant: mutant.id.to_string(),
+            catalog: self.catalog.digest().to_owned(),
+            nonce,
+            read: match std::fs::read_to_string(&notice) {
+                Ok(said) => Some(said),
+                Err(_absent_or_unreadable) => None,
+            },
+        };
+        let stopped = result.exit_code == crate::instrument::CRASH_EXIT && evidence.published();
+        Ok((result, Kept(tmp, Stop(stopped), evidence)))
     }
 
     /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.

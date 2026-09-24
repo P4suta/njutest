@@ -2182,16 +2182,17 @@ fn crashes(
     for (crash, why) in crate::crashes::disagreements(&reported, crashed) {
         notes.violated(&crash, why);
     }
-    if crashed.steps.iter().any(
-        |(_crash, step)| matches!(step, crate::crashes::Step::Ran(run) if run.stage == "crash"),
-    ) {
-        notes.unaudited(
-            "crashes",
-            "whether each crash run stopped at the call is held by the engine's `Stop` type, which \
-             only the engine makes true after verifying the runtime's notice, and is not re-derived \
-             here: the crash session keeps no engine recording to read it from"
-                .to_owned(),
-        );
+    let ids: BTreeMap<String, String> = rows(recording.document, "crashes")
+        .iter()
+        .map(|row| {
+            (
+                field(row, "display_id").unwrap_or_default(),
+                field(row, "id").unwrap_or_default(),
+            )
+        })
+        .collect();
+    for (crash, why) in crate::crashes::issued_disagreements(&ids, crashed) {
+        notes.violated(&crash, why);
     }
 }
 

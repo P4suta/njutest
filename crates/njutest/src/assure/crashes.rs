@@ -268,6 +268,7 @@ impl Stopped<'_> {
                 exit_code: result.exit_code,
                 outcome: result.outcome(),
                 stop: kept.stop(),
+                issued: Some(kept.notice()),
                 left: &left,
                 failed: &[],
             });
@@ -278,6 +279,7 @@ impl Stopped<'_> {
             exit_code: result.exit_code,
             outcome: result.outcome(),
             stop: kept.stop(),
+            issued: Some(kept.notice()),
             left: &[],
             failed: &[],
         });
@@ -320,6 +322,7 @@ impl Stopped<'_> {
             exit_code: next.exit_code,
             outcome: next.outcome(),
             stop: Stop::none(),
+            issued: None,
             left: &[],
             failed: &next.failed_tests,
         });
@@ -367,6 +370,7 @@ impl Stopped<'_> {
             exit_code: fresh.exit_code,
             outcome: fresh.outcome(),
             stop: Stop::none(),
+            issued: None,
             left: &[],
             failed: &fresh.failed_tests,
         });
@@ -391,6 +395,7 @@ impl Stopped<'_> {
             exit_code: again.exit_code,
             outcome: again.outcome(),
             stop: Stop::none(),
+            issued: None,
             left: &[],
             failed: &again.failed_tests,
         });
@@ -413,6 +418,12 @@ impl Stopped<'_> {
             exit_code: i64::from(run.exit_code),
             outcome: run.outcome.name().to_owned(),
             noticed: run.stop.noticed(),
+            issued: run.issued.map(|notice| crate::trace::CrashNoticeRecord {
+                mutant: notice.mutant.clone(),
+                catalog: notice.catalog.clone(),
+                nonce: notice.nonce.clone(),
+                read: notice.read.clone(),
+            }),
             left: run.left.to_vec(),
             failed: run.failed.to_vec(),
         });
@@ -437,6 +448,7 @@ struct Recorded<'a> {
     exit_code: i32,
     outcome: Outcome,
     stop: Stop,
+    issued: Option<&'a rust_mutants::session::Notice>,
     left: &'a [String],
     failed: &'a [String],
 }
