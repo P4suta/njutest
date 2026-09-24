@@ -69,12 +69,10 @@ mod __rm {
             }
         }
     }
-    #[derive(Clone, Copy)]
-    enum Budget {
-        Unbounded,
-        Bounded(StepLimit),
-        Invalid(BudgetError),
-    }
+    // What the configured allowance is: none, a bound, or a refusal. A
+    // standard Result and Option rather than an enum of this module's own,
+    // whose unequal variants a project denying variant_size_differences refuses.
+    type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>;
     #[derive(Clone, Copy)]
     enum BudgetError {
         NonUnicode,
@@ -231,9 +229,9 @@ Result < (StepPhase, StepAdvance), StepMachineError >
 
     fn advance(action: StepAction) {
         let limit = match *BUDGET.get_or_init(configured_budget) {
-            Budget::Unbounded => return,
-            Budget::Bounded(limit) => limit,
-            Budget::Invalid(_) => protocol_failure(),
+            __rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,
+            __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)) => limit,
+            __rm_std::result::Result::Err(_) => protocol_failure(),
         };
         let advanced = match update_state(action, limit) {
             __rm_std::result::Result::Ok(advanced) => advanced,
@@ -248,27 +246,27 @@ Result < (StepPhase, StepAdvance), StepMachineError >
 
     fn configured_budget() -> Budget {
         let raw = match __rm_std::env::var_os("RUST_MUTANTS_STEPS") {
-            __rm_std::option::Option::None => return Budget::Unbounded,
+            __rm_std::option::Option::None => return __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::option::Option::Some(raw) => raw,
         };
         let text = match raw.to_str() {
             __rm_std::option::Option::Some(text) => text,
-            __rm_std::option::Option::None => return Budget::Invalid(BudgetError::NonUnicode),
+            __rm_std::option::Option::None => return __rm_std::result::Result::Err(BudgetError::NonUnicode),
         };
         match text.parse::<usize>() {
-            __rm_std::result::Result::Ok(0) => Budget::Unbounded,
+            __rm_std::result::Result::Ok(0) => __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::result::Result::Ok(allowed) => {
                 if __rm_std::string::ToString::to_string(&allowed) != text {
-                    return Budget::Invalid(BudgetError::NonCanonical);
+                    return __rm_std::result::Result::Err(BudgetError::NonCanonical);
                 }
                 match StepLimit::new(allowed) {
-                    __rm_std::option::Option::Some(limit) => Budget::Bounded(limit),
+                    __rm_std::option::Option::Some(limit) => __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)),
                     __rm_std::option::Option::None => {
-                        Budget::Invalid(BudgetError::UnrepresentableLimit)
+                        __rm_std::result::Result::Err(BudgetError::UnrepresentableLimit)
                     }
                 }
             }
-            __rm_std::result::Result::Err(_) => Budget::Invalid(BudgetError::NotANumber),
+            __rm_std::result::Result::Err(_) => __rm_std::result::Result::Err(BudgetError::NotANumber),
         }
     }
 

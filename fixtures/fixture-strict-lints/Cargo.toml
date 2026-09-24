@@ -12,13 +12,26 @@ publish = false
 [dependencies]
 
 [lints.rust]
-warnings = "deny"
+warnings = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+unsafe_code = "deny"
+non_ascii_idents = "deny"
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(kani)"] }
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
 unused_qualifications = "deny"
 unused_results = "deny"
 unused_import_braces = "deny"
+elided_lifetimes_in_paths = "deny"
 unused_lifetimes = "deny"
 single_use_lifetimes = "deny"
+redundant_lifetimes = "deny"
 trivial_casts = "deny"
 trivial_numeric_casts = "deny"
-unreachable_pub = "deny"
-unsafe_code = "deny"
+let_underscore_drop = "deny"
+meta_variable_misuse = "deny"
+unit_bindings = "deny"
+variant_size_differences = "deny"
+ambiguous_negative_literals = "deny"
