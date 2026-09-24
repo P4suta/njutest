@@ -15,7 +15,9 @@ use xtask::proofaudit::sentinel::{
     self, ASKED, KILLED, RUN, SURVIVED, TARGET, base, merge, never_noticed, routes, was_put,
     went_past, with,
 };
-use xtask::proofaudit::{Audit, AuditError, EXIT_UNREADABLE, Layer, REPORT_FILE, Standing};
+use xtask::proofaudit::{
+    Audit, AuditError, Coverage, EXIT_UNREADABLE, Layer, REPORT_FILE, Standing,
+};
 
 const EARLIER: &str = "20260905T090000Z-1a2b3c";
 
@@ -122,6 +124,23 @@ fn a_recording_that_agrees_with_itself_has_nothing_to_report() {
     let audit = audited_with_routes(&base());
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.exit_code(), 0);
+}
+
+#[test]
+fn every_layer_says_how_far_it_got_even_with_nothing_to_look_at() {
+    let said = audited(&base()).to_string();
+    for layer in Layer::ALL {
+        let heads = said
+            .lines()
+            .filter(|line| line.starts_with(&format!("layer: {}: ", layer.label())))
+            .count();
+        assert_eq!(
+            heads,
+            1,
+            "{} says how far it got once:\n{said}",
+            layer.label()
+        );
+    }
 }
 
 #[test]
@@ -2427,4 +2446,36 @@ fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_sha
             .any(|remark| remark.layer == Layer::Merge && remark.standing == Standing::Unaudited),
         "every shard the merge names was given and re-decided: {audit}"
     );
+}
+
+#[test]
+fn a_merge_says_how_far_each_layer_got_over_its_parts_and_no_further() {
+    let clean = sharded();
+    let whole = merge_audit(&clean).expect("the merge is read with its shards");
+    for layer in Layer::ALL {
+        assert!(
+            whole.coverage.contains_key(&layer),
+            "{} says how far it got: {whole}",
+            layer.label()
+        );
+    }
+    assert_eq!(
+        whole.coverage.get(&Layer::Merge),
+        Some(&Coverage::Rederived),
+        "{whole}"
+    );
+    let mut half = clean;
+    half.shards.truncate(1);
+    let half = merge_audit(&half).expect("the merge is read with one shard");
+    for layer in Layer::ALL
+        .into_iter()
+        .filter(|layer| *layer != Layer::Merge)
+    {
+        assert_eq!(
+            half.coverage.get(&layer),
+            Some(&Coverage::Partly),
+            "{} cannot have re-decided a part nobody gave: {half}",
+            layer.label()
+        );
+    }
 }

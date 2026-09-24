@@ -14,6 +14,7 @@ pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;
 pub mod kaniaudit;
+pub mod layers;
 pub mod lints;
 pub mod milestones;
 pub mod modelaudit;

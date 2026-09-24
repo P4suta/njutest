@@ -72,6 +72,23 @@ fn a_clean_run_is_silent_on_every_layer_it_can_re_decide() {
 }
 
 #[test]
+fn every_layer_says_how_far_it_got_even_with_nothing_to_look_at() {
+    let said = audited(&base()).to_string();
+    for layer in Layer::ALL {
+        let heads = said
+            .lines()
+            .filter(|line| line.starts_with(&format!("layer: {}: ", layer.label())))
+            .count();
+        assert_eq!(
+            heads,
+            1,
+            "{} says how far it got once:\n{said}",
+            layer.label()
+        );
+    }
+}
+
+#[test]
 fn an_id_that_does_not_re_mint_from_its_own_fields_is_a_violation() {
     let audit = audited(&with(serde_json::json!({
         "mutants": [{ "start_byte": 104 }]

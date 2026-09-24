@@ -193,7 +193,7 @@ It reads that run's `run-report-v1.json` and re-decides it in nine layers, none 
 | `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated and a step-limit stop carried the notice that established it, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
 
-Its output and exit codes are `proofaudit`'s: one line per remark, a summary line, and 0, 1, or 2.
+Its output and exit codes are `proofaudit`'s: one line per remark, one `layer:` line per layer, a summary line, and 0, 1, or 2.
 Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails here rather than in a weekly job.
 
@@ -208,7 +208,11 @@ proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 vio
 Where the recording does not carry enough to decide something again — which survivors a reviewer accepted, what a reused disposition was routed under,
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
-One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
+One line per remark names its layer and its subject.
+Then every layer says how far it got in one `layer:` line: `re-decided`, `partly re-decided` where an `unaudited` line says what was not, or `nothing to re-decide` and why, so a layer that had nothing to look at is never read as one that looked and agreed.
+A layer returns a `Decided` that only those three outcomes make, and the audit calls every layer through an exhaustive match over `Layer`, so a layer cannot end without saying which.
+A merge's layers are re-decided only where every shard was given and none fell short.
+A summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
 Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its ten layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed

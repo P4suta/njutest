@@ -8,12 +8,17 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::{
-    Audit, CheckedRecording, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row, STOPPED_EARLY,
-    StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string, strings,
+    Audit, CheckedRecording, Decided, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row,
+    STOPPED_EARLY, StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string,
+    strings,
 };
 
 /// The recording, against the report it is supposed to be the exhaust of.
-pub(super) fn trace(report: &Report, recorded: Option<&CheckedRecording>, audit: &mut Audit) {
+pub(super) fn trace(
+    report: &Report,
+    recorded: Option<&CheckedRecording>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Trace);
     let Some(recorded) = recorded else {
         notes.unaudited(
@@ -21,13 +26,14 @@ pub(super) fn trace(report: &Report, recorded: Option<&CheckedRecording>, audit:
             "the run kept no recording, so what it did cannot be held to what it reported"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     complete(&recorded.events, &mut notes);
     instrumented(&recorded.events, &mut notes);
     verified(&recorded.events, &mut notes);
     condemned(report, &recorded.events, &mut notes);
     routed(report, &recorded.routing, &mut notes);
+    notes.looked()
 }
 
 /// Whether the recording begins, ends, lost nothing, and closed every phase it opened.
@@ -563,7 +569,11 @@ fn discharged(
 
 /// The ledger of accepted survivors, against the run that was asked to hold to it.
 /// The work the report claims, against the routes it claims it from and the recording of what ran.
-pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: &mut Audit) {
+pub(super) fn work(
+    report: &Report,
+    recorded: Option<&CheckedRecording>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Work);
     let targets = report.targets.len();
     if targets == 0 {
@@ -573,7 +583,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
              re-derived"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     }
     let built: BTreeSet<&str> = report.targets.iter().map(String::as_str).collect();
     let mut started: u64 = 0;
@@ -588,7 +598,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
                     row.label(),
                     "the route's execution count exceeds the report's integer width".to_owned(),
                 );
-                return;
+                return notes.looked();
             };
             let Some(next) = started
                 .checked_add(executed)
@@ -598,7 +608,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
                     "executions",
                     "the execution total exceeds the report's integer width".to_owned(),
                 );
-                return;
+                return notes.looked();
             };
             started = next;
         }
@@ -610,7 +620,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
              ran"
             .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let ran = recorded
         .events
@@ -622,7 +632,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
             "executions",
             "the recording's execution count exceeds the report's integer width".to_owned(),
         );
-        return;
+        return notes.looked();
     };
     if ran != started {
         notes.violated(
@@ -633,6 +643,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
             ),
         );
     }
+    notes.looked()
 }
 
 /// Whether one row's pairs are ones the run built targets for and its own route reached.

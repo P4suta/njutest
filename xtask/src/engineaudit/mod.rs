@@ -6,6 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub use crate::layers::Coverage;
+
 mod arithmetic;
 mod evidence;
 mod ledger;
@@ -265,6 +267,8 @@ pub struct Audit {
     pub rejections: usize,
     /// Everything it has to say, grouped by layer with the violations of each first.
     pub remarks: Vec<Remark>,
+    /// How far each layer got.
+    pub coverage: BTreeMap<Layer, Coverage>,
 }
 
 impl Audit {
@@ -317,6 +321,9 @@ impl fmt::Display for Audit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for remark in &self.remarks {
             writeln!(f, "{remark}")?;
+        }
+        for (layer, coverage) in &self.coverage {
+            writeln!(f, "layer: {}: {coverage}", layer.label())?;
         }
         write!(
             f,
@@ -477,6 +484,11 @@ fn parse_typed_evidence(
     Ok(value)
 }
 
+/// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.
+#[must_use]
+#[derive(Debug)]
+struct Decided(());
+
 /// Where one layer's re-decisions are written down.
 #[derive(Debug)]
 struct Notes<'a> {
@@ -495,6 +507,30 @@ impl<'a> Notes<'a> {
 
     fn unaudited(&mut self, subject: &str, detail: String) {
         self.note(Standing::Unaudited, subject, detail);
+    }
+
+    /// The layer looked at everything the run owes it, and its remarks say what it found.
+    fn looked(self) -> Decided {
+        let partly = self
+            .audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == self.layer && remark.standing == Standing::Unaudited);
+        let coverage = if partly {
+            Coverage::Partly
+        } else {
+            Coverage::Rederived
+        };
+        self.audit.coverage.insert(self.layer, coverage);
+        Decided(())
+    }
+
+    /// The run holds nothing this layer re-decides, for the reason `why`.
+    fn absent(self, why: &'static str) -> Decided {
+        self.audit
+            .coverage
+            .insert(self.layer, Coverage::Absent(why));
+        Decided(())
     }
 
     fn note(&mut self, standing: Standing, subject: &str, detail: String) {
@@ -551,20 +587,25 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
         mutants: report.mutants.len(),
         rejections: report.rejections.len(),
         remarks: Vec::new(),
+        coverage: BTreeMap::new(),
     };
-    identity(&report, &mut audit);
-    accounting(&report, &mut audit);
-    score(&report, &mut audit);
-    findings(&report, &mut audit);
-    expectations(&report, &mut audit);
-    exit(&report, &mut audit);
-    merge(&report, &evidence, &mut audit);
-    proofs(&report, &evidence, &mut audit);
-    sites(&evidence, &mut audit);
-    trace(&report, evidence.recorded.as_ref(), &mut audit);
-    ledger(&report, evidence.ledger.as_ref(), &mut audit);
-    work(&report, evidence.recorded.as_ref(), &mut audit);
-    touch(&report, evidence.touched.as_ref(), &mut audit);
+    for layer in Layer::ALL {
+        let Decided(()) = match layer {
+            Layer::Identity => identity(&report, &mut audit),
+            Layer::Accounting => accounting(&report, &mut audit),
+            Layer::Score => score(&report, &mut audit),
+            Layer::Findings => findings(&report, &mut audit),
+            Layer::Expectations => expectations(&report, &mut audit),
+            Layer::Exit => exit(&report, &mut audit),
+            Layer::Merge => merge(&report, &evidence, &mut audit),
+            Layer::Proofs => proofs(&report, &evidence, &mut audit),
+            Layer::Sites => sites(&evidence, &mut audit),
+            Layer::Trace => trace(&report, evidence.recorded.as_ref(), &mut audit),
+            Layer::Ledger => ledger(&report, evidence.ledger.as_ref(), &mut audit),
+            Layer::Work => work(&report, evidence.recorded.as_ref(), &mut audit),
+            Layer::Touch => touch(&report, evidence.touched.as_ref(), &mut audit),
+        };
+    }
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)

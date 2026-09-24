@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{Audit, AuditError, Layer, Notes, Recorded, Remark};
+use super::{Audit, AuditError, Coverage, Decided, Layer, Notes, Recorded, Remark};
 
 /// Each thing a merged report must be of the shards it names, by which a violation says what it broke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
@@ -210,6 +210,7 @@ pub fn merged_with(path: &str, text: &str, shards: &[AuditedShard]) -> Result<Au
             .max()
             .unwrap_or_default(),
         remarks: Vec::new(),
+        coverage: std::collections::BTreeMap::new(),
     };
     let mut notes = Notes::on(&mut audit, Layer::Merge);
     divided(&merged, sources, &mut notes);
@@ -229,6 +230,17 @@ pub fn merged_with(path: &str, text: &str, shards: &[AuditedShard]) -> Result<Au
             ),
         }
     }
+    let Decided(()) = notes.looked();
+    let whole = shards.len() == sources.len();
+    for layer in Layer::ALL
+        .into_iter()
+        .filter(|layer| *layer != Layer::Merge)
+    {
+        audit.coverage.insert(
+            layer,
+            combined(layer, shards.iter().map(|shard| &shard.audit), whole),
+        );
+    }
     for shard in shards {
         for remark in &shard.audit.remarks {
             audit.remarks.push(Remark {
@@ -240,6 +252,25 @@ pub fn merged_with(path: &str, text: &str, shards: &[AuditedShard]) -> Result<Au
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
+}
+
+/// How far `layer` got over the whole catalog: re-decided only where every part was given and none fell short, and absent only where it was absent from every part.
+fn combined<'a>(layer: Layer, parts: impl Iterator<Item = &'a Audit>, whole: bool) -> Coverage {
+    let mut absent = None;
+    let mut looked = false;
+    let mut short = !whole;
+    for part in parts {
+        match part.coverage.get(&layer) {
+            Some(Coverage::Rederived) => looked = true,
+            Some(Coverage::Absent(why)) => absent = absent.or(Some(*why)),
+            Some(Coverage::Partly) | None => short = true,
+        }
+    }
+    match (short, looked, absent) {
+        (true, _, _) => Coverage::Partly,
+        (false, false, Some(why)) => Coverage::Absent(why),
+        (false, _, _) => Coverage::Rederived,
+    }
 }
 
 /// Nothing, where every shard in `shards` is given once and is one `sources` names.
