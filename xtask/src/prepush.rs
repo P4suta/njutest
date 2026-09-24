@@ -237,7 +237,7 @@ fn interrupted(signal: i32) -> u8 {
     }
 }
 
-/// Checks the commit being pushed and says whether it may go, its progress passed on through a [`Relay`] so a stream that takes no more never decides the answer.
+/// Checks the commit being pushed and says whether it may go, its progress passed on through a relay so a stream that takes no more never decides the answer.
 ///
 /// # Errors
 /// Returns a [`PrePushError`] naming what was refused, or what kept the gate from answering.
