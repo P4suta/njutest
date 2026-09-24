@@ -1901,16 +1901,8 @@ fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
         .lines()
         .map(|line| njutest_devkit::strictjson::decode_str(line).expect("a recorded line"))
         .collect();
-    let validator = trace_schema();
-    let off: Vec<String> = events
-        .iter()
-        .filter_map(|event| match validator.validate(event) {
-            Ok(()) => None,
-            Err(error) => Some(format!("{error}: {event}")),
-        })
-        .collect();
     assert_eq!(
-        off,
+        off_the_trace_schema(&recording),
         Vec::<String>::new(),
         "every recorded line is on its schema"
     );
@@ -1968,30 +1960,67 @@ fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
     }
 }
 
-#[cfg(unix)]
-fn trace_schema() -> jsonschema::Validator {
-    let schema = |name: &str| -> serde_json::Value {
-        let path = njutest_devkit::paths::workspace_root()
-            .join("schema")
-            .join(name);
-        let text = std::fs::read_to_string(&path).expect("the published schema");
-        njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON")
-    };
+fn published(name: &str) -> serde_json::Value {
+    let path = njutest_devkit::paths::workspace_root()
+        .join("schema")
+        .join(name);
+    let text = std::fs::read_to_string(&path).expect("the published schema");
+    njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON")
+}
+
+fn off_the_trace_schema(recording: &Path) -> Vec<String> {
     let registry = jsonschema::Registry::new()
         .add(
             "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v1.json",
-            schema("rust-mutants-trace-v1.json"),
+            published("rust-mutants-trace-v1.json"),
         )
         .expect("the engine trace schema has a canonical URI")
         .add(
             "https://github.com/P4suta/njutest/schema/njutest-assurance-report-v1.json",
-            schema("njutest-assurance-report-v1.json"),
+            published("njutest-assurance-report-v1.json"),
         )
         .expect("the report schema has a canonical URI")
         .prepare()
         .expect("the referenced schemas prepare");
-    jsonschema::options()
+    let validator = jsonschema::options()
         .with_registry(&registry)
-        .build(&schema("njutest-trace-v1.json"))
-        .expect("the trace schema compiles offline")
+        .build(&published("njutest-trace-v1.json"))
+        .expect("the trace schema compiles offline");
+    let text =
+        std::fs::read_to_string(recording.join(njutest::trace::FILE_NAME)).expect("the recording");
+    text.lines()
+        .enumerate()
+        .filter_map(|(at, line)| {
+            let event: serde_json::Value =
+                njutest_devkit::strictjson::decode_str(line).expect("a recorded line is JSON");
+            match validator.validate(&event) {
+                Ok(()) => None,
+                Err(error) => Some(format!("line {}: {error}: {line}", at.saturating_add(1))),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn every_line_a_run_records_is_on_the_published_trace_schema_whole_or_sharded() {
+    for extra in [&["--trace"][..], &["--trace", "--shard", "1/2"][..]] {
+        let fixture = fixture("fixture-assured");
+        let output = verify(&fixture, extra);
+        assert!(
+            matches!(output.status.code(), Some(0 | 2)),
+            "{extra:?}: {}",
+            njutest_devkit::process::strict_utf8(&output.stderr)
+        );
+        let recording = std::fs::read_dir(fixture.root.join(".njutest/trace"))
+            .expect("the trace root")
+            .next()
+            .expect("one namespace")
+            .expect("the namespace is readable")
+            .path();
+        assert_eq!(
+            off_the_trace_schema(&recording),
+            Vec::<String>::new(),
+            "{extra:?}: a recording a reader must validate before it reads is written on its schema"
+        );
+    }
 }
