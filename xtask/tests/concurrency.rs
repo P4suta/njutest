@@ -111,6 +111,13 @@ fn a_reason_or_a_thread_count_no_run_gives_is_refused() {
     let single = json!({ "state": "single-threaded" });
     assert!(
         !holds(
+            &json!({ "state": "single-threaded", "because": [{ "kind": "starts" }] }),
+            &libtest("1", Some(0))
+        ),
+        "a proven binary names no reason it is not"
+    );
+    assert!(
+        !holds(
             &json!({ "state": "concurrent", "because": [{ "kind": "banana" }] }),
             &libtest("1", Some(0))
         ),

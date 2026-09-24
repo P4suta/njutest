@@ -210,7 +210,9 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
     };
     match state.as_str() {
         "single-threaded" => {
-            if derived.because.is_empty() && derived.why.is_empty() {
+            if standing.get("because").is_some() || standing.get("why").is_some() {
+                Err(ContradictionError::Unknown { state })
+            } else if derived.because.is_empty() && derived.why.is_empty() {
                 Ok(())
             } else {
                 Err(ContradictionError::Proven {
