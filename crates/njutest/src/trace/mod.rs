@@ -392,6 +392,11 @@ impl Recorder {
         self.emit(Payload::Fault { fault: record });
     }
 
+    /// Records a survivor a target told apart only under a fault.
+    pub fn beside(&self, record: crate::report::faults::BesideRecord) {
+        self.emit(Payload::Beside { beside: record });
+    }
+
     /// Records what the probe pass measured for one target.
     pub fn probe_exec(&self, record: ProbeExecRecord) {
         self.emit(Payload::ProbeExec { probe: record });

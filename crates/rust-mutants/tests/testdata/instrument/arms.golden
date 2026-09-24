@@ -63,6 +63,7 @@ mod __rm {
     enum Selection {
         None,
         Index(u32),
+        Beside(u32, u32),
     }
     #[derive(Clone, Copy)]
     struct StepLimit(usize);
@@ -280,11 +281,12 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         touch(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
-            Selection::Index(selected) if selected == index => {
+            Selection::Index(selected) | Selection::Beside(selected, _) if selected == index => {
                 activate();
                 true
             }
-            Selection::Index(_) => false,
+            Selection::Beside(_, fault) if fault == index => true,
+            Selection::Index(_) | Selection::Beside(..) => false,
         }
     }
 
@@ -1027,12 +1029,28 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         if catalog != CATALOG {
             stale_catalog(&catalog);
         }
-        for &(id, index) in IDS {
-            if id == wanted {
-                return Selection::Index(index);
+        let selected = match indexed(&wanted) {
+            __rm_std::option::Option::Some(index) => index,
+            __rm_std::option::Option::None => return Selection::None,
+        };
+        match __rm_std::env::var("RUST_MUTANTS_FAULT") {
+            __rm_std::result::Result::Ok(fault) if !fault.is_empty() => match indexed(&fault) {
+                __rm_std::option::Option::Some(beside) => Selection::Beside(selected, beside),
+                __rm_std::option::Option::None => Selection::Index(selected),
+            },
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => {
+                Selection::Index(selected)
             }
         }
-        Selection::None
+    }
+
+    fn indexed(wanted: &str) -> __rm_std::option::Option<u32> {
+        for &(id, index) in IDS {
+            if id == wanted {
+                return __rm_std::option::Option::Some(index);
+            }
+        }
+        __rm_std::option::Option::None
     }
 
     #[cold]

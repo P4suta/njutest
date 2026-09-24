@@ -1041,6 +1041,7 @@ fn target_key(
         cargo: Some(building.workspace.toolchain.cargo()),
         sysroot: building.workspace.toolchain.sysroot(),
         active: None,
+        beside: None,
         touch: recording.as_deref().map(|log| execute::Touching {
             log,
             catalog: building.catalog.digest(),
@@ -1169,6 +1170,7 @@ fn ran(
         cargo: Some(workspace.toolchain.cargo()),
         sysroot: workspace.toolchain.sysroot(),
         active: None,
+        beside: None,
         touch: log.map(|log| execute::Touching {
             log,
             catalog: catalog.digest(),

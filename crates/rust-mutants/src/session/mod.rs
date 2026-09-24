@@ -296,6 +296,9 @@ pub struct Request {
     /// How long the process may take.
     /// `None` uses the session's default.
     pub timeout: Option<Duration>,
+    /// A fault to activate beside the mutant, by identity or prefix, so the mutant is asked with the call at its own site failing.
+    /// `None` activates the mutant alone.
+    pub fault: Option<String>,
 }
 
 impl Request {
@@ -333,6 +336,13 @@ impl Request {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Activates a fault beside the mutant.
+    #[must_use]
+    pub fn with_fault(mut self, fault: impl Into<String>) -> Self {
+        self.fault = Some(fault.into());
         self
     }
 
@@ -841,6 +851,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
@@ -1065,6 +1076,54 @@ impl Session {
     }
 
     /// A catalogued mutant this instrumented build actually contains.
+    /// The fault whose guard the instrumentation carried into `mutant`'s alternative: the one at the call the mutation keeps the bytes of, right before its edit or first in it.
+    ///
+    /// Only such a fault can be active beside the mutation, because only its guard is inside the mutation's branch.
+    #[must_use]
+    pub fn fault_beside(&self, mutant: &Mutant) -> Option<&Mutant> {
+        let edit = mutant.candidate.span;
+        self.catalog.mutants().iter().find(|fault| {
+            fault.candidate.rule.family.perturbs() == crate::rule::Perturbs::Environment
+                && fault.candidate.path == mutant.candidate.path
+                && (fault.candidate.span.end == edit.start
+                    || (fault.candidate.span.start == edit.start
+                        && fault.candidate.span.end <= edit.end
+                        && mutant
+                            .candidate
+                            .replacement
+                            .starts_with(&fault.candidate.original)))
+                && self.validated.accepted.binary_search(&fault.index).is_ok()
+        })
+    }
+
+    /// The fault a request names beside its mutant, held to being a fault beside something that is not one.
+    fn beside(&self, request: &Request, mutant: &Mutant) -> Result<Option<&Mutant>, EngineError> {
+        let Some(named) = request.fault.as_deref() else {
+            return Ok(None);
+        };
+        let fault = self.executable(named)?;
+        let why = match (
+            mutant.candidate.rule.family.perturbs(),
+            fault.candidate.rule.family.perturbs(),
+        ) {
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Environment) => None,
+            (crate::rule::Perturbs::Environment, _) => {
+                Some("what runs is itself a fault, and a fault is put beside a mutation")
+            }
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Program) => {
+                Some("what is named beside it is a mutation, not a fault")
+            }
+        };
+        match why {
+            Some(why) => Err(EngineError::from(SessionError::NotBeside {
+                mutant: mutant.display_id.to_string(),
+                fault: fault.display_id.to_string(),
+                why,
+            })),
+            None => Ok(Some(fault)),
+        }
+    }
+
     fn executable(&self, prefix: &str) -> Result<&Mutant, EngineError> {
         let mutant = self.resolve(prefix)?;
         if self.validated.accepted.binary_search(&mutant.index).is_ok() {
@@ -1111,6 +1170,7 @@ impl Session {
     /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
         let mutant = self.executable(&request.mutant)?;
+        let beside = self.beside(request, mutant)?;
         let chosen = self.chosen(request, mutant, Asking::Anything);
         Ok(self
             .execute(
@@ -1119,6 +1179,7 @@ impl Session {
                     alone: false,
                     chosen: &chosen,
                     mutant,
+                    beside,
                 },
                 cancel,
             )?
@@ -1136,12 +1197,14 @@ impl Session {
         cancel: &Cancel,
     ) -> Result<Judgement, EngineError> {
         let mutant = self.executable(&request.mutant)?;
+        let beside = self.beside(request, mutant)?;
         let route = self.route(mutant);
         let chosen = Chosen::of(request, &route, Asking::ThisRun);
         let running = |alone: bool| Running {
             alone,
             chosen: &chosen,
             mutant,
+            beside,
         };
         let ran = quiet.shared(|| self.execute(request, running(false), cancel))??;
         let (first, mut asked) = (ran.taken, ran.asked);
@@ -1184,6 +1247,7 @@ impl Session {
             alone,
             chosen,
             mutant,
+            beside,
         } = how;
         let targets = self.selected(request.target.as_deref())?;
         let targets = match chosen {
@@ -1207,6 +1271,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: beside.map(|fault| fault.id.as_str()),
             touch: None,
             steps: self.mutant_steps,
             profile: None,
@@ -1378,6 +1443,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
+            beside: None,
             touch: log.map(|log| execute::Touching {
                 log,
                 catalog: self.catalog.digest(),
@@ -1483,6 +1549,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
@@ -1672,6 +1739,8 @@ struct Running<'a> {
     chosen: &'a Chosen,
     /// The mutation, resolved once by whoever asked rather than again here.
     mutant: &'a Mutant,
+    /// The fault active beside it, resolved the same way.
+    beside: Option<&'a Mutant>,
 }
 
 #[derive(Clone, Copy)]

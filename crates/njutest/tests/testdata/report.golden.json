@@ -173,6 +173,7 @@
               }
             ],
             "faults": [],
+            "beside": [],
             "targets": [
               {
                 "id": "0123456789abcdef",

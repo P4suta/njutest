@@ -83,6 +83,11 @@ pub enum Payload {
         /// The record, as the report holds it.
         fault: crate::report::faults::FaultRecord,
     },
+    /// A survivor a target told apart only with the call at its site failing beside it.
+    Beside {
+        /// The record, as the report holds it.
+        beside: crate::report::faults::BesideRecord,
+    },
     /// What the probe pass measured for one target.
     ProbeExec {
         /// The record.
@@ -140,6 +145,7 @@ impl Payload {
             Self::MutantExec { .. } => "mutant-exec",
             Self::FaultExec { .. } => "fault-exec",
             Self::Fault { .. } => "fault",
+            Self::Beside { .. } => "beside",
             Self::ProbeExec { .. } => "probe-exec",
             Self::WireExchange { .. } => "wire-exchange",
             Self::WireExec { .. } => "wire-exec",

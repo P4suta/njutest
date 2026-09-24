@@ -36,8 +36,11 @@ fn instrument(source: &str) -> String {
 }
 
 fn instrument_with_catalog(source: &str) -> (String, Catalog) {
-    let selection = Selection::tier(&REGISTRY, Tier::All);
-    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    instrument_selected(source, &Selection::tier(&REGISTRY, Tier::All))
+}
+
+fn instrument_selected(source: &str, selection: &Selection<'_>) -> (String, Catalog) {
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), selection).expect("discover");
     let mut builder = Builder::new();
     for found in &discovery.candidates {
         builder.add(found.candidate.clone()).expect("add");
@@ -1245,4 +1248,28 @@ fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() 
             file.text
         );
     }
+}
+
+#[test]
+fn a_fault_guard_is_carried_into_every_alternative_that_keeps_its_bytes() {
+    let source = "pub fn f(p: &str) -> Result<u8, std::num::ParseIntError> {\n    let n = p.parse::<u8>()?;\n    Ok(n)\n}\n";
+    let selection = Selection::rules(&REGISTRY, &["question-to-unwrap", "inject-error"])
+        .expect("both rules are known");
+    let (text, _) = instrument_selected(source, &selection);
+    let line = text
+        .lines()
+        .find(|line| line.contains(".unwrap()"))
+        .expect("the unwrap alternative");
+    let (unwrapped, original) = line
+        .split_once(".unwrap() } else {")
+        .expect("the unwrap alternative, then the original branch");
+    assert!(
+        unwrapped.contains("injected()"),
+        "the alternative keeps the call's bytes, so the fault at that call is guarded inside \
+         it and can be active beside the unwrap: {line}"
+    );
+    assert!(
+        original.contains("injected()"),
+        "and the original branch keeps it as every nested guard is kept: {line}"
+    );
 }

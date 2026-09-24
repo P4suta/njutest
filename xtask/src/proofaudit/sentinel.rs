@@ -153,6 +153,27 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
             ..clean.clone()
         },
         Perturbation {
+            name: "evidence beside a fault the recording does not hold",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }],
+                "beside": [{
+                    "mutant": SURVIVED, "fault": FAULTED, "target": TARGET, "failed": "beside"
+                }]
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
             name: "a fault site the recording holds and the report dropped",
             events: Some(fault_recorded(
                 &json!({ "decision": "unnoticed" }),

@@ -15,7 +15,7 @@ use crate::cargo::{
 };
 use crate::id::{is_digest, is_id};
 use crate::instrument::{
-    ACTIVE_ENV, CATALOG_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
+    ACTIVE_ENV, CATALOG_ENV, FAULT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
     STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
@@ -26,8 +26,9 @@ use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 7] = [
+pub const RESERVED_ENV: [&str; 8] = [
     ACTIVE_ENV,
+    FAULT_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
     STEPS_ENV,
@@ -37,8 +38,9 @@ pub const RESERVED_ENV: [&str; 7] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 8] = [
+pub const COMPOSED_ENV: [&str; 9] = [
     ACTIVE_ENV,
+    FAULT_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
     STEPS_ENV,
@@ -1297,6 +1299,9 @@ pub fn environment(
     }
     if let Some((id, catalog)) = active {
         env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
+        if let Some(fault) = context.beside {
+            env.insert(OsString::from(FAULT_ENV), OsString::from(fault));
+        }
         env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
         if let Some(steps) = context.steps {
             env.insert(OsString::from(STEPS_ENV), OsString::from(steps.to_string()));
@@ -1499,6 +1504,8 @@ pub struct Context<'a> {
     pub sysroot: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
+    /// A fault of the same catalog to activate beside the mutant, by identity; only ever set with `active`.
+    pub beside: Option<&'a str>,
     /// How many instrumented workspace boundaries the process may cross after the selected guard activates before it is stopped.
     /// `None` counts nothing.
     ///
@@ -2255,6 +2262,7 @@ mod tests {
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
+            beside: None,
             steps: Some(limit),
             touch: None,
             profile: None,
@@ -2274,6 +2282,7 @@ mod tests {
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
+            beside: None,
             steps: Some(10),
             touch: None,
             profile: None,

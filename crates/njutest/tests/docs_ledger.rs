@@ -641,6 +641,10 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
         "/$defs/drift/oneOf/2/properties/why",
         names(&njutest::report::drift::Unmeasured::ALL),
     ));
+    rows.push((
+        "/$defs/beside/properties/failed",
+        names(&njutest::report::faults::Failed::ALL),
+    ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
         .map(|(pointer, names)| {

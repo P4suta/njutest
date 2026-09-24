@@ -11,6 +11,9 @@ use super::Placement;
 /// Selects the active mutant by its full identity.
 pub const ACTIVE_ENV: &str = "RUST_MUTANTS_ACTIVE";
 
+/// Selects a fault to activate beside the active mutant, by its full identity.
+pub const FAULT_ENV: &str = "RUST_MUTANTS_FAULT";
+
 /// Names the catalog the activating run holds.
 pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 
@@ -274,6 +277,7 @@ mod {{MODULE}} {
     enum Selection {
         None,
         Index(u32),
+        Beside(u32, u32),
     }
     #[derive(Clone, Copy)]
     struct StepLimit(usize);
@@ -426,11 +430,12 @@ mod {{MODULE}} {
         touch(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
-            Selection::Index(selected) if selected == index => {
+            Selection::Index(selected) | Selection::Beside(selected, _) if selected == index => {
                 activate();
                 true
             }
-            Selection::Index(_) => false,
+            Selection::Beside(_, fault) if fault == index => true,
+            Selection::Index(_) | Selection::Beside(..) => false,
         }
     }
 
@@ -1173,12 +1178,28 @@ mod {{MODULE}} {
         if catalog != CATALOG {
             stale_catalog(&catalog);
         }
-        for &(id, index) in IDS {
-            if id == wanted {
-                return Selection::Index(index);
+        let selected = match indexed(&wanted) {
+            __rm_std::option::Option::Some(index) => index,
+            __rm_std::option::Option::None => return Selection::None,
+        };
+        match __rm_std::env::var("{{FAULT_ENV}}") {
+            __rm_std::result::Result::Ok(fault) if !fault.is_empty() => match indexed(&fault) {
+                __rm_std::option::Option::Some(beside) => Selection::Beside(selected, beside),
+                __rm_std::option::Option::None => Selection::Index(selected),
+            },
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => {
+                Selection::Index(selected)
             }
         }
-        Selection::None
+    }
+
+    fn indexed(wanted: &str) -> __rm_std::option::Option<u32> {
+        for &(id, index) in IDS {
+            if id == wanted {
+                return __rm_std::option::Option::Some(index);
+            }
+        }
+        __rm_std::option::Option::None
     }
 
     #[cold]
@@ -1242,6 +1263,7 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{SPAN}}", &reach.span.to_string())
         .replace("{{STEP_MACHINE}}", STEP_MACHINE_SOURCE)
         .replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
+        .replace("{{FAULT_ENV}}", FAULT_ENV)
         .replace("{{CATALOG_ENV}}", CATALOG_ENV)
         .replace("{{TOUCH_ENV}}", TOUCH_ENV)
         .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)

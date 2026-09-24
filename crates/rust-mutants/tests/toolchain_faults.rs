@@ -81,3 +81,79 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
     );
     session.close().expect("close");
 }
+
+#[test]
+fn a_survivor_is_told_apart_only_with_the_fault_at_its_own_site_beside_it() {
+    let fixture = Fixture::copy("fixture-faulted");
+    let session = Workspace::open(
+        fixture.root(),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            operators: vec!["question-to-unwrap".to_owned(), "inject-error".to_owned()],
+            touch: true,
+            ..PrepareOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("prepare");
+    let in_measured = |rule: &str| {
+        session
+            .catalog()
+            .mutants()
+            .iter()
+            .find(|mutant| {
+                mutant.candidate.rule.name == rule
+                    && session.item_of(mutant.index) == Some("measured")
+            })
+            .unwrap_or_else(|| panic!("{rule} has a site in `measured`"))
+            .id
+            .to_string()
+    };
+    let (unwrapped, fault) = (
+        in_measured("question-to-unwrap"),
+        in_measured("inject-error"),
+    );
+    let beside = session
+        .fault_beside(session.resolve(&unwrapped).expect("the survivor resolves"))
+        .map(|one| one.id.to_string());
+    assert_eq!(
+        beside.as_deref(),
+        Some(fault.as_str()),
+        "the fault at the call `.unwrap()` keeps is the one carried into its alternative"
+    );
+    let outcome = |request: Request| {
+        session
+            .exec(&request, &Cancel::new())
+            .expect("the execution runs")
+            .outcome()
+    };
+    assert_eq!(
+        outcome(Request::new(unwrapped.clone())),
+        Outcome::Survived,
+        "while the read succeeds, `?` and `.unwrap()` do the same thing"
+    );
+    assert_eq!(
+        outcome(Request::new(fault.clone())),
+        Outcome::Survived,
+        "the caller throws the answer away, so nothing notices the read failing"
+    );
+    assert_eq!(
+        outcome(Request::new(unwrapped).with_fault(fault.clone())),
+        Outcome::Killed,
+        "with the read failing, `.unwrap()` panics where `?` returned the error, and the test \
+         that never checked the answer fails"
+    );
+    let refused = session.exec(
+        &Request::new(fault.clone()).with_fault(fault),
+        &Cancel::new(),
+    );
+    assert!(
+        refused.is_err(),
+        "a fault is put beside a mutation, never beside a fault or in place of one: {refused:?}"
+    );
+    session.close().expect("close");
+}

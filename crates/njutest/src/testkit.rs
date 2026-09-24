@@ -310,6 +310,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Route { .. } => "route",
         Payload::MutantExec { .. } => "mutant",
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
+        Payload::Beside { .. } => "beside",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -353,6 +354,8 @@ pub mod payload {
         FaultExec(&'a crate::trace::FaultExecRecord),
         /// A fault site's decision.
         Fault(&'a crate::report::faults::FaultRecord),
+        /// A survivor told apart only under a fault.
+        Beside(&'a crate::report::faults::BesideRecord),
         /// A probe execution.
         ProbeExec(&'a crate::trace::ProbeExecRecord),
         /// A wire exchange.
@@ -386,6 +389,7 @@ pub mod payload {
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
             Payload::FaultExec { fault } => Ref::FaultExec(fault),
             Payload::Fault { fault } => Ref::Fault(fault),
+            Payload::Beside { beside } => Ref::Beside(beside),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
@@ -593,6 +597,14 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 decision: crate::report::faults::FaultDecision::Noticed {
                     by: "demo/test/calls".to_owned(),
                 },
+            },
+        },
+        Payload::Beside {
+            beside: crate::report::faults::BesideRecord {
+                mutant: "b".repeat(20),
+                fault: "a".repeat(20),
+                target: "demo/test/calls".to_owned(),
+                failed: crate::report::faults::Failed::Beside,
             },
         },
         Payload::ProbeExec {

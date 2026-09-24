@@ -127,6 +127,43 @@ impl FaultRecord {
     }
 }
 
+/// Which of the two runs of a target failed, where exactly one did: the call failing alone, or the call failing with the mutation beside it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum Failed {
+    /// The target passed with the call failing, and failed with the mutation beside it.
+    Beside,
+    /// The target failed with the call failing, and passed with the mutation beside it.
+    Alone,
+}
+
+/// A survivor put again with the fault at its own call beside it, where a target told it from the call failing alone (ADR 0032 decision 6).
+///
+/// It is evidence that the survivor is not an equivalence, never a kill: no test made the call fail, the run did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BesideRecord {
+    /// The survivor's short identity.
+    pub mutant: String,
+    /// The fault's short identity.
+    pub fault: String,
+    /// The target that told them apart.
+    pub target: String,
+    /// Which of the two runs failed.
+    pub failed: Failed,
+}
+
 /// How many sites a run asked a fault at, by what became of each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

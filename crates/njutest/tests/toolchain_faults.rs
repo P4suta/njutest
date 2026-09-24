@@ -255,3 +255,55 @@ fn a_tree_every_run_writes_into_is_not_broken_by_a_fault() {
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
 }
+
+#[test]
+fn a_survivor_the_suite_tells_apart_only_under_a_fault_is_evidence_and_never_a_kill() {
+    let fixture = fixture("fixture-faulted");
+    let output = verify(&fixture, &["--faults"]);
+    let part = part(&fixture);
+    let beside: Vec<(String, String)> = part["beside"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!(
+                "a list of what was put beside a fault: {part}\n{}",
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            )
+        })
+        .iter()
+        .map(|one| {
+            (
+                one["target"].as_str().unwrap_or_default().to_owned(),
+                one["failed"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        beside,
+        vec![("fixture-faulted/test/calls".to_owned(), "beside".to_owned())],
+        "only `measured` tells `.unwrap()` from `?` once its read fails; `load` and `number` \
+         fail either way, and the two sites no fault can be put at are not asked: {part}"
+    );
+    let unwrapped = part["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|mutant| mutant["display_id"] == part["beside"][0]["mutant"])
+        .expect("the survivor the evidence is about");
+    assert_eq!(
+        (
+            unwrapped["rule"].as_str(),
+            unwrapped["item"].as_str(),
+            unwrapped["decision"]["outcome"].as_str()
+        ),
+        (
+            Some("question-to-unwrap"),
+            Some("measured"),
+            Some("survived")
+        ),
+        "the evidence is attached to a survivor and leaves it one: no test failed that call"
+    );
+    assert_eq!(
+        part["accounting"]["mutants"]["killed"], 5,
+        "and it is in no kill count: {part}"
+    );
+}

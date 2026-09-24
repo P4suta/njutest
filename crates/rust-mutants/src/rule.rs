@@ -87,7 +87,59 @@ pub enum Family {
     Fault,
 }
 
+/// What a rule changes: the program's text, or what the program is given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Perturbs {
+    /// The program itself, which is what a mutation is.
+    Program,
+    /// What a call the program makes returns, which is what a fault is.
+    Environment,
+}
+
 impl Family {
+    /// What the family's rules perturb, which every question that differs between a fault and a mutation reads rather than naming the fault family again.
+    #[must_use]
+    pub const fn perturbs(self) -> Perturbs {
+        match self {
+            Self::Fault => Perturbs::Environment,
+            Self::BooleanLiteral
+            | Self::ConditionNegation
+            | Self::BooleanConnective
+            | Self::Comparison
+            | Self::Range
+            | Self::Arithmetic
+            | Self::ReturnReplacement
+            | Self::ErrorPropagation
+            | Self::MatchArm
+            | Self::ControlFlow
+            | Self::ConditionRemoval
+            | Self::Bitwise
+            | Self::CompoundAssignment
+            | Self::MethodSwap
+            | Self::StatementDeletion
+            | Self::Literal
+            | Self::SaturatingArithmetic => Perturbs::Program,
+        }
+    }
+
+    /// Whether a proof read off the unperturbed program may remove a target from what could notice one of the family's rules: not for a fault, which changes where control goes past its site and so leaves such a proof without its premise (ADR 0032).
+    #[must_use]
+    pub const fn proofs_apply(self) -> bool {
+        matches!(self.perturbs(), Perturbs::Program)
+    }
+
+    /// Whether a tier chooses the family's rules, which a fault's never are: it perturbs the program's environment rather than its text, and asks another question of the suite.
+    #[must_use]
+    pub const fn chosen_by_tiers(self) -> bool {
+        matches!(self.perturbs(), Perturbs::Program)
+    }
+
+    /// Whether the family's guard is carried into every alternative of a site it nests in, so it can be active beside a mutation of that site (ADR 0032).
+    #[must_use]
+    pub const fn carried_beside(self) -> bool {
+        matches!(self.perturbs(), Perturbs::Environment)
+    }
+
     /// The family's canonical name.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -117,56 +169,6 @@ impl Family {
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|family| family.name() == name)
-    }
-
-    /// Whether a proof read off the unperturbed program may remove a target from what could notice one of the family's rules: not for a fault, which changes where control goes past its site and so leaves such a proof without its premise (ADR 0032).
-    #[must_use]
-    pub const fn proofs_apply(self) -> bool {
-        match self {
-            Self::Fault => false,
-            Self::BooleanLiteral
-            | Self::ConditionNegation
-            | Self::BooleanConnective
-            | Self::Comparison
-            | Self::Range
-            | Self::Arithmetic
-            | Self::ReturnReplacement
-            | Self::ErrorPropagation
-            | Self::MatchArm
-            | Self::ControlFlow
-            | Self::ConditionRemoval
-            | Self::Bitwise
-            | Self::CompoundAssignment
-            | Self::MethodSwap
-            | Self::StatementDeletion
-            | Self::Literal
-            | Self::SaturatingArithmetic => true,
-        }
-    }
-
-    /// Whether a tier chooses the family's rules, which a fault's never are: it perturbs the program's environment rather than its text, and asks another question of the suite.
-    #[must_use]
-    pub const fn chosen_by_tiers(self) -> bool {
-        match self {
-            Self::Fault => false,
-            Self::BooleanLiteral
-            | Self::ConditionNegation
-            | Self::BooleanConnective
-            | Self::Comparison
-            | Self::Range
-            | Self::Arithmetic
-            | Self::ReturnReplacement
-            | Self::ErrorPropagation
-            | Self::MatchArm
-            | Self::ControlFlow
-            | Self::ConditionRemoval
-            | Self::Bitwise
-            | Self::CompoundAssignment
-            | Self::MethodSwap
-            | Self::StatementDeletion
-            | Self::Literal
-            | Self::SaturatingArithmetic => true,
-        }
     }
 }
 

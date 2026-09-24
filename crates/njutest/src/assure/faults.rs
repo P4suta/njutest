@@ -9,10 +9,11 @@ use crate::assure::run::Request;
 use crate::cli::Environment;
 use crate::error::RunnerError;
 use crate::report::BuildReport;
-use crate::report::faults::{FaultAccounting, FaultDecision, FaultRecord};
+use crate::report::faults::{BesideRecord, Failed, FaultAccounting, FaultDecision, FaultRecord};
 use crate::report::{CatalogIndex, Finding, FindingKind};
 use crate::ui::Notes;
 use crate::watch::Watch;
+use rust_mutants::outcome::Outcome;
 
 /// The one rule a faulted session is discovered by.
 pub const RULE: &str = "inject-error";
@@ -98,6 +99,7 @@ pub fn put(
             ),
         ));
     }
+    report.beside = beside(&session, report, watch)?;
     report.accounting.faults = FaultAccounting::of(&records)?;
     report
         .findings
@@ -110,6 +112,75 @@ pub fn put(
         notes.note("kept", &path.display().to_string())?;
     }
     Ok(())
+}
+
+/// Every error-propagation survivor of the report a target told apart only with the call at its own site failing, put again beside that fault (ADR 0032 decision 6).
+///
+/// Evidence and never a kill: the survivor stays one, and nothing here enters a count.
+fn beside(
+    session: &rust_mutants::session::Session,
+    report: &BuildReport,
+    watch: Watch<'_>,
+) -> Result<Vec<BesideRecord>, RunnerError> {
+    let mut found = Vec::new();
+    for survivor in report
+        .mutants
+        .iter()
+        .filter(|mutant| mutant.outcome.outcome() == crate::report::Outcome::Survived)
+    {
+        let Ok(mutant) = session.resolve(&survivor.id) else {
+            continue;
+        };
+        if mutant.candidate.rule.family != rust_mutants::rule::Family::ErrorPropagation {
+            continue;
+        }
+        let Some(fault) = session.fault_beside(mutant) else {
+            continue;
+        };
+        let mut reaching: Vec<String> = session
+            .route(mutant)
+            .reaching()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        reaching.sort();
+        for target in reaching {
+            if watch.cancel.is_cancelled() {
+                return Err(RunnerError::Interrupted);
+            }
+            let asked = |request: rust_mutants::session::Request| {
+                session
+                    .exec(&request.with_target(target.clone()), watch.cancel)
+                    .map(|result| result.outcome())
+            };
+            let alone = asked(rust_mutants::session::Request::new(fault.id.to_string()))?;
+            let with = |()| {
+                asked(
+                    rust_mutants::session::Request::new(mutant.id.to_string())
+                        .with_fault(fault.id.to_string()),
+                )
+            };
+            let failed = match (alone, with(())?) {
+                (Outcome::Survived, Outcome::Killed) if with(())? == Outcome::Killed => {
+                    Failed::Beside
+                }
+                (Outcome::Killed, Outcome::Survived) if with(())? == Outcome::Survived => {
+                    Failed::Alone
+                }
+                _ => continue,
+            };
+            let record = BesideRecord {
+                mutant: survivor.display_id.clone(),
+                fault: fault.display_id.to_string(),
+                target,
+                failed,
+            };
+            watch.trace.beside(record.clone());
+            found.push(record);
+            break;
+        }
+    }
+    Ok(found)
 }
 
 /// What a run says when the tree it faults gave no baseline to put a fault against, which leaves a run asked for faults short of assured.
@@ -149,7 +220,14 @@ fn prepared(
     )?;
     Ok(workspace.prepare(
         &rust_mutants::session::PrepareOptions {
-            operators: vec![RULE.to_owned()],
+            operators: std::iter::once(RULE.to_owned())
+                .chain(
+                    rust_mutants::rule::Registry::canonical()
+                        .family_rules(rust_mutants::rule::Family::ErrorPropagation)
+                        .iter()
+                        .map(|rule| rule.name.to_owned()),
+                )
+                .collect(),
             ..crate::assure::run::preparing(request)?
         },
         watch.cancel,

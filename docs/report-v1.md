@@ -188,6 +188,11 @@ A tree whose faulted baseline could not be measured raises a `not-measured` find
 A record's `position` is `null` where the run could not place the site.
 `broken-under-fault` names every path of the tree that was written while faults were put and had not been written before any was.
 
+Every part also carries `beside`: one record for each error-propagation survivor of the part (`question-to-unwrap`, `ignore-question-statement`) that a target told apart once the call at its own `?` failed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md) decision 6).
+The survivor is put again with the fault that is carried into its alternative active beside it, target by target in name order, and the fault alone is put to the same target; a record names the first target on which exactly one of the two runs failed, and `failed` says which (`beside` or `alone`), confirmed by running the survivor beside the fault a second time.
+It is evidence that the survivor is not an equivalence and never a kill: the survivor stays `survived`, its finding stays, and no count moves, because no test made that call fail.
+A record names a survivor and a fault the same part holds, or the part is not a v1 document.
+
 ## Sources
 
 Every part carries `sources`, one `{ path, digest }` per file its mutants were read from, in path order: the SHA-256 of the file's bytes as the run read them, taken from the catalog, which already refuses two digests for one file.

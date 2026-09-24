@@ -365,6 +365,15 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "beside"],
+          "properties": {
+            "type": { "const": "beside" },
+            "beside": { "$ref": "njutest-assurance-report-v1.json#/$defs/beside" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "probe"],
           "properties": {
             "type": { "const": "probe-exec" },

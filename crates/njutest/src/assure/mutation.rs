@@ -440,6 +440,19 @@ pub enum Perturbing {
     Faults,
 }
 
+impl Perturbing {
+    /// Whether a phase putting this judges a catalog entry that perturbs `what`: a faulted session also holds the mutations a fault is put beside, which it asks about only there.
+    #[must_use]
+    pub const fn judges(self, what: rust_mutants::rule::Perturbs) -> bool {
+        match (self, what) {
+            (Self::Mutants, rust_mutants::rule::Perturbs::Program)
+            | (Self::Faults, rust_mutants::rule::Perturbs::Environment) => true,
+            (Self::Mutants, rust_mutants::rule::Perturbs::Environment)
+            | (Self::Faults, rust_mutants::rule::Perturbs::Program) => false,
+        }
+    }
+}
+
 /// What to measure and how.
 #[derive(Debug, Clone)]
 pub struct MutationOptions {
@@ -558,6 +571,11 @@ pub fn run_resuming(
         .mutants()
         .iter()
         .filter(|mutant| options.shard.is_none_or(|shard| shard.holds(mutant.index)))
+        .filter(|mutant| {
+            subject
+                .perturbing
+                .judges(mutant.candidate.rule.family.perturbs())
+        })
         .collect();
     let total = u64::try_from(mutants.len())
         .map_err(|error| crate::targets::TargetError::invalid("mutation target count", error))?;

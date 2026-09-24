@@ -1009,6 +1009,45 @@
         }
       ]
     },
+    "besides": {
+      "description": "Every error-propagation survivor of the part a target told apart only with the call at its own site failing beside it (ADR 0032 decision 6). Evidence, never a kill.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/beside"
+      }
+    },
+    "beside": {
+      "description": "One survivor put again beside the fault at its own call, and the target that told the two runs apart.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mutant",
+        "fault",
+        "target",
+        "failed"
+      ],
+      "properties": {
+        "mutant": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "fault": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "failed": {
+          "enum": [
+            "beside",
+            "alone"
+          ],
+          "description": "Which of the two runs failed: with the mutation beside the failing call, or with the call failing alone."
+        }
+      }
+    },
     "target": {
       "type": "object",
       "additionalProperties": false,
@@ -1902,6 +1941,7 @@
         "candidates",
         "seams",
         "faults",
+        "beside",
         "targets",
         "sources",
         "mutants",
@@ -1937,6 +1977,9 @@
         },
         "faults": {
           "$ref": "#/$defs/faults"
+        },
+        "beside": {
+          "$ref": "#/$defs/besides"
         },
         "targets": {
           "type": "array",

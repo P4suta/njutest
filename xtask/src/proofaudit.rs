@@ -529,6 +529,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "limitations",
         "drift",
         "faults",
+        "beside",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -1856,6 +1857,7 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
         .collect();
     fault_counts(recording, &reported, &mut notes);
     fault_findings(recording, &reported, &mut notes);
+    besides(recording, &reported, faulted, &mut notes);
     let Some(faulted) = faulted else {
         if reported.is_empty() {
             return;
@@ -1897,6 +1899,55 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
         if let Err(why) = crate::faults::supports(site, &execs) {
             notes.violated(&site.fault, why.to_string());
         }
+    }
+}
+
+/// The evidence a report holds beside faults, held to survivors and faults it holds and to what the recording says was told apart, in both directions.
+fn besides(
+    recording: &Recording<'_>,
+    reported: &[crate::faults::Site],
+    faulted: Option<&crate::faults::Faulted>,
+    notes: &mut Notes<'_>,
+) {
+    let mut held: Vec<crate::faults::Beside> = rows(recording.document, "beside")
+        .iter()
+        .map(crate::faults::beside)
+        .collect();
+    held.sort();
+    for one in &held {
+        let survivor = recording
+            .mutants
+            .iter()
+            .any(|mutant| mutant.display_id == one.mutant && mutant.outcome == "survived");
+        let put = reported
+            .iter()
+            .any(|site| site.fault == one.fault && site.decision != "not-put");
+        if !survivor || !put || !["beside", "alone"].contains(&one.failed.as_str()) {
+            notes.violated(
+                &one.mutant,
+                format!(
+                    "evidence beside {} names what is not a survivor beside a fault that was put, \
+                     or no run that failed",
+                    one.fault
+                ),
+            );
+        }
+    }
+    let Some(faulted) = faulted else {
+        return;
+    };
+    let mut recorded = faulted.besides.clone();
+    recorded.sort();
+    if held != recorded {
+        notes.violated(
+            "beside",
+            format!(
+                "the report holds {} piece(s) of evidence beside a fault and the recording {}, \
+                 and they are not the same",
+                held.len(),
+                recorded.len()
+            ),
+        );
     }
 }
 

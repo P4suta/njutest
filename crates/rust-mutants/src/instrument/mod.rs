@@ -31,7 +31,7 @@ use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, INJECTED, INJECTED_CALL, MODULE_STEM,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, FAULT_ENV, INJECTED, INJECTED_CALL, MODULE_STEM,
     ModuleNameError, RUNTIME_MARKER, Rendering, RuntimeRenderError, STALE_CATALOG_EXIT,
     STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
     STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name, render,
@@ -75,6 +75,8 @@ pub struct Placement {
     pub replacement: Vec<u8>,
     /// The rewrite site.
     pub hint: SiteHint,
+    /// Whether its guard is carried into every alternative of a site it nests in, so it can be active beside a mutation there.
+    pub carried: bool,
 }
 
 /// One guard the instrumenter placed.
@@ -106,6 +108,14 @@ struct Planted<'a> {
     forest: &'a interval::Forest<Placement>,
     /// The markers that can be written where they are.
     markers: &'a [Marker],
+}
+
+/// One site an alternative is written for: where it is, its pristine text, and the guards carried into every alternative of it.
+#[derive(Clone, Copy)]
+struct Around<'a> {
+    site: Span,
+    text: &'a str,
+    carried: &'a [(Span, String)],
 }
 
 /// A rewritten file: its text and where every alternative landed in it.
@@ -271,6 +281,7 @@ pub fn plan_file(
             original: one.candidate.original.clone(),
             replacement: one.candidate.replacement.clone(),
             hint: one.hint.clone(),
+            carried: one.candidate.rule.family.carried_beside(),
         });
     }
     placements.sort_by_key(|placement| placement.index);
@@ -512,6 +523,7 @@ fn mapped_placement(
             site_text: site_text.to_owned(),
             super_depth: placement.hint.super_depth,
         },
+        carried: placement.carried,
     })
 }
 
@@ -840,11 +852,26 @@ impl File<'_> {
         } = self.original_branch(node)?;
 
         let site = self.slice(node.span)?;
+        let mut carried = Vec::new();
+        for child in node
+            .children
+            .iter()
+            .filter(|child| child.alternatives.iter().all(|placement| placement.carried))
+        {
+            carried.push((child.span, self.render(child)?.text));
+        }
         let mut alternatives = Vec::with_capacity(node.alternatives.len());
         for placement in &node.alternatives {
             alternatives.push(guards::Alternative {
                 index: placement.index,
-                text: self.alternative(node.span, site, placement)?,
+                text: self.alternative(
+                    &Around {
+                        site: node.span,
+                        text: site,
+                        carried: &carried,
+                    },
+                    placement,
+                )?,
                 comparable: self.comparable.contains(&placement.index),
                 probe: self.probed.get(&placement.index).copied(),
             });
@@ -922,18 +949,40 @@ impl File<'_> {
         })
     }
 
-    /// One alternative: the pristine site with exactly this edit applied, folded onto one line.
+    /// One alternative: the pristine site with exactly this edit applied, folded onto one line, with every carried guard the edit keeps the bytes of rendered where those bytes are.
     fn alternative(
         &self,
-        site: Span,
-        site_text: &str,
+        around: &Around<'_>,
         placement: &Placement,
     ) -> Result<String, InstrumentError> {
-        let head = self.slice(
-            Span::new(site.start, placement.edit.start).map_err(|error| {
+        let Around {
+            site,
+            text: site_text,
+            carried,
+        } = *around;
+        let mut head = String::new();
+        let mut cursor = site.start;
+        let mut kept = None;
+        for (span, rendered) in carried {
+            if span.end <= placement.edit.start {
+                head.push_str(self.slice(Span::new(cursor, span.start).map_err(|error| {
+                    self.error(InstrumentErrorKind::SiteConflict, error.to_string())
+                })?)?);
+                head.push_str(rendered);
+                cursor = span.end;
+            } else if span.start == placement.edit.start
+                && placement
+                    .replacement
+                    .starts_with(self.slice(*span)?.as_bytes())
+            {
+                kept = Some((span, rendered));
+            }
+        }
+        head.push_str(
+            self.slice(Span::new(cursor, placement.edit.start).map_err(|error| {
                 self.error(InstrumentErrorKind::SiteConflict, error.to_string())
-            })?,
-        )?;
+            })?)?,
+        );
         let tail =
             self.slice(Span::new(placement.edit.end, site.end).map_err(|error| {
                 self.error(InstrumentErrorKind::SiteConflict, error.to_string())
@@ -947,6 +996,13 @@ impl File<'_> {
                 ),
             )
         })?;
+        let replacement = match kept {
+            Some((span, rendered)) => {
+                let (_, rest) = replacement.split_at(self.slice(*span)?.len());
+                format!("{rendered}{rest}")
+            }
+            None => replacement.to_owned(),
+        };
         let resolved = replacement.replace(
             INJECTED_CALL,
             &guards::named(&self.module, placement.hint.super_depth, "injected"),

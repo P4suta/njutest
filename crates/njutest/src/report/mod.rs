@@ -1599,6 +1599,8 @@ pub struct BuildPartEvidence {
     seams: Vec<SeamRecord>,
     /// Every site of this source's part a fault was asked at.
     faults: Vec<faults::FaultRecord>,
+    /// Every survivor of this source's part a target told apart only under a fault.
+    beside: Vec<faults::BesideRecord>,
     /// The baseline target facts, in canonical target order.
     targets: Vec<TargetRecord>,
     /// The SHA-256 of each file this source's mutants were read from, as it read them.
@@ -1632,6 +1634,7 @@ impl BuildPartEvidence {
             candidates: report.candidates.clone(),
             seams: report.seams.clone(),
             faults: report.faults.clone(),
+            beside: report.beside.clone(),
             targets: report.targets.clone(),
             sources: report.sources.clone(),
             mutants: report.mutants.clone(),
@@ -1656,6 +1659,7 @@ struct BuildPartEvidenceWire {
     candidates: Vec<CandidateRecord>,
     seams: Vec<SeamRecord>,
     faults: Vec<faults::FaultRecord>,
+    beside: Vec<faults::BesideRecord>,
     targets: Vec<TargetRecord>,
     #[serde(deserialize_with = "sources_wire::deserialize")]
     sources: BTreeMap<String, rust_mutants::id::HexDigest>,
@@ -1681,6 +1685,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             candidates: wire.candidates,
             seams: wire.seams,
             faults: wire.faults,
+            beside: wire.beside,
             targets: wire.targets,
             sources: wire.sources,
             mutants: wire.mutants,
@@ -1867,6 +1872,18 @@ pub enum PartLedgerError {
         run_id: rust_mutants::id::RunId,
         /// What was being counted.
         about: &'static str,
+    },
+    /// Evidence under a fault names a survivor or a fault the part does not hold.
+    #[error(
+        "source {run_id} holds evidence under a fault about {mutant} beside {fault}, which are not a survivor and a fault of it"
+    )]
+    BesideUnheld {
+        /// The source.
+        run_id: rust_mutants::id::RunId,
+        /// The survivor it names.
+        mutant: String,
+        /// The fault it names.
+        fault: String,
     },
     /// Stored accounting disagreed with the retained rows.
     #[error("source {run_id} has {about} accounting that disagrees with its rows")]
@@ -2069,6 +2086,24 @@ fn validate_catalog_positions(
     Ok(())
 }
 
+/// Holds every record of evidence under a fault to a survivor and a fault the part holds.
+fn validate_beside(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    for beside in &part.beside {
+        let survivor = part.mutants.iter().any(|mutant| {
+            mutant.display_id == beside.mutant && mutant.outcome.outcome() == Outcome::Survived
+        });
+        let fault = part.faults.iter().any(|one| one.display_id == beside.fault);
+        if !survivor || !fault {
+            return Err(PartLedgerError::BesideUnheld {
+                run_id: part.run_id.clone(),
+                mutant: beside.mutant.clone(),
+                fault: beside.fault.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
     validate_part_catalog(part)?;
     let started = canonical_timestamp(part, "started", &part.timing.started)?;
@@ -2092,6 +2127,7 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
             about: "mutation",
         });
     }
+    validate_beside(part)?;
     let faults = faults::FaultAccounting::of(&part.faults).map_err(|_too_wide| {
         PartLedgerError::CountOverflow {
             run_id: part.run_id.clone(),
@@ -4570,6 +4606,8 @@ pub struct BuildReport {
     pub seams: Vec<SeamRecord>,
     /// Every site a fault was asked at, and what became of it.
     pub faults: Vec<faults::FaultRecord>,
+    /// Every survivor a target told apart only once the call at its site failed.
+    pub beside: Vec<faults::BesideRecord>,
     /// Every target it selected, slowest first.
     pub targets: Vec<TargetRecord>,
     /// The SHA-256 of each file its mutants were read from, as it read them, by workspace-relative path.
@@ -4615,6 +4653,7 @@ impl BuildReport {
             candidates: Vec::new(),
             seams: Vec::new(),
             faults: Vec::new(),
+            beside: Vec::new(),
             targets: Vec::new(),
             sources: BTreeMap::new(),
             mutants: Vec::new(),
@@ -5313,6 +5352,8 @@ pub struct Conclusion {
     pub seams: Vec<SeamRecord>,
     /// Every build's fault sites, part by part.
     pub faults: Vec<faults::FaultRecord>,
+    /// Every build's survivors told apart only under a fault, part by part.
+    pub beside: Vec<faults::BesideRecord>,
     /// Every build's target facts.
     pub targets: Vec<TargetRecord>,
     /// The mutation lattice projection, for presentation only.
@@ -6022,6 +6063,12 @@ impl Report {
                 .iter()
                 .flat_map(|build| build.parts.iter())
                 .flat_map(|part| part.faults.iter().cloned())
+                .collect(),
+            beside: self
+                .builds
+                .iter()
+                .flat_map(|build| build.parts.iter())
+                .flat_map(|part| part.beside.iter().cloned())
                 .collect(),
             targets: self
                 .builds

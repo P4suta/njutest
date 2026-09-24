@@ -482,6 +482,12 @@ snapshot_code!(
     "the crate planted for the routing layers was built by another compiler than the run's",
     "the planted crate is built by the binaries in the run's own sysroot, so they answered with another version than the run's rustc: the toolchain directory is broken or mixed; reinstall it, or, where the run's rustc names no sysroot, make the cargo on PATH the one the tree resolves to"
 );
+snapshot_code!(
+    SESSION_NOT_BESIDE,
+    "RM5009",
+    "a fault was asked to run beside something that is not a mutation, or what was named beside it is not a fault",
+    "a fault is put beside a mutation of the same session: name an `inject-error` fault beside a mutant of any other rule"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -626,6 +632,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SESSION_WRITE_FAILED,
         SENTINEL_UNWRITABLE,
         SENTINEL_OTHER_TOOLCHAIN,
+        SESSION_NOT_BESIDE,
         COVERAGE_UNREADABLE,
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,

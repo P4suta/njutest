@@ -27,13 +27,28 @@ pub struct Site {
     pub by: Option<String>,
 }
 
-/// Every fault execution and every site decision a recording holds.
+/// A survivor a target told apart only under a fault, as a report or a recording writes it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
+pub struct Beside {
+    /// The survivor a person types.
+    pub mutant: String,
+    /// The fault a person types.
+    pub fault: String,
+    /// The target that told them apart.
+    pub target: String,
+    /// Which of the two runs failed.
+    pub failed: String,
+}
+
+/// Every fault execution, site decision and piece of evidence beside a fault a recording holds.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Faulted {
     /// Every execution, in recording order.
     pub execs: Vec<Exec>,
     /// Every site decision, in recording order.
     pub sites: Vec<Site>,
+    /// Every survivor told apart beside a fault, in recording order.
+    pub besides: Vec<Beside>,
 }
 
 /// Everything the recording says about the faults.
@@ -43,6 +58,9 @@ pub struct Faulted {
 pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
     let mut faulted = Faulted::default();
     for event in crate::route::events(recorded)? {
+        if let Some(record) = event.get("beside") {
+            faulted.besides.push(beside(record));
+        }
         let Some(record) = event.get("fault") else {
             continue;
         };
@@ -57,6 +75,17 @@ pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
         }
     }
     Ok(faulted)
+}
+
+/// One piece of evidence beside a fault as a report or a recording writes it.
+#[must_use]
+pub fn beside(record: &Value) -> Beside {
+    Beside {
+        mutant: text(record, "mutant"),
+        fault: text(record, "fault"),
+        target: text(record, "target"),
+        failed: text(record, "failed"),
+    }
 }
 
 /// One site as a report or a recording writes it.
