@@ -1988,8 +1988,8 @@
               ],
               "properties": {
                 "outcome": {
-                  "type": "string",
-                  "minLength": 1
+                  "enum": ["detected", "undetected", "interrupted", "failed", "completed"],
+                  "description": "How the run ended: every judged mutation noticed, some not, cancelled, stopped on an error, or finished with judgement left to the program that embedded it."
                 },
                 "error": {
                   "type": [

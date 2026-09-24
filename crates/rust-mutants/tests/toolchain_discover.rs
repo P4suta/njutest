@@ -437,7 +437,9 @@ fn discovery_is_deterministic_and_traced_per_file() {
         rust_mutants::testkit::trace::standalone_context(),
     );
     let second = run(&prepared, &options(), &recorder);
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     assert_eq!(first, second);
     assert_eq!(first.catalog.digest(), second.catalog.digest());
     let files: Vec<(String, u32)> = recorder

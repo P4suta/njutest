@@ -135,11 +135,11 @@ pub fn ended(
         Err(error) => Some(error.to_string()),
     };
     let verdict = if cancel.is_cancelled() {
-        "interrupted"
+        rust_mutants::trace::RunOutcome::Interrupted
     } else {
         match outcome {
             Ok(code) => verdict_of(*code),
-            Err(_command_failure) => "failed",
+            Err(_command_failure) => rust_mutants::trace::RunOutcome::Failed,
         }
     };
     recorder
@@ -148,12 +148,12 @@ pub fn ended(
 }
 
 /// How a command ended, in the words the exit codes are named after.
-const fn verdict_of(code: u8) -> &'static str {
+const fn verdict_of(code: u8) -> rust_mutants::trace::RunOutcome {
     match code {
-        crate::run::EXIT_DETECTED => "detected",
-        crate::run::EXIT_UNDETECTED => "undetected",
-        crate::run::EXIT_INTERRUPTED => "interrupted",
-        _ => "failed",
+        crate::run::EXIT_DETECTED => rust_mutants::trace::RunOutcome::Detected,
+        crate::run::EXIT_UNDETECTED => rust_mutants::trace::RunOutcome::Undetected,
+        crate::run::EXIT_INTERRUPTED => rust_mutants::trace::RunOutcome::Interrupted,
+        _ => rust_mutants::trace::RunOutcome::Failed,
     }
 }
 

@@ -552,7 +552,9 @@ fn the_trace_says_what_every_phase_did() {
         .exec(&Request::new(mutant), &Cancel::new())
         .expect("exec");
     drop(result);
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     session.close().expect("close");
 
     let events = recorder.events();
@@ -735,7 +737,9 @@ fn the_trace_of_a_covered_run_names_every_layer() {
             &Cancel::new(),
         )
         .expect("prepare");
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     let events = recorder.events();
 
     let phases: Vec<(String, bool)> = events
@@ -1375,7 +1379,9 @@ fn targets_measured_under_coverage(skip_targets: Vec<String>) -> usize {
         )
         .expect("prepare");
     session.close().expect("close");
-    recorder.run_end("ok", None).expect("trace closes");
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
     recorder
         .events()
         .iter()
