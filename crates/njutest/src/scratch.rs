@@ -30,6 +30,9 @@ pub const PROFILES_DIR_NAME: &str = "profiles";
 /// Where preserved command output goes.
 pub const OUTPUT_DIR_NAME: &str = "output";
 
+/// Where the crate planted for the engine's routing layers is written.
+pub const SENTINEL_DIR_NAME: &str = "sentinel";
+
 /// Why a run has nowhere to work.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -149,6 +152,12 @@ impl Scratch {
     #[must_use]
     pub fn build_dir(&self) -> PathBuf {
         self.dir.join(BUILD_DIR_NAME)
+    }
+
+    /// Where the crate planted for the engine's routing layers is written.
+    #[must_use]
+    pub fn sentinel_dir(&self) -> PathBuf {
+        self.dir.join(SENTINEL_DIR_NAME)
     }
 
     /// Where coverage profiles are written.

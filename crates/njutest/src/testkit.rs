@@ -186,6 +186,12 @@ pub fn every_failure() -> Vec<RunnerError> {
                 display_id: "abcdef".to_owned(),
             },
         },
+        RunnerError::Blind {
+            layer: rust_mutants::sentinel::Planted::Reach,
+            mutant: "src/lib.rs:one:return-default".to_owned(),
+            expected: "unreached".to_owned(),
+            routed: "test".to_owned(),
+        },
         RunnerError::Output {
             source: std::io::Error::other("output closed"),
         },
@@ -216,6 +222,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::ReportCount { .. }
             | RunnerError::Scratch(_)
             | RunnerError::Build(_)
+            | RunnerError::Blind { .. }
             | RunnerError::Engine(_) => {}
         }
     }
@@ -305,6 +312,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
+        Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
         Payload::Knob { .. } => "knob",
@@ -347,6 +355,8 @@ pub mod payload {
         WireExchange,
         /// A wire decision.
         WireExec,
+        /// A routing layer's sentinel.
+        Sentinel(&'a crate::trace::SentinelRecord),
         /// A model decision.
         Model,
         /// A control's drift observation.
@@ -375,6 +385,7 @@ pub mod payload {
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
+            Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
             Payload::Knob { knob } => Ref::Knob(knob),
@@ -411,6 +422,15 @@ pub mod payload {
                 return None;
             };
             Some(note)
+        }
+
+        /// The sentinel record, where this is one.
+        #[must_use]
+        pub const fn sentinel(self) -> Option<&'a crate::trace::SentinelRecord> {
+            let Self::Sentinel(sentinel) = self else {
+                return None;
+            };
+            Some(sentinel)
         }
 
         /// The route record, where this is one.
@@ -643,6 +663,20 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                     seq: 1,
                     rule: crate::wire::rule::Rule::DropConnection,
                     decision,
+                },
+            }),
+    );
+    payloads.extend(
+        rust_mutants::sentinel::Planted::every()
+            .into_iter()
+            .flat_map(rust_mutants::sentinel::Planted::expectations)
+            .map(|expectation| Payload::Sentinel {
+                sentinel: crate::trace::SentinelRecord {
+                    layer: expectation.planted,
+                    mutant: expectation.mutant.to_string(),
+                    expected: expectation.expected,
+                    routed: "test".to_owned(),
+                    sighted: false,
                 },
             }),
     );

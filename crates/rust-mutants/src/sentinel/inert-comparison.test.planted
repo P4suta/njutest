@@ -1,0 +1,9 @@
+#[test]
+fn apart() {
+    assert_eq!(sentinel::pick(1, 5), 1);
+}
+
+#[test]
+fn tied() {
+    assert_eq!(sentinel::pick_tied(2, 2), 2);
+}
