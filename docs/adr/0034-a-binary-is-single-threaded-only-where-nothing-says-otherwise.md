@@ -33,9 +33,10 @@ Reach alone cannot prove a binary single-threaded.
 2. **The source half reads tokens of the whole closure and fails closed.** Every `.rs` file of every package the binary links is read, registry packages included, as tokens, so a macro body and an attribute are read exactly as code is.
    A call or method whose name starts with `spawn` on any receiver, a path call to `scope`, rayon, crossbeam, a thread pool or a parallel iterator, a runtime's `main` or `test` attribute and `new_multi_thread` each make it `concurrent`.
    An `extern` block, a `links` key, and `pthread_create` make it `not-proven` as `native-code`, because code no Rust source here shows can start threads without a token saying so.
-   A file that is not Rust, or not UTF-8, is `unread`, and never read as a file that starts nothing.
+   A file that is not Rust's tokens, or not UTF-8, is `unread`, and never read as a file that starts nothing.
    A raw identifier is read as the name it spells, so `r#spawn` is `spawn`.
-   A file whose brackets nest deeper than 128 outside its comments and literals is `unread` before it is parsed, because the parser recurses through them and would end the run on a small enough stack.
+   A file is held to being Rust's tokens and parsed no further: no rule reads more than tokens, and a parser recurses through a chain of unary operators or nested generics that no limit on the source could bound.
+   A file whose brackets nest deeper than 128 outside its comments and literals is `unread` before it is lexed, because its token tree is built and dropped recursively and would end the run on a small enough stack.
    A false "can start one" leaves a hole the report states; a false "cannot" would be a proof of nothing, so every uncertain token is read the first way.
 
 3. **What is known to start a thread is said first.** A binary with a known spawn is `concurrent` even where something else of it could not be read, so the reason a reader acts on is not hidden behind the one they cannot.
