@@ -6,7 +6,6 @@
 #![no_main]
 
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use libfuzzer_sys::fuzz_target;
 use njutest::cache::store::Store;
@@ -21,7 +20,7 @@ fn store() -> &'static Store {
                 reason = "without its one process store this fuzz target cannot execute"
             )]
             let root = tempfile::tempdir().expect("a directory to keep answers in");
-            let store = Store::new(root.path(), 1 << 30, Duration::from_secs(3600));
+            let store = Store::new(root.path(), 1 << 30);
             (root, store)
         })
         .1
