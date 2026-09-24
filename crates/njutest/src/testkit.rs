@@ -186,6 +186,12 @@ pub fn every_failure() -> Vec<RunnerError> {
                 display_id: "abcdef".to_owned(),
             },
         },
+        RunnerError::Blind {
+            layer: rust_mutants::sentinel::Planted::Reach,
+            mutant: "src/lib.rs:one:return-default".to_owned(),
+            expected: "unreached".to_owned(),
+            routed: "test".to_owned(),
+        },
         RunnerError::Output {
             source: std::io::Error::other("output closed"),
         },
@@ -216,6 +222,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::ReportCount { .. }
             | RunnerError::Scratch(_)
             | RunnerError::Build(_)
+            | RunnerError::Blind { .. }
             | RunnerError::Engine(_) => {}
         }
     }
@@ -305,6 +312,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
+        Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
         Payload::Note { .. } => "note",
@@ -346,6 +354,8 @@ pub mod payload {
         WireExchange,
         /// A wire decision.
         WireExec,
+        /// A routing layer's sentinel.
+        Sentinel(&'a crate::trace::SentinelRecord),
         /// A model decision.
         Model,
         /// A control's drift observation.
@@ -372,6 +382,7 @@ pub mod payload {
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
+            Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
             Payload::Note { note } => Ref::Note(note),
@@ -407,6 +418,15 @@ pub mod payload {
                 return None;
             };
             Some(note)
+        }
+
+        /// The sentinel record, where this is one.
+        #[must_use]
+        pub const fn sentinel(self) -> Option<&'a crate::trace::SentinelRecord> {
+            let Self::Sentinel(sentinel) = self else {
+                return None;
+            };
+            Some(sentinel)
         }
 
         /// The route record, where this is one.
@@ -630,6 +650,20 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                     seq: 1,
                     rule: crate::wire::rule::Rule::DropConnection,
                     decision,
+                },
+            }),
+    );
+    payloads.extend(
+        rust_mutants::sentinel::Planted::every()
+            .into_iter()
+            .flat_map(rust_mutants::sentinel::Planted::expectations)
+            .map(|expectation| Payload::Sentinel {
+                sentinel: crate::trace::SentinelRecord {
+                    layer: expectation.planted,
+                    mutant: expectation.mutant.to_string(),
+                    expected: expectation.expected,
+                    routed: "test".to_owned(),
+                    sighted: false,
                 },
             }),
     );
@@ -993,6 +1027,7 @@ pub mod reports {
             })
             .collect();
         report.mutants = rows;
+        super::read_every_named_file(&mut report);
         report.verdict = report.concluded();
         Ok(report)
     }
@@ -1058,5 +1093,31 @@ pub mod reports {
             }
             crate::report::LatticedDocument::Shard(_) => Err(UnmadeReport::Part),
         }
+    }
+}
+
+/// Records, for every file the rows and findings of `report` name, a digest as a run that read the file would have, which a report assembled by hand needs before the audit accepts it.
+///
+/// The digest is the SHA-256 of the path, not of any file's bytes, so a test that reads a real file records that file's own digest instead.
+#[cfg(feature = "testkit")]
+pub fn read_every_named_file(report: &mut crate::report::BuildReport) {
+    let named: Vec<String> = report
+        .mutants
+        .iter()
+        .map(|row| row.path.clone())
+        .chain(
+            report
+                .findings
+                .iter()
+                .filter_map(|finding| finding.path.clone()),
+        )
+        .collect();
+    for path in named {
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, path.as_bytes());
+        report
+            .sources
+            .entry(path)
+            .or_insert_with(|| rust_mutants::id::HexDigest::finish(hasher));
     }
 }

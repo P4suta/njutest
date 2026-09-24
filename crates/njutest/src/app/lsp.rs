@@ -67,7 +67,9 @@ pub struct Reported {
     pub diagnostics: Vec<Value>,
 }
 
-/// The findings of `report` that name a place in a file, by file.
+/// The findings of `report` that name a place in a file, by file, placed only in files that still hold the bytes the run read.
+///
+/// A file edited since the run, or one nothing can hold to the run's record, gets one information diagnostic saying which run measured it and that nothing it found there is shown until a run measures the file again: a finding placed by line and column in code the run never measured points at the wrong thing.
 /// # Errors
 /// Returns the report's checked projection failure instead of publishing a partial diagnostic set.
 pub fn diagnostics(
@@ -75,7 +77,10 @@ pub fn diagnostics(
     root: &Path,
     encoding: Encoding,
 ) -> Result<Vec<Reported>, crate::report::CountError> {
+    let sources = crate::presentation::Sources::read(root, report)?;
     let mut by_file: std::collections::BTreeMap<String, Vec<Value>> =
+        std::collections::BTreeMap::new();
+    let mut unshown: std::collections::BTreeMap<String, crate::presentation::Missing> =
         std::collections::BTreeMap::new();
     let conclusion = report.conclusion()?;
     for finding in &conclusion.findings {
@@ -86,11 +91,15 @@ pub fn diagnostics(
         else {
             continue;
         };
+        if let Err(missing) = sources.standing(mutant.path()) {
+            unshown.insert(mutant.path().to_owned(), missing);
+            continue;
+        }
         let at = match finding.position {
             Some(position) => position,
             None => mutant.position(),
         };
-        let character = column(root, mutant.path(), at, encoding);
+        let character = column(&sources, mutant.path(), at, encoding);
         let line = at.line.saturating_sub(1);
         by_file
             .entry(mutant.path().to_owned())
@@ -111,29 +120,52 @@ pub fn diagnostics(
                 },
             }));
     }
+    for (path, missing) in unshown {
+        by_file.insert(
+            path,
+            vec![json!({
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 0 },
+                },
+                "severity": 3,
+                "source": "njutest",
+                "code": "not-yet-asked",
+                "message": unshown_note(report.run_id(), missing),
+            })],
+        );
+    }
     Ok(by_file
         .into_iter()
         .map(|(path, diagnostics)| Reported { path, diagnostics })
         .collect())
 }
 
-/// Where the report's column falls in the units the client counts.
-fn column(root: &Path, path: &str, at: crate::report::Position, encoding: Encoding) -> u32 {
+/// What a reader of a file the run's findings are not shown in is told: why, which run, and what shows them again.
+fn unshown_note(run: &str, missing: crate::presentation::Missing) -> String {
+    format!(
+        "{}; nothing run {run} found in this file is shown until a run measures it again",
+        missing.told()
+    )
+}
+
+/// Where the report's column falls in the units the client counts, read off the line as the run measured it.
+fn column(
+    sources: &crate::presentation::Sources,
+    path: &str,
+    at: crate::report::Position,
+    encoding: Encoding,
+) -> u32 {
     let scalar = at.character_column.saturating_sub(1);
     if encoding == Encoding::Utf8 {
         return at.column.saturating_sub(1);
     }
-    let Ok(text) = std::fs::read_to_string(root.join(path)) else {
-        return scalar;
-    };
-    let at_line = match usize::try_from(at.line.saturating_sub(1)) {
-        Ok(line) => line,
-        Err(_) => return scalar,
-    };
-    let Some(line) = text.lines().nth(at_line) else {
-        return scalar;
+    let line = match sources.at(path, at.line) {
+        crate::presentation::Excerpt::Read(line) => line,
+        crate::presentation::Excerpt::Instead(_missing) => return scalar,
     };
     let units: usize = line
+        .text()
         .chars()
         .take(match usize::try_from(scalar) {
             Ok(column) => column,

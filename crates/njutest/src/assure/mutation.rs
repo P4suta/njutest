@@ -234,6 +234,8 @@ pub struct Mutation {
     pub skips: BTreeMap<String, u64>,
     /// Whether each target the baseline measured held its reach on a control, one record each.
     pub drift: Vec<Drift>,
+    /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
+    pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
 }
 
 impl Mutation {
@@ -580,6 +582,9 @@ pub fn run_resuming(
         (resume.record)(&judged)?;
         mutation.judged.push(judged);
     }
+    mutation.sources = session.catalog().sources().map_err(|refused| {
+        rust_mutants::EngineError::from(rust_mutants::discover::DiscoverError::from(refused))
+    })?;
     mutation.drift = crate::report::drift::folded(
         session.touched().targets.keys().map(String::as_str),
         mutation
