@@ -182,3 +182,9 @@ A file that could not be written is one an audit calls unaudited, which is the h
 
 `rust-mutants trace` writes JSON Lines rather than a document; its shape is `schema/rust-mutants-trace-v1.json` and its rules are in [trace](trace.md).
 A recording is never evidence, so nothing here reads one to decide anything.
+
+## Who owns a temporary directory
+
+Every directory a program of this repository makes outside every checkout — a run's scratch, a snapshot, a compiled cache, the push gate's tree — holds `owner.json` (`schema/temp-owner-v1.json`) beside the `owner.lock` its maker holds for as long as it uses it ([ADR 0006](../adr/0006-every-temporary-directory-has-an-owner.md)).
+The engine writes it through `tempowner`, and the push gate, which depends on no workspace crate, writes the same shape itself; a test holds each writer to the schema, so the two cannot drift apart.
+A collector on the machine reads the same document to decide what it may take, and takes nothing that lacks one.

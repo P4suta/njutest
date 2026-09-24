@@ -121,13 +121,10 @@ fn releasing_takes_what_the_directory_says_was_kept_and_writes_back_the_rest() {
         removed, 1,
         "the one directory that vouches for its keep goes"
     );
-    assert_eq!(
-        std::fs::symlink_metadata(&kept)
-            .map_err(|error| error.kind())
-            .err(),
-        Some(std::io::ErrorKind::NotFound),
-        "and it is gone"
-    );
+    match std::fs::symlink_metadata(&kept) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        other => panic!("and it is gone: {other:?}"),
+    }
     assert!(
         std::fs::symlink_metadata(&unmarked).is_ok_and(|metadata| metadata.is_dir()),
         "a path in the ledger is not authority to delete: the directory has to say it was kept"

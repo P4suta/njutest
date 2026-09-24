@@ -103,6 +103,11 @@ impl Scratch {
         ] {
             fs::create_dir_all(&path).map_err(|source| ScratchError::Unusable { path, source })?;
         }
+        let build = dir.join(BUILD_DIR_NAME);
+        tempowner::tag_cache(&build).map_err(|source| ScratchError::Unusable {
+            path: build,
+            source,
+        })?;
         let owner = match tempowner::claim_as(&dir, now, MARKER_SCHEMA) {
             Ok(owner) => Some(owner),
             Err(ClaimError::Owned { .. }) => None,

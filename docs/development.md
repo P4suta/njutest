@@ -259,6 +259,12 @@ What is remembered is the commit, the base the commit-message check reads, and t
 Every relinked test binary, fixture build, and mutant pays it.
 Switch the applications that start the sessions on under System Settings → Privacy & Security → Developer Tools; on the development machine that is the terminal and the multiplexer running in it.
 
+### What the gate leaves on the machine
+
+The gate's home under the cache directory is the one directory it keeps between pushes, and it says whose it is: `owner.json` in the shape `schema/temp-owner-v1.json` publishes, a cache keyed to the repository's common git directory, with `owner.lock` held for as long as a push is checking in it, and `CACHEDIR.TAG` on the build directory it makes ahead of Cargo.
+A collector on the machine may take it once the repository it serves is gone, and never while a push holds it; nothing here decides by how long anything has sat.
+The gate prunes git's record of its tree whenever it finds the tree gone, so a collector that removed it leaves nothing dangling.
+
 ## Test harness
 
 `crates/njutest-devkit` is test-only support shared by every crate: the golden-file comparison, the workspace and fixture paths, the `cargo` that built the test binary, a throwaway copy of a fixture project, and the scripted toolchain.

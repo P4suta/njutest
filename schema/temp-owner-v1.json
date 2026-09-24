@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/temp-owner-v1.json",
+  "title": "temporary directory owner v1",
+  "description": "`owner.json` in a directory some process made outside every checkout, beside the `owner.lock` that process holds for as long as it uses the directory. Every program of this repository that makes such a directory writes this document, and a collector on the machine reads it: a lock nobody holds means the owner is gone, `kept` means it was preserved on purpose, and a cache is spared while the tree it is keyed to exists. A directory without it names no owner and is nobody's to remove.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "pid",
+    "started",
+    "kept"
+  ],
+  "properties": {
+    "schema": {
+      "description": "Which program wrote the marker, ending in the shape's own name.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*-temp-owner-v1$"
+    },
+    "pid": {
+      "description": "The process that claimed the directory; diagnostic only, since liveness is the lock's.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "started": {
+      "description": "When the directory was claimed, in UTC.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "kept": {
+      "description": "Whether the directory was preserved on purpose; only an explicit release ends a keep.",
+      "type": "boolean"
+    },
+    "role": {
+      "description": "What the directory is for; absent means a scratch.",
+      "enum": [
+        "scratch",
+        "cache"
+      ]
+    },
+    "keyed_to": {
+      "description": "The tree a cache is keyed to, absolutely: once it is gone, nothing can look the cache up again.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

@@ -36,6 +36,9 @@ Two questions must be answerable about a directory found in a temporary root: *w
 9. **A keep ends when somebody ends it**, with `njutest cache --release-kept` or `rust-mutants cache --kept`, which take only a directory whose own marker says it was kept, and a cache ends when the tree it is keyed to is gone or when a caller reclaims it by name.
    No sweep has a time budget either: it looks at every prefixed directory, because one it did not reach would be one it said nothing about.
 10. **None of this can fail a run.**
+11. **One published shape for every owner.** `schema/temp-owner-v1.json` is what `owner.json` holds, whoever wrote it: the engine through `tempowner`, and the push gate, which depends on no workspace crate, by itself; a test holds each writer to it, and a collector that is not this program reads it.
+    A cache also carries `CACHEDIR.TAG`, written by the claim itself, so no caller can forget it.
+12. **A claim outwaits a collector, briefly.** A lock on a directory with no marker yet is a collector judging it, since a claim writes its marker while it holds the lock; the claim waits for it, makes the directory again if the collector took it, and gives up after a short grace to the unclaimed run of decision 2 rather than hang on a holder that is no collector.
 
 ## Consequences
 

@@ -2849,6 +2849,8 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "hex",
+ "jiff",
+ "jsonschema",
  "njutest-devkit",
  "njutest-macros",
  "proc-macro2",

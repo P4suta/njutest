@@ -21,7 +21,7 @@ fn run_id(value: &str) -> RunId {
     RunId::try_from(value).expect("a canonical writable run id")
 }
 
-/// The real moment, because the sweep judges an unowned directory by its age on the filesystem: a made-up "now" months away from the file times would call every directory a leftover.
+/// The moment a claim records.
 fn now() -> Timestamp {
     Timestamp::now()
 }
@@ -41,6 +41,11 @@ fn a_scratch_is_named_for_its_run_and_holds_the_places_a_run_writes() {
         format!("{DIR_PREFIX}20260905t081500z-abcdef")
     );
     assert!(scratch.build_dir().is_dir(), "the isolated build directory");
+    assert!(
+        fs::read_to_string(scratch.build_dir().join("CACHEDIR.TAG"))
+            .is_ok_and(|tag| tag.starts_with("Signature: 8a477f597d28d172789f06886806bc55")),
+        "made ahead of cargo, so it says it is a cache as cargo's own would"
+    );
     assert!(scratch.profiles_dir().is_dir(), "coverage profiles");
     assert!(scratch.output_dir().is_dir(), "preserved command output");
     assert!(scratch.is_claimed(), "the lock is held for the whole run");

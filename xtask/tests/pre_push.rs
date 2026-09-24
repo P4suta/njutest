@@ -864,3 +864,52 @@ fn a_commit_is_checked_again_under_different_build_settings() {
         stderr(&again)
     );
 }
+
+#[test]
+fn the_gate_owns_its_cache_in_the_shape_a_machine_collector_reads() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let pushed = repository.push(&repository.head);
+    assert!(pushed.status.success(), "{}", stderr(&pushed));
+    let trees = gate_trees(repository.scratch.path());
+    let home = trees
+        .first()
+        .and_then(|tree| tree.parent())
+        .expect("the gate's tree lives in its home");
+    let schema: serde_json::Value = xtask::strictjson::decode_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../schema/temp-owner-v1.json"),
+        )
+        .expect("the schema"),
+    )
+    .expect("the schema is JSON");
+    let marker: serde_json::Value = xtask::strictjson::decode_str(
+        &std::fs::read_to_string(home.join("owner.json")).expect("the gate's owner marker"),
+    )
+    .expect("the marker is JSON");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    let errors: Vec<String> = validator
+        .iter_errors(&marker)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "a collector on this machine takes nothing without an owner, and reads the owner as \
+         schema/temp-owner-v1.json says: {marker} {errors:?}"
+    );
+    let common = std::fs::canonicalize(repository.directory.path().join(".git"))
+        .expect("the repository's common directory");
+    assert_eq!(
+        (
+            marker.get("role").and_then(serde_json::Value::as_str),
+            marker.get("keyed_to").and_then(serde_json::Value::as_str)
+        ),
+        (Some("cache"), common.to_str()),
+        "the gate's home is a cache for as long as the repository it serves exists"
+    );
+    let tag = std::fs::read_to_string(home.join("target").join("CACHEDIR.TAG"))
+        .expect("the build directory made ahead of cargo says it is a cache");
+    assert!(
+        tag.starts_with("Signature: 8a477f597d28d172789f06886806bc55"),
+        "{tag}"
+    );
+}

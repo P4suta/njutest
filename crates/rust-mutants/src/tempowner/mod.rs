@@ -8,6 +8,7 @@ mod lock;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -191,14 +192,15 @@ fn claim_with(dir: &Path, now: Timestamp, claiming: Claiming<'_>) -> Result<Owne
         role,
         keyed_to,
     } = claiming;
-    let lock = acquire(&lock_path(dir)).map_err(|source| ClaimError::Lock {
-        dir: dir.to_path_buf(),
-        source,
-    })?;
-    let Some(lock) = lock else {
-        return Err(ClaimError::Owned {
-            dir: dir.to_path_buf(),
-        });
+    let lock = match acquire(&lock_path(dir)) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => outwait(dir)?,
+        Err(source) => {
+            return Err(ClaimError::Lock {
+                dir: dir.to_path_buf(),
+                source,
+            });
+        }
     };
     let marker = Marker {
         schema: schema.to_owned(),
@@ -208,7 +210,11 @@ fn claim_with(dir: &Path, now: Timestamp, claiming: Claiming<'_>) -> Result<Owne
         role,
         keyed_to,
     };
-    if let Err(source) = write_marker(dir, &marker) {
+    let tagged = match role {
+        Role::Cache => tag_cache(dir),
+        Role::Scratch => Ok(()),
+    };
+    if let Err(source) = tagged.and_then(|()| write_marker(dir, &marker)) {
         drop(lock);
         return Err(ClaimError::Marker {
             dir: dir.to_path_buf(),
@@ -219,6 +225,51 @@ fn claim_with(dir: &Path, now: Timestamp, claiming: Claiming<'_>) -> Result<Owne
         dir: dir.to_path_buf(),
         lock: Some(lock),
         marker,
+    })
+}
+
+/// What `CACHEDIR.TAG` holds: the signature the convention requires, then who made it.
+const CACHEDIR_TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n# A build cache a mutation run made; see schema/temp-owner-v1.json.\n";
+
+/// Marks `dir` as a cache for every backup, indexing, and cleaning tool that honours `CACHEDIR.TAG`, Cargo among them.
+///
+/// # Errors
+/// The tag could not be written.
+pub fn tag_cache(dir: &Path) -> io::Result<()> {
+    fs::write(dir.join("CACHEDIR.TAG"), CACHEDIR_TAG)
+}
+
+/// How many times a claim makes a fresh directory again after a collector took it while the claim waited.
+const REMADE: usize = 3;
+
+/// How long a claim waits out a lock on a directory nobody has claimed: a collector holds one for the instant it judges it, and a holder that keeps it longer is not a collector, so the claim gives up as it always did rather than hang.
+const COLLECTOR_GRACE: Duration = Duration::from_secs(2);
+
+/// Waits out the holder of a lock on a directory nobody has claimed, which can only be a collector judging it, since a claim writes its marker while it holds the lock.
+/// A directory with a marker is somebody's, and is refused as [`ClaimError::Owned`].
+fn outwait(dir: &Path) -> Result<Lock, ClaimError> {
+    let failed = |source| ClaimError::Lock {
+        dir: dir.to_path_buf(),
+        source,
+    };
+    match read_marker(dir) {
+        Err(MarkerError::Missing { .. }) => {}
+        Ok(_) | Err(_) => {
+            return Err(ClaimError::Owned {
+                dir: dir.to_path_buf(),
+            });
+        }
+    }
+    for _attempt in 0..REMADE {
+        fs::create_dir_all(dir).map_err(failed)?;
+        match lock::wait(&lock_path(dir), COLLECTOR_GRACE).map_err(failed)? {
+            lock::Waited::Taken(lock) => return Ok(lock),
+            lock::Waited::Removed => {}
+            lock::Waited::Kept => break,
+        }
+    }
+    Err(ClaimError::Owned {
+        dir: dir.to_path_buf(),
     })
 }
 

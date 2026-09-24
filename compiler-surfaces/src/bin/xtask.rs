@@ -19,7 +19,7 @@ extern crate self as xtask;
 mod product;
 pub(crate) use product::{
     Process, Streams, deps, devgates, drift, engineaudit, fixtures, lanes, lints, milestones,
-    modelaudit, proofaudit, release, reportdiff, route, run_from, sbom, sentinel, shapes,
+    modelaudit, owner, proofaudit, release, reportdiff, route, run_from, sbom, sentinel, shapes,
     strictjson, surface, wire, work,
 };
 

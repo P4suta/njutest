@@ -492,3 +492,95 @@ fn a_keep_is_released_only_where_the_directory_vouches_for_it_and_nobody_holds_i
     assert!(exists(&held).expect("inspect held") && exists(&unmarked).expect("inspect unmarked"));
     holder.release().expect("releases");
 }
+
+#[test]
+fn every_marker_a_claim_writes_is_the_published_shape_a_collector_reads() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema/temp-owner-v1.json"),
+        )
+        .expect("the schema"),
+    )
+    .expect("the schema is JSON");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scratch = make(temp.path(), "rust-mutants-snap-shape");
+    let cache = make(temp.path(), "rust-mutants-target-shape");
+    let keyed = make(temp.path(), "rust-mutants-target-keyed");
+    let mut owners = vec![
+        claim(&scratch, now()).expect("claims a scratch"),
+        claim_cache(&cache, now(), SCHEMA).expect("claims a cache"),
+        claim_cache_of(&keyed, now(), SCHEMA, temp.path()).expect("claims a keyed cache"),
+    ];
+    owners
+        .first_mut()
+        .expect("the scratch")
+        .keep()
+        .expect("keeps");
+    for dir in [&scratch, &cache, &keyed] {
+        let written: serde_json::Value = njutest_devkit::strictjson::decode_str(
+            &fs::read_to_string(marker_path(dir)).expect("the marker"),
+        )
+        .expect("the marker is JSON");
+        let errors: Vec<String> = validator
+            .iter_errors(&written)
+            .map(|error| error.to_string())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "a collector that is not this program decides what to take by this document, so \
+             what a claim writes is exactly schema/temp-owner-v1.json: {written} {errors:?}"
+        );
+    }
+    for mut owner in owners {
+        owner.release().expect("releases");
+    }
+}
+
+#[test]
+fn a_fresh_directory_a_collector_is_looking_at_is_still_claimed_once_it_looks_away() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fresh = make(temp.path(), "rust-mutants-snap-fresh");
+    let mut collector = acquire(&lock_path(&fresh))
+        .expect("inspects the lock")
+        .expect("a collector holds a directory for the instant it judges it");
+    let (answered, answer) = std::sync::mpsc::sync_channel(1);
+    let claiming = fresh.clone();
+    let claimer = njutest_devkit::thread::JoinedThread::launch(move || {
+        answered
+            .send(claim(&claiming, now()).map(|mut owner| owner.release()))
+            .expect("says what it got");
+    });
+    let early = answer.recv_timeout(Duration::from_millis(500));
+    assert!(
+        early.is_err(),
+        "while the collector holds the lock a claim has nothing to answer yet; answering is \
+         giving the directory up: {early:?}"
+    );
+    collector.release().expect("the collector looks away");
+    let answer = answer.recv().expect("the claimer answers once it may");
+    claimer.join().expect("the claimer returns");
+    assert!(
+        matches!(answer, Ok(Ok(()))),
+        "a directory with no marker yet is one nobody has claimed, so a lock on it is a \
+         collector's, held for an instant, and a claim waits it out rather than leaving the \
+         directory unowned for good: {answer:?}"
+    );
+    assert!(
+        !read_marker(&fresh).expect("the marker").kept,
+        "and the claim is the one on record"
+    );
+}
+
+#[test]
+fn a_cache_claim_says_so_to_every_tool_that_honours_the_cache_tag() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cache = make(temp.path(), "rust-mutants-target-tagged");
+    let mut owner = claim_cache(&cache, now(), SCHEMA).expect("claims");
+    let tag = fs::read_to_string(cache.join("CACHEDIR.TAG")).expect("the tag");
+    assert!(
+        tag.starts_with("Signature: 8a477f597d28d172789f06886806bc55"),
+        "{tag}"
+    );
+    owner.release().expect("releases");
+}

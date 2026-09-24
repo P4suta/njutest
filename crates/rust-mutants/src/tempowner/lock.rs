@@ -34,6 +34,60 @@ pub fn acquire(path: &Path) -> io::Result<Option<Lock>> {
     }
 }
 
+/// What waiting for a lock came to.
+#[derive(Debug)]
+pub(super) enum Waited {
+    /// The lock, on the file `path` still names.
+    Taken(Lock),
+    /// The file was removed while this waited, so a lock on it would be on a name nobody can find.
+    Removed,
+    /// Somebody kept it for longer than the wait.
+    Kept,
+}
+
+/// Opens `path`, creating it, and waits up to `within` for the exclusive lock.
+///
+/// # Errors
+/// Returns the open, lock, or inspection failure.
+pub(super) fn wait(path: &Path, within: std::time::Duration) -> io::Result<Waited> {
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(lock) = acquire(path)? {
+            let named = match lock.file.as_ref() {
+                Some(file) => still_named(file, path)?,
+                None => false,
+            };
+            return Ok(if named {
+                Waited::Taken(lock)
+            } else {
+                Waited::Removed
+            });
+        }
+        if started.elapsed() >= within {
+            return Ok(Waited::Kept);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Whether the file `held` is still the one `path` names.
+#[cfg(unix)]
+fn still_named(held: &File, path: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt as _;
+    let held = held.metadata()?;
+    match std::fs::metadata(path) {
+        Ok(named) => Ok(named.dev() == held.dev() && named.ino() == held.ino()),
+        Err(missing) if missing.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(source),
+    }
+}
+
+/// Whether the file `held` is still the one `path` names; Windows refuses to remove a file somebody has open, so it always is.
+#[cfg(not(unix))]
+fn still_named(_held: &File, _path: &Path) -> io::Result<bool> {
+    Ok(true)
+}
+
 impl Lock {
     /// Unlocks and closes the file.
     /// Idempotent.

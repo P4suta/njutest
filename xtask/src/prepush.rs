@@ -287,6 +287,8 @@ pub fn gate(
         stops: &stops,
     };
     let (turn, tree) = take_lanes(&lanes, &place, asking, progress)?;
+    let owned = crate::owner::claim_cache(&place.home, &place.common)
+        .map_err(|source| io_error(&place.home, source))?;
     if remembered(&memory)? {
         say(progress, &passed())?;
         return Ok(Passed::Remembered);
@@ -317,6 +319,7 @@ pub fn gate(
         return Err(PrePushError::Interrupted { signal });
     }
     remember(&memory, &head)?;
+    drop(owned);
     drop(tree);
     drop(turn);
     Ok(Passed::Checked)
@@ -618,6 +621,7 @@ struct Place {
     home: PathBuf,
     tree: PathBuf,
     target: PathBuf,
+    common: PathBuf,
 }
 
 impl Place {
@@ -632,6 +636,7 @@ impl Place {
             tree: home.join("tree"),
             target: home.join("target"),
             home,
+            common,
         })
     }
 
@@ -693,6 +698,7 @@ impl Place {
 
     #[cfg(unix)]
     fn link_target(&self) -> Result<(), PrePushError> {
+        crate::owner::tag_cache(&self.target).map_err(|source| io_error(&self.target, source))?;
         let inside = self.tree.join("target");
         std::fs::create_dir_all(&inside).map_err(|source| io_error(&inside, source))?;
         for profile in ["debug", "release"] {
@@ -711,7 +717,7 @@ impl Place {
 
     #[cfg(not(unix))]
     fn link_target(&self) -> Result<(), PrePushError> {
-        std::fs::create_dir_all(&self.target).map_err(|source| io_error(&self.target, source))
+        crate::owner::tag_cache(&self.target).map_err(|source| io_error(&self.target, source))
     }
 
     fn check_command(&self, tools: &Tools<'_>, head: &str, lanes: &Lanes) -> Command {
