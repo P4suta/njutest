@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use njutest::report::{BuildReport, Limitation, Provenance, RunKind, TargetRecord, TargetStatus};
@@ -27,12 +27,12 @@ fn digest(number: u8) -> HexDigest {
 /// How many entries the writer puts through the destination while the reader reads it.
 const ROUNDS: u64 = 400;
 
-/// How long the reader waits for the writer before saying the writer is the problem.
+/// How long the reader waits for the writer to finish one more round before saying the writer is the problem.
 ///
 /// The loop reads as fast as it can on purpose — a torn read is a narrow window and slowing down is how you miss it — so it finishes in under a second on a machine with nothing else to do and takes as long as the machine makes it take when there is.
 /// What it must not do is wait forever:
 /// an unbounded wait for another thread is a sixty-second hang in somebody's CI that says nothing, where a bound is a failure naming which half was slow.
-/// The number is generous because it is not what this test is about (ADR 0023: a claim about the apparatus wants a bound, not a guess).
+/// The bound is on a round, not on all of them (ADR 0026): a writer that keeps finishing rounds on a busy machine is slow, not stuck, and was failed at 30 s for all 400 while the merge queue's gate ran at load 60.
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// How many members one entry carries, so that writing one is not a single small write.
@@ -196,10 +196,10 @@ fn an_entry_a_reader_takes_while_a_run_replaces_it_is_one_whole_entry() {
             "{}: the entry a reader starts from",
             kept.name
         );
-        let done = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicU64::new(0));
         let writing = {
             let root = root.clone();
-            let done = Arc::clone(&done);
+            let finished = Arc::clone(&finished);
             let put = kept.put;
             JoinedThread::launch(move || {
                 let mut refused: Vec<String> = Vec::new();
@@ -207,19 +207,29 @@ fn an_entry_a_reader_takes_while_a_run_replaces_it_is_one_whole_entry() {
                     if let Some(stopped) = put(&root, round) {
                         refused.push(stopped);
                     }
+                    finished.store(round, Ordering::SeqCst);
                 }
-                done.store(true, Ordering::SeqCst);
                 refused
             })
         };
         let mut reads: u64 = 0;
         let mut torn: Vec<String> = Vec::new();
-        let giving_up = std::time::Instant::now().checked_add(PATIENCE);
-        while !done.load(Ordering::SeqCst) {
+        let mut seen: u64 = 0;
+        let mut giving_up = std::time::Instant::now().checked_add(PATIENCE);
+        loop {
+            let rounds = finished.load(Ordering::SeqCst);
+            if rounds == ROUNDS {
+                break;
+            }
+            if rounds > seen {
+                seen = rounds;
+                giving_up = std::time::Instant::now().checked_add(PATIENCE);
+            }
             assert!(
                 giving_up.is_none_or(|at| std::time::Instant::now() < at),
-                "{}: the writer had not finished {ROUNDS} rounds after {PATIENCE:?}, and \
-                 waiting longer would say nothing about tearing. {reads} reads so far",
+                "{}: the writer finished no round in {PATIENCE:?} after its {seen}th of \
+                 {ROUNDS}, and waiting longer would say nothing about tearing. {reads} reads \
+                 so far",
                 kept.name
             );
             reads = reads.saturating_add(1);
