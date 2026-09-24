@@ -263,7 +263,7 @@ pub fn gate(
             &format!("{}^{{commit}}", settings.base_ref),
         ],
     )?;
-    let memory = place.memory(&head, base.as_deref(), &identity(surroundings.executable)?);
+    let memory = place.memory(&head, base.as_deref(), &identity(surroundings)?);
     let passed = || {
         format!(
             "pre-push: {head} against {} already passed this gate within the hour; it is not run again",
@@ -312,6 +312,9 @@ pub fn gate(
                 "pre-push: the gate's tree could not be put back ({failure}); the next push makes it again"
             ),
         )?;
+    }
+    if let Some(signal) = stops.raised() {
+        return Err(PrePushError::Interrupted { signal });
     }
     remember(&memory, &head)?;
     drop(tree);
@@ -412,7 +415,26 @@ fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
     run.place.require_exact(&run.tools, run.head)
 }
 
-/// Starts the compilation cache's server in the gate's own process group, when the check compiles through it, so stopping the check's group never stops a server every session shares.
+/// A command started in a process group of its own, so no signal meant for whoever started it reaches what it leaves running.
+trait Apart {
+    fn apart(&mut self) -> &mut Self;
+}
+
+impl Apart for Command {
+    #[cfg(unix)]
+    fn apart(&mut self) -> &mut Self {
+        use std::os::unix::process::CommandExt as _;
+
+        self.process_group(0)
+    }
+
+    #[cfg(not(unix))]
+    fn apart(&mut self) -> &mut Self {
+        self
+    }
+}
+
+/// Starts the compilation cache's server apart from the check and from the terminal, when the check compiles through it, so stopping the check's group never stops a server every session shares.
 fn serve_the_cache(
     tools: &Tools<'_>,
     settings: &Settings,
@@ -427,6 +449,7 @@ fn serve_the_cache(
         .saturating_add(Duration::from_secs(600));
     let started = tools
         .command("sccache")
+        .apart()
         .arg("--start-server")
         .env("SCCACHE_IDLE_TIMEOUT", idle.as_secs().to_string())
         .stdin(Stdio::null())
@@ -819,9 +842,28 @@ fn spelled<'a>(arguments: &[&'a str]) -> Vec<&'a OsStr> {
         .collect()
 }
 
-fn identity(executable: &Path) -> Result<String, PrePushError> {
+/// The gate that answers and the build settings it answers under: the gate binary's bytes, and every variable that changes what cargo builds.
+fn identity(surroundings: &Surroundings<'_>) -> Result<String, PrePushError> {
+    let executable = surroundings.executable;
     let bytes = std::fs::read(executable).map_err(|source| io_error(executable, source))?;
-    Ok(hex::encode(Sha256::digest(&bytes)))
+    let mut digest = Sha256::new();
+    digest.update(&bytes);
+    let mut building: Vec<&(OsString, OsString)> = surroundings
+        .environment
+        .iter()
+        .filter(|(name, _value)| {
+            let name = name.as_encoded_bytes();
+            name.starts_with(b"CARGO_") || name.starts_with(b"RUST")
+        })
+        .collect();
+    building.sort();
+    for (name, value) in building {
+        digest.update(name.as_encoded_bytes());
+        digest.update(b"=");
+        digest.update(value.as_encoded_bytes());
+        digest.update(b"\n");
+    }
+    Ok(hex::encode(digest.finalize()))
 }
 
 fn short(bytes: &[u8]) -> String {

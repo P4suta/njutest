@@ -47,6 +47,8 @@ The gate was a Bash script, and the rule that decides what may run on the machin
   With a handful of sessions that has not mattered; a queue that orders them is the change to make if it does.
 - The next run waits for the work's leader, not for every process in its group: the compilation cache's server and Git's file monitor stay in the group that started them, so waiting for the whole group could wait forever.
   A leader that dies before its own children, killed outright or out of memory, therefore lets the next run in while those children still run; that gap is known and left open.
+- On Windows nothing reads a process's start time without an unsafe call, so the leader is not recorded, waiting markers are never swept, and a holder killed outright lets the next run in at once; there the lane is only the lock.
+- The work a lane admits has no terminal input: it runs apart from the terminal's foreground group, and a program that stopped to read one would hold the lane for ever.
 - The gate starts the compilation cache's server itself before the check, with an idle timeout longer than the check's budgets, so stopping the check's group never stops the server every session shares.
 - A narrowed run can still coincide with a whole one.
   Whether that costs anything is a count to take before widening the lane to it.

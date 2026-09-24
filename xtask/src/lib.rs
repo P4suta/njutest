@@ -366,7 +366,8 @@ fn slot(
     let mut running = Command::new(program);
     running
         .args(arguments)
-        .env(lanes::HELD, lanes.held_with(named));
+        .env(lanes::HELD, lanes.held_with(named))
+        .stdin(std::process::Stdio::null());
     let ran = work::run(&mut running, None, &stops, |leader| held.working_on(leader));
     drop(held);
     match ran {

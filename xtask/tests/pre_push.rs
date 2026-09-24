@@ -839,3 +839,23 @@ fn two_gates_of_one_repository_take_turns_even_inside_a_held_lane() {
     assert!(first.status.success(), "{}", stderr(&first));
     assert!(second.status.success(), "{}", stderr(&second));
 }
+
+#[test]
+fn a_commit_is_checked_again_under_different_build_settings() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let first = repository.push(&repository.head);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let checked = repository.calls();
+    let flags: [(&str, &std::ffi::OsStr); 1] = [("RUSTFLAGS", "-D warnings".as_ref())];
+    let again = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &flags,
+    );
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert!(
+        repository.calls() > checked,
+        "a pass under one set of build flags answered for another: {}",
+        stderr(&again)
+    );
+}

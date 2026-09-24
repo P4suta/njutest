@@ -207,7 +207,7 @@ impl Lanes {
         };
         let lock = place.take(request, progress)?;
         place.outlast(request, progress)?;
-        std::fs::write(&record, record_of(request.holder)).map_err(|source| io(&record, source))?;
+        replace(&record, &record_of(request.holder)).map_err(|source| io(&record, source))?;
         Ok(Held {
             lock: Some(lock),
             record: Some(record),
@@ -319,6 +319,9 @@ impl Place<'_> {
 
     /// Removes the waiting markers of runs that are no longer alive to wait.
     fn forget_the_dead(&self, lane: Lane) -> Result<(), LaneError> {
+        if cfg!(not(unix)) {
+            return Ok(());
+        }
         let prefix = format!("{}.waiting.", lane.name());
         let entries =
             std::fs::read_dir(self.directory).map_err(|source| io(self.directory, source))?;
@@ -396,7 +399,14 @@ impl Held {
             return Ok(());
         };
         let Some(born) = started_at(leader) else {
-            return Ok(());
+            return if cfg!(unix) {
+                Err(std::io::Error::other(format!(
+                    "when the work's leader (pid {leader}) started could not be read, so a holder \
+                     killed outright could let the next run in over it"
+                )))
+            } else {
+                Ok(())
+            };
         };
         let text = std::fs::read_to_string(record)?;
         let mut kept: Vec<&str> = text
@@ -406,7 +416,7 @@ impl Held {
         let leading = format!("leader={leader} {born}");
         kept.push(&leading);
         kept.push("");
-        std::fs::write(record, kept.join("\n"))
+        replace(record, &kept.join("\n"))
     }
 }
 
@@ -449,10 +459,20 @@ fn started_at(pid: u32) -> Option<String> {
     after_name.split_whitespace().nth(19).map(str::to_owned)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn started_at(pid: u32) -> Option<String> {
-    answer(Command::new("ps").args(["-o", "lstart=", "-p", &pid.to_string()]))
-        .filter(|started| !started.is_empty())
+    answer(
+        Command::new("ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .env("LC_ALL", "C")
+            .env("TZ", "UTC0"),
+    )
+    .filter(|started| !started.is_empty())
+}
+
+#[cfg(not(unix))]
+const fn started_at(_pid: u32) -> Option<String> {
+    None
 }
 
 /// The leader the record names and when it started.
@@ -561,6 +581,13 @@ fn load() -> String {
 fn averages(uptime: &str) -> Option<String> {
     let after = uptime.split_once("load average")?.1;
     Some(after.split_once(':')?.1.trim().to_owned())
+}
+
+/// Writes `text` beside `path` and renames it over, so a reader never sees a record half written.
+fn replace(path: &Path, text: &str) -> std::io::Result<()> {
+    let written = path.with_extension("next");
+    std::fs::write(&written, text)?;
+    std::fs::rename(&written, path)
 }
 
 fn say(progress: &mut dyn Write, line: &str) -> Result<(), LaneError> {
