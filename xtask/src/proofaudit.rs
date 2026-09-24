@@ -545,14 +545,16 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
 
 /// Every binary the engine built that the report records nothing about, each a violation.
 fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes: &mut Notes<'_>) {
-    for target in touched
-        .kinds
-        .keys()
-        .filter(|target| touched.passing.contains(*target))
-    {
-        if !rows
-            .iter()
-            .any(|row| field(row, "target").as_deref() == Some(target.as_str()))
+    let mut unverified = Vec::new();
+    for target in touched.kinds.keys() {
+        if !touched.verified.contains(target) {
+            unverified.push(target.as_str());
+            continue;
+        }
+        if touched.passing.contains(target)
+            && !rows
+                .iter()
+                .any(|row| field(row, "target").as_deref() == Some(target.as_str()))
         {
             notes.violated(
                 target,
@@ -563,6 +565,17 @@ fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes
                 ),
             );
         }
+    }
+    if !unverified.is_empty() {
+        notes.unaudited(
+            "concurrency",
+            format!(
+                "the engine built {} and recorded no baseline of them, so whether they were skipped \
+                 by name or their record is missing, and so whether the report owes a thread \
+                 record for them, is not known",
+                unverified.join(", ")
+            ),
+        );
     }
 }
 

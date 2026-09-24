@@ -2660,3 +2660,37 @@ fn a_binary_the_run_did_not_measure_owes_no_thread_record() {
         "a binary whose baseline failed is excluded, and a skipped one never measured, so neither owes a record: {audit}"
     );
 }
+
+#[test]
+fn a_built_binary_with_no_baseline_record_is_said_to_be_unaccounted_for() {
+    let clean = sentinel::clean();
+    let mut engine = clean
+        .engine
+        .clone()
+        .expect("the clean specimen keeps an engine recording");
+    engine.push(serde_json::json!({
+        "type": "build",
+        "build": {
+            "targets": ["pkg/test/vanished"],
+            "details": [
+                { "id": "pkg/test/vanished", "kind": "test", "harness": true, "limitations": [] }
+            ]
+        }
+    }));
+    let laid = sentinel::Perturbation {
+        name: "a built binary whose baseline record is gone",
+        engine: Some(engine),
+        ..clean
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit = gates::proofaudit(laid.run(), laid.trace()).expect("the specimen is read");
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited
+                && remark.detail.contains("pkg/test/vanished")),
+        "a binary with no baseline record may have been skipped or dropped from the recording, and the audit says it cannot tell: {audit}"
+    );
+}
