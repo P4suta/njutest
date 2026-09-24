@@ -774,7 +774,7 @@ impl ExpectationDocument {
     /// Refuses a claim whose fields do not carry the standing it states.
     pub fn finding(&self) -> Result<Option<FindingDocument>, DocumentError> {
         match (self.standing.as_str(), self.actual, &self.why) {
-            ("met", None, None) => Ok(None),
+            ("met", None, _) => Ok(None),
             ("stale", Some(actual), None) => Ok(Some(FindingDocument {
                 kind: FindingKind::StaleExpectation,
                 mutant: self.mutant.clone(),
@@ -1031,32 +1031,33 @@ pub fn document(
             .collect::<Result<Vec<_>, _>>()?,
         rejections: crate::report::catalog::rejection_documents(session),
         skips: crate::report::catalog::skip_documents(session),
-        expectations: run
-            .expectations
-            .iter()
-            .map(|verified| ExpectationDocument {
-                id: verified.id.clone(),
-                locator: verified.locator.as_ref().map(LocatorDocument::from),
-                reason: verified.reason.clone(),
-                outcome: verified.outcome,
-                mutant: verified.mutant.clone(),
-                covered: (verified.covered > 1).then_some(verified.covered),
-                standing: standing_name(&verified.standing).to_owned(),
-                actual: match &verified.standing {
-                    Standing::Stale { actual } => Some(*actual),
-                    Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
-                },
-                why: match &verified.standing {
-                    Standing::Unmatched { why } => Some(why.clone()),
-                    Standing::Moved { from, to } => {
-                        Some(format!("the mutation moved from line {from} to line {to}"))
-                    }
-                    Standing::Met | Standing::Stale { .. } => None,
-                },
-            })
-            .collect(),
+        expectations: run.expectations.iter().map(expectation_document).collect(),
         findings: run.findings().iter().map(finding).collect(),
     })
+}
+
+/// The document a verified claim is written as, which is the shape [`ExpectationDocument::finding`] reads back.
+fn expectation_document(verified: &crate::run::Verified) -> ExpectationDocument {
+    ExpectationDocument {
+        id: verified.id.clone(),
+        locator: verified.locator.as_ref().map(LocatorDocument::from),
+        reason: verified.reason.clone(),
+        outcome: verified.outcome,
+        mutant: verified.mutant.clone(),
+        covered: (verified.covered > 1).then_some(verified.covered),
+        standing: standing_name(&verified.standing).to_owned(),
+        actual: match &verified.standing {
+            Standing::Stale { actual } => Some(*actual),
+            Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
+        },
+        why: match &verified.standing {
+            Standing::Unmatched { why } => Some(why.clone()),
+            Standing::Moved { from, to } => {
+                Some(format!("the mutation moved from line {from} to line {to}"))
+            }
+            Standing::Met | Standing::Stale { .. } => None,
+        },
+    }
 }
 
 const fn standing_name(standing: &Standing) -> &'static str {
@@ -1440,5 +1441,55 @@ fn exit_code_of(merged: &RunDocument) -> u8 {
         crate::run::EXIT_DETECTED
     } else {
         crate::run::EXIT_UNDETECTED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::outcome::Outcome;
+    use crate::run::{Standing, Verified};
+
+    use super::expectation_document;
+
+    fn every_standing() -> Vec<Standing> {
+        let every = vec![
+            Standing::Met,
+            Standing::Moved { from: 9, to: 11 },
+            Standing::Stale {
+                actual: Outcome::Killed,
+            },
+            Standing::Unmatched {
+                why: "the identity names nothing".to_owned(),
+            },
+        ];
+        for standing in &every {
+            match standing {
+                Standing::Met
+                | Standing::Moved { .. }
+                | Standing::Stale { .. }
+                | Standing::Unmatched { .. } => {}
+            }
+        }
+        every
+    }
+
+    #[test]
+    fn every_standing_the_writer_can_write_reads_back() {
+        for standing in every_standing() {
+            let verified = Verified {
+                id: "a claim".to_owned(),
+                locator: None,
+                reason: "a reason".to_owned(),
+                outcome: Outcome::Survived,
+                mutant: Some("a mutant".to_owned()),
+                covered: 1,
+                standing: standing.clone(),
+            };
+            let written = expectation_document(&verified);
+            assert!(
+                written.finding().is_ok(),
+                "{standing:?} is written as {written:?}, which its reader refuses"
+            );
+        }
     }
 }

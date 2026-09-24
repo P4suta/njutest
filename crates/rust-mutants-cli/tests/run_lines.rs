@@ -898,6 +898,22 @@ fn a_merge_is_the_same_document_in_whatever_order_its_parts_are_offered() {
 }
 
 #[test]
+fn a_claim_met_where_its_mutation_has_moved_is_a_report_that_reads_back() {
+    let row = mutant(0, Outcome::Survived, true);
+    let mut moved = claimed("the reviewer's reason", &row);
+    moved.why = Some("the mutation moved from line 9 to line 11".to_owned());
+    let mut document = part(vec![row], 1, "1/1");
+    document.expectations = vec![moved];
+    cohere(&mut document);
+    assert!(
+        document.validate().is_ok(),
+        "a claim the run met at a new line is met, and saying where it went is not a contradiction: \
+         {:?}",
+        document.validate()
+    );
+}
+
+#[test]
 fn a_merge_names_the_part_it_is_missing_rather_than_a_row_it_cannot_explain() {
     use rust_mutants::run::PartsError;
     use rust_mutants_cli::report::run::MergeError;
