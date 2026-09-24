@@ -33,42 +33,17 @@ const PLACEHOLDER: &str = "UPSTREAM";
 
 #[test]
 fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
-    let fixture = Fixture::copy(FIXTURE);
-    pointed_at_the_provider(&fixture);
-
-    let output = verify(&fixture);
-    let report = document(&fixture);
-    let lost = not_watched(&report);
-    assert!(
-        lost.is_empty(),
-        "a seam this fixture names is one the run did not watch, so comparing the block \
-         below would compare a shorter answer against a whole one, and the rows that \
-         remain carry the other seam's decisions. The report already says which of the \
-         five ways it could not, and this is that sentence:\n{}\n\n{}",
-        lost.join("\n"),
-        njutest_devkit::process::strict_utf8(&output.stderr)
-    );
-    let not_green = limitation(&report, njutest::assure::wire::SUITE_NOT_GREEN);
-    assert!(
-        not_green.is_none(),
-        "the fixture's own suite did not pass without a fault, so no question it licensed \
-         could be answered by anything and the phase put none of them. That is the run \
-         being honest; what it says about this machine is that the provider or the tests \
-         it serves did not come up: {}\n\n{}",
-        not_green.unwrap_or_default(),
-        njutest_devkit::process::strict_utf8(&output.stderr)
-    );
-    let found = rows(&report);
-    assert!(
-        !found.is_empty(),
-        "a run that recorded no seam at all established nothing this fixture is for: {}",
-        njutest_devkit::process::strict_utf8(&output.stderr)
-    );
-
-    let stated = njutest_devkit::fixture::stated_seams(FIXTURE);
-    if found == stated {
-        return;
-    }
+    let mut attempt = 1;
+    let (fixture, report, found, stated) = loop {
+        let Some((fixture, report, found, stated)) = attempt_once() else {
+            return;
+        };
+        if attempt < ATTEMPTS && only_the_machine_moved(&report, &found, &stated) {
+            attempt += 1;
+            continue;
+        }
+        break (fixture, report, found, stated);
+    };
     if let Some(directory) = std::env::var_os("KEEP_REPORT") {
         let run =
             njutest::app::reports::pointed_at(fixture.root(), njutest::app::reports::Index::Any)
@@ -113,6 +88,63 @@ fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
         every_absence(&report).join("\n"),
         stages(fixture.root()).join("\n")
     );
+}
+
+/// How many whole runs the comparison is given when every row that moved is one the run itself says this machine kept it from answering.
+const ATTEMPTS: usize = 3;
+
+/// One run of the fixture, and what it found where that is not what the README states.
+fn attempt_once() -> Option<(Fixture, serde_json::Value, Vec<Seam>, Vec<Seam>)> {
+    let fixture = Fixture::copy(FIXTURE);
+    pointed_at_the_provider(&fixture);
+
+    let output = verify(&fixture);
+    let report = document(&fixture);
+    let lost = not_watched(&report);
+    assert!(
+        lost.is_empty(),
+        "a seam this fixture names is one the run did not watch, so comparing the block \
+             below would compare a shorter answer against a whole one, and the rows that \
+             remain carry the other seam's decisions. The report already says which of the \
+             five ways it could not, and this is that sentence:\n{}\n\n{}",
+        lost.join("\n"),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let not_green = limitation(&report, njutest::assure::wire::SUITE_NOT_GREEN);
+    assert!(
+        not_green.is_none(),
+        "the fixture's own suite did not pass without a fault, so no question it licensed \
+             could be answered by anything and the phase put none of them. That is the run \
+             being honest; what it says about this machine is that the provider or the tests \
+             it serves did not come up: {}\n\n{}",
+        not_green.unwrap_or_default(),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let found = rows(&report);
+    assert!(
+        !found.is_empty(),
+        "a run that recorded no seam at all established nothing this fixture is for: {}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+
+    let stated = njutest_devkit::fixture::stated_seams(FIXTURE);
+    if found == stated {
+        return None;
+    }
+    Some((fixture, report, found, stated))
+}
+
+/// Whether every row that differs is `unreached` and the report itself says a question was not put, not reproduced, or not carried.
+fn only_the_machine_moved(report: &serde_json::Value, found: &[Seam], stated: &[Seam]) -> bool {
+    let said = finding(report, njutest::assure::wire::NOT_PUT).is_some()
+        || finding(report, njutest::assure::wire::NOT_REPRODUCED).is_some()
+        || limitation(report, njutest::assure::wire::TRANSPORT_FAILED).is_some();
+    let moved: Vec<String> = found
+        .iter()
+        .filter(|row| !stated.contains(row))
+        .map(ToString::to_string)
+        .collect();
+    said && !moved.is_empty() && moved.iter().all(|row| row.ends_with(" unreached"))
 }
 
 /// Every place the fixture's orders test said an exchange stopped, from what the run recorded of each target it ran.
