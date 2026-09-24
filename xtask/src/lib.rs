@@ -14,6 +14,7 @@ pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;
 pub mod kaniaudit;
+pub mod kanilaws;
 pub mod lints;
 pub mod milestones;
 pub mod modelaudit;
@@ -61,6 +62,12 @@ enum Gate {
     },
     /// Version consistency between the workspace and the release manifest.
     ReleaseCheck,
+    /// Prove every production law with Kani, or read back the proof of exactly these inputs, and audit it either way.
+    KaniLaws {
+        /// Where proofs are kept, one per digest of what they rest on.
+        #[arg(long)]
+        cache: std::path::PathBuf,
+    },
     /// Fail closed unless Kani's raw law export proves every assertion reachable and every cover satisfiable.
     KaniLawsAudit {
         /// The fresh JSON document written by pinned Kani 0.68.
@@ -153,6 +160,7 @@ where
             fuzzclippy::check(&root, cargo).map_err(|error| gates::GateFailure(error.to_string()))
         }
         Gate::ReleaseCheck => gates::release_check(&root),
+        Gate::KaniLaws { cache } => kanilaws::laws(&root, cargo, &cache),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
             .map_err(|error| gates::GateFailure(error.to_string())),
