@@ -1001,3 +1001,54 @@ fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
          crate was never measured"
     );
 }
+
+/// Every command in `place` that compiles the workspace in the dev profile for a build or a test.
+fn dev_builds(place: &str) -> Vec<String> {
+    repository(place)
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            ["cargo build ", "cargo test ", "cargo nextest run "]
+                .iter()
+                .find_map(|verb| line.find(verb))
+                .and_then(|at| line.get(at..))
+        })
+        .filter(|command| !command.contains("--release"))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn every_dev_build_compiles_the_one_feature_set_the_suite_does() {
+    let mut divergent: Vec<String> = ["mise.toml", ".github/workflows/ci.yml"]
+        .iter()
+        .flat_map(|place| {
+            dev_builds(place)
+                .into_iter()
+                .map(move |command| format!("{place}: {command}"))
+        })
+        .filter(|command| {
+            let selects = command.contains("--workspace") && command.contains("--all-features");
+            let profiled = !command.contains("--examples") || command.contains("--profile test");
+            !(selects && profiled)
+        })
+        .collect();
+    let bacon = repository("bacon.toml");
+    for job in bacon.split("\n[jobs.").skip(1) {
+        let compiles = job.contains("\"nextest\"") || job.contains("\"build\"");
+        if compiles && !(job.contains("\"--workspace\"") && job.contains("\"--all-features\"")) {
+            divergent.push(format!(
+                "bacon.toml: [jobs.{}",
+                job.lines().next().unwrap_or_default()
+            ));
+        }
+    }
+    assert!(
+        divergent.is_empty(),
+        "each of these compiles the core crates under a feature set or a profile of its own, so a \
+         push builds them once per variant rather than once, and a person's own run warms \
+         nothing the gate reads; an examples build takes `--profile test` so its library is the \
+         one the suite links: {divergent:#?}"
+    );
+}
