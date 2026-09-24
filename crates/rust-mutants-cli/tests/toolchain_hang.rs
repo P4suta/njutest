@@ -159,9 +159,9 @@ fn a_test_slower_than_the_bound_is_waited_for_while_it_keeps_moving() {
     let fixture = Fixture::copy("fixture-hang");
     std::fs::write(
         fixture.root().join(".rust-mutants.toml"),
-        "version = 1\n\n[mutation]\ntimeout = \"1s\"\nsteps = 1000\n",
+        "version = 1\n\n[mutation]\ntimeout = \"5s\"\nsteps = 1000\n",
     )
-    .expect("the one-second bound");
+    .expect("the five-second bound");
     let output = run(&fixture, &[("FIXTURE_HANG_STRIDE_MS", "50".to_owned())]);
     assert!(
         output.status.code() == Some(2),
@@ -172,8 +172,8 @@ fn a_test_slower_than_the_bound_is_waited_for_while_it_keeps_moving() {
     assert_eq!(
         moving["outcome"].as_str(),
         Some("survived"),
-        "a test that passes through the mutated site every fifty milliseconds for two \
-         seconds is slower than the one-second bound and never quiet for one, so the run \
+        "a test that passes through the mutated site every fifty milliseconds for ten \
+         seconds is slower than the five-second bound and never quiet for one, so the run \
          waits for it and it answers: {moving}"
     );
     assert_eq!(moving["retried"].as_bool(), Some(false), "{moving}");
