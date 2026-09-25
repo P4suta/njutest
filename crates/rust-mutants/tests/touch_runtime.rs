@@ -757,3 +757,63 @@ fn recording_costs_a_crate_neither_its_prelude_nor_its_ban_on_unsafe_code() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_run_binds_its_step_state_once_rather_than_reopening_it_at_every_boundary() {
+    let (one, two, selected) = step_modules();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join("bound_steps.rs");
+    let state = dir.join("step.state");
+    let held = dir.join("held.state");
+    let replacement = dir.join("replacement.state");
+    let nonce = "0123456789abcdef0123456789abcdef";
+    let dormant =
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tdormant\t0\n");
+    let elsewhere =
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tactive\t500\n");
+    std::fs::write(&state, &dormant).expect("initial state");
+    std::fs::hard_link(&state, &held).expect("a second name for the file the run opens");
+    std::fs::write(&replacement, &elsewhere).expect("a replacement");
+    let program = format!(
+        "{one}\n{two}\nfn main() {{\n\
+         \x20   assert!(__rm_one::active(0));\n\
+         \x20   __rm_two::checkpoint();\n\
+         \x20   std::fs::rename({replacement:?}, {state:?}).expect(\"replace the name\");\n\
+         \x20   for _ in 0..1_000 {{ __rm_two::checkpoint(); }}\n\
+         }}\n"
+    );
+    std::fs::write(&source, program).expect("write program");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let run = Command::new(dir.join("bound_steps"))
+        .env(ACTIVE_ENV, &selected)
+        .env(CATALOG_ENV, CATALOG)
+        .env(STEPS_ENV, "1000000")
+        .env(STEP_NONCE_ENV, nonce)
+        .env(STEP_NOTICE_ENV, dir.join("step.notice"))
+        .env(STEP_STATE_ENV, &state)
+        .output()
+        .expect("program runs");
+    assert!(run.status.success(), "{}", exact_output(&run.stderr));
+    assert_eq!(
+        (
+            std::fs::read_to_string(&held).expect("the file the run opened"),
+            std::fs::read_to_string(&state).expect("the file now at the name"),
+        ),
+        (
+            format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tactive\t1002\n"),
+            elsewhere,
+        ),
+        "a run opens its step state once, per runtime copy, and counts every boundary in that \
+         file: reopening the name at each of them paid an open, a check and a close per function \
+         entry and loop turn, which on Windows cost more than the work being measured"
+    );
+}

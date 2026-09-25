@@ -289,12 +289,10 @@ mod {{MODULE}} {
             }
         }
     }
-    #[derive(Clone, Copy)]
-    enum Budget {
-        Unbounded,
-        Bounded(StepLimit),
-        Invalid(BudgetError),
-    }
+    // What the configured allowance is: none, a bound, or a refusal. A
+    // standard Result and Option rather than an enum of this module's own,
+    // whose unequal variants a project denying variant_size_differences refuses.
+    type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>;
     #[derive(Clone, Copy)]
     enum BudgetError {
         NonUnicode,
@@ -324,6 +322,7 @@ mod {{MODULE}} {
         Sync,
         Publish,
         Unlock,
+        Poisoned,
     }
     #[derive(Clone, Copy)]
     enum TouchMode {
@@ -357,6 +356,18 @@ mod {{MODULE}} {
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
     static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
+    // The step state this runtime copy opened, and the process that opened
+    // it: one open and one check per copy and process, where reopening the
+    // name at every boundary paid an open and a close per function entry and
+    // loop turn. A child made by fork without exec shares the parent's open
+    // file description and so its lock, which is why the process is recorded.
+    struct BoundStepState {
+        pid: u32,
+        file: __rm_std::fs::File,
+    }
+    static STEP_STATE: __rm_std::sync::OnceLock<
+        __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
+    > = __rm_std::sync::OnceLock::new();
 
 {{VALUE_MACRO}}
     #[inline(always)]
@@ -386,9 +397,9 @@ mod {{MODULE}} {
 
     fn advance(action: StepAction) {
         let limit = match *BUDGET.get_or_init(configured_budget) {
-            Budget::Unbounded => return,
-            Budget::Bounded(limit) => limit,
-            Budget::Invalid(_) => protocol_failure(),
+            __rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,
+            __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)) => limit,
+            __rm_std::result::Result::Err(_) => protocol_failure(),
         };
         let advanced = match update_state(action, limit) {
             __rm_std::result::Result::Ok(advanced) => advanced,
@@ -403,27 +414,27 @@ mod {{MODULE}} {
 
     fn configured_budget() -> Budget {
         let raw = match __rm_std::env::var_os("{{STEPS_ENV}}") {
-            __rm_std::option::Option::None => return Budget::Unbounded,
+            __rm_std::option::Option::None => return __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::option::Option::Some(raw) => raw,
         };
         let text = match raw.to_str() {
             __rm_std::option::Option::Some(text) => text,
-            __rm_std::option::Option::None => return Budget::Invalid(BudgetError::NonUnicode),
+            __rm_std::option::Option::None => return __rm_std::result::Result::Err(BudgetError::NonUnicode),
         };
         match text.parse::<usize>() {
-            __rm_std::result::Result::Ok(0) => Budget::Unbounded,
+            __rm_std::result::Result::Ok(0) => __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::result::Result::Ok(allowed) => {
                 if __rm_std::string::ToString::to_string(&allowed) != text {
-                    return Budget::Invalid(BudgetError::NonCanonical);
+                    return __rm_std::result::Result::Err(BudgetError::NonCanonical);
                 }
                 match StepLimit::new(allowed) {
-                    __rm_std::option::Option::Some(limit) => Budget::Bounded(limit),
+                    __rm_std::option::Option::Some(limit) => __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)),
                     __rm_std::option::Option::None => {
-                        Budget::Invalid(BudgetError::UnrepresentableLimit)
+                        __rm_std::result::Result::Err(BudgetError::UnrepresentableLimit)
                     }
                 }
             }
-            __rm_std::result::Result::Err(_) => Budget::Invalid(BudgetError::NotANumber),
+            __rm_std::result::Result::Err(_) => __rm_std::result::Result::Err(BudgetError::NotANumber),
         }
     }
 
@@ -450,14 +461,30 @@ mod {{MODULE}} {
                 return __rm_std::result::Result::Err(StepStateError::MissingMutant);
             }
         };
-        let mut file = open_step_state(path)?;
-        file.lock().map_err(|_| StepStateError::Lock)?;
-        let transitioned = (|| {
-            let metadata = file.metadata().map_err(|_| StepStateError::Metadata)?;
+        let cell = STEP_STATE.get_or_init(|| __rm_std::sync::Mutex::new(__rm_std::option::Option::None));
+        let mut bound = cell.lock().map_err(|_| StepStateError::Poisoned)?;
+        let pid = __rm_std::process::id();
+        let reopen = match &*bound {
+            __rm_std::option::Option::Some(state) => state.pid != pid,
+            __rm_std::option::Option::None => true,
+        };
+        if reopen {
+            let opened = open_step_state(path)?;
+            let metadata = opened.metadata().map_err(|_| StepStateError::Metadata)?;
             if !metadata.file_type().is_file() {
                 return __rm_std::result::Result::Err(StepStateError::NotRegular);
             }
-            let phase = read_step_state(&mut file, nonce, mutant, limit)?;
+            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
+        }
+        let file = match &mut *bound {
+            __rm_std::option::Option::Some(state) => &mut state.file,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::Open);
+            }
+        };
+        file.lock().map_err(|_| StepStateError::Lock)?;
+        let transitioned = (|| {
+            let phase = read_step_state(file, nonce, mutant, limit)?;
             let (next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
             if let StepAdvance::Reached { allowed, observed } = advanced {
@@ -470,7 +497,7 @@ mod {{MODULE}} {
                 publish_step_notice(allowed, observed).map_err(|_| StepStateError::Publish)?;
             }
             if next != phase {
-                write_step_state(&mut file, nonce, mutant, limit, next)?;
+                write_step_state(file, nonce, mutant, limit, next)?;
             }
             __rm_std::result::Result::Ok(advanced)
         })();
@@ -494,9 +521,12 @@ mod {{MODULE}} {
     ) -> __rm_std::result::Result<__rm_std::fs::File, StepStateError> {
         use __rm_std::os::unix::fs::OpenOptionsExt as _;
 
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options.read(true).write(true).custom_flags(no_follow_flag());
-        options.open(path).map_err(|_| StepStateError::Open)
+        __rm_std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(no_follow_flag())
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(windows)]
@@ -509,12 +539,12 @@ mod {{MODULE}} {
         // opened object. The regular-file check below then rejects links and
         // junctions instead of following them.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options
+        __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        options.open(path).map_err(|_| StepStateError::Open)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -658,13 +688,17 @@ mod {{MODULE}} {
         expected_limit: StepLimit,
     ) -> __rm_std::result::Result<StepPhase, StepStateError> {
         const MAX_STATE_BYTES: u64 = 1024;
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         let mut bytes = __rm_std::vec::Vec::new();
         let mut capped = __rm_std::io::Read::take(&mut *file, MAX_STATE_BYTES + 1);
-        __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
+        let read = __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
             .map_err(|_| StepStateError::Read)?;
-        if bytes.len() > MAX_STATE_BYTES as usize {
+        if read > MAX_STATE_BYTES as usize {
             return __rm_std::result::Result::Err(StepStateError::TooLarge);
         }
         let text = __rm_std::str::from_utf8(&bytes).map_err(|_| StepStateError::NotUtf8)?;
@@ -755,8 +789,12 @@ mod {{MODULE}} {
             name,
             spent,
         );
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         file.set_len(0).map_err(|_| StepStateError::Truncate)?;
         __rm_std::io::Write::write_all(file, state.as_bytes())
             .map_err(|_| StepStateError::Write)?;
