@@ -609,11 +609,13 @@ pub fn run_resuming(
 
     let available = schedule::available()?;
     let worker_count = schedule::workers(options.jobs, available, options.exclusive);
-    let measured = schedule::measure(&mutants, worker_count, |_at, mutant| {
-        establish(mutant, &judging, resume.state, &rejected)
-    })?;
+    let measured = schedule::measure(
+        &mutants,
+        &schedule::Crew::threads(worker_count, "njutest-measure"),
+        |_at, mutant| establish(mutant, &judging, resume.state, &rejected),
+    )?;
 
-    for (index, answer) in measured.into_iter().enumerate() {
+    for (index, (_mutant, answer)) in measured.into_iter().enumerate() {
         let judged = answer?;
         let done = u64::try_from(index)
             .map_err(|error| crate::targets::TargetError::invalid("mutation progress", error))?

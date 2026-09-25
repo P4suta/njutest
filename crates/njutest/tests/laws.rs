@@ -542,13 +542,22 @@ proptest! {
         workers in prop_oneof![Just(1_usize), 2_usize..12],
     ) {
         let items: Vec<usize> = (0..count).collect();
-        let answers = njutest::assure::schedule::measure(&items, workers, |at, item| {
-            prop_assert_eq!(at, *item, "a worker is told which item it has");
-            Ok(at.saturating_mul(2))
-        })
+        let answers = njutest::assure::schedule::measure(
+            &items,
+            &njutest::assure::schedule::Crew::threads(workers, "law"),
+            |at, item| {
+                prop_assert_eq!(at, *item, "a worker is told which item it has");
+                Ok(at.saturating_mul(2))
+            },
+        )
         .expect("a law's measurements do not panic or overflow the cursor");
         let answers: Vec<usize> = answers
             .into_iter()
+            .map(|(item, answer)| {
+                let answer = answer?;
+                prop_assert_eq!(answer, item.saturating_mul(2), "each answer is paired with its own item");
+                Ok(answer)
+            })
             .collect::<Result<Vec<usize>, TestCaseError>>()?;
         prop_assert_eq!(
             answers,

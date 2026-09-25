@@ -1440,8 +1440,13 @@ fn concurrency_of(
     session: &rust_mutants::session::Session,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
+    let workers = super::schedule::workers(
+        mutating.request.config.execution.jobs,
+        super::schedule::available()?,
+        false,
+    );
     let (mut concurrency, uncompiled) =
-        super::concurrency::recorded(session, &mutating.request.test_args)?;
+        super::concurrency::recorded(session, (&mutating.request.test_args, workers))?;
     if !uncompiled.is_empty() {
         watch.trace.note(
             "concurrency-uncompiled",
