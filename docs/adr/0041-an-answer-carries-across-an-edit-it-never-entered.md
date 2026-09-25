@@ -60,11 +60,13 @@ An edit to the body of an item the execution never entered cannot change what th
    - P4 (a kill): the killing execution meets P1–P3, its target passed this run's baseline, and its filter names tests this baseline ran.
    - P5 (a survivor): every target and filter this run's route executes has a recorded execution with an equal filter meeting P1–P3.
      A subset of targets is enough; a narrower or different filter is not.
+     No target that reaches the mutant may start a process the run cannot see into, since no run of it could claim a survival.
    - P6: a record is written only from an attributable answer: a failing test named, or a signal the process raised itself, and never after cancellation.
    - P7: every target an execution ran held its reach under a control of this run's tree ([ADR 0025](0025-a-reach-that-moves-is-not-a-measurement.md)).
-6. **Visible.** A carried answer's route says `carried`, and a refusal names one word from a closed set: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`.
-7. **Audited before it ships.** The engine audit gains a `carry` layer that recomputes body digests, sealing and skeletons from the pristine sources with its own parser, from `docs/engine/carry.md`, and re-checks P1–P7 for every carried row.
-   Planted defects, each found by name before any run is read: a kill carried across a changed entered item, a survivor whose route grew, a change to a `const` that the skeleton missed.
+6. **Visible.** A carried answer's route says `carried`, and a refusal names one word from a closed set: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`, `uncontrolled`.
+7. **Audited before it ships.** The engine audit gains a `carry` layer that recomputes body digests, sealing and skeletons from the pristine sources with its own parser, from `docs/engine/carry.md`, and re-checks every carried row against the record the run believed and kept beside its report: its locus, P1–P3, and P4 and P5 against the plan the run held it to, with each planned target one the guards' record says reaches the mutation.
+   P7 is re-derived from the baseline and control records of the run's own recording, for every target a carried answer rests on.
+   Planted defects, each found by name before any run is read: a kill carried across a changed entered item, a survival whose route grew, a changed skeleton, and a kill carried through a target whose control reached other than its baseline.
    An edit-pair differential runs a fixture, applies a scripted edit, runs again with carry and with `--no-cache`, and requires the two to agree mutant by mutant and at least one answer to have been carried.
 
 ## Consequences

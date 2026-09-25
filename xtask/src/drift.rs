@@ -115,8 +115,17 @@ pub struct Touched {
 /// # Errors
 /// A non-empty line that is not JSON rejects the whole recording.
 pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
+    Ok(of_events(&crate::route::events(
+        recorded,
+        crate::schemas::Producer::Engine,
+    )?))
+}
+
+/// Every touch record among `events`, the events of one engine recording already read.
+#[must_use]
+pub fn of_events(events: &[Value]) -> Touched {
     let mut touched = Touched::default();
-    for event in crate::route::events(recorded, crate::schemas::Producer::Engine)? {
+    for event in events {
         if event.get("type").and_then(Value::as_str) == Some("verify")
             && let Some(verify) = event.get("verify")
             && verify.get("retried").and_then(Value::as_bool) == Some(true)
@@ -132,7 +141,7 @@ pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
             None => touched.unreadable = touched.unreadable.saturating_add(1),
         }
     }
-    Ok(touched)
+    touched
 }
 
 /// One touch record, or nothing where it lacks what a re-derivation needs.

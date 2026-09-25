@@ -507,6 +507,41 @@ fn carry_beside(
     ]
 }
 
+/// The clean recording with a baseline and a control of each of `targets` inserted before its end, each control reaching `reached(target)`, numbered as the engine numbers them.
+fn with_controls(targets: &[&str], reached: fn(&str) -> Vec<u64>) -> Vec<Value> {
+    let touch = |target: &str, measured: &str, sites: Vec<u64>| {
+        json!({
+            "timestamp": "2026-09-06T10:15:01Z", "elapsed_ms": 55,
+            "type": "touch",
+            "touch": {
+                "target": target, "measured": measured, "mutant": null,
+                "passed": ["larger_works"],
+                "summary": { "protocol": "libtest", "tests_run": 1 },
+                "reached_sites": sites, "entered_bodies": [], "infected_sites": [],
+                "tests": 1, "sites": 2, "loose": 0, "infected": 0, "entered": 1,
+                "entered_items": [0]
+            }
+        })
+    };
+    let mut events = recording();
+    let Some(end) = events.pop() else {
+        return events;
+    };
+    for target in targets {
+        events.push(touch(target, "baseline", vec![0, 1]));
+        events.push(touch(target, "control", reached(target)));
+    }
+    events.push(end);
+    let total = events.len();
+    for (at, event) in events.iter_mut().enumerate() {
+        merge(event, json!({ "seq": at.checked_add(1) }));
+        if event.get("type").and_then(Value::as_str) == Some("run-end") {
+            merge(event, json!({ "run": { "events_emitted": total } }));
+        }
+    }
+    events
+}
+
 /// A run that carried one answer about the row at `row`, whose evidence agrees with it everywhere `planted` does not change.
 fn believed_beside(
     name: &'static str,
@@ -589,6 +624,7 @@ fn believed_beside(
     Perturbation {
         name,
         document: with(json!({ "mutants": rows })),
+        events: with_controls(&[TARGET, other], |_| vec![0, 1]),
         beside,
         ..clean()
     }
@@ -622,6 +658,20 @@ fn believed_plants() -> Vec<Perturbation> {
                 merge(believed, json!({ "record": { "target": TARGET } }));
             },
         ),
+        Perturbation {
+            events: with_controls(&[TARGET, "demo/test/other"], |target| {
+                if target == TARGET {
+                    vec![0, 1]
+                } else {
+                    vec![0]
+                }
+            }),
+            ..believed_beside(
+                "a kill carried through a target whose control reached other than its baseline",
+                (0, "killed", "demo/test/other"),
+                |_| {},
+            )
+        },
         believed_beside(
             "a kill carried across a skeleton that has changed since",
             (0, "killed", "demo/test/other"),
