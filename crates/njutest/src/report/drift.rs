@@ -34,7 +34,7 @@ impl Moved {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Unmeasured {
-    /// No control of the whole target ran, which is what a target nothing was confirmed on has.
+    /// No control of the whole target ran, which only a run cancelled before its targets were compared leaves.
     NoControl,
     /// The control's process could not record what its guards reached.
     Unrecorded,
@@ -85,6 +85,8 @@ pub enum Drift {
         bodies: Moved,
         /// The mutations a guard saw its two branches differ over.
         infected: Moved,
+        /// The items whose bodies anything of the target entered, by the item catalog.
+        entered: Moved,
     },
     /// Nothing about it was compared.
     NotMeasured {
@@ -112,12 +114,21 @@ impl Drift {
         let target = target.to_owned();
         match steadiness {
             rust_mutants::touch::Steadiness::Held => Self::Held { target },
-            rust_mutants::touch::Steadiness::Moved(moved) => Self::Moved {
-                target,
-                reached: Moved::of(&moved.reached),
-                bodies: Moved::of(&moved.bodies),
-                infected: Moved::of(&moved.infected),
-            },
+            rust_mutants::touch::Steadiness::Moved(moved) => {
+                let rust_mutants::touch::ReachMoved {
+                    reached,
+                    bodies,
+                    infected,
+                    entered,
+                } = moved;
+                Self::Moved {
+                    target,
+                    reached: Moved::of(reached),
+                    bodies: Moved::of(bodies),
+                    infected: Moved::of(infected),
+                    entered: Moved::of(entered),
+                }
+            }
             rust_mutants::touch::Steadiness::NotMeasured(why) => Self::NotMeasured {
                 target,
                 why: Unmeasured::of(*why),

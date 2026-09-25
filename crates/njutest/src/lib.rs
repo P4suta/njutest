@@ -21,6 +21,7 @@ pub mod limitation;
 pub mod naming;
 pub mod presentation;
 pub mod provider;
+pub mod reach;
 pub mod repair;
 pub mod report;
 pub mod resource;

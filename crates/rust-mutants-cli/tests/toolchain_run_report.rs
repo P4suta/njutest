@@ -1179,7 +1179,9 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
-        program: PathBuf::from("this test never runs it"),
+        program: std::env::current_exe().expect(
+            "this test's own executable stands in for the engine a remembered outcome is keyed on",
+        ),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,
@@ -1210,7 +1212,9 @@ fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: temp.to_path_buf(),
-        program: PathBuf::from("this test never runs it"),
+        program: std::env::current_exe().expect(
+            "this test's own executable stands in for the engine a remembered outcome is keyed on",
+        ),
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         no_color: true,

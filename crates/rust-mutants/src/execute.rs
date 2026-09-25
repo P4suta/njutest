@@ -1627,6 +1627,9 @@ pub struct Context<'a> {
     /// Where a coverage-instrumented process writes what it executed.
     /// `None` runs a process that measures nothing.
     pub profile: Option<&'a Path>,
+    /// Where the process leading this execution is recorded as it starts, so a child it leaves is never read as another execution's.
+    /// `None` runs one no other execution overlaps.
+    pub leaders: Option<&'a crate::orphan::Leaders>,
 }
 
 /// Where the guards of one process append what they reached, and the catalog the record is about.
@@ -1659,6 +1662,8 @@ pub enum MutantConclusion {
     Waited,
     /// The execution did not establish either side of the question.
     Inconclusive,
+    /// Every selected test passed while a process of the tree ran where the run could not see whether the mutant was active in it, so the survival is not one.
+    Unobserved,
     /// The execution apparatus failed.
     Errored,
 }
@@ -1673,7 +1678,7 @@ impl MutantConclusion {
             Self::Survived => Outcome::Survived,
             Self::StepLimitReached { .. } => Outcome::StepLimitReached,
             Self::Waited => Outcome::Waited,
-            Self::Inconclusive => Outcome::Inconclusive,
+            Self::Inconclusive | Self::Unobserved => Outcome::Inconclusive,
             Self::Errored => Outcome::Errored,
         }
     }
@@ -1688,6 +1693,7 @@ impl MutantConclusion {
             | Self::Survived
             | Self::Waited
             | Self::Inconclusive
+            | Self::Unobserved
             | Self::Errored => None,
         }
     }
@@ -1720,10 +1726,20 @@ impl MutantConclusion {
                 | Self::Survived
                 | Self::Waited
                 | Self::Inconclusive
+                | Self::Unobserved
                 | Self::Errored => Self::Errored,
             },
             Outcome::Waited => Self::Waited,
-            Outcome::Inconclusive => Self::Inconclusive,
+            Outcome::Inconclusive => match self {
+                Self::Unobserved => Self::Unobserved,
+                Self::NotRun
+                | Self::Killed
+                | Self::Survived
+                | Self::StepLimitReached { .. }
+                | Self::Waited
+                | Self::Inconclusive
+                | Self::Errored => Self::Inconclusive,
+            },
             Outcome::Errored => Self::Errored,
         }
     }
@@ -1755,6 +1771,8 @@ pub struct MutantResult {
     pub passed_tests: Vec<String>,
     /// Every test the harness was told to skip.
     pub ignored_tests: Vec<String>,
+    /// The id of the process the execution started, which is the parent of whatever it starts, or nothing where none started.
+    pub leader: Option<u32>,
 }
 
 /// The protocol a test process answered in.
@@ -1818,6 +1836,7 @@ impl MutantResult {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 
@@ -1887,6 +1906,7 @@ pub fn exec(
     let (bound, progress) = watched(request.timeout, step.as_ref());
     let mut spec = Spec::new(request.argv(), bound);
     spec.progress = progress;
+    spec.leaders = context.leaders.cloned();
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),
@@ -1943,6 +1963,7 @@ pub fn exec(
         failed_tests: lines.failed,
         passed_tests: lines.passed,
         ignored_tests: lines.ignored,
+        leader: result.leader,
     }
 }
 
@@ -2322,6 +2343,7 @@ mod tests {
             output: Vec::new(),
             stdout: Vec::new(),
             stdout_truncated: false,
+            leader: None,
         }
     }
 
@@ -2379,6 +2401,7 @@ mod tests {
             return;
         };
         let context = Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
@@ -2398,6 +2421,7 @@ mod tests {
     fn step_setup_creates_one_exact_private_state_and_clear_removes_it() {
         let scratch = returned!(tempfile::tempdir(), "scratch");
         let context = Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,

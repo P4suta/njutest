@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/njutest-reach-v1.json",
+  "title": "njutest reach v1",
+  "description": "What `njutest measure` kept for `njutest select`: every file of the measured tree and what its build read beyond it, the item catalog, what each test target entered and whether a second whole run of it entered the same, and what each package declares over the standard macro, attribute, and derive names. A selection skips a target only where this shows the target's tests entered none of the items a change is to; anything it cannot place runs everything.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "measurement"
+  ],
+  "properties": {
+    "schema": {
+      "const": "njutest-reach-v1"
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "toolchain",
+        "survey",
+        "inputs",
+        "environment",
+        "settings",
+        "items",
+        "targets",
+        "shadows"
+      ],
+      "properties": {
+        "toolchain": {
+          "description": "The toolchain, as it names itself.",
+          "type": "string",
+          "minLength": 1
+        },
+        "survey": {
+          "description": "Every file of the tree, read by the rules a run copies it by.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rules",
+            "files",
+            "passed_over"
+          ],
+          "properties": {
+            "rules": {
+              "description": "The digest of the exclusions and outside directories the walk followed.",
+              "type": "string"
+            },
+            "files": {
+              "description": "Every regular file, by `/`-normalized path, or by absolute path for one under a directory the tree reads outside itself.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "sha256",
+                  "executable"
+                ],
+                "properties": {
+                  "sha256": {
+                    "$ref": "#/$defs/sha256"
+                  },
+                  "executable": {
+                    "description": "Whether any execute bit is set.",
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "passed_over": {
+              "description": "Every entry that is not a regular file, with what it points at where it is a link.",
+              "type": "object",
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "inputs": {
+          "description": "What the build read that the survey does not see.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outside",
+            "env",
+            "compile_time",
+            "scripted",
+            "scripts"
+          ],
+          "properties": {
+            "outside": {
+              "description": "Every file the compiler read outside the tree and outside the build's own output, by absolute path.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "env": {
+              "description": "Every variable the compiler read through `env!` or `option_env!`, with the value it read or null where it was unset.",
+              "type": "object",
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "compile_time": {
+              "description": "Every file of the tree compiled into code that runs while the build does — a procedural macro, a build script — by `/`-normalized path.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scripted": {
+              "description": "Every variable a build script put in the compiler's environment.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "scripts": {
+              "description": "What each package's build script said it depends on, by the package's directory in the tree, or `<outside>:<package id>` for a package outside it.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/script"
+              }
+            }
+          }
+        },
+        "environment": {
+          "description": "The variables the run selected for its test processes.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "settings": {
+          "description": "What the tree was compiled and started with, by name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "items": {
+          "description": "Every item, by item index.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "targets": {
+          "description": "Every target the baseline recorded, by identity.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "entered",
+              "standing"
+            ],
+            "properties": {
+              "entered": {
+                "description": "Every item anything of the target entered.",
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "standing": {
+                "$ref": "#/$defs/standing"
+              }
+            }
+          }
+        },
+        "shadows": {
+          "description": "What each package declares over the standard names, by package.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "names",
+              "all"
+            ],
+            "properties": {
+              "names": {
+                "description": "Every standard macro, attribute, or derive name the package declares or imports from outside the standard library.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "all": {
+                "description": "Whether the package imports what it cannot name: a glob from outside itself, or every macro of a `#[macro_use] extern crate`.",
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "item": {
+      "description": "One item of an instrumented file whose body a test can enter.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "package",
+        "path",
+        "name",
+        "span",
+        "body",
+        "measurable"
+      ],
+      "properties": {
+        "index": {
+          "description": "The dense item index an entry marker names, which is the item's position in `items`.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "package": {
+          "description": "The package whose unit compiled the file.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The workspace-relative path with forward slashes.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "The item as a reader writes it, which is what a mutant inside it names as its `item`.",
+          "type": "string"
+        },
+        "span": {
+          "description": "The bytes the whole item covers in the pristine file, attributes and signature included.",
+          "$ref": "#/$defs/span"
+        },
+        "body": {
+          "description": "The bytes its body covers in the pristine file.",
+          "$ref": "#/$defs/span"
+        },
+        "measurable": {
+          "description": "Whether entering the body is something the guards record; a `const fn`, a `const`, or a `static` is not.",
+          "type": "boolean"
+        }
+      }
+    },
+    "span": {
+      "description": "A half-open byte range of the pristine file.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "standing": {
+      "description": "Whether the target's reach was shown to be a function of the target.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "held"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "moved"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "why"
+          ],
+          "properties": {
+            "state": {
+              "const": "not-measured"
+            },
+            "why": {
+              "enum": [
+                "unrecorded",
+                "unreadable",
+                "control-failed",
+                "other-tests",
+                "no-baseline",
+                "baseline-retried",
+                "unparsed"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "uncompared"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "reads-tree"
+            }
+          }
+        }
+      ]
+    },
+    "script": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "watched",
+        "env"
+      ],
+      "properties": {
+        "watched": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "package"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "inside",
+                "outside"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "paths"
+                },
+                "inside": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "outside": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "$ref": "#/$defs/sha256"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
