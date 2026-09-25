@@ -33,42 +33,17 @@ const PLACEHOLDER: &str = "UPSTREAM";
 
 #[test]
 fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
-    let fixture = Fixture::copy(FIXTURE);
-    pointed_at_the_provider(&fixture);
-
-    let output = verify(&fixture);
-    let report = document(&fixture);
-    let lost = not_watched(&report);
-    assert!(
-        lost.is_empty(),
-        "a seam this fixture names is one the run did not watch, so comparing the block \
-         below would compare a shorter answer against a whole one, and the rows that \
-         remain carry the other seam's decisions. The report already says which of the \
-         five ways it could not, and this is that sentence:\n{}\n\n{}",
-        lost.join("\n"),
-        njutest_devkit::process::strict_utf8(&output.stderr)
-    );
-    let not_green = limitation(&report, njutest::assure::wire::SUITE_NOT_GREEN);
-    assert!(
-        not_green.is_none(),
-        "the fixture's own suite did not pass without a fault, so no question it licensed \
-         could be answered by anything and the phase put none of them. That is the run \
-         being honest; what it says about this machine is that the provider or the tests \
-         it serves did not come up: {}\n\n{}",
-        not_green.unwrap_or_default(),
-        njutest_devkit::process::strict_utf8(&output.stderr)
-    );
-    let found = rows(&report);
-    assert!(
-        !found.is_empty(),
-        "a run that recorded no seam at all established nothing this fixture is for: {}",
-        njutest_devkit::process::strict_utf8(&output.stderr)
-    );
-
-    let stated = njutest_devkit::fixture::stated_seams(FIXTURE);
-    if found == stated {
-        return;
-    }
+    let mut attempt = 1;
+    let (fixture, report, found, stated) = loop {
+        let Some((fixture, report, found, stated)) = attempt_once() else {
+            return;
+        };
+        if attempt < ATTEMPTS && only_the_machine_moved(&report, &found, &stated) {
+            attempt += 1;
+            continue;
+        }
+        break (fixture, report, found, stated);
+    };
     if let Some(directory) = std::env::var_os("KEEP_REPORT") {
         let run =
             njutest::app::reports::pointed_at(fixture.root(), njutest::app::reports::Index::Any)
@@ -102,15 +77,134 @@ fn every_question_the_two_seams_licensed_came_to_what_the_readme_says() {
          run reports it could not attribute, the suite on this machine was already failing \
          without a fault, so what moved is the machine. Rewriting the block would then \
          write that machine into the oracle.\ncould not attribute: {}\n\n\
-         what the run said it could not do:\n{}\n",
+         what the run said it could not do:\n{}\n\n\
+         where each exchange the orders test made stopped, from the run's recorded output:\n{}\n",
         stated
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<String>>()
             .join("\n"),
         could_not_attribute.unwrap_or_else(|| "(nothing said so)".to_owned()),
-        every_absence(&report).join("\n")
+        every_absence(&report).join("\n"),
+        stages(fixture.root()).join("\n")
     );
+}
+
+/// How many whole runs the comparison is given when every row that moved is one the run itself says this machine kept it from answering.
+const ATTEMPTS: usize = 3;
+
+/// One run of the fixture, and what it found where that is not what the README states.
+fn attempt_once() -> Option<(Fixture, serde_json::Value, Vec<Seam>, Vec<Seam>)> {
+    let fixture = Fixture::copy(FIXTURE);
+    pointed_at_the_provider(&fixture);
+
+    let output = verify(&fixture);
+    let report = document(&fixture);
+    let lost = not_watched(&report);
+    assert!(
+        lost.is_empty(),
+        "a seam this fixture names is one the run did not watch, so comparing the block \
+             below would compare a shorter answer against a whole one, and the rows that \
+             remain carry the other seam's decisions. The report already says which of the \
+             five ways it could not, and this is that sentence:\n{}\n\n{}",
+        lost.join("\n"),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let not_green = limitation(&report, njutest::assure::wire::SUITE_NOT_GREEN);
+    assert!(
+        not_green.is_none(),
+        "the fixture's own suite did not pass without a fault, so no question it licensed \
+             could be answered by anything and the phase put none of them. That is the run \
+             being honest; what it says about this machine is that the provider or the tests \
+             it serves did not come up: {}\n\n{}",
+        not_green.unwrap_or_default(),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let found = rows(&report);
+    assert!(
+        !found.is_empty(),
+        "a run that recorded no seam at all established nothing this fixture is for: {}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+
+    let stated = njutest_devkit::fixture::stated_seams(FIXTURE);
+    if found == stated {
+        return None;
+    }
+    Some((fixture, report, found, stated))
+}
+
+/// Whether every row that differs is `unreached` and the report itself says a question was not put, not reproduced, or not carried.
+fn only_the_machine_moved(report: &serde_json::Value, found: &[Seam], stated: &[Seam]) -> bool {
+    let said = finding(report, njutest::assure::wire::NOT_PUT).is_some()
+        || finding(report, njutest::assure::wire::NOT_REPRODUCED).is_some()
+        || limitation(report, njutest::assure::wire::TRANSPORT_FAILED).is_some();
+    let moved: Vec<String> = found
+        .iter()
+        .filter(|row| !stated.contains(row))
+        .map(ToString::to_string)
+        .collect();
+    said && !moved.is_empty() && moved.iter().all(|row| row.ends_with(" unreached"))
+}
+
+/// Every place the fixture's orders test said an exchange stopped, from what the run recorded of each target it ran.
+fn stages(root: &Path) -> Vec<String> {
+    let mut said = Vec::new();
+    let mut pending = vec![root.join(".njutest").join("trace")];
+    while let Some(directory) = pending.pop() {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) => {
+                said.push(format!("(could not read {}: {error})", directory.display()));
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    said.push(format!("(could not list {}: {error})", directory.display()));
+                    continue;
+                }
+            };
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => pending.push(path),
+                Ok(_file) => match std::fs::read_to_string(&path) {
+                    Ok(text) => said.extend(
+                        text.lines()
+                            .filter(|line| {
+                                line.contains("left: Err(") || line.contains("left: Ok(")
+                            })
+                            .map(|line| format!("{}\t{}", line.trim(), path.display())),
+                    ),
+                    Err(error) => {
+                        said.push(format!("(could not read {}: {error})", path.display()));
+                    }
+                },
+                Err(error) => said.push(format!("(could not inspect {}: {error})", path.display())),
+            }
+        }
+    }
+    let mut by_stage: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for line in said {
+        let (stage, file) = line.split_once('\t').unwrap_or((line.as_str(), ""));
+        by_stage
+            .entry(stage.to_owned())
+            .or_default()
+            .push(file.to_owned());
+    }
+    if by_stage.is_empty() {
+        return vec!["(the recorded output named no stage)".to_owned()];
+    }
+    by_stage
+        .into_iter()
+        .map(|(stage, files)| {
+            let shown: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
+            format!("{stage} x{}: {}", files.len(), shown.join(", "))
+        })
+        .collect()
 }
 
 /// The copy's configuration, with the one thing a committed file cannot hold filled in.
@@ -122,7 +216,13 @@ fn pointed_at_the_provider(fixture: &Fixture) {
         "the fixture no longer says where its provider goes, so this driver would run it \
          against whatever {PLACEHOLDER} was replaced with"
     );
-    let provider = njutest_devkit::fake_cargo::example("fake_upstream");
+    let provider = njutest_devkit::fake_cargo::example_in(
+        "fake_upstream",
+        fixture
+            .root()
+            .parent()
+            .expect("the fixture's own directory"),
+    );
     std::fs::write(
         &path,
         written.replace(

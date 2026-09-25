@@ -20,6 +20,7 @@ pub mod milestones;
 pub mod modelaudit;
 pub mod proofaudit;
 pub mod release;
+pub mod remote;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
@@ -115,6 +116,15 @@ enum Gate {
     /// A second opinion, by body shape alone, on every catch-all the ledger waives.
     /// Refuses nothing.
     Waivers,
+    /// The whole suite of this commit on the other machines, before it is pushed.
+    RemoteCheck {
+        /// The file that names the machines, how each is reached, and what each runs.
+        #[arg(long, value_name = "FILE")]
+        machines: std::path::PathBuf,
+        /// The worktree whose checked-out commit is put to them, where it is not this one.
+        #[arg(long, value_name = "DIR")]
+        worktree: Option<std::path::PathBuf>,
+    },
     /// Every gate, in order.
     All,
 }
@@ -185,6 +195,8 @@ where
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::Waivers => gates::waivers(&root),
+        Gate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(&root), &machines)
+            .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::All => gates::all(&root),
     };
     match outcome {

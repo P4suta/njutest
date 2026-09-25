@@ -934,6 +934,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         sites: 7,
         loose: 1,
         infected: 2,
+        entered: 4,
     });
     recorder.perturbed(rust_mutants::trace::PerturbedRecord {
         target: "demo/lib/demo".to_owned(),

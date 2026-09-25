@@ -65,7 +65,7 @@ run = "bash scripts/doctor.sh"
 
 [tasks.build]
 description = "Build every crate and every target"
-run = "cargo build --locked --workspace --all-targets"
+run = "cargo build --locked --workspace --all-targets --all-features"
 
 [tasks.fmt]
 description = "Format Rust and TOML"
@@ -142,7 +142,7 @@ run = "cargo clippy --locked --workspace --all-targets --features njutest/testki
 description = "Build the scripted cargo the suite drives, which no test build produces"
 # `cargo test --all-targets` builds an example as a test harness rather than as
 # the program it is, so a suite that drives one has to ask for it plainly.
-run = "cargo build --locked --examples -p rust-mutants"
+run = "cargo build --locked --examples --workspace --all-features --profile test"
 
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
@@ -168,7 +168,7 @@ run_windows = 'cargo nextest run --locked --workspace --all-targets --all-featur
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
-run = "cargo test --locked --workspace --doc"
+run = "cargo test --locked --workspace --all-features --doc"
 
 [tasks.test]
 description = "Run the complete suite: every target through nextest, then the doctests"
@@ -177,7 +177,7 @@ run = ["mise run test:fast", "mise run test:slow", "mise run test:doc"]
 [tasks."kani:verified"]
 description = "Run the generated-harness and strict-result protocol suite with the pinned Kani 0.68 installation"
 depends = ["kani:laws"]
-run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked -p njutest --lib real_kani_068 -- --test-threads=1"
+run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked --workspace --all-features --lib real_kani_068 -- --test-threads=1"
 
 [tasks."kani:laws"]
 description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation"
@@ -224,7 +224,7 @@ set -euo pipefail
 cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
-cargo build --locked --examples -p rust-mutants
+cargo build --locked --examples --workspace --all-features --profile test
 cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
 cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
@@ -260,11 +260,40 @@ cargo xtask sbom --output "$install_root/njutest.cdx.json"
 
 [tasks.deny]
 description = "Check licenses, advisories, bans, and sources"
-run = "cargo deny --locked --all-features check"
+run = [
+  "cargo deny --locked --all-features fetch db",
+  "cargo deny --locked --all-features check --disable-fetch",
+]
 
 [tasks.audit]
 description = "Check the dependency graph against the RustSec advisory database"
-run = "cargo audit --deny warnings"
+shell = "bash -c"
+run = """
+set -uo pipefail
+db="${CARGO_TARGET_DIR:-target}/advisory-db"
+fetched=false
+for attempt in 1 2 3 4 5; do
+  if [ -d "${db}/.git" ]; then
+    git -C "${db}" fetch --quiet --depth 1 origin main && git -C "${db}" reset --quiet --hard FETCH_HEAD && fetched=true
+  else
+    rm -rf "${db}"
+    git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "${db}" && fetched=true
+  fi
+  status=$?
+  [ "${fetched}" = true ] && break
+  echo "audit: fetching the advisory database exited ${status} on attempt ${attempt} of 5" >&2
+  sleep $((attempt * 5))
+done
+if [ "${fetched}" = false ]; then
+  [ -d "${db}/.git" ] || { echo "audit: no advisory database was ever fetched into ${db}" >&2; exit 1; }
+  echo "audit: checking against the copy in ${db}, last updated $(git -C "${db}" log -1 --format=%cI), not a fresh one" >&2
+fi
+cargo audit --no-fetch --deny warnings --db "${db}" || {
+  status=$?
+  echo "audit: cargo audit exited ${status}; its own output above says why" >&2
+  exit "${status}"
+}
+"""
 
 [tasks."fuzz:clippy"]
 description = "Lint every cargo-fuzz target with the root workspace's exact rustc and Clippy policy"
@@ -328,15 +357,18 @@ description = "Run every local gate a push waits for, the ones that answer quick
 # `build` is not here because `test:fast` runs `--all-targets`, which builds the same thing and then runs it.
 # What a push compiles is twice over: once with clippy's fingerprints and once with the test harness's.
 # Everything else reuses one of those.
-run = [
-  "mise run fmt:check",
-  "mise run lint",
-  "mise run test:fast",
-  "mise run test:doc",
-  "mise run kani:verified",
-  "mise run deny",
-  "mise run audit",
-]
+shell = "bash -c"
+run = """
+set -uo pipefail
+step() { "$@" || { status=$?; echo "check: '$*' failed with exit ${status}" >&2; exit "${status}"; }; }
+step mise run fmt:check
+step mise run lint
+step mise run test:fast
+step mise run test:doc
+step mise run kani:verified
+step mise run deny
+step mise run audit
+"""
 
 # Every target triple this machine can read without the machine.
 #
@@ -434,6 +466,6 @@ description = "Say whether a recording is complete: it begins, it ends, and it l
 shell = "bash -c"
 run = """
 set -euo pipefail
-cargo build --bin rust-mutants
+cargo build --workspace --all-features --bin rust-mutants
 ./target/debug/rust-mutants trace check "$@"
 """

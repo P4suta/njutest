@@ -1649,21 +1649,10 @@ pub fn record(
     report.drift.clone_from(&mutation.drift);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
-        report
-            .findings
-            .extend(crate::report::hollow::found(&report.mutants));
-        report
-            .findings
-            .extend(crate::report::drift::found(&report.drift, &report.mutants));
-        report
-            .limitations
-            .extend(crate::report::drift::unmeasured(&report.drift));
-        report
-            .findings
-            .extend(crate::report::knobs::found(&report.knobs, &report.mutants));
-        report
-            .limitations
-            .extend(crate::report::knobs::limited(&report.knobs));
+        let whole =
+            crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
+        report.findings.extend(whole.findings);
+        report.limitations.extend(whole.limitations);
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
