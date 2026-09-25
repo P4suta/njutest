@@ -215,6 +215,9 @@ A name is one to sixty-four of letters, digits, `.`, `_` and `-`, because it is 
 
 `--keep-temp` keeps the snapshot and the build cache a run would otherwise remove, and writes them into `kept-v1.json` under the report directory, with the run that kept them.
 `cache` lists what is there: the snapshots, the build caches, the outcome store with its size, and every kept directory with the run that kept it.
+Beside the outcome store, a run remembers which target killed each mutant, by the mutant's identity, in `rust-mutants/killers-v1`, and the next run asks that target first.
+It changes the order targets are asked in and never which are asked: a kill is still an execution of this tree, and a survivor still needs every target it reaches.
+`cache --clear-outcomes` clears both.
 `cache --gc` removes what is abandoned and leaves the build caches, so the next run is still fast — except the ones no run can look up again, which every run already sweeps on its way past: a cache is keyed to a source tree, and one whose tree is gone will never make anything fast.
 `--gc --all` takes the rest too; `--gc --kept` takes what was kept on purpose.
 `--clear-outcomes` empties the store and says how much was in it, and `--cache-dir` says where the store is.

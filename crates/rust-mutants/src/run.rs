@@ -701,6 +701,8 @@ pub struct Reusing<'a> {
     pub keyed: &'a crate::outcomes::Keyed,
     /// This run, which is what a record it writes names.
     pub run_id: &'a str,
+    /// Which target last killed each mutant, which decides only the order targets are asked in.
+    pub killers: &'a crate::killers::Killers,
 }
 
 /// One part of a catalog, for a run that shares the work with others.
@@ -1421,7 +1423,13 @@ fn execute(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    let request = Request::new(mutant.id.to_string()).with_args(options.args.to_vec());
+    let first = match options.outcomes.as_ref() {
+        Some(reusing) => reusing.killers.of(mutant.id.as_str())?,
+        None => None,
+    };
+    let request = Request::new(mutant.id.to_string())
+        .with_args(options.args.to_vec())
+        .trying_first(first);
     let judgement = session.judge(&request, options.quiet, cancel)?;
     let duration = judgement.duration();
     let retried = judgement.retried();
@@ -1567,6 +1575,13 @@ fn reuse(
 /// Records what this run established, for the next run of this exact tree.
 /// Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
 fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), EngineError> {
+    if let Some(reusing) = options.outcomes.as_ref()
+        && judged.outcome == Outcome::Killed
+    {
+        reusing
+            .killers
+            .remember(mutant.id.as_str(), &judged.target)?;
+    }
     let Some(reusing) = options.outcomes else {
         return Ok(());
     };
