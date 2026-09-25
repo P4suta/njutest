@@ -1,0 +1,9 @@
+=== tmpdir-alone source crates/app/tests/run.rs
+//! A file.
+fn temporary(command: &mut std::process::Command, dir: &std::path::Path) { command.env("TMPDIR", dir); }
+=== tmp-alone source crates/app/tests/run.rs
+//! A file.
+fn temporary(command: &mut std::process::Command, dir: &std::path::Path) { command.env("TMP", dir); }
+=== temp-alone-in-a-chain source crates/app/src/lib.rs
+//! A file.
+fn temporary(dir: &std::path::Path) -> std::process::Command { let mut command = std::process::Command::new("x"); command.arg("y").env("TEMP", dir); command }

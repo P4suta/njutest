@@ -479,8 +479,13 @@
         "mutant": {
           "description": "The mutation a repair ran, in full; null on a baseline or a control, which run with nothing active.",
           "oneOf": [
-            { "type": "null" },
-            { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
           ]
         },
         "passed": {
@@ -590,6 +595,48 @@
           }
         }
       }
+    },
+    "startFailure": {
+      "description": "Why the process never started.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "missing",
+                "denied",
+                "busy",
+                "exhausted",
+                "unsupervised",
+                "malformed",
+                "unprepared",
+                "not-asked"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "detail"
+          ],
+          "properties": {
+            "kind": {
+              "const": "other"
+            },
+            "detail": {
+              "type": "string"
+            }
+          }
+        }
+      ]
     }
   },
   "type": "object",
@@ -916,11 +963,15 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "kind"
+                        "kind",
+                        "cause"
                       ],
                       "properties": {
                         "kind": {
                           "const": "not-started"
+                        },
+                        "cause": {
+                          "$ref": "#/$defs/startFailure"
                         }
                       }
                     },
@@ -1007,6 +1058,18 @@
                       "properties": {
                         "kind": {
                           "const": "wait-failed"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "answered"
                         }
                       }
                     },
@@ -1425,6 +1488,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "args",
                 "duration_ms",
                 "outcome",
                 "remembered",
@@ -1451,6 +1515,12 @@
                 "duration_ms": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 },
                 "remembered": {
                   "type": "boolean"
@@ -1511,7 +1581,9 @@
                   "required": [
                     "arguments",
                     "environment",
-                    "launcher"
+                    "launcher",
+                    "delay",
+                    "confirms"
                   ],
                   "properties": {
                     "environment": {
@@ -1549,6 +1621,38 @@
                         "type": "string",
                         "minLength": 1
                       }
+                    },
+                    "delay": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "pause_ms",
+                            "site"
+                          ],
+                          "properties": {
+                            "site": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "pause_ms": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "confirms": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
                     }
                   }
                 },
@@ -1840,12 +1944,14 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "entered_records",
                 "alone",
                 "duration_ms",
                 "exit_code",
                 "failed_tests",
                 "id",
                 "index",
+                "lingered",
                 "outcome",
                 "signal",
                 "step_notice",
@@ -1912,9 +2018,25 @@
                     "derived"
                   ]
                 },
+                "entered_records": {
+                  "description": "How many records the process wrote naming the items it entered, when it was asked to record them.",
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  ]
+                },
                 "alone": {
                   "type": "boolean",
                   "description": "Whether it ran with nothing else the run started running beside it, which is what a confirming retry does."
+                },
+                "lingered": {
+                  "type": "boolean",
+                  "description": "Whether the harness had already answered when the clock ended the process, so the verdict is the harness's."
                 },
                 "step_notice": {
                   "oneOf": [
@@ -1976,6 +2098,8 @@
                 "hit",
                 "key",
                 "mutant",
+                "refused",
+                "rule",
                 "source_run_id"
               ],
               "properties": {
@@ -1996,6 +2120,25 @@
                     "null"
                   ],
                   "minLength": 1
+                },
+                "rule": {
+                  "enum": [
+                    "exact",
+                    "carried"
+                  ]
+                },
+                "refused": {
+                  "enum": [
+                    "skeleton-changed",
+                    "item-changed",
+                    "unsealed",
+                    "entry-incomplete",
+                    "route-grew",
+                    "filter-differs",
+                    "reach-moved",
+                    "uncontrolled",
+                    null
+                  ]
                 }
               }
             }
@@ -2028,7 +2171,9 @@
                   "enum": [
                     "unreached",
                     "discharged",
-                    "interrupted"
+                    "interrupted",
+                    "unselected",
+                    "stopped-early"
                   ]
                 }
               }
@@ -2164,8 +2309,14 @@
               ],
               "properties": {
                 "outcome": {
-                  "type": "string",
-                  "minLength": 1
+                  "enum": [
+                    "detected",
+                    "found",
+                    "interrupted",
+                    "failed",
+                    "completed"
+                  ],
+                  "description": "How the run ended: every judged mutation noticed, some not, cancelled, stopped on an error, or finished with judgement left to the program that embedded it."
                 },
                 "error": {
                   "type": [

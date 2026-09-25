@@ -44,7 +44,7 @@ offline = false
 locked = false
 doctests = true                # run a library's documented examples as a target
 skip_targets = []              # target ids never to start, as pkg/kind/name; a name no target has is refused
-jobs = "auto"                  # mutants measured at once: a count, "auto" (the machine, capped at 4), or "all"
+jobs = "auto"                  # mutants measured at once: a count, "auto" (the machine, capped at 4), or "all"; unset is "all" under CI
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
 scratch_working_directory = false # start each test process in a directory of its own
 
@@ -85,8 +85,11 @@ The typed scope of that fact is `InstrumentedWorkspaceSource`.
 Macro expansion and dependency bodies are not rewritten.
 An execution that activates in the workspace and then remains inside either has no source boundary to count and can still reach the clock as `waited`; that limitation cannot be upgraded into `step_limit_reached` or any verdict.
 
-The default of fifty million was sized for an in-memory counter that this durable protocol replaced, and what it costs is no longer a property of the engine.
-Measured on one developer machine after the per-take `fsync` was lifted out of the hot path, a take costs about half a microsecond and fifty million of them spend about twenty-five seconds, against the thirty-second floor a derived `timeout` never goes below; measured on Windows with that `fsync` still in place, a take cost 7.3ms and fifty million would have spent days.
+The default of fifty million was sized for an in-memory counter, and since [ADR 0039](../adr/0039-a-step-is-spent-in-memory.md) a take is one again.
+A runtime copy reserves a share of what is left of the allowance from the shared state and spends it in memory, and a copy that has not seen the mutation activate asks the state only every 256 boundaries.
+Measured median per boundary, on a loaded development Mac: dormant 30 ns and active 90 ns, where one file round trip per boundary had cost 3.2 µs and 35 µs; on Windows the round trip had cost 14 µs and 44 µs, and 4 ms before the file was opened once per copy.
+The allowance is exact for the copy that activates the mutation: the reservations never cross it, and the step past it is decided one at a time under the lock.
+With several copies spending at once it can stop early by what the others still hold, at most one reservation each, and a dormant copy charges nothing for up to 256 boundaries after another copy activates.
 So whether the count is reached before the clock is a fact about the machine, which is the one thing a verdict may not rest on ([ADR 0023](../adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
 
 Tuning the number does not fix that, because the number is machine-independent and its cost is not.
@@ -145,8 +148,10 @@ They are the same run either way, so the arguments a person gives take the place
 A baseline taken one way and mutations measured another compares two suites: a mutation could be noticed by a test the baseline never ran, which is a kill nothing vouched for, and a mutation's budget is a multiple of a duration measured under other flags.
 
 `[execution] jobs` is how many mutants a run measures at once, and `--jobs` or `-j` says the same on the command line.
-Zero is as many as the machine has,
-capped at four: each test binary already runs its own tests on as many threads as the machine has, so a run that started one process per core would have every process contending with every other and would measure the contention.
+`auto` is as many as the machine has, capped at four: each test binary already runs its own tests on as many threads as the machine has, so on a workstation a run that started one process per core would have every process contending with every other and with whatever else is running there, and would measure the contention.
+`all` is every processor, for a runner doing nothing else.
+Left unset, a run under continuous integration (GitHub Actions or GitLab CI) measures on every processor, because the runner is the job's alone, and a run anywhere else is `auto`; the report's `run.jobs` says what was asked and how many were used.
+Zero is refused, since `auto` says it.
 A suite that sets `test_binary_args = ["--test-threads=1"]` has already given that up, and can afford more.
 
 An expired bound buys one more measurement, put again with nothing else the run started running beside it: a duration measured while three other test processes were running is a fact about the load rather than about the mutation.
@@ -246,9 +251,13 @@ A skip that quietly stops meaning anything when the code under it moves is worse
 
 ## Reserved environment
 
-A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
-`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process it starts.
+A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
+`RUST_MUTANTS_FAULT` names a fault to activate beside the active mutation, and only a fault whose guard the instrumentation carried into that mutation's branch can be; it is set only with `RUST_MUTANTS_ACTIVE` ([ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+`RUST_MUTANTS_TOUCH_ITEMS`, set to `1` beside `RUST_MUTANTS_TOUCH`, asks a mutant execution to record only the items it entered, which is what a run that keeps its answers in the store records about each one.
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
+
+`RUST_MUTANTS_DELAY` is `<index>@<ms>`, set only on a control with nothing active: each operating-system thread of the test process sleeps `<ms>` the first time it reaches the guard of `<index>`, and never again.
+The flag is per thread, so a thread a pool or the harness reuses across tests pauses only for the first test that reaches the guard on it, and a thread spawned after another paused gets its own pause.
 
 `RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken.
 At the first take past it, the runtime atomically publishes a notice carrying the fresh nonce, catalog, mutant, allowance and exact `N + 1` count, then parks.
@@ -258,6 +267,11 @@ malformed, mismatched or replayed notice fails closed as a protocol error.
 No exit status is reserved: a test that returns 95 is an ordinary non-zero test failure.
 Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_STATE` names the execution-private state shared by every instrumented module and descendant process, so a selected mutation has one process-wide allowance rather than one counter per compilation unit.
+
+`RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` are set for a run that keeps its scratch for a next run ([ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+When a crash stops the process after its call, the runtime first publishes a notice carrying the schema, the fresh nonce, the catalog and the mutant, in a directory apart from the scratch the test sees.
+A stop is the crash's exit status together with that notice: a test that returns 93 by itself stopped at nothing, and nothing is decided on it.
+What the engine keeps for such a run — the notice, step state, a spilled profile — lives in that directory too, so everything in the scratch is what the test left.
 
 There is one closed exception for this repository measuring itself.
 Cargo compiles every instrumented tree with an internal RUST_MUTANTS_COMPILED_CATALOG build input, and the two engine composition roots embed it with `option_env!`.

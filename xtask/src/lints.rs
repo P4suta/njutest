@@ -135,8 +135,9 @@ const BROAD_EXPECTATION_REMEDY: &str = "put the expectation on the exact express
     and silently permits every later one";
 const VACUOUS_CFG_REMEDY: &str = "remove a condition that is provably always true or always \
     false. `cfg(any())`, `cfg(not(all()))`, `cfg(all())`, and `cfg(not(any()))` can hide code \
-    from every compiler or pretend an unconditional item was checked conditionally; name a real \
-    target, feature, or test boundary instead";
+    from every compiler or pretend an unconditional item was checked conditionally, and a `cfg` \
+    an enclosing item's `cfg` already guarantees reads as a second condition that is not there; \
+    name a real target, feature, or test boundary once, where it applies";
 const GLOB_IMPORT_REMEDY: &str = "name the imported items. Only a module explicitly named \
     `prelude` may export an intentionally open vocabulary; every other glob lets a dependency add \
     a name to this scope without changing this file";
@@ -166,6 +167,11 @@ const WILDCARD_OVER_OUR_OWN_REMEDY: &str = "a catch-all over a set this reposito
 const HAND_PAINTED_REMEDY: &str = "ask for what the thing is rather than for a colour: \
     `Style::Gap`, `Style::Command`, or `Style::Limitation`. One module turns a style into bytes; \
     everything else names a meaning";
+const LONE_TEMPORARY_VARIABLE_REMEDY: &str = "name the directory in every variable a platform \
+    reads it from: `.envs(njutest_devkit::paths::temporary_directory(dir))`. \
+    `std::env::temp_dir` reads `TMP` and `TEMP` on Windows and `TMPDIR` elsewhere, so a child \
+    given one of them keeps writing into the parent's directory on the other platform, and what \
+    it leaves there is left where nothing owns it";
 const OPEN_AND_CLOSED_REMEDY: &str = "drop `#[non_exhaustive]`. A type that publishes its whole \
     list has promised to break callers when it grows, while the attribute promises not to. It \
     also disables `clippy::match_wildcard_for_single_variants`. Keep it only on an error whose \
@@ -248,6 +254,7 @@ declare_kinds! {
     TriStateBool => "tri-state-bool",
     OpenAndClosed => "open-and-closed",
     ForeignRemainder => "foreign-remainder",
+    LoneTemporaryVariable => "lone-temporary-variable",
 }
 
 impl Kind {
@@ -297,6 +304,7 @@ impl Kind {
             Self::TriStateBool => TRI_STATE_BOOL_REMEDY,
             Self::OpenAndClosed => OPEN_AND_CLOSED_REMEDY,
             Self::ForeignRemainder => FOREIGN_REMAINDER_REMEDY,
+            Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
         }
     }
 }
@@ -501,6 +509,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(foreign_remainders(&parsed, file));
     }
     scan.found.extend(broad_expectations(&parsed, file));
+    scan.found.extend(implied_cfgs(&parsed, file));
     scan.found.sort();
     scan.found.dedup();
     Ok(scan.found)
@@ -4611,6 +4620,15 @@ fn owned_spawn_boundaries(parsed: &syn::File) -> BTreeSet<SourcePoint> {
     allowed
 }
 
+/// Whether `argument` is a literal naming one of the variables a temporary directory is read from.
+fn names_a_temporary_variable(argument: &syn::Expr) -> bool {
+    matches!(
+        argument,
+        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(name), .. })
+            if super::TEMPORARY_VARIABLES.contains(&name.value().as_str())
+    )
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SourcePolicy {
     Reclaimer,
@@ -5321,6 +5339,9 @@ impl Visit<'_> for Scan {
         }
         if wrapping_counter_method(&call.method) {
             self.note(Kind::WrappingCounter, call.method.span());
+        }
+        if call.method == "env" && call.args.first().is_some_and(names_a_temporary_variable) {
+            self.note(Kind::LoneTemporaryVariable, call.method.span());
         }
         if call.method == "from_utf8_lossy" || call.method == "to_string_lossy" {
             self.note(Kind::LossyText, call.method.span());
@@ -6209,6 +6230,188 @@ fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
         Some(CfgTruth::Always) => CfgTruth::Never,
         Some(CfgTruth::Never) => CfgTruth::Always,
         Some(CfgTruth::Variable) | None => CfgTruth::Variable,
+    }
+}
+
+/// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
+fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = ImpliedCfg {
+        file,
+        held: Vec::new(),
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// The conditions the items around the walk are compiled under, and what repeated one of them.
+struct ImpliedCfg<'a> {
+    file: &'a str,
+    held: Vec<String>,
+    found: Vec<Finding>,
+}
+
+impl ImpliedCfg<'_> {
+    /// Notes every condition of `attributes` the enclosing ones imply, then walks the item under all of them.
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let conditions: Vec<(proc_macro2::TokenStream, proc_macro2::Span)> = attributes
+            .iter()
+            .filter_map(|attribute| match &attribute.meta {
+                syn::Meta::List(list) if list.path.is_ident("cfg") => {
+                    Some((list.tokens.clone(), attribute.pound_token.span))
+                }
+                syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => None,
+            })
+            .collect();
+        for (condition, span) in &conditions {
+            if implied(condition, &self.held) {
+                self.found.push(Finding {
+                    kind: Kind::VacuousCfg,
+                    file: self.file.to_owned(),
+                    line: span.start().line,
+                });
+            }
+        }
+        let depth = self.held.len();
+        for (condition, _span) in &conditions {
+            self.held.extend(conjuncts(condition));
+        }
+        walk(self);
+        self.held.truncate(depth);
+    }
+}
+
+/// `condition` and, where it is `all(…)`, every condition it is the conjunction of.
+fn conjuncts(condition: &proc_macro2::TokenStream) -> Vec<String> {
+    let mut found = vec![condition.to_string()];
+    if let Some(parts) = all_of(condition) {
+        for part in &parts {
+            found.extend(conjuncts(part));
+        }
+    }
+    found
+}
+
+/// The arguments of `all(…)`, split at their top-level commas, or nothing when `condition` is not one.
+fn all_of(condition: &proc_macro2::TokenStream) -> Option<Vec<proc_macro2::TokenStream>> {
+    let trees: Vec<proc_macro2::TokenTree> = condition.clone().into_iter().collect();
+    let [
+        proc_macro2::TokenTree::Ident(all),
+        proc_macro2::TokenTree::Group(arguments),
+    ] = trees.as_slice()
+    else {
+        return None;
+    };
+    if all != "all" || arguments.delimiter() != proc_macro2::Delimiter::Parenthesis {
+        return None;
+    }
+    let mut parts = vec![proc_macro2::TokenStream::new()];
+    for tree in arguments.stream() {
+        match &tree {
+            proc_macro2::TokenTree::Punct(comma) if comma.as_char() == ',' => {
+                parts.push(proc_macro2::TokenStream::new());
+            }
+            proc_macro2::TokenTree::Punct(_)
+            | proc_macro2::TokenTree::Ident(_)
+            | proc_macro2::TokenTree::Group(_)
+            | proc_macro2::TokenTree::Literal(_) => {
+                if let Some(last) = parts.last_mut() {
+                    last.extend([tree.clone()]);
+                }
+            }
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    Some(parts)
+}
+
+/// Whether the conditions in `held` already guarantee `condition`: it is one of them, or every part of an `all(…)` is.
+fn implied(condition: &proc_macro2::TokenStream, held: &[String]) -> bool {
+    held.contains(&condition.to_string())
+        || all_of(condition)
+            .is_some_and(|parts| !parts.is_empty() && parts.iter().all(|part| implied(part, held)))
+}
+
+impl Visit<'_> for ImpliedCfg<'_> {
+    fn visit_file(&mut self, file: &syn::File) {
+        self.within(&file.attrs, |walk| syn::visit::visit_file(walk, file));
+    }
+
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
+    fn visit_trait_item(&mut self, item: &syn::TraitItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::TraitItem::Const(one) => &one.attrs,
+            syn::TraitItem::Fn(one) => &one.attrs,
+            syn::TraitItem::Type(one) => &one.attrs,
+            syn::TraitItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_trait_item(walk, item));
+    }
+
+    fn visit_foreign_item(&mut self, item: &syn::ForeignItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ForeignItem::Fn(one) => &one.attrs,
+            syn::ForeignItem::Static(one) => &one.attrs,
+            syn::ForeignItem::Type(one) => &one.attrs,
+            syn::ForeignItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| {
+            syn::visit::visit_foreign_item(walk, item);
+        });
+    }
+
+    fn visit_field(&mut self, field: &syn::Field) {
+        self.within(&field.attrs, |walk| syn::visit::visit_field(walk, field));
+    }
+
+    fn visit_variant(&mut self, variant: &syn::Variant) {
+        self.within(&variant.attrs, |walk| {
+            syn::visit::visit_variant(walk, variant);
+        });
+    }
+
+    fn visit_local(&mut self, local: &syn::Local) {
+        self.within(&local.attrs, |walk| syn::visit::visit_local(walk, local));
+    }
+}
+
+/// The attributes of any item, every kind named, so a kind this walk forgot is a compile error rather than a hole.
+fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Const(one) => &one.attrs,
+        syn::Item::Enum(one) => &one.attrs,
+        syn::Item::ExternCrate(one) => &one.attrs,
+        syn::Item::Fn(one) => &one.attrs,
+        syn::Item::ForeignMod(one) => &one.attrs,
+        syn::Item::Impl(one) => &one.attrs,
+        syn::Item::Macro(one) => &one.attrs,
+        syn::Item::Mod(one) => &one.attrs,
+        syn::Item::Static(one) => &one.attrs,
+        syn::Item::Struct(one) => &one.attrs,
+        syn::Item::Trait(one) => &one.attrs,
+        syn::Item::TraitAlias(one) => &one.attrs,
+        syn::Item::Type(one) => &one.attrs,
+        syn::Item::Union(one) => &one.attrs,
+        syn::Item::Use(one) => &one.attrs,
+        _ => &[],
     }
 }
 

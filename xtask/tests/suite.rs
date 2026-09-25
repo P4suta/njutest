@@ -5,6 +5,14 @@
 
 #![recursion_limit = "256"]
 
+#[path = "adrs.rs"]
+mod adrs;
+#[path = "carry.rs"]
+mod carry;
+#[path = "concurrency.rs"]
+mod concurrency;
+#[path = "crashes.rs"]
+mod crashes;
 #[path = "deps.rs"]
 mod deps;
 #[path = "devgates.rs"]
@@ -19,6 +27,8 @@ mod dogfood;
 mod engineaudit;
 #[path = "errors_doc.rs"]
 mod errors_doc;
+#[path = "faults.rs"]
+mod faults;
 #[path = "fixtures.rs"]
 mod fixtures;
 #[path = "fuzz_ledger.rs"]
@@ -29,6 +39,8 @@ mod fuzzclippy;
 mod gates;
 #[path = "kani.rs"]
 mod kani;
+#[path = "libtest_options.rs"]
+mod libtest_options;
 #[path = "lints.rs"]
 mod lints;
 #[path = "milestones.rs"]
@@ -53,6 +65,10 @@ mod sbom;
 mod sentinel;
 #[path = "shapes.rs"]
 mod shapes;
+#[path = "slot.rs"]
+mod slot;
+#[path = "specimen_reach.rs"]
+mod specimen_reach;
 #[path = "suites.rs"]
 mod suites;
 #[path = "surface.rs"]

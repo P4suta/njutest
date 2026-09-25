@@ -33,7 +33,7 @@ The first digit names an area:
 | `RM0004` | A configuration or a flag that parses but says something a run cannot honour: an expectation without a reason, two expectations that name one mutation, a harness flag the engine owns, a report directory outside the workspace, a shard that is not a part of something, a line range that addresses no line, a run name a directory cannot be, a `--file` this run does not read, a `--rule` or `--family` this release does not know. | the message says which key and why; `rust-mutants init` writes one that is valid |
 | `RM0005` | A configuration whose `version` is not one this release understands. | this release reads version 1; a newer file needs a newer release |
 | `RM0006` | A process environment names any mutation-control value unless this is an instrumented engine binary carrying the same nonempty catalog and exactly one nonempty activation or touch mode. | unset the RUST_MUTANTS_ variable the message names and run again |
-| `RM0007` | A stored run report or recording that is not there or cannot be read. | `rust-mutants report --list` names the runs that are stored under this root |
+| `RM0007` | A stored run report or recording that is not there or cannot be read. | every run is a directory named for it in the configured reports directory (`reports/mutation` by default); `rust-mutants report` with no `--run` reads the newest |
 | `RM0008` | A file a command would write that is already there, and `--force` was not given. | remove the file, or name another path: a command here never writes over what it did not write |
 | `RM0009` | A report or configuration file that could not be written. | check the directory exists and this user may write in it; the path names the file |
 | `RM0010` | A change set git could not be asked for: the tree is not a repository, or it does not know the revision. A run that could not see what changed never reads as a run that saw nothing change. | run inside a git working tree, or name what to measure with --include |
@@ -63,6 +63,7 @@ The first digit names an area:
 | `RM1018` | `--root` names a member of a workspace rather than the workspace. A run measures a copy of what it was given, and a member on its own is not a buildable tree. | run with --root at the workspace root the message names, and --package to narrow it |
 | `RM1019` | A directory a run would copy has no place in the copy that keeps every path into it resolving: it is not absolute, it still climbs, it is the tree or holds it or is inside it, or it lies on another filesystem root. A copy places what it holds by substituting one prefix, so a directory it cannot place is one every path into it would stop reaching. | --allow-outside takes an existing absolute directory outside the tree and on the same filesystem root as it; a copy reproduces the shape of what it copies, and cannot hold a directory that is the tree, holds it, or lies across a volume |
 | `RM1020` | A manifest a run has to read is there and could not be read. A run decides what it may copy, which targets carry a harness, and which lints a crate forbids from these, and an empty answer to any of them is a different run rather than a missing one. | read the manifest the message names yourself: a run decides what it may copy, which targets carry a harness, and which lints a crate forbids from it, and an empty answer to any of those is a different run rather than a missing one |
+| `RM1021` | A name handed to a capability directory is not one path component. | a store names its entries itself; a name that could reach a parent, a stream or a device is a defect in the caller, so report it |
 | `RM2001` | A dep-info file has no rule to read. | run `cargo test --no-run` yourself, then try again: a build that did not finish leaves this behind |
 | `RM2002` | An artifact's dep-info file could not be read, so the files its unit compiled are unknown. | run `cargo clean` and try again; a dep-info file from an interrupted build cannot be read |
 | `RM2003` | A source file a unit compiled could not be read. | the file a unit compiled is not readable from the copy; check it is not written while the run reads it |
@@ -90,6 +91,9 @@ The first digit names an area:
 | `RM5006` | The instrumented tree could not be written. | check there is room under TMPDIR and that nothing is removing the run's directory while it writes |
 | `RM5007` | The crate planted for the routing layers could not be written, so no layer could be checked before the run believed what it removes. | check the run's scratch directory is one this user may write in and that there is room under it |
 | `RM5008` | The crate planted for the routing layers was built by another compiler than the run's, so what it showed about the layers is not about this run. | the planted crate is built by the binaries in the run's own sysroot, so they answered with another version than the run's rustc: the toolchain directory is broken or mixed; reinstall it, or, where the run's rustc names no sysroot, make the cargo on PATH the one the tree resolves to |
+| `RM5009` | A fault was asked to run beside something that is not a mutation, or what was named beside it is not a fault. | a fault is put beside a mutation of the same session: name an `inject-error` fault beside a mutant of any other rule |
+| `RM5010` | The system gave no randomness for the nonce that ties a crash's notice to its execution. | the operating system's random source failed; nothing the run could do stands in for it, so check the machine rather than the tree |
+| `RM5011` | A mutant's execution changed the test executables the run starts, so no answer after it would be about the tests. | run the mutant it names alone with `rust-mutants run --mutant <id> --jobs 1` to confirm, then keep its tests from writing where the test binaries live, or skip it with a reason |
 | `RM6001` | A coverage export could not be read. | run again without --coverage to measure without it, or check llvm-tools-preview is installed |
 | `RM6002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). | rustup component add llvm-tools, or run with --no-coverage |
 | `RM6003` | `llvm-profdata` or `llvm-cov` failed. | `rustup component add llvm-tools-preview`, and check the versions match the toolchain in use |
@@ -131,7 +135,7 @@ The first digit names an area:
 | `NJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. | this is a defect in this tool: a report it built could not be written as JSON |
 | `NJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. | the document is from another release or another tool; `njutest verify` writes one this release reads |
 | `NJ6004` | The report could not be written where a reader will look for it. | check the report directory exists and this user may write in it; the path names the file |
-| `NJ6005` | There is no such run to answer about, or none at all. A command never answers about a different run than the one it was asked about. | `njutest report --list` names the runs that are stored under this root |
+| `NJ6005` | There is no such run to answer about, or none at all. A command never answers about a different run than the one it was asked about. | every run is a directory under `runs/` in the configured reports directory (`reports/runs` by default); `njutest report` with no run reads the newest |
 | `NJ6006` | `njutest spec` was asked about something the run made no change in: a file, an item, or `PATH:ITEM` that matches nothing the run cataloged. The run is named with how much of the workspace it asked about, because a changed or scoped run catalogs only part of it. | `njutest report` lists what the run changed; name a file, `PATH:ITEM`, or an item as the source names it |
 | `NJ6020` | The measurement a selection reads could not be written. | check the report directory exists and this user may write in it; the path names the file |
 | `NJ6021` | There is no measurement to select by, or it is not one this release reads. | `njutest measure` writes one; a selection with nothing measured to stand on selects nothing |
@@ -150,7 +154,7 @@ The first digit names an area:
 
 `cargo xtask` prints a failure as its code, a colon, then what it says.
 A gate that refused because of another coded failure prints both: `XT0001` for the refusal, then the cause's code.
-The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `proofaudit`, 3 `engine-audit`, 4 Kani and the model evidence, 5 audit specimens and lint sentinels, 6 identities and recordings, 7 `report-diff` and the bill of materials.
+The first digit names an area: 0 the gates, their ledgers, and what runs them (the pre-push gate, the lanes, the other machines), 1 fixtures, 2 `proofaudit`, 3 `engine-audit`, 4 Kani and the model evidence, 5 audit specimens and lint sentinels, 6 identities and recordings, 7 `report-diff` and the bill of materials.
 
 | Code | Meaning | Remedy |
 | --- | --- | --- |
@@ -159,6 +163,20 @@ The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `pro
 | `XT0003` | The roadmap declares no milestone, or one twice. | give every milestone one row in the roadmap table |
 | `XT0004` | The root manifest could not be read, or its workspace lint table is not one `fuzz-clippy` can carry to the fuzz workspace. | fix the table the message names in the root `Cargo.toml` |
 | `XT0005` | `cargo clippy` could not be started for the fuzz workspace. | check `cargo` is on the path and the pinned toolchain is installed |
+| `XT0006` | A published JSON schema under `schema/` does not compile, so nothing can be validated against it. | fix the schema the message names; `cargo xtask all` compiles every one |
+| `XT0007` | A decision record under the ADR directory is misnamed, shares its number, carries another's heading, is listed wrongly in the book, or is named by a link to no record. | fix the record, the book, or the link the message names |
+| `XT0008` | `docflows` could not check the workflows the documentation shows: a page could not be read, or actionlint could not be run or said something other than which workflows it refused. | check `actionlint` is installed, or name it with `--actionlint`, and read what it said |
+| `XT0009` | actionlint refused a workflow the documentation shows. | fix the snippet the message names, so a reader who copies it has a workflow that runs |
+| `XT0101` | The push names something the pre-push gate cannot check: an update Git did not give whole, an object other than the checked-out commit, a remote commit that is not here, a move that is not a fast-forward, or only deletions. | fetch the remote ref and push the checked-out commit as a fast-forward of it |
+| `XT0102` | The tree the pre-push gate checks stopped being the pushed commit while it ran, or the check changed it. | leave the worktree alone while a push runs, then push again |
+| `XT0103` | The check the pre-push gate runs failed. | read the check's own output above, fix what it names, and push again |
+| `XT0104` | The check the pre-push gate runs was stopped: it outlived its budget, said nothing for longer than the gate allows, or the gate was asked to stop. | push again when the machine is less loaded, or raise the budget the message names |
+| `XT0105` | The pre-push gate could not run its check: a program, Git, one of its own files, a setting, its lane, or its progress output failed it. | fix what the message names and push again |
+| `XT0201` | The lane a whole-workspace run waits in could not be found, written, locked, or reported on. | set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one the message names |
+| `XT0202` | The run was asked to stop while it waited for its lane. | nothing is wrong with the tree; run it again |
+| `XT0301` | A program a gate runs could not be started or watched, or the signals that stop it could not be armed. | check the program the message names is installed and that this process may be signalled |
+| `XT0401` | `remote-check` could not ask the other machines: its machines file could not be read or names none, or a program, Git, a log, or the thread asking a machine failed it. | fix the machines file or what the message names, and run it again |
+| `XT0402` | At least one other machine refused the commit. | read each machine's answer and fix what it names |
 | `XT1001` | A fixture's tree could not be walked or one of its files read. | check the path the message names exists and is readable |
 | `XT1002` | A fixture tree holds a symbolic link, which the checks never follow. | replace the link with the file it points at |
 | `XT1003` | A fixture path is not UTF-8, so no protocol a fixture feeds could spell it. | rename the path |
@@ -168,13 +186,27 @@ The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `pro
 | `XT2002` | The assurance report is not JSON this audit can read. | re-run the run that wrote it; a report nothing can parse is not one to re-decide |
 | `XT2003` | The runner's recording has a line that is not JSON. | re-run with `--trace`; a recording that lost a line cannot be counted as agreement |
 | `XT2004` | The report is not one configured build measured whole, which is what this audit re-decides. | audit each part against its own recording |
-| `XT2005` | The document calls itself something other than the assurance report. | point `proofaudit` at an assurance report |
+| `XT2005` | The report departs from the published assurance-report schema, so a reader could meet an absent required field. | re-run with this release; a report off its schema is not one to re-decide |
+| `XT2006` | A document given as a merged report is not a merge of shards. | give `proofaudit` the report `njutest merge` wrote, with `--shard` for each part |
+| `XT2007` | A document given with `--shard` is not a shard of a catalog. | give each shard's own report or run directory to `--shard` |
+| `XT2008` | The same shard was given twice with `--shard`. | give each shard once; counting one part twice is an operator's mistake, not a merge |
+| `XT2009` | A shard was given that the merged report does not name among its sources. | give only the shards the merged report names in its composition |
+| `XT2010` | The document is on its published schema and is not one this audit can read into a complete report or a shard. | report it; a document on its schema that this audit cannot read is a gap in the audit |
+| `XT2011` | The report passed its schema and still lacks a field a layer of this audit reads, so the schema and the reader disagree. | report it; either the schema should require the field or the reader should not demand it |
+| `XT2101` | A report's thread standing for a test binary contradicts what the engine recording witnesses, or is no standing a run gives. | the runner decided what its own recording does not support: re-run, and report it if it recurs |
+| `XT2102` | A report's exploration of a binary's schedules comes to something other than its recorded controls do. | the runner decided what its own recording does not support: re-run, and report it if it recurs |
+| `XT2103` | The recorded controls of an exploration are not a schedule the exploration could have run. | re-run with `--trace`; a recording that cannot be replayed cannot be counted as agreement |
+| `XT2104` | The recording lacks the build or baseline record a thread standing is derived from. | re-run with `--trace` using this release |
+| `XT2105` | A report's decision about a fault contradicts the fault's recorded executions. | the runner decided what its own recording does not support: re-run, and report it if it recurs |
+| `XT2106` | A report's repair of a disposition contradicts the recorded execution of that repair. | the runner decided what its own recording does not support: re-run, and report it if it recurs |
 | `XT3001` | The run directory holds no engine run report, or it or a document beside it could not be read. | point `engine-audit` at the directory a completed engine run wrote |
 | `XT3002` | The engine run report is not JSON this audit can read. | re-run the run that wrote it |
 | `XT3003` | An evidence document beside the engine run report is not one this audit can read. | re-run the run that wrote it |
 | `XT3004` | The engine's recording is not one this audit can read, or is of another schema. | re-run with `--trace` using this release |
 | `XT3005` | The configuration named as the ledger is not one this audit can read. | fix the configuration file the message names |
 | `XT3006` | The document is not the engine run report, or is of another schema version. | point `engine-audit` at a run report this release wrote |
+| `XT3007` | The engine run report departs from the published run-report schema, so a reader could meet an absent required field or a value of another shape. | re-run with this release; a report off its schema is not one to re-decide |
+| `XT3008` | The carry page, `docs/engine/carry.md`, lacks a closed block the carry audit reads its lists from. | restore the fenced block the message names on the page |
 | `XT4001` | The Kani export could not be read, or is not the closed JSON schema of the pinned release. | regenerate the export with the pinned Kani |
 | `XT4002` | The Kani export's metadata, project or toolchain is not the pinned release run on this workspace. | regenerate the export here with the pinned Kani and backend |
 | `XT4003` | A harness or check ledger of the Kani export is missing, duplicated, or not the selected production one. | regenerate the export from the production harness list |
@@ -185,8 +217,11 @@ The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `pro
 | `XT4103` | A retained Kani export is not the pinned schema, or does not establish the answer the report gives. | read the model record the message names |
 | `XT5001` | An audit specimen could not be laid out in a temporary directory. | check the temporary directory is writable |
 | `XT5002` | An event of an audit specimen's recording is not an object, or lacks its envelope. | fix the specimen in the sentinel module the gate names |
+| `XT5003` | A flat audit specimen could not be completed into the document a run writes. | fix the specimen in the sentinel module the gate names |
 | `XT5101` | A planted text of the lint sentinels is not the header-and-files shape they are read in. | fix the planted text under `xtask/sentinels/` the message names |
 | `XT6001` | An identity field exceeds the length prefix of the recipe it is minted by. | report it; an identity this recipe cannot spell is not one to truncate |
 | `XT6002` | A line of a recording is not JSON. | re-run with `--trace` |
+| `XT6003` | A line of a recording departs from its producer's published schema, so a reader could meet an absent required field. | re-run with `--trace` using this release; a recording off its schema is not one to re-decide |
+| `XT6004` | A line of a recording passed its producer's schema and still lacks a field a reader of this audit reads, so the schema and the reader disagree. | report it; either the schema should require the field or the reader should not demand it |
 | `XT7001` | A report given to `report-diff` is not one this version understands. | give it two reports this release wrote |
 | `XT7002` | `cargo metadata` could not be read into a bill of materials. | run `cargo metadata --locked` and fix what it says |

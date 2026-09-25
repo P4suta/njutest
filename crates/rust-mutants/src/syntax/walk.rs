@@ -1103,12 +1103,18 @@ impl<'a> Walker<'a> {
         let value = ctx.value();
         match expr {
             Expr::Call(c) => {
+                if writes_by_path(&c.func) {
+                    self.crash_after(expr, ctx);
+                }
                 self.walk_expr(&c.func, value);
                 for arg in &c.args {
                     self.walk_expr(arg, value);
                 }
             }
             Expr::MethodCall(m) => {
+                if WRITING_METHODS.contains(&m.method.to_string().as_str()) {
+                    self.crash_after(expr, ctx);
+                }
                 self.walk_method_name(m, ctx);
                 let chain = ctx.wrap.unwrap_or_else(|| self.span(m));
                 self.walk_expr(&m.receiver, value.wrapping(chain));
@@ -1686,8 +1692,34 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// A crash just after a call that writes (ADR 0035): the call is kept whole inside the runtime's stop, so it runs and nothing after it does.
+    fn crash_after(&mut self, call: &Expr, ctx: Ctx) {
+        let own = self.span(call);
+        let replacement =
+            format!("{}({})", crate::instrument::CRASHED_CALL, self.text(own)).into_bytes();
+        self.emit(
+            "crash-after-write",
+            Edit {
+                span: own,
+                replacement,
+                site: Self::site_for(ctx.value(), own),
+                probe: None,
+            },
+        );
+    }
+
     fn walk_try(&mut self, t: &syn::ExprTry, ctx: Ctx) {
         let own = self.span(t);
+        let asked = self.span(&*t.expr);
+        self.emit(
+            "inject-error",
+            Edit {
+                span: asked,
+                replacement: crate::instrument::INJECTED.as_bytes().to_vec(),
+                site: Self::site_for(ctx.value(), asked),
+                probe: None,
+            },
+        );
         let edit = self.span(&t.question_token);
         self.emit(
             "question-to-unwrap",
@@ -1752,5 +1784,30 @@ impl<'a> Walker<'a> {
                 walker.return_site(body);
             }
         });
+    }
+}
+
+/// The methods whose call writes to a file a later run can read.
+const WRITING_METHODS: [&str; 5] = ["write_all", "sync_all", "sync_data", "set_len", "flush"];
+
+/// Whether a call's path ends in one of the standard library's functions that write a file: `fs::write`, `rename`, `copy`, `remove_file`, `create_dir_all`, or `File::create`.
+fn writes_by_path(func: &Expr) -> bool {
+    let Expr::Path(path) = func else {
+        return false;
+    };
+    let names: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    match names.as_slice() {
+        [.., module, function] => {
+            (module == "fs"
+                && ["write", "rename", "copy", "remove_file", "create_dir_all"]
+                    .contains(&function.as_str()))
+                || (module == "File" && function == "create")
+        }
+        [_] | [] => false,
     }
 }

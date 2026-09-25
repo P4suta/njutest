@@ -8,15 +8,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, ERRORED, ERRORED_MUTANT, ID_DOMAIN,
-    INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN, NOT_RUN_MUTANT, Notes, Report,
-    Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED, STEP_LIMIT_REACHED_MUTANT, STOPPED_EARLY,
-    SURVIVED, SURVIVING_MUTANT, UNJUDGED, UNMATCHED, UNMATCHED_EXPECTATION, UNREACHED,
-    UNREACHED_MUTANT, UNSELECTED, WAITED, WAITED_MUTANT, count,
+    Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, Decided, ERRORED, ERRORED_MUTANT,
+    ID_DOMAIN, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN, NOT_RUN_MUTANT,
+    Notes, Report, Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED, STEP_LIMIT_REACHED_MUTANT,
+    STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, UNJUDGED, UNMATCHED, UNMATCHED_EXPECTATION,
+    UNREACHED, UNREACHED_MUTANT, UNSELECTED, WAITED, WAITED_MUTANT, count,
 };
 
 /// Every identity re-minted from the row that carries it.
-pub(super) fn identity(report: &Report, audit: &mut Audit) {
+pub(super) fn identity(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Identity);
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     for row in &report.mutants {
@@ -65,6 +65,7 @@ pub(super) fn identity(report: &Report, audit: &mut Audit) {
         }
     }
     dense(report, &mut notes);
+    notes.looked()
 }
 
 /// The indices of the accepted and the refused together, which are the whole catalog.
@@ -116,8 +117,16 @@ fn mint(row: &Row) -> Result<String, IdentityWidthError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// An identity field longer than the length prefix it is minted with can say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("an identity field exceeds the u32 length prefix")]
 struct IdentityWidthError;
+
+impl crate::error::Coded for IdentityWidthError {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::IdentityField
+    }
+}
 
 /// The lowercase hex SHA-256 of `bytes`.
 fn digest(bytes: &[u8]) -> String {
@@ -125,7 +134,7 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 /// Every column re-tallied from the rows, and every equation the contract states.
-pub(super) fn accounting(report: &Report, audit: &mut Audit) {
+pub(super) fn accounting(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Accounting);
     for (name, derived) in [
         (KILLED, report.counted(KILLED)),
@@ -174,6 +183,7 @@ pub(super) fn accounting(report: &Report, audit: &mut Audit) {
     skipped(report, &mut notes);
     step_notices(report, &mut notes);
     equations(report, &mut notes);
+    notes.looked()
 }
 
 /// The skipped-place column is the checked sum of every skip record.
@@ -356,14 +366,14 @@ fn column_sum(report: &Report, names: &[&str]) -> ColumnSum {
 }
 
 /// The score, against the columns it is a ratio over.
-pub(super) fn score(report: &Report, audit: &mut Audit) {
+pub(super) fn score(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Score);
     let (Some(killed), Some(survived)) = (report.column(KILLED), report.column(SURVIVED)) else {
         notes.unaudited(
             "score",
             "the report omits a column the score is a ratio over".to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let detected = killed;
     let Some(decided) = killed.checked_add(survived) else {
@@ -371,7 +381,7 @@ pub(super) fn score(report: &Report, audit: &mut Audit) {
             "score",
             "killed plus survived exceeds the report's integer width".to_owned(),
         );
-        return;
+        return notes.looked();
     };
     match (decided > 0, report.score) {
         (false, Some(_)) => notes.violated(
@@ -405,6 +415,7 @@ pub(super) fn score(report: &Report, audit: &mut Audit) {
         }
         (false, None) => {}
     }
+    notes.looked()
 }
 
 /// One ratio, as the report computes it.
@@ -423,7 +434,7 @@ fn widen(value: u64) -> f64 {
 }
 
 /// The findings against the rows: every kind is a set equality in both directions.
-pub(super) fn findings(report: &Report, audit: &mut Audit) {
+pub(super) fn findings(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Findings);
     let interrupted = report.interrupted;
     let raises = |kind: &str, row: &Row| match kind {
@@ -481,6 +492,12 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) {
             );
         }
     }
+    named(report, &mut notes);
+    notes.looked()
+}
+
+/// Every mutant finding against the row it names, which must exist.
+fn named(report: &Report, notes: &mut Notes<'_>) {
     for finding in &report.findings {
         if finding.kind == STALE_EXPECTATION || finding.kind == UNMATCHED_EXPECTATION {
             continue;
@@ -507,7 +524,7 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) {
 }
 
 /// The claims a reviewer declared, as the run left them.
-pub(super) fn expectations(report: &Report, audit: &mut Audit) {
+pub(super) fn expectations(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Expectations);
     let mut met: BTreeMap<String, usize> = BTreeMap::new();
     for claim in &report.expectations {
@@ -538,7 +555,7 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) {
                              space"
                                 .to_owned(),
                         );
-                        return;
+                        return notes.looked();
                     };
                     *seen = next;
                 }
@@ -585,6 +602,7 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) {
         }
     }
     accounted(report, &met, &mut notes);
+    notes.looked()
 }
 
 /// Every row a reviewer accepted, and every claim the run contradicted, against what the findings say.
@@ -625,7 +643,7 @@ fn accounted(report: &Report, met: &BTreeMap<String, usize>, notes: &mut Notes<'
 }
 
 /// The exit code, against what the run found.
-pub(super) fn exit(report: &Report, audit: &mut Audit) {
+pub(super) fn exit(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Exit);
     let recorded = report.exit_code;
     let infrastructure = report.findings.iter().any(|finding| {
@@ -650,4 +668,5 @@ pub(super) fn exit(report: &Report, audit: &mut Audit) {
             ),
         );
     }
+    notes.looked()
 }

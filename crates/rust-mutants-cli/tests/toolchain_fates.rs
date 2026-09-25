@@ -254,8 +254,18 @@ fn fixture_annotated() {
 }
 
 #[test]
+fn fixture_apparatus() {
+    holds("fixture-apparatus");
+}
+
+#[test]
 fn fixture_assured() {
     holds("fixture-assured");
+}
+
+#[test]
+fn fixture_balanced_fails_then_hangs() {
+    holds("fixture-balanced-fails-then-hangs");
 }
 
 #[test]
@@ -266,6 +276,11 @@ fn fixture_baseline() {
 #[test]
 fn fixture_build_script() {
     holds("fixture-build-script");
+}
+
+#[test]
+fn fixture_carry() {
+    holds("fixture-carry");
 }
 
 #[test]
@@ -309,8 +324,18 @@ fn fixture_drifts() {
 }
 
 #[test]
+fn fixture_durable() {
+    holds("fixture-durable");
+}
+
+#[test]
 fn fixture_edits() {
     holds("fixture-edits");
+}
+
+#[test]
+fn fixture_entered() {
+    holds("fixture-entered");
 }
 
 #[test]
@@ -324,8 +349,28 @@ fn fixture_equivalent() {
 }
 
 #[test]
+fn fixture_fails_then_hangs() {
+    holds("fixture-fails-then-hangs");
+}
+
+#[test]
 fn fixture_families() {
     holds("fixture-families");
+}
+
+#[test]
+fn fixture_faulted() {
+    holds("fixture-faulted");
+}
+
+#[test]
+fn fixture_faulted_failure_writes() {
+    holds("fixture-faulted-failure-writes");
+}
+
+#[test]
+fn fixture_faulted_writes() {
+    holds("fixture-faulted-writes");
 }
 
 #[test]
@@ -354,6 +399,11 @@ fn fixture_hollow() {
 }
 
 #[test]
+fn fixture_hollow_only() {
+    holds("fixture-hollow-only");
+}
+
+#[test]
 fn fixture_ignored() {
     holds("fixture-ignored");
 }
@@ -366,6 +416,11 @@ fn fixture_include() {
 #[test]
 fn fixture_item_reach() {
     holds("fixture-item-reach");
+}
+
+#[test]
+fn fixture_killer_last() {
+    holds("fixture-killer-last");
 }
 
 #[test]
@@ -434,6 +489,11 @@ fn fixture_rejectable() {
 }
 
 #[test]
+fn fixture_scheduled() {
+    holds("fixture-scheduled");
+}
+
+#[test]
 fn fixture_scripted() {
     holds("fixture-scripted");
 }
@@ -444,8 +504,18 @@ fn fixture_shared_path() {
 }
 
 #[test]
+fn fixture_silent_kill() {
+    holds("fixture-silent-kill");
+}
+
+#[test]
 fn fixture_simple() {
     holds("fixture-simple");
+}
+
+#[test]
+fn fixture_stop_status() {
+    holds("fixture-stop-status");
 }
 
 #[test]
@@ -466,6 +536,11 @@ fn fixture_targets() {
 #[test]
 fn fixture_threaded() {
     holds("fixture-threaded");
+}
+
+#[test]
+fn fixture_two_bodies() {
+    holds("fixture-two-bodies");
 }
 
 #[test]

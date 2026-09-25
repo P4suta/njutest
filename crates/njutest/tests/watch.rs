@@ -26,7 +26,7 @@ fn stopped(root: &Path) -> Environment {
         vars: Vec::new(),
         working_directory: root.to_owned(),
         temp_directory: root.to_owned(),
-        program: std::path::PathBuf::from("this test never runs it"),
+        program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         cache_directory: root.to_owned(),
         cancel,
         terminal: njutest::presentation::Terminal::default(),

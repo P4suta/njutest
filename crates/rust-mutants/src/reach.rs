@@ -226,9 +226,11 @@ fn run_targets(
             cargo: Some(workspace.toolchain.cargo()),
             sysroot: workspace.toolchain.sysroot(),
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: Some(&pattern),
+            crash: None,
         };
         let request = ExecRequest::new(target)
             .with_timeout(Workspace::timeout(options.build_timeout))

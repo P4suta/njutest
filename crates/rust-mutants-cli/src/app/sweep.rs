@@ -136,12 +136,21 @@ pub(super) fn cache(
         let (records, bytes) = store
             .clear()
             .map_err(|source| cache_unreadable(store.root(), source))?;
+        let killers = rust_mutants::killers::Killers::new(
+            asked
+                .cache_dir
+                .unwrap_or(environment.cache_directory.as_path()),
+        );
+        let hints = killers
+            .clear()
+            .map_err(|source| cache_unreadable(killers.root(), source))?;
         write(
             stdout,
             &format!(
-                "outcomes    {} removed, {bytes} bytes, from {}\n",
+                "outcomes    {} removed, {bytes} bytes, from {}\nkillers     {hints} removed, from {}\n",
                 records,
-                store.root().display()
+                store.root().display(),
+                killers.root().display()
             ),
         )?;
         return Ok(0);

@@ -36,6 +36,11 @@ pub const MIRI_UNSUPPORTED: &str = "miri-unsupported";
 /// The interpreter ran out of the time it was given, which is not a claim that it found nothing.
 pub const MIRI_TIMED_OUT: &str = "miri-timed-out";
 
+/// The toolchain has no interpreter, and the contract names the soundness it could not establish rather than refusing the run.
+pub const MIRI_UNAVAILABLE: &str = "miri-unavailable";
+/// The interpreter ended without a test result, so what its status says is about the interpreter and not the suite.
+pub const MIRI_RAN_NO_TEST: &str = "miri-ran-no-test";
+
 /// A sanitizer the run was asked for could not be run, so nothing it would have found is claimed.
 pub const SANITIZER_UNAVAILABLE: &str = "sanitizer-unavailable";
 
@@ -64,6 +69,8 @@ pub const SEAM_NOT_WATCHED: &str = "seam-not-watched";
 /// A target's baseline was measured and no original-code control over the same passing tests recorded what it reached, so whether its reach is a function of the target is not known.
 pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
+/// A run asked for faults could not put some, because the compiler refused them: their sites propagate an error type the engine does not make.
+pub const FAULT_NOT_PUT: &str = "fault-not-put";
 /// A target's reach moved and every disposition that rested on it was decided again against it, so nothing the run concludes stands on the moved record, but the suite's reach is still not a function of the target (ADR 0036).
 pub const REACH_MOVED: &str = "reach-moved";
 
@@ -73,9 +80,27 @@ pub const KNOB_NOT_PUT: &str = "knob-not-put";
 /// A control under a knob established nothing to compare, so whether a target's verdict and reach hold there is not known.
 pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 
+/// A run asked for faults found no `?` in a measured file, so there was no call to fail.
+pub const FAULT_NO_SITE: &str = "fault-no-site";
+
+/// A run asked for crashes could not put some, because the compiler refused them.
+pub const CRASH_NOT_PUT: &str = "crash-not-put";
+
+/// A run asked for crashes found no call that writes in a measured file, so there was nothing to stop after.
+pub const CRASH_NO_SITE: &str = "crash-no-site";
+
+/// A test binary is not proven to run one thread, and no schedule of it was explored, so what it does when its threads interleave otherwise is not known.
+pub const SCHEDULE_NOT_EXPLORED: &str = "schedule-not-explored";
+
+/// A test binary passed every schedule a delayed guard made, which is a sample of its schedules and never all of them.
+pub const SCHEDULE_SAMPLED: &str = "schedule-sampled";
+
+/// A test binary no delay broke, where the controls of at least one delayed guard settled nothing.
+pub const SCHEDULE_UNDECIDED: &str = "schedule-undecided";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 23] = [
+pub const ALL: [&str; 32] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -87,6 +112,8 @@ pub const ALL: [&str; 23] = [
     SOUNDNESS_SOURCE_UNREADABLE,
     MIRI_UNSUPPORTED,
     MIRI_TIMED_OUT,
+    MIRI_UNAVAILABLE,
+    MIRI_RAN_NO_TEST,
     SANITIZER_UNAVAILABLE,
     SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED,
     FUZZ_NOT_EXECUTED,
@@ -96,7 +123,14 @@ pub const ALL: [&str; 23] = [
     RESOURCE_NOT_STOPPED,
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
+    FAULT_NOT_PUT,
+    FAULT_NO_SITE,
+    CRASH_NOT_PUT,
+    CRASH_NO_SITE,
     REACH_MOVED,
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
+    SCHEDULE_NOT_EXPLORED,
+    SCHEDULE_SAMPLED,
+    SCHEDULE_UNDECIDED,
 ];

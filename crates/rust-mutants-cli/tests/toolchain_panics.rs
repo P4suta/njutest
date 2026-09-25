@@ -18,7 +18,7 @@ use std::path::Path;
 fn rows(fixture: &Fixture) -> serde_json::Value {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
+    command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
     command.env("XDG_CACHE_HOME", fixture.cache());
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
@@ -74,6 +74,12 @@ fn a_process_that_aborts_is_a_kill_on_every_platform() {
         Some("killed"),
         "a process that stops without exiting is one no test could have passed under: {aborted}"
     );
+    let named = aborted["killed_by"]
+        .as_array()
+        .is_some_and(|tests| !tests.is_empty());
+    if named {
+        return;
+    }
     let exit = aborted["exit_code"].as_i64().unwrap_or_default();
     assert_ne!(exit, 0, "{aborted}");
     assert_ne!(
@@ -83,7 +89,8 @@ fn a_process_that_aborts_is_a_kill_on_every_platform() {
     #[cfg(unix)]
     assert_eq!(
         exit, 134,
-        "on unix a signal is reported as 128 plus its number, and abort is six: {aborted}"
+        "where no failing test was named first, the abort decided it, and on unix a signal is \
+         reported as 128 plus its number, abort being six: {aborted}"
     );
 }
 

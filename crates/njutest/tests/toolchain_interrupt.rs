@@ -140,11 +140,10 @@ fn verify_in(root: &Path, extra: &[&str]) -> SupervisedChild {
             "XDG_CACHE_HOME",
             njutest_devkit::paths::cache_beside(root).expect("a cache directory"),
         )
-        .env(
-            "TMPDIR",
-            njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
-        )
         .envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]))
+        .envs(njutest_devkit::paths::temporary_directory(
+            &njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
+        ))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     SupervisedChild::launch(&mut command).expect("njutest starts")
@@ -178,7 +177,8 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
                 "id": "0f7b4d7472329894e9b3",
                 "disposition": {
                     "kind": "killed",
-                    "by": "fixture-assured/lib/fixture_assured"
+                    "by": "fixture-assured/lib/fixture_assured",
+                    "before": []
                 },
                 "duration_ms": 1,
             }],

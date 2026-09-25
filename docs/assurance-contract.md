@@ -40,6 +40,18 @@ It advances no index and stores no verdict.
 
 `deep-v1` uses the expanded operator set and exploration limits, runs Miri on every crate with a non-empty soundness inventory and every crate that links one, and may add sanitizers.
 
+`whole-v1` asks every dimension: mutations, knobs, faults, seams, schedules and durability ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+It runs soundness as `deep-v1` does and puts every fault, every crash and every knob, and each dimension it did not establish — not asked, unmeasured, or measured with a hole — is a `dimension-not-measured` finding, so the run is not `ASSURED`.
+A dimension with nothing to ask, and the classes a dimension says it cannot speak about, are stated and are not holes.
+A toolchain with no interpreter is one more thing it names rather than refuses: `miri-unavailable`, beside a `not-measured` finding.
+Schedules are explored by delaying guards, and a sample of schedules is never a proof, so a suite with a test binary not proven to run one thread and not broken by a delay is not `ASSURED` under it ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+
+## Crashes
+
+A run asked for crashes stops the process just after each call that writes in a measured file and runs the test that reached it again over what it left ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+A next run that fails there, where a run in a fresh scratch passes and a second stop fails it again, is `corrupt-after-crash`, a `DEFECT`.
+A next run that passes is `restarted`, which says only that it passed over the files the stop left.
+
 `verified-v1` keeps the `standard-v1` mutation contract and asks one additional question about every test survivor that belongs to a deliberately closed,
 pure Rust fragment.
 Its `[verification]` section requires a nonzero unwind bound and a process timeout of at least one whole millisecond.
@@ -86,6 +98,18 @@ A test binary that brings its own harness cannot be asked for one of its tests a
 A mutation is measured against a suite that passes.
 A run whose baseline saw a target fail reports that and measures no mutation: there is nothing for a mutation to change about a test that was going to fail anyway.
 A future performance contract must be explicit rather than treating ordinary benchmarks as tests.
+
+## Failed calls
+
+A run asked for faults (`[faults] inject`, or `--faults`) fails, one at a time, every call a `?` in a measured file asks about, and asks the suite whether it noticed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+The faults are catalogued, built and run in a session of their own, so no mutation's catalog, route, execution, control or verdict ever holds one, and a run's mutation verdict is the same with faults as without.
+A fault is put only to the tests that reached its `?`, because two programs identical up to the site run identically until it is reached; no other proof is applied to a fault, since every other proof is read off the program without the fault.
+A fault is `noticed` only when a test failed with it, passed on the unchanged program, and failed with it again.
+Every fault every reaching test passed is an `unnoticed-fault` finding and makes the run `INSUFFICIENT`, never `DEFECT`: it changes what the program is given, not the program, and says only that no test asserts what happens when that call fails.
+A path of the tree under measurement first written while faults were put is a `not-measured` finding about `fault-write-unattributed`, since the faulted executions share one tree and run at once; a path already written before any fault was put is not named.
+`broken-under-fault`, which is a `DEFECT`, is reserved for a write tied to one fault, which a fault run alone makes and the same test run alone without it does not.
+A fault the run put and could not decide is a `not-measured` finding, so such a run is not `ASSURED`.
+A fault the compiler refuses — its site propagates an error type the engine does not make — is `not-put` and is stated, never counted as anything the suite did.
 
 ## Mutation routing
 
@@ -320,6 +344,9 @@ A run that kept no store of earlier answers records neither, which is what parts
 #### A kill
 
 Reused when: the mutant has the same content-addressed identity; the recorded killer is a target this run's own coverage still routes to the mutant, after every discharge; that target has the same behaviour key; and this run's own baseline ran that target on the original tree and saw it pass.
+Every behaviour key, and the identity of the run itself, carries the digest of the njutest executable that decided, so an answer one build kept is never believed by another that may mean something else by it; a njutest that cannot read its own executable runs as `--no-cache`.
+The record also carries every target asked before the killer, with its key and what it answered, and is reused only when those are exactly the targets this run would ask before the killer, each with the same key and seen to pass.
+A reused row then carries the answers the recording run was given, so what the whole catalog decides from answers — `hollow-target` among them — is the same whether a run asked again or read back ([ADR 0038](adr/0038-a-read-back-row-carries-its-answers.md)).
 
 #### A survival
 
@@ -397,6 +424,12 @@ What the run **established nothing about** — a bound that expired, a harness t
 An acceptance says a reviewer looked at what a run found and decided it may stand; where nothing was found there is nothing to have looked at, and recording one would be a decision about a measurement that never happened.
 The loop asks a different question there, with an answer type that has no such arm, so the wrong acceptance is not a thing the program can express ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
 
+`njutest next` offers the same gaps a behaviour at a time: the mutations of one item no test noticed, cheapest to close first.
+A gap a checked test closes comes before one nothing was offered for, the test that closes more before the one that closes fewer, and a gap with more in it before one with fewer.
+Only a test the run checked is offered, one that passed three times with nothing active and failed twice under each mutation it names, and what it is said to close is only what it was checked against.
+Taking it puts it to every one of those mutations again against the tree as it is now, and writes it only when all of them still hold; `--take` takes the cheapest without asking, which is how an agent asks for one.
+A mutation the run established nothing about is never offered, since no test closes a gap in the run.
+
 ## Parts of one catalog
 
 `njutest verify --shard K/N` divides the judging.
@@ -466,6 +499,25 @@ A subject the run made no change in is refused with `NJ6006`, naming the run and
 A part's report is refused as every command that needs a complete report refuses it: it holds a slice of the catalog, so what it says an item pins and leaves free would not be the item's.
 Merge the parts first.
 The command exits 0 whatever the specification says, because it describes and does not judge.
+
+## What a guard marks
+
+`njutest guard PATH` draws one file as a stored run measured it, and marks each line a change starts on with the section of the weakest change that starts there, by `Decision::standing`: `●` pinned, `○` left free, `◎` the same program, `◇` could not tell (`*`, `o`, `=`, `?` where the terminal has only ASCII).
+A line one change of which is left free is free, whatever else on it is pinned, and a change that spans two lines is marked on the line it starts on and nowhere else.
+The sections are the specification's, read off the same rows, so a line and the change `njutest spec` lists cannot stand in different places.
+
+The file is drawn only from lines the run vouches for: its SHA-256 now has to be the one the report recorded ([Sources](report-v1.md#sources)).
+A file with other bytes is one note, `◌` not yet asked, which says why and which run, and none of its code, because a mark beside a line the run did not measure is a claim about a program nobody asked about.
+`PATH` names one file by its whole path from the project's root, however it is spelled (`./src/lib.rs` is `src/lib.rs`); a file the run changed nothing in is refused with `NJ6006`.
+The command exits 0 whatever the marks say.
+
+`njutest lsp` puts the same marks in an editor.
+A mark is an inlay hint at the end of its line, labelled with its section, and hovering it gives each change that starts there, what each build established about it, and the `njutest explain` command that asks about it.
+Each item carries a lens above its first change saying how many of its changes stand where, and naming it as `njutest spec` reads it.
+The server asks for the whole buffer on every change and marks a document only while the client holds exactly the bytes the run read: an unsaved edit takes the marks away, and undoing it brings them back.
+A client that sends an edit as a range anyway gets no marks in that document until it opens it again, and its log says why.
+An editor that strips a byte-order mark from what it holds never holds the bytes a file with one was read as, so such a file is not marked.
+It reads the latest run's report once, and again only when the store points at another run.
 
 ## DEFECT, INSUFFICIENT, and ERROR
 

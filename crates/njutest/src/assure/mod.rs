@@ -4,9 +4,12 @@
 //! The phases of one verification, and what coordinates them.
 
 pub mod baseline;
+pub mod concurrency;
+pub mod crashes;
 pub mod deep;
 pub mod engine;
 pub mod equivalence;
+pub mod faults;
 pub mod fuzz;
 pub mod identity;
 pub mod knobs;

@@ -101,6 +101,15 @@ pub enum NotPut {
 }
 
 impl NotPut {
+    /// Whether another machine could put the knob, which leaves this run's column open rather than outside what the column speaks about.
+    #[must_use]
+    pub const fn another_machine_could(self) -> bool {
+        match self {
+            Self::Platform | Self::ZoneMissing | Self::LocaleMissing | Self::ShellMissing => true,
+            Self::ThroughCargo | Self::NotLibtest => false,
+        }
+    }
+
     /// Why, as a clause a reader is told.
     #[must_use]
     pub const fn said(self) -> &'static str {

@@ -117,6 +117,7 @@ fn prepare(fixture: &str) -> Tree {
             selection: Selection::tier(&REGISTRY, Tier::All),
             include: Vec::new(),
             exclude: Vec::new(),
+            narrowing: Vec::new(),
             packages: Vec::new(),
             skips: Vec::new(),
         },

@@ -82,6 +82,10 @@ pub fn replay(
     kind: FindingKind,
     watch: Watch<'_>,
 ) -> Result<Outcome, RunnerError> {
+    let operators = match replayed(kind) {
+        Replayable::Site(operators) => operators,
+        Replayable::Phase => return Ok(Outcome::Inconclusive),
+    };
     let workspace = Workspace::open(
         replaying.root,
         OpenOptions {
@@ -110,6 +114,7 @@ pub fn replay(
             skip_targets: replaying.skip_targets.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
+            operators,
             ..crate::assure::engine::switches()
         },
         watch.cancel,
@@ -130,6 +135,42 @@ pub fn replay(
     outcome
 }
 
+/// Where a finding's subject can be put back to the tests from.
+enum Replayable {
+    /// One site of a catalog discovered by these rules, or by the tier's where there are none.
+    Site(Vec<String>),
+    /// A phase as a whole, which no single execution reproduces.
+    Phase,
+}
+
+/// Where a finding of `kind` is put back to the tests from.
+fn replayed(kind: FindingKind) -> Replayable {
+    match kind {
+        FindingKind::UnnoticedFault => {
+            Replayable::Site(vec![crate::assure::faults::RULE.to_owned()])
+        }
+        FindingKind::BrokenUnderFault
+        | FindingKind::DimensionNotMeasured
+        | FindingKind::CorruptAfterCrash => Replayable::Phase,
+        FindingKind::BuildFailure
+        | FindingKind::FailingTest
+        | FindingKind::TargetMissing
+        | FindingKind::SurvivingMutant
+        | FindingKind::Timeout
+        | FindingKind::WaitedMutant
+        | FindingKind::StepLimitReachedMutant
+        | FindingKind::NotMeasured
+        | FindingKind::UnmatchedAcceptance
+        | FindingKind::UndefinedBehaviour
+        | FindingKind::HollowTarget
+        | FindingKind::WireUnnoticed
+        | FindingKind::UnstableBaseline
+        | FindingKind::EnvironmentDependent
+        | FindingKind::EnvironmentDependentReach
+        | FindingKind::ScheduleDependent => Replayable::Site(Vec::new()),
+    }
+}
+
 /// Whether the finding is still what the tests say.
 ///
 /// A clock expiry reproduces a clock-expiry finding, and a verified step boundary reproduces a step-boundary finding.
@@ -146,6 +187,9 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
             | Measured::Inconclusive
             | Measured::Errored => Outcome::Inconclusive,
         },
+        FindingKind::BrokenUnderFault
+        | FindingKind::DimensionNotMeasured
+        | FindingKind::CorruptAfterCrash => Outcome::Inconclusive,
         FindingKind::StepLimitReachedMutant => match outcome {
             Measured::StepLimitReached => Outcome::Reproduced,
             Measured::Killed | Measured::Survived => Outcome::Resolved,
@@ -164,7 +208,9 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
         | FindingKind::WireUnnoticed
         | FindingKind::UnstableBaseline
         | FindingKind::EnvironmentDependent
-        | FindingKind::EnvironmentDependentReach => match outcome {
+        | FindingKind::EnvironmentDependentReach
+        | FindingKind::UnnoticedFault
+        | FindingKind::ScheduleDependent => match outcome {
             Measured::Survived => Outcome::Reproduced,
             Measured::Killed => Outcome::Resolved,
             Measured::NotRun

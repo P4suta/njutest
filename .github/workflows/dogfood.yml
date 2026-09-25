@@ -33,6 +33,10 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   whole:
     name: the whole engine, in one job
@@ -89,7 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           previous=$(gh run list --workflow dogfood.yml --status success \
-            --json databaseId --jq '.[0].databaseId' || true)
+            --json databaseId --jq '.[0].databaseId // empty')
           if [ -z "$previous" ]; then
             echo "no earlier run of this workflow to compare with" >> "$GITHUB_STEP_SUMMARY"
             exit 0

@@ -102,16 +102,14 @@ runs:
         XDG_CACHE_HOME: ${{ runner.temp }}/rust-mutants-cache
       run: |
         set -uo pipefail
-        # The runner starts this shell with -e, and the status below is what this step exists to read.
-        set +e
         changed=()
         if [ -n "${REVISION}" ]; then
           changed=(--changed-from "${REVISION}")
         fi
-        # shellcheck disable=SC2086
         said=$(mktemp)
-        rust-mutants run --jobs all ${changed[@]+"${changed[@]}"} ${ARGS} | tee "${said}"
-        status=${PIPESTATUS[0]}
+        status=0
+        # shellcheck disable=SC2086
+        rust-mutants run --jobs all ${changed[@]+"${changed[@]}"} ${ARGS} | tee "${said}" || status=$?
         # The run says where it wrote its report, and the gate reads exactly that one, so a run that wrote none is never judged by an older one.
         report=$(sed -n 's/^REPORT[[:space:]]*//p' "${said}" | tail -n 1)
         {
@@ -139,14 +137,13 @@ runs:
         REVISION: ${{ inputs.changed-from }}
       run: |
         set -uo pipefail
-        # The runner starts this shell with -e, and the status below is what this step exists to read.
-        set +e
         changed=()
         if [ -n "${REVISION}" ]; then
           changed=(--changed-from "${REVISION}")
         fi
-        rust-mutants ci gate --host github --report "${REPORT}" --sarif "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/rust-mutants.sarif" ${changed[@]+"${changed[@]}"}
-        echo "status=$?" >> "${GITHUB_OUTPUT}"
+        status=0
+        rust-mutants ci gate --host github --report "${REPORT}" --sarif "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/rust-mutants.sarif" ${changed[@]+"${changed[@]}"} || status=$?
+        echo "status=${status}" >> "${GITHUB_OUTPUT}"
         exit 0
     - name: Upload the survivors to code scanning
       if: inputs.upload-sarif == 'true' && steps.gate.outputs.sarif != ''

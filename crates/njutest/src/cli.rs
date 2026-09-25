@@ -142,10 +142,14 @@ pub enum Command {
     Why(Why),
     /// Say, item by item, what a run found pinned and what it found free.
     Spec(Spec),
+    /// Draw one file as a run measured it, each changed line marked with where it stands.
+    Guard(Guard),
     /// Record that a reviewer looked at a surviving mutant.
     Accept(Accept),
     /// Go through one run's gaps, one at a time, deciding as you read.
     Review(Review),
+    /// The cheapest gap in the tests, one at a time, with the checked test that closes it.
+    Next(Next),
     /// Say what repairs a run was offered, and write the ones that hold up.
     Fix(Fix),
     /// Put one finding back to the tests and say whether it is still there.
@@ -279,6 +283,14 @@ pub struct Verify {
     /// Implies --changed.
     #[arg(long, value_name = "REV")]
     pub changed_from: Option<String>,
+    /// Stop the process just after each call that writes, and say whether the next run starts over what it left.
+    /// Turns `[durability] crash` on for this run; it cannot turn it off.
+    #[arg(long)]
+    pub crashes: bool,
+    /// Fail every call a `?` asks about, one at a time, and say which failures the suite noticed.
+    /// Turns `[faults] inject` on for this run; it cannot turn it off.
+    #[arg(long)]
+    pub faults: bool,
     /// Judge only one part of the catalog, as `K/N`.
     /// Every part measures the whole baseline; `njutest merge` combines what they judged.
     #[arg(long, value_name = "K/N")]
@@ -360,6 +372,18 @@ pub struct Spec {
     pub run: Option<String>,
 }
 
+/// `njutest guard`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Guard {
+    /// The file to draw, from the project's root.
+    #[arg(value_name = "PATH")]
+    pub path: String,
+    /// The run to read.
+    /// The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
+}
+
 /// `njutest why`.
 #[derive(Debug, Clone, clap::Args)]
 pub struct Why {
@@ -390,6 +414,12 @@ pub enum Asked {
         #[arg(value_name = "QUESTION")]
         id: String,
     },
+    /// One call a `?` asks about, failed by a fault.
+    Fault {
+        /// Its identity.
+        #[arg(value_name = "FAULT")]
+        id: String,
+    },
 }
 
 impl Asked {
@@ -399,6 +429,7 @@ impl Asked {
         match self {
             Self::Mutation { id } => crate::why::Claim::Mutation(id.clone()),
             Self::Seam { id } => crate::why::Claim::Seam(id.clone()),
+            Self::Fault { id } => crate::why::Claim::Fault(id.clone()),
         }
     }
 }
@@ -464,6 +495,24 @@ pub struct Review {
     /// The latest by default.
     #[arg(long, value_name = "RUN")]
     pub run: Option<String>,
+}
+
+/// `njutest next`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Next {
+    /// The run to read.
+    /// The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
+    /// Take the cheapest checked test without asking, and nothing after it.
+    #[arg(long)]
+    pub take: bool,
+    /// Never touch the network when a taken test is checked again.
+    #[arg(long)]
+    pub offline: bool,
+    /// Refuse to change `Cargo.lock` when a taken test is checked again.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 /// `njutest accept`.

@@ -15,6 +15,24 @@
       "parts": [
         {
           "accounting": {
+            "crashes": {
+              "corrupt": 0,
+              "not_put": 0,
+              "restarted": 0,
+              "sites": 0,
+              "undecided": 0,
+              "unreached": 0,
+              "unshared": 0
+            },
+            "faults": {
+              "not_put": 0,
+              "noticed": 0,
+              "sites": 0,
+              "undecided": 0,
+              "unnoticed": 0,
+              "unreached": 0,
+              "waited": 0
+            },
             "mutants": {
               "accepted": 0,
               "cataloged": 14,
@@ -56,7 +74,59 @@
               "skipped": 0
             }
           },
+          "beside": [],
           "candidates": [],
+          "concurrency": [
+            {
+              "explored": {
+                "state": "unexplored",
+                "why": "not-passing"
+              },
+              "standing": {
+                "state": "not-proven",
+                "why": [
+                  {
+                    "kind": "no-touch"
+                  },
+                  {
+                    "kind": "doctest"
+                  }
+                ]
+              },
+              "target": "<volatile>"
+            },
+            {
+              "explored": {
+                "state": "unexplored",
+                "why": "not-asked"
+              },
+              "standing": {
+                "because": [
+                  {
+                    "kind": "parallel-tests"
+                  }
+                ],
+                "state": "concurrent"
+              },
+              "target": "<volatile>"
+            },
+            {
+              "explored": {
+                "state": "unexplored",
+                "why": "not-asked"
+              },
+              "standing": {
+                "because": [
+                  {
+                    "kind": "parallel-tests"
+                  }
+                ],
+                "state": "concurrent"
+              },
+              "target": "<volatile>"
+            }
+          ],
+          "crashes": [],
           "drift": [
             {
               "state": "held",
@@ -67,6 +137,7 @@
               "target": "<volatile>"
             }
           ],
+          "faults": [],
           "findings": [
             {
               "detail": "no test could have noticed gt-to-ge at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",
@@ -158,6 +229,10 @@
             {
               "detail": "1 place was not mutated: test-code",
               "name": "skipped-test-code"
+            },
+            {
+              "detail": "3 test binaries are not proven to run one thread and no schedule of them was explored, so what they do when their threads interleave otherwise is not known (fixture-baseline/doc/fixture_baseline, fixture-baseline/lib/fixture_baseline, fixture-baseline/test/doubling)",
+              "name": "schedule-not-explored"
             }
           ],
           "mutants": [
@@ -791,7 +866,7 @@
   "schema": "njutest-assurance-report-v1",
   "schema_version": 2,
   "scope": {
-    "configuration": "",
+    "configuration": ".njutest.toml",
     "configured_builds": [
       "default"
     ],

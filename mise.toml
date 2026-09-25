@@ -147,10 +147,10 @@ run = "cargo build --locked --examples --workspace --all-features --profile test
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
 depends = ["build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
 # cmd.exe is not a POSIX shell: it leaves single quotes in the argument rather than taking them off, so the filterset reaches nextest as `'not` and the task dies parsing it before a single test runs.
 # Double quotes are what this shell spells the same intent with.
-run_windows = 'cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E "not binary(/^toolchain_/)"'
+run_windows = 'cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E "not binary(/^toolchain_/)"'
 
 # Each test in these binaries drives its own Cargo. CI adds `--test-threads 2`
 # on top of this, because a hosted runner multiplies those build jobs into
@@ -163,8 +163,8 @@ run = "bash scripts/exec-tax.sh"
 [tasks."test:slow"]
 description = "Run the suites that drive a real cargo against the fixture projects"
 depends = ["exec-tax", "build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
-run_windows = 'cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E "binary(/^toolchain_/)"'
+run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'"
+run_windows = 'cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E "binary(/^toolchain_/)"'
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
@@ -180,34 +180,8 @@ depends = ["kani:laws"]
 run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked --workspace --all-features --lib real_kani_068 -- --test-threads=1"
 
 [tasks."kani:laws"]
-description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation"
-run = """
-set -eu
-export_file="$(mktemp "${TMPDIR:-/tmp}/njutest-kani-laws.XXXXXX")"
-cleanup() { rm -f "$export_file"; }
-trap cleanup EXIT HUP INT TERM
-env -u RUSTFLAGS cargo kani -p rust-mutants --lib --exact --no-assertion-reach-checks \
-  --harness instrument::runtime::kani_laws::a_counting_checkpoint_counts \
-  --harness instrument::runtime::kani_laws::a_counting_checkpoint_never_stops \
-  --harness instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend \
-  --harness instrument::runtime::kani_laws::counting_is_not_reachable_from_dormant_or_active \
-  --harness instrument::runtime::kani_laws::activation_is_idempotent \
-  --harness instrument::runtime::kani_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary \
-  --harness instrument::runtime::kani_laws::stopping_is_absorbing \
-  --harness session::kani_laws::attempt_duration_is_the_checked_sum_of_every_execution \
-  --harness session::kani_laws::attempt_ledger_is_nonempty_and_its_result_is_derived \
-  --harness session::kani_laws::cancellation_before_retry_cannot_create_a_retry \
-  --harness session::kani_laws::cancelled_retry_is_structurally_not_run \
-  --harness session::kani_laws::equal_outcomes_choose_the_canonical_target_in_every_order \
-  --harness session::kani_laws::killed_is_absorbing \
-  --harness session::kani_laws::retry_reconciliation_is_closed \
-  --harness session::kani_laws::survived_means_every_nonempty_target_survived \
-  --harness session::kani_laws::target_join_is_associative \
-  --harness session::kani_laws::target_join_is_commutative \
-  --harness session::kani_laws::target_join_is_idempotent \
-  -Z unstable-options --export-json "$export_file"
-cargo xtask kani-laws-audit "$export_file"
-"""
+description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation, reading back the proof of identical inputs"
+run = 'cargo xtask kani-laws --cache "${XDG_CACHE_HOME:-$HOME/.cache}/njutest/kani-laws"'
 
 # The floors are the ones .github/workflows/ci.yml enforces, in the same order
 # and with the same scoping. Never lower one; raise one when its suite earns it,
@@ -225,8 +199,8 @@ cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
 cargo build --locked --examples --workspace --all-features --profile test
-cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
-cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
+cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
 cargo llvm-cov report --summary-only --fail-under-regions 80 \
   --ignore-filename-regex 'compiler-surfaces/'
 cargo llvm-cov report --summary-only --fail-under-regions 87 \
@@ -291,7 +265,7 @@ fi
 cargo audit --no-fetch --deny warnings --db "${db}" || {
   status=$?
   echo "audit: cargo audit exited ${status}; its own output above says why" >&2
-  exit "${status}"
+  exit $((status))
 }
 """
 
@@ -322,21 +296,12 @@ done
 description = "Run cargo-mutants, the external mutation tester, against this workspace"
 run = "cargo mutants --config .cargo/mutants.toml --workspace"
 
-# The order is cheapest refusal first, which is not the order CI runs them in:
-# CI runs the jobs at once and waits for all of them, and a person waits for
-# each in turn. Formatting answers in seconds, rustdoc and clippy and the
-# repository gates in tens of them, the suite in minutes. Two broken
-# documentation links and two fuzz targets naming code that had been deleted
-# all lived behind a three-minute suite, and every one of them is something
-# `lint` says in seventeen seconds.
-# What this leaves to CI is what this machine cannot answer: the suite on the
-# other two platforms, the coverage ratchets (a second instrumented run of
-# everything), the suite under the interpreter, and the composite action driven
-# the way another repository drives it. Everything else CI asks is asked here
-# first, because a push that has to wait twenty minutes to be told about a
-# stale golden is a push nobody waits for.
-# The pre-push gate isolates the tree and not the build cache: it symlinks the developer's target/debug in, which is minutes per push and the reason every earlier "green" in this campaign was about artifacts compiled before the field they were meant to prove existed.
-# CI is always cold and never had the problem; this is the one place that needs asking.
+# The order is cheapest refusal first, which is not the order CI runs them in: CI runs the jobs at once and waits for all of them, and a person waits for each in turn.
+# Formatting answers in seconds, rustdoc and clippy and the repository gates in tens of them, the suite in minutes.
+# Two broken documentation links and two fuzz targets naming code that had been deleted all lived behind a three-minute suite, and every one of them is something `lint` says in seventeen seconds.
+# What this leaves to CI is what this machine cannot answer: the suite on the other two platforms, the coverage ratchets (a second instrumented run of everything), the suite under the interpreter, and the composite action driven the way another repository drives it.
+# Everything else CI asks is asked here first, because a push that has to wait twenty minutes to be told about a stale golden is a push nobody waits for.
+# The pre-push gate (`cargo xtask pre-push`) checks the pushed object in the repository's one gate tree, with a build of its own that every worktree shares and nobody's `target/debug` feeds; docs/adr/0030-one-machine-several-sessions.md says why.
 [tasks."build:release"]
 description = "Build the njutest binary this commit would ship, which is what a smoke test of the action runs"
 run = "cargo build --locked --release --bin njutest"
@@ -422,7 +387,7 @@ shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin njutest
-./target/release/njutest verify --locked --offline --ui=plain --trace "$@" || true
+./target/release/njutest verify --locked --offline --ui=plain --trace "$@" || case "$?" in 1 | 2) ;; *) exit 1 ;; esac
 run="$(ls -dt reports/runs/*/ | head -1)"
 trace="$(ls -dt .njutest/trace/*/ | head -1)"
 echo "re-deciding ${run} from ${trace}"
@@ -446,7 +411,7 @@ run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
 cargo build --release -p xtask
-./target/release/rust-mutants run --locked --offline --trace --jobs all "$@" || true
+./target/release/rust-mutants run --locked --offline --trace --jobs all "$@" || case "$?" in 1) ;; *) exit 1 ;; esac
 run="$(ls -dt reports/mutation/*/ 2>/dev/null | head -1)"
 if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
   echo "the run left no report to re-decide; read what it said above" >&2

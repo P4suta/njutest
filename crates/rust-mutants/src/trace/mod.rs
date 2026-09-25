@@ -15,13 +15,13 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 pub use event::{
-    AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
-    EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
-    Measurement, MutantExecRecord, NjutestBuild, NjutestBuildError, NoteRecord, OpenRecord,
-    Payload, PerturbationRecord, PerturbedRecord, PhaseRecord, ReachRecord, RouteRecord, RunRecord,
-    SCHEMA, SelectRecord, SetRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord,
-    SummaryRecord, SweepRecord, TargetRecord, TouchRecord, TraceContext, ValidateRoundRecord,
-    VerifyRecord, WitnessRecord,
+    AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DelayRecord, DischargeRecord,
+    DiscoverFileRecord, EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord,
+    InstrumentRecord, KeptRecord, Measurement, MutantExecRecord, NjutestBuild, NjutestBuildError,
+    NoteRecord, OpenRecord, Payload, PerturbationRecord, PerturbedRecord, PhaseRecord, ReachRecord,
+    RouteRecord, RunOutcome, RunRecord, SCHEMA, SelectRecord, SetRecord, SiteRecord,
+    SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord, SweepRecord, TargetRecord,
+    TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -476,7 +476,7 @@ impl Recorder {
     ///
     /// # Errors
     /// The sink could not make the completed recording durable.
-    pub fn run_end(&self, outcome: &str, error: Option<String>) -> std::io::Result<()> {
+    pub fn run_end(&self, outcome: RunOutcome, error: Option<String>) -> std::io::Result<()> {
         let Some(inner) = &self.inner else {
             return Ok(());
         };
@@ -507,7 +507,7 @@ impl Recorder {
                 moment,
                 Payload::RunEnd {
                     run: RunRecord {
-                        outcome: outcome.to_owned(),
+                        outcome,
                         error,
                         events_emitted,
                         events_dropped,

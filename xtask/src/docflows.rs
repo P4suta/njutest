@@ -50,6 +50,17 @@ pub enum DocflowsError {
     Refused(String),
 }
 
+impl crate::error::Coded for DocflowsError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Io { .. } | Self::Start(..) | Self::Undecodable(..) | Self::Failed { .. } => {
+                crate::error::XtCode::DocflowsUnchecked
+            }
+            Self::Refused(..) => crate::error::XtCode::DocflowsRefused,
+        }
+    }
+}
+
 /// The prefixes by which a page names this repository's own actions and reusable workflows.
 const OWN: [&str; 2] = ["<owner>/njutest/.github/", "P4suta/njutest/.github/"];
 

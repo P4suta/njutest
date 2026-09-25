@@ -226,6 +226,10 @@ pub struct ScoreDocument {
 /// One non-refused candidate and what the run established about it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact about one judged mutant that the published report states"
+)]
 pub struct RunMutantDocument {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -280,6 +284,8 @@ pub struct RunMutantDocument {
     pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
+    /// Whether the harness had already answered when the clock ended the process: a verdict the harness gave, from a process that would not end.
+    pub lingered: bool,
     /// Why it was never executed, when it was not: `unreached`, `discharged`, or `interrupted`.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub not_run_reason: Option<NotRunReason>,
@@ -1161,9 +1167,18 @@ fn mutant(
         exit_code: one.exit_code,
         duration_ms: millis(one.duration)?,
         tests_run: one.tests_run,
-        killed_by: one.failed_tests.clone(),
+        killed_by: match one.outcome {
+            Outcome::Killed => one.failed_tests.clone(),
+            Outcome::NotRun
+            | Outcome::Survived
+            | Outcome::StepLimitReached
+            | Outcome::Waited
+            | Outcome::Inconclusive
+            | Outcome::Errored => Vec::new(),
+        },
         signal: one.signal,
         retried: one.retried,
+        lingered: one.lingered,
         not_run_reason: one.not_run_reason,
         route: one.route.clone(),
         identical: one.identical,

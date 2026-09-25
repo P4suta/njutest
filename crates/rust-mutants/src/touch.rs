@@ -23,6 +23,9 @@ pub(crate) const INFECTED: &str = "i";
 /// The first field of a record naming the items whose bodies a thread entered, by item index.
 pub(crate) const ENTERED: &str = "e";
 
+/// How a record naming entered items begins, which is what counting what recording cost reads.
+pub(crate) const ENTERED_RECORD: &str = "e\t";
+
 /// How many mutants and how many items a record may name, which is what every index it holds is checked against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bounds {
@@ -307,6 +310,44 @@ pub struct Touched {
     /// Every item of every file the tree instrumented, by item index, which is what an `entered` index names.
     #[serde(default)]
     pub items: Vec<Item>,
+}
+
+/// An item named so that a record read after an edit still names it: its package, its file, and its position among the items of that file, which an edit inside an earlier body leaves alone where a byte offset would move.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ItemRef {
+    /// The package whose unit compiled the file.
+    pub package: String,
+    /// The workspace-relative path with forward slashes.
+    pub path: String,
+    /// The item's position among every cataloged item of its file, in catalog order, from [`crate::instrument::ItemCatalog::ordinal`].
+    pub ordinal: u32,
+}
+
+/// How much of a process a union of entered items accounts for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Completeness {
+    /// The process ran to its end, so the union is every item it entered.
+    Whole,
+    /// A test failed, and a process may be ended at its first failure, so the union is claimed only up to it: enough to say why it failed, not what a longer run would have entered.
+    UpToFirstFailure,
+    /// A clock, a signal, or a cancellation ended the process, so the union says nothing about what it would have entered.
+    Cut,
+}
+
+/// The items one mutant execution's whole process entered, and how much of the process that accounts for.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Entered {
+    /// Every item any thread of the process entered.
+    pub items: BTreeSet<ItemRef>,
+    /// How much of the process the union accounts for.
+    pub completeness: Completeness,
+    /// How many records the process wrote to say it, which is what recording cost it (ADR 0027).
+    pub records: u32,
 }
 
 /// One item of an instrumented file whose body a test can enter.

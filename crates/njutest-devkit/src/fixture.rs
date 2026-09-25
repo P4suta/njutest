@@ -415,8 +415,10 @@ pub fn names() -> Vec<String> {
             found.push(name);
             continue;
         }
-        for (inner, _nested) in directories(&path) {
-            found.push(format!("{name}/{inner}"));
+        for (inner, nested) in directories(&path) {
+            if std::fs::metadata(nested.join("Cargo.toml")).is_ok_and(|entry| entry.is_file()) {
+                found.push(format!("{name}/{inner}"));
+            }
         }
     }
     found.sort();
@@ -433,4 +435,25 @@ fn directories(dir: &Path) -> Vec<(String, PathBuf)> {
         .collect();
     found.sort();
     found
+}
+
+/// Names `contract` in the copied tree's configuration, writing one where the tree has none, so a test about one contract's behaviour is not a test about the default.
+///
+/// # Panics
+/// Where the configuration cannot be read or written, which is a setup failure.
+pub fn pin_contract(root: &Path, contract: &str) {
+    let path = root.join(".njutest.toml");
+    let written = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "version = 1\n".to_owned(),
+        Err(error) => panic!("the configuration of {} reads: {error}", root.display()),
+    };
+    if written
+        .lines()
+        .any(|line| line.trim_start().starts_with("contract"))
+    {
+        return;
+    }
+    std::fs::write(&path, format!("contract = \"{contract}\"\n{written}"))
+        .unwrap_or_else(|error| panic!("the configuration of {} writes: {error}", root.display()));
 }

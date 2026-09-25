@@ -32,7 +32,7 @@ fn expect_ok(text: &str) -> Config {
 fn the_defaults_are_the_numbers_the_contract_states() {
     let config = Config::default();
     assert_eq!(config.version, 1);
-    assert_eq!(config.contract, Contract::StandardV1);
+    assert_eq!(config.contract, Contract::WholeV1);
     assert_eq!(config.execution.timeout, DEFAULT_TIMEOUT);
     assert_eq!(config.execution.jobs, rust_mutants::run::Jobs::Auto);
     assert_eq!(config.cache.max_bytes, DEFAULT_CACHE_MAX_BYTES);
@@ -103,10 +103,10 @@ fn how_long_a_measurement_may_take_is_not_how_long_a_build_may_take() {
 #[test]
 fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
     let written = skeleton();
-    assert_eq!(load("").expect("empty is legal"), Config::default());
+    assert_eq!(load("").expect("empty is legal"), Config::unwritten());
     assert_eq!(
         load(&written).expect("the skeleton loads"),
-        Config::default(),
+        Config::unwritten(),
         "the untouched skeleton is exactly the defaults"
     );
     for section in [
@@ -544,7 +544,14 @@ fn a_missing_file_is_the_defaults_and_a_present_one_is_read() {
     let dir = tempfile::tempdir().expect("tempdir");
     assert_eq!(
         Config::load(dir.path()).expect("a missing file is legal"),
-        Config::default()
+        Config::unwritten(),
+        "a tree with no configuration asks what the default contract asks, as an empty file does, \
+         on every platform and through every command"
+    );
+    assert_eq!(
+        Config::load(dir.path()).expect("a missing file is legal"),
+        load("").expect("empty is legal"),
+        "a missing file and an empty one are the same document"
     );
     std::fs::write(dir.path().join(FILE_NAME), "[reports]\nkeep = 3\n").expect("write");
     assert_eq!(Config::load(dir.path()).expect("read").reports.keep, 3);
@@ -604,7 +611,7 @@ fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it
         vars: Vec::new(),
         working_directory: PathBuf::from("/somewhere/a/caller/named"),
         temp_directory: PathBuf::from("/tmp"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         cache_directory: PathBuf::from("/tmp/cache"),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -660,7 +667,7 @@ fn an_exclude_pattern_that_is_not_a_pattern_is_refused() {
 #[test]
 fn a_knob_is_named_from_the_closed_set_and_a_name_outside_it_is_refused_by_that_name() {
     let asked = Config::parse(
-        "[repeatable]\nknobs = [\"timezone\", \"threads\"]\n",
+        "contract = \"standard-v1\"\n[repeatable]\nknobs = [\"timezone\", \"threads\"]\n",
         std::path::Path::new("njutest.toml"),
     )
     .expect("two knobs by their names");
