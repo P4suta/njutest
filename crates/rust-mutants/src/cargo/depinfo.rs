@@ -22,6 +22,24 @@ pub struct Unit {
     pub sources: Vec<PathBuf>,
 }
 
+/// Everything one compilation read: every file a unit's dep-info names, build scripts included and whatever the extension, and every environment variable rustc recorded reading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Inputs {
+    /// Every file read, absolute, sorted, deduplicated.
+    pub files: Vec<PathBuf>,
+    /// Every environment variable read at compile time, sorted by name.
+    pub env: Vec<EnvDep>,
+}
+
+/// One environment variable a compilation read through `env!` or `option_env!`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EnvDep {
+    /// Its name.
+    pub name: String,
+    /// Its value as rustc recorded it, absent where it was unset.
+    pub value: Option<String>,
+}
+
 /// The dep-info file rustc wrote beside `artifact`: the same stem without the `lib` prefix and with the `.d` extension.
 #[must_use]
 pub fn dep_info_path(artifact: &Path) -> Option<PathBuf> {
@@ -115,6 +133,67 @@ fn is_rust(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }
 
+/// The environment variables a dep-info records reading, from its `# env-dep:` lines.
+#[must_use]
+pub fn env_deps(text: &str) -> Vec<EnvDep> {
+    let mut found: Vec<EnvDep> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("# env-dep:"))
+        .map(|said| match said.split_once('=') {
+            Some((name, value)) => EnvDep {
+                name: name.to_owned(),
+                value: Some(value.to_owned()),
+            },
+            None => EnvDep {
+                name: said.to_owned(),
+                value: None,
+            },
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Everything a compilation read, from every artifact's dep-info, build scripts included.
+///
+/// # Errors
+/// The dep-info errors of [`units_of`].
+pub fn inputs_of(messages: &[Message], workspace_root: &Path) -> Result<Inputs, CargoError> {
+    let mut files = Vec::new();
+    let mut env = Vec::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        if is_uplift(artifact) {
+            continue;
+        }
+        let text = dep_info_of(artifact)?;
+        files.extend(
+            parse_dep_info(&text)?
+                .into_iter()
+                .map(|path| absolute(workspace_root, path)),
+        );
+        env.extend(env_deps(&text));
+    }
+    files.sort();
+    files.dedup();
+    env.sort();
+    env.dedup();
+    Ok(Inputs { files, env })
+}
+
+/// `path` as a dep-info names it, resolved against the directory rustc ran in.
+fn absolute(workspace_root: &Path, path: String) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        path
+    } else {
+        workspace_root.join(path)
+    }
+}
+
 /// The units of a compilation, each with the sources its dep-info names, resolved against `workspace_root` (the directory rustc ran in).
 /// Build scripts are left out: they are never mutated.
 ///
@@ -166,6 +245,24 @@ fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> 
 }
 
 fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {
+    let text = dep_info_of(artifact)?;
+    let mut sources: Vec<PathBuf> = parse_dep_info(&text)?
+        .into_iter()
+        .map(|path| absolute(workspace_root, path))
+        .filter(|path| is_rust(path))
+        .collect();
+    sources.sort();
+    sources.dedup();
+    Ok(Unit {
+        package_id: artifact.package_id.clone(),
+        target: artifact.target.clone(),
+        test: artifact.profile.test,
+        sources,
+    })
+}
+
+/// The text of the dep-info rustc wrote for `artifact`.
+fn dep_info_of(artifact: &Artifact) -> Result<String, CargoError> {
     let candidates = dep_info_candidates(artifact)?;
     let file = match regular_dep_info(&candidates)? {
         Some(file) => file,
@@ -179,32 +276,12 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
             )
         })?,
     };
-    let text = std::fs::read_to_string(&file).map_err(|source| {
+    std::fs::read_to_string(&file).map_err(|source| {
         CargoError::new(
             CargoErrorKind::DepInfoMissing,
             format!("cannot read dep-info {}", file.display()),
         )
         .with_source(source)
-    })?;
-    let mut sources: Vec<PathBuf> = parse_dep_info(&text)?
-        .into_iter()
-        .map(|path| {
-            let path = PathBuf::from(path);
-            if path.is_absolute() {
-                path
-            } else {
-                workspace_root.join(path)
-            }
-        })
-        .filter(|path| is_rust(path))
-        .collect();
-    sources.sort();
-    sources.dedup();
-    Ok(Unit {
-        package_id: artifact.package_id.clone(),
-        target: artifact.target.clone(),
-        test: artifact.profile.test,
-        sources,
     })
 }
 
