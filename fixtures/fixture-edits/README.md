@@ -53,26 +53,30 @@ The run is `rust-mutants run --tier all --offline --locked --skip-target edits/t
 It leaves `edits/test/included` out because that target is the class it stands for, seen from the engine's side.
 Instrumenting `data.rs` changes its text, so a test that reads the file as text fails with nothing active, and the run refuses it with `RM5002` rather than report outcomes that are about the instrumentation.
 
+`tests/child.rs` starts the binary with nothing inherited, so the baseline sees a process of the tree run without the run's environment, and `edits/test/child` is `uncontrolled-child` (ADR 0029).
+Its touch record is not gathered, so it stays in every route, and a pass of it says nothing about a mutant that may have lived only in the process it could not see into.
+Every mutation it is put to that no other target kills is therefore `inconclusive`, the proc macro's included: a test that starts a process with nothing inherited could as well start the compiler.
+
 ```fates --skip-target edits/test/included
-answer/src/lib.rs:11:5 return-default unreached
-answer/src/lib.rs:11:5 string-to-empty unreached
-answer/src/lib.rs:11:25 string-to-empty unreached
+answer/src/lib.rs:11:5 return-default inconclusive
+answer/src/lib.rs:11:5 string-to-empty inconclusive
+answer/src/lib.rs:11:25 string-to-empty inconclusive
 src/allman.rs:22:5 return-default killed
 src/answered.rs:8:5 return-default killed
 src/built.rs:8:5 return-default killed
-src/child.rs:8:5 return-default survived
-src/child.rs:8:8 condition-to-false survived
-src/child.rs:8:8 condition-to-true survived
-src/child.rs:8:8 negate-condition survived
-src/child.rs:8:10 gt-to-ge survived
-src/child.rs:8:12 int-increment survived
-src/child.rs:8:16 return-default survived
-src/child.rs:8:16 string-to-empty survived
-src/child.rs:8:36 return-default survived
-src/child.rs:8:36 string-to-empty survived
-src/data.rs:8:5 int-decrement survived
-src/data.rs:8:5 int-increment survived
-src/data.rs:8:5 return-default survived
+src/child.rs:8:5 return-default inconclusive
+src/child.rs:8:8 condition-to-false inconclusive
+src/child.rs:8:8 condition-to-true inconclusive
+src/child.rs:8:8 negate-condition inconclusive
+src/child.rs:8:10 gt-to-ge inconclusive
+src/child.rs:8:12 int-increment inconclusive
+src/child.rs:8:16 return-default inconclusive
+src/child.rs:8:16 string-to-empty inconclusive
+src/child.rs:8:36 return-default inconclusive
+src/child.rs:8:36 string-to-empty inconclusive
+src/data.rs:8:5 int-decrement inconclusive
+src/data.rs:8:5 int-increment inconclusive
+src/data.rs:8:5 return-default inconclusive
 src/documented.rs:12:5 return-default killed
 src/documented.rs:12:7 mul-to-div killed
 src/documented.rs:12:9 int-decrement killed
@@ -81,21 +85,21 @@ src/generated.rs:8:5 int-decrement killed
 src/generated.rs:8:5 int-increment killed
 src/generated.rs:8:5 return-default killed
 src/located.rs:9:5 return-default killed
-src/located.rs:14:5 int-decrement survived
-src/located.rs:14:5 int-increment survived
-src/located.rs:14:5 return-default survived
+src/located.rs:14:5 int-decrement inconclusive
+src/located.rs:14:5 int-increment inconclusive
+src/located.rs:14:5 return-default inconclusive
 src/located.rs:19:5 return-default killed
 src/loud.rs:8:5 return-default killed
-src/loud.rs:8:8 condition-to-false survived
+src/loud.rs:8:8 condition-to-false inconclusive
 src/loud.rs:8:8 condition-to-true killed
 src/loud.rs:8:8 negate-condition killed
-src/loud.rs:8:33 int-decrement survived
-src/loud.rs:8:33 int-increment survived
-src/loud.rs:8:33 return-default survived
+src/loud.rs:8:33 int-decrement inconclusive
+src/loud.rs:8:33 int-increment inconclusive
+src/loud.rs:8:33 return-default inconclusive
 src/loud.rs:8:45 int-decrement killed
 src/loud.rs:8:45 int-increment killed
 src/loud.rs:8:45 return-default killed
-src/main.rs:7:38 int-decrement survived
-src/main.rs:7:38 int-increment survived
-src/quiet.rs:8:5 int-increment survived
+src/main.rs:7:38 int-decrement inconclusive
+src/main.rs:7:38 int-increment inconclusive
+src/quiet.rs:8:5 int-increment inconclusive
 ```

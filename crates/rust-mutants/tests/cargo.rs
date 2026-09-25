@@ -19,8 +19,8 @@ use njutest_devkit::result::{
 };
 use rust_mutants::cargo::{
     BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
-    LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, parse_dep_info,
-    parse_messages, parse_version,
+    LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, env_deps,
+    parse_dep_info, parse_messages, parse_version,
 };
 use rust_mutants::runner::Cancel;
 
@@ -246,6 +246,20 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::MessageUnparsable);
     assert!(error.to_string().contains("line 2"), "{error}");
+}
+
+#[test]
+fn dep_info_says_which_variables_the_compiler_read_and_what_it_read() {
+    let text = "/t/deps/demo-abc.d: src/lib.rs\n\nsrc/lib.rs:\n\n# env-dep:WHO=a\\\\b\\nc\n# env-dep:ABSENT\n";
+    assert_eq!(
+        env_deps(text),
+        std::collections::BTreeMap::from([
+            ("ABSENT".to_owned(), None),
+            ("WHO".to_owned(), Some("a\\b\nc".to_owned())),
+        ]),
+        "rustc escapes a backslash and a line feed to keep the value on its line, and an unset \
+         variable it read is written without a value"
+    );
 }
 
 #[test]

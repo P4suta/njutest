@@ -1863,6 +1863,12 @@ pub fn limitation_detail(name: &str) -> String {
             "the target recorded what its guards reached and the record did not read back, \
              so nothing of it is believed and every test of it runs"
         }
+        rust_mutants::limitation::UNCONTROLLED_CHILD => {
+            "a process of the target's tree ran without the environment the run gave it, as a \
+             test that clears a child's environment starts one: no mutant can be active in it \
+             and nothing records what it entered, so every test of the target stays in every \
+             route and a survival it reports is inconclusive"
+        }
         rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION => {
             "the configuration named this target as one never to start, so no mutation was \
              measured against it"

@@ -1045,7 +1045,7 @@ fn whole(
     let shard = shard.map(run::Shard::parse).transpose()?;
     let asking = asking_equivalence(settings, open);
     let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
-    let (keyed, expectations) = (keyed(session, settings, args), expectations(settings));
+    let (keyed, expectations) = (keyed(session, whole), expectations(settings));
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
         quiet: &run::Quiet::default(),
@@ -1185,7 +1185,12 @@ fn measured_run(
 }
 
 /// Everything beyond a mutant's own identity that a stored outcome is keyed on.
-fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outcomes::Keyed {
+fn keyed(session: &Session, whole: &Whole<'_>) -> crate::outcomes::Keyed {
+    let (settings, args) = (whole.settings, whole.args);
+    let engine = match crate::outcomes::engine_of(&whole.environment.program) {
+        Ok(engine) => engine,
+        Err(_unreadable_so_nothing_is_remembered) => String::new(),
+    };
     crate::outcomes::Keyed {
         closure: session.closure().to_owned(),
         manifests: session.manifests().to_owned(),
@@ -1199,6 +1204,7 @@ fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outc
         timeout: crate::config::render_timeout(settings.config.mutation.timeout),
         steps: settings.config.mutation.steps,
         build: settings.config.build.config().arguments(),
+        engine,
     }
 }
 
@@ -1908,6 +1914,7 @@ fn instrumented(
         probed: &BTreeMap::default(),
         catalog_digest: discovery.catalog.digest(),
         first_item: 0,
+        watched: "<watched>",
     })
     .map_err(EngineError::from)?;
     let Some(prefix) = mutant else {

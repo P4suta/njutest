@@ -260,7 +260,7 @@ fn a_target_whose_reach_moved_between_its_baseline_and_a_control_is_an_unstable_
 
 #[cfg(unix)]
 #[test]
-fn a_target_no_kill_was_confirmed_on_is_one_whose_drift_was_not_measured() {
+fn a_target_no_kill_was_confirmed_on_is_still_compared_with_a_control_of_its_own() {
     let fixture = fixture("fixture-hollow");
     let output = verify(&fixture, &[]);
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
@@ -284,29 +284,22 @@ fn a_target_no_kill_was_confirmed_on_is_one_whose_drift_was_not_measured() {
                 "fixture-hollow/lib/fixture_hollow".to_owned(),
                 "held".to_owned()
             ),
-            (
-                "fixture-hollow/test/smoke".to_owned(),
-                "not-measured".to_owned()
-            ),
+            ("fixture-hollow/test/smoke".to_owned(), "held".to_owned()),
         ],
-        "the library's kills were confirmed by a control that reached what its baseline did, \
-         and nothing was ever confirmed on `smoke`, so nothing compared it"
+        "nothing was ever confirmed on `smoke`, and a run that routes on its reach and selects \
+         on it still owes it a second whole run to compare: {document}\n{stderr}"
     );
-    let limitation: Vec<&serde_json::Value> = part["limitations"]
-        .as_array()
-        .unwrap_or_else(|| panic!("the report lists limitations: {document}"))
-        .iter()
-        .filter(|one| one["name"] == njutest::limitation::DRIFT_NOT_MEASURED)
-        .collect();
-    assert_eq!(limitation.len(), 1, "{document}");
-    let detail = limitation[0]["detail"].as_str().unwrap_or_default();
     assert!(
-        detail.ends_with("(fixture-hollow/test/smoke)") && detail.contains("1 target"),
-        "the limitation names the one target it is about and says how many: {detail}"
+        !part["limitations"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the report lists limitations: {document}"))
+            .iter()
+            .any(|one| one["name"] == njutest::limitation::DRIFT_NOT_MEASURED),
+        "every target was compared, so none is owed the limitation: {document}"
     );
     assert!(
         findings_of(&document, "unstable-baseline").is_empty(),
-        "a target whose drift was not measured is not one that moved: {document}"
+        "a target that held is not one that moved: {document}"
     );
 }
 
@@ -1195,7 +1188,7 @@ fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
 
 #[cfg(unix)]
 #[test]
-fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
+fn a_resumed_run_compares_every_target_itself_rather_than_restoring_a_comparison() {
     let fixture = fixture("fixture-assured");
     assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
     let established = document(&fixture);
@@ -1270,13 +1263,14 @@ fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
         .map(|one| &one["state"])
         .collect();
     assert!(
-        states.iter().all(|state| *state == "not-measured"),
-        "every kill was inherited, so no control ran this run, and a comparison the \
-         interrupted run made was against a baseline this run measured again: {part}"
+        states.iter().all(|state| *state == "held"),
+        "every kill was inherited, so no control confirming one ran this run, and each target \
+         was run alone for the comparison instead: {part}\n{stderr}"
     );
     assert!(
-        names(&report).contains(&njutest::limitation::DRIFT_NOT_MEASURED.to_owned()),
-        "and the run says so rather than claiming a hold it did not observe: {report}"
+        !names(&report).contains(&njutest::limitation::DRIFT_NOT_MEASURED.to_owned()),
+        "the comparison the interrupted run made was not restored; this run made its own: \
+         {report}"
     );
 }
 
@@ -1879,6 +1873,53 @@ fn a_run_that_reads_an_answer_back_says_it_the_way_a_run_that_established_one_do
 }
 
 #[cfg(unix)]
+#[test]
+fn a_mutant_only_a_child_that_lost_the_runs_environment_runs_is_not_a_survivor() {
+    let fixture = fixture("fixture-cleared-child");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let part = &document["builds"][0]["parts"][0];
+    let answered: Vec<(String, String)> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists mutations: {document}\n{stderr}"))
+        .iter()
+        .filter(|row| row["item"] == "answer")
+        .map(|row| {
+            (
+                row["rule"].as_str().unwrap_or_default().to_owned(),
+                row["decision"]["outcome"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    assert!(!answered.is_empty(), "{document}");
+    assert!(
+        answered
+            .iter()
+            .all(|(_, outcome)| outcome != "survived" && outcome != "unreached"),
+        "only the child runs `answer`, and the test starts it with a cleared environment, so no \
+         mutant of it was ever active and nothing recorded the child entering it: `survived` \
+         would claim every test that could notice ran and none did, and `unreached` that no \
+         test reached it: {answered:?}"
+    );
+    let limitations = part["limitations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists limitations: {document}"));
+    assert!(
+        limitations
+            .iter()
+            .any(|one| one["name"] == "uncontrolled-child"
+                && one["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("fixture-cleared-child/test/cleared"))),
+        "and the run says which target started a process it could not reach: {limitations:?}"
+    );
+}
+
+#[cfg(unix)]
 fn concluded(path: &Path) -> (Verdict, BTreeSet<(String, String)>, BTreeSet<String>) {
     let text =
         std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
@@ -1904,6 +1945,44 @@ fn concluded_from(text: &str) -> (Verdict, BTreeSet<(String, String)>, BTreeSet<
             .map(|limitation| limitation.name.clone())
             .collect(),
     )
+}
+
+#[cfg(unix)]
+#[test]
+fn a_survival_under_which_a_child_lost_the_runs_environment_is_not_one() {
+    let fixture = fixture("fixture-cleared-under-mutant");
+    let output = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let decided: BTreeSet<(String, String)> = document["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists mutations: {document}\n{stderr}"))
+        .iter()
+        .filter(|row| row["item"] == "delegated")
+        .map(|row| {
+            (
+                row["rule"].as_str().unwrap_or_default().to_owned(),
+                row["decision"]["outcome"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    for (rule, outcome) in &decided {
+        let starts_a_child = rule == "return-true";
+        assert!(
+            !starts_a_child || outcome != "survived",
+            "{rule} makes the test start a child with a cleared environment, a process no \
+             mutant can be active in, so its passing is not a survival: {decided:?}"
+        );
+    }
+    assert!(
+        decided
+            .iter()
+            .any(|(rule, outcome)| rule == "gt-to-ge" && outcome == "survived"),
+        "a mutant under which no child starts survives as it always did: {decided:?}"
+    );
 }
 
 #[cfg(unix)]
