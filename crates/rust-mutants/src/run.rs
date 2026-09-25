@@ -1788,6 +1788,7 @@ fn carried(
     let (Some(record), Some(Ok(()))) = (record, decided) else {
         return Ok(None);
     };
+    session.believed(mutant.id.as_str(), record.clone())?;
     Ok(Some(remembered(
         mutant,
         record.outcome.into(),

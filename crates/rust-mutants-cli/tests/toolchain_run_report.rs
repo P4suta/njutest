@@ -1364,6 +1364,14 @@ fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
     }
 }
 
+/// The carried records the newest run of `fixture` believed.
+fn carried_of(fixture: &Fixture) -> serde_json::Value {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    document_at(&directory.join(rust_mutants::carry::FILE))
+}
+
 /// The skeletons the newest run of `fixture` kept.
 fn skeletons_of(fixture: &Fixture) -> serde_json::Value {
     let directory = njutest_devkit::fixture::newest_run(
@@ -1567,6 +1575,15 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
         stderr(&carried)
     );
     let with_carry = by_place(&stored(&fixture));
+    let believed = carried_of(&fixture);
+    let errors = against_schema("rust-mutants-carried-v1.json", &believed);
+    assert!(errors.is_empty(), "{errors:#?}");
+    assert!(
+        believed["records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty()),
+        "a run that carried answers keeps every record it believed: {believed:#}"
+    );
     let fresh = against(
         &fixture,
         &[

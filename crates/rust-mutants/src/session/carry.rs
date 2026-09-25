@@ -208,4 +208,42 @@ impl Session {
             })
             .collect()
     }
+
+    /// Keeps `record` as what this run believed about the mutant `id`, so the run's evidence can say what each carried answer rests on.
+    ///
+    /// # Errors
+    /// [`SessionError::CarryStatePoisoned`].
+    pub fn believed(&self, id: &str, record: crate::carry::Carried) -> Result<(), EngineError> {
+        self.closure
+            .carrying
+            .believed
+            .lock()
+            .map_err(|_poisoned| SessionError::CarryStatePoisoned)?
+            .insert(id.to_owned(), record);
+        Ok(())
+    }
+
+    /// Every record this run believed, by the full identity of the mutant it answered for.
+    ///
+    /// # Errors
+    /// [`SessionError::CarryStatePoisoned`].
+    pub fn carried_evidence(&self) -> Result<crate::carry::Believed, EngineError> {
+        let believed = self
+            .closure
+            .carrying
+            .believed
+            .lock()
+            .map_err(|_poisoned| SessionError::CarryStatePoisoned)?;
+        Ok(crate::carry::Believed {
+            document_type: crate::carry::DOCUMENT.to_owned(),
+            schema_version: crate::carry::DOCUMENT_VERSION,
+            records: believed
+                .iter()
+                .map(|(mutant, record)| crate::carry::BelievedRecord {
+                    mutant: mutant.clone(),
+                    record: record.clone(),
+                })
+                .collect(),
+        })
+    }
 }

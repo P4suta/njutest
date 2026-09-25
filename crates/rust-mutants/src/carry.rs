@@ -20,6 +20,37 @@ pub const SCHEMA: &str = "rust-mutants-carried-v1";
 /// Where carried records live under the cache directory.
 pub const LAYOUT: &str = "rust-mutants/carried-v1";
 
+/// The file a run keeps beside its report naming every carried record it believed.
+pub const FILE: &str = "carried-v1.json";
+
+/// The document type of [`FILE`].
+pub const DOCUMENT: &str = "rust-mutants/carried";
+
+/// The version of [`DOCUMENT`] this release writes.
+pub const DOCUMENT_VERSION: u32 = 1;
+
+/// Every carried record one run believed, which is what an audit re-derives each carried answer from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Believed {
+    /// [`DOCUMENT`].
+    pub document_type: String,
+    /// [`DOCUMENT_VERSION`].
+    pub schema_version: u32,
+    /// Each record, by the mutant it answered for, in the order of their full identities.
+    pub records: Vec<BelievedRecord>,
+}
+
+/// One carried record a run believed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BelievedRecord {
+    /// The mutant's full identity in this run's catalog.
+    pub mutant: String,
+    /// The record.
+    pub record: Carried,
+}
+
 /// Where a mutation sits and what it writes, named by nothing outside the item it edits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

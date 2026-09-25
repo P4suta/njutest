@@ -463,6 +463,7 @@ pub struct Session {
 pub(crate) struct Carrying {
     pub(crate) tree: std::sync::OnceLock<carry::Tree>,
     pub(crate) held: std::sync::Mutex<BTreeMap<String, bool>>,
+    pub(crate) believed: std::sync::Mutex<BTreeMap<String, crate::carry::Carried>>,
 }
 
 impl Carrying {
@@ -471,6 +472,7 @@ impl Carrying {
         Self {
             tree: std::sync::OnceLock::new(),
             held: std::sync::Mutex::new(BTreeMap::new()),
+            believed: std::sync::Mutex::new(BTreeMap::new()),
         }
     }
 }
