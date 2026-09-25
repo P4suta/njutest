@@ -172,6 +172,8 @@ pub struct UnitSkeleton {
     pub test: bool,
     /// The lowercase hex SHA-256 of the unit's inputs, each sealed body replaced by a placeholder naming its item.
     pub skeleton: String,
+    /// Every entry `skeleton` folds, by name, with its digest or value.
+    pub entries: BTreeMap<String, String>,
 }
 
 /// One compiled unit and everything it read, with every path spelled by its class.
@@ -241,12 +243,16 @@ pub fn evidence(units: &[UnitSource], items: &[Item]) -> Skeletons {
     }
     let mut unit_skeletons: Vec<UnitSkeleton> = units
         .iter()
-        .map(|unit| UnitSkeleton {
-            package: unit.package.clone(),
-            target: unit.target.clone(),
-            kind: unit.kind.clone(),
-            test: unit.test,
-            skeleton: skeleton(unit, items, &item_evidence),
+        .map(|unit| {
+            let entries = entries(unit, items, &item_evidence);
+            UnitSkeleton {
+                package: unit.package.clone(),
+                target: unit.target.clone(),
+                kind: unit.kind.clone(),
+                test: unit.test,
+                skeleton: folded(&entries),
+                entries,
+            }
         })
         .collect();
     unit_skeletons.sort();
@@ -282,8 +288,12 @@ fn parsed(bytes: &[u8]) -> Option<(u32, syn::File)> {
     }
 }
 
-/// The skeleton of one unit: its files with each sealed body replaced, its variables, and what its build scripts emitted, folded into one digest.
-fn skeleton(unit: &UnitSource, items: &[Item], evidence: &[ItemEvidence]) -> String {
+/// What one unit's skeleton folds: its files with each sealed body replaced, its variables, and what its build scripts emitted.
+fn entries(
+    unit: &UnitSource,
+    items: &[Item],
+    evidence: &[ItemEvidence],
+) -> BTreeMap<String, String> {
     let mut entries: BTreeMap<String, String> = BTreeMap::new();
     for (name, bytes) in &unit.files {
         let sealed: Vec<(usize, &Item)> = name
@@ -314,14 +324,19 @@ fn skeleton(unit: &UnitSource, items: &[Item], evidence: &[ItemEvidence]) -> Str
     for (name, digest) in &unit.emitted {
         entries.insert(name.clone(), digest.clone());
     }
-    let mut folded = String::new();
-    for (name, digest) in &entries {
-        folded.push_str(name);
-        folded.push('\0');
-        folded.push_str(digest);
-        folded.push('\n');
+    entries
+}
+
+/// One digest over every entry, as `<name>\0<digest>\n` in name order.
+fn folded(entries: &BTreeMap<String, String>) -> String {
+    let mut text = String::new();
+    for (name, digest) in entries {
+        text.push_str(name);
+        text.push('\0');
+        text.push_str(digest);
+        text.push('\n');
     }
-    crate::id::digest(folded.as_bytes())
+    crate::id::digest(text.as_bytes())
 }
 
 /// `bytes` with every sealed body replaced by `{sealed:<file>#<ordinal>}`.

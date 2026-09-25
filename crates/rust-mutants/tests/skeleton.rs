@@ -326,3 +326,45 @@ fn the_page_the_audit_implements_names_exactly_the_lists_the_evidence_applies() 
         );
     }
 }
+
+#[test]
+fn a_skeleton_is_the_fold_of_the_entries_it_names() {
+    let files = [("src/lib.rs", "pub fn f() -> i32 { 1 }\nconst K: i32 = 2;\n")];
+    let mut read = unit(&files);
+    read.files
+        .insert("$root/src/answer.txt".to_owned(), b"30\n".to_vec());
+    read.env.insert("LIMIT".to_owned(), "unset".to_owned());
+    read.emitted
+        .insert("$emitted/$target/out".to_owned(), "b".repeat(64));
+    let kept = evidence_of(&read, &files);
+    let one = kept.units.first().expect("the unit");
+    assert_eq!(
+        one.entries.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "$emitted/$target/out",
+            "$env/LIMIT",
+            "$root/src/answer.txt",
+            "$root/src/lib.rs"
+        ],
+        "every file, variable and build script output the unit read is an entry"
+    );
+    let mut folded = String::new();
+    for (name, digest) in &one.entries {
+        folded.push_str(name);
+        folded.push('\0');
+        folded.push_str(digest);
+        folded.push('\n');
+    }
+    assert_eq!(
+        one.skeleton,
+        rust_mutants::id::digest(folded.as_bytes()),
+        "and the skeleton is exactly their fold, so a reader re-derives it from them"
+    );
+    let rendered = "pub fn f() -> i32 {sealed:$root/src/lib.rs#0}\nconst K: i32 = 2;\n";
+    assert_eq!(
+        one.entries.get("$root/src/lib.rs"),
+        Some(&rust_mutants::id::digest(rendered.as_bytes())),
+        "a Rust file's entry is its bytes with each sealed body replaced by a placeholder \
+         naming the file and the item's position in it"
+    );
+}

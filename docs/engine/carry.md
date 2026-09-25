@@ -118,7 +118,7 @@ An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.js
 
 A unit is named by its package's name, its target's name, its target's kinds joined by `,`, and whether it is the test build; never by a package id, which carries an absolute path.
 
-Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte order of the names:
+Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte order of the names, and `entries` keeps every one of those names with its digest, so a reader can fold them again and check any entry it can read:
 
 - every file the unit's dep-info names, as `$root/<path>` under the workspace root or `$target/<path>` under the target directory, each path with forward slashes; a file under neither is the lock file's to key and has no entry.
   The digest is the SHA-256 of the file's bytes with every sealed body of it replaced by `{sealed:<name>#<ordinal>}`, where `<name>` is the entry's name and `<ordinal>` is the item's position among the file's cataloged items, from 0;
