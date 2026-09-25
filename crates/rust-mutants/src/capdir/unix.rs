@@ -79,7 +79,7 @@ fn status_of(stat: &rustix::fs::Stat) -> io::Result<Status> {
         | FileType::BlockDevice
         | FileType::Unknown => Kind::Other,
     };
-    let volume = u64::try_from(stat.st_dev)
+    let volume = u64::try_from(i128::from(stat.st_dev))
         .map_err(|_negative| io::Error::other("a device number is negative"))?;
     let object = u128::from(stat.st_ino);
     let len = u64::try_from(stat.st_size)
