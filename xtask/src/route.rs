@@ -124,6 +124,8 @@ pub struct Route {
     pub reused: Option<String>,
     /// Why the answer an earlier run left was not the one used, when there was a store of them to ask.
     pub refused: Option<String>,
+    /// Which store a reused answer came out of, `exact` or `carried`, which only the runner records.
+    pub rule: Option<String>,
 }
 
 impl Route {
@@ -379,6 +381,7 @@ fn route(record: &Value) -> Result<Route, ReadCause> {
         considered: strings(record, "considered"),
         reused: text(record, "reused"),
         refused: text(record, "refused"),
+        rule: text(record, "rule"),
     })
 }
 

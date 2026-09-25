@@ -607,7 +607,7 @@ pub fn audit_with(
             Layer::Killers => killers(&recording, &mut audit),
             Layer::Findings => findings(&recording, &mut audit),
             Layer::Acceptances => acceptances(&recording, &mut audit),
-            Layer::Reuse => reuse(&recording, &mut audit),
+            Layer::Reuse => reuse(&recording, routing.as_ref(), &mut audit),
             Layer::Proofs => proofs(&recording, routing.as_ref(), &repairs, &mut audit),
             Layer::Executions => executions(&recording, routing.as_ref(), &mut audit),
             Layer::Hollow => hollow(&recording, routing.as_ref(), &mut audit),
@@ -4294,10 +4294,17 @@ fn acceptances(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     notes.looked()
 }
 
-/// Whether every disposition read back from an earlier run names one a reader could go and read.
-fn reuse(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
-    let mut read_back = 0_usize;
+/// Whether every disposition read back from an earlier run names one a reader could go and read, and is one the run's own recording says it read back.
+///
+/// Re-derived from the runner's route of each: it names the run the report does, nothing of the mutation ran, and a kill's target is one the route still reaches.
+/// Whether each target an answer rests on keeps the behaviour key it had, or a carried answer's premises hold, is not in the report, and is left unaudited.
+fn reuse(
+    recording: &Recording<'_>,
+    routing: Option<&crate::route::Routing>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Reuse);
+    let mut read_back: Vec<&MutantRow> = Vec::new();
     for mutant in &recording.mutants {
         match mutant.read_back_from.as_deref() {
             Some(run) if run == recording.run_id => notes.violated(
@@ -4306,30 +4313,88 @@ fn reuse(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
                  cannot have read its own answer back"
                     .to_owned(),
             ),
-            Some(_) => match read_back.checked_add(1) {
-                Some(count) => read_back = count,
-                None => {
-                    notes.violated(
-                        "provenance",
-                        "the number of reused dispositions exceeds usize".to_owned(),
-                    );
-                    return notes.looked();
-                }
-            },
+            Some(_) => read_back.push(mutant),
             None => {}
         }
     }
-    if read_back > 0 {
-        notes.unaudited(
+    if read_back.is_empty() {
+        return notes.looked();
+    }
+    match routing {
+        Some(routing) => {
+            for mutant in &read_back {
+                routed_back(mutant, routing, &mut notes);
+            }
+        }
+        None => notes.unaudited(
             "provenance",
             format!(
-                "{read_back} dispositions were read back from an earlier run; whether the \
-                 recorded target is still routed to the mutation under the same behaviour key is \
-                 a fact this report does not carry"
+                "{} dispositions were read back from an earlier run, and the run kept no \
+                 recording of the routes it read them back under",
+                read_back.len()
+            ),
+        ),
+    }
+    notes.unaudited(
+        "provenance",
+        format!(
+            "{} dispositions were read back from an earlier run; whether each target they rest \
+             on keeps the behaviour key it had, or a carried answer's premises hold, is a fact \
+             this report does not carry",
+            read_back.len()
+        ),
+    );
+    notes.looked()
+}
+
+/// Whether the run's own route of `mutant`, a disposition read back, says it read it back from the run the report names, ran none of it, and still reaches the target a kill names.
+fn routed_back(mutant: &MutantRow, routing: &crate::route::Routing, notes: &mut Notes<'_>) {
+    let Some(route) = routing.route_of(&mutant.id, &mutant.display_id) else {
+        notes.violated(
+            mutant.label(),
+            "the disposition was read back from an earlier run, and the recording holds no \
+             route of it to say under what"
+                .to_owned(),
+        );
+        return;
+    };
+    if route.reused != mutant.read_back_from {
+        notes.violated(
+            mutant.label(),
+            format!(
+                "the report says it was read back from {:?}, and the run's own route of it says \
+                 {:?}",
+                mutant.read_back_from, route.reused
             ),
         );
     }
-    notes.looked()
+    if routing
+        .execs_for(&mutant.id, &mutant.display_id)
+        .next()
+        .is_some()
+    {
+        notes.violated(
+            mutant.label(),
+            "an answer read back is an execution that did not happen, and the recording holds \
+             an execution of it"
+                .to_owned(),
+        );
+    }
+    if let Some(killer) = &mutant.killed_by
+        && !route.reaching.iter().any(|target| target == killer)
+    {
+        let word = match route.rule.as_deref() {
+            Some("carried") => "filter-differs",
+            Some(_) | None => "not-routed",
+        };
+        notes.violated(
+            mutant.label(),
+            format!(
+                "the kill read back names {killer}, which this run's route no longer reaches \
+                 ({word})"
+            ),
+        );
+    }
 }
 
 /// The columns of the accounting, against the records they summarise and against the verdict they carry.
