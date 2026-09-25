@@ -1189,6 +1189,7 @@ const VERDICTS: &str = include_str!("../../../docs/engine/verdicts.md");
 /// Every row of the page's decision table, in the order it is read: six cells of what the decision reads and the verdict.
 fn verdict_table() -> Vec<[String; 7]> {
     let mut rows = Vec::new();
+    let mut malformed = Vec::new();
     let mut inside = false;
     for line in VERDICTS.lines() {
         if line.starts_with("| stopped |") {
@@ -1206,15 +1207,15 @@ fn verdict_table() -> Vec<[String; 7]> {
             .split('|')
             .map(|cell| cell.trim().to_owned())
             .collect();
-        let row = <[String; 7]>::try_from(cells.clone());
-        assert!(
-            row.is_ok(),
-            "a row of the decision table has seven cells: {cells:?}"
-        );
-        if let Ok(row) = row {
-            rows.push(row);
+        match <[String; 7]>::try_from(cells) {
+            Ok(row) => rows.push(row),
+            Err(cells) => malformed.push(cells),
         }
     }
+    assert!(
+        malformed.is_empty(),
+        "every row of the decision table has seven cells: {malformed:?}"
+    );
     rows
 }
 
