@@ -37,7 +37,7 @@ fn task(name: &str) -> String {
 ///
 /// `None` is a job this machine cannot answer, with the reason it cannot.
 /// The list is the whole of what a push has to wait for CI to find out, so adding to it is a decision rather than an omission.
-const GATED: [(&str, Option<&str>); 10] = [
+const GATED: [(&str, Option<&str>); 11] = [
     ("test", Some("mise run test")),
     ("lint", Some("mise run lint")),
     ("deny", Some("mise run deny")),
@@ -48,6 +48,7 @@ const GATED: [(&str, Option<&str>); 10] = [
     ("soundness", None),
     ("kani-verified", Some("mise run kani:verified")),
     ("action-smoke", None),
+    ("action-smoke-rust-mutants", None),
 ];
 
 #[test]
