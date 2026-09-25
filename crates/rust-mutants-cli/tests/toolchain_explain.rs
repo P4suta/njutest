@@ -484,12 +484,26 @@ fn an_identity_the_newest_run_lacks_is_answered_with_the_runs_that_hold_it() {
         "{narrowed:?}"
     );
 
+    let unreadable = stored.join("20200101t000000000z");
+    std::fs::create_dir_all(&unreadable).expect("an older run directory");
+    std::fs::write(
+        unreadable.join(rust_mutants::report::evidence::CATALOG),
+        "{\"written_by\": \"another release\"}",
+    )
+    .expect("a catalog this release cannot read");
+    std::fs::write(unreadable.join("run-report-v1.json"), "{}").expect("its run report");
+
     let output = against(&fixture, &["explain", "f0d2"]);
     let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         said.contains(&holding) && said.contains("--run"),
         "a mutant the newest run did not catalog is one an earlier run may hold, and the answer \
          names that run and how to ask it rather than only that the newest does not: {said}"
+    );
+    assert!(
+        said.contains("20200101t000000000z") && said.contains("not known"),
+        "and a run it could not read is named as one whose answer is not known, not left out: \
+         {said}"
     );
 }
 
@@ -519,5 +533,36 @@ fn the_reproduce_line_explain_prints_reproduces_the_mutant_it_explains() {
         reproduced.status.code().is_some_and(|code| code < 2) && !said.contains("RM5003"),
         "the line explain prints is the one a person copies to see the mutant again, so running \
          it must measure that mutant rather than refuse it: `{line}` said {said}"
+    );
+}
+
+#[test]
+fn a_stored_run_this_release_cannot_read_does_not_stop_an_answer_about_another() {
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let stored = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
+    let current = njutest_devkit::fixture::newest_run(&stored);
+    let older = stored.join("20200101t000000000z");
+    std::fs::create_dir_all(&older).expect("an older run directory");
+    let catalog = rust_mutants::report::evidence::CATALOG;
+    let text = std::fs::read_to_string(current.join(catalog)).expect("the current catalog");
+    let without_item = text.replacen("\"item\":", "\"retired_item\":", 1);
+    assert_ne!(
+        without_item, text,
+        "the older catalog lacks a field this release reads"
+    );
+    std::fs::write(older.join(catalog), without_item).expect("an older catalog");
+    std::fs::copy(
+        current.join("run-report-v1.json"),
+        older.join("run-report-v1.json"),
+    )
+    .expect("the older run's report");
+
+    let output = against(&fixture, &["explain", "0000"]);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert!(
+        said.contains("\"0000\"") && !said.contains("is not a document this release reads"),
+        "a question no stored run answers is refused for what was asked, not for a run from \
+         another release that was never needed to answer it: {said}"
     );
 }

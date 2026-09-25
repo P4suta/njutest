@@ -1549,18 +1549,11 @@ fn stored_explain(
     let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
-    if named.is_none() && !catalog.mutants.iter().any(|one| one.id.starts_with(prefix)) {
-        let holding = runs_holding(&directory, prefix)?;
-        if let Some(latest) = holding.last() {
-            return Err(CliError::ReportMissing {
-                message: format!(
-                    "the newest run does not catalog {prefix:?}; {} stored run(s) do: {}. \
-                     Ask one of them: `rust-mutants explain {prefix} --run {latest}`",
-                    holding.len(),
-                    holding.join(", ")
-                ),
-            });
-        }
+    if named.is_none()
+        && !catalog.mutants.iter().any(|one| one.id.starts_with(prefix))
+        && let Some(message) = runs_holding(&directory, prefix)?.refusal(prefix)
+    {
+        return Err(CliError::ReportMissing { message });
     }
     let stored = read_run_document(&report)?;
     let source = catalog
@@ -1581,21 +1574,68 @@ fn stored_explain(
     )
 }
 
-/// Every stored run, oldest first, whose catalog holds a mutant `prefix` names.
-fn runs_holding(directory: &Path, prefix: &str) -> Result<Vec<String>, CliError> {
+/// What the stored runs say about a mutant: the runs whose catalog holds it, and the runs this release could not read, which neither do nor do not.
+///
+/// The fields are private and the one way to turn this into words names both, so a caller cannot report the first and drop the second.
+struct Holding {
+    holding: Vec<String>,
+    unreadable: Vec<(String, String)>,
+}
+
+impl Holding {
+    /// Why the newest run cannot answer while an earlier one can, or nothing when no readable run holds it.
+    fn refusal(&self, prefix: &str) -> Option<String> {
+        let latest = self.holding.last()?;
+        let mut said = format!(
+            "the newest run does not catalog {prefix:?}; {} stored run(s) do: {}. \
+             Ask one of them: `rust-mutants explain {prefix} --run {latest}`",
+            self.holding.len(),
+            self.holding.join(", ")
+        );
+        if !self.unreadable.is_empty() {
+            let named: Vec<String> = self
+                .unreadable
+                .iter()
+                .map(|(run, why)| format!("{run} ({why})"))
+                .collect();
+            let written = write!(
+                said,
+                ". Whether {} more hold it is not known, since this release cannot read them: {}",
+                self.unreadable.len(),
+                named.join("; ")
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        Some(said)
+    }
+}
+
+/// Every stored run, oldest first, whose catalog holds a mutant `prefix` names, and every one whose catalog this release cannot read.
+fn runs_holding(directory: &Path, prefix: &str) -> Result<Holding, CliError> {
     let runs = stored::kept(directory)?.0;
     let mut holding = Vec::new();
+    let mut unreadable = Vec::new();
     for run in runs {
-        let catalog: rust_mutants::report::catalog::CatalogDocument =
-            read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
-        if catalog.mutants.iter().any(|one| one.id.starts_with(prefix))
-            && let Some(name) = run.file_name().and_then(std::ffi::OsStr::to_str)
-        {
-            holding.push(name.to_owned());
+        let Some(name) = run.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        let read: Result<rust_mutants::report::catalog::CatalogDocument, CliError> =
+            read_document(&run.join(rust_mutants::report::evidence::CATALOG));
+        match read {
+            Ok(catalog) => {
+                if catalog.mutants.iter().any(|one| one.id.starts_with(prefix)) {
+                    holding.push(name.to_owned());
+                }
+            }
+            Err(error) => unreadable.push((name.to_owned(), error.to_string())),
         }
     }
     holding.sort();
-    Ok(holding)
+    unreadable.sort();
+    Ok(Holding {
+        holding,
+        unreadable,
+    })
 }
 
 /// One stored document, or the reason it is not one this release reads.
