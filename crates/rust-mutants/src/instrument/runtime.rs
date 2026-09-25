@@ -263,7 +263,8 @@ mod {{MODULE}} {
 {{IDS}}    ];
     const TOUCH_BASE: u32 = {{BASE}};
     const TOUCH_SPAN: u32 = {{SPAN}};
-    const TOUCH_BATCH: usize = 64;
+    const ITEM_BASE: u32 = {{ITEM_BASE}};
+    const ITEM_SPAN: u32 = {{ITEM_SPAN}};
     #[derive(Clone, Copy)]
     enum Selection {
         None,
@@ -289,12 +290,10 @@ mod {{MODULE}} {
             }
         }
     }
-    #[derive(Clone, Copy)]
-    enum Budget {
-        Unbounded,
-        Bounded(StepLimit),
-        Invalid(BudgetError),
-    }
+    // What the configured allowance is: none, a bound, or a refusal. A
+    // standard Result and Option rather than an enum of this module's own,
+    // whose unequal variants a project denying variant_size_differences refuses.
+    type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>;
     #[derive(Clone, Copy)]
     enum BudgetError {
         NonUnicode,
@@ -324,6 +323,7 @@ mod {{MODULE}} {
         Sync,
         Publish,
         Unlock,
+        Poisoned,
     }
     #[derive(Clone, Copy)]
     enum TouchMode {
@@ -357,6 +357,18 @@ mod {{MODULE}} {
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
     static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
+    // The step state this runtime copy opened, and the process that opened
+    // it: one open and one check per copy and process, where reopening the
+    // name at every boundary paid an open and a close per function entry and
+    // loop turn. A child made by fork without exec shares the parent's open
+    // file description and so its lock, which is why the process is recorded.
+    struct BoundStepState {
+        pid: u32,
+        file: __rm_std::fs::File,
+    }
+    static STEP_STATE: __rm_std::sync::OnceLock<
+        __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
+    > = __rm_std::sync::OnceLock::new();
 
 {{VALUE_MACRO}}
     #[inline(always)]
@@ -386,9 +398,9 @@ mod {{MODULE}} {
 
     fn advance(action: StepAction) {
         let limit = match *BUDGET.get_or_init(configured_budget) {
-            Budget::Unbounded => return,
-            Budget::Bounded(limit) => limit,
-            Budget::Invalid(_) => protocol_failure(),
+            __rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,
+            __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)) => limit,
+            __rm_std::result::Result::Err(_) => protocol_failure(),
         };
         let advanced = match update_state(action, limit) {
             __rm_std::result::Result::Ok(advanced) => advanced,
@@ -403,27 +415,27 @@ mod {{MODULE}} {
 
     fn configured_budget() -> Budget {
         let raw = match __rm_std::env::var_os("{{STEPS_ENV}}") {
-            __rm_std::option::Option::None => return Budget::Unbounded,
+            __rm_std::option::Option::None => return __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::option::Option::Some(raw) => raw,
         };
         let text = match raw.to_str() {
             __rm_std::option::Option::Some(text) => text,
-            __rm_std::option::Option::None => return Budget::Invalid(BudgetError::NonUnicode),
+            __rm_std::option::Option::None => return __rm_std::result::Result::Err(BudgetError::NonUnicode),
         };
         match text.parse::<usize>() {
-            __rm_std::result::Result::Ok(0) => Budget::Unbounded,
+            __rm_std::result::Result::Ok(0) => __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::result::Result::Ok(allowed) => {
                 if __rm_std::string::ToString::to_string(&allowed) != text {
-                    return Budget::Invalid(BudgetError::NonCanonical);
+                    return __rm_std::result::Result::Err(BudgetError::NonCanonical);
                 }
                 match StepLimit::new(allowed) {
-                    __rm_std::option::Option::Some(limit) => Budget::Bounded(limit),
+                    __rm_std::option::Option::Some(limit) => __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)),
                     __rm_std::option::Option::None => {
-                        Budget::Invalid(BudgetError::UnrepresentableLimit)
+                        __rm_std::result::Result::Err(BudgetError::UnrepresentableLimit)
                     }
                 }
             }
-            __rm_std::result::Result::Err(_) => Budget::Invalid(BudgetError::NotANumber),
+            __rm_std::result::Result::Err(_) => __rm_std::result::Result::Err(BudgetError::NotANumber),
         }
     }
 
@@ -450,14 +462,30 @@ mod {{MODULE}} {
                 return __rm_std::result::Result::Err(StepStateError::MissingMutant);
             }
         };
-        let mut file = open_step_state(path)?;
-        file.lock().map_err(|_| StepStateError::Lock)?;
-        let transitioned = (|| {
-            let metadata = file.metadata().map_err(|_| StepStateError::Metadata)?;
+        let cell = STEP_STATE.get_or_init(|| __rm_std::sync::Mutex::new(__rm_std::option::Option::None));
+        let mut bound = cell.lock().map_err(|_| StepStateError::Poisoned)?;
+        let pid = __rm_std::process::id();
+        let reopen = match &*bound {
+            __rm_std::option::Option::Some(state) => state.pid != pid,
+            __rm_std::option::Option::None => true,
+        };
+        if reopen {
+            let opened = open_step_state(path)?;
+            let metadata = opened.metadata().map_err(|_| StepStateError::Metadata)?;
             if !metadata.file_type().is_file() {
                 return __rm_std::result::Result::Err(StepStateError::NotRegular);
             }
-            let phase = read_step_state(&mut file, nonce, mutant, limit)?;
+            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
+        }
+        let file = match &mut *bound {
+            __rm_std::option::Option::Some(state) => &mut state.file,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::Open);
+            }
+        };
+        file.lock().map_err(|_| StepStateError::Lock)?;
+        let transitioned = (|| {
+            let phase = read_step_state(file, nonce, mutant, limit)?;
             let (next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
             if let StepAdvance::Reached { allowed, observed } = advanced {
@@ -470,7 +498,7 @@ mod {{MODULE}} {
                 publish_step_notice(allowed, observed).map_err(|_| StepStateError::Publish)?;
             }
             if next != phase {
-                write_step_state(&mut file, nonce, mutant, limit, next)?;
+                write_step_state(file, nonce, mutant, limit, next)?;
             }
             __rm_std::result::Result::Ok(advanced)
         })();
@@ -494,9 +522,12 @@ mod {{MODULE}} {
     ) -> __rm_std::result::Result<__rm_std::fs::File, StepStateError> {
         use __rm_std::os::unix::fs::OpenOptionsExt as _;
 
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options.read(true).write(true).custom_flags(no_follow_flag());
-        options.open(path).map_err(|_| StepStateError::Open)
+        __rm_std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(no_follow_flag())
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(windows)]
@@ -509,12 +540,12 @@ mod {{MODULE}} {
         // opened object. The regular-file check below then rejects links and
         // junctions instead of following them.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options
+        __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        options.open(path).map_err(|_| StepStateError::Open)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -658,13 +689,17 @@ mod {{MODULE}} {
         expected_limit: StepLimit,
     ) -> __rm_std::result::Result<StepPhase, StepStateError> {
         const MAX_STATE_BYTES: u64 = 1024;
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         let mut bytes = __rm_std::vec::Vec::new();
         let mut capped = __rm_std::io::Read::take(&mut *file, MAX_STATE_BYTES + 1);
-        __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
+        let read = __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
             .map_err(|_| StepStateError::Read)?;
-        if bytes.len() > MAX_STATE_BYTES as usize {
+        if read > MAX_STATE_BYTES as usize {
             return __rm_std::result::Result::Err(StepStateError::TooLarge);
         }
         let text = __rm_std::str::from_utf8(&bytes).map_err(|_| StepStateError::NotUtf8)?;
@@ -755,8 +790,12 @@ mod {{MODULE}} {
             name,
             spent,
         );
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         file.set_len(0).map_err(|_| StepStateError::Truncate)?;
         __rm_std::io::Write::write_all(file, state.as_bytes())
             .map_err(|_| StepStateError::Write)?;
@@ -806,15 +845,15 @@ mod {{MODULE}} {
         }
     }
 
-    fn touch_span() -> usize {
-        match <usize as __rm_std::convert::TryFrom<u32>>::try_from(TOUCH_SPAN) {
+    fn window(span: u32) -> usize {
+        match <usize as __rm_std::convert::TryFrom<u32>>::try_from(span) {
             __rm_std::result::Result::Ok(span) => span,
             __rm_std::result::Result::Err(_) => touch_failure(),
         }
     }
 
-    fn touch_offset(index: u32) -> usize {
-        let relative = match index.checked_sub(TOUCH_BASE) {
+    fn offset(index: u32, base: u32) -> usize {
+        let relative = match index.checked_sub(base) {
             __rm_std::option::Option::Some(relative) => relative,
             __rm_std::option::Option::None => touch_failure(),
         };
@@ -827,9 +866,10 @@ mod {{MODULE}} {
     fn mark(
         bits: &mut __rm_std::vec::Vec<bool>,
         indices: &mut __rm_std::vec::Vec<u32>,
+        at: usize,
         index: u32,
     ) -> bool {
-        let slot = match bits.get_mut(touch_offset(index)) {
+        let slot = match bits.get_mut(at) {
             __rm_std::option::Option::Some(slot) => slot,
             __rm_std::option::Option::None => touch_failure(),
         };
@@ -843,75 +883,81 @@ mod {{MODULE}} {
 
     struct Seen {
         name: __rm_std::string::String,
-        eager: bool,
         bits: __rm_std::vec::Vec<bool>,
         touched: __rm_std::vec::Vec<u32>,
         entered_bits: __rm_std::vec::Vec<bool>,
         entered: __rm_std::vec::Vec<u32>,
         differed_bits: __rm_std::vec::Vec<bool>,
         differed: __rm_std::vec::Vec<u32>,
+        item_bits: __rm_std::vec::Vec<bool>,
+        items: __rm_std::vec::Vec<u32>,
     }
 
     impl Seen {
         fn new() -> Seen {
             let named = __rm_std::thread::current().name().map(__rm_std::string::ToString::to_string);
-            let eager = match &named {
-                __rm_std::option::Option::Some(name) => name == "main",
-                __rm_std::option::Option::None => true,
+            let attributed = match &named {
+                __rm_std::option::Option::Some(name) => name != "main",
+                __rm_std::option::Option::None => false,
             };
-            let span = touch_span();
+            let span = window(TOUCH_SPAN);
             let mut bits = __rm_std::vec::Vec::new();
             bits.resize(span, false);
             let mut entered_bits = __rm_std::vec::Vec::new();
             entered_bits.resize(span, false);
             let mut differed_bits = __rm_std::vec::Vec::new();
             differed_bits.resize(span, false);
+            let mut item_bits = __rm_std::vec::Vec::new();
+            item_bits.resize(window(ITEM_SPAN), false);
             Seen {
                 name: match named {
-                    __rm_std::option::Option::Some(name) if !eager => name,
+                    __rm_std::option::Option::Some(name) if attributed => name,
                     _ => __rm_std::string::String::from("{{UNATTRIBUTED}}"),
                 },
-                eager,
                 bits,
                 touched: __rm_std::vec::Vec::new(),
                 entered_bits,
                 entered: __rm_std::vec::Vec::new(),
                 differed_bits,
                 differed: __rm_std::vec::Vec::new(),
+                item_bits,
+                items: __rm_std::vec::Vec::new(),
             }
         }
 
         fn saw(&mut self, index: u32) {
-            if !mark(&mut self.bits, &mut self.touched, index) {
+            if !mark(&mut self.bits, &mut self.touched, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.touched.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn entered_body(&mut self, index: u32) {
-            if !mark(&mut self.entered_bits, &mut self.entered, index) {
+            if !mark(&mut self.entered_bits, &mut self.entered, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.entered.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn saw_a_difference(&mut self, index: u32) {
-            if !mark(&mut self.differed_bits, &mut self.differed, index) {
+            if !mark(&mut self.differed_bits, &mut self.differed, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.differed.len() >= TOUCH_BATCH {
-                self.flush();
+            self.flush();
+        }
+
+        fn entered_item(&mut self, index: u32) {
+            if !mark(&mut self.item_bits, &mut self.items, offset(index, ITEM_BASE), index) {
+                return;
             }
+            self.flush();
         }
 
         fn flush(&mut self) {
             written("{{SITES}}", &self.name, &mut self.touched);
             written("{{BODIES}}", &self.name, &mut self.entered);
             written("{{INFECTED}}", &self.name, &mut self.differed);
+            written("{{ENTERED}}", &self.name, &mut self.items);
         }
     }
 
@@ -1033,6 +1079,32 @@ mod {{MODULE}} {
         with_seen(|seen| seen.saw_a_difference(index));
     }
 
+    #[inline(always)]
+    pub(crate) fn item(index: u32) {
+        if touching() {
+            entered_item(index);
+        }
+    }
+
+    #[inline(never)]
+    fn entered_item(index: u32) {
+        let recorded = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => {
+                seen.entered_item(index);
+                TouchAccess::Applied
+            }
+            __rm_std::result::Result::Err(_) => TouchAccess::AlreadyBorrowed,
+        });
+        match recorded {
+            __rm_std::result::Result::Ok(TouchAccess::Applied) => {}
+            __rm_std::result::Result::Ok(TouchAccess::AlreadyBorrowed) => touch_failure(),
+            __rm_std::result::Result::Err(_) => {
+                let mut indices = __rm_std::vec![index];
+                written("{{ENTERED}}", "{{UNATTRIBUTED}}", &mut indices);
+            }
+        }
+    }
+
     #[inline(never)]
     fn entered(index: u32) {
         if !touching() {
@@ -1145,6 +1217,8 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         catalog_digest,
         placements,
         markers,
+        first_item,
+        item_count,
         newline,
     } = *rendering;
     let ids: BTreeSet<(&str, u32)> = placements
@@ -1178,6 +1252,8 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{IDS}}", &table)
         .replace("{{BASE}}", &reach.base.to_string())
         .replace("{{SPAN}}", &reach.span.to_string())
+        .replace("{{ITEM_BASE}}", &first_item.to_string())
+        .replace("{{ITEM_SPAN}}", &item_count.to_string())
         .replace("{{STEP_MACHINE}}", STEP_MACHINE_SOURCE)
         .replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
         .replace("{{CATALOG_ENV}}", CATALOG_ENV)
@@ -1187,6 +1263,7 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{SITES}}", crate::touch::SITES)
         .replace("{{BODIES}}", crate::touch::BODIES)
         .replace("{{INFECTED}}", crate::touch::INFECTED)
+        .replace("{{ENTERED}}", crate::touch::ENTERED)
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
         .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
         .replace("{{STEPS_ENV}}", STEPS_ENV)
@@ -1225,6 +1302,10 @@ pub struct Rendering<'a> {
     pub placements: &'a [Placement],
     /// The markers the branch proofs put in it, whose indices the recording also carries.
     pub markers: &'a [crate::syntax::branch::Marker],
+    /// The item index of the file's first item, which is where its entry markers start counting.
+    pub first_item: u32,
+    /// How many items the file holds, which sizes the per-thread record of what it already said it entered.
+    pub item_count: u32,
     /// The newline the file uses.
     pub newline: &'a str,
 }

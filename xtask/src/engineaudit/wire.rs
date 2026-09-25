@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde::de::Error as _;
-use serde::de::{self, Visitor};
 use serde_json::Value;
 
 use super::{
@@ -273,8 +272,7 @@ struct Mutant {
     #[serde(rename = "family")]
     _family: String,
     rule: String,
-    #[serde(rename = "item")]
-    _item: String,
+    item: String,
     rule_version: u64,
     #[serde(rename = "line")]
     _line: u64,
@@ -295,8 +293,7 @@ struct Mutant {
     _duration_ms: u64,
     #[serde(deserialize_with = "required_option")]
     tests_run: Option<u64>,
-    #[serde(rename = "killed_by")]
-    _killed_by: Vec<String>,
+    killed_by: Vec<String>,
     #[serde(rename = "signal")]
     #[serde(deserialize_with = "required_option")]
     _signal: Option<i64>,
@@ -306,67 +303,21 @@ struct Mutant {
     #[serde(deserialize_with = "required_option")]
     route: Option<Route>,
     #[serde(rename = "identical")]
-    _identical: NullableBoolean,
+    _identical: CodegenIdentity,
     expected: bool,
     unreached: bool,
     #[serde(deserialize_with = "required_option")]
     source_run_id: Option<String>,
 }
 
-/// A required wire field whose explicit value is one of null, false, or true.
-///
-/// Keeping the three states nominal prevents an absent field from being confused with an explicit null while also avoiding `Option<bool>` as a domain state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NullableBoolean {
-    Null,
-    False,
-    True,
-}
-
-impl<'de> Deserialize<'de> for NullableBoolean {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct NullableBooleanVisitor;
-
-        impl<'de> Visitor<'de> for NullableBooleanVisitor {
-            type Value = NullableBoolean;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("null or a boolean")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(NullableBoolean::Null)
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(NullableBoolean::Null)
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                bool::deserialize(deserializer).map(|value| {
-                    if value {
-                        NullableBoolean::True
-                    } else {
-                        NullableBoolean::False
-                    }
-                })
-            }
-        }
-
-        deserializer.deserialize_option(NullableBooleanVisitor)
-    }
+/// What the optional compiler-artifact comparison established about a row, as the run report writes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum CodegenIdentity {
+    NotMeasured,
+    Identical,
+    Different,
+    NotEstablished,
 }
 
 impl Mutant {
@@ -379,7 +330,7 @@ impl Mutant {
             _package: _,
             _family: _,
             rule,
-            _item: _,
+            item,
             rule_version,
             _line: _,
             _column: _,
@@ -394,7 +345,7 @@ impl Mutant {
             _exit_code: _,
             _duration_ms: _,
             tests_run,
-            _killed_by: _,
+            killed_by,
             _signal: _,
             retried,
             not_run_reason,
@@ -423,6 +374,8 @@ impl Mutant {
             step_notice,
             target,
             tests_run,
+            killed_by,
+            item,
             retried,
             expected,
             unreached,
@@ -672,6 +625,7 @@ fn reject_touched_nulls(value: &Value) -> Result<(), serde_json::Error> {
         ));
     };
     reject_null(root.get("narrowing"), "touched narrowing")?;
+    reject_null(root.get("items"), "the touched item catalog")?;
     let Some(targets) = root.get("targets").and_then(Value::as_object) else {
         return Ok(());
     };
@@ -679,7 +633,7 @@ fn reject_touched_nulls(value: &Value) -> Result<(), serde_json::Error> {
         let Some(target) = target.as_object() else {
             continue;
         };
-        for kind in ["reached", "bodies", "infected"] {
+        for kind in ["reached", "bodies", "infected", "entered"] {
             let seen = target.get(kind);
             reject_null(seen, "a touched target record")?;
             let Some(seen) = seen.and_then(Value::as_object) else {
@@ -741,6 +695,36 @@ struct TouchedEvidence {
     _limitations: Vec<String>,
     #[serde(rename = "narrowing")]
     _narrowing: Option<TouchedNarrowing>,
+    #[serde(rename = "items")]
+    _items: Option<Vec<TouchedItem>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TouchedItem {
+    #[serde(rename = "index")]
+    _index: u64,
+    #[serde(rename = "package")]
+    _package: String,
+    #[serde(rename = "path")]
+    _path: String,
+    #[serde(rename = "name")]
+    _name: String,
+    #[serde(rename = "span")]
+    _span: TouchedSpan,
+    #[serde(rename = "body")]
+    _body: TouchedSpan,
+    #[serde(rename = "measurable")]
+    _measurable: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TouchedSpan {
+    #[serde(rename = "start")]
+    _start: u64,
+    #[serde(rename = "end")]
+    _end: u64,
 }
 
 #[derive(Deserialize)]
@@ -761,6 +745,8 @@ struct TouchedTarget {
     _bodies: Option<TouchedSeen>,
     #[serde(rename = "infected")]
     _infected: Option<TouchedSeen>,
+    #[serde(rename = "entered")]
+    _entered: Option<TouchedSeen>,
     #[serde(rename = "ran")]
     _ran: Vec<String>,
 }
