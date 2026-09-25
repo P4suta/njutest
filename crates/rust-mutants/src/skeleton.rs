@@ -60,7 +60,7 @@ pub const STANDARD_ROOTS: [&str; 3] = ["std", "core", "alloc"];
 pub const LOCAL_ROOTS: [&str; 3] = ["self", "super", "crate"];
 
 /// The attributes a sealed body, its item, and the items around it may carry.
-pub const SEALABLE_ATTRIBUTES: [&str; 13] = [
+pub const SEALABLE_ATTRIBUTES: [&str; 16] = [
     "allow",
     "cfg",
     "cfg_attr",
@@ -70,8 +70,11 @@ pub const SEALABLE_ATTRIBUTES: [&str; 13] = [
     "doc",
     "expect",
     "forbid",
+    "ignore",
     "inline",
     "must_use",
+    "should_panic",
+    "test",
     "track_caller",
     "warn",
 ];
@@ -125,6 +128,10 @@ pub struct ItemEvidence {
 pub enum Unsealing {
     /// The item is a `const fn`, a `const` or a `static`, which can be evaluated where nothing enters it.
     Evaluated,
+    /// A unit that read the item's file runs in the compiler, as a procedural macro or a build script does, where no test enters it.
+    CompileTime,
+    /// The function is `async` or returns an `impl` type, whose hidden type the body decides and a caller can observe without entering it.
+    OpaqueType,
     /// The body invokes a macro off the list, or one qualified by a path outside the standard library.
     Macro {
         /// The macro's path as written.
@@ -217,6 +224,18 @@ pub fn evidence(units: &[UnitSource], items: &[Item]) -> Skeletons {
         let unsealed = match (source, body) {
             (None, _) => Some(Unsealing::Unread),
             (Some(_), None) => Some(Unsealing::Unlocated),
+            (Some(_), Some(_))
+                if item.measurable
+                    && reading.iter().any(|position| {
+                        units.get(*position).is_some_and(|unit| {
+                            unit.kind
+                                .split(',')
+                                .any(|kind| kind == "proc-macro" || kind == "custom-build")
+                        })
+                    }) =>
+            {
+                Some(Unsealing::CompileTime)
+            }
             (Some(bytes), Some(_)) if item.measurable => {
                 let file = verdicts
                     .entry(item.path.as_str())
@@ -352,15 +371,27 @@ fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(usize, &Item)]) -> Vec
         ) else {
             continue;
         };
-        let Some(before) = bytes.get(from..start) else {
+        let (Some(before), Some(body)) = (bytes.get(from..start), bytes.get(start..end)) else {
             continue;
         };
         out.extend_from_slice(before);
-        out.extend_from_slice(format!("{{sealed:{name}#{ordinal}}}").as_bytes());
+        out.extend_from_slice(format!("{{sealed:{name}#{ordinal}/{}}}", shape(body)).as_bytes());
         from = end;
     }
     out.extend_from_slice(bytes.get(from..).unwrap_or_default());
     out
+}
+
+/// Where a body leaves what follows it: its line breaks, and its last line's length in bytes and in characters.
+fn shape(body: &[u8]) -> String {
+    let mut lines = body.split(|byte| *byte == b'\n');
+    let last = lines.next_back().unwrap_or_default();
+    let newlines = lines.count();
+    let characters = match std::str::from_utf8(last) {
+        Ok(text) => text.chars().count().to_string(),
+        Err(_not_text) => "bytes".to_owned(),
+    };
+    format!("{newlines}:{}:{characters}", last.len())
 }
 
 /// Why no body of this unit is sealed, when a file of it can rename a listed macro.
@@ -531,7 +562,12 @@ impl Bodies {
         self.around = outer;
     }
 
-    fn function(&mut self, attrs: &[syn::Attribute], block: &syn::Block) {
+    fn function(
+        &mut self,
+        attrs: &[syn::Attribute],
+        signature: &syn::Signature,
+        block: &syn::Block,
+    ) {
         self.within(attrs, |bodies| {
             let range = block.span().byte_range();
             let span = match (u32::try_from(range.start), u32::try_from(range.end)) {
@@ -541,11 +577,15 @@ impl Bodies {
                     .zip(bodies.base.checked_add(end)),
                 (Err(_does_not_fit), _) | (_, Err(_does_not_fit)) => None,
             };
-            let verdict = bodies.around.clone().or_else(|| {
-                let mut body = Body::default();
-                body.visit_block(block);
-                body.found
-            });
+            let verdict = bodies
+                .around
+                .clone()
+                .or_else(|| opaque(signature))
+                .or_else(|| {
+                    let mut body = Body::default();
+                    body.visit_block(block);
+                    body.found
+                });
             if let Some(span) = span {
                 bodies.verdicts.insert(span, verdict);
             }
@@ -556,16 +596,16 @@ impl Bodies {
 
 impl<'ast> Visit<'ast> for Bodies {
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        self.function(&node.attrs, &node.block);
+        self.function(&node.attrs, &node.sig, &node.block);
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        self.function(&node.attrs, &node.block);
+        self.function(&node.attrs, &node.sig, &node.block);
     }
 
     fn visit_trait_item_fn(&mut self, node: &'ast syn::TraitItemFn) {
         if let Some(block) = &node.default {
-            self.function(&node.attrs, block);
+            self.function(&node.attrs, &node.sig, block);
         }
     }
 
@@ -579,6 +619,25 @@ impl<'ast> Visit<'ast> for Bodies {
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         self.within(&node.attrs, |bodies| visit::visit_item_mod(bodies, node));
+    }
+}
+
+/// Why a function with this signature has a type its body decides, or nothing when it has none.
+fn opaque(signature: &syn::Signature) -> Option<Unsealing> {
+    let mut returned = Returned::default();
+    returned.visit_return_type(&signature.output);
+    (signature.asyncness.is_some() || returned.opaque).then_some(Unsealing::OpaqueType)
+}
+
+/// The walk over a return type that finds an `impl` type in it.
+#[derive(Debug, Default)]
+struct Returned {
+    opaque: bool,
+}
+
+impl<'ast> Visit<'ast> for Returned {
+    fn visit_type_impl_trait(&mut self, _node: &'ast syn::TypeImplTrait) {
+        self.opaque = true;
     }
 }
 

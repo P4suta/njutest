@@ -291,7 +291,7 @@ fn closure_of(
         );
     }
     for told in &checked.inputs.emitted {
-        let (name, digest) = emitted_entry(told, portable);
+        let (name, digest) = emitted_entry(told, (root, target), portable)?;
         files.insert(name, digest);
     }
     if files.is_empty() {
@@ -307,13 +307,17 @@ fn closure_of(
 /// What one build script emitted, as a closure entry: named by the directory it wrote into, and digested over every configuration, variable, and link request, with the run's own directories spelled portably.
 fn emitted_entry(
     told: &crate::cargo::Emitted,
+    (root, target): (&Path, &Path),
     portable: impl Fn(&str) -> String,
-) -> (String, String) {
-    let named = told
-        .out_dir
-        .as_deref()
-        .and_then(Path::to_str)
-        .map_or_else(|| "unnamed".to_owned(), &portable);
+) -> Result<(String, String), SessionError> {
+    let named = match told.out_dir.as_deref() {
+        None => "unnamed".to_owned(),
+        Some(directory) => match (directory.strip_prefix(root), directory.strip_prefix(target)) {
+            (Ok(relative), _) => format!("$root/{}", portable_path(directory, relative)?),
+            (Err(_), Ok(relative)) => format!("$target/{}", portable_path(directory, relative)?),
+            (Err(_), Err(_)) => portable(text_of(directory)?),
+        },
+    };
     let mut said = String::new();
     for (kind, values) in [
         ("cfg", told.cfgs.clone()),
@@ -334,10 +338,20 @@ fn emitted_entry(
             said.push('\n');
         }
     }
-    (
+    Ok((
         format!("$emitted/{named}"),
         crate::id::digest(said.as_bytes()),
-    )
+    ))
+}
+
+/// `relative`, a part of `full`, with forward slashes, as a portable name spells it.
+fn portable_path(full: &Path, relative: &Path) -> Result<String, SessionError> {
+    crate::id::normalize_path(text_of(relative)?).map_err(|source| {
+        SessionError::EvidencePathInvalid {
+            path: full.to_path_buf(),
+            source,
+        }
+    })
 }
 
 /// The digest of every manifest, the lock file, and the cargo configuration the build read.
@@ -754,12 +768,7 @@ fn unit_sources(
                 (Err(_), Ok(relative)) => (relative, "$target/"),
                 (Err(_), Err(_)) => continue,
             };
-            let name = crate::id::normalize_path(text_of(relative)?).map_err(|source| {
-                SessionError::EvidencePathInvalid {
-                    path: path.clone(),
-                    source,
-                }
-            })?;
+            let name = portable_path(path, relative)?;
             let bytes = match read.entry(path.clone()) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
                 std::collections::btree_map::Entry::Vacant(entry) => entry
@@ -796,8 +805,8 @@ fn unit_sources(
                 .inputs
                 .emitted
                 .iter()
-                .map(|told| emitted_entry(told, portable))
-                .collect(),
+                .map(|told| emitted_entry(told, (root, target), portable))
+                .collect::<Result<_, _>>()?,
         });
     }
     Ok(units)
