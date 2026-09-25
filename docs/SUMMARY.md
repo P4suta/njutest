@@ -67,3 +67,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0025 A reach that moves is not a measurement](adr/0025-a-reach-that-moves-is-not-a-measurement.md)
 - [0026 A bound measures quiet, not duration](adr/0026-a-bound-measures-quiet-not-duration.md)
 - [0027 An item is entered where its body starts](adr/0027-an-item-is-entered-where-its-body-starts.md)
+- [0041 An answer carries across an edit it never entered](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)
