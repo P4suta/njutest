@@ -8,7 +8,7 @@ include!("support/missing.rs");
 include!("support/ok.rs");
 include!("support/some.rs");
 
-use njutest_devkit::fixture::{Fixture, copy_tree};
+use njutest_devkit::fixture::{Fixture, RUN_OUTPUT, copy_tree, run_output_in};
 
 #[test]
 fn a_fixture_copy_is_a_throwaway_tree_with_temp_and_cache_beside_it() {
@@ -194,4 +194,33 @@ fn a_symlinked_entry_is_copied_as_what_it_points_at_not_as_a_link() {
             .is_symlink(),
         "and the copy is not itself a link out of the tree"
     );
+}
+
+#[test]
+fn a_tree_a_run_was_made_inside_is_named_rather_than_copied_on() {
+    for written in RUN_OUTPUT {
+        let source = test_ok(
+            tempfile::Builder::new()
+                .prefix("devkit-polluted-")
+                .tempdir(),
+            "tempdir",
+        );
+        let root = source.path();
+        test_ok(std::fs::create_dir_all(root.join("src")), "mkdir");
+        assert_eq!(
+            run_output_in(root),
+            None,
+            "a tree holding only its sources holds nothing a run wrote"
+        );
+        test_ok(
+            std::fs::create_dir_all(root.join(written).join("runs")),
+            "mkdir",
+        );
+        assert_eq!(
+            run_output_in(root),
+            Some(root.join(written)),
+            "a copy of a tree holding {written} hands every test the stored runs an earlier run left \
+             there, and a test counting runs counts one more"
+        );
+    }
 }

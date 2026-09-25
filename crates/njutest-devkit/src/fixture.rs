@@ -27,7 +27,7 @@ impl Fixture {
     /// Copies the fixture project `name` into a directory of this test's own.
     ///
     /// # Panics
-    /// When the copy cannot be made, which a test cannot continue without.
+    /// When the copy cannot be made, which a test cannot continue without, or when the fixture holds what a run writes.
     #[must_use]
     pub fn copy(name: &str) -> Self {
         Self::copy_with_siblings(name, &[])
@@ -36,7 +36,7 @@ impl Fixture {
     /// Copies the fixture project `name`, and every fixture in `siblings` beside it, so a path dependency that climbs out of the tree has somewhere to land.
     ///
     /// # Panics
-    /// When a copy cannot be made, which a test cannot continue without.
+    /// When a copy cannot be made, which a test cannot continue without, or when a fixture holds what a run writes.
     #[must_use]
     pub fn copy_with_siblings(name: &str, siblings: &[&str]) -> Self {
         let dir = tempfile::Builder::new()
@@ -46,7 +46,14 @@ impl Fixture {
         let trees = dir.path().join("trees");
         let fixtures = crate::paths::fixtures_dir();
         for tree in std::iter::once(name).chain(siblings.iter().copied()) {
-            copy_tree(&fixtures.join(tree), &trees.join(tree));
+            let source = fixtures.join(tree);
+            if let Some(written) = run_output_in(&source) {
+                panic!(
+                    "{} is what a run writes, so a run was made inside the committed fixture, and a copy would hand this test its stored runs; remove it",
+                    written.display()
+                );
+            }
+            copy_tree(&source, &trees.join(tree));
         }
         let temp = dir.path().join("temp");
         let cache = dir.path().join("cache");
@@ -107,6 +114,18 @@ impl Fixture {
     pub fn fingerprint(&self) -> Vec<(String, String)> {
         fingerprint(&self.root)
     }
+}
+
+/// What a run writes into the tree it measures, which a committed fixture never holds.
+pub const RUN_OUTPUT: [&str; 2] = ["reports", ".njutest"];
+
+/// The first of [`RUN_OUTPUT`] present at `root`, which says a run was made inside the tree itself.
+#[must_use]
+pub fn run_output_in(root: &Path) -> Option<PathBuf> {
+    RUN_OUTPUT
+        .iter()
+        .map(|written| root.join(written))
+        .find(|path| std::fs::symlink_metadata(path).is_ok())
 }
 
 /// Copies a tree, skipping every `target` directory, following what a link stands for rather than copying the link.
