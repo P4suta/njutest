@@ -155,6 +155,55 @@ pub fn env_deps(text: &str) -> Vec<EnvDep> {
     found
 }
 
+/// One compiled unit, build scripts included, and everything its own dep-info says it read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnitInputs {
+    /// The package id.
+    pub package_id: String,
+    /// The target.
+    pub target: Target,
+    /// Whether this is the test unit of the target.
+    pub test: bool,
+    /// What its compilation read.
+    pub inputs: Inputs,
+}
+
+/// Every unit of a compilation, build scripts included, with every file its dep-info names whatever the extension and every variable it recorded reading.
+///
+/// # Errors
+/// The dep-info errors of [`units_of`].
+pub fn unit_inputs_of(
+    messages: &[Message],
+    workspace_root: &Path,
+) -> Result<Vec<UnitInputs>, CargoError> {
+    let mut units = Vec::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        if !artifact.target.is_custom_build() && is_uplift(artifact) {
+            continue;
+        }
+        let text = dep_info_of(artifact)?;
+        let mut files: Vec<PathBuf> = parse_dep_info(&text)?
+            .into_iter()
+            .map(|path| absolute(workspace_root, path))
+            .collect();
+        files.sort();
+        files.dedup();
+        units.push(UnitInputs {
+            package_id: artifact.package_id.clone(),
+            target: artifact.target.clone(),
+            test: artifact.profile.test,
+            inputs: Inputs {
+                files,
+                env: env_deps(&text),
+            },
+        });
+    }
+    Ok(units)
+}
+
 /// Everything a compilation read, from every artifact's dep-info, build scripts included.
 ///
 /// # Errors
@@ -162,20 +211,9 @@ pub fn env_deps(text: &str) -> Vec<EnvDep> {
 pub fn inputs_of(messages: &[Message], workspace_root: &Path) -> Result<Inputs, CargoError> {
     let mut files = Vec::new();
     let mut env = Vec::new();
-    for message in messages {
-        let Message::CompilerArtifact(artifact) = message else {
-            continue;
-        };
-        if is_uplift(artifact) {
-            continue;
-        }
-        let text = dep_info_of(artifact)?;
-        files.extend(
-            parse_dep_info(&text)?
-                .into_iter()
-                .map(|path| absolute(workspace_root, path)),
-        );
-        env.extend(env_deps(&text));
+    for unit in unit_inputs_of(messages, workspace_root)? {
+        files.extend(unit.inputs.files);
+        env.extend(unit.inputs.env);
     }
     files.sort();
     files.dedup();
@@ -239,9 +277,21 @@ fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> 
             )
         })?;
         candidates.push(candidate);
+        if artifact.target.is_custom_build()
+            && let Some(hashed) = build_script_dep_info(file, &artifact.target.name)
+        {
+            candidates.push(hashed);
+        }
     }
     candidates.dedup();
     Ok(candidates)
+}
+
+/// Where rustc left a build script's dep-info: cargo names the program `build-script-build` in a directory ending in the unit's hash, and rustc wrote `build_script_build-<hash>.d` beside it.
+fn build_script_dep_info(program: &Path, target: &str) -> Option<PathBuf> {
+    let directory = program.parent()?;
+    let (_package, hash) = directory.file_name()?.to_str()?.rsplit_once('-')?;
+    Some(directory.join(format!("{}-{hash}.d", target.replace('-', "_"))))
 }
 
 fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {
