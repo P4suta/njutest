@@ -123,6 +123,40 @@ pub enum Observing {
     Nothing,
 }
 
+/// What a control is started with beyond what the baseline was: variables set over its environment, a program it is started through, and harness arguments after the baseline's.
+///
+/// Held apart from [`Request`], which every execution takes, so that only a control can be perturbed and no mutant execution is ever run under conditions its baseline was not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Perturbation {
+    /// Variables set over the base environment, each replacing one of the same name, from the closed set a control may be perturbed in.
+    pub environment: Vec<(execute::Variable, std::ffi::OsString)>,
+    /// A program the test binary is started through, which replaces itself with it.
+    pub launcher: Option<execute::Launcher>,
+    /// How the harness schedules the tests.
+    pub schedule: execute::Schedule,
+}
+
+impl Perturbation {
+    /// Nothing beyond what the baseline was started with.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            environment: Vec::new(),
+            launcher: None,
+            schedule: execute::Schedule::AsConfigured,
+        }
+    }
+}
+
+/// How one control is run: whether it records what it reached, and what it is started with beyond what its baseline was.
+#[derive(Debug, Clone, Copy)]
+pub struct Conditions<'a> {
+    /// Whether it records, and compares with its baseline.
+    pub observing: Observing,
+    /// What it is started with beyond what the baseline was.
+    pub perturbation: &'a Perturbation,
+}
+
 /// What a control came to, and what it established about each whole target's baseline reach where it was asked to record.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -154,6 +188,7 @@ struct Once<'a> {
     request: &'a Request,
     target: &'a TestTarget,
     timeout: Duration,
+    perturbation: &'a Perturbation,
 }
 
 /// What preparing does about a target whose baseline does not pass with nothing active.
@@ -1401,6 +1436,19 @@ impl Session {
         ran
     }
 
+    /// Runs one target with no mutant active under `conditions`: recording what it reached where they ask, and started with what they add to the baseline's start.
+    ///
+    /// # Errors
+    /// As [`Session::control`].
+    pub fn control_perturbed(
+        &self,
+        request: &Request,
+        conditions: Conditions<'_>,
+        cancel: &Cancel,
+    ) -> Result<Controlled, EngineError> {
+        self.controlled(request, conditions, cancel)
+    }
+
     /// Runs one target with no mutant active: the original control, recording what it reached where `observing` asks.
     ///
     /// # Errors
@@ -1410,6 +1458,27 @@ impl Session {
         request: &Request,
         cancel: &Cancel,
         observing: Observing,
+    ) -> Result<Controlled, EngineError> {
+        let none = Perturbation::none();
+        self.controlled(
+            request,
+            Conditions {
+                observing,
+                perturbation: &none,
+            },
+            cancel,
+        )
+    }
+
+    /// A control of `request` under `perturbation`, which is what [`Session::control`] and [`Session::control_perturbed`] both are.
+    fn controlled(
+        &self,
+        request: &Request,
+        Conditions {
+            observing,
+            perturbation,
+        }: Conditions<'_>,
+        cancel: &Cancel,
     ) -> Result<Controlled, EngineError> {
         let targets = self.selected(request.target.as_deref())?;
         let mut asked = Vec::new();
@@ -1425,6 +1494,7 @@ impl Session {
                 request,
                 target,
                 timeout,
+                perturbation,
             };
             let mut result = self.control_once(&once, (&own, log.as_deref()), cancel);
             let unrecorded =
@@ -1489,6 +1559,7 @@ impl Session {
         (own, log): (&std::path::Path, Option<&std::path::Path>),
         cancel: &Cancel,
     ) -> MutantResult {
+        let perturbation = once.perturbation;
         let context = Context {
             leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
@@ -1502,11 +1573,30 @@ impl Session {
             steps: None,
             profile: None,
         };
+        if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
+            return MutantResult::apparatus_error(
+                &once.target.id,
+                format!(
+                    "{:?} is a libtest argument, and {} does not run under libtest",
+                    perturbation.schedule, once.target.id
+                ),
+            );
+        }
+        let mut arguments = self.arguments(once.request);
+        arguments.extend(
+            perturbation
+                .schedule
+                .arguments()
+                .iter()
+                .map(|argument| (*argument).to_owned()),
+        );
         let mut exec = ExecRequest::new(once.target)
-            .with_args(self.arguments(once.request))
+            .with_args(arguments)
             .with_timeout(Some(once.timeout))
             .with_scratch(own)
-            .in_scratch(self.scratch_working_directory);
+            .in_scratch(self.scratch_working_directory)
+            .with_overlay(perturbation.environment.clone())
+            .with_launcher(perturbation.launcher);
         if let Some(test) = &once.request.test {
             exec = exec.with_test(test.clone());
         }
