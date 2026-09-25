@@ -84,7 +84,8 @@ pub fn base() -> Value {
             "duration_ms": 2000,
             "interrupted": false,
             "exit_code": 0,
-            "shard": null
+            "shard": null,
+            "jobs": {"asked": "auto", "used": 1}
         },
         "workspace": {
             "root_name": "demo",

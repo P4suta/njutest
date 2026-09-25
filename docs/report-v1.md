@@ -177,6 +177,11 @@ A carriage return a Windows checkout left is the checkout's and not the line's, 
 A row or finding naming a file with no entry is refused, and so are two parts or builds of one run that recorded different digests for one file, since then they did not read one tree.
 A document that writes a path twice, or out of path order, is not read: a file has one digest, and a document has one spelling of it.
 
+## How wide a run measured
+
+`run.jobs` says how wide the run measured: `asked`, as a person writes it — a count, `auto` (the machine, capped at four), or `all` (every processor) — and `used`, how many mutants were measured at once.
+The engine resolves the width once, runs at it, and writes that value, so the report and the run cannot disagree; the report's lines print it as `jobs      <used> (<asked>)`, so a CI log says how wide the run was without anybody opening the report.
+
 ## Shards and projections
 
 A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.

@@ -102,6 +102,7 @@ impl Document {
             interrupted,
             exit_code,
             _shard: _,
+            _jobs: _,
         } = run;
         let Workspace {
             _root_name: _,
@@ -159,6 +160,17 @@ struct Run {
     #[serde(rename = "shard")]
     #[serde(deserialize_with = "required_option")]
     _shard: Option<String>,
+    #[serde(rename = "jobs")]
+    _jobs: Jobs,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Jobs {
+    #[serde(rename = "asked")]
+    _asked: String,
+    #[serde(rename = "used")]
+    _used: u64,
 }
 
 #[derive(Deserialize)]

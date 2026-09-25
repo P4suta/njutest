@@ -209,7 +209,7 @@ reason = "EXIT_DETECTED is zero and so is u8::default(), so a clean run exits wi
 path = "crates/rust-mutants/src/run.rs"
 item = "run"
 rule = "negate-condition"
-original = "options.jobs.resolve() == 1"
+original = "width.used == 1"
 reason = "serially and the pool are two ways of doing one thing and a catalog answers the same either way; one_job_and_several_judge_a_catalog_the_same_way holds that by running one catalog both ways, and this is an equivalence under it rather than a fail-open the suite cannot reach"
 
 [[mutation.expect]]

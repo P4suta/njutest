@@ -9,7 +9,7 @@
     "duration_ms": 241,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null
+    "shard": null, "jobs": {"asked": "auto", "used": 1}
   },
   "workspace": {
     "root_name": "fixture-simple",

@@ -94,6 +94,18 @@ pub struct RunMeta {
     /// Which part of the catalog the run was about, absent for the whole of it.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub shard: Option<String>,
+    /// How wide the run measured.
+    pub jobs: JobsDocument,
+}
+
+/// How wide a run measured, as a report says it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobsDocument {
+    /// What was asked for, as a person writes it: a count, `auto`, or `all`.
+    pub asked: String,
+    /// How many mutants were measured at once.
+    pub used: u32,
 }
 
 /// What a run counted.
@@ -629,7 +641,12 @@ impl RunDocument {
                 found: self.schema_version,
             });
         }
+        let width_is_one = match crate::run::Jobs::parse(&self.run.jobs.asked) {
+            Ok(_asked) => self.run.jobs.used > 0,
+            Err(_unknown) => false,
+        };
         for (valid, field) in [
+            (width_is_one, "jobs"),
             (self.document_type == DOCUMENT_TYPE, "document_type"),
             (!self.tool_version.is_empty(), "tool_version"),
             (
@@ -1004,6 +1021,11 @@ pub fn document(
             interrupted: run.interrupted,
             exit_code: run.exit_code(),
             shard: run.shard.map(|shard| shard.to_string()),
+            jobs: JobsDocument {
+                asked: run.width.asked.name(),
+                used: u32::try_from(run.width.used)
+                    .map_err(|_too_wide| crate::workspace::SessionError::RunCountOverflow)?,
+            },
         },
         workspace: crate::report::catalog::workspace_document(session)?,
         selection,

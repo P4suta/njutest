@@ -210,7 +210,7 @@ struct Watching {
 }
 
 impl rust_mutants::run::Observer for Watching {
-    fn starting(&mut self, total: u32) {
+    fn starting(&mut self, total: u32, _width: rust_mutants::run::Width) {
         self.total = total;
     }
 

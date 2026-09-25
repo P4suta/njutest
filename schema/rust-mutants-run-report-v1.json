@@ -41,9 +41,26 @@
         "duration_ms",
         "interrupted",
         "exit_code",
-        "shard"
+        "shard",
+        "jobs"
       ],
       "properties": {
+        "jobs": {
+          "description": "How wide the run measured: what was asked for, as a person writes it, and how many mutants were measured at once.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["asked", "used"],
+          "properties": {
+            "asked": {
+              "type": "string",
+              "pattern": "^(auto|all|[1-9][0-9]*)$"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
         "id": {
           "type": "string",
           "minLength": 1,

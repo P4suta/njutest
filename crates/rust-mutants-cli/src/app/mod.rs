@@ -1093,7 +1093,6 @@ fn whole(
         session,
         &Watched {
             options: &options,
-            settings,
             phases,
             json,
             ui,
@@ -1172,7 +1171,6 @@ fn onward(document: &run_report::RunDocument) -> String {
 /// Everything the run itself needs beyond the session, so a caller chooses one display and hands it over.
 struct Watched<'a> {
     options: &'a run::Options<'a>,
-    settings: &'a Settings,
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     json: bool,
     ui: crate::ui::Ui,
@@ -1194,12 +1192,7 @@ fn measured_run(
         return Ok(result?);
     }
     write(stdout, &crate::ui::phases(watched.phases))?;
-    let mut display = crate::ui::Display::new(
-        stdout,
-        resolved(watched.ui),
-        watched.paints,
-        watched.settings.config.execution.jobs.resolve(),
-    );
+    let mut display = crate::ui::Display::new(stdout, resolved(watched.ui), watched.paints);
     let result = run::run(session, watched.options, cancel, &mut display);
     display.finish()?;
     Ok(result?)

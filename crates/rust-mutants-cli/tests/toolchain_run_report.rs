@@ -1513,3 +1513,30 @@ fn a_claim_on_mutations_the_selection_left_out_is_unjudged_and_no_finding() {
          stale, and nothing to find"
     );
 }
+
+#[test]
+fn a_run_says_how_wide_it_measured_in_its_report_and_its_lines() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--jobs", "all"]);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let asked = report
+        .pointer("/run/jobs/asked")
+        .and_then(serde_json::Value::as_str);
+    let used = report
+        .pointer("/run/jobs/used")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    assert_eq!(asked, Some("all"), "the report says what was asked for");
+    assert!(used >= 1, "and how many were measured at once: {used}");
+    let lines = against(&fixture, &["report"]);
+    assert!(
+        stdout(&lines).contains(&format!("jobs      {used} (all)\n")),
+        "a CI log says how wide the run measured without anybody opening the report: {}",
+        stdout(&lines)
+    );
+}

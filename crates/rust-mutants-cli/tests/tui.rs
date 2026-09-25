@@ -99,6 +99,10 @@ fn document() -> RunDocument {
             interrupted: false,
             exit_code: 1,
             shard: None,
+            jobs: rust_mutants_cli::report::run::JobsDocument {
+                asked: "auto".to_owned(),
+                used: 1,
+            },
         },
         workspace: WorkspaceDocument {
             root_name: "demo".to_owned(),

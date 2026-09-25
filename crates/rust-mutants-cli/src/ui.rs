@@ -166,12 +166,12 @@ impl std::fmt::Debug for Display<'_> {
 
 impl<'a> Display<'a> {
     /// A display that writes to `stream`.
-    pub fn new(stream: &'a mut dyn Write, ui: Ui, paints: bool, jobs: usize) -> Self {
+    pub fn new(stream: &'a mut dyn Write, ui: Ui, paints: bool) -> Self {
         Self {
             stream,
             ui,
             paints,
-            jobs,
+            jobs: 1,
             total: 0,
             started: None,
             tally: Tally::default(),
@@ -219,12 +219,14 @@ impl<'a> Display<'a> {
 }
 
 impl Observer for Display<'_> {
-    fn starting(&mut self, total: u32) {
+    fn starting(&mut self, total: u32, width: rust_mutants::run::Width) {
         self.total = total;
+        self.jobs = width.used;
         self.started = Some(std::time::Instant::now());
         self.say(&format!(
-            "run         {total} mutants on {} jobs\n",
-            self.jobs
+            "run         {total} mutants on {} jobs ({})\n",
+            width.used,
+            width.asked.name()
         ));
     }
 

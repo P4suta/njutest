@@ -26,7 +26,8 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
             "duration_ms": 1000,
             "interrupted": false,
             "exit_code": 0,
-            "shard": null
+            "shard": null,
+            "jobs": {"asked": "auto", "used": 1}
         },
         "workspace": {
             "root_name": "demo",

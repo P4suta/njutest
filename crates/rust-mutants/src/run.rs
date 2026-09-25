@@ -358,6 +358,17 @@ pub struct Run {
     pub shard: Option<Shard>,
     /// How long the executions took together.
     pub duration: Duration,
+    /// How wide the run measured: what was asked for, and how many at once that came to on this machine.
+    pub width: Width,
+}
+
+/// How wide a run measured, resolved once so the run and what it reports cannot disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Width {
+    /// What the configuration or the command line asked for.
+    pub asked: Jobs,
+    /// How many mutants were measured at once.
+    pub used: usize,
 }
 
 impl Run {
@@ -908,11 +919,15 @@ pub fn run<O: Observer>(
         });
         unselected.push(unexecuted(mutant, NotRunReason::Unselected));
     }
-    observer.starting(count(places.len())?);
-    let judged = if options.jobs.resolve() == 1 {
+    let width = Width {
+        asked: options.jobs,
+        used: options.jobs.resolve(),
+    };
+    observer.starting(count(places.len())?, width);
+    let judged = if width.used == 1 {
         serially(session, &places, options, (cancel, observer))?
     } else {
-        pool::judge(session, &places, options, (cancel, observer))?
+        pool::judge(session, &places, options, (cancel, observer, width.used))?
     };
     observer.finished(started.elapsed());
     let mut judged = judged;
@@ -937,6 +952,7 @@ pub fn run<O: Observer>(
         interrupted: interrupted || cancel.is_cancelled(),
         shard: options.shard,
         duration: started.elapsed(),
+        width,
     })
 }
 
@@ -1480,9 +1496,9 @@ mod pool {
         session: &Session,
         places: &[&Mutant],
         options: &Options<'_>,
-        watching: (&Cancel, &mut O),
+        watching: (&Cancel, &mut O, usize),
     ) -> Result<Vec<Judged>, EngineError> {
-        let (cancel, observer) = watching;
+        let (cancel, observer, workers) = watching;
         let total =
             u32::try_from(places.len()).map_err(|_overflow| SessionError::WorkerQueueTooLarge {
                 workers: places.len(),
@@ -1490,7 +1506,7 @@ mod pool {
         if places.is_empty() {
             return Ok(Vec::new());
         }
-        let worker_count = options.jobs.resolve().min(places.len());
+        let worker_count = workers.min(places.len());
         let capacity = worker_count
             .checked_mul(2)
             .ok_or(SessionError::WorkerQueueTooLarge {
@@ -1580,8 +1596,8 @@ fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
 
 /// What a caller hears while a run happens.
 pub trait Observer {
-    /// The run is about to judge `total` mutants.
-    fn starting(&mut self, _total: u32) {}
+    /// The run is about to judge `total` mutants, `width` of them at once.
+    fn starting(&mut self, _total: u32, _width: Width) {}
 
     /// A mutant is about to be judged.
     fn started(&mut self, _mutant: &Mutant) {}
