@@ -92,8 +92,16 @@ name = "toolchain_drift"
 path = "tests/toolchain_drift.rs"
 
 [[test]]
+name = "toolchain_durable"
+path = "tests/toolchain_durable.rs"
+
+[[test]]
 name = "toolchain_equivalence"
 path = "tests/toolchain_equivalence.rs"
+
+[[test]]
+name = "toolchain_faults"
+path = "tests/toolchain_faults.rs"
 
 [[test]]
 name = "toolchain_features"

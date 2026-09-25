@@ -104,10 +104,28 @@ fn exit_code(directory: &Path) -> i32 {
 }
 
 #[test]
-fn a_recording_that_agrees_with_itself_has_nothing_to_report() {
-    let audit = audited_with_routes(&base());
+fn a_recording_that_agrees_with_itself_violates_nothing_and_leaves_only_the_package_scan() {
+    let laid = sentinel::clean().lay().expect("the specimen is laid out");
+    let audit =
+        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
     assert_eq!(audit.violations(), 0, "{audit}");
-    assert_eq!(audit.exit_code(), 0);
+    let unaudited: Vec<(Layer, &str)> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.standing == Standing::Unaudited)
+        .map(|remark| (remark.layer, remark.subject.as_str()))
+        .collect();
+    assert_eq!(
+        unaudited,
+        vec![(Layer::Concurrency, "concurrency")],
+        "with its runner and engine recordings beside it, every layer re-decides the run but the \
+         package scan a single-threaded proof rests on, which the audit does not repeat: {audit}"
+    );
+    assert_eq!(
+        audit.exit_code(),
+        xtask::proofaudit::EXIT_UNAUDITED,
+        "an audit that left the scan unrepeated did not check everything, so it does not exit 0"
+    );
 }
 
 #[test]
