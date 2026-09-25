@@ -95,7 +95,7 @@ fn an_exchange_the_run_read_licenses_the_questions_about_what_it_said_as_well() 
 #[test]
 fn a_recording_of_something_else_entirely_holds_no_seam_and_says_so_by_being_empty() {
     let Some(watched) = returned(read(
-        &event(&serde_json::json!({"type": "note"})).to_string(),
+        &event(&serde_json::json!({"type": "note", "note": {"kind": "other", "detail": "nothing about seams"}})).to_string(),
     )) else {
         return;
     };
@@ -109,10 +109,11 @@ fn what_the_recording_says_went_past_a_seam_is_read_back_field_for_field() {
         "exchange": {
             "capability": "api",
             "seq": 0,
-            "wire": "http",
-            "method": "GET",
-            "path": "/orders",
-            "status": 200
+            "during": null,
+            "duration_ms": 1,
+            "read": { "wire": "http", "method": "GET", "path": "/orders", "status": 200 },
+            "request_bytes": 1,
+            "response_bytes": 1
         }
     }));
     let Some(watched) = returned(read(&line.to_string())) else {

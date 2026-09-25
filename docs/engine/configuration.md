@@ -85,8 +85,11 @@ The typed scope of that fact is `InstrumentedWorkspaceSource`.
 Macro expansion and dependency bodies are not rewritten.
 An execution that activates in the workspace and then remains inside either has no source boundary to count and can still reach the clock as `waited`; that limitation cannot be upgraded into `step_limit_reached` or any verdict.
 
-The default of fifty million was sized for an in-memory counter that this durable protocol replaced, and what it costs is no longer a property of the engine.
-Measured on one developer machine after the per-take `fsync` was lifted out of the hot path, a take costs about half a microsecond and fifty million of them spend about twenty-five seconds, against the thirty-second floor a derived `timeout` never goes below; measured on Windows with that `fsync` still in place, a take cost 7.3ms and fifty million would have spent days.
+The default of fifty million was sized for an in-memory counter, and since [ADR 0039](../adr/0039-a-step-is-spent-in-memory.md) a take is one again.
+A runtime copy reserves a share of what is left of the allowance from the shared state and spends it in memory, and a copy that has not seen the mutation activate asks the state only every 256 boundaries.
+Measured median per boundary, on a loaded development Mac: dormant 30 ns and active 90 ns, where one file round trip per boundary had cost 3.2 µs and 35 µs; on Windows the round trip had cost 14 µs and 44 µs, and 4 ms before the file was opened once per copy.
+The allowance is exact for the copy that activates the mutation: the reservations never cross it, and the step past it is decided one at a time under the lock.
+With several copies spending at once it can stop early by what the others still hold, at most one reservation each, and a dormant copy charges nothing for up to 256 boundaries after another copy activates.
 So whether the count is reached before the clock is a fact about the machine, which is the one thing a verdict may not rest on ([ADR 0023](../adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
 
 Tuning the number does not fix that, because the number is machine-independent and its cost is not.

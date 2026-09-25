@@ -327,13 +327,17 @@ struct Mutant {
     source_run_id: Option<String>,
 }
 
-/// What the optional compiler-artifact comparison established about a row, as the run report writes it.
+/// What the engine's compiler-artifact comparison established about one mutant, as the published run report spells it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum CodegenIdentity {
+    /// Nothing was compared.
     NotMeasured,
+    /// The mutant compiles to the same code.
     Identical,
+    /// It compiles to different code.
     Different,
+    /// The comparison could not be made.
     NotEstablished,
 }
 

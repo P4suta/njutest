@@ -20,6 +20,7 @@ pub mod kaniaudit;
 pub mod kanilaws;
 pub mod knobs;
 pub mod lanes;
+pub mod layers;
 pub mod lints;
 pub mod milestones;
 pub mod modelaudit;
@@ -31,8 +32,10 @@ pub mod repair;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
+pub mod schemas;
 pub mod sentinel;
 pub mod shapes;
+pub mod specimen;
 pub mod strictjson;
 pub mod surface;
 pub mod wire;
@@ -123,11 +126,18 @@ enum Gate {
     Surfaces,
     /// Whether a completed run's verdicts are the ones its own recording supports (ADR 0004).
     Proofaudit {
-        /// The directory the run left its report in.
+        /// The directory the run left its report in, or a merged report.
         run: std::path::PathBuf,
         /// The directory the run left its recording in, which is what the proof layers are re-derived from.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "shards")]
         trace: Option<std::path::PathBuf>,
+        /// Each shard a merged report was merged from, as its report or its run directory, each re-decided against its own recording before the merge is.
+        /// Repeatable.
+        #[arg(long = "shard", value_name = "REPORT")]
+        shards: Vec<std::path::PathBuf>,
+        /// The directory holding each shard's recording under the run it names, as `.njutest/trace` does; without it, each shard's layers are unaudited.
+        #[arg(long, requires = "shards")]
+        traces: Option<std::path::PathBuf>,
     },
     /// Whether a completed engine run's report is the one its own rows, recording, and ledger support (ADR 0004).
     EngineAudit {
@@ -208,6 +218,23 @@ impl std::fmt::Debug for Streams<'_> {
     }
 }
 
+/// The command line `args` spell, or the exit code of the message clap already wrote about it.
+fn parsed<I>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<Cli, ExitCode>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    Cli::try_parse_from(args).map_err(|error| {
+        let stream: &mut dyn Write = if error.use_stderr() { stderr } else { stdout };
+        let rendered = error.render().to_string();
+        let intended = if error.use_stderr() {
+            ExitCode::from(2)
+        } else {
+            ExitCode::SUCCESS
+        };
+        after_output(stream.write_all(rendered.as_bytes()), intended)
+    })
+}
+
 /// Runs the gate named by `args` against the workspace and reports.
 pub fn run_from<I>(args: I, process: &Process<'_>, streams: &mut Streams<'_>) -> ExitCode
 where
@@ -215,18 +242,9 @@ where
 {
     let stdout = &mut *streams.output;
     let stderr = &mut *streams.errors;
-    let cli = match Cli::try_parse_from(args) {
+    let cli = match parsed(args, stdout, stderr) {
         Ok(cli) => cli,
-        Err(error) => {
-            let stream: &mut dyn Write = if error.use_stderr() { stderr } else { stdout };
-            let rendered = error.render().to_string();
-            let intended = if error.use_stderr() {
-                ExitCode::from(2)
-            } else {
-                ExitCode::SUCCESS
-            };
-            return after_output(stream.write_all(rendered.as_bytes()), intended);
-        }
+        Err(answered) => return answered,
     };
     let gate = match cli.task {
         Task::Gate(gate) => gate,
@@ -254,8 +272,17 @@ where
         Gate::Adrs => gates::adrs(&root),
         Gate::Reached => gates::reached(&root),
         Gate::Surfaces => gates::surfaces(&root),
-        Gate::Proofaudit { run, trace } => {
-            return audit_run(&run, trace.as_deref(), stdout, stderr);
+        Gate::Proofaudit {
+            run,
+            trace,
+            shards,
+            traces,
+        } => {
+            return audit_run(
+                (&run, trace.as_deref(), &shards, traces.as_deref()),
+                stdout,
+                stderr,
+            );
         }
         Gate::EngineAudit {
             run,
@@ -327,8 +354,7 @@ fn audit_engine(
 
 /// A recording that could not be read at all, like an audit with a layer blind to what was planted for it, is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
 fn audit_run(
-    run: &Path,
-    trace: Option<&Path>,
+    (run, trace, shards, traces): (&Path, Option<&Path>, &[std::path::PathBuf], Option<&Path>),
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
@@ -341,7 +367,12 @@ fn audit_run(
             );
         }
     };
-    match gates::proofaudit(run, trace) {
+    let audited = if shards.is_empty() {
+        gates::proofaudit(run, trace)
+    } else {
+        gates::proofaudit_merged(run, shards, traces)
+    };
+    match audited {
         Ok(audit) => {
             let intended = ExitCode::from(audit.exit_code());
             after_output(
@@ -430,6 +461,17 @@ fn slot(
     }
 }
 
+/// Every variable a platform's standard library or a POSIX tool reads its temporary directory from.
+const TEMPORARY_VARIABLES: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
+
+/// The variables that name this platform's temporary directory, in the order its standard library reads them.
+#[cfg(windows)]
+const TEMPORARY_READ_FROM: [&str; 3] = ["TMP", "TEMP", "TMPDIR"];
+
+/// The variables that name this platform's temporary directory, in the order its standard library reads them.
+#[cfg(not(windows))]
+const TEMPORARY_READ_FROM: [&str; 1] = ["TMPDIR"];
+
 /// Runs `command` with a temporary directory nothing else uses, and refuses whatever it leaves there.
 fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> ExitCode {
     let Some((program, arguments)) = command.split_first() else {
@@ -438,10 +480,13 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
             ExitCode::from(2),
         );
     };
-    let parent = match lanes::variable(process.environment, "TMPDIR") {
-        Some(named) => std::path::PathBuf::from(named),
-        None => std::path::PathBuf::from("/tmp"),
-    };
+    let parent = TEMPORARY_READ_FROM
+        .iter()
+        .find_map(|name| lanes::variable(process.environment, name))
+        .map_or_else(
+            || std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from,
+        );
     let scratch = match tempfile::Builder::new()
         .prefix("njutest-tidy-")
         .tempdir_in(&parent)
@@ -465,7 +510,10 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
         }
     };
     let mut running = Command::new(program);
-    running.args(arguments).env("TMPDIR", scratch.path());
+    running.args(arguments);
+    for name in TEMPORARY_VARIABLES {
+        running.env(name, scratch.path());
+    }
     let ran = work::run(&mut running, None, &stops, |_leader| Ok(()));
     let code = match ran {
         Ok(work::Ended::Exited(status)) => exit_status(status),

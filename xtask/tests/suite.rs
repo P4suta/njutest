@@ -59,6 +59,8 @@ mod sentinel;
 mod shapes;
 #[path = "slot.rs"]
 mod slot;
+#[path = "specimen_reach.rs"]
+mod specimen_reach;
 #[path = "suites.rs"]
 mod suites;
 #[path = "surface.rs"]

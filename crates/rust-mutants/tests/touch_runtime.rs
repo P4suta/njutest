@@ -1105,17 +1105,26 @@ fn a_run_binds_its_step_state_once_rather_than_reopening_it_at_every_boundary() 
         .output()
         .expect("program runs");
     assert!(run.status.success(), "{}", exact_output(&run.stderr));
+    let counted = std::fs::read_to_string(&held).expect("the file the run opened");
+    let count = counted
+        .trim_end()
+        .strip_prefix(&format!(
+            "{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tactive\t"
+        ))
+        .unwrap_or_else(|| panic!("the file the run opened is active: {counted}"));
+    let charged = count
+        .parse::<usize>()
+        .expect("the charged count is a number");
+    assert!(
+        charged >= 1002,
+        "every one of the 1002 boundaries is charged to the file the run opened, the reserved \
+         ones included: {counted}"
+    );
     assert_eq!(
-        (
-            std::fs::read_to_string(&held).expect("the file the run opened"),
-            std::fs::read_to_string(&state).expect("the file now at the name"),
-        ),
-        (
-            format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tactive\t1002\n"),
-            elsewhere,
-        ),
-        "a run opens its step state once, per runtime copy, and counts every boundary in that \
-         file: reopening the name at each of them paid an open, a check and a close per function \
-         entry and loop turn, which on Windows cost more than the work being measured"
+        std::fs::read_to_string(&state).expect("the file now at the name"),
+        elsewhere,
+        "a run opens its step state once, per runtime copy, and never counts in whatever the \
+         name is pointed at later: reopening the name at every boundary paid an open, a check \
+         and a close per function entry and loop turn"
     );
 }

@@ -584,10 +584,10 @@ pub(super) fn layer(
     report: &super::Report,
     evidence: &super::CheckedEvidence<'_>,
     audit: &mut super::Audit,
-) {
+) -> super::Decided {
     let mut notes = super::Notes::on(audit, super::Layer::Carry);
     let Some(skeletons) = evidence.skeletons.as_ref() else {
-        return;
+        return notes.absent("the run kept no skeletons, so it carried no answer to read again");
     };
     if let (Some(carried), Some(touched)) = (evidence.carried.as_ref(), evidence.touched.as_ref()) {
         let standings = evidence
@@ -606,7 +606,7 @@ pub(super) fn layer(
             "no --root names the tree the run measured, so its carry evidence is not read again"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let Some(touched) = evidence.touched.as_ref() else {
         notes.unaudited(
@@ -614,13 +614,13 @@ pub(super) fn layer(
             "the run kept no record of its items' body spans, so no body can be read again"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let page = match PageLists::read(PAGE) {
         Ok(page) => page,
         Err(refusal) => {
             notes.unaudited("page", format!("{refusal}, so no list is read"));
-            return;
+            return notes.looked();
         }
     };
     let measured: std::collections::BTreeMap<&str, &str> = report
@@ -635,6 +635,7 @@ pub(super) fn layer(
     }
     refs(&items, &mut notes);
     skeleton_folds(skeletons, &items, &mut read, &mut notes);
+    notes.looked()
 }
 
 /// The files of the measured tree, each read once and proved to be the file the run measured where the report can say.

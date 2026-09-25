@@ -115,7 +115,10 @@ pub struct Touched {
 /// # Errors
 /// A non-empty line that is not JSON rejects the whole recording.
 pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
-    Ok(of_events(&crate::route::events(recorded)?))
+    Ok(of_events(&crate::route::events(
+        recorded,
+        crate::schemas::Producer::Engine,
+    )?))
 }
 
 /// Every touch record among `events`, the events of one engine recording already read.
