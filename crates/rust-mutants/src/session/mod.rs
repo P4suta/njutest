@@ -463,7 +463,7 @@ pub struct Session {
 pub(crate) struct Carrying {
     pub(crate) tree: std::sync::OnceLock<carry::Tree>,
     pub(crate) held: std::sync::Mutex<BTreeMap<String, bool>>,
-    pub(crate) believed: std::sync::Mutex<BTreeMap<String, crate::carry::Carried>>,
+    pub(crate) believed: std::sync::Mutex<BelievedRecords>,
 }
 
 impl Carrying {
@@ -476,6 +476,10 @@ impl Carrying {
         }
     }
 }
+
+/// Every carried record a run believed, with the plan it was held to, by the full identity of its mutant.
+pub(crate) type BelievedRecords =
+    BTreeMap<String, (crate::carry::Carried, Vec<crate::carry::Planned>)>;
 
 /// Everything the pristine build read, as the outcome store keys it and as each unit's skeleton is taken over.
 #[derive(Debug)]

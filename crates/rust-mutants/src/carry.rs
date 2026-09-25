@@ -49,6 +49,8 @@ pub struct BelievedRecord {
     pub mutant: String,
     /// The record.
     pub record: Carried,
+    /// The executions this run's route would have made, which the record was held to.
+    pub plan: Vec<Planned>,
 }
 
 /// Where a mutation sits and what it writes, named by nothing outside the item it edits.
@@ -201,7 +203,8 @@ pub enum Sealing {
 }
 
 /// One execution this run's route would make: a target and the tests it would name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Planned {
     /// The target.
     pub target: String,

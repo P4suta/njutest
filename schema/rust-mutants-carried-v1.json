@@ -58,7 +58,8 @@
       "additionalProperties": false,
       "required": [
         "mutant",
-        "record"
+        "record",
+        "plan"
       ],
       "properties": {
         "mutant": {
@@ -66,6 +67,33 @@
         },
         "record": {
           "$ref": "#/$defs/record"
+        },
+        "plan": {
+          "description": "The executions this run's route would have made, which the record was held to.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "target",
+              "filter"
+            ],
+            "properties": {
+              "target": {
+                "type": "string",
+                "minLength": 1
+              },
+              "filter": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },

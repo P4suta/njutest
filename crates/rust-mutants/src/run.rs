@@ -1751,10 +1751,13 @@ fn carried(
     };
     let key = crate::carry::key(reusing.keyed, &locus);
     let record = reusing.carried.get(&key)?;
+    let plan = match &record {
+        None => Vec::new(),
+        Some(_) => session.plan(mutant, options.args, cancel)?,
+    };
     let decided = match &record {
         None => None,
         Some(record) => {
-            let plan = session.plan(mutant, options.args, cancel)?;
             let targets: BTreeSet<String> = record
                 .executions
                 .iter()
@@ -1788,7 +1791,7 @@ fn carried(
     let (Some(record), Some(Ok(()))) = (record, decided) else {
         return Ok(None);
     };
-    session.believed(mutant.id.as_str(), record.clone())?;
+    session.believed(mutant.id.as_str(), record.clone(), plan)?;
     Ok(Some(remembered(
         mutant,
         record.outcome.into(),

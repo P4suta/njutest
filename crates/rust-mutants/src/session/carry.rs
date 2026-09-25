@@ -213,13 +213,18 @@ impl Session {
     ///
     /// # Errors
     /// [`SessionError::CarryStatePoisoned`].
-    pub fn believed(&self, id: &str, record: crate::carry::Carried) -> Result<(), EngineError> {
+    pub fn believed(
+        &self,
+        id: &str,
+        record: crate::carry::Carried,
+        plan: Vec<Planned>,
+    ) -> Result<(), EngineError> {
         self.closure
             .carrying
             .believed
             .lock()
             .map_err(|_poisoned| SessionError::CarryStatePoisoned)?
-            .insert(id.to_owned(), record);
+            .insert(id.to_owned(), (record, plan));
         Ok(())
     }
 
@@ -239,9 +244,10 @@ impl Session {
             schema_version: crate::carry::DOCUMENT_VERSION,
             records: believed
                 .iter()
-                .map(|(mutant, record)| crate::carry::BelievedRecord {
+                .map(|(mutant, (record, plan))| crate::carry::BelievedRecord {
                     mutant: mutant.clone(),
                     record: record.clone(),
+                    plan: plan.clone(),
                 })
                 .collect(),
         })
