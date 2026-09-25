@@ -375,6 +375,20 @@ pub enum ProcessExit {
     Unknown,
 }
 
+impl ProcessExit {
+    /// Whether the process ended of a signal it raised by what it did, which a mutation can make it do, rather than one sent from outside.
+    #[must_use]
+    pub fn raised_by_itself(self) -> bool {
+        match self {
+            #[cfg(unix)]
+            Self::Signal(signal) => sys::raised_by_itself(signal),
+            #[cfg(windows)]
+            Self::Signal(_) => false,
+            Self::Code(_) | Self::Unknown => false,
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum ProcessExitWire {

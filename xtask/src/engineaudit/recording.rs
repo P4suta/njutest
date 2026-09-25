@@ -8,8 +8,9 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::{
-    Audit, CheckedRecording, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row, STOPPED_EARLY,
-    StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string, strings,
+    Audit, CheckedRecording, INCONCLUSIVE, KILLED, Layer, NOT_RUN, Notes, Report, Row,
+    STOPPED_EARLY, StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string,
+    strings,
 };
 
 /// The recording, against the report it is supposed to be the exhaust of.
@@ -421,6 +422,9 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     if execs.is_empty() {
         return;
     }
+    for exec in execs {
+        attributed(row, exec, notes);
+    }
     let Some(answer) = execs.iter().rev().find(|exec| exec.target == row.target) else {
         notes.violated(
             row.label(),
@@ -497,6 +501,52 @@ fn lingered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
             ),
         ),
         Some(_) => {}
+    }
+}
+
+/// Whether a killed execution that ended on a signal can be credited to the tests: a failing test named, or a signal the process raised by what it did.
+fn attributed(row: &Row, exec: &crate::route::Exec, notes: &mut Notes<'_>) {
+    let Some(signal) = exec.signal else {
+        return;
+    };
+    if exec.outcome != KILLED || !exec.failed_tests.is_empty() {
+        return;
+    }
+    match raised(signal) {
+        Raised::Itself => {}
+        Raised::Outside => notes.violated(
+            row.label(),
+            format!(
+                "an execution against {} is counted killed on signal {signal}, which another \
+                 process sends, and names no failing test; nothing the tests did ended it",
+                exec.target
+            ),
+        ),
+        Raised::Unknown => notes.unaudited(
+            row.label(),
+            format!(
+                "signal {signal} means a different thing on different platforms and the \
+                 recording does not say which it ran on, so whether the process raised it is \
+                 not known"
+            ),
+        ),
+    }
+}
+
+/// Who raised the signal a process died of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Raised {
+    Itself,
+    Outside,
+    Unknown,
+}
+
+/// Who raised `signal`, read from the numbers every POSIX platform shares and nothing else.
+const fn raised(signal: i64) -> Raised {
+    match signal {
+        4 | 5 | 6 | 8 | 11 => Raised::Itself,
+        7 | 10 | 12 | 31 => Raised::Unknown,
+        _ => Raised::Outside,
     }
 }
 

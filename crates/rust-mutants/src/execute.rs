@@ -1268,9 +1268,9 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test is a kill and a complete summary with none failed a survivor, whatever the clock did afterwards.
+/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a complete summary with none failed a survivor, and a signal sent from outside inconclusive.
 #[must_use]
-pub const fn outcome_of(
+pub fn outcome_of(
     observed: &Observation,
     summary: Option<Summary>,
     (harness, failed): (bool, &[String]),
@@ -1298,7 +1298,9 @@ pub const fn outcome_of(
     }
     let code = match exit {
         ProcessExit::Code(code) => code,
-        ProcessExit::Signal(_) => return Outcome::Killed,
+        ProcessExit::Signal(_) if exit.raised_by_itself() => return Outcome::Killed,
+        ProcessExit::Signal(_) if harness && !failed.is_empty() => return Outcome::Killed,
+        ProcessExit::Signal(_) => return Outcome::Inconclusive,
         ProcessExit::Unknown => return Outcome::NotRun,
     };
     if code != 0 {

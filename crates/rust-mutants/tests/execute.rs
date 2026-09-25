@@ -135,6 +135,15 @@ const fn result(exit_code: i32) -> Observation {
     }
 }
 
+const fn signalled(signal: i32) -> Observation {
+    Observation {
+        stopped: Stopped::Exited {
+            exit: ProcessExit::Signal(signal),
+        },
+        stale_catalog: false,
+    }
+}
+
 const fn stopped(stopped: Stopped) -> Observation {
     Observation {
         stopped,
@@ -1021,5 +1030,39 @@ fn a_test_the_harness_said_failed_is_a_detection_whatever_the_clock_did_afterwar
         ),
         Outcome::Waited,
         "a harness that is not libtest names no failure this reader can trust"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signal_sent_from_outside_is_no_detection_and_one_the_process_raised_is() {
+    for (signal, name) in [(1, "HUP"), (2, "INT"), (9, "KILL"), (15, "TERM")] {
+        assert_ne!(
+            outcome_of(&signalled(signal), None, (true, &[])),
+            Outcome::Killed,
+            "SIG{name} is what a cancelled CI job or an out-of-memory killer sends; the tests \
+             did not notice anything, and a kill stored from it would hide a survivor from \
+             every later run that reads it back"
+        );
+    }
+    for (signal, name) in [
+        (4, "ILL"),
+        (5, "TRAP"),
+        (6, "ABRT"),
+        (8, "FPE"),
+        (11, "SEGV"),
+    ] {
+        assert_eq!(
+            outcome_of(&signalled(signal), None, (true, &[])),
+            Outcome::Killed,
+            "SIG{name} is raised by what the process itself did, which a mutation can make it do"
+        );
+    }
+    let failed = vec!["a_test_that_noticed".to_owned()];
+    assert_eq!(
+        outcome_of(&signalled(9), None, (true, &failed)),
+        Outcome::Killed,
+        "a test the harness had already said failed noticed the mutation, whatever ended the \
+         process afterwards"
     );
 }
