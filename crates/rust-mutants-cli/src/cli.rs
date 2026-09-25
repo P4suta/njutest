@@ -415,10 +415,9 @@ pub struct Scope {
     /// How many compilation jobs cargo may run at once.
     #[arg(long = "build-jobs", value_name = "N")]
     pub build_jobs: Option<u32>,
-    /// How many mutants to measure at once.
-    /// Zero is as many as the machine has, capped at four.
-    #[arg(long, short = 'j', value_name = "N")]
-    pub jobs: Option<usize>,
+    /// How many mutants to measure at once: a count, `auto` for as many as the machine has capped at four, or `all` for every one.
+    #[arg(long, short = 'j', value_name = "N|auto|all", value_parser = rust_mutants::run::Jobs::parse)]
+    pub jobs: Option<rust_mutants::run::Jobs>,
     /// Never start this target, by the id a report names it with.
     /// Repeatable.
     #[arg(long = "skip-target", value_name = "PKG/KIND/NAME")]

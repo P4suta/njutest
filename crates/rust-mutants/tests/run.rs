@@ -332,19 +332,51 @@ fn an_inconclusive_mutant_says_which_of_the_two_things_left_it_undecided() {
 }
 
 #[test]
-fn jobs_defaults_to_the_machine_capped_at_four_and_a_number_wins() {
-    let cores = match std::thread::available_parallelism() {
-        Ok(cores) => cores.get(),
-        Err(_unavailable) => 1,
-    };
-    assert_eq!(rust_mutants::run::jobs(0), cores.min(4));
-    assert_eq!(rust_mutants::run::jobs(1), 1);
+fn auto_is_the_machine_capped_at_four_all_is_the_machine_and_a_count_wins() {
+    use rust_mutants::run::{Jobs, JobsError};
+
+    for cores in [1, 2, 4, 8, 64] {
+        assert_eq!(
+            Jobs::Auto.resolve_on(cores),
+            cores.min(4),
+            "{cores} cores: each test binary already runs its own tests on as many threads as the \
+             machine has, so the cap is what keeps a duration a fact about the mutation rather \
+             than the load on a machine a person is using"
+        );
+        assert_eq!(
+            Jobs::All.resolve_on(cores),
+            cores,
+            "{cores} cores: a CI runner doing nothing else is asked for every one"
+        );
+        assert_eq!(Jobs::count(64).map(|jobs| jobs.resolve_on(cores)), Ok(64));
+    }
     assert_eq!(
-        rust_mutants::run::jobs(64),
-        64,
-        "each test binary already runs its own tests on as many threads as the machine has, \
-         so the cap is what keeps a duration a fact about the mutation rather than the load; \
-         a person who says otherwise has said so"
+        Jobs::All.resolve_on(0),
+        1,
+        "a machine that says nothing still runs one"
+    );
+    for (written, read) in [
+        ("auto", Ok(Jobs::Auto)),
+        ("all", Ok(Jobs::All)),
+        ("3", Jobs::count(3)),
+        ("0", Err(JobsError::Zero)),
+        (
+            "many",
+            Err(JobsError::Unknown {
+                text: "many".to_owned(),
+            }),
+        ),
+    ] {
+        assert_eq!(Jobs::parse(written), read, "{written:?}");
+    }
+    assert_eq!(
+        Jobs::parse("0").map_err(|error| error.to_string()),
+        Err(
+            "0 jobs would measure nothing; write `auto` for as many as the machine has, capped \
+             at 4, or `all` for every one"
+                .to_owned()
+        ),
+        "a zero that used to mean auto says which word means it now"
     );
 }
 

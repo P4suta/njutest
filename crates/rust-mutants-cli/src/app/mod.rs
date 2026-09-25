@@ -1184,7 +1184,7 @@ fn measured_run(
         stdout,
         resolved(watched.ui),
         watched.paints,
-        run::jobs(watched.settings.config.execution.jobs),
+        watched.settings.config.execution.jobs.resolve(),
     );
     let result = run::run(session, watched.options, cancel, &mut display);
     display.finish()?;

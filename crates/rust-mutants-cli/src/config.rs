@@ -351,9 +351,8 @@ pub struct Execution {
     pub doctests: bool,
     /// Targets never to start, by the id a report names them with.
     pub skip_targets: Vec<String>,
-    /// How many mutants to measure at once.
-    /// Zero is as many as the machine has, capped at four.
-    pub jobs: usize,
+    /// How many mutants to measure at once: a count, `auto` for as many as the machine has capped at four, or `all` for every one.
+    pub jobs: rust_mutants::run::Jobs,
 }
 
 impl Default for Execution {
@@ -365,7 +364,7 @@ impl Default for Execution {
             test_binary_args: Vec::new(),
             scratch_working_directory: false,
             skip_targets: Vec::new(),
-            jobs: 0,
+            jobs: rust_mutants::run::Jobs::Auto,
         }
     }
 }
@@ -898,7 +897,7 @@ version = 1
 # locked = false
 # doctests = true                # run a library's documented examples as a target
 # skip_targets = []              # target ids never to start, as pkg/kind/name
-# jobs = 0                        # mutants measured at once; 0 = the machine, capped at 4
+# jobs = \"auto\"                # mutants measured at once: a count, \"auto\" (the machine, capped at 4), or \"all\"
 # test_binary_args = []          # allowed: {allowed}
 # scratch_working_directory = false # start each test process in a directory of its own,
 #                                # so a test that writes where it runs does not write into
