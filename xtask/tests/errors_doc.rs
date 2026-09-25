@@ -71,7 +71,7 @@ fn every_documented_row_says_what_the_code_says() {
     }
 }
 
-/// The error types of one file, by derive or by name, and the types it gives a code.
+/// The error types of one file, by derive, by a written `Error` impl, or by name, and the types it gives a code.
 #[derive(Default)]
 struct Declared {
     errors: BTreeSet<String>,
@@ -94,17 +94,25 @@ impl<'ast> syn::visit::Visit<'ast> for Declared {
     }
 
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
-        let codes = item.trait_.as_ref().is_some_and(|(trait_, _for)| {
+        let implemented = item.trait_.as_ref().and_then(|(trait_, _for)| {
             trait_
                 .segments
                 .last()
-                .is_some_and(|segment| segment.ident == "Coded")
+                .map(|segment| segment.ident.to_string())
         });
-        if codes
+        if let Some(implemented) = implemented
             && let syn::Type::Path(type_) = item.self_ty.as_ref()
             && let Some(name) = type_.path.segments.last()
         {
-            self.coded.insert(name.ident.to_string());
+            match implemented.as_str() {
+                "Coded" => {
+                    self.coded.insert(name.ident.to_string());
+                }
+                "Error" => {
+                    self.errors.insert(name.ident.to_string());
+                }
+                _ => {}
+            }
         }
         syn::visit::visit_item_impl(self, item);
     }
@@ -178,7 +186,7 @@ fn xtask_sources() -> Vec<(String, String)> {
 }
 
 #[test]
-fn an_error_type_with_no_code_is_found_by_its_derive_or_its_name() {
+fn an_error_type_with_no_code_is_found_by_its_derive_its_impl_or_its_name() {
     let specimen = vec![(
         "xtask/src/specimen.rs".to_owned(),
         "#[derive(Debug, thiserror::Error)]\n\
@@ -194,19 +202,26 @@ fn an_error_type_with_no_code_is_found_by_its_derive_or_its_name() {
              fn code(&self) -> crate::error::XtCode {\n        \
                  crate::error::XtCode::GateRefused\n    }\n}\n\
          mod inner {\n    #[derive(Debug, thiserror::Error)]\n    \
-             #[error(\"inner\")]\n    pub struct InnerError;\n}\n"
+             #[error(\"inner\")]\n    pub struct InnerError;\n}\n\
+         #[derive(Debug)]\n\
+         pub struct Failure;\n\
+         impl std::fmt::Display for Failure {\n    \
+             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        \
+                 f.write_str(\"failed\")\n    }\n}\n\
+         impl std::error::Error for Failure {}\n"
             .to_owned(),
     )];
     assert_eq!(
         uncoded(&specimen),
         vec![
             "xtask/src/specimen.rs: Contradiction",
+            "xtask/src/specimen.rs: Failure",
             "xtask/src/specimen.rs: InnerError",
             "xtask/src/specimen.rs: NamedError",
             "xtask/src/specimen.rs: PlantedError",
         ],
-        "an error is found by what it derives or what it is named, wherever in the file it is, \
-         and only the one given a code is left out"
+        "an error is found by what it derives, by an `Error` impl written by hand, or by what it \
+         is named, wherever in the file it is, and only the one given a code is left out"
     );
 }
 
