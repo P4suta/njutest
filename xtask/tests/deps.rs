@@ -223,3 +223,21 @@ fn a_feature_only_a_development_edge_turns_on_is_named_for_a_direct_dependency_a
         "and a graph built alike with and without development edges draws nothing"
     );
 }
+
+#[test]
+fn the_targets_the_feature_gate_reads_are_the_ones_a_release_builds() {
+    let workflow = std::fs::read_to_string(
+        njutest_devkit::paths::workspace_root().join(".github/workflows/release.yml"),
+    )
+    .unwrap_or_else(|error| panic!("the release workflow: {error}"));
+    let built: std::collections::BTreeSet<&str> = workflow
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("target: "))
+        .map(str::trim)
+        .collect();
+    let read: std::collections::BTreeSet<&str> = xtask::deps::SHIPPED_TARGETS.into_iter().collect();
+    assert_eq!(
+        read, built,
+        "a target a release builds unifies features over its own graph, and a gate that does not read it passes what that release ships without"
+    );
+}

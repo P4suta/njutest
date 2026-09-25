@@ -1619,7 +1619,7 @@ fn built_as_tested(
     Ok(())
 }
 
-/// Every feature a shipped dependency is built with only because a development edge asks for it.
+/// Every feature a shipped dependency is built with only because a development edge asks for it, on any target a release builds.
 ///
 /// # Errors
 /// A `cargo tree` that could not be run or read.
@@ -1627,10 +1627,10 @@ fn features_only_tests_build_with(
     root: &Path,
     direct: &BTreeSet<String>,
 ) -> Result<Vec<(String, Vec<String>)>, GateFailure> {
-    let tree = |edges: &str| -> Result<String, GateFailure> {
+    let tree = |target: &str, edges: &str| -> Result<String, GateFailure> {
         let mut args = vec![
             "tree", "--locked", "--color", "never", "--prefix", "none", "--format", "{p}|{f}",
-            "--edges", edges,
+            "--target", target, "--edges", edges,
         ];
         for shipped in deps::SHIPPED {
             args.extend(["--package", shipped]);
@@ -1648,10 +1648,19 @@ fn features_only_tests_build_with(
         String::from_utf8(asked.stdout)
             .map_err(|error| GateFailure(format!("cargo tree stdout is not UTF-8: {error}")))
     };
-    Ok(deps::features_only_tests_build_with(
-        (&tree("normal,build")?, &tree("normal,build,dev")?),
-        direct,
-    ))
+    let mut found = Vec::new();
+    for target in deps::SHIPPED_TARGETS {
+        for (package, features) in deps::features_only_tests_build_with(
+            (
+                &tree(target, "normal,build")?,
+                &tree(target, "normal,build,dev")?,
+            ),
+            direct,
+        ) {
+            found.push((format!("{package} on {target}"), features));
+        }
+    }
+    Ok(found)
 }
 
 /// Every cargo manifest in the tree, classified, so a fourth kind cannot appear unnoticed.
