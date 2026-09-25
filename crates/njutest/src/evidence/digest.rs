@@ -127,6 +127,8 @@ pub struct Inputs {
     pub toolchain: String,
     /// The target triple the run happens on.
     pub platform: String,
+    /// The digest of the running njutest, because two builds of it may mean two different things by the same answer.
+    pub engine: String,
     /// The environment the run selected, as names and values.
     /// Read in a fixed order.
     pub environment: Vec<(String, String)>,
@@ -142,6 +144,23 @@ pub struct Inputs {
     pub shard: Option<String>,
 }
 
+/// The digest of the njutest executable at `program`, which is what every answer a run keeps was decided by.
+///
+/// # Errors
+/// The file could not be read.
+pub fn engine_of(program: &std::path::Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(program)?;
+    let mut hasher = Sha256::new();
+    let mut chunk = vec![0_u8; 1 << 16];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut chunk)?;
+        let Some(held) = chunk.get(..read).filter(|held| !held.is_empty()) else {
+            return Ok(hex::encode(hasher.finalize()));
+        };
+        hasher.update(held);
+    }
+}
+
 /// The run's identity: the number a later run compares its own against before believing anything an earlier one recorded.
 #[must_use]
 pub fn identity(inputs: &Inputs) -> String {
@@ -154,6 +173,7 @@ pub fn identity(inputs: &Inputs) -> String {
         .field("dependencies", &inputs.dependencies)
         .field("toolchain", &inputs.toolchain)
         .field("platform", &inputs.platform)
+        .field("engine", &inputs.engine)
         .list(
             "environment",
             environment

@@ -724,6 +724,7 @@ fn validate_build_ledger(report: &impl LatticeEvidence) -> Vec<Violation> {
         validate_build_parts(report, build, &mut unique_runs, &mut violations);
     }
     check_one_tree(report, &mut violations);
+    check_merged_acceptances(report, &mut violations);
     violations
 }
 
@@ -1100,38 +1101,37 @@ fn check_seams(report: &BuildReport, violations: &mut Vec<Violation>) {
     }
 }
 
-/// Whether every unmatched-acceptance finding really fails to name exactly one catalog entry.
+/// Whether every unmatched-acceptance finding really fails to name exactly one catalog entry, which a part of a shard set cannot say alone.
 fn check_acceptances(report: &BuildReport, violations: &mut Vec<Violation>) {
     if report.scope.shard.is_some() {
         return;
     }
-    for finding in report
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == FindingKind::UnmatchedAcceptance)
-    {
-        let subject = finding.subject.as_str();
-        let valid = (rust_mutants::id::MIN_PREFIX_LENGTH..=rust_mutants::id::ID_HEX_LENGTH)
-            .contains(&subject.len())
-            && subject
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-        if !valid {
-            continue;
-        }
-        let mut matches = report
-            .mutants
+    resolved(&report.findings, &report.mutants, violations);
+}
+
+/// The same question of a build measured in parts, asked of every part's rows together.
+fn check_merged_acceptances(report: &impl LatticeEvidence, violations: &mut Vec<Violation>) {
+    for build in report.builds().iter() {
+        if !build
+            .parts
             .iter()
-            .filter(|mutant| mutant.id.starts_with(subject));
-        let Some(mutant) = matches.next() else {
+            .any(|part| matches!(part.part, super::CatalogPart::Shard(_)))
+        {
             continue;
-        };
-        if matches.next().is_none() {
-            violations.push(Violation::UnmatchedAcceptanceResolved {
-                subject: finding.subject.clone(),
-                mutant: mutant.id.clone(),
-            });
         }
+        let rows: Vec<super::MutantRecord> = build
+            .parts
+            .iter()
+            .flat_map(|part| part.mutants.iter().cloned())
+            .collect();
+        resolved(report.global_findings(), &rows, violations);
+    }
+}
+
+/// A violation for every unmatched acceptance `rows` resolve.
+fn resolved(findings: &[Finding], rows: &[super::MutantRecord], violations: &mut Vec<Violation>) {
+    for (subject, mutant) in super::acceptances_the_catalog_resolves(findings, rows) {
+        violations.push(Violation::UnmatchedAcceptanceResolved { subject, mutant });
     }
 }
 

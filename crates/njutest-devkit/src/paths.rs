@@ -87,9 +87,61 @@ pub fn cache_beside(root: &Path) -> std::io::Result<PathBuf> {
 }
 
 fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
-    let dir = root.parent().unwrap_or(root).join(name);
+    let parent = root.parent().unwrap_or(root);
+    if same_directory(parent, &std::env::temp_dir()) {
+        return Err(std::io::Error::other(format!(
+            "{} sits directly in the shared temporary directory, so what is put beside it would \
+             be shared by every test and outlive them all; give the tree a directory of its own \
+             and root it inside that",
+            root.display()
+        )));
+    }
+    let dir = parent.join(name);
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+/// A project tree a test owns, rooted inside a temporary directory of its own so what a run puts beside the tree goes with it.
+#[derive(Debug)]
+pub struct Project {
+    #[expect(
+        dead_code,
+        reason = "the directory is held for what dropping it does: the project and what sits beside it go"
+    )]
+    directory: tempfile::TempDir,
+    root: PathBuf,
+}
+
+impl Project {
+    /// A new, empty project tree.
+    ///
+    /// # Panics
+    /// When no temporary directory can be made, which leaves the test nowhere to work.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "a test with no directory has nothing to test"
+    )]
+    pub fn fresh() -> Self {
+        let directory = tempfile::tempdir().expect("a directory for a project");
+        let root = directory.path().join("project");
+        fs::create_dir_all(&root).expect("a project tree");
+        Self { directory, root }
+    }
+
+    /// The project's root.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.root
+    }
+}
+
+/// Whether two paths name one directory once each is resolved.
+fn same_directory(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        (Err(_), _) | (_, Err(_)) => left == right,
+    }
 }
 
 /// `path`, escaped the way a JSON string escapes its contents, without the quotes.

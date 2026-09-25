@@ -20,8 +20,8 @@ pub fn pick(a: i32, b: i32) -> i32 {
 /// A returned expression, and a match arm body.
 pub fn classify(n: i32) -> Option<&'static str> {
     __rm::item(2); __rm::checkpoint(); __rm::value!(if __rm::active(15) { Default::default() } else if __rm::active(16) { Some(Default::default()) } else { match n {
-        0 if __rm::value!(__rm::active(17) && __rm::value!(false) || !__rm::active(17) && true) => __rm::value!(if __rm::active(18) { Some(Default::default()) } else { None }),
-        n if __rm::value!(__rm::active(19) && __rm::value!(false) || __rm::active(20) && __rm::value!(true) || __rm::active(21) && __rm::value!(n <= 0) || !__rm::active(19) && !__rm::active(20) && !__rm::active(21) && n < __rm::value!(if __rm::active(22) { 1 } else { 0 })) => __rm::value!(if __rm::active(23) { Default::default() } else if __rm::active(24) { Some(Default::default()) } else { Some(__rm::value!(if __rm::active(25) { "" } else { "negative" })) }),
+        0 if __rm::value!(__rm::active(17) && __rm::value!(false) || !__rm::active(17) && __rm::value!(true)) => __rm::value!(if __rm::active(18) { Some(Default::default()) } else { None }),
+        n if __rm::value!(__rm::active(19) && __rm::value!(false) || __rm::active(20) && __rm::value!(true) || __rm::active(21) && __rm::value!(n <= 0) || !__rm::active(19) && !__rm::active(20) && !__rm::active(21) && __rm::value!(n < __rm::value!(if __rm::active(22) { 1 } else { 0 }))) => __rm::value!(if __rm::active(23) { Default::default() } else if __rm::active(24) { Some(Default::default()) } else { Some(__rm::value!(if __rm::active(25) { "" } else { "negative" })) }),
         _ => __rm::value!(if __rm::active(26) { Default::default() } else if __rm::active(27) { Some(Default::default()) } else { Some(__rm::value!(if __rm::active(28) { "" } else { "positive" })) }),
     } })
 }

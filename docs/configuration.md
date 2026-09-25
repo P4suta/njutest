@@ -32,7 +32,7 @@ test_binary_args = []           # allowed: --test-threads=N, --include-ignored, 
 environment = []                # variable names only, never values; RUST_TEST_* is refused
 timeout = "10m"                 # upper bound for one measurement; Go duration syntax
 build_timeout = ""              # upper bound for one build; empty = no bound
-jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
+jobs = "auto"                   # mutation workers: a count, "auto" (logical CPUs capped at four), or "all"
 skip_targets = []               # stable target ids never to start; every one is reported
 coverage = false                # also make the coverage build, as a second opinion (ADR 0014)
 

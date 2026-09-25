@@ -101,14 +101,18 @@ fn the_disabled_recorder_keeps_nothing_and_says_so() {
     assert!(!trace.is_enabled());
     trace.note("phase", "nothing is listening");
     trace.phase("baseline").end();
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 }
 
 #[test]
 fn a_recording_opens_with_run_start_and_closes_with_run_end() {
     let trace = recording();
     trace.note("note", "in between");
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(types(&events), ["run-start", "note", "run-end"]);
@@ -123,7 +127,7 @@ fn a_recording_opens_with_run_start_and_closes_with_run_end() {
     let Payload::RunEnd { run } = &events[2].payload else {
         panic!("a run-end last: {:?}", events[2]);
     };
-    assert_eq!(run.verdict, "ASSURED");
+    assert_eq!(run.verdict, njutest::report::Verdict::Assured);
     assert_eq!(
         run.events_emitted, 2,
         "the run-start and the note; a recording cannot count the event it is writing"
@@ -136,7 +140,9 @@ fn sequence_numbers_run_from_one_and_the_elapsed_time_is_measured_from_the_start
     let trace = recording();
     trace.note("a", "one");
     trace.note("b", "two");
-    trace.run_end("ERROR", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Error, None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(
@@ -164,7 +170,7 @@ fn a_phase_ends_once_whether_the_caller_ends_it_or_drops_it() {
     let mutation_phase = trace.phase("mutation");
     drop(mutation_phase);
     trace
-        .run_end("INSUFFICIENT", None, None)
+        .run_end(njutest::report::Verdict::Insufficient, None, None)
         .expect("trace closes");
 
     let events = trace.events();
@@ -193,7 +199,9 @@ fn phases_nest_and_each_guard_times_its_own() {
     let inner = trace.phase("baseline");
     inner.end();
     outer.end();
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(
@@ -221,16 +229,24 @@ fn phases_nest_and_each_guard_times_its_own() {
 #[test]
 fn a_recording_ends_once_and_keeps_nothing_after() {
     let trace = recording();
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
     trace.note("late", "after the end");
-    trace.run_end("DEFECT", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Defect, None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(types(&events), ["run-start", "run-end"]);
     let Payload::RunEnd { run } = &events[1].payload else {
         panic!("a run-end: {:?}", events[1]);
     };
-    assert_eq!(run.verdict, "ASSURED", "the first end is the one");
+    assert_eq!(
+        run.verdict,
+        njutest::report::Verdict::Assured,
+        "the first end is the one"
+    );
 }
 
 #[test]
@@ -256,7 +272,9 @@ fn an_exec_event_carries_environment_names_and_never_a_value() {
         error: None,
         output: Vec::new(),
     });
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     let Payload::Exec { exec } = &events[1].payload else {
@@ -291,7 +309,9 @@ fn an_exec_event_digests_the_output_rather_than_carrying_it() {
         error: None,
         output: output.clone(),
     });
-    trace.run_end("DEFECT", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Defect, None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     let Payload::Exec { exec } = &events[1].payload else {
@@ -323,7 +343,9 @@ fn a_progress_note_and_an_artifact_are_records_of_their_own() {
         path: "/tmp/njutest-run-abcdef".to_owned(),
         bytes: Some(4_096),
     });
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 
     assert_eq!(
         types(&trace.events()),
@@ -341,7 +363,9 @@ fn a_full_ring_drops_its_oldest_and_the_run_end_says_how_many() {
     for index in 0..5_u32 {
         trace.note("fill", &index.to_string());
     }
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 
     let events = trace.events();
     assert_eq!(events.len(), 3, "the newest three");
@@ -379,7 +403,7 @@ fn a_requested_trace_that_cannot_write_fails_finalization() {
     let trace = Recorder::new(Sink::required_with_ring(sink), stepping_clock(), start());
     trace.note("note", "into the void");
     let error = trace
-        .run_end("ASSURED", None, None)
+        .run_end(njutest::report::Verdict::Assured, None, None)
         .expect_err("a requested durable trace may not disappear");
     assert!(
         error.to_string().contains("trace sink is closed"),
@@ -396,7 +420,7 @@ fn a_required_directory_failure_after_start_cannot_be_hidden_by_the_ring() {
     trace.fail_durable_writes_for_test();
     trace.note("after-start", "must be durable");
     let error = trace
-        .run_end("ASSURED", None, None)
+        .run_end(njutest::report::Verdict::Assured, None, None)
         .expect_err("the ring is an observer, not durable authority");
     assert!(
         error
@@ -418,7 +442,9 @@ fn a_directory_sink_writes_one_json_object_per_line_and_the_reader_reads_it_back
     let sink = DirSink::create(&recording).expect("the sink");
     let trace = Recorder::new(Sink::required_with_ring(sink), stepping_clock(), start());
     trace.phase("baseline").end();
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
 
     let path = recording.join(FILE_NAME);
     let text = fs::read_to_string(&path).expect("the stream");
@@ -679,7 +705,9 @@ fn the_published_v1_schema_accepts_every_closed_specimen_and_refuses_ambiguity()
 #[test]
 fn a_recording_that_lost_one_event_says_so_like_any_other() {
     let trace = recording();
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
     let mut events = trace.events();
     let Some(Payload::RunEnd { run }) = events.last_mut().map(|event| &mut event.payload) else {
         panic!("a run-end last");
@@ -727,7 +755,7 @@ fn a_stage_ends_where_the_next_begins_and_the_last_ends_with_the_run() {
     trace.stage("open");
     trace.stage("baseline");
     trace
-        .run_end("INSUFFICIENT", None, None)
+        .run_end(njutest::report::Verdict::Insufficient, None, None)
         .expect("trace closes");
 
     let events = trace.events();
@@ -781,7 +809,7 @@ fn a_route_names_every_target_a_proof_discharged_beside_the_proof() {
         infected: Some(3),
     });
     trace
-        .run_end("INSUFFICIENT", None, None)
+        .run_end(njutest::report::Verdict::Insufficient, None, None)
         .expect("trace closes");
 
     let events = trace.events();
@@ -852,7 +880,7 @@ fn the_wire_shape_is_the_recorded_one() {
     });
     trace.note("limitation", "mutation-phase-not-implemented");
     trace
-        .run_end("INSUFFICIENT", None, None)
+        .run_end(njutest::report::Verdict::Insufficient, None, None)
         .expect("trace closes");
 
     let mut lines = Vec::new();
@@ -871,7 +899,9 @@ fn a_stage_and_the_work_inside_it_do_not_answer_to_one_name() {
     let inner = trace.phase("mutation-judge");
     inner.end();
     trace.stage("equivalence");
-    trace.run_end("ASSURED", None, None).expect("trace closes");
+    trace
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
     assert!(
         !check(&trace.events())
             .iter()
@@ -885,7 +915,9 @@ fn a_stage_and_the_work_inside_it_do_not_answer_to_one_name() {
     twice.stage("equivalence");
     let same = twice.phase("equivalence");
     same.end();
-    twice.run_end("ASSURED", None, None).expect("trace closes");
+    twice
+        .run_end(njutest::report::Verdict::Assured, None, None)
+        .expect("trace closes");
     let problems = check(&twice.events());
     assert!(
         problems.contains(&Problem::PhaseRepeated {

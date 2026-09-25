@@ -17,7 +17,7 @@ use rust_mutants::work::{Removal, Work};
 fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
     let value = serde_json::json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
+        "schema_version": 3,
         "tool_version": "0.1.0",
         "run": {
             "id": "20260907T000000000Z",
@@ -26,7 +26,8 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
             "duration_ms": 1000,
             "interrupted": false,
             "exit_code": 0,
-            "shard": null
+            "shard": null,
+            "jobs": {"asked": "auto", "used": 1}
         },
         "workspace": {
             "root_name": "demo",
@@ -89,6 +90,7 @@ fn row(index: u32, extra: &serde_json::Value) -> serde_json::Value {
         "killed_by": [],
         "signal": null,
         "retried": false,
+        "lingered": false,
         "not_run_reason": null,
         "route": null,
         "identical": "not-measured",
@@ -279,6 +281,7 @@ fn a_confirming_retry_is_one_pair_started_twice() {
             &serde_json::json!({
                 "outcome": "waited",
                 "retried": true,
+                "lingered": false,
                 "route": {
                     "granularity": "all",
                     "reaching": ["demo/test/one"],

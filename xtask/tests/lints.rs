@@ -1811,9 +1811,19 @@ fn a_removal_in_a_loop_is_refused_and_one_of_a_named_directory_is_not() {
     );
     let found = scan_source("crates/demo/src/lib.rs", single).expect("it parses");
     assert!(
-        found.is_empty(),
+        found.iter().all(|one| one.kind != Kind::UnboundedRemoval),
         "one directory a caller names is one removal, and a budget over one thing is a \
          bound on nothing: {found:?}"
+    );
+    assert!(
+        found.iter().any(|one| one.kind == Kind::RawTreeRemoval),
+        "but shipped code removes a run's tree through tempowner, which gets past a directory \
+         a panicking test left read-only: {found:?}"
+    );
+    let found = scan_source("crates/rust-mutants/src/tempowner/mod.rs", single).expect("it parses");
+    assert!(
+        found.is_empty(),
+        "the one module that restores access on the way down is the one that may: {found:?}"
     );
 }
 

@@ -120,6 +120,8 @@ pub struct MutantLine {
     pub failed_tests: Vec<String>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
+    /// Whether the harness had already answered when the clock ended the process.
+    pub lingered: bool,
     /// Why it was never executed, when it was not.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub not_run_reason: Option<NotRunReason>,
@@ -161,6 +163,7 @@ impl MutantLine {
             tests_run: judged.tests_run,
             failed_tests: judged.failed_tests.clone(),
             retried: judged.retried,
+            lingered: judged.lingered,
             not_run_reason: judged.not_run_reason,
             source_run_id: judged.source_run_id.clone(),
         })

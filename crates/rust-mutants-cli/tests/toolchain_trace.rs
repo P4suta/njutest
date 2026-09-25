@@ -131,9 +131,10 @@ fn run_with_trace_records_under_the_run_directory_and_ends_with_run_end() {
         Some(if output.status.code() == Some(0) {
             "detected"
         } else {
-            "undetected"
+            "found"
         }),
-        "{end}"
+        "exit 1 is a finding of any kind, and the recording names it for that rather than for one \
+         kind of finding: {end}"
     );
     assert_eq!(
         end.pointer("/payload/run/events_dropped")
@@ -647,5 +648,54 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
+    }
+}
+
+#[test]
+fn every_line_a_real_run_records_is_on_the_published_engine_trace_schema() {
+    let path = njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    for extra in [
+        &["--tier", "balanced"][..],
+        &["--coverage", "--tier", "balanced"][..],
+    ] {
+        let fixture = Fixture::copy("fixture-simple");
+        let mut args = vec!["run", "--trace"];
+        args.extend_from_slice(extra);
+        let output = against(&fixture, &args);
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "{extra:?}: the run answers: {}",
+            njutest_devkit::process::strict_utf8(&output.stderr)
+        );
+        let run = only_run(&reports(&fixture));
+        let events = recorded(&run.join("trace"));
+        let mut debug_spelled = events.last().cloned().expect("a run-end");
+        if let Some(outcome) = debug_spelled.pointer_mut("/payload/run/outcome") {
+            *outcome = serde_json::Value::from("Detected");
+        }
+        assert!(
+            validator.validate(&debug_spelled).is_err(),
+            "an outcome spelled by its Debug text is off the schema, which is what this law exists \
+             to see: {debug_spelled}"
+        );
+        let off: Vec<String> = events
+            .iter()
+            .filter_map(|event| match validator.validate(event) {
+                Ok(()) => None,
+                Err(error) => Some(format!("{error}: {event}")),
+            })
+            .collect();
+        assert_eq!(
+            off,
+            Vec::<String>::new(),
+            "{extra:?}: a recording its readers validate before they read it is written on its \
+             schema"
+        );
     }
 }

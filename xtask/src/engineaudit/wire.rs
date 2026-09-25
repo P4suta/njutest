@@ -102,6 +102,7 @@ impl Document {
             interrupted,
             exit_code,
             _shard: _,
+            _jobs: _,
         } = run;
         let Workspace {
             _root_name: _,
@@ -159,6 +160,17 @@ struct Run {
     #[serde(rename = "shard")]
     #[serde(deserialize_with = "required_option")]
     _shard: Option<String>,
+    #[serde(rename = "jobs")]
+    _jobs: Jobs,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Jobs {
+    #[serde(rename = "asked")]
+    _asked: String,
+    #[serde(rename = "used")]
+    _used: u64,
 }
 
 #[derive(Deserialize)]
@@ -262,6 +274,10 @@ impl Target {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states, and the wire shape is the schema's"
+)]
 struct Mutant {
     index: u64,
     id: String,
@@ -298,6 +314,7 @@ struct Mutant {
     #[serde(deserialize_with = "required_option")]
     _signal: Option<i64>,
     retried: bool,
+    lingered: bool,
     #[serde(deserialize_with = "required_option")]
     not_run_reason: Option<NotRunReason>,
     #[serde(deserialize_with = "required_option")]
@@ -348,6 +365,7 @@ impl Mutant {
             killed_by,
             _signal: _,
             retried,
+            lingered,
             not_run_reason,
             route,
             _identical: _,
@@ -377,6 +395,7 @@ impl Mutant {
             killed_by,
             item,
             retried,
+            lingered,
             expected,
             unreached,
             not_run_reason,

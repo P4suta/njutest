@@ -904,3 +904,43 @@ fn every_crash_decision_is_one_the_schema_publishes_and_the_page_documents() {
         );
     }
 }
+
+#[test]
+fn the_marks_the_contract_says_a_guard_draws_are_the_ones_it_draws() {
+    let text = page("docs/assurance-contract.md");
+    let (_, after) = text
+        .split_once("## What a guard marks")
+        .expect("the contract says what a guard marks");
+    let said = after.split("\n## ").next().unwrap_or_default();
+    let plain = njutest::presentation::Terminal::plain(80);
+    let drawn = njutest::presentation::Telling::of(njutest::presentation::Terminal {
+        unicode: true,
+        ..plain
+    })
+    .strokes();
+    let ascii = njutest::presentation::Telling::of(plain).strokes();
+    for section in njutest::spec::Section::ALL {
+        let named = njutest::presentation::spec::named(section);
+        let mark = njutest::presentation::guard::mark(section, &drawn);
+        assert!(
+            said.contains(&format!("`{mark}` {named}")),
+            "the contract names `{mark}` as what a line {named} is marked with, as the page and \
+             the editor mark it"
+        );
+    }
+    let fallbacks: Vec<String> = njutest::spec::Section::ALL
+        .into_iter()
+        .map(|section| format!("`{}`", njutest::presentation::guard::mark(section, &ascii)))
+        .collect();
+    assert!(
+        said.contains(&format!(
+            "({} where the terminal has only ASCII)",
+            fallbacks.join(", ")
+        )),
+        "the contract lists the ASCII marks in the order of the sections they stand for"
+    );
+    assert!(
+        said.contains(&format!("`{}` not yet asked", drawn.unasked)),
+        "the contract names the mark of a file no run has asked about as it is now"
+    );
+}

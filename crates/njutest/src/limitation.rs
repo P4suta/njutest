@@ -38,6 +38,8 @@ pub const MIRI_TIMED_OUT: &str = "miri-timed-out";
 
 /// The toolchain has no interpreter, and the contract names the soundness it could not establish rather than refusing the run.
 pub const MIRI_UNAVAILABLE: &str = "miri-unavailable";
+/// The interpreter ended without a test result, so what its status says is about the interpreter and not the suite.
+pub const MIRI_RAN_NO_TEST: &str = "miri-ran-no-test";
 
 /// A sanitizer the run was asked for could not be run, so nothing it would have found is claimed.
 pub const SANITIZER_UNAVAILABLE: &str = "sanitizer-unavailable";
@@ -69,6 +71,8 @@ pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
 /// A run asked for faults could not put some, because the compiler refused them: their sites propagate an error type the engine does not make.
 pub const FAULT_NOT_PUT: &str = "fault-not-put";
+/// A target's reach moved and every disposition that rested on it was decided again against it, so nothing the run concludes stands on the moved record, but the suite's reach is still not a function of the target (ADR 0036).
+pub const REACH_MOVED: &str = "reach-moved";
 
 /// A knob was asked for and not put on a target, so nothing is claimed about whether the target depends on what it sets.
 pub const KNOB_NOT_PUT: &str = "knob-not-put";
@@ -96,7 +100,7 @@ pub const SCHEDULE_UNDECIDED: &str = "schedule-undecided";
 
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 30] = [
+pub const ALL: [&str; 32] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -109,6 +113,7 @@ pub const ALL: [&str; 30] = [
     MIRI_UNSUPPORTED,
     MIRI_TIMED_OUT,
     MIRI_UNAVAILABLE,
+    MIRI_RAN_NO_TEST,
     SANITIZER_UNAVAILABLE,
     SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED,
     FUZZ_NOT_EXECUTED,
@@ -122,6 +127,7 @@ pub const ALL: [&str; 30] = [
     FAULT_NO_SITE,
     CRASH_NOT_PUT,
     CRASH_NO_SITE,
+    REACH_MOVED,
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
     SCHEDULE_NOT_EXPLORED,

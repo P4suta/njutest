@@ -40,6 +40,7 @@ pub(crate) fn main() -> ExitCode {
         no_color: Environment::no_color_of(&vars),
         stdout_is_terminal: std::io::IsTerminal::is_terminal(&std::io::stdout()),
         paints: false,
+        ci: Environment::ci_host_of(&vars),
         vars,
     };
     let code = rust_mutants_cli::run_from_compiled(

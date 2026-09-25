@@ -292,7 +292,8 @@ discharges included, because a discharge is a proof a caller may not share.
 Both now come from `Route::narrowing`.
 Runs on trees where every profile was readable are unaffected.
 
-**A run measures four mutants at once.** `[execution] jobs` and `--jobs`/`-j` say how many; zero, the default, is as many as the machine has capped at four.
+**A run measures four mutants at once.** `[execution] jobs` and `--jobs`/`-j` say how many: `auto`, the default, is as many as the machine has capped at four, and `all` is every processor.
+A `jobs = 0` from an earlier release is refused with the word that now says it: write `auto`.
 Results are delivered as they finish rather than in catalog order, so the progress lines of a run are no longer in index order; the report still is.
 
 **The driver is the engine's.** `run`, the outcome store, the run and catalog documents, and everything a run's policy decides now live in `rust_mutants::{run, outcomes, report}`; `rust-mutants-cli` re-exports them at the paths it used before, so a consumer of the library sees them move and a consumer of the command line sees nothing.

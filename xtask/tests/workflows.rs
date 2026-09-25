@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! That a step which can run on Windows says which shell it is written for.
+//! That the workflows say what they run in, and read only what the schemas declare.
 
 #![expect(
     clippy::panic,
@@ -20,6 +20,20 @@ fn workflows() -> Vec<PathBuf> {
         .map(|entry| entry.unwrap_or_else(|error| panic!("entry under {}: {error}", dir.display())))
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|one| one == "yml"))
+        .collect();
+    found.sort();
+    found
+}
+
+/// The composite actions the workflows use, one `action.yml` each.
+fn actions() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/actions");
+    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
+        .map(|entry| entry.unwrap_or_else(|error| panic!("entry under {}: {error}", dir.display())))
+        .map(|entry| entry.path().join("action.yml"))
         .collect();
     found.sort();
     found
@@ -47,24 +61,12 @@ fn jobs(source: &str) -> Vec<(String, String)> {
     found
 }
 
-/// The steps of one job body, each as the lines from its `- ` to the next one's.
-fn steps(body: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for line in body.lines() {
-        if line.trim_start().starts_with("- ") && line.starts_with("      ") {
-            found.push(String::new());
-        }
-        if let Some(last) = found.last_mut() {
-            last.push_str(line);
-            last.push('\n');
-        }
-    }
-    found
-}
+/// What a workflow says its steps run in when a step says nothing: `bash`, which GitHub runs as `bash -e -o pipefail` on every runner.
+const DEFAULT_SHELL: &str = "defaults:\n  run:\n    shell: bash\n";
 
 #[test]
-fn a_step_that_can_run_on_windows_says_which_shell_it_is_written_for() {
-    let mut silent = Vec::new();
+fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe() {
+    let mut loose = Vec::new();
     for path in workflows() {
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
@@ -72,37 +74,39 @@ fn a_step_that_can_run_on_windows_says_which_shell_it_is_written_for() {
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
             .unwrap_or_else(|| panic!("a workflow file name is not UTF-8: {}", path.display()));
-        for (job, body) in jobs(&source) {
-            if !body.contains("windows-") {
-                continue;
-            }
-            for step in steps(&body) {
-                let runs = step
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("run:"));
-                let said = step
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("shell:"));
-                if runs && !said {
-                    let name = step
-                        .lines()
-                        .find_map(|line| line.trim_start().strip_prefix("- name: "))
-                        .unwrap_or("(unnamed)")
-                        .to_owned();
-                    silent.push(format!("{file}: {job}: {name}"));
-                }
+        if !source.contains(DEFAULT_SHELL) {
+            loose.push(format!("{file}: no top-level `{DEFAULT_SHELL}`"));
+        }
+    }
+    for path in workflows().into_iter().chain(actions()) {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        for (at, line) in source.lines().enumerate() {
+            let other = line
+                .trim_start()
+                .trim_start_matches("- ")
+                .strip_prefix("shell:")
+                .map(str::trim)
+                .filter(|shell| *shell != "bash");
+            if let Some(shell) = other {
+                loose.push(format!(
+                    "{}:{}: `shell: {shell}`",
+                    path.display(),
+                    at.saturating_add(1)
+                ));
             }
         }
     }
 
     assert!(
-        silent.is_empty(),
-        "a step of a job that can run on Windows takes PowerShell unless it says \
-         otherwise, and there a native command that fails does not stop the script: the \
-         step runs on, and its status becomes the last command's. That is how a failing \
-         test was reported forty-five minutes later as a cancelled job, and how one \
-         could have been reported as a pass. Say `shell: bash`, which every runner has. \
-         {silent:?}"
+        loose.is_empty(),
+        "a step with no shell of its own takes `bash -e {{0}}` on Linux and macOS, where a \
+         command piped into `tee` has its status replaced by tee's, and PowerShell on \
+         Windows, where a failing native command does not stop the script. The first let \
+         `njutest verify` exit with any code at all while the soundness job read on; the \
+         second reported a failing test forty-five minutes later as a cancelled job. \
+         Declare `shell: bash` as the workflow's default, which GitHub runs with \
+         `-o pipefail` on every runner, and override it with nothing else. {loose:?}"
     );
 }
 
@@ -474,5 +478,473 @@ fn a_workflow_that_reads_a_report_names_paths_the_schema_declares() {
          assertion is false whatever the run did and the job fails for a reason that is not \
          about soundness. The report is enveloped: `document_type` beside `report`, and the \
          accounting is per build and per part: {unresolved:?}"
+    );
+}
+
+/// Every page a reader copies commands and workflows from: the book and the README.
+fn pages() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut found: Vec<PathBuf> = walkdir::WalkDir::new(root.join("docs"))
+        .into_iter()
+        .map(|entry| entry.unwrap_or_else(|error| panic!("docs: {error}")))
+        .map(walkdir::DirEntry::into_path)
+        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        .collect();
+    found.push(root.join("README.md"));
+    found.sort();
+    found
+}
+
+/// The shell text a workflow, an action, a task or a script runs: the whole file, since a line that is not shell holds no `||` outside the expressions [`shell_text`] removes.
+fn shell_sources() -> Vec<(PathBuf, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut scripts: Vec<PathBuf> = std::fs::read_dir(root.join("scripts"))
+        .unwrap_or_else(|error| panic!("scripts: {error}"))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|error| panic!("scripts: {error}"))
+                .path()
+        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sh"))
+        .collect();
+    scripts.sort();
+    let mut found = Vec::new();
+    for path in workflows()
+        .into_iter()
+        .chain(actions())
+        .chain([root.join("mise.toml")])
+        .chain(scripts)
+    {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        found.push((path, source));
+    }
+    for path in pages() {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let mut inside = false;
+        let mut examples = String::new();
+        for line in source.lines() {
+            if line.trim_start().starts_with("```") {
+                inside = line.trim_start().starts_with("```yaml");
+                examples.push('\n');
+                continue;
+            }
+            if inside {
+                examples.push_str(line);
+            }
+            examples.push('\n');
+        }
+        found.push((path, examples));
+    }
+    found
+}
+
+/// `source` with what is not a shell command blanked, line lengths kept: comments, quoted strings, `${{ … }}` expressions, and `[[ … ]]` tests.
+fn shell_text(source: &str) -> String {
+    let characters: Vec<char> = source.chars().collect();
+    let mut kept = String::with_capacity(source.len());
+    let mut at = 0_usize;
+    while let Some(&character) = characters.get(at) {
+        let rest: String = characters.iter().skip(at).take(3).collect();
+        if rest == "\"\"\"" {
+            kept.push_str(&rest);
+            at = at.saturating_add(3);
+            continue;
+        }
+        let closing = if rest.starts_with("${{") {
+            Some("}}")
+        } else if rest.starts_with("[[") {
+            Some("]]")
+        } else if character == '\'' || character == '"' {
+            Some(if character == '\'' { "'" } else { "\"" })
+        } else if character == '#'
+            && (at == 0
+                || characters
+                    .get(at.saturating_sub(1))
+                    .is_some_and(|before| before.is_whitespace()))
+        {
+            Some("\n")
+        } else {
+            None
+        };
+        let Some(closing) = closing else {
+            kept.push(character);
+            at = at.saturating_add(1);
+            continue;
+        };
+        let opened = if closing == "}}" || closing == "]]" {
+            2
+        } else {
+            1
+        };
+        let mut end = at.saturating_add(opened);
+        while end < characters.len() {
+            let here: String = characters.iter().skip(end).take(closing.len()).collect();
+            if here == closing {
+                break;
+            }
+            end = end.saturating_add(1);
+        }
+        let through = if closing == "\n" {
+            end
+        } else {
+            end.saturating_add(closing.len())
+        };
+        for blanked in characters.iter().take(through).skip(at) {
+            kept.push(if *blanked == '\n' { '\n' } else { ' ' });
+        }
+        at = through;
+    }
+    kept
+}
+
+/// Whether the command after a `||` still ends non-zero, or records the failure for a later decision, rather than turning it into a success.
+fn answers_the_failure(right: &str, left_is_a_test: bool) -> bool {
+    let right = right.trim_start();
+    if let Some(group) = right.strip_prefix('{') {
+        let body = group.split('}').next().unwrap_or("");
+        return body
+            .split([';', '\n'])
+            .map(str::trim)
+            .rfind(|command| !command.is_empty())
+            .is_some_and(ends_non_zero);
+    }
+    let command: String = right
+        .chars()
+        .take_while(|character| !matches!(character, ';' | '\n' | '&' | '|' | ')'))
+        .collect();
+    let command = command.trim();
+    command.starts_with("case ")
+        || ends_non_zero(command)
+        || command.split_once('=').is_some_and(|(name, _value)| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+        || (left_is_a_test && matches!(command, "continue" | "break"))
+}
+
+/// Whether `command` ends its shell non-zero.
+fn ends_non_zero(command: &str) -> bool {
+    command == "false"
+        || ["exit ", "return "].iter().any(|keyword| {
+            command
+                .strip_prefix(keyword)
+                .is_some_and(|code| code.trim() != "0" && !code.trim().is_empty())
+        })
+}
+
+/// Every `||` in `text` whose right side turns the left side's failure into a success, and every `set +e`, by line.
+fn swallowed(text: &str) -> Vec<usize> {
+    let mut found = Vec::new();
+    for (at, line) in text.lines().enumerate() {
+        if line
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| pair == ["set", "+e"])
+            || line.contains("continue-on-error: true")
+        {
+            found.push(at.saturating_add(1));
+        }
+    }
+    let mut from = 0_usize;
+    while let Some(offset) = text.get(from..).and_then(|rest| rest.find("||")) {
+        let at = from.saturating_add(offset);
+        let before = text.get(..at).unwrap_or("");
+        let left_start = before
+            .rfind(['\n', ';', '(', '{', '&', '|'])
+            .map_or(0, |boundary| boundary.saturating_add(1));
+        let left = before.get(left_start..).unwrap_or("").trim_start();
+        let left_is_a_test = ["[ ", "test ", "if ", "elif ", "while ", "until "]
+            .iter()
+            .any(|opening| left.starts_with(opening))
+            || left.trim().is_empty();
+        let right = text.get(at.saturating_add(2)..).unwrap_or("");
+        let right = right.trim_start_matches([' ', '\t', '\\', '\n']);
+        if !left_is_a_test && !answers_the_failure(right, left_is_a_test) {
+            found.push(before.matches('\n').count().saturating_add(1));
+        }
+        from = at.saturating_add(2);
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+#[test]
+fn no_command_turns_its_own_failure_into_a_success() {
+    let mut swallowing = Vec::new();
+    for (path, source) in shell_sources() {
+        for line in swallowed(&shell_text(&source)) {
+            swallowing.push(format!("{}:{line}", path.display()));
+        }
+    }
+    assert!(
+        swallowing.is_empty(),
+        "a command that cannot fail says nothing when it goes wrong: the dogfood parts passed a \
+         flag the engine does not have, every part refused to run, and `|| true` reported each \
+         one as a part that measured. After `||`, end non-zero, record the status for a later \
+         decision, or accept the exit codes that are answers by name in a `case`; `set +e` and \
+         `continue-on-error` are refused outright. {swallowing:#?}"
+    );
+}
+
+#[test]
+fn the_swallowing_rule_tells_a_refusal_from_a_decision() {
+    for swallowing in [
+        "cmd || true",
+        "cmd ||true",
+        "cmd || :",
+        "cmd || echo failed",
+        "cmd || exit 0",
+        "a || b || true",
+        "set +e",
+        "continue-on-error: true",
+    ] {
+        assert!(
+            !swallowed(&shell_text(swallowing)).is_empty(),
+            "{swallowing}"
+        );
+    }
+    for deciding in [
+        "cmd || exit 1",
+        "cmd || { echo why; exit 1; }",
+        "cmd || case \"$?\" in 1) ;; *) exit 1 ;; esac",
+        "cmd || status=1",
+        "[ -f x ] || continue",
+        "if a || b; then c; fi",
+        "while read -r line || [[ -n \"${line}\" ]]; do :; done",
+        "ref: ${{ inputs.tag || github.ref }}",
+        "echo 'a || true'",
+        "# a || true",
+    ] {
+        assert!(swallowed(&shell_text(deciding)).is_empty(), "{deciding}");
+    }
+}
+
+/// Every long option a help golden lists for `program`'s `command`, with whether it takes a value.
+fn options(program: &str, command: Option<&str>) -> Option<Vec<(String, bool)>> {
+    let crate_dir = match program {
+        "njutest" => "crates/njutest",
+        _ => "crates/rust-mutants-cli",
+    };
+    if command.is_some_and(|command| {
+        !command.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    }) {
+        return None;
+    }
+    let name = command.map_or_else(
+        || "help.golden".to_owned(),
+        |command| format!("help-{command}.golden"),
+    );
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(crate_dir)
+        .join("tests/testdata")
+        .join(name);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => panic!("{}: {error}", path.display()),
+    };
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let mut words = line.split_whitespace().peekable();
+        while let Some(word) = words.next() {
+            let written = word.trim_end_matches(',');
+            let (flag, optional) = written
+                .split_once("[=")
+                .map_or((written, false), |(flag, _value)| (flag, true));
+            if flag.starts_with("--") && flag.len() > 2 {
+                let valued = optional || words.peek().is_some_and(|next| next.starts_with('<'));
+                found.push((flag.to_owned(), valued));
+            }
+        }
+    }
+    Some(found)
+}
+
+/// The commands a text runs, one logical line each: a line continued by `\`, or a folded YAML block, is one line.
+fn logical_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut folded: Option<usize> = None;
+    for line in source.lines() {
+        let indent = line.len().saturating_sub(line.trim_start().len());
+        if let Some(depth) = folded {
+            if !line.trim().is_empty() && indent >= depth {
+                current.push(' ');
+                current.push_str(line.trim());
+                continue;
+            }
+            lines.push(std::mem::take(&mut current));
+            folded = None;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.ends_with(": >-") || trimmed.ends_with(": >") {
+            folded = Some(indent.saturating_add(1));
+            continue;
+        }
+        if let Some(continued) = trimmed.strip_suffix('\\') {
+            current.push_str(continued);
+            current.push(' ');
+            continue;
+        }
+        current.push_str(trimmed);
+        lines.push(std::mem::take(&mut current));
+    }
+    lines.push(current);
+    lines
+}
+
+/// The programs this repository ships.
+const PROGRAMS: [&str; 2] = ["njutest", "rust-mutants"];
+
+/// Whether `word` names a subcommand of `program`'s `command`, whose own flags no golden lists.
+fn nests(program: &str, command: Option<&str>, word: &str) -> bool {
+    let crate_dir = match program {
+        "njutest" => "crates/njutest",
+        _ => "crates/rust-mutants-cli",
+    };
+    let Some(command) = command else {
+        return false;
+    };
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(crate_dir)
+        .join("tests/testdata")
+        .join(format!("help-{command}.golden"));
+    std::fs::read_to_string(path).is_ok_and(|text| {
+        text.split_once("Commands:")
+            .is_some_and(|(_before, listed)| {
+                listed
+                    .lines()
+                    .skip(1)
+                    .take_while(|line| !line.trim().is_empty())
+                    .any(|line| line.split_whitespace().next() == Some(word))
+            })
+    })
+}
+
+/// Every flag `line` passes to one of this repository's programs, as program, command, and the flag as written.
+fn invocations(line: &str) -> Vec<(String, Option<String>, String)> {
+    let spaced = line.replace(['`', '(', ')'], " ` ");
+    let words: Vec<&str> = spaced.split_whitespace().collect();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(word) = words.get(at) {
+        at = at.saturating_add(1);
+        let Some(program) = PROGRAMS.iter().copied().find(|program| {
+            *word == *program
+                || ["/release/", "/debug/", "/bin/"]
+                    .iter()
+                    .any(|built| word.ends_with(&format!("{built}{program}")))
+        }) else {
+            continue;
+        };
+        let installed = at >= 2
+            && words
+                .get(at.saturating_sub(2))
+                .is_some_and(|before| *before == "install");
+        if installed {
+            continue;
+        }
+        let command = words
+            .get(at)
+            .filter(|next| options(program, Some(next)).is_some())
+            .map(|next| (*next).to_owned());
+        if command.is_some() {
+            at = at.saturating_add(1);
+        }
+        let nested = words.get(at).is_some_and(|next| {
+            !next.starts_with('-')
+                && next.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                && command.is_some()
+                && nests(program, command.as_deref(), next)
+        });
+        if nested {
+            continue;
+        }
+        while let Some(word) = words.get(at) {
+            if ["`", "|", "||", "&&", ";", ">", "2>&1"].contains(word) {
+                break;
+            }
+            let flag = word.trim_end_matches([',', '.', ':', ';', '"', '\'']);
+            if flag.starts_with("--") && flag.len() > 2 {
+                found.push((program.to_owned(), command.clone(), flag.to_owned()));
+            }
+            at = at.saturating_add(1);
+        }
+    }
+    found
+}
+
+#[test]
+fn every_flag_a_workflow_or_a_page_passes_is_one_the_command_has() {
+    let mut unknown = Vec::new();
+    for path in workflows().into_iter().chain(actions()).chain(pages()) {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        for line in logical_lines(&source) {
+            for (program, command, written) in invocations(&line) {
+                let (flag, given) = written
+                    .split_once('=')
+                    .map_or((written.as_str(), false), |(flag, _value)| (flag, true));
+                let mut known = options(&program, None)
+                    .unwrap_or_else(|| panic!("{program} has no top-level help golden"));
+                if let Some(of_command) = command
+                    .as_deref()
+                    .and_then(|command| options(&program, Some(command)))
+                {
+                    known.extend(of_command);
+                }
+                let accepted = known
+                    .iter()
+                    .any(|(name, valued)| name == flag && (*valued || !given));
+                if !accepted {
+                    unknown.push(format!(
+                        "{}: `{program} {} {written}`",
+                        path.display(),
+                        command.as_deref().unwrap_or("")
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        unknown.is_empty(),
+        "a flag the command does not have is refused when it runs, and a page that shows one \
+         teaches a reader to be refused; the help goldens are what the command has. {unknown:#?}"
+    );
+}
+#[test]
+fn code_only_one_platform_compiles_is_linted_on_that_platform() {
+    let path = workflows()
+        .into_iter()
+        .find(|path| path.ends_with("ci.yml"))
+        .unwrap_or_else(|| panic!("ci.yml is one of the workflows"));
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let test = jobs(&source)
+        .into_iter()
+        .find_map(|(name, body)| (name == "test").then_some(body))
+        .unwrap_or_else(|| panic!("ci.yml has the test matrix"));
+    let linted = test.split("\n      - ").any(|step| {
+        step.contains("cargo clippy")
+            && step.contains("--all-targets")
+            && step.contains("--all-features")
+            && step.contains("-D warnings")
+            && step
+                .lines()
+                .find_map(|line| line.trim_start().strip_prefix("if:"))
+                .is_none_or(|condition| condition.trim() == "runner.os != 'Linux'")
+    });
+    assert!(
+        linted,
+        "clippy ran only on Linux, so every `cfg(windows)` and `cfg(target_os = \"macos\")` \
+         line in the tree was compiled on its own platform and linted nowhere; the matrix \
+         lints on every platform the lint job does not stand on"
     );
 }

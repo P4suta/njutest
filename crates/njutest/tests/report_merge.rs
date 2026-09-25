@@ -1095,3 +1095,137 @@ fn a_part_whose_concurrency_records_leave_out_a_binary_it_measured_is_refused() 
         "a measured binary with no record is neither proven nor named as a hole: {refused}"
     );
 }
+
+#[test]
+fn a_merge_refuses_an_acceptance_called_unmatched_that_its_catalog_resolves() {
+    let claimed = Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "bbbbbbbb",
+        "no mutant matches this acceptance",
+    );
+    let one = part_stated(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &|_| {},
+        &|source| source.findings.push(claimed.clone()),
+    );
+    let two = part_stated(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &|_| {},
+        &|source| source.findings.push(claimed.clone()),
+    );
+    let refused = refused_as(&[one, two]);
+    assert!(
+        refused.to_string().contains("bbbbbbbb"),
+        "the acceptance names exactly one mutant of the whole catalog, the one the second part \
+         holds, so a whole run would refuse to call it unmatched, and a merge of its parts \
+         does too: {refused}"
+    );
+}
+
+/// What a complete report concludes, as a multiset: its verdict, its findings by kind and subject, and its limitations by name.
+fn concluded(report: &Report) -> (Verdict, Vec<(String, String)>, Vec<String>) {
+    let conclusion = report
+        .conclusion()
+        .expect("the checked whole has a representable conclusion");
+    let mut findings: Vec<(String, String)> = conclusion
+        .findings
+        .iter()
+        .map(|finding| (finding.kind.name().to_owned(), finding.subject.clone()))
+        .collect();
+    findings.sort();
+    let mut limitations: Vec<String> = conclusion
+        .limitations
+        .iter()
+        .map(|limitation| limitation.name.clone())
+        .collect();
+    limitations.sort();
+    (conclusion.verdict, findings, limitations)
+}
+
+/// The targets a generated row may be answered by, in the name order a run asks them in.
+const ANSWERING_IN_NAME_ORDER: [&str; 3] = ["pkg/lib/pkg", "pkg/test/pins", "pkg/test/smoke"];
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(96))]
+
+    #[test]
+    fn how_a_catalog_is_divided_among_runs_is_not_an_input_to_what_it_concludes(
+        judged in proptest::collection::vec(
+            (0_usize..ANSWERING_IN_NAME_ORDER.len(), proptest::bool::ANY),
+            1..9,
+        ),
+        moved in proptest::option::of(0_usize..ANSWERING_IN_NAME_ORDER.len()),
+    ) {
+        let rows: Vec<MutantRecord> = judged
+            .iter()
+            .enumerate()
+            .map(|(at, (asked, noticed))| {
+                let index = u32::try_from(at).expect("a small catalog");
+                let order = ANSWERING_IN_NAME_ORDER.get(..=*asked).unwrap_or_default();
+                let last = order.last().copied().unwrap_or_default();
+                let outcome = if *noticed { "killed" } else { "survived" };
+                let mut record =
+                    row(index, &format!("{:02x}{}", at.saturating_add(1), "a".repeat(62)), outcome, false);
+                record.outcome = decided(outcome, Some(last));
+                record.routing = Some(njutest::report::Routing {
+                    granularity: rust_mutants::session::Granularity::Block,
+                    reaching: order.iter().map(|target| (*target).to_owned()).collect(),
+                    discharged: Vec::new(),
+                    fallback: None,
+                    answered: order
+                        .iter()
+                        .map(|target| njutest::report::Answered {
+                            target: (*target).to_owned(),
+                            outcome: if *noticed && *target == last {
+                                Outcome::Killed
+                            } else {
+                                Outcome::Survived
+                            },
+                        })
+                        .collect(),
+                });
+                record
+            })
+            .collect();
+        let drift: Vec<njutest::report::drift::Drift> =
+            moved
+                .and_then(|target| ANSWERING_IN_NAME_ORDER.get(target))
+                .map(|target| moved_at(target))
+                .into_iter()
+                .collect();
+        let mut conclusions = Vec::new();
+        for of in 1..=rows.len().min(4) {
+            let parts: Vec<ShardReport> = (1..=of)
+                .map(|index| {
+                    let owned: Vec<MutantRecord> = rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(at, _)| at % of == index - 1)
+                        .map(|(_, record)| record.clone())
+                        .collect();
+                    let drift = drift.clone();
+                    part_varying(
+                        &format!("part{index}of{of}"),
+                        &format!("{index}/{of}"),
+                        owned,
+                        &move |source| source.drift.clone_from(&drift),
+                    )
+                })
+                .collect();
+            conclusions.push((of, concluded(&whole(&format!("the-whole-of-{of}"), &parts))));
+        }
+        let (_, first) = conclusions.first().expect("at least one division");
+        for (of, conclusion) in &conclusions {
+            proptest::prop_assert_eq!(
+                conclusion,
+                first,
+                "divided into {} shard(s), the catalog concluded otherwise than in one",
+                of
+            );
+        }
+    }
+}

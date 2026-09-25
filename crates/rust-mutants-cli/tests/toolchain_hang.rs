@@ -190,9 +190,53 @@ fn a_mutation_that_never_returns_is_stopped_rather_than_left_running() {
     );
     let text = njutest_devkit::process::strict_utf8(&output.stdout);
     assert!(
-        text.contains("step_limit_reached=2") && text.contains("waited=0"),
+        text.contains("step_limit_reached=3") && text.contains("waited=0"),
         "the run ends rather than waiting on the process it started, and what ended it is \
          a count rather than this machine's clock.{}: {text}",
         outran_by_the_clock(&row(&fixture, "delete-compound-assignment", 13))
+    );
+}
+
+#[test]
+fn a_mutation_outside_a_loop_in_a_file_nothing_mutates_is_counted_at_the_boundary() {
+    let fixture = Fixture::copy("fixture-hang");
+    let output = run(&fixture, &[]);
+    assert!(
+        output.status.code() == Some(2),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let stopped = row(&fixture, "int-decrement", 33);
+    assert_eq!(
+        stopped["outcome"].as_str(),
+        Some("step_limit_reached"),
+        "a stride of zero never ends the loop in src/walk.rs, which the run does not mutate, \
+         and the checkpoints across the crate count it there.{}: {stopped}",
+        outran_by_the_clock(&stopped)
+    );
+    assert_eq!(
+        (
+            &stopped["step_notice"]["limit"],
+            &stopped["step_notice"]["observed"]
+        ),
+        (&serde_json::json!(10), &serde_json::json!(11)),
+        "the count ends it at exactly one past the allowance: {stopped}"
+    );
+    assert_eq!(stopped["retried"].as_bool(), Some(false), "{stopped}");
+    let newest = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    )
+    .join("run-report-v1.json");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(newest).expect("the report"),
+    )
+    .expect("the report is a document");
+    assert!(
+        document["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .all(|row| row["path"].as_str() != Some("src/walk.rs")),
+        "the loop's own file is one the run does not mutate"
     );
 }
