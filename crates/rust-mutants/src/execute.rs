@@ -15,8 +15,9 @@ use crate::cargo::{
 };
 use crate::id::{is_digest, is_id};
 use crate::instrument::{
-    ACTIVE_ENV, CATALOG_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
-    STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
+    ACTIVE_ENV, CATALOG_ENV, CRASH_NONCE_ENV, CRASH_NOTICE_ENV, DELAY_ENV, FAULT_ENV,
+    STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
+    STEP_STATE_SCHEMA, STEPS_ENV, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
 use crate::runner::{
@@ -26,8 +27,12 @@ use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 8] = [
+pub const RESERVED_ENV: [&str; 12] = [
     ACTIVE_ENV,
+    CRASH_NOTICE_ENV,
+    CRASH_NONCE_ENV,
+    FAULT_ENV,
+    DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
     crate::instrument::TOUCH_ITEMS_ENV,
@@ -38,8 +43,12 @@ pub const RESERVED_ENV: [&str; 8] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 9] = [
+pub const COMPOSED_ENV: [&str; 13] = [
     ACTIVE_ENV,
+    CRASH_NOTICE_ENV,
+    CRASH_NONCE_ENV,
+    FAULT_ENV,
+    DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
     crate::instrument::TOUCH_ITEMS_ENV,
@@ -1121,9 +1130,7 @@ impl ExpectedStep {
         if !is_id(mutant) {
             return Err(StepSetupError::InvalidMutant);
         }
-        let mut bytes = [0u8; 16];
-        getrandom::fill(&mut bytes).map_err(|error| StepSetupError::NonceUnavailable { error })?;
-        let nonce = hex::encode(bytes);
+        let nonce = fresh_nonce().map_err(|error| StepSetupError::NonceUnavailable { error })?;
         let directory = scratch.ok_or(StepSetupError::ScratchRequired)?;
         let path = directory.join(format!("rust-mutants-step-{nonce}.notice"));
         let state_path = directory.join(format!("rust-mutants-step-{nonce}.state"));
@@ -1526,7 +1533,7 @@ fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, O
 pub fn environment(
     context: &Context<'_>,
     target: &TestTarget,
-    scratch: Option<&Path>,
+    (scratch, engine): (Option<&Path>, Option<&Path>),
 ) -> std::io::Result<Vec<(OsString, OsString)>> {
     let (base, active, cargo) = (context.base_env, context.active, context.cargo);
     let mut env: BTreeMap<OsString, OsString> = base
@@ -1548,10 +1555,20 @@ pub fn environment(
     }
     if let Some((id, catalog)) = active {
         env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
+        if let Some(fault) = context.beside {
+            env.insert(OsString::from(FAULT_ENV), OsString::from(fault));
+        }
         env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
         if let Some(steps) = context.steps {
             env.insert(OsString::from(STEPS_ENV), OsString::from(steps.to_string()));
         }
+    }
+    if let Some(crash) = context.crash {
+        env.insert(
+            OsString::from(CRASH_NOTICE_ENV),
+            crash.notice.as_os_str().to_owned(),
+        );
+        env.insert(OsString::from(CRASH_NONCE_ENV), OsString::from(crash.nonce));
     }
     if let Some(touch) = context.touch {
         env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
@@ -1566,17 +1583,17 @@ pub fn environment(
             }
         }
     }
-    match (context.profile, scratch) {
+    match (context.profile, engine) {
         (Some(profile), _) => {
             env.insert(
                 OsString::from(crate::coverage::PROFILE_ENV),
                 profile.as_os_str().to_owned(),
             );
         }
-        (None, Some(scratch)) => {
+        (None, Some(engine)) => {
             env.insert(
                 OsString::from(crate::coverage::PROFILE_ENV),
-                scratch.join(SPILLED_PROFILE).into_os_string(),
+                engine.join(SPILLED_PROFILE).into_os_string(),
             );
         }
         (None, None) => {}
@@ -1649,6 +1666,15 @@ fn rustlib_targets(sysroot: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(found)
 }
 
+/// One guard a control pauses at, the first time each of its threads reaches it: one schedule of the program, named by the site it delays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Delay {
+    /// The catalog index of the guard.
+    pub site: u32,
+    /// How many milliseconds each thread pauses there, once.
+    pub pause_ms: u64,
+}
+
 /// One execution to make.
 #[derive(Debug, Clone)]
 pub struct ExecRequest<'a> {
@@ -1657,12 +1683,16 @@ pub struct ExecRequest<'a> {
     args: Vec<String>,
     timeout: Option<Duration>,
     scratch: Option<PathBuf>,
+    /// Where the engine keeps its own files for the process, apart from the scratch the process sees; the scratch where unset.
+    engine: Option<PathBuf>,
     /// Whether the process starts in its scratch directory rather than in the one cargo would give it.
     scratch_cwd: bool,
     /// Variables set over the environment the process would otherwise have, each replacing one of the same name.
     overlay: Vec<(Variable, OsString)>,
     /// A program the process is started through.
     launcher: Option<Launcher>,
+    /// The guard the process pauses at, with the catalog its index is in.
+    delay: Option<(Delay, &'a str)>,
 }
 
 impl<'a> ExecRequest<'a> {
@@ -1675,10 +1705,19 @@ impl<'a> ExecRequest<'a> {
             args: Vec::new(),
             timeout: None,
             scratch: None,
+            engine: None,
             scratch_cwd: false,
             overlay: Vec::new(),
             launcher: None,
+            delay: None,
         }
+    }
+
+    /// Pauses each thread of the process at `delay`'s guard of the catalog digested as `catalog`, the first time it reaches it.
+    #[must_use]
+    pub const fn with_delay(mut self, delay: Option<(Delay, &'a str)>) -> Self {
+        self.delay = delay;
+        self
     }
 
     /// Sets `overlay` over the environment the process would otherwise have, each variable replacing one of the same name.
@@ -1736,6 +1775,18 @@ impl<'a> ExecRequest<'a> {
         self
     }
 
+    /// Keeps the engine's own files for the process in `engine` rather than in its scratch, so what the process leaves there is only its own.
+    #[must_use]
+    pub fn with_engine(mut self, engine: impl Into<PathBuf>) -> Self {
+        self.engine = Some(engine.into());
+        self
+    }
+
+    /// Where the engine keeps its own files for the process.
+    fn engine_dir(&self) -> Option<&Path> {
+        self.engine.as_deref().or(self.scratch.as_deref())
+    }
+
     /// Starts the process in its scratch directory rather than where cargo would.
     #[must_use]
     pub const fn in_scratch(mut self, within: bool) -> Self {
@@ -1780,6 +1831,8 @@ pub struct Context<'a> {
     pub sysroot: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
+    /// A fault of the same catalog to activate beside the mutant, by identity; only ever set with `active`.
+    pub beside: Option<&'a str>,
     /// How many instrumented workspace boundaries the process may cross after the selected guard activates before it is stopped.
     /// `None` counts nothing.
     ///
@@ -1795,6 +1848,28 @@ pub struct Context<'a> {
     /// Where the process leading this execution is recorded as it starts, so a child it leaves is never read as another execution's.
     /// `None` runs one no other execution overlaps.
     pub leaders: Option<&'a crate::orphan::Leaders>,
+    /// Where the runtime publishes that a crash stopped the process, and the nonce that ties the notice to this execution.
+    /// `None` runs a process whose crash, if it has one, says nothing it can be told by.
+    pub crash: Option<Crashing<'a>>,
+}
+
+/// A fresh 128-bit nonce in lowercase hexadecimal, which ties a notice the runtime publishes to exactly one execution.
+///
+/// # Errors
+/// What the system's random source said where it gave nothing.
+pub(crate) fn fresh_nonce() -> Result<String, getrandom::Error> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes)?;
+    Ok(hex::encode(bytes))
+}
+
+/// The fresh file a crash's notice is published to, outside the scratch the test can see, and the nonce it must carry.
+#[derive(Debug, Clone, Copy)]
+pub struct Crashing<'a> {
+    /// The notice's path.
+    pub notice: &'a Path,
+    /// The nonce.
+    pub nonce: &'a str,
 }
 
 /// Where the guards of one process append what they reached, and the catalog the record is about.
@@ -2051,6 +2126,54 @@ pub const fn answered(outcome: Outcome) -> bool {
     !matches!(outcome, Outcome::Inconclusive | Outcome::StepLimitReached)
 }
 
+/// Why a control's perturbation cannot be put.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unput {
+    /// A delay beside an active mutant, which only a control may carry.
+    DelayBesideMutant,
+}
+
+impl Unput {
+    /// What a reader is told.
+    const fn said(self) -> &'static str {
+        match self {
+            Self::DelayBesideMutant => {
+                "a delay is a control's perturbation, and this execution activates a mutant"
+            }
+        }
+    }
+}
+
+/// Lays a control's perturbation over `env`: the variables it sets, and the guard it pauses at with the catalog that guard's index is in.
+///
+/// # Errors
+/// Why the perturbation cannot be put: a delay beside an active mutant, which only a control may carry.
+fn perturbed(
+    request: &ExecRequest<'_>,
+    active: bool,
+    env: &mut Vec<(OsString, OsString)>,
+) -> Result<(), Unput> {
+    for (variable, value) in &request.overlay {
+        let name = OsStr::new(variable.name());
+        env.retain(|(held, _)| !crate::vars::same_name(held, name));
+        env.push((name.to_owned(), value.clone()));
+    }
+    if let Some((delay, catalog)) = request.delay {
+        if active {
+            return Err(Unput::DelayBesideMutant);
+        }
+        for name in [DELAY_ENV, CATALOG_ENV] {
+            env.retain(|(held, _)| !crate::vars::same_name(held, OsStr::new(name)));
+        }
+        env.push((
+            OsString::from(DELAY_ENV),
+            OsString::from(format!("{}@{}", delay.site, delay.pause_ms)),
+        ));
+        env.push((OsString::from(CATALOG_ENV), OsString::from(catalog)));
+    }
+    Ok(())
+}
+
 /// The bound one execution runs under: a quiet window under a ceiling where it counts its steps, and the bound it was given where it does not.
 fn watched(timeout: Option<Duration>, step: Option<&ExpectedStep>) -> (Bound, Option<Progress>) {
     match (timeout, step) {
@@ -2100,7 +2223,7 @@ pub fn exec(
         trace.note("execution-launcher", &message);
         return MutantResult::apparatus_error(&target.id, message);
     }
-    let step = match ExpectedStep::new(context, request.scratch.as_deref()) {
+    let step = match ExpectedStep::new(context, request.engine_dir()) {
         Ok(step) => step,
         Err(error) => {
             let message = error.to_string();
@@ -2117,7 +2240,11 @@ pub fn exec(
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),
     });
-    let mut env = match environment(context, target, request.scratch.as_deref()) {
+    let mut env = match environment(
+        context,
+        target,
+        (request.scratch.as_deref(), request.engine_dir()),
+    ) {
         Ok(env) => env,
         Err(error) => {
             let message = format!("the toolchain environment could not be inspected: {error}");
@@ -2129,10 +2256,8 @@ pub fn exec(
         step.add_environment(&mut env);
         spec.stop_file = Some(step.path.clone());
     }
-    for (variable, value) in &request.overlay {
-        let name = OsStr::new(variable.name());
-        env.retain(|(held, _)| !crate::vars::same_name(held, name));
-        env.push((name.to_owned(), value.clone()));
+    if let Err(refusal) = perturbed(request, context.active.is_some(), &mut env) {
+        return MutantResult::apparatus_error(&target.id, refusal.said().to_owned());
     }
     spec.env = Some(env);
     let result = run(&spec, cancel);
@@ -2610,9 +2735,11 @@ mod tests {
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
+            beside: None,
             steps: Some(limit),
             touch: None,
             profile: None,
+            crash: None,
         };
 
         assert!(matches!(
@@ -2630,9 +2757,11 @@ mod tests {
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
+            beside: None,
             steps: Some(10),
             touch: None,
             profile: None,
+            crash: None,
         };
         let step = returned!(ExpectedStep::new(&context, Some(scratch.path())), "setup");
         let step = present!(step, "bounded execution");

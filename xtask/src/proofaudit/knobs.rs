@@ -37,21 +37,33 @@ struct Put {
     knob: Knob,
 }
 
+/// One knob record as a report writes it, or nothing where it lacks its target, knob, or standing's state.
+fn row_of(row: &serde_json::Value) -> Option<Row<'_>> {
+    let standing = row.get("standing")?;
+    Some(Row {
+        target: field(row, "target")?,
+        knob: field(row, "knob")?,
+        state: field(standing, "state")?,
+        standing,
+    })
+}
+
 /// What each control under a knob established, re-derived from the engine's perturbed-control records against its baseline touch record, and held to what the report says of each.
 pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Knobs);
-    let recorded: Vec<Row<'_>> = rows(recording.document, "knobs")
-        .iter()
-        .map(|row| {
-            let standing = row.get("standing").unwrap_or(&serde_json::Value::Null);
-            Row {
-                target: field(row, "target").unwrap_or_default(),
-                knob: field(row, "knob").unwrap_or_default(),
-                state: field(standing, "state").unwrap_or_default(),
-                standing,
-            }
-        })
-        .collect();
+    if recording.contract == "whole-v1" {
+        owed_every_knob(recording, &mut notes);
+    }
+    let mut recorded: Vec<Row<'_>> = Vec::new();
+    for row in rows(recording.document, "knobs") {
+        match row_of(row) {
+            Some(one) => recorded.push(one),
+            None => notes.violated(
+                "knobs",
+                "a knob record of the report is not the shape a run writes it in".to_owned(),
+            ),
+        }
+    }
     let (touched, perturbations) = match engines {
         [] => {
             if recorded.is_empty() {
@@ -108,15 +120,16 @@ fn established(
 ) -> BTreeMap<Put, Derived> {
     let mut controls: BTreeMap<Put, Vec<&Perturbed>> = BTreeMap::new();
     for control in &perturbations.controls {
-        match control.started.knob() {
-            Some(knob) => controls
+        match control.started.role() {
+            crate::knobs::Role::Knob(knob) => controls
                 .entry(Put {
                     target: control.target.clone(),
                     knob,
                 })
                 .or_default()
                 .push(control),
-            None => notes.violated(
+            crate::knobs::Role::Delayed | crate::knobs::Role::Undelayed => {}
+            crate::knobs::Role::Unknown => notes.violated(
                 &control.target,
                 format!(
                     "the engine started a control of {} with {}, which is not what any knob puts",
@@ -344,6 +357,37 @@ fn held_to_limitations(
                      that {why}"
                 ),
             );
+        }
+    }
+}
+
+/// Holds a whole run to a row for every knob on every target whose baseline passed, since the contract puts every one of them.
+fn owed_every_knob(recording: &Recording<'_>, notes: &mut Notes<'_>) {
+    let put: BTreeSet<(String, String)> = rows(recording.document, "knobs")
+        .iter()
+        .map(|row| {
+            (
+                field(row, "target").unwrap_or_default(),
+                field(row, "knob").unwrap_or_default(),
+            )
+        })
+        .collect();
+    for target in rows(recording.document, "targets")
+        .iter()
+        .filter(|target| field(target, "status").as_deref() == Some("passed"))
+        .filter_map(|target| field(target, "name"))
+    {
+        for knob in Knob::ALL {
+            if !put.contains(&(target.clone(), knob.name().to_owned())) {
+                notes.violated(
+                    &target,
+                    format!(
+                        "whole-v1 puts every knob on every target whose baseline passed, and \
+                         {} has no row for {target}",
+                        knob.name()
+                    ),
+                );
+            }
         }
     }
 }

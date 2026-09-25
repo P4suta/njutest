@@ -942,6 +942,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         outcome: "survived".to_owned(),
         tests_run: Some(3),
         duration_ms: 12,
+        args: vec![],
         remembered: false,
         retried: false,
     });
@@ -970,6 +971,25 @@ fn one_of_each_measurement(recorder: &Recorder) {
             }],
             launcher: None,
             arguments: Vec::new(),
+            delay: None,
+            confirms: None,
+        },
+        outcome: "killed".to_owned(),
+        failed_tests: vec!["the_zone_is_utc".to_owned()],
+        duration_ms: 4,
+        reach: rust_mutants::trace::ReachRecord::NotRead,
+    });
+    recorder.perturbed(rust_mutants::trace::PerturbedRecord {
+        target: "demo/lib/demo".to_owned(),
+        perturbation: rust_mutants::trace::PerturbationRecord {
+            environment: vec![rust_mutants::trace::SetRecord {
+                name: "TZ".to_owned(),
+                value: Some("Australia/Lord_Howe".to_owned()),
+            }],
+            launcher: None,
+            arguments: Vec::new(),
+            delay: None,
+            confirms: None,
         },
         outcome: "killed".to_owned(),
         failed_tests: vec!["the_zone_is_utc".to_owned()],

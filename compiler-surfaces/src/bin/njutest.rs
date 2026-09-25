@@ -18,10 +18,10 @@ extern crate self as njutest;
 #[path = "../../../crates/njutest/src/lib.rs"]
 mod product;
 pub(crate) use product::{
-    VERSION, app, asked, assure, build, cache, checkpoint, cli, config, coverage, ended, error,
-    evidence, git, interruptible, kept, limitation, naming, next, presentation, provider, reach,
-    repair, report, resource, run_from, run_id, rustflags, scratch, soundness, spec, strictjson,
-    targets, text, trace, ui, watch, why, wire,
+    VERSION, app, asked, assure, build, cache, checkpoint, cli, concurrency, config, coverage,
+    ended, error, evidence, git, interruptible, kept, limitation, naming, next, presentation,
+    provider, reach, repair, report, resource, run_from, run_id, rustflags, scratch, soundness,
+    spec, strictjson, targets, text, trace, ui, watch, why, wire,
 };
 
 #[path = "../../../crates/njutest/src/bin/cargo-njutest/main.rs"]

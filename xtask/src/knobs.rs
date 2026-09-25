@@ -51,6 +51,9 @@ impl Knob {
 
     /// Whether `started` is this knob put, by this audit's own reading of what each knob sets, written without the runner's.
     fn puts(self, started: &Started) -> bool {
+        if started.delayed.is_some() {
+            return false;
+        }
         let names: Vec<&str> = started
             .environment
             .iter()
@@ -99,9 +102,45 @@ pub struct Started {
     pub launcher: Option<String>,
     /// The harness arguments added.
     pub arguments: Vec<String>,
+    /// The catalog index of the guard it paused its threads at, which makes it a schedule and never a knob.
+    pub delayed: Option<u64>,
+    /// The guard whose delayed failure it is the undelayed half of a confirming round for.
+    pub confirms: Option<u64>,
+}
+
+/// What one perturbed control was started as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// The putting of one knob.
+    Knob(Knob),
+    /// A schedule: its threads paused at one guard, with nothing else set.
+    Delayed,
+    /// Nothing beyond its baseline, named as the undelayed half of a round confirming a delayed failure.
+    Undelayed,
+    /// Nothing a run starts a control as.
+    Unknown,
 }
 
 impl Started {
+    /// What it was started as, read from everything it was started with.
+    #[must_use]
+    pub fn role(&self) -> Role {
+        let plain =
+            self.environment.is_empty() && self.launcher.is_none() && self.arguments.is_empty();
+        match (self.delayed, self.confirms, plain) {
+            (Some(_), None, true) => Role::Delayed,
+            (None, Some(_), true) => Role::Undelayed,
+            (None, None, true) => Role::Unknown,
+            (None, None, false) => match self.knob() {
+                Some(knob) => Role::Knob(knob),
+                None => Role::Unknown,
+            },
+            (Some(_), Some(_), _) | (Some(_), None, false) | (None, Some(_), false) => {
+                Role::Unknown
+            }
+        }
+    }
+
     /// The one knob this is the putting of, or nothing where no knob starts a control this way.
     #[must_use]
     pub fn knob(&self) -> Option<Knob> {
@@ -257,6 +296,14 @@ fn started(record: &Value) -> Option<Started> {
             text => Some(text.as_str()?.to_owned()),
         },
         arguments: strings(record.get("arguments")?)?,
+        delayed: match record.get("delay")? {
+            Value::Null => None,
+            delay => Some(delay.get("site")?.as_u64()?),
+        },
+        confirms: match record.get("confirms")? {
+            Value::Null => None,
+            site => Some(site.as_u64()?),
+        },
     })
 }
 

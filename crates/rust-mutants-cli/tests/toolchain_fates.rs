@@ -324,6 +324,11 @@ fn fixture_drifts() {
 }
 
 #[test]
+fn fixture_durable() {
+    holds("fixture-durable");
+}
+
+#[test]
 fn fixture_edits() {
     holds("fixture-edits");
 }
@@ -351,6 +356,21 @@ fn fixture_fails_then_hangs() {
 #[test]
 fn fixture_families() {
     holds("fixture-families");
+}
+
+#[test]
+fn fixture_faulted() {
+    holds("fixture-faulted");
+}
+
+#[test]
+fn fixture_faulted_failure_writes() {
+    holds("fixture-faulted-failure-writes");
+}
+
+#[test]
+fn fixture_faulted_writes() {
+    holds("fixture-faulted-writes");
 }
 
 #[test]
@@ -469,6 +489,11 @@ fn fixture_rejectable() {
 }
 
 #[test]
+fn fixture_scheduled() {
+    holds("fixture-scheduled");
+}
+
+#[test]
 fn fixture_scripted() {
     holds("fixture-scripted");
 }
@@ -486,6 +511,11 @@ fn fixture_silent_kill() {
 #[test]
 fn fixture_simple() {
     holds("fixture-simple");
+}
+
+#[test]
+fn fixture_stop_status() {
+    holds("fixture-stop-status");
 }
 
 #[test]

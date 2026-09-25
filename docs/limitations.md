@@ -238,6 +238,9 @@ They are what the run says about its own footing, and each is stated fail-closed
   A run that met any of these and said nothing recorded no seam, raised no finding and stated no limitation, so a reader read the wire dimension as covered when nothing about it had been measured.
 - The interpreter ran out of the time it was given (`miri-timed-out`).
   This is not a claim that it found nothing: a budget that expired is a question nobody answered, which is why it is a limitation and never a pass.
+- The toolchain has no interpreter and the contract is `whole-v1` (`miri-unavailable`).
+  `whole-v1` names each thing it could not establish rather than refusing the run, so the soundness nothing interpreted is a limitation beside a `not-measured` finding, and the run is not `ASSURED`.
+  `deep-v1` promises interpretation, and there the same toolchain ends the run with `NJ7001`.
 - The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
   Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
@@ -255,6 +258,20 @@ The comparison sees what the guards see, so a suite whose behaviour moves where 
 And what rested on a moved target is run again against it with its reach recorded ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
 Where nothing rests on a moved target any more, `reach-moved` still names it: nothing the run concludes stands on the moved record, and the suite's reach is still not a function of the target.
 
+## What a run asks of a call that can fail
+
+Faults are opt-in, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+A run that is asked pays a second instrumented build and baseline of the tree, and one execution for every `?` a test reaches.
+
+Three things are not claimed, and each is stated.
+A `?` whose error type is not one of the six the engine makes — `std::io::Error`, `Utf8Error`, `FromUtf8Error`, `ParseIntError`, `ParseFloatError`, `TryFromIntError` — or that propagates an `Option` is refused by the compiler under the fault and named in `fault-not-put`, one entry per compiler error class; a user's own error type is never injected, because guessing its constructor would inject something the program never returns.
+A fault a bound expired on, or whose failure did not reproduce, is a `not-measured` finding, so the run is not `ASSURED`.
+And a caller that swallows the injected error reads as `unnoticed`, which is what the suite could tell: where the error went is not recorded yet.
+
+A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
+Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.
+A tree whose faulted build or baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and puts nothing.
+A tree with no `?` in any measured file states `fault-no-site`: there was no call to fail, which is a finding about the tree and not a hole in the run.
 ## What a run asks of a suite that depends on where it runs
 
 A suite can pass on one machine and fail on the next because of something the contract lets differ between them: the time zone, the locale, the temporary directory, the home directory, the umask, the terminal width, or how many tests the harness runs at once.
@@ -265,6 +282,27 @@ Three things follow and are not hidden.
 A knob asked for and not put — no such zone in the time zone database, no such locale installed, no shell to set the mask through, a target that runs through cargo, a target that does not run under libtest, a platform with no way to put it — is `knob-not-put`, naming the knob, the targets, and why, because a pass under a knob that was never put says nothing.
 A knob whose controls established nothing to compare — a record that did not read back, other tests passing, a baseline that passed only on retry, a control that errored or ran out of time — is `knob-not-compared`, one per knob and reason, naming the targets.
 And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
+## What a run asks of a suite that runs more than one thread
+
+A schedule is not something a run explores yet, so a suite whose tests race each other passes on the schedule it happened to get ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+What a run does instead is prove, per test binary, where there is nothing to explore: its baseline reached no code off the threads its tests ran on, and no package in its dependency closure has a token that can start a thread, a task, a parallel iterator, a runtime, or a process, and none links native code or declares an `extern` block.
+Everything else is `schedule-not-explored`, naming the binaries in its closing list: `concurrent` where something says it can run more than one thread, and `not-proven` where something could not be looked at.
+Asked for with `[schedules] explore`, a run delays up to that many guards of each such binary whose baseline passed, one schedule each; a binary that passed every one is `schedule-sampled`, because a sample of its schedules is not all of them, and one a delay broke in five rounds, failing the same tests with the delay and passing without it each time, is `schedule-dependent`.
+A binary no delay broke where the controls of some delayed guard ran past their bound, errored, or failed in a way no round confirmed is `schedule-undecided`: it passed no sample of that schedule and showed no failure of it.
+A delay pauses each operating-system thread of the test process once, the first time it reaches the guard, so a thread a pool or the harness reuses across tests pauses only for the first test that reaches the guard on it.
+
+Three things follow and are not hidden.
+The scan reads tokens, not types, so a function of a user's own named `spawn`, or a word in a string, makes a binary concurrent that runs one thread; that is a hole the report states, never a proof it makes.
+A doctest's code is a doc string the scan does not read and its run records no reach, so a doctest binary is never proven.
+And a thread given exactly the name of a test that passed is read as that test's, which is why the source scan, and not the reach alone, is what the proof rests on.
+
+## What a run asks of a program that keeps state
+
+Crashes are opt-in, and a run not asked for them says nothing about a stop between two writes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+A crash stops the process just after a call that writes and runs the test that reached it again over what it left, so `restarted` says the next run passed over those files, not that it read them: a test that keeps its state under a name it picks afresh every run reads nothing its predecessor left.
+The stop is a process ending, so what it wrote is in the system's cache and on disk to every next run; a power failure that loses unflushed writes is not modelled.
+A call a target reaches without the run knowing which of its tests reaches it is `undecided`, because stopping every test of the target at once would tear what the others were writing.
+The compiler refusing a crash is stated in `crash-not-put`, and a tree with no call that writes in `crash-no-site`.
 
 ## What a run asks of a suite that talks about time
 

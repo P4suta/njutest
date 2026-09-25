@@ -71,6 +71,7 @@ const NEUTRAL: [Neutral; 5] = [
         event: "verify",
         record: "verify",
         fields: &[
+            ("args", NeutralValue::Empty),
             ("duration_ms", NeutralValue::Zero),
             ("remembered", NeutralValue::False),
             ("retried", NeutralValue::False),

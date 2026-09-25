@@ -326,8 +326,16 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Exec { .. } => "exec",
         Payload::Progress { .. } => "progress",
         Payload::Artifact { .. } => "artifact",
-        Payload::Route { .. } => "route",
+        Payload::Route { .. } | Payload::FaultRoute { .. } => "route",
         Payload::MutantExec { .. } => "mutant",
+        Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
+        Payload::Beside { .. } => "beside",
+        Payload::BesideRun { .. } => "pair",
+        Payload::CrashExec { .. } | Payload::Crash { .. } => "crash",
+        Payload::CrashStep { .. } => "step",
+        Payload::FaultControl { .. } => "control",
+        Payload::FaultAttribution { .. } => "attribution",
+        Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
         Payload::WireExec { .. } => "wire",
@@ -369,6 +377,28 @@ pub mod payload {
         Route(&'a crate::trace::RouteRecord),
         /// A mutation execution.
         MutantExec(&'a crate::trace::MutantExecRecord),
+        /// A fault execution.
+        FaultExec(&'a crate::trace::FaultExecRecord),
+        /// A fault confirmation's control.
+        FaultControl(&'a crate::trace::FaultControlRecord),
+        /// A fault's write attribution.
+        FaultAttribution(&'a crate::trace::FaultAttributionRecord),
+        /// A fault's route.
+        FaultRoute(&'a crate::trace::FaultRouteRecord),
+        /// A fault the compiler refused.
+        FaultRejected(&'a crate::trace::FaultRejectedRecord),
+        /// A fault site's decision.
+        Fault(&'a crate::report::faults::FaultRecord),
+        /// A survivor told apart only under a fault.
+        Beside(&'a crate::report::faults::BesideRecord),
+        /// A pair of runs behind evidence beside a fault.
+        BesideRun(&'a crate::report::faults::BesideRun),
+        /// A run of a test a crash was put to.
+        CrashExec(&'a crate::trace::CrashExecRecord),
+        /// A step of a crash that ran no test.
+        CrashStep(&'a crate::trace::CrashStepRecord),
+        /// A crash site's decision.
+        Crash(&'a crate::report::crashes::CrashRecord),
         /// A probe execution.
         ProbeExec(&'a crate::trace::ProbeExecRecord),
         /// A wire exchange.
@@ -404,6 +434,17 @@ pub mod payload {
             Payload::Artifact { .. } => Ref::Artifact,
             Payload::Route { route } => Ref::Route(route),
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
+            Payload::FaultExec { fault } => Ref::FaultExec(fault),
+            Payload::FaultControl { control } => Ref::FaultControl(control),
+            Payload::FaultRoute { route } => Ref::FaultRoute(route),
+            Payload::FaultAttribution { attribution } => Ref::FaultAttribution(attribution),
+            Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
+            Payload::Fault { fault } => Ref::Fault(fault),
+            Payload::Beside { beside } => Ref::Beside(beside),
+            Payload::BesideRun { pair } => Ref::BesideRun(pair),
+            Payload::CrashExec { crash } => Ref::CrashExec(crash),
+            Payload::CrashStep { step } => Ref::CrashStep(step),
+            Payload::Crash { crash } => Ref::Crash(crash),
             Payload::ProbeExec { probe } => Ref::ProbeExec(probe),
             Payload::WireExchange { .. } => Ref::WireExchange,
             Payload::WireExec { .. } => Ref::WireExec,
@@ -585,6 +626,129 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 step_boundary: crate::report::StepBoundary::new(10, 11),
                 duration_ms: 5,
                 alone: true,
+            },
+        },
+        Payload::FaultExec {
+            fault: crate::trace::FaultExecRecord {
+                fault: "abcdef".to_owned(),
+                role: crate::trace::FaultRole::First,
+                target: "demo/test/calls".to_owned(),
+                args: vec!["--exact".to_owned(), "tests::one".to_owned()],
+                outcome: "killed".to_owned(),
+                duration_ms: 5,
+                alone: false,
+            },
+        },
+        Payload::FaultAttribution {
+            attribution: crate::trace::FaultAttributionRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                path: "failed-read.log".to_owned(),
+                faulted: true,
+                passed: true,
+                unfaulted: crate::trace::Unfaulted::DidNotWrite,
+            },
+        },
+        Payload::FaultRoute {
+            route: crate::trace::FaultRouteRecord {
+                fault: "abcdef".to_owned(),
+                reaching: vec!["demo/test/calls".to_owned()],
+            },
+        },
+        Payload::FaultRejected {
+            rejected: crate::trace::FaultRejectedRecord {
+                fault: "abcdef".to_owned(),
+                diagnostic: "error[E0308]: mismatched types".to_owned(),
+            },
+        },
+        Payload::FaultControl {
+            control: crate::trace::FaultControlRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                passed: true,
+            },
+        },
+        Payload::Fault {
+            fault: crate::report::faults::FaultRecord {
+                catalog_index: crate::report::CatalogIndex::new(0),
+                id: "a".repeat(64),
+                display_id: "a".repeat(20),
+                path: "src/lib.rs".to_owned(),
+                item: "load".to_owned(),
+                position: Some(crate::report::Position {
+                    line: 13,
+                    column: 16,
+                    character_column: 16,
+                }),
+                decision: crate::report::faults::FaultDecision::Noticed {
+                    by: "demo/test/calls".to_owned(),
+                },
+            },
+        },
+        Payload::Beside {
+            beside: crate::report::faults::BesideRecord {
+                mutant: "b".repeat(20),
+                fault: "a".repeat(20),
+                target: "demo/test/calls".to_owned(),
+                failed: crate::report::faults::Failed::Beside,
+            },
+        },
+        Payload::BesideRun {
+            pair: crate::report::faults::BesideRun {
+                mutant: "b".repeat(20),
+                fault: "a".repeat(20),
+                target: "demo/test/calls".to_owned(),
+                alone: "survived".to_owned(),
+                with: "killed".to_owned(),
+            },
+        },
+        Payload::CrashExec {
+            crash: crate::trace::CrashExecRecord {
+                crash: "d".repeat(20),
+                target: "demo/test/counter".to_owned(),
+                test: "a_count_goes_up".to_owned(),
+                stage: "crash".to_owned(),
+                exit_code: 93,
+                outcome: "killed".to_owned(),
+                noticed: true,
+                issued: Some(crate::trace::CrashNoticeRecord {
+                    mutant: "d".repeat(64),
+                    catalog: "c".repeat(64),
+                    nonce: "e".repeat(32),
+                    read: Some(format!(
+                        "rust-mutants-crash-notice-v1\t{}\t{}\t{}\n",
+                        "e".repeat(32),
+                        "c".repeat(64),
+                        "d".repeat(64)
+                    )),
+                }),
+                left: vec!["count".to_owned()],
+                failed: Vec::new(),
+            },
+        },
+        Payload::CrashStep {
+            step: crate::trace::CrashStepRecord {
+                crash: "d".repeat(20),
+                taken: crate::trace::CrashStep::Route {
+                    asked: vec![crate::trace::CrashAsked {
+                        target: "demo/test/counter".to_owned(),
+                        tests: Some(vec!["a_count_goes_up".to_owned()]),
+                    }],
+                },
+            },
+        },
+        Payload::Crash {
+            crash: crate::report::crashes::CrashRecord {
+                catalog_index: crate::report::CatalogIndex::new(0),
+                id: "d".repeat(64),
+                display_id: "d".repeat(20),
+                path: "src/lib.rs".to_owned(),
+                item: "save".to_owned(),
+                position: None,
+                decision: crate::report::crashes::CrashDecision::Restarted {
+                    on: "demo/test/counter::a_count_goes_up".to_owned(),
+                    left: vec!["count".to_owned()],
+                },
             },
         },
         Payload::ProbeExec {
@@ -782,8 +946,8 @@ pub fn documented_specimen() -> crate::config::Config {
     use std::time::Duration;
 
     use crate::config::{
-        Acceptance, Cache, Config, Configuration, Contract, Execution, Fuzz, Generation, Mutation,
-        Project, Repeatable, Reports, Resource, Soundness, Verification,
+        Acceptance, Cache, Config, Configuration, Contract, Execution, Faults, Fuzz, Generation,
+        Mutation, Project, Repeatable, Reports, Resource, Soundness, Verification,
     };
 
     Config {
@@ -812,6 +976,8 @@ pub fn documented_specimen() -> crate::config::Config {
             ttl: Duration::from_hours(24 * 30),
         },
         mutation: Mutation { equivalence: true },
+        faults: Faults { inject: true },
+        durability: crate::config::Durability { crash: true },
         verification: Verification {
             unwind: Some(8),
             timeout: Some(Duration::from_mins(2)),
@@ -838,6 +1004,7 @@ pub fn documented_specimen() -> crate::config::Config {
                 crate::report::knobs::Knob::Threads,
             ],
         },
+        schedules: crate::config::Schedules { explore: 2 },
         resources: BTreeMap::from([(
             "api".to_owned(),
             Resource {
@@ -1081,6 +1248,7 @@ pub mod reports {
             })
             .collect();
         report.mutants = rows;
+        super::raise_what_the_records_decide(&mut report);
         super::read_every_named_file(&mut report);
         report.verdict = report.concluded();
         Ok(report)
@@ -1132,6 +1300,7 @@ pub mod reports {
         for (at, (name, rows, drift)) in builds.into_iter().enumerate() {
             let mut report = measured(&format!("{run}-{at}"), kind, rows, &order)?;
             report.drift = drift;
+            super::raise_what_the_records_decide(&mut report);
             report.verdict = report.concluded();
             measured_builds.push((
                 name.to_owned(),
@@ -1148,6 +1317,20 @@ pub mod reports {
             crate::report::LatticedDocument::Shard(_) => Err(UnmadeReport::Part),
         }
     }
+}
+
+/// Sets the findings the records of `report` decide to exactly the ones they raise, as a run does, leaving every finding of another derivation as the fixture put it.
+#[cfg(feature = "testkit")]
+pub fn raise_what_the_records_decide(report: &mut crate::report::BuildReport) {
+    report
+        .findings
+        .retain(|finding| finding.kind.derivation() != crate::report::Derivation::Records);
+    let derived = crate::report::derived::findings(report);
+    report.findings.extend(
+        derived
+            .into_iter()
+            .filter(|finding| finding.kind.derivation() == crate::report::Derivation::Records),
+    );
 }
 
 /// Records, for every file the rows and findings of `report` name, a digest as a run that read the file would have, which a report assembled by hand needs before the audit accepts it.

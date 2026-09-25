@@ -47,6 +47,7 @@ impl Told {
                     detail: limitation.detail.clone(),
                 })
                 .collect(),
+            matrix: conclusion.matrix.clone(),
         })
     }
 }
@@ -165,10 +166,36 @@ fn said(finding: &Finding, report: &Conclusion, sources: &Sources) -> Diagnostic
         severity,
         code,
         title: title.to_owned(),
-        at: mutant.map(|one| site(one, sources)),
+        at: mutant
+            .map(|one| site(one, sources))
+            .or_else(|| placed(finding, sources)),
         notes: vec![beyond(&finding.detail, mutant)],
-        actions: mutant.map(answering).unwrap_or_default(),
+        actions: mutant.map_or_else(|| followed(finding), answering),
     }
+}
+
+/// Where a finding about no mutation is, drawn from the place it names itself.
+fn placed(finding: &Finding, sources: &Sources) -> Option<Site> {
+    let (path, at) = (finding.path.as_ref()?, finding.position?);
+    Some(Site {
+        path: path.clone(),
+        line: at.line,
+        column: at.column,
+        excerpt: sources.at(path, at.line),
+        label: "failed here".to_owned(),
+        width: 1,
+    })
+}
+
+/// What a reader can type to follow a finding about no mutation back through the run's recording.
+fn followed(finding: &Finding) -> Vec<Action> {
+    if finding.kind != FindingKind::UnnoticedFault {
+        return Vec::new();
+    }
+    vec![Action {
+        said: "why".to_owned(),
+        command: format!("njutest why fault {}", finding.subject),
+    }]
 }
 
 /// What a detail says beyond what the drawing already shows.
@@ -251,6 +278,26 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             "NJ-WIRE",
             "the suite carried on through what a seam was asked",
         ),
+        FindingKind::UnnoticedFault => (
+            Severity::Gap,
+            "NJ-UNNOTICED-FAULT",
+            "a call failed here and no test noticed",
+        ),
+        FindingKind::BrokenUnderFault => (
+            Severity::Refusal,
+            "NJ-BROKEN-UNDER-FAULT",
+            "a test wrote into the tree it was measured in once a call failed",
+        ),
+        FindingKind::CorruptAfterCrash => (
+            Severity::Refusal,
+            "NJ-CORRUPT-AFTER-CRASH",
+            "a stop just after this call writes leaves what the next run cannot start over",
+        ),
+        FindingKind::DimensionNotMeasured => (
+            Severity::Limitation,
+            "NJ-DIMENSION",
+            "this run was asked to establish every dimension and did not establish this one",
+        ),
         FindingKind::HollowTarget => (
             Severity::Gap,
             "NJ-HOLLOW-TARGET",
@@ -267,6 +314,12 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             "NJ-ENVIRONMENT",
             "this test target passes here and fails where something a machine may set \
              differently is set differently",
+        ),
+        FindingKind::ScheduleDependent => (
+            Severity::Refusal,
+            "NJ-SCHEDULE",
+            "this test binary passes on the schedule its threads usually get and fails when one \
+             of them is late",
         ),
         FindingKind::EnvironmentDependentReach => (
             Severity::Limitation,

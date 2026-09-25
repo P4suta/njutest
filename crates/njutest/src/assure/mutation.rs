@@ -429,6 +429,31 @@ pub struct Subject<'a> {
     pub session: &'a Session,
     /// Every target the baseline measured.
     pub baseline: &'a [Measured],
+    /// What the session's catalog puts to the tests, which decides what the recording calls each execution.
+    pub perturbing: Perturbing,
+}
+
+/// What a catalog puts at each of its sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Perturbing {
+    /// A change to the program, whose executions, routes, probes and controls every reader of mutations reads.
+    Mutants,
+    /// A failed call, whose executions are recorded as fault executions and nothing else, so no reader of mutations ever counts one (ADR 0032).
+    Faults,
+}
+
+impl Perturbing {
+    /// Whether a phase putting this judges a catalog entry that perturbs `what`: a faulted session also holds the mutations a fault is put beside, which it asks about only there.
+    #[must_use]
+    pub const fn judges(self, what: rust_mutants::rule::Perturbs) -> bool {
+        match (self, what) {
+            (Self::Mutants, rust_mutants::rule::Perturbs::Program)
+            | (Self::Faults, rust_mutants::rule::Perturbs::Environment) => true,
+            (Self::Mutants, rust_mutants::rule::Perturbs::Environment)
+            | (Self::Faults, rust_mutants::rule::Perturbs::Program)
+            | (Self::Mutants | Self::Faults, rust_mutants::rule::Perturbs::Crash) => false,
+        }
+    }
 }
 
 /// What to measure and how.
@@ -507,6 +532,20 @@ impl std::fmt::Debug for Resume<'_> {
     }
 }
 
+/// How many places of the catalog each reason left unmutated.
+fn skip_census(session: &Session) -> Result<BTreeMap<String, u64>, crate::error::RunnerError> {
+    let mut census = BTreeMap::new();
+    for skip in session.skips() {
+        let count = census.entry(skip.reason.name().to_owned()).or_insert(0_u64);
+        *count = count
+            .checked_add(1)
+            .ok_or(crate::report::CountError::Overflow {
+                field: "mutation skip census",
+            })?;
+    }
+    Ok(census)
+}
+
 /// Runs every accepted mutant against the tests that could notice it, continuing from what an interrupted run had already judged.
 ///
 /// # Errors
@@ -521,20 +560,14 @@ pub fn run_resuming(
     let watch = reporting.watch;
     let (session, baseline) = (subject.session, subject.baseline);
     let phase = watch.trace.phase("mutation-judge");
-    let mut mutation = Mutation::default();
-    for skip in session.skips() {
-        let count = mutation
-            .skips
-            .entry(skip.reason.name().to_owned())
-            .or_insert(0);
-        *count = count
-            .checked_add(1)
-            .ok_or(crate::report::CountError::Overflow {
-                field: "mutation skip census",
-            })?;
-    }
+    let mut mutation = Mutation {
+        skips: skip_census(session)?,
+        ..Mutation::default()
+    };
 
-    record_probe(watch, session, baseline)?;
+    if subject.perturbing == Perturbing::Mutants {
+        record_probe(watch, session, baseline)?;
+    }
 
     let catalog = session.catalog();
     let rejected: BTreeMap<&str, &str> = session
@@ -546,6 +579,11 @@ pub fn run_resuming(
         .mutants()
         .iter()
         .filter(|mutant| options.shard.is_none_or(|shard| shard.holds(mutant.index)))
+        .filter(|mutant| {
+            subject
+                .perturbing
+                .judges(mutant.candidate.rule.family.perturbs())
+        })
         .collect();
     let total = u64::try_from(mutants.len())
         .map_err(|error| crate::targets::TargetError::invalid("mutation target count", error))?;
@@ -710,13 +748,19 @@ fn establish(
         ));
         inherited(saved)
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
+        if judging.subject.perturbing == Perturbing::Faults {
+            record_rejection(watch, mutant, diagnostic);
+        }
         Disposition::Rejected {
             diagnostic: (*diagnostic).to_owned(),
         }
     } else {
         let route = session.route(mutant);
         let consulted = reuse(options, &route, mutant.id.as_str());
-        record_route(watch, mutant, &route, &consulted);
+        match judging.subject.perturbing {
+            Perturbing::Mutants => record_route(watch, mutant, &route, &consulted),
+            Perturbing::Faults => record_fault_route(watch, mutant, &route),
+        }
         if let Consulted::Believed {
             disposition,
             answered,
@@ -804,6 +848,28 @@ fn record_probe(
 }
 
 /// Records how one mutant's tests were chosen, and whether this run established the answer itself.
+/// Records a fault the compiler refused, which is what `not-put` rests on.
+fn record_rejection(watch: Watch<'_>, mutant: &Mutant, diagnostic: &str) {
+    watch
+        .trace
+        .fault_rejected(crate::trace::FaultRejectedRecord {
+            fault: mutant.display_id.to_string(),
+            diagnostic: crate::assure::run::first_line(diagnostic),
+        });
+}
+
+/// Records which targets reach a fault, which is what `unreached` rests on, apart from every mutant route.
+fn record_fault_route(watch: Watch<'_>, mutant: &Mutant, route: &Route) {
+    watch.trace.fault_route(crate::trace::FaultRouteRecord {
+        fault: mutant.display_id.to_string(),
+        reaching: route
+            .reaching()
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+    });
+}
+
 fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Consulted) {
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.to_string(),
@@ -1279,7 +1345,7 @@ impl Aggregation {
     fn observe(
         &mut self,
         judging: &Judging<'_>,
-        target: &str,
+        (mutant, target): (&Mutant, &str),
         fact: TargetFact,
     ) -> Result<Option<Disposition>, crate::error::RunnerError> {
         let answered = AnsweredIndex::append(
@@ -1294,7 +1360,7 @@ impl Aggregation {
                 self.observation = self.observation.join(TargetObservation::Survived);
             }
             TargetFact::Killed { on, retry } => {
-                match confirm(judging, &retry, ExpectedReproduction::Killed)? {
+                match confirm(judging, (mutant, &on), &retry, ExpectedReproduction::Killed)? {
                     Ok(()) => return Ok(Some(Disposition::Killed { by: on })),
                     Err(why) => {
                         answered.mark_unconfirmed(&mut self.answered, &on)?;
@@ -1327,6 +1393,7 @@ impl Aggregation {
     fn finish(
         mut self,
         judging: &Judging<'_>,
+        mutant: &Mutant,
         route: Route,
     ) -> Result<(Disposition, Vec<crate::report::Answered>), crate::error::RunnerError> {
         let Some(selected) = select_unsettled(self.unsettled, self.observation) else {
@@ -1348,13 +1415,14 @@ impl Aggregation {
             answered,
         } = selected
         {
-            let disposition = match confirm(judging, &retry, ExpectedReproduction::Waited)? {
-                Ok(()) => Disposition::Waited { on },
-                Err(why) => {
-                    answered.mark_unconfirmed(&mut self.answered, &on)?;
-                    Disposition::Unconfirmed { on, why }
-                }
-            };
+            let disposition =
+                match confirm(judging, (mutant, &on), &retry, ExpectedReproduction::Waited)? {
+                    Ok(()) => Disposition::Waited { on },
+                    Err(why) => {
+                        answered.mark_unconfirmed(&mut self.answered, &on)?;
+                        Disposition::Unconfirmed { on, why }
+                    }
+                };
             return Ok((disposition, self.answered));
         }
         Ok((selected.disposition(), self.answered))
@@ -1387,11 +1455,11 @@ fn judge(
         if judging.watch.cancel.is_cancelled() {
             return Err(crate::error::RunnerError::Interrupted);
         }
-        if let Some(disposition) = aggregation.observe(judging, target, established)? {
+        if let Some(disposition) = aggregation.observe(judging, (mutant, target), established)? {
             return Ok((disposition, aggregation.answered));
         }
     }
-    aggregation.finish(judging, route)
+    aggregation.finish(judging, mutant, route)
 }
 
 /// What one mutation comes to against one test before the route aggregates every target.
@@ -1413,6 +1481,7 @@ fn against(
             request: &request,
             result: &result,
             alone: false,
+            perturbing: judging.subject.perturbing,
         },
     )?;
     if quiet_measurement_due(result.outcome(), watch.cancel.is_cancelled()) {
@@ -1427,6 +1496,7 @@ fn against(
                 request: &request,
                 result: &result,
                 alone: true,
+                perturbing: judging.subject.perturbing,
             },
         )?;
     }
@@ -1443,9 +1513,9 @@ fn repair(
     let was = judged.disposition.name();
     let (fact, reach) = against_reaching(judging, mutant, measured)?;
     let mut aggregation = Aggregation::new();
-    let (now, answered) = match aggregation.observe(judging, target, fact)? {
+    let (now, answered) = match aggregation.observe(judging, (mutant, target), fact)? {
         Some(decided) => (decided, aggregation.answered),
-        None => aggregation.finish(judging, judging.subject.session.route(mutant))?,
+        None => aggregation.finish(judging, mutant, judging.subject.session.route(mutant))?,
     };
     let reached = match reach {
         rust_mutants::session::SiteReach::Reached => crate::trace::SiteReached::Reached,
@@ -1491,6 +1561,7 @@ fn against_reaching(
             request: &request,
             result: &result,
             alone,
+            perturbing: judging.subject.perturbing,
         },
     )?;
     if quiet_measurement_due(result.outcome(), watch.cancel.is_cancelled()) {
@@ -1506,6 +1577,7 @@ fn against_reaching(
                 request: &request,
                 result: &result,
                 alone,
+                perturbing: judging.subject.perturbing,
             },
         )?;
     }
@@ -1562,19 +1634,50 @@ fn fact_of(request: Request, measured: Option<&Measured>, result: &MutantResult)
 /// The pair: the original must pass right now, and the kill must reproduce.
 fn confirm(
     judging: &Judging<'_>,
+    asked: (&Mutant, &str),
     request: &Request,
     expected: ExpectedReproduction,
 ) -> Result<Result<(), Unconfirmed>, crate::error::RunnerError> {
-    if let Some(failure) = judging
+    let (mutant, on) = asked;
+    let control = judging
         .controls
-        .ask(judging.subject.session, request, judging.watch)?
-    {
+        .ask(judging.subject, request, judging.watch)?;
+    let faulted = judging.subject.perturbing == Perturbing::Faults;
+    if faulted {
+        judging
+            .watch
+            .trace
+            .fault_control(crate::trace::FaultControlRecord {
+                fault: mutant.display_id.to_string(),
+                target: on.to_owned(),
+                passed: control.is_none(),
+            });
+    }
+    if let Some(failure) = control {
         return Ok(Err(Unconfirmed::ControlFailed { detail: failure }));
     }
     let second = judging
         .subject
         .session
         .exec(request, judging.watch.cancel)?;
+    if faulted {
+        let milliseconds = second.duration.as_millis();
+        let duration_ms = u64::try_from(milliseconds).map_err(|_outside_wire_range| {
+            crate::assure::run::RunInvariantError::MutationDurationOutsideWire { milliseconds }
+        })?;
+        judging
+            .watch
+            .trace
+            .fault_exec(crate::trace::FaultExecRecord {
+                fault: mutant.display_id.to_string(),
+                role: crate::trace::FaultRole::Confirmation,
+                target: on.to_owned(),
+                args: request.args.clone(),
+                outcome: second.outcome().name().to_owned(),
+                duration_ms,
+                alone: false,
+            });
+    }
     Ok(expected.compare(second.outcome()))
 }
 
@@ -1651,10 +1754,11 @@ impl Controls {
     /// Why this test fails on the original, or nothing when it passes, running the control once for every asker of the same question.
     fn ask(
         &self,
-        session: &Session,
+        subject: Subject<'_>,
         request: &Request,
         watch: Watch<'_>,
     ) -> Result<Option<String>, crate::error::RunnerError> {
+        let session = subject.session;
         let slot = Arc::clone(
             self.asked
                 .lock()
@@ -1669,7 +1773,9 @@ impl Controls {
             Some(known) => known.clone(),
             None => {
                 let control = session.control(request, watch.cancel, Observing::Reach)?;
-                self.observe(request, &control.observed, watch)?;
+                if subject.perturbing == Perturbing::Mutants {
+                    self.observe(request, &control.observed, watch)?;
+                }
                 let original = if control.result.outcome() == Outcome::Survived {
                     Original::Passed
                 } else {
@@ -1735,6 +1841,8 @@ struct Ran<'a> {
     result: &'a MutantResult,
     /// Whether the machine was given to it, which a run does once when a budget expires.
     alone: bool,
+    /// Which record the execution is.
+    perturbing: Perturbing,
 }
 
 /// One mutation execution, as the recording holds it.
@@ -1746,20 +1854,31 @@ fn record_exec(
     let duration_ms = u64::try_from(milliseconds).map_err(|_outside_wire_range| {
         crate::assure::run::RunInvariantError::MutationDurationOutsideWire { milliseconds }
     })?;
-    watch.trace.mutant_exec(crate::trace::MutantExecRecord {
-        mutant: ran.mutant.display_id.to_string(),
-        target: ran
-            .measured
-            .map_or_else(|| SUITE.to_owned(), |one| one.target.name()),
-        args: ran.request.args.clone(),
-        outcome: ran.result.outcome().name().to_owned(),
-        step_boundary: ran
-            .result
-            .step_notice()
-            .and_then(|notice| crate::report::StepBoundary::new(notice.limit(), notice.observed())),
-        duration_ms,
-        alone: ran.alone,
-    });
+    let target = ran
+        .measured
+        .map_or_else(|| SUITE.to_owned(), |one| one.target.name());
+    match ran.perturbing {
+        Perturbing::Mutants => watch.trace.mutant_exec(crate::trace::MutantExecRecord {
+            mutant: ran.mutant.display_id.to_string(),
+            target,
+            args: ran.request.args.clone(),
+            outcome: ran.result.outcome().name().to_owned(),
+            step_boundary: ran.result.step_notice().and_then(|notice| {
+                crate::report::StepBoundary::new(notice.limit(), notice.observed())
+            }),
+            duration_ms,
+            alone: ran.alone,
+        }),
+        Perturbing::Faults => watch.trace.fault_exec(crate::trace::FaultExecRecord {
+            fault: ran.mutant.display_id.to_string(),
+            role: crate::trace::FaultRole::First,
+            target,
+            args: ran.request.args.clone(),
+            outcome: ran.result.outcome().name().to_owned(),
+            duration_ms,
+            alone: ran.alone,
+        }),
+    }
     Ok(())
 }
 

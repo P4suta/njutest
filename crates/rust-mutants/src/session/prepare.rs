@@ -897,12 +897,7 @@ pub fn prepare(
     let remembered = remembering(options, &read.closure.digest, &read.manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
-    let Instrumented {
-        validated,
-        last_build,
-        narrowing,
-        items: item_catalog,
-    } = validated(
+    let instrumented = validated(
         &Establishing {
             workspace: &workspace,
             discovery: &discovery,
@@ -923,19 +918,19 @@ pub fn prepare(
         cancel,
         trace: &trace,
         catalog: &discovery.catalog,
-        accepted: &validated.accepted,
-        narrowing: &narrowing,
-        items: item_count(&item_catalog)?,
+        accepted: &instrumented.validated.accepted,
+        narrowing: &instrumented.narrowing,
+        items: item_count(&instrumented.items)?,
         closure: &read.closure.digest,
         manifests: &read.manifests,
         asked: options.touch,
-        last_build: &last_build,
+        last_build: &instrumented.last_build,
         options,
     })?;
     phase.end();
     let (packages, items) = attributed(&discovery);
-    let item_refs = item_refs(&item_catalog)?;
-    let verified = narrowed(verified, narrowing, item_catalog.items);
+    let item_refs = item_refs(&instrumented.items)?;
+    let verified = narrowed(verified, instrumented.narrowing, instrumented.items.items);
     Ok(Session {
         apparatus,
         item_refs,
@@ -948,13 +943,14 @@ pub fn prepare(
         items,
         proofs: established.proofs,
         reached,
-        validated,
+        validated: instrumented.validated,
         eligible,
         targets,
         scratch,
         verified,
         established: std::sync::Mutex::new(super::EstablishmentState::fresh()),
         written_by_a_test,
+        beside: instrumented.beside,
         closure: read.closure,
         inputs: read.inputs,
         manifests: read.manifests,
@@ -1063,6 +1059,8 @@ struct Instrumented {
     last_build: Vec<crate::cargo::Message>,
     /// What the tree that was built can say about a mutant it never named, which is what narrowing by silence rests on.
     narrowing: crate::touch::Narrowing,
+    /// Every mutation whose branch in the tree that was built carries a fault's guard, with that fault.
+    beside: BTreeSet<(u32, u32)>,
     /// Every item of the tree, numbered as its entry markers name them.
     items: crate::instrument::ItemCatalog,
 }
@@ -1119,6 +1117,7 @@ fn establish(
         probed: &established.probed,
         compared: BTreeSet::new(),
         marked: BTreeSet::new(),
+        beside: BTreeSet::new(),
     };
     let validated = validate_selected(
         &discovery.catalog,
@@ -1134,6 +1133,7 @@ fn establish(
     )?;
     Ok(Instrumented {
         validated,
+        beside: writer.beside,
         last_build: writer.last_build,
         narrowing: crate::touch::Narrowing {
             compared: writer.compared,
@@ -1343,6 +1343,8 @@ struct TreeCompiler<'a> {
     compared: BTreeSet<u32>,
     /// Every marker the tree that was last built actually holds the call for.
     marked: BTreeSet<u32>,
+    /// Every mutation whose branch in the tree that was last built carries a fault's guard, with that fault.
+    beside: BTreeSet<(u32, u32)>,
     /// The item index each file's first item takes.
     first_items: &'a BTreeMap<String, u32>,
 }
@@ -1464,6 +1466,10 @@ impl Compile for TreeCompiler<'_> {
             self.marked = files
                 .iter()
                 .flat_map(|file| file.marked.iter().copied())
+                .collect();
+            self.beside = files
+                .iter()
+                .flat_map(|file| file.beside.iter().copied())
                 .collect();
         }
         Ok(Attempt {

@@ -11,6 +11,9 @@ use super::Placement;
 /// Selects the active mutant by its full identity.
 pub const ACTIVE_ENV: &str = "RUST_MUTANTS_ACTIVE";
 
+/// Selects a fault to activate beside the active mutant, by its full identity.
+pub const FAULT_ENV: &str = "RUST_MUTANTS_FAULT";
+
 /// Names the catalog the activating run holds.
 pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 
@@ -48,6 +51,8 @@ pub const STEP_PROTOCOL_EXIT: i32 = 94;
 /// Names the file the guards append to, saying which of the process's threads reached them.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
+/// Names the one guard each thread pauses at the first time it reaches it, as `<catalog index>@<milliseconds>`: one schedule of the program, told apart from the others by the site it delays.
+pub const DELAY_ENV: &str = "RUST_MUTANTS_DELAY";
 /// Set to `1` beside [`TOUCH_ENV`], asks a process to record only the items it entered, which is all a mutant execution's union needs and a fraction of what a baseline writes.
 pub const TOUCH_ITEMS_ENV: &str = "RUST_MUTANTS_TOUCH_ITEMS";
 
@@ -65,6 +70,27 @@ pub const TOUCH_UNAVAILABLE_EXIT: i32 = 96;
 
 /// The name the generated module takes when the file does not already spell it; otherwise a digit is appended until one is free.
 pub const MODULE_STEM: &str = "__rm";
+
+/// What a fault replaces the call a `?` asks about with, naming the runtime's constructor the way a reader would; the instrumenter writes the path the site reaches the runtime by in its place.
+pub const INJECTED: &str = "::core::result::Result::Err(rust_mutants::injected())";
+
+/// The call [`INJECTED`] names, which the instrumenter replaces.
+pub const INJECTED_CALL: &str = "rust_mutants::injected";
+
+/// What a crash wraps the call that writes in, naming the runtime's function the way a reader would; the instrumenter writes the path the site reaches the runtime by in its place.
+pub const CRASHED_CALL: &str = "rust_mutants::crashed_after";
+
+/// The exit status of a test process a crash stopped just after a call that writes (ADR 0035).
+pub const CRASH_EXIT: i32 = 93;
+
+/// Names the fresh file through which the runtime says a crash stopped the process at the active call.
+pub const CRASH_NOTICE_ENV: &str = "RUST_MUTANTS_CRASH_NOTICE";
+
+/// Ties one crash notice to exactly one supervised execution.
+pub const CRASH_NONCE_ENV: &str = "RUST_MUTANTS_CRASH_NONCE";
+
+/// The first field of every crash notice.
+pub const CRASH_NOTICE_SCHEMA: &str = "rust-mutants-crash-notice-v1";
 
 /// Marks the generated module, for a person reading the snapshot and for the drift gate.
 pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v1";
@@ -279,6 +305,7 @@ mod {{MODULE}} {
     enum Selection {
         None,
         Index(u32),
+        Beside(u32, u32),
     }
     #[derive(Clone, Copy)]
     struct StepLimit(usize);
@@ -398,17 +425,108 @@ mod {{MODULE}} {
     > = __rm_std::sync::OnceLock::new();
 
 {{VALUE_MACRO}}
+    // The failures a fault can make without guessing: an error type the
+    // standard library defines and a caller already has to be ready for.
+    // A `?` whose error is anything else does not compile under a fault,
+    // and the compiler's refusal is what says the fault was not put.
+    pub(crate) trait Injectable {
+        fn injected() -> Self;
+    }
+    impl Injectable for __rm_std::io::Error {
+        fn injected() -> Self {
+            __rm_std::io::Error::other("a failure rust-mutants injected")
+        }
+    }
+    impl Injectable for __rm_std::str::Utf8Error {
+        fn injected() -> Self {
+            match __rm_std::str::from_utf8(__rm_std::hint::black_box(&[0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::string::FromUtf8Error {
+        fn injected() -> Self {
+            match __rm_std::string::String::from_utf8(__rm_std::hint::black_box(__rm_std::vec![0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseFloatError {
+        fn injected() -> Self {
+            match <f64 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::TryFromIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::convert::TryFrom<u16>>::try_from(__rm_std::hint::black_box(256_u16)) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    pub(crate) fn injected<E: Injectable>() -> E {
+        E::injected()
+    }
+    // A crash lets the call that writes finish and then stops the process
+    // with nothing after it: no destructor, flush or unwinding, so what the
+    // call wrote is on disk and nothing later is.
+    pub(crate) fn crashed_after<T>(_written: T) -> T {
+        let _published = publish_crash_notice();
+        __rm_std::process::exit({{CRASH_EXIT}})
+    }
+
+    // The notice is what tells the supervisor this status is a stop the
+    // runtime made rather than one a test chose. A notice that cannot be
+    // published still stops the process, so the state is torn all the
+    // same; the status alone then decides nothing, and the crash is left
+    // undecided rather than read as a stop nobody confirmed.
+    fn publish_crash_notice() -> __rm_std::option::Option<()> {
+        let path = __rm_std::env::var("{{CRASH_NOTICE_ENV}}").ok()?;
+        let nonce = __rm_std::env::var("{{CRASH_NONCE_ENV}}").ok()?;
+        let wanted = __rm_std::env::var("{{ACTIVE_ENV}}").ok()?;
+        let partial = __rm_std::format!("{}.partial", path);
+        {
+            let mut file = __rm_std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&partial)
+                .ok()?;
+            let notice = __rm_std::format!(
+                "{{CRASH_NOTICE_SCHEMA}}\t{}\t{}\t{}\n",
+                nonce, CATALOG, wanted
+            );
+            __rm_std::io::Write::write_all(&mut file, notice.as_bytes()).ok()?;
+            file.sync_data().ok()?;
+        }
+        __rm_std::fs::rename(partial, path).ok()
+    }
+
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         watched();
         touch(index);
+        delay(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
-            Selection::Index(selected) if selected == index => {
+            Selection::Index(selected) | Selection::Beside(selected, _) if selected == index => {
                 activate();
                 true
             }
-            Selection::Index(_) => false,
+            Selection::Beside(_, fault) if fault == index => true,
+            Selection::Index(_) | Selection::Beside(..) => false,
         }
     }
 
@@ -1094,6 +1212,57 @@ mod {{MODULE}} {
         }
     }
 
+    /// The one guard this process delays, and for how long.
+    #[derive(Clone, Copy)]
+    enum Delay {
+        None,
+        At { index: u32, millis: u64 },
+    }
+
+    static DELAY: __rm_std::sync::OnceLock<Delay> = __rm_std::sync::OnceLock::new();
+
+    __rm_std::thread_local! {
+        static DELAYED: __rm_std::cell::Cell<bool> = const { __rm_std::cell::Cell::new(false) };
+    }
+
+    fn configured_delay() -> Delay {
+        let raw = match __rm_std::env::var("{{DELAY_ENV}}") {
+            __rm_std::result::Result::Ok(raw) => raw,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotPresent) => return Delay::None,
+            __rm_std::result::Result::Err(__rm_std::env::VarError::NotUnicode(_)) => protocol_failure(),
+        };
+        if raw.is_empty() {
+            return Delay::None;
+        }
+        match __rm_std::env::var_os("{{ACTIVE_ENV}}") {
+            __rm_std::option::Option::Some(active) if !active.is_empty() => protocol_failure(),
+            _ => {}
+        }
+        match __rm_std::env::var("{{CATALOG_ENV}}") {
+            __rm_std::result::Result::Ok(catalog) if catalog == CATALOG => {}
+            __rm_std::result::Result::Ok(catalog) => stale_catalog(&catalog),
+            __rm_std::result::Result::Err(_) => stale_catalog("<unset>"),
+        }
+        let (index, millis) = match raw.split_once('@') {
+            __rm_std::option::Option::Some(parts) => parts,
+            __rm_std::option::Option::None => protocol_failure(),
+        };
+        match (index.parse::<u32>(), millis.parse::<u64>()) {
+            (__rm_std::result::Result::Ok(index), __rm_std::result::Result::Ok(millis)) => Delay::At { index, millis },
+            _ => protocol_failure(),
+        }
+    }
+
+    /// Pauses this thread the first time it reaches the guard this process delays.
+    #[inline(never)]
+    fn delay(index: u32) {
+        if let Delay::At { index: at, millis } = *DELAY.get_or_init(configured_delay) {
+            if at == index && !DELAYED.with(|delayed| delayed.replace(true)) {
+                __rm_std::thread::sleep(__rm_std::time::Duration::from_millis(millis));
+            }
+        }
+    }
+
     #[inline(never)]
     fn touch(index: u32) {
         if !touching() {
@@ -1311,12 +1480,28 @@ mod {{MODULE}} {
         if catalog != CATALOG {
             stale_catalog(&catalog);
         }
-        for &(id, index) in IDS {
-            if id == wanted {
-                return Selection::Index(index);
+        let selected = match indexed(&wanted) {
+            __rm_std::option::Option::Some(index) => index,
+            __rm_std::option::Option::None => return Selection::None,
+        };
+        match __rm_std::env::var("{{FAULT_ENV}}") {
+            __rm_std::result::Result::Ok(fault) if !fault.is_empty() => match indexed(&fault) {
+                __rm_std::option::Option::Some(beside) => Selection::Beside(selected, beside),
+                __rm_std::option::Option::None => protocol_failure(),
+            },
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => {
+                Selection::Index(selected)
             }
         }
-        Selection::None
+    }
+
+    fn indexed(wanted: &str) -> __rm_std::option::Option<u32> {
+        for &(id, index) in IDS {
+            if id == wanted {
+                return __rm_std::option::Option::Some(index);
+            }
+        }
+        __rm_std::option::Option::None
     }
 
     #[cold]
@@ -1357,6 +1542,12 @@ fn with_protocol(text: &str) -> String {
         .replace("{{STEP_PROTOCOL_EXIT}}", &STEP_PROTOCOL_EXIT.to_string())
         .replace("{{WATCHED_ENV}}", WATCHED_ENV)
         .replace("{{ORPHAN_PREFIX}}", ORPHAN_PREFIX)
+        .replace("{{FAULT_ENV}}", FAULT_ENV)
+        .replace("{{CRASH_EXIT}}", &CRASH_EXIT.to_string())
+        .replace("{{CRASH_NOTICE_ENV}}", CRASH_NOTICE_ENV)
+        .replace("{{CRASH_NONCE_ENV}}", CRASH_NONCE_ENV)
+        .replace("{{CRASH_NOTICE_SCHEMA}}", CRASH_NOTICE_SCHEMA)
+        .replace("{{DELAY_ENV}}", DELAY_ENV)
 }
 
 /// Renders the runtime module for one file.

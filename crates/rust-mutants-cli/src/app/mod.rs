@@ -1889,7 +1889,7 @@ fn rules(tier: Option<&str>, json: bool, stdout: &mut dyn Write) -> Result<u8, C
                     serde_json::json!({
                         "name": rule.name,
                         "family": rule.family.name(),
-                        "tier": rule.tier.name(),
+                        "tier": rule.chosen_by(),
                         "version": rule.version,
                     })
                 })
@@ -1925,7 +1925,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> Result<String, CliError> {
             "{:<20} {:<30} {:<9} {}",
             rule.family.name(),
             rule.name,
-            rule.tier.name(),
+            rule.chosen_by(),
             rule.version
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");

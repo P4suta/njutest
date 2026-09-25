@@ -68,7 +68,7 @@ pub(super) fn verify(
         let replayed = replay(
             &recalled.verified,
             &recalled.tests_run,
-            targets,
+            (targets, &building.options.harness_args),
             &workspace.trace,
         );
         phase.end();
@@ -184,6 +184,7 @@ fn verify_target(
         outcome: result.outcome().name().to_owned(),
         tests_run: result.tests_run(),
         duration_ms: duration_millis(result.duration)?,
+        args: building.options.harness_args.clone(),
         remembered: false,
         retried,
     });
@@ -825,7 +826,7 @@ fn answer_digest(
 fn replay(
     verified: &Verified,
     tests_run: &BTreeMap<String, Option<u32>>,
-    targets: &mut [TestTarget],
+    (targets, harness_args): (&mut [TestTarget], &[String]),
     trace: &crate::trace::Recorder,
 ) -> Result<(), EngineError> {
     for target in targets {
@@ -840,6 +841,7 @@ fn replay(
                 .copied()
                 .and_then(std::convert::identity),
             duration_ms: duration_millis(baseline.duration)?,
+            args: harness_args.to_vec(),
             remembered: true,
             retried: false,
         });
@@ -1113,6 +1115,7 @@ fn target_key(
         cargo: Some(building.workspace.toolchain.cargo()),
         sysroot: building.workspace.toolchain.sysroot(),
         active: None,
+        beside: None,
         touch: recording.as_deref().map(|log| execute::Touching {
             scope: execute::TouchScope::Everything,
             log,
@@ -1120,6 +1123,7 @@ fn target_key(
         }),
         steps: None,
         profile: None,
+        crash: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
@@ -1133,12 +1137,13 @@ fn target_key(
     for argument in argv {
         key.os("argv", &argument)?;
     }
-    let environment = execute::environment(&context, target, Some(own)).map_err(|source| {
-        BaselineCacheError::EnvironmentUnavailable {
-            target: target.id.clone(),
-            source,
-        }
-    })?;
+    let environment =
+        execute::environment(&context, target, (Some(own), Some(own))).map_err(|source| {
+            BaselineCacheError::EnvironmentUnavailable {
+                target: target.id.clone(),
+                source,
+            }
+        })?;
     key.u64(
         "environment-count",
         baseline_count(BaselineQuantity::Environment, environment.len())?,
@@ -1243,6 +1248,7 @@ fn ran(
         cargo: Some(workspace.toolchain.cargo()),
         sysroot: workspace.toolchain.sysroot(),
         active: None,
+        beside: None,
         touch: log.map(|log| execute::Touching {
             scope: execute::TouchScope::Everything,
             log,
@@ -1250,6 +1256,7 @@ fn ran(
         }),
         steps: None,
         profile: None,
+        crash: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())

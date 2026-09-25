@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t163715758z",
-    "started_at": "2026-09-25T16:37:15.758225Z",
-    "finished_at": "2026-09-25T16:37:18.167729Z",
-    "duration_ms": 307,
+    "id": "20260925t173201548z",
+    "started_at": "2026-09-25T17:32:01.548431Z",
+    "finished_at": "2026-09-25T17:32:04.047533Z",
+    "duration_ms": 175,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-unreached",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "2973d0731e74a4c567a5e16635803c4c4cc9a9a73bb4eaea990c6fe9dd42408d",
+    "workspace_digest": "68b3fa4ccf0987ac8646dd49d5f36d39888c7ca6ba785d97f5af2338ea9bb8da",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "darwin",
@@ -145,7 +145,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 30,
+      "duration_ms": 29,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"

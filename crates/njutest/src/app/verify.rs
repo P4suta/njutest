@@ -722,7 +722,7 @@ fn complete_lattice(
             return Ok(crate::report::ReportDocument::Shard(shard));
         }
     };
-    if latticed.contract() != crate::config::Contract::VerifiedV1 {
+    if !latticed.contract().proves_models() {
         crate::assure::model::confirm_not_required(&prepared)
             .map_err(crate::error::RunnerError::from)?;
         return Ok(crate::report::ReportDocument::Complete(
@@ -1566,6 +1566,17 @@ fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
 
 /// The configuration this run answers to.
 fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<LoadedConfig, LoadError> {
+    let mut loaded = configured(arguments, workspace)?;
+    loaded.config.faults.inject |= arguments.faults;
+    loaded.config.durability.crash |= arguments.crashes;
+    Ok(loaded)
+}
+
+/// The configuration the invocation named, or the workspace's, as it was written.
+fn configured(
+    arguments: &Verify,
+    workspace: &reports::WorkspaceRoot,
+) -> Result<LoadedConfig, LoadError> {
     match &arguments.config {
         Some(path) => {
             let text = reports::read_configuration(path)?;

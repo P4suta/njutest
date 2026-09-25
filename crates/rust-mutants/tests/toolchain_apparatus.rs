@@ -72,7 +72,7 @@ fn a_mutant_that_removes_the_test_binaries_stops_the_run_and_is_named() {
     };
     assert!(
         answered.is_err()
-            && said.contains("RM5009")
+            && said.contains("RM5011")
             && sweeping.iter().any(|mutant| said.contains(mutant.as_str())),
         "a mutant whose tests removed the binaries the run executes stops the run, naming \
          itself, rather than surviving while every mutant after it errors for a cause it did \

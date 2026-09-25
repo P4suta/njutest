@@ -18,6 +18,8 @@ pub const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 pub const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 /// The one target the specimen run tested with.
 pub const TARGET: &str = "pkg/test/lib";
+/// The display identity of the fault a planted defect puts.
+pub const FAULTED: &str = "cccccccccccccccccccc";
 /// The question about the status of the one exchange [`went_past`] holds.
 pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
 
@@ -49,8 +51,13 @@ pub fn base() -> Value {
                 "model_noticed": 0,
                 "model_proved": 0
             },
-            "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false }
+            "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false },
+            "faults": {
+                "sites": 0, "noticed": 0, "unnoticed": 0, "unreached": 0,
+                "waited": 0, "undecided": 0, "not_put": 0
+            }
         },
+        "faults": [],
         "targets": [
             {
                 "id": "3f2a1b0c9d8e7f60",
@@ -97,6 +104,581 @@ pub fn base() -> Value {
             }
         ],
         "limitations": []
+    })
+}
+
+/// The display identity of the crash the crashes layer's planted defects put.
+const CRASHED: &str = "dddddddddddddddddddd";
+
+/// A report of one crash site decided `decision`, counted once under `counted`, with `finding` beside the specimen's own where it names one.
+fn crash_reported(decision: &Value, counted: &str, finding: Option<(&str, &str)>) -> Value {
+    let mut document = with(json!({
+        "crashes": [{
+            "catalog_index": 0,
+            "id": "d".repeat(64),
+            "display_id": CRASHED,
+            "path": "src/lib.rs",
+            "item": "save",
+            "position": null,
+            "decision": decision
+        }],
+        "accounting": { "crashes": { "sites": 1, counted: 1 } }
+    }));
+    if let (Some((kind, subject)), Some(findings)) = (
+        finding,
+        document.get_mut("findings").and_then(Value::as_array_mut),
+    ) {
+        findings.push(json!({
+            "kind": kind, "subject": subject, "detail": "planted", "position": null
+        }));
+    }
+    document
+}
+
+/// One step of the crash [`CRASHED`], as the runner records it.
+fn crash_step(taken: &Value) -> Value {
+    json!({
+        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
+        "type": "crash-step",
+        "step": { "crash": CRASHED, "taken": taken }
+    })
+}
+
+/// One run of `test` with the crash [`CRASHED`] put to it, which `ended` stopped at the call, passed, failed or waited, with the `files` a stop left or a next or fresh run failed.
+fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
+    let (exit_code, outcome) = match ended {
+        "stopped" | "chose" => (93, "killed"),
+        "passed" => (0, "survived"),
+        "waited" => (124, "waited"),
+        _ => (101, "killed"),
+    };
+    let (left, failed): (&[&str], &[&str]) = if stage == "crash" {
+        (files, &[])
+    } else {
+        (&[], files)
+    };
+    let issued = (stage == "crash").then(|| {
+        json!({
+            "mutant": "d".repeat(64), "catalog": "c".repeat(64), "nonce": "0".repeat(32),
+            "read": (ended == "stopped").then(|| notice(&"0".repeat(32)))
+        })
+    });
+    json!({
+        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
+        "type": "crash-exec",
+        "crash": {
+            "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
+            "exit_code": exit_code, "outcome": outcome, "noticed": ended == "stopped",
+            "issued": issued, "left": left, "failed": failed
+        }
+    })
+}
+
+/// The defects planted for the crashes layer about the evidence a stop is decided on: a notice the engine never read, one naming another run's nonce, and a run issued another mutation.
+fn crashes_planted_against_evidence(clean: &Perturbation) -> Vec<Perturbation> {
+    let on = format!("{TARGET}::t");
+    let restarted = json!({ "decision": "restarted", "on": on, "left": ["count"] });
+    let planted = |name: &'static str, document: Value, events: Vec<Value>| Perturbation {
+        name,
+        document,
+        events: Some(events),
+        ..clean.clone()
+    };
+    vec![
+        planted(
+            "a stop claimed over a run whose engine read no notice",
+            crash_reported(&restarted, "restarted", None),
+            reissued(crash_recorded(crash_restarted()), |issued| {
+                issued["read"] = Value::Null;
+            }),
+        ),
+        planted(
+            "a stop claimed over a notice that carries another run's nonce",
+            crash_reported(&restarted, "restarted", None),
+            reissued(crash_recorded(crash_restarted()), |issued| {
+                issued["read"] = json!(notice(&"f".repeat(32)));
+            }),
+        ),
+        planted(
+            "a stop claimed over a run issued another mutation than the site",
+            crash_reported(&restarted, "restarted", None),
+            reissued(crash_recorded(crash_restarted()), |issued| {
+                let nonce = "a".repeat(32);
+                let other = format!(
+                    "{}\t{nonce}\t{}\t{}\n",
+                    crate::crashes::NOTICE_SCHEMA,
+                    "c".repeat(64),
+                    "e".repeat(64)
+                );
+                issued["nonce"] = json!(nonce);
+                issued["mutant"] = json!("e".repeat(64));
+                issued["read"] = json!(other);
+            }),
+        ),
+    ]
+}
+
+/// `events` with what the engine issued every crashed run changed by `change`.
+fn reissued(mut events: Vec<Value>, change: impl Fn(&mut Value)) -> Vec<Value> {
+    for event in &mut events {
+        if let Some(issued) = event
+            .get_mut("crash")
+            .and_then(|crash| crash.get_mut("issued"))
+            .filter(|issued| issued.is_object())
+        {
+            change(issued);
+        }
+    }
+    events
+}
+
+/// The notice the runtime publishes for a run of [`CRASHED`] issued `nonce`.
+fn notice(nonce: &str) -> String {
+    format!(
+        "{}\t{nonce}\t{}\t{}\n",
+        crate::crashes::NOTICE_SCHEMA,
+        "c".repeat(64),
+        "d".repeat(64)
+    )
+}
+
+/// `events` with every crashed run issued a nonce of its own, and the notice it published naming that nonce.
+fn nonced(mut events: Vec<Value>) -> Vec<Value> {
+    let issued_runs = events.iter_mut().filter_map(|event| {
+        event
+            .get_mut("crash")
+            .and_then(|crash| crash.get_mut("issued"))
+            .filter(|issued| issued.is_object())
+    });
+    for (issued, next) in issued_runs.zip(1_u32..) {
+        let nonce = format!("{next:032x}");
+        if issued.get("read").is_some_and(Value::is_string) {
+            issued["read"] = json!(notice(&nonce));
+        }
+        issued["nonce"] = json!(nonce);
+    }
+    events
+}
+
+/// The specimen's recording with the route that asks the one test `t`, and `runs` after it.
+fn crash_recorded(runs: Vec<Value>) -> Vec<Value> {
+    let route = crash_step(&json!({
+        "kind": "route", "asked": [{ "target": TARGET, "tests": ["t"] }]
+    }));
+    numbered(nonced(
+        routes().into_iter().chain([route]).chain(runs).collect(),
+    ))
+}
+
+/// A stop of `t` that left `count`, and a next run that passed over it.
+fn crash_restarted() -> Vec<Value> {
+    vec![
+        crash_run("t", "crash", "stopped", &["count"]),
+        crash_run("t", "next", "passed", &[]),
+    ]
+}
+
+/// A stop of `t`, a next run that failed `t`, and the rounds that confirm it, the last of whose next runs failed `again`.
+fn crash_corrupted(again: &str) -> Vec<Value> {
+    let mut runs = vec![
+        crash_run("t", "crash", "stopped", &["count"]),
+        crash_run("t", "next", "failed", &["t"]),
+    ];
+    for round in 1..=crate::crashes::CONFIRMATIONS {
+        let failed = if round == crate::crashes::CONFIRMATIONS {
+            again
+        } else {
+            "t"
+        };
+        runs.extend([
+            crash_run("t", "fresh", "passed", &[]),
+            crash_run("t", "crash", "stopped", &["count"]),
+            crash_run("t", "next", "failed", &[failed]),
+        ]);
+    }
+    runs
+}
+
+/// The defects planted for the crashes layer: each a report that claims a decision, or drops one, where the recorded steps decide otherwise.
+fn crashes_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    let on = format!("{TARGET}::t");
+    let restarted = json!({ "decision": "restarted", "on": on, "left": ["count"] });
+    let planted = |name: &'static str, document: Value, events: Vec<Value>| Perturbation {
+        name,
+        document,
+        events: Some(events),
+        ..clean.clone()
+    };
+    vec![
+        planted(
+            "a crash said to have restarted that no recorded run stopped at",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(Vec::new()),
+        ),
+        planted(
+            "a crash said to be unreached whose recorded run waited",
+            crash_reported(&json!({ "decision": "unreached" }), "unreached", None),
+            crash_recorded(vec![crash_run("t", "crash", "waited", &[])]),
+        ),
+        planted(
+            "a crash said to have restarted whose stop left nothing",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(vec![
+                crash_run("t", "crash", "stopped", &[]),
+                crash_run("t", "next", "passed", &[]),
+            ]),
+        ),
+        planted(
+            "a crash said to be undecided whose runs decide it corrupt",
+            crash_reported(
+                &json!({ "decision": "undecided", "on": on, "why": "planted" }),
+                "undecided",
+                Some(("not-measured", CRASHED)),
+            ),
+            crash_recorded(crash_corrupted("t")),
+        ),
+        planted(
+            "corrupt runs no site of the report holds",
+            with(json!({})),
+            crash_recorded(crash_corrupted("t")),
+        ),
+        planted(
+            "a crash said to be not put that no recorded step refused",
+            crash_reported(
+                &json!({ "decision": "not-put", "diagnostic": "planted" }),
+                "not_put",
+                None,
+            ),
+            numbered(routes()),
+        ),
+        planted(
+            "a crash said to be unreached whose route asks a test no run was recorded for",
+            crash_reported(&json!({ "decision": "unreached" }), "unreached", None),
+            crash_recorded(Vec::new()),
+        ),
+    ]
+    .into_iter()
+    .chain(crashes_planted_against_order(clean))
+    .chain(crashes_planted_against_evidence(clean))
+    .collect()
+}
+
+/// The defects planted for the crashes layer about counts, the runs a decision rests on, and the order they come in.
+fn crashes_planted_against_order(clean: &Perturbation) -> Vec<Perturbation> {
+    let on = format!("{TARGET}::t");
+    let restarted = json!({ "decision": "restarted", "on": on, "left": ["count"] });
+    let corrupt = json!({ "decision": "corrupt", "on": on, "failed": ["t"] });
+    let planted = |name: &'static str, document: Value, events: Vec<Value>| Perturbation {
+        name,
+        document,
+        events: Some(events),
+        ..clean.clone()
+    };
+    vec![
+        planted(
+            "crash accounting that does not add up to the report's sites",
+            with(json!({
+                "crashes": [{
+                    "catalog_index": 0, "id": "d".repeat(64), "display_id": CRASHED,
+                    "path": "src/lib.rs", "item": "save", "position": null,
+                    "decision": restarted
+                }],
+                "accounting": { "crashes": { "sites": 7, "restarted": 1 } }
+            })),
+            crash_recorded(crash_restarted()),
+        ),
+        planted(
+            "a restart claimed over a next run of another test",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(vec![
+                crash_run("t", "crash", "stopped", &["count"]),
+                crash_run("u", "next", "passed", &[]),
+            ]),
+        ),
+        planted(
+            "a crash said to be corrupt whose second next run failed another test",
+            crash_reported(&corrupt, "corrupt", Some(("corrupt-after-crash", CRASHED))),
+            crash_recorded(crash_corrupted("u")),
+        ),
+        planted(
+            "a restart claimed with a run recorded after its decision",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(
+                crash_restarted()
+                    .into_iter()
+                    .chain([crash_run("t", "crash", "stopped", &["count"])])
+                    .collect(),
+            ),
+        ),
+        planted(
+            "a restart claimed over a run that ended with the stop's status and no notice",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(vec![
+                crash_run("t", "crash", "chose", &["count"]),
+                crash_run("t", "next", "passed", &[]),
+            ]),
+        ),
+        planted(
+            "a restart claimed where the stopped test wrote into the tree",
+            crash_reported(&restarted, "restarted", None),
+            crash_recorded(
+                crash_restarted()
+                    .into_iter()
+                    .chain([crash_step(&json!({ "kind": "outside" }))])
+                    .collect(),
+            ),
+        ),
+        planted(
+            "an undecided crash with no not-measured finding",
+            crash_reported(
+                &json!({ "decision": "undecided", "on": on, "why": "planted" }),
+                "undecided",
+                None,
+            ),
+            crash_recorded(vec![crash_run("t", "crash", "waited", &[])]),
+        ),
+    ]
+}
+
+/// The defects planted for the faults layer, and for the evidence beside a fault it also audits.
+fn faults_and_besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    faults_planted(clean)
+        .into_iter()
+        .chain(besides_planted(clean))
+        .collect()
+}
+
+/// The defect planted for the dimensions layer: a whole-v1 run that names none of the dimensions its records leave a hole.
+fn dimensions_planted(clean: Perturbation) -> Vec<Perturbation> {
+    let mut unput = with(json!({ "contract": "whole-v1" }));
+    merge(
+        &mut unput,
+        json!({
+            "knobs": [{
+                "target": TARGET, "knob": "timezone",
+                "standing": { "state": "not-put", "why": "zone-missing" }
+            }]
+        }),
+    );
+    if let Some(findings) = unput.get_mut("findings").and_then(Value::as_array_mut) {
+        for dimension in ["fault", "durable"] {
+            findings.push(json!({
+                "kind": "dimension-not-measured", "subject": dimension,
+                "detail": "planted", "position": null
+            }));
+        }
+    }
+    vec![
+        Perturbation {
+            name: "a whole-v1 run that names none of the dimensions it left a hole",
+            document: with(json!({ "contract": "whole-v1" })),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a whole-v1 run that calls knobs this machine could not put measured",
+            document: unput,
+            ..clean
+        },
+    ]
+}
+
+/// The defects planted for the evidence beside a fault: a record the recording does not hold, and one its recorded runs do not support.
+fn besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "evidence beside a fault the recording does not hold",
+            document: beside_claimed(),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "evidence beside a fault its recorded runs do not support",
+            document: beside_claimed(),
+            events: Some(
+                fault_recorded(&json!({ "decision": "unnoticed" }), "survived")
+                    .into_iter()
+                    .chain([4, 5].map(|at| {
+                        json!({
+                            "timestamp": "2026-09-06T00:00:04Z", "elapsed_ms": at,
+                            "type": "beside-run",
+                            "pair": {
+                                "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
+                                "alone": "killed", "with": "killed"
+                            }
+                        })
+                    }))
+                    .chain([json!({
+                        "timestamp": "2026-09-06T00:00:06Z", "elapsed_ms": 6,
+                        "type": "beside",
+                        "beside": {
+                            "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
+                            "failed": "beside"
+                        }
+                    })])
+                    .collect(),
+            ),
+            ..clean.clone()
+        },
+    ]
+}
+
+/// The clean report with one unnoticed fault and a record saying the survivor failed only beside it.
+fn beside_claimed() -> Value {
+    with(json!({
+        "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+        "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+        "findings": [{}, {
+            "kind": "unnoticed-fault",
+            "subject": FAULTED,
+            "detail": "nothing noticed the call failing",
+            "position": null
+        }],
+        "beside": [{
+            "mutant": SURVIVED, "fault": FAULTED, "target": TARGET, "failed": "beside"
+        }]
+    }))
+}
+
+/// The defects planted for the faults layer: one for every way a fault's record can disagree with what the recording says ran.
+fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "a failed call nothing noticed that no finding names",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } }
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault said to be noticed that no execution of it failed",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "noticed", "by": TARGET }))],
+                "accounting": { "faults": { "sites": 1, "noticed": 1 } }
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "noticed", "by": TARGET }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault said to be unnoticed that an execution of it failed",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }]
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "killed",
+            )),
+            ..clean.clone()
+        },
+    ]
+    .into_iter()
+    .chain(faults_owing(clean))
+    .collect()
+}
+
+/// The faults layer's planted defects about what a fault's decision owes: the finding a decision raises, and the attribution a write rests on.
+fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "an undecided fault whose not-measured finding the report dropped",
+            document: with(json!({
+                "faults": [fault_site(&json!({
+                    "decision": "undecided", "on": TARGET, "why": "the kill did not happen the second time"
+                }))],
+                "accounting": { "faults": { "sites": 1, "undecided": 1 } }
+            })),
+            events: Some(fault_recorded(
+                &json!({
+                    "decision": "undecided", "on": TARGET, "why": "the kill did not happen the second time"
+                }),
+                "killed",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a write called broken-under-fault that no attribution ties to the fault",
+            document: with(json!({
+                "verdict": "DEFECT",
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }, {
+                    "kind": "broken-under-fault",
+                    "subject": FAULTED,
+                    "detail": "wrote failed-read.log",
+                    "position": null
+                }]
+            })),
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault site the recording holds and the report dropped",
+            events: Some(fault_recorded(
+                &json!({ "decision": "unnoticed" }),
+                "survived",
+            )),
+            ..clean.clone()
+        },
+    ]
+}
+
+/// A route and an execution for each mutant of [`base`], then one fault the one target ran to `outcome`, and the site the run said it came to `decision`.
+fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
+    routes()
+        .into_iter()
+        .chain([
+            json!({
+                "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+                "type": "fault-exec",
+                "fault": {
+                    "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
+                    "outcome": outcome, "duration_ms": 5, "alone": false
+                }
+            }),
+            json!({
+                "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
+                "type": "fault",
+                "fault": fault_site(decision)
+            }),
+        ])
+        .collect()
+}
+
+/// One fault site, decided `decision`.
+fn fault_site(decision: &Value) -> Value {
+    json!({
+        "catalog_index": 0,
+        "id": "c".repeat(64),
+        "display_id": FAULTED,
+        "path": "src/lib.rs",
+        "item": "load",
+        "position": { "line": 13, "column": 16, "character_column": 16 },
+        "decision": decision
     })
 }
 
@@ -231,6 +813,28 @@ pub fn touch(measured: &str, reached: &[u32]) -> Value {
     json!({ "type": "touch", "touch": touched(measured, reached) })
 }
 
+/// The build record naming [`TARGET`] as a library test binary libtest runs.
+fn built() -> Value {
+    json!({
+        "type": "build",
+        "build": {
+            "targets": [TARGET],
+            "details": [{ "id": TARGET, "kind": "lib", "harness": true, "limitations": [] }]
+        }
+    })
+}
+
+/// The baseline record of [`TARGET`], run with the harness arguments `args`.
+fn verified(args: &[&str]) -> Value {
+    json!({
+        "type": "verify",
+        "verify": {
+            "target": TARGET, "outcome": "survived", "tests_run": 1, "duration_ms": 1,
+            "args": args, "remembered": false, "retried": false
+        }
+    })
+}
+
 /// The record of [`touch`] without its event.
 fn touched(measured: &str, reached: &[u32]) -> Value {
     json!({
@@ -261,7 +865,9 @@ pub fn perturbed(outcome: &str, failed: &[&str], reach: &Value) -> Value {
             "perturbation": {
                 "environment": [{ "name": "TZ", "value": "Australia/Lord_Howe" }],
                 "launcher": null,
-                "arguments": []
+                "arguments": [],
+                "delay": null,
+                "confirms": null
             },
             "outcome": outcome,
             "failed_tests": failed,
@@ -554,13 +1160,20 @@ pub fn clean() -> Perturbation {
     merge(&mut document, knobbed("stable"));
     Perturbation {
         name: "clean",
-        document,
+        document: {
+            let mut document = document;
+            merge(
+                &mut document,
+                json!({ "concurrency": [{
+                    "target": TARGET,
+                    "standing": { "state": "single-threaded" },
+                    "explored": { "state": "unexplored", "why": "not-needed" }
+                }] }),
+            );
+            document
+        },
         events: Some(routes()),
-        engine: Some(vec![
-            touch("baseline", &[0, 1]),
-            touch("control", &[0, 1]),
-            perturbed("survived", &[], &recorded_reach(&[0, 1])),
-        ]),
+        engine: Some(clean_engine()),
         shards: Vec::new(),
         outputs: Vec::new(),
     }
@@ -665,6 +1278,124 @@ impl Perturbation {
             shards,
             traces,
         })
+    }
+}
+
+/// The planted defect of the concurrency layer: a binary whose baseline reached code off its tests' threads, recorded as proven single-threaded.
+fn loose_yet_single_threaded(clean: Perturbation) -> Perturbation {
+    let mut loose = touch("baseline", &[0, 1]);
+    merge(&mut loose, json!({ "touch": { "loose": 1 } }));
+    Perturbation {
+        name: "a binary whose baseline reached code off its tests' threads, proven single-threaded",
+        engine: Some(vec![
+            built(),
+            verified(&["--test-threads=1"]),
+            loose,
+            touch("control", &[0, 1]),
+        ]),
+        ..clean
+    }
+}
+
+/// The planted defect of the concurrency layer: a report that measured mutants and dropped every concurrency record.
+fn unrecorded_threads(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    if let Some(part) = document.as_object_mut() {
+        part.insert("concurrency".to_owned(), json!([]));
+    }
+    Perturbation {
+        name: "a report that measured mutants and records nothing about any binary's threads",
+        document,
+        ..clean
+    }
+}
+
+/// The planted defect of the concurrency layer: a binary libtest ran on every processor, recorded as proven single-threaded.
+fn parallel_yet_single_threaded(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a binary libtest ran its tests side by side in, proven single-threaded",
+        engine: Some(vec![
+            built(),
+            verified(&[]),
+            touch("baseline", &[0, 1]),
+            touch("control", &[0, 1]),
+        ]),
+        ..clean
+    }
+}
+
+/// `document` with its one concurrency row's exploration replaced whole by `explored`, since a merge would keep fields of the state it replaces.
+fn explored_as(document: &mut Value, explored: Value) {
+    if let Some(row) = document.pointer_mut("/concurrency/0/explored") {
+        *row = explored;
+    }
+}
+
+/// The engine recording of the clean specimen: its build, its single-threaded baseline, one control, and one knob's control that held.
+fn clean_engine() -> Vec<Value> {
+    vec![
+        built(),
+        verified(&["--test-threads=1"]),
+        touch("baseline", &[0, 1]),
+        touch("control", &[0, 1]),
+        perturbed("survived", &[], &recorded_reach(&[0, 1])),
+    ]
+}
+
+/// The planted defect of the concurrency layer: a delayed guard whose control ran past its bound, recorded as a sample that passed.
+fn waited_yet_sampled(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    explored_as(
+        &mut document,
+        json!({ "state": "sampled", "asked": 1, "delayed": [0] }),
+    );
+    let mut delayed = perturbed("waited", &[], &json!({ "state": "not-read" }));
+    merge(
+        &mut delayed,
+        json!({ "perturbed": { "perturbation": {
+            "environment": [],
+            "delay": { "site": 0, "pause_ms": 100 }
+        } } }),
+    );
+    let mut engine = clean_engine();
+    engine.push(delayed);
+    Perturbation {
+        name: "a delayed guard whose control ran past its bound, recorded as a sample that passed",
+        document,
+        engine: Some(engine),
+        ..clean
+    }
+}
+
+/// The second planted defect of the concurrency layer: a delayed guard whose control passed, recorded as a schedule that broke the binary.
+fn passed_yet_broke(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    explored_as(
+        &mut document,
+        json!({
+            "state": "broke",
+            "site": 0,
+            "path": "src/lib.rs",
+            "line": 7,
+            "failed": ["lib::works"],
+            "rounds": 5
+        }),
+    );
+    let mut delayed = perturbed("survived", &[], &recorded_reach(&[0, 1]));
+    merge(
+        &mut delayed,
+        json!({ "perturbed": { "perturbation": {
+            "environment": [],
+            "delay": { "site": 0, "pause_ms": 100 }
+        } } }),
+    );
+    let mut engine = clean_engine();
+    engine.push(delayed);
+    Perturbation {
+        name: "a delayed guard whose control passed, recorded as a schedule that broke the binary",
+        document,
+        engine: Some(engine),
+        ..clean
     }
 }
 
@@ -971,6 +1702,9 @@ impl Layer {
                 document: with(json!({ "contract": "verified-v1" })),
                 ..clean
             }],
+            Self::Faults => faults_and_besides_planted(&clean),
+            Self::Dimensions => dimensions_planted(clean),
+            Self::Crashes => crashes_planted(&clean),
             Self::Merge => merge_plants(),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
@@ -982,11 +1716,24 @@ impl Layer {
                 unobserved_repair_called_a_survival(),
                 repaired_where_nothing_moved(clean),
             ],
-            Self::Knobs => vec![broken_by_a_knob_called_stable(clean)],
+            Self::Knobs => knobs_planted(clean),
+            Self::Concurrency => concurrency_planted(&clean),
             Self::Soundness => soundness_planted(&clean),
             Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
         }
     }
+}
+
+/// The lies about knobs the knobs layer must refuse.
+fn knobs_planted(clean: Perturbation) -> Vec<Perturbation> {
+    vec![
+        broken_by_a_knob_called_stable(clean.clone()),
+        Perturbation {
+            name: "a whole run with no row for a knob the contract puts",
+            document: with(json!({ "contract": "whole-v1" })),
+            ..clean
+        },
+    ]
 }
 
 /// A recorded run of the interpreter over the suite that ended with `code` and said `said`, kept at `output/1.txt` with its size and digest.
@@ -1100,6 +1847,17 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             )],
             ..clean.clone()
         },
+    ]
+}
+
+/// The lies about threads and schedules the concurrency layer must refuse.
+fn concurrency_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    vec![
+        loose_yet_single_threaded(clean.clone()),
+        unrecorded_threads(clean.clone()),
+        parallel_yet_single_threaded(clean.clone()),
+        waited_yet_sampled(clean.clone()),
+        passed_yet_broke(clean.clone()),
     ]
 }
 

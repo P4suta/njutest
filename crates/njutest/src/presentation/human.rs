@@ -18,6 +18,7 @@ pub fn draw(told: &Told, terminal: Terminal) -> String {
         out.push('\n');
     }
     stated(&mut out, told, terminal);
+    dimensions(&mut out, told, terminal);
     headline(&mut out, told, terminal);
     out
 }
@@ -43,6 +44,44 @@ fn stated(out: &mut String, told: &Told, terminal: Terminal) {
                 out,
                 format_args!("  {} {first}", telling.frame(telling.strokes().beside)),
             );
+        }
+        for rest in lines {
+            super::line(out, format_args!("{:opening$}{rest}", ""));
+        }
+    }
+    out.push('\n');
+}
+
+/// The matrix, one line per dimension, which is the one table a reader deciding whether to ship reads (ADR 0033).
+fn dimensions(out: &mut String, told: &Told, terminal: Terminal) {
+    if told.matrix.is_empty() {
+        return;
+    }
+    let telling = Telling::of(terminal);
+    for row in &told.matrix {
+        let counted = match &row.column {
+            crate::report::matrix::Column::Measured {
+                catalogued,
+                answered,
+                holes,
+                ..
+            } => format!("{catalogued} catalogued, {answered} answered, {holes} holes"),
+            crate::report::matrix::Column::Unmeasured { why }
+            | crate::report::matrix::Column::NothingToAsk { why } => why.clone(),
+            crate::report::matrix::Column::NotAsked => String::new(),
+        };
+        let mut said = format!(
+            "{} {}",
+            telling.painted(Style::Subject, row.dimension.name()),
+            telling.painted(Style::Keyword, row.column.state())
+        );
+        if !counted.is_empty() {
+            said = format!("{said}  {}", telling.painted(Style::Frame, &counted));
+        }
+        let opening = 4;
+        let mut lines = super::folded(&said, telling.room(opening)).into_iter();
+        if let Some(first) = lines.next() {
+            super::line(out, format_args!("  {first}"));
         }
         for rest in lines {
             super::line(out, format_args!("{:opening$}{rest}", ""));

@@ -169,6 +169,7 @@ fn cases() -> Vec<(&'static str, Told)> {
         places,
         diagnostics: Vec::new(),
         limitations,
+        matrix: Vec::new(),
     };
     vec![
         (
@@ -323,6 +324,88 @@ fn cases() -> Vec<(&'static str, Told)> {
             ),
         ),
         (
+            "a failed call nothing noticed",
+            Told {
+                headline: headline(Verdict::Insufficient, 4, 0, 0),
+                places: Vec::new(),
+                diagnostics: vec![Diagnostic {
+                    severity: Severity::Gap,
+                    code: "NJ-UNNOTICED-FAULT",
+                    title: "a call failed here and no test noticed".to_owned(),
+                    at: Some(site(
+                        (13, 16),
+                        Excerpt::Read(MeasuredLine::specimen(
+                            "    let text = std::fs::read_to_string(path)?;",
+                        )),
+                        "failed here",
+                        1,
+                    )),
+                    notes: vec![
+                        "the call the `?` at src/lib.rs:13 asks about failed and every test that \
+                         reached it passed: no test asserts what `measured` does when it fails"
+                            .to_owned(),
+                    ],
+                    actions: vec![Action {
+                        said: "why".to_owned(),
+                        command: "njutest why fault 5cbe8a6f76c39a620356".to_owned(),
+                    }],
+                }],
+                limitations: vec![Stated {
+                    name: "fault-not-put".to_owned(),
+                    detail: "the compiler refused 2 fault(s), because the engine makes only the \
+                             standard error types it can build without guessing and these sites \
+                             propagate another, so nothing is claimed about their failures: \
+                             E0277 at src/lib.rs:46; E0308 at src/lib.rs:57"
+                        .to_owned(),
+                }],
+                matrix: Vec::new(),
+            },
+        ),
+        (
+            "a whole run, every dimension one line",
+            Told {
+                headline: headline(Verdict::Insufficient, 4, 0, 0),
+                places: Vec::new(),
+                diagnostics: Vec::new(),
+                limitations: Vec::new(),
+                matrix: {
+                    use njutest::report::matrix::{Column, Dimension, Row};
+                    let measured = |catalogued, answered, holes| Column::Measured {
+                        catalogued,
+                        answered,
+                        holes,
+                        speaks_not_about: Vec::new(),
+                    };
+                    vec![
+                        Row {
+                            dimension: Dimension::Mutation,
+                            column: measured(13, 13, 0),
+                        },
+                        Row {
+                            dimension: Dimension::Repeatable,
+                            column: measured(14, 12, 2),
+                        },
+                        Row {
+                            dimension: Dimension::Fault,
+                            column: measured(3, 3, 0),
+                        },
+                        Row {
+                            dimension: Dimension::Schedule,
+                            column: measured(2, 1, 1),
+                        },
+                        Row {
+                            dimension: Dimension::Wire,
+                            column: measured(0, 0, 0),
+                        },
+                        Row {
+                            dimension: Dimension::Durable,
+                            column: measured(5, 5, 0),
+                        },
+                    ]
+                },
+            },
+        ),
+        (
             "a run that could not proceed",
             Told {
                 headline: headline(Verdict::Error, 0, 0, 0),
@@ -348,6 +431,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                     }],
                 }],
                 limitations: Vec::new(),
+                matrix: Vec::new(),
             },
         ),
         (

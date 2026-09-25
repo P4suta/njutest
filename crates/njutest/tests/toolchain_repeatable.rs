@@ -42,6 +42,7 @@ fn verified(knobs: bool) -> (serde_json::Value, njutest::report::Report) {
         )
         .expect("the configuration");
     }
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = njutest::run_from(
         ["njutest", "verify", "--offline", "--locked", "--trace"]

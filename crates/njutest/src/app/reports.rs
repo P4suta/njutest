@@ -1362,7 +1362,7 @@ impl WorkspaceRoot {
             let path = self.path.join(crate::config::FILE_NAME);
             let Some(text) = read_optional_config_at(&self.directory, &path)? else {
                 return Ok(LoadedConfiguration {
-                    config: crate::config::Config::default(),
+                    config: crate::config::Config::unwritten(),
                     source: ConfigurationSource::Defaults,
                 });
             };

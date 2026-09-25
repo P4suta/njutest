@@ -9,8 +9,8 @@ A sweep that a mutation turns on the directory the test binaries run from.
 `sweep` removes the files in a directory whose names say they are stale, and the one test sweeps the directory its own binary runs from, where nothing is stale, so the baseline removes nothing.
 Three mutations make it remove everything there — `negate-condition`, `condition-to-true`, and `string-to-empty` on `"stale-"` — and the test still passes, so the mutant survives while the run's test executables are gone.
 
-Before RM5009 every mutant after such a one came back `errored` with exit -1, for a cause it did not have; domyjob's run of its own node module was 131 of 145 that way.
-A run of this fixture now stops at the first of the three with `RM5009`, naming it, which `toolchain_apparatus` holds.
+Before RM5011 every mutant after such a one came back `errored` with exit -1, for a cause it did not have; domyjob's run of its own node module was 131 of 145 that way.
+A run of this fixture now stops at the first of the three with `RM5011`, naming it, which `toolchain_apparatus` holds.
 
 | Path | Unit | Candidates |
 | --- | --- | --- |

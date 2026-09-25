@@ -3,9 +3,9 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 2,
-    "run_id": "20260925t161653368z-02d94c",
+    "run_id": "20260925t164422237z-03c67a",
     "run_kind": "full",
-    "contract": "standard-v1",
+    "contract": "whole-v1",
     "tool": {
       "njutest": "0.1.0",
       "rust_mutants": "0.1.0"
@@ -16,7 +16,7 @@
         "fixture-assured"
       ],
       "workspace_digest": "98d07f238cbc4c6c37dcea8164e4a2d80b09feff1cd9016ecebe63e274462b26",
-      "configuration_digest": "bd7a7138ee28fca32a68b2d552e5b7dee7942a1398cb9495aa056ff2db8e99d1",
+      "configuration_digest": "870c4d96f55c41d2b770d8cf71378f84be1f5b2c3de8efd8a52adb1faf783ced",
       "git": {
         "available": false,
         "commit": "unavailable",
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "787064f8e464bf4b236da5eb0d624b33b0014dbc47b237b69582df0d1ca1c610",
+      "identity": "06a8163810920a80b15d35e3078002004bab1036ff69dc8062be59011bd75290",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20260925t161635636z-02cb86",
+          "run_id": "20260925t164354304z-03ae7a",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20260925t161645034z-02d275",
+          "run_id": "20260925t164408721z-03ba9a",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,7 +76,7 @@
         },
         "parts": [
           {
-            "run_id": "20260925t161635636z-02cb86-b0000000000",
+            "run_id": "20260925t164354304z-03ae7a-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
@@ -90,9 +90,9 @@
               "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-25T16:16:35.636418439Z",
-              "finished": "2026-09-25T16:16:44.962438952Z",
-              "duration_ms": 9326
+              "started": "2026-09-25T16:43:54.304790538Z",
+              "finished": "2026-09-25T16:44:08.662040002Z",
+              "duration_ms": 14357
             },
             "accounting": {
               "targets": {
@@ -133,19 +133,40 @@
               "soundness": {
                 "unsafe_items": 0,
                 "packages_with_unsafe": 0,
-                "executed": false
+                "executed": true
+              },
+              "faults": {
+                "sites": 0,
+                "noticed": 0,
+                "unnoticed": 0,
+                "unreached": 0,
+                "waited": 0,
+                "undecided": 0,
+                "not_put": 0
+              },
+              "crashes": {
+                "sites": 0,
+                "restarted": 0,
+                "corrupt": 0,
+                "unshared": 0,
+                "unreached": 0,
+                "undecided": 0,
+                "not_put": 0
               }
             },
             "resources": [],
             "candidates": [],
             "seams": [],
+            "faults": [],
+            "beside": [],
+            "crashes": [],
             "targets": [
               {
                 "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 25,
+                "duration_ms": 29,
                 "message": null
               },
               {
@@ -153,7 +174,7 @@
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 25,
+                "duration_ms": 26,
                 "message": null
               }
             ],
@@ -258,6 +279,18 @@
               {
                 "name": "skipped-test-code",
                 "detail": "1 place was not mutated: test-code"
+              },
+              {
+                "name": "schedule-not-explored",
+                "detail": "3 test binaries are not proven to run one thread and no schedule of them was explored, so what they do when their threads interleave otherwise is not known (fixture-assured/doc/fixture_assured, fixture-assured/lib/fixture_assured, fixture-assured/test/doubling)"
+              },
+              {
+                "name": "fault-no-site",
+                "detail": "no measured file has a `?`, so there was no call a fault could fail"
+              },
+              {
+                "name": "crash-no-site",
+                "detail": "no measured file calls anything that writes, so there was nothing to stop after"
               }
             ],
             "drift": [
@@ -270,10 +303,161 @@
                 "target": "fixture-assured/test/doubling"
               }
             ],
-            "knobs": []
+            "knobs": [
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              }
+            ],
+            "concurrency": [
+              {
+                "target": "fixture-assured/doc/fixture_assured",
+                "standing": {
+                  "state": "not-proven",
+                  "why": [
+                    {
+                      "kind": "no-touch"
+                    },
+                    {
+                      "kind": "doctest"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-passing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              }
+            ]
           },
           {
-            "run_id": "20260925t161645034z-02d275-b0000000000",
+            "run_id": "20260925t164408721z-03ba9a-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
@@ -287,9 +471,9 @@
               "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-25T16:16:45.034114748Z",
-              "finished": "2026-09-25T16:16:53.279652079Z",
-              "duration_ms": 8245
+              "started": "2026-09-25T16:44:08.721632505Z",
+              "finished": "2026-09-25T16:44:22.149662063Z",
+              "duration_ms": 13428
             },
             "accounting": {
               "targets": {
@@ -330,12 +514,33 @@
               "soundness": {
                 "unsafe_items": 0,
                 "packages_with_unsafe": 0,
-                "executed": false
+                "executed": true
+              },
+              "faults": {
+                "sites": 0,
+                "noticed": 0,
+                "unnoticed": 0,
+                "unreached": 0,
+                "waited": 0,
+                "undecided": 0,
+                "not_put": 0
+              },
+              "crashes": {
+                "sites": 0,
+                "restarted": 0,
+                "corrupt": 0,
+                "unshared": 0,
+                "unreached": 0,
+                "undecided": 0,
+                "not_put": 0
               }
             },
             "resources": [],
             "candidates": [],
             "seams": [],
+            "faults": [],
+            "beside": [],
+            "crashes": [],
             "targets": [
               {
                 "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
@@ -455,6 +660,18 @@
               {
                 "name": "skipped-test-code",
                 "detail": "1 place was not mutated: test-code"
+              },
+              {
+                "name": "schedule-not-explored",
+                "detail": "3 test binaries are not proven to run one thread and no schedule of them was explored, so what they do when their threads interleave otherwise is not known (fixture-assured/doc/fixture_assured, fixture-assured/lib/fixture_assured, fixture-assured/test/doubling)"
+              },
+              {
+                "name": "fault-no-site",
+                "detail": "no measured file has a `?`, so there was no call a fault could fail"
+              },
+              {
+                "name": "crash-no-site",
+                "detail": "no measured file calls anything that writes, so there was nothing to stop after"
               }
             ],
             "drift": [
@@ -467,7 +684,158 @@
                 "target": "fixture-assured/test/doubling"
               }
             ],
-            "knobs": []
+            "knobs": [
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              }
+            ],
+            "concurrency": [
+              {
+                "target": "fixture-assured/doc/fixture_assured",
+                "standing": {
+                  "state": "not-proven",
+                  "why": [
+                    {
+                      "kind": "no-touch"
+                    },
+                    {
+                      "kind": "doctest"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-passing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              }
+            ]
           }
         ]
       }

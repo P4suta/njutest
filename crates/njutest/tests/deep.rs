@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use njutest::assure::deep::{Interpreted, Interpreting, interpret};
+use njutest::assure::deep::{Absent, Interpreted, Interpreting, interpret};
 use njutest::error::RunnerError;
 use njutest::report::FindingKind;
 use njutest::trace::Recorder;
@@ -64,6 +64,15 @@ fn recording() -> Recorder {
 }
 
 fn interpreted(said: &str, code: i32, dir: &Path) -> Result<Interpreted, RunnerError> {
+    interpreted_when_absent(said, code, dir, Absent::Refused)
+}
+
+fn interpreted_when_absent(
+    said: &str,
+    code: i32,
+    dir: &Path,
+    absent: Absent,
+) -> Result<Interpreted, RunnerError> {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
@@ -77,6 +86,7 @@ fn interpreted(said: &str, code: i32, dir: &Path) -> Result<Interpreted, RunnerE
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
+            absent,
         },
         Watch::new(&cancel, &trace),
     )
@@ -179,6 +189,7 @@ fn a_cargo_that_is_not_there_is_a_toolchain_with_no_interpreter() {
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
+            absent: Absent::Refused,
         },
         Watch::new(&cancel, &trace),
     )
@@ -203,6 +214,7 @@ fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
+            absent: Absent::Refused,
         },
         Watch::new(&cancel, &trace),
     )
@@ -260,6 +272,7 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
             timeout: Some(Duration::from_secs(30)),
             offline: false,
             locked: false,
+            absent: Absent::Refused,
         },
         Watch::new(&cancel, &trace),
     )
@@ -324,6 +337,7 @@ fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
+            absent: Absent::Refused,
         },
         Watch::new(&cancel, &trace),
     )
@@ -372,6 +386,7 @@ fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given(
             timeout: Some(Duration::from_secs(30)),
             offline: true,
             locked: true,
+            absent: Absent::Refused,
         },
         Watch::new(&cancel, &trace),
     )
@@ -409,6 +424,7 @@ fn an_interpreter_that_runs_out_of_time_has_interpreted_nothing() {
             timeout: Some(Duration::from_millis(200)),
             offline: true,
             locked: true,
+            absent: Absent::Refused,
         },
         Watch::new(&cancel, &trace),
     )
@@ -529,6 +545,7 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
             timeout: Some(Duration::from_millis(300)),
             offline: true,
             locked: true,
+            absent: Absent::Refused,
         },
         Watch::new(&cancel, &trace),
     )
@@ -554,6 +571,29 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
         "a suite the interpreter never finished says nothing about the program, and a \
          finding here would be one nobody can act on: {done:?}"
     );
+}
+
+#[test]
+fn a_contract_that_asks_every_dimension_names_a_missing_interpreter_as_a_hole() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for said in [
+        "error: 'cargo-miri' is not installed for the toolchain 'nightly'",
+        "error: toolchain 'nightly-aarch64-apple-darwin' is not installed",
+    ] {
+        let done = interpreted_when_absent(said, 1, dir.path(), Absent::Hole)
+            .expect("a machine with no interpreter is a hole under this contract, not an error");
+        assert!(!done.executed, "{done:?}");
+        assert_eq!(
+            done.limitations.first().map(|one| one.name.clone()),
+            Some("miri-unavailable".to_owned()),
+            "{done:?}"
+        );
+        assert_eq!(
+            done.findings.first().map(|one| one.kind),
+            Some(FindingKind::NotMeasured),
+            "a suite nothing interpreted is not one found sound, so the run is not assured: {done:?}"
+        );
+    }
 }
 
 #[test]

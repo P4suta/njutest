@@ -7,6 +7,8 @@
 #![forbid(unsafe_code)]
 
 pub mod adrs;
+pub mod concurrency;
+pub mod crashes;
 pub mod defaulted;
 pub mod deps;
 pub mod devgates;
@@ -14,6 +16,7 @@ pub mod docflows;
 pub mod drift;
 pub mod engineaudit;
 pub mod error;
+pub mod faults;
 pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;

@@ -47,6 +47,7 @@ fn told(places: Vec<Place>) -> Told {
         places,
         diagnostics: Vec::new(),
         limitations: Vec::new(),
+        matrix: Vec::new(),
     }
 }
 

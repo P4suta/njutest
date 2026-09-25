@@ -327,7 +327,7 @@ fn init_writes_a_skeleton_that_loads_as_exactly_the_defaults() {
     assert_eq!(written, njutest::config::skeleton());
     assert_eq!(
         njutest::config::Config::load(dir.path()).expect("it loads"),
-        njutest::config::Config::default(),
+        njutest::config::Config::unwritten(),
         "the untouched skeleton is the defaults, written down"
     );
     assert!(

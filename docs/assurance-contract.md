@@ -40,6 +40,18 @@ It advances no index and stores no verdict.
 
 `deep-v1` uses the expanded operator set and exploration limits, runs Miri on every crate with a non-empty soundness inventory and every crate that links one, and may add sanitizers.
 
+`whole-v1` asks every dimension: mutations, knobs, faults, seams, schedules and durability ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
+It runs soundness as `deep-v1` does and puts every fault, every crash and every knob, and each dimension it did not establish — not asked, unmeasured, or measured with a hole — is a `dimension-not-measured` finding, so the run is not `ASSURED`.
+A dimension with nothing to ask, and the classes a dimension says it cannot speak about, are stated and are not holes.
+A toolchain with no interpreter is one more thing it names rather than refuses: `miri-unavailable`, beside a `not-measured` finding.
+Schedules are explored by delaying guards, and a sample of schedules is never a proof, so a suite with a test binary not proven to run one thread and not broken by a delay is not `ASSURED` under it ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
+
+## Crashes
+
+A run asked for crashes stops the process just after each call that writes in a measured file and runs the test that reached it again over what it left ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+A next run that fails there, where a run in a fresh scratch passes and a second stop fails it again, is `corrupt-after-crash`, a `DEFECT`.
+A next run that passes is `restarted`, which says only that it passed over the files the stop left.
+
 `verified-v1` keeps the `standard-v1` mutation contract and asks one additional question about every test survivor that belongs to a deliberately closed,
 pure Rust fragment.
 Its `[verification]` section requires a nonzero unwind bound and a process timeout of at least one whole millisecond.
@@ -86,6 +98,18 @@ A test binary that brings its own harness cannot be asked for one of its tests a
 A mutation is measured against a suite that passes.
 A run whose baseline saw a target fail reports that and measures no mutation: there is nothing for a mutation to change about a test that was going to fail anyway.
 A future performance contract must be explicit rather than treating ordinary benchmarks as tests.
+
+## Failed calls
+
+A run asked for faults (`[faults] inject`, or `--faults`) fails, one at a time, every call a `?` in a measured file asks about, and asks the suite whether it noticed ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+The faults are catalogued, built and run in a session of their own, so no mutation's catalog, route, execution, control or verdict ever holds one, and a run's mutation verdict is the same with faults as without.
+A fault is put only to the tests that reached its `?`, because two programs identical up to the site run identically until it is reached; no other proof is applied to a fault, since every other proof is read off the program without the fault.
+A fault is `noticed` only when a test failed with it, passed on the unchanged program, and failed with it again.
+Every fault every reaching test passed is an `unnoticed-fault` finding and makes the run `INSUFFICIENT`, never `DEFECT`: it changes what the program is given, not the program, and says only that no test asserts what happens when that call fails.
+A path of the tree under measurement first written while faults were put is a `not-measured` finding about `fault-write-unattributed`, since the faulted executions share one tree and run at once; a path already written before any fault was put is not named.
+`broken-under-fault`, which is a `DEFECT`, is reserved for a write tied to one fault, which a fault run alone makes and the same test run alone without it does not.
+A fault the run put and could not decide is a `not-measured` finding, so such a run is not `ASSURED`.
+A fault the compiler refuses — its site propagates an error type the engine does not make — is `not-put` and is stated, never counted as anything the suite did.
 
 ## Mutation routing
 

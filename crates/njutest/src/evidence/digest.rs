@@ -194,5 +194,6 @@ const fn contract_name(contract: Contract) -> &'static str {
         Contract::StandardV1 => "standard-v1",
         Contract::DeepV1 => "deep-v1",
         Contract::VerifiedV1 => "verified-v1",
+        Contract::WholeV1 => "whole-v1",
     }
 }

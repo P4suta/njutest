@@ -108,8 +108,20 @@ name = "toolchain_commands"
 path = "tests/toolchain_commands.rs"
 
 [[test]]
+name = "toolchain_concurrency"
+path = "tests/toolchain_concurrency.rs"
+
+[[test]]
+name = "toolchain_crashes"
+path = "tests/toolchain_crashes.rs"
+
+[[test]]
 name = "toolchain_edits"
 path = "tests/toolchain_edits.rs"
+
+[[test]]
+name = "toolchain_faults"
+path = "tests/toolchain_faults.rs"
 
 [[test]]
 name = "toolchain_generation"
@@ -126,6 +138,10 @@ path = "tests/toolchain_knobs.rs"
 [[test]]
 name = "toolchain_lsp"
 path = "tests/toolchain_lsp.rs"
+
+[[test]]
+name = "toolchain_matrix"
+path = "tests/toolchain_matrix.rs"
 
 [[test]]
 name = "toolchain_mutation"

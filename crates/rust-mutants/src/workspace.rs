@@ -265,6 +265,16 @@ pub enum SessionError {
         /// What was wrong with the prefix.
         message: String,
     },
+    /// A fault was asked to run beside something that is not a mutation, or what was named beside it is not a fault.
+    #[error("{}: {fault} cannot run beside {mutant}: {why}", error::SESSION_NOT_BESIDE.code)]
+    NotBeside {
+        /// What was asked to run.
+        mutant: String,
+        /// What was named beside it.
+        fault: String,
+        /// Which half is not what it has to be.
+        why: &'static str,
+    },
     /// The named target is not one this session built.
     #[error(
         "{}: no test target is named {name:?}; this session built {}",
@@ -631,6 +641,27 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
+    /// A run's scratch directory could not be walked for what it left.
+    #[error(
+        "{}: cannot read what a run left in its scratch directory {}: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    ScratchUnreadable {
+        /// The directory, or the entry of it, that could not be read.
+        path: PathBuf,
+        /// What reading it said.
+        source: std::io::Error,
+    },
+    /// The system gave no randomness for the nonce that ties a crash's notice to its execution.
+    #[error(
+        "{}: cannot draw the nonce a crash's notice must carry: {error}",
+        error::SESSION_NONCE_UNAVAILABLE.code
+    )]
+    CrashNonceUnavailable {
+        /// What the system said.
+        error: getrandom::Error,
+    },
     /// A fresh execution scratch directory could not be created exclusively.
     #[error(
         "{}: cannot reserve the fresh execution scratch directory {}: {source}",
@@ -675,6 +706,8 @@ impl SessionError {
             Self::PristineBroken { .. } => error::SESSION_PRISTINE_BROKEN,
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
+            Self::NotBeside { .. } => error::SESSION_NOT_BESIDE,
+            Self::CrashNonceUnavailable { .. } => error::SESSION_NONCE_UNAVAILABLE,
             Self::UnknownTarget { .. } | Self::SkippedTargetUnknown { .. } => {
                 error::SESSION_UNKNOWN_TARGET
             }
@@ -709,6 +742,7 @@ impl SessionError {
             | Self::ScratchSequenceExhausted
             | Self::ScratchUnclaimed { .. }
             | Self::ScratchCreateFailed { .. }
+            | Self::ScratchUnreadable { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
             Self::SelectionSourceMissing { .. }

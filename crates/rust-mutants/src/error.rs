@@ -156,6 +156,10 @@ mod table {
         SentinelUnwritable,
         /// The crate planted for the routing layers was built by another compiler than the run's.
         SentinelOtherToolchain,
+        /// A fault was asked to run beside something that is not a mutation, or what was named beside it is not a fault.
+        SessionNotBeside,
+        /// The system gave no randomness for the nonce that ties a crash's notice to its execution.
+        SessionNonceUnavailable,
         /// A mutant's execution changed the test executables the run starts.
         SessionApparatusChanged,
         /// A coverage export that could not be read.
@@ -691,8 +695,24 @@ mod table {
                     ),
                     sealed: Sealed,
                 },
-                Self::SessionApparatusChanged => ErrorCode {
+                Self::SessionNotBeside => ErrorCode {
                     code: "RM5009",
+                    summary: "a fault was asked to run beside something that is not a mutation, or what was named beside it is not a fault",
+                    remedy: Some(
+                        "a fault is put beside a mutation of the same session: name an `inject-error` fault beside a mutant of any other rule",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SessionNonceUnavailable => ErrorCode {
+                    code: "RM5010",
+                    summary: "the system gave no randomness for the nonce that ties a crash's notice to its execution",
+                    remedy: Some(
+                        "the operating system's random source failed; nothing the run could do stands in for it, so check the machine rather than the tree",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SessionApparatusChanged => ErrorCode {
+                    code: "RM5011",
                     summary: "a mutant's execution changed the test executables the run starts, so no answer after it would be about the tests",
                     remedy: Some(
                         "run the mutant it names alone with `rust-mutants run --mutant <id> --jobs 1` to confirm, then keep its tests from writing where the test binaries live, or skip it with a reason",
@@ -901,6 +921,9 @@ pub(crate) const SESSION_APPARATUS_CHANGED: ErrorCode =
     RmCode::SessionApparatusChanged.error_code();
 pub(crate) const SENTINEL_UNWRITABLE: ErrorCode = RmCode::SentinelUnwritable.error_code();
 pub(crate) const SENTINEL_OTHER_TOOLCHAIN: ErrorCode = RmCode::SentinelOtherToolchain.error_code();
+pub(crate) const SESSION_NOT_BESIDE: ErrorCode = RmCode::SessionNotBeside.error_code();
+pub(crate) const SESSION_NONCE_UNAVAILABLE: ErrorCode =
+    RmCode::SessionNonceUnavailable.error_code();
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]

@@ -190,6 +190,10 @@ pub struct Perturbation {
     pub launcher: Option<execute::Launcher>,
     /// How the harness schedules the tests.
     pub schedule: execute::Schedule,
+    /// The guard each thread pauses at the first time it reaches it, which is how one schedule of the program is chosen.
+    pub delay: Option<execute::Delay>,
+    /// The guard whose delayed failure this control is the undelayed half of a confirming round for; it changes nothing the process is started with, and is what makes the control one a recording names.
+    pub confirms: Option<u32>,
 }
 
 impl Perturbation {
@@ -200,6 +204,8 @@ impl Perturbation {
             environment: Vec::new(),
             launcher: None,
             schedule: execute::Schedule::AsConfigured,
+            delay: None,
+            confirms: None,
         }
     }
 
@@ -224,6 +230,11 @@ impl Perturbation {
                 .iter()
                 .map(|argument| (*argument).to_owned())
                 .collect(),
+            delay: self.delay.map(|delay| crate::trace::DelayRecord {
+                site: delay.site,
+                pause_ms: delay.pause_ms,
+            }),
+            confirms: self.confirms,
         }
     }
 }
@@ -278,6 +289,133 @@ const CONTROL_TOUCH_LOG: &str = "touch.log";
 const ENTERED_LOG: &str = "entered.log";
 
 /// One control process's question: which target, asked how, for how long.
+/// A scratch directory a run left, kept so a next run can start over what it holds.
+#[derive(Debug)]
+pub struct Kept(PathBuf, Stop, Notice);
+
+/// What the engine issued a crashed run and what it found published, which is the evidence a stop is decided on: the audit decides it again from exactly this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    /// The mutation the run had active, in full.
+    pub mutant: String,
+    /// The catalog it was of.
+    pub catalog: String,
+    /// The nonce issued to this run alone.
+    pub nonce: String,
+    /// The notice's text as the engine read it, or nothing where none was published or it could not be read.
+    pub read: Option<String>,
+}
+
+impl Notice {
+    /// The one text a notice of this run can be: the schema, the nonce issued to it, the catalog and the mutation.
+    #[must_use]
+    pub fn expected(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}\n",
+            crate::instrument::CRASH_NOTICE_SCHEMA,
+            self.nonce,
+            self.catalog,
+            self.mutant
+        )
+    }
+
+    /// Whether the runtime published exactly that text.
+    #[must_use]
+    pub fn published(&self) -> bool {
+        self.read.as_deref() == Some(self.expected().as_str())
+    }
+}
+
+/// Whether a run stopped at the call its crash was put at, which only the engine can say yes to: it says so only where it verified the runtime's notice itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stop(bool);
+
+impl Stop {
+    /// A run that was not one a crash was put to, which stopped at nothing.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self(false)
+    }
+
+    /// Whether the engine verified that the run stopped at the call.
+    #[must_use]
+    pub const fn noticed(self) -> bool {
+        self.0
+    }
+}
+
+impl Kept {
+    /// Whether the run stopped at the call its crash was put at.
+    #[must_use]
+    pub const fn stop(&self) -> Stop {
+        self.1
+    }
+
+    /// What the stop was decided on.
+    #[must_use]
+    pub const fn notice(&self) -> &Notice {
+        &self.2
+    }
+
+    /// Every file and directory the run left in this scratch directory, a directory named with a trailing `/`, relative to it and in path order; the engine keeps its own files elsewhere, so every one of them is the run's.
+    ///
+    /// # Errors
+    /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
+    pub fn left(&self) -> Result<Vec<String>, EngineError> {
+        let mut found = Vec::new();
+        let mut pending = vec![self.0.clone()];
+        while let Some(directory) = pending.pop() {
+            let entries = std::fs::read_dir(&directory).map_err(|source| {
+                SessionError::ScratchUnreadable {
+                    path: directory.clone(),
+                    source,
+                }
+            })?;
+            for entry in entries {
+                let entry = entry.map_err(|source| SessionError::ScratchUnreadable {
+                    path: directory.clone(),
+                    source,
+                })?;
+                let path = entry.path();
+                let kind = entry
+                    .file_type()
+                    .map_err(|source| SessionError::ScratchUnreadable {
+                        path: path.clone(),
+                        source,
+                    })?;
+                let Ok(relative) = path.strip_prefix(&self.0) else {
+                    continue;
+                };
+                let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
+                    SessionError::ScratchUnreadable {
+                        path: path.clone(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "a path left in the scratch is not UTF-8",
+                        ),
+                    }
+                })?;
+                if kind.is_dir() {
+                    found.push(format!("{relative}/"));
+                    pending.push(path);
+                } else {
+                    found.push(relative);
+                }
+            }
+        }
+        found.sort();
+        Ok(found)
+    }
+}
+
+/// A fresh nonce a crash notice must carry to be this execution's.
+///
+/// # Errors
+/// [`SessionError::CrashNonceUnavailable`] where the system gave no randomness.
+fn crash_nonce() -> Result<String, EngineError> {
+    Ok(execute::fresh_nonce().map_err(|error| SessionError::CrashNonceUnavailable { error })?)
+}
+
 struct Once<'a> {
     request: &'a Request,
     target: &'a TestTarget,
@@ -444,6 +582,9 @@ pub struct Request {
     /// How long the process may take.
     /// `None` uses the session's default.
     pub timeout: Option<Duration>,
+    /// A fault to activate beside the mutant, by identity or prefix, so the mutant is asked with the call at its own site failing.
+    /// `None` activates the mutant alone.
+    pub fault: Option<String>,
     /// What each execution records of the items its process entered.
     pub entered: Recording,
     /// A target to ask before the others, where one is known to have killed this mutant before; every target is still asked until one notices.
@@ -469,6 +610,7 @@ impl Request {
             test: None,
             args: Vec::new(),
             timeout: None,
+            fault: None,
             first: None,
             entered: Recording::Off,
         }
@@ -506,6 +648,13 @@ impl Request {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Activates a fault beside the mutant.
+    #[must_use]
+    pub fn with_fault(mut self, fault: impl Into<String>) -> Self {
+        self.fault = Some(fault.into());
         self
     }
 
@@ -567,6 +716,8 @@ pub struct Session {
     established: std::sync::Mutex<EstablishmentState>,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
+    /// Every mutation whose branch in the instrumented tree carries a fault's guard, with that fault: the only pairs a fault can be active beside, as the instrumenter wrote them.
+    beside: BTreeSet<(u32, u32)>,
     /// Everything the pristine build read: the digest that keys the outcome store, and what each unit read.
     closure: Closure,
     /// What the build read that no survey of the tree sees.
@@ -830,6 +981,12 @@ impl Session {
     #[must_use]
     pub fn package_of(&self, index: u32) -> Option<&str> {
         self.packages.get(&index).map(String::as_str)
+    }
+
+    /// What `cargo metadata` said about the copy this session measures, whose resolve names every package a binary links.
+    #[must_use]
+    pub const fn metadata(&self) -> &crate::cargo::Metadata {
+        self.workspace.metadata()
     }
 
     /// The packages this session was told to measure, which is where a reader looks for a test to write.
@@ -1216,9 +1373,11 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         };
         let timeout = self.mutant_timeout.of(self.baseline(&target.id))?.0;
         let request = ExecRequest::new(target)
@@ -1265,6 +1424,9 @@ impl Session {
 
     /// The same route with every target a proof removes moved out of what could notice the mutation.
     fn discharging(&self, mutant: &Mutant, route: Route) -> Route {
+        if !mutant.candidate.rule.family.proofs_apply() {
+            return route;
+        }
         let Route::Block {
             reaching,
             mut discharged,
@@ -1436,6 +1598,65 @@ impl Session {
         })
     }
 
+    /// The one fault whose guard the instrumentation carried into `mutant`'s branch, read from what the instrumenter wrote rather than derived again; none where it carried none or more than one.
+    #[must_use]
+    pub fn fault_beside(&self, mutant: &Mutant) -> Option<&Mutant> {
+        let mut carried = self
+            .beside
+            .range((mutant.index, 0)..=(mutant.index, u32::MAX))
+            .map(|(_, fault)| *fault);
+        let fault = carried.next()?;
+        if carried.next().is_some() {
+            return None;
+        }
+        self.catalog
+            .mutants()
+            .iter()
+            .find(|candidate| candidate.index == fault)
+    }
+
+    /// The fault a request names beside its mutant, held to being a fault beside something that is not one.
+    fn beside(&self, request: &Request, mutant: &Mutant) -> Result<Option<&Mutant>, EngineError> {
+        let Some(named) = request.fault.as_deref() else {
+            return Ok(None);
+        };
+        let fault = self.executable(named)?;
+        let why = match (
+            mutant.candidate.rule.family.perturbs(),
+            fault.candidate.rule.family.perturbs(),
+        ) {
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Environment)
+                if self.beside.contains(&(mutant.index, fault.index)) =>
+            {
+                None
+            }
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Environment) => Some(
+                "the instrumentation did not carry this fault's guard into that mutation's branch, \
+                 so activating it there would activate nothing",
+            ),
+            (crate::rule::Perturbs::Environment, _) => {
+                Some("what runs is itself a fault, and a fault is put beside a mutation")
+            }
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Program) => {
+                Some("what is named beside it is a mutation, not a fault")
+            }
+            (crate::rule::Perturbs::Crash, _) => {
+                Some("what runs is a crash, and nothing is put beside a crash")
+            }
+            (crate::rule::Perturbs::Program, crate::rule::Perturbs::Crash) => {
+                Some("what is named beside it is a crash, not a fault")
+            }
+        };
+        match why {
+            Some(why) => Err(EngineError::from(SessionError::NotBeside {
+                mutant: mutant.display_id.to_string(),
+                fault: fault.display_id.to_string(),
+                why,
+            })),
+            None => Ok(Some(fault)),
+        }
+    }
+
     /// A catalogued mutant this instrumented build actually contains.
     fn executable(&self, prefix: &str) -> Result<&Mutant, EngineError> {
         let mutant = self.resolve(prefix)?;
@@ -1477,12 +1698,113 @@ impl Session {
         Ok(own)
     }
 
+    /// Runs one mutant against the one target `request` names, and keeps the scratch directory it ran in for a next run to start over (ADR 0035).
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn exec_keeping(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<(MutantResult, Kept), EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let target = self.named(request)?;
+        let timeout = self.timeout_for(request, &target.id)?.0;
+        let own = self.exec_scratch()?;
+        let (tmp, engine) = (own.join("tmp"), own.join("engine"));
+        for directory in [&tmp, &engine] {
+            std::fs::DirBuilder::new()
+                .create(directory)
+                .map_err(|source| SessionError::ScratchCreateFailed {
+                    path: directory.clone(),
+                    source,
+                })?;
+        }
+        let notice = engine.join("crash-notice");
+        let nonce = crash_nonce()?;
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: None,
+            touch: None,
+            steps: self.mutant_steps,
+            profile: None,
+            leaders: Some(&self.leaders),
+            crash: Some(execute::Crashing {
+                notice: &notice,
+                nonce: &nonce,
+            }),
+        };
+        let mut exec = ExecRequest::new(target)
+            .with_args(self.arguments(request))
+            .with_timeout(Some(timeout))
+            .with_scratch(tmp.clone())
+            .with_engine(engine)
+            .in_scratch(self.scratch_working_directory);
+        if let Some(test) = &request.test {
+            exec = exec.with_test(test.clone());
+        }
+        let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+        let evidence = Notice {
+            mutant: mutant.id.to_string(),
+            catalog: self.catalog.digest().to_owned(),
+            nonce,
+            read: match std::fs::read_to_string(&notice) {
+                Ok(said) => Some(said),
+                Err(_absent_or_unreadable) => None,
+            },
+        };
+        let stopped = result.exit_code == crate::instrument::CRASH_EXIT && evidence.published();
+        Ok((result, Kept(tmp, Stop(stopped), evidence)))
+    }
+
+    /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn control_in(
+        &self,
+        request: &Request,
+        kept: &Kept,
+        cancel: &Cancel,
+    ) -> Result<MutantResult, EngineError> {
+        let target = self.named(request)?;
+        let timeout = self.timeout_for(request, &target.id)?.0;
+        let none = Perturbation::none();
+        let engine = self.exec_scratch()?;
+        Ok(self.control_once(
+            &Once {
+                request,
+                target,
+                timeout,
+                perturbation: &none,
+            },
+            (&kept.0, Some(&engine), None),
+            cancel,
+        ))
+    }
+
+    /// The one target a request names.
+    fn named(&self, request: &Request) -> Result<&TestTarget, EngineError> {
+        let name = request.target.as_deref().unwrap_or_default();
+        let targets = self.selected(Some(name))?;
+        targets.into_iter().next().ok_or_else(|| {
+            EngineError::from(SessionError::UnknownTarget {
+                name: name.to_owned(),
+                available: self.targets.iter().map(|one| one.id.clone()).collect(),
+            })
+        })
+    }
+
     /// Runs one mutant and reports what the tests said.
     ///
     /// # Errors
     /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
         let mutant = self.executable(&request.mutant)?;
+        let beside = self.beside(request, mutant)?;
         let chosen = self.chosen(request, mutant, Asking::Anything);
         Ok(self
             .execute(
@@ -1491,6 +1813,7 @@ impl Session {
                     alone: false,
                     chosen: &chosen,
                     mutant,
+                    beside,
                 },
                 cancel,
             )?
@@ -1507,6 +1830,7 @@ impl Session {
         cancel: &Cancel,
     ) -> Result<(MutantResult, SiteReach), EngineError> {
         let mutant = self.executable(&request.mutant)?;
+        let beside = self.beside(request, mutant)?;
         let name = request.target.as_deref().unwrap_or_default();
         let target = self
             .selected(Some(name))?
@@ -1526,6 +1850,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: beside.map(|fault| fault.id.as_str()),
             touch: Some(execute::Touching {
                 log: &log,
                 catalog: self.catalog.digest(),
@@ -1534,6 +1859,7 @@ impl Session {
             steps: self.mutant_steps,
             profile: None,
             leaders: Some(&self.leaders),
+            crash: None,
         };
         let mut exec = ExecRequest::new(target)
             .with_args(self.arguments(request))
@@ -1601,12 +1927,14 @@ impl Session {
         cancel: &Cancel,
     ) -> Result<Judgement, EngineError> {
         let mutant = self.executable(&request.mutant)?;
+        let beside = self.beside(request, mutant)?;
         let route = self.route(mutant);
         let chosen = Chosen::of(request, &route, Asking::ThisRun);
         let running = |alone: bool| Running {
             alone,
             chosen: &chosen,
             mutant,
+            beside,
         };
         let ran = quiet.shared(|| self.execute(request, running(false), cancel))??;
         let (first, mut asked) = (ran.taken, ran.asked);
@@ -1645,6 +1973,7 @@ impl Session {
             alone,
             chosen,
             mutant,
+            beside,
         } = how;
         let mut targets = self.selected(request.target.as_deref())?;
         if let Some(first) = request.first.as_deref() {
@@ -1674,7 +2003,7 @@ impl Session {
                 Recording::Off => None,
                 Recording::Items => Some(scratch.join(ENTERED_LOG)),
             };
-            let context = self.mutant_context(mutant, log.as_deref());
+            let context = self.mutant_context((mutant, beside), log.as_deref());
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
@@ -1710,10 +2039,10 @@ impl Session {
         Ok(Ran { taken, asked })
     }
 
-    /// What one execution of `mutant` runs with: the mutant active, and a log of what it entered where one was asked for.
+    /// What one execution of `mutant` runs with: the mutant active with the fault `beside` it, and a log of what it entered where one was asked for.
     fn mutant_context<'a>(
         &'a self,
-        mutant: &'a Mutant,
+        (mutant, beside): (&'a Mutant, Option<&'a Mutant>),
         log: Option<&'a std::path::Path>,
     ) -> Context<'a> {
         Context {
@@ -1722,6 +2051,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: beside.map(|fault| fault.id.as_str()),
             touch: log.map(|log| execute::Touching {
                 log,
                 catalog: self.catalog.digest(),
@@ -1729,6 +2059,7 @@ impl Session {
             }),
             steps: self.mutant_steps,
             profile: None,
+            crash: None,
         }
     }
 
@@ -1994,7 +2325,7 @@ impl Session {
                 timeout,
                 perturbation,
             };
-            let mut result = self.control_once(&once, (&own, log.as_deref()), cancel);
+            let mut result = self.control_once(&once, (&own, None, log.as_deref()), cancel);
             let unrecorded =
                 log.is_some() && result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT;
             if unrecorded {
@@ -2007,7 +2338,7 @@ impl Session {
                         target.id
                     ),
                 );
-                result = self.control_once(&once, (&self.exec_scratch()?, None), cancel);
+                result = self.control_once(&once, (&self.exec_scratch()?, None, None), cancel);
             }
             let perturbed = (*perturbation != Perturbation::none()).then(|| perturbation.record());
             if perturbed.is_none() {
@@ -2052,7 +2383,11 @@ impl Session {
     fn control_once(
         &self,
         once: &Once<'_>,
-        (own, log): (&std::path::Path, Option<&std::path::Path>),
+        (own, engine, log): (
+            &std::path::Path,
+            Option<&std::path::Path>,
+            Option<&std::path::Path>,
+        ),
         cancel: &Cancel,
     ) -> MutantResult {
         let perturbation = once.perturbation;
@@ -2062,6 +2397,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
+            beside: None,
             touch: log.map(|log| execute::Touching {
                 scope: execute::TouchScope::Everything,
                 log,
@@ -2069,6 +2405,7 @@ impl Session {
             }),
             steps: None,
             profile: None,
+            crash: None,
         };
         if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
             return MutantResult::apparatus_error(
@@ -2093,7 +2430,15 @@ impl Session {
             .with_scratch(own)
             .in_scratch(self.scratch_working_directory)
             .with_overlay(perturbation.environment.clone())
-            .with_launcher(perturbation.launcher);
+            .with_launcher(perturbation.launcher)
+            .with_delay(
+                perturbation
+                    .delay
+                    .map(|delay| (delay, self.catalog.digest())),
+            );
+        if let Some(engine) = engine {
+            exec = exec.with_engine(engine);
+        }
         if let Some(test) = &once.request.test {
             exec = exec.with_test(test.clone());
         }
@@ -2200,9 +2545,11 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
+            beside: None,
             touch: None,
             steps: None,
             profile: None,
+            crash: None,
         };
         let mut asked = Vec::new();
         for target in targets {
@@ -2376,6 +2723,8 @@ struct Running<'a> {
     chosen: &'a Chosen,
     /// The mutation, resolved once by whoever asked rather than again here.
     mutant: &'a Mutant,
+    /// The fault active beside it, resolved the same way.
+    beside: Option<&'a Mutant>,
 }
 
 #[derive(Clone, Copy)]
