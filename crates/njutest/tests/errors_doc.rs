@@ -191,7 +191,7 @@ fn sources() -> Vec<String> {
 
 /// The ledger, squeezed, with the table and every declaration taken out, so a declaration is not a report.
 fn declarations_removed() -> String {
-    let (_table, rest) = ledger_parts();
+    let rest = ledger_parts().1;
     rest.split(';')
         .filter(|statement| !statement.contains(":ErrorCode=NjCode::"))
         .collect::<Vec<_>>()
