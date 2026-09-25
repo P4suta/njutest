@@ -1023,6 +1023,20 @@ struct Switches {
     dry_run: bool,
 }
 
+/// Where a run reads and writes what it established: the exact store and the carried one, under this run's keys.
+fn reusing<'a>(
+    (store, carried): &'a (crate::outcomes::Store, rust_mutants::carry::Store),
+    keyed: &'a rust_mutants::outcomes::Keyed,
+    id: &'a RunId,
+) -> run::Reusing<'a> {
+    run::Reusing {
+        store,
+        keyed,
+        run_id: id.as_str(),
+        carried,
+    }
+}
+
 fn whole(
     session: &Session,
     whole: &Whole<'_>,
@@ -1051,7 +1065,10 @@ fn whole(
     } = *whole;
     let shard = shard.map(run::Shard::parse).transpose()?;
     let asking = asking_equivalence(settings, open);
-    let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
+    let stores = (
+        crate::outcomes::Store::new(&environment.cache_directory),
+        rust_mutants::carry::Store::new(&environment.cache_directory),
+    );
     let (keyed, expectations) = (keyed(session, whole), expectations(settings));
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
@@ -1061,11 +1078,7 @@ fn whole(
         expectations: &expectations,
         args,
         shard,
-        outcomes: (!no_cache).then_some(run::Reusing {
-            store: &outcomes,
-            keyed: &keyed,
-            run_id: id.as_str(),
-        }),
+        outcomes: (!no_cache).then(|| reusing(&stores, &keyed, id)),
         filter: Some(filter),
         fail_fast,
     };

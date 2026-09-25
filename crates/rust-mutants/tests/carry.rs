@@ -3,7 +3,7 @@
 
 //! The carry rule: an answer is believed on another tree exactly when every premise of ADR 0041 holds.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rust_mutants::carry::{
     Body, Carried, Entered, Execution, Locus, MalformedCarried, Now, Planned, Refusal, SCHEMA,
@@ -84,8 +84,26 @@ fn record(outcome: CacheOutcome, executions: Vec<Execution>) -> Carried {
     }
 }
 
-fn now() -> Now {
-    let mut now = Now::default();
+/// What a run knows of its tree, owned, so a test can change it before lending it out.
+#[derive(Default)]
+struct Tree {
+    skeletons: BTreeMap<String, String>,
+    items: BTreeMap<ItemRef, Body>,
+    held: BTreeSet<String>,
+}
+
+impl Tree {
+    fn now(&self) -> Now<'_> {
+        Now {
+            skeletons: self.skeletons.clone(),
+            items: &self.items,
+            held: self.held.clone(),
+        }
+    }
+}
+
+fn tree() -> Tree {
+    let mut now = Tree::default();
     for target in [TARGET, OTHER] {
         now.skeletons.insert(target.to_owned(), SKELETON.to_owned());
         now.held.insert(target.to_owned());
@@ -134,31 +152,34 @@ fn survival() -> Carried {
 
 #[test]
 fn an_answer_carries_across_an_edit_to_a_body_no_execution_entered() {
-    let mut edited = now();
+    let mut edited = tree();
     if let Some(body) = edited.items.get_mut(&item(1)) {
         body.digest = "body-1-edited".to_owned();
     }
-    assert_eq!(believe(&kill(), &edited, &plan(&[OTHER, TARGET])), Ok(()));
     assert_eq!(
-        believe(&survival(), &edited, &plan(&[OTHER, TARGET])),
+        believe(&kill(), &edited.now(), &plan(&[OTHER, TARGET])),
+        Ok(())
+    );
+    assert_eq!(
+        believe(&survival(), &edited.now(), &plan(&[OTHER, TARGET])),
         Ok(())
     );
 }
 
 #[test]
 fn an_edit_to_a_body_an_execution_entered_refuses_it() {
-    let mut edited = now();
+    let mut edited = tree();
     if let Some(body) = edited.items.get_mut(&item(0)) {
         body.digest = "body-0-edited".to_owned();
     }
     assert_eq!(
-        believe(&kill(), &edited, &plan(&[OTHER, TARGET])),
+        believe(&kill(), &edited.now(), &plan(&[OTHER, TARGET])),
         Err(Refusal::ItemChanged)
     );
-    let mut gone = now();
+    let mut gone = tree();
     gone.items.remove(&item(0));
     assert_eq!(
-        believe(&survival(), &gone, &plan(&[OTHER, TARGET])),
+        believe(&survival(), &gone.now(), &plan(&[OTHER, TARGET])),
         Err(Refusal::ItemChanged),
         "an entered item that is no longer there is a changed one"
     );
@@ -166,30 +187,30 @@ fn an_edit_to_a_body_an_execution_entered_refuses_it() {
 
 #[test]
 fn an_entered_body_that_is_no_longer_sealed_refuses_it() {
-    let mut unsealed = now();
+    let mut unsealed = tree();
     if let Some(body) = unsealed.items.get_mut(&item(0)) {
         body.sealing = Sealing::Unsealed;
     }
     assert_eq!(
-        believe(&kill(), &unsealed, &plan(&[OTHER, TARGET])),
+        believe(&kill(), &unsealed.now(), &plan(&[OTHER, TARGET])),
         Err(Refusal::Unsealed)
     );
 }
 
 #[test]
 fn a_changed_skeleton_refuses_it() {
-    let mut changed = now();
+    let mut changed = tree();
     changed
         .skeletons
         .insert(TARGET.to_owned(), "skeleton-1".to_owned());
     assert_eq!(
-        believe(&kill(), &changed, &plan(&[OTHER, TARGET])),
+        believe(&kill(), &changed.now(), &plan(&[OTHER, TARGET])),
         Err(Refusal::SkeletonChanged)
     );
-    let mut missing = now();
+    let mut missing = tree();
     missing.skeletons.remove(OTHER);
     assert_eq!(
-        believe(&survival(), &missing, &plan(&[OTHER, TARGET])),
+        believe(&survival(), &missing.now(), &plan(&[OTHER, TARGET])),
         Err(Refusal::SkeletonChanged),
         "a target with no skeleton now has not kept the one it had"
     );
@@ -197,10 +218,10 @@ fn a_changed_skeleton_refuses_it() {
 
 #[test]
 fn a_target_whose_reach_did_not_hold_refuses_it() {
-    let mut moved = now();
+    let mut moved = tree();
     moved.held.remove(TARGET);
     assert_eq!(
-        believe(&kill(), &moved, &plan(&[OTHER, TARGET])),
+        believe(&kill(), &moved.now(), &plan(&[OTHER, TARGET])),
         Err(Refusal::ReachMoved)
     );
 }
@@ -220,7 +241,7 @@ fn a_kill_needs_its_killer_to_have_named_what_it_entered_up_to_the_kill() {
             ],
         );
         assert_eq!(
-            believe(&carried, &now(), &plan(&[OTHER, TARGET])),
+            believe(&carried, &tree().now(), &plan(&[OTHER, TARGET])),
             expected,
             "{reach:?}; the executions before the killer are not what the kill rests on"
         );
@@ -238,7 +259,7 @@ fn a_survival_needs_every_execution_to_have_named_everything_it_entered() {
             ],
         );
         assert_eq!(
-            believe(&carried, &now(), &plan(&[OTHER, TARGET])),
+            believe(&carried, &tree().now(), &plan(&[OTHER, TARGET])),
             Err(Refusal::EntryIncomplete),
             "{reach:?}"
         );
@@ -248,14 +269,14 @@ fn a_survival_needs_every_execution_to_have_named_everything_it_entered() {
 #[test]
 fn a_survival_answers_only_for_a_route_its_executions_cover() {
     assert_eq!(
-        believe(&survival(), &now(), &plan(&[TARGET])),
+        believe(&survival(), &tree().now(), &plan(&[TARGET])),
         Ok(()),
         "a route that runs fewer targets than were recorded is covered"
     );
     assert_eq!(
         believe(
             &survival(),
-            &now(),
+            &tree().now(),
             &plan(&[TARGET, OTHER, "pkg/test/third"])
         ),
         Err(Refusal::RouteGrew)
@@ -269,11 +290,11 @@ fn a_different_filter_refuses_it_and_a_narrower_one_is_not_enough() {
         one.filter = Some(vec!["lib::works".to_owned()]);
     }
     assert_eq!(
-        believe(&survival(), &now(), &narrowed),
+        believe(&survival(), &tree().now(), &narrowed),
         Err(Refusal::FilterDiffers)
     );
     assert_eq!(
-        believe(&kill(), &now(), &narrowed),
+        believe(&kill(), &tree().now(), &narrowed),
         Err(Refusal::FilterDiffers)
     );
 }
@@ -281,7 +302,7 @@ fn a_different_filter_refuses_it_and_a_narrower_one_is_not_enough() {
 #[test]
 fn a_kill_by_a_target_the_route_no_longer_runs_is_refused() {
     assert_eq!(
-        believe(&kill(), &now(), &plan(&[OTHER])),
+        believe(&kill(), &tree().now(), &plan(&[OTHER])),
         Err(Refusal::FilterDiffers)
     );
 }

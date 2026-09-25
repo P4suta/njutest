@@ -862,6 +862,11 @@ pub struct CacheRecord {
     /// The run that established it, when one did.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub source_run_id: Option<String>,
+    /// How the key was taken: `exact`, under the whole compiled closure, or `carried`, under the mutation's locus (ADR 0041).
+    pub rule: String,
+    /// The premise a carried record failed, in the closed words of ADR 0041, where one did.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub refused: Option<String>,
 }
 
 /// Why one mutant was never executed.

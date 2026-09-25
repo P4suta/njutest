@@ -702,6 +702,7 @@ fn gated(
         closure: super::Closure {
             digest: closure_of(workspace, &checked)?,
             units: unit_sources(workspace, &checked)?,
+            carrying: super::Carrying::fresh(),
         },
         inputs: inputs_of(workspace, &checked)?,
         manifests: manifests_of(workspace)?,

@@ -3,10 +3,12 @@
 
 //! A prepared workspace: every accepted mutant instrumented into one build, and the test binaries that build produced.
 
+mod carry;
 pub(crate) mod prepare;
 mod route;
 mod verify;
 
+pub use carry::Tree as CarriedTree;
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
 use verify::verify;
@@ -456,6 +458,23 @@ pub struct Session {
     manifests: String,
 }
 
+/// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
+#[derive(Debug)]
+pub(crate) struct Carrying {
+    pub(crate) tree: std::sync::OnceLock<carry::Tree>,
+    pub(crate) held: std::sync::Mutex<BTreeMap<String, bool>>,
+}
+
+impl Carrying {
+    /// Nothing taken yet.
+    pub(crate) const fn fresh() -> Self {
+        Self {
+            tree: std::sync::OnceLock::new(),
+            held: std::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
 /// Everything the pristine build read, as the outcome store keys it and as each unit's skeleton is taken over.
 #[derive(Debug)]
 pub(crate) struct Closure {
@@ -463,6 +482,8 @@ pub(crate) struct Closure {
     pub(crate) digest: String,
     /// Each unit and what it read, spelled by class.
     pub(crate) units: Vec<crate::skeleton::UnitSource>,
+    /// What the carry rule has taken of it so far.
+    pub(crate) carrying: Carrying,
 }
 
 /// What narrowing a target's tests left: the ones that could still notice the mutation, or the proof that took the last of them away.

@@ -73,7 +73,7 @@ Tests serialize non-empty specimens and compare both directions, so adding, remo
 | `skip-claim` | `path`, `line`, `reason`, `matched` | per `rust-mutants: skip` marker: where it sits, the reason its author wrote, and whether it hid anything |
 | `kept` | `path`, `run_id` | per directory a run was asked to keep rather than remove, with the run that kept it |
 | `route` | `mutant`, `index`, `granularity`, `fallback`, `reaching`, `considered`, `discharged`, `executed`, `reused` | per judged mutant: granularity, what widened it, the targets that could notice, the ones a proof discharged, the ones that ran, and the run an answer was reused from |
-| `cache` | `mutant`, `key`, `hit`, `source_run_id` | what an earlier run of this exact tree said about one mutant: the key, whether a record answered, and the run that established it |
+| `cache` | `mutant`, `key`, `hit`, `source_run_id`, `rule`, `refused` | what an earlier run said about one mutant: the key, whether a record answered, and the run that established it; `rule` is `exact` for the key over the whole compiled closure and `carried` for the key over the mutation's locus (ADR 0041), and `refused` names the premise a carried record failed |
 | `select` | `mutant`, `reason` | why one mutant was never executed |
 | `identical` | `index`, `identity`, `detail` | what the equivalence layer said about one mutation: `identical`, `differs`, or nothing at all |
 | `evidence` | `file`, `bytes`, `digest` | one file the run kept for an audit: its path, its size, and its digest |

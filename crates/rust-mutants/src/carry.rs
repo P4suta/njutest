@@ -8,8 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use std::path::{Path, PathBuf};
+
 use crate::id::HexDigest;
-use crate::outcomes::{CacheOutcome, Keyed};
+use crate::outcomes::{CacheOutcome, Keyed, StoreError};
 use crate::touch::{Completeness, ItemRef};
 
 /// The schema every carried record names.
@@ -139,12 +141,12 @@ fn framed(hasher: &mut Sha256, field: &str) {
 }
 
 /// What this run knows of its own tree, which a record is held to.
-#[derive(Debug, Clone, Default)]
-pub struct Now {
+#[derive(Debug, Clone)]
+pub struct Now<'a> {
     /// Each target's skeleton now.
     pub skeletons: BTreeMap<String, String>,
     /// Each item's body digest now, and whether that body is sealed.
-    pub items: BTreeMap<ItemRef, Body>,
+    pub items: &'a BTreeMap<ItemRef, Body>,
     /// The targets whose reach held under a control of this tree.
     pub held: BTreeSet<String>,
 }
@@ -193,6 +195,8 @@ pub enum Refusal {
     FilterDiffers,
     /// A target the answer rests on did not hold its reach under a control of this tree, so the answer may have missed a changed body by chance.
     ReachMoved,
+    /// A survival rests on a target whose process this run cannot see into, so no run of it could have claimed a survival.
+    Uncontrolled,
 }
 
 impl Refusal {
@@ -207,6 +211,7 @@ impl Refusal {
             Self::RouteGrew => "route-grew",
             Self::FilterDiffers => "filter-differs",
             Self::ReachMoved => "reach-moved",
+            Self::Uncontrolled => "uncontrolled",
         }
     }
 }
@@ -264,7 +269,7 @@ impl Carried {
 ///
 /// # Errors
 /// The [`Refusal`] of the first premise that does not hold.
-pub fn believe(record: &Carried, now: &Now, plan: &[Planned]) -> Result<(), Refusal> {
+pub fn believe(record: &Carried, now: &Now<'_>, plan: &[Planned]) -> Result<(), Refusal> {
     match record.outcome {
         CacheOutcome::Killed => {
             let Some(killer) = record.executions.iter().rev().find(|one| one.detected) else {
@@ -303,7 +308,7 @@ pub fn believe(record: &Carried, now: &Now, plan: &[Planned]) -> Result<(), Refu
 }
 
 /// Whether one execution would do on this tree what it did on its own: its record reaches far enough, its target holds its reach, its skeleton is unchanged, and every item it entered has the same sealed body.
-fn held(execution: &Execution, now: &Now, enough: &[Completeness]) -> Result<(), Refusal> {
+fn held(execution: &Execution, now: &Now<'_>, enough: &[Completeness]) -> Result<(), Refusal> {
     if !enough.contains(&execution.completeness) {
         return Err(Refusal::EntryIncomplete);
     }
@@ -325,4 +330,94 @@ fn held(execution: &Execution, now: &Now, enough: &[Completeness]) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// The skeleton every target of a tree is held to: the fold of every unit's skeleton, named without a package id, in byte order of the names.
+///
+/// It is coarser than the units one target links, and sound for being so: an edit outside a sealed body anywhere moves it.
+#[must_use]
+pub fn tree_skeleton(units: &[crate::skeleton::UnitSkeleton]) -> String {
+    let mut lines: Vec<String> = units
+        .iter()
+        .map(|unit| {
+            format!(
+                "{}\0{}\0{}\0{}\0{}\n",
+                unit.package, unit.target, unit.kind, unit.test, unit.skeleton
+            )
+        })
+        .collect();
+    lines.sort();
+    crate::id::digest(lines.concat().as_bytes())
+}
+
+/// The carried records earlier runs left, each under its locus key.
+#[derive(Debug, Clone)]
+pub struct Store {
+    root: PathBuf,
+}
+
+impl Store {
+    /// The store under `cache_directory`.
+    #[must_use]
+    pub fn new(cache_directory: &Path) -> Self {
+        Self {
+            root: cache_directory.join(LAYOUT),
+        }
+    }
+
+    /// The record filed under `key`, when one is there and is the record its name promises.
+    ///
+    /// # Errors
+    /// Every I/O or decoding failure, and a record whose key, schema or executions contradict it; a corrupt entry is not an absent one.
+    pub fn get(&self, key: &HexDigest) -> Result<Option<Carried>, StoreError> {
+        let path = self.entry(key);
+        let text = match crate::outcomes::read_through_a_replacement(&path) {
+            Ok(Some(text)) => text,
+            Ok(None) => return Ok(None),
+            Err(source) => return Err(StoreError::Io { path, source }),
+        };
+        let corrupt = |message: String| StoreError::Corrupt {
+            path: path.clone(),
+            message,
+        };
+        let record: Carried =
+            crate::strictjson::decode_str(&text).map_err(|error| corrupt(error.to_string()))?;
+        if record.schema != SCHEMA {
+            return Err(corrupt(format!(
+                "record schema {:?} is not {SCHEMA:?}",
+                record.schema
+            )));
+        }
+        if record.key() != *key {
+            return Err(corrupt(format!(
+                "the record's own inputs key it as {}, not the {key} it is filed under",
+                record.key()
+            )));
+        }
+        record
+            .validate()
+            .map_err(|malformed| corrupt(malformed.to_string()))?;
+        Ok(Some(record))
+    }
+
+    /// Files `record` under the key its own inputs name.
+    ///
+    /// # Errors
+    /// Serialization and filesystem failures.
+    pub fn put(&self, record: &Carried) -> Result<PathBuf, StoreError> {
+        let path = self.entry(&record.key());
+        let text = serde_json::to_string(record).map_err(|error| StoreError::Corrupt {
+            path: path.clone(),
+            message: error.to_string(),
+        })?;
+        crate::replace::file(&path, text.as_bytes()).map_err(|failure| StoreError::Io {
+            path: failure.path,
+            source: failure.source,
+        })?;
+        Ok(path)
+    }
+
+    fn entry(&self, key: &HexDigest) -> PathBuf {
+        self.root.join(format!("{key}.json"))
+    }
 }
