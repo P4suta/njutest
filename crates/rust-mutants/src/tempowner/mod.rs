@@ -354,20 +354,19 @@ pub fn remove_tree(dir: &Path) -> io::Result<()> {
 }
 
 /// Gives the owner back full access to every directory in a tree, without following a link.
+/// Only a Unix mode takes that access away; a Windows read-only attribute on a directory does not stop its entries being removed.
 fn restore_owner_access(dir: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(dir)?;
     if !metadata.file_type().is_dir() {
         return Ok(());
     }
-    let mut permissions = metadata.permissions();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = metadata.permissions();
         permissions.set_mode(permissions.mode() | 0o700);
+        fs::set_permissions(dir, permissions)?;
     }
-    #[cfg(not(unix))]
-    permissions.set_readonly(false);
-    fs::set_permissions(dir, permissions)?;
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
