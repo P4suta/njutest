@@ -1649,8 +1649,7 @@ pub fn record(
     report.drift.clone_from(&mutation.drift);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
-        let whole =
-            crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
+        let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
         report.findings.extend(whole.findings);
         report.limitations.extend(whole.limitations);
     }
