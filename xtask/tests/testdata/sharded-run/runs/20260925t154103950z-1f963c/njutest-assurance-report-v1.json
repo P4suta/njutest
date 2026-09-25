@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-shard-report-v1",
     "schema_version": 2,
-    "run_id": "20260925t152603034z-1caddd",
+    "run_id": "20260925t154103950z-1f963c",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "2c99f796f1213973e8273cd0cee1f64fe9d76b694794c7ec6735e2ff6748482b",
+      "identity": "ff627c7ac71867867eac24c5ebe9d235a1fb6e1c8fd6921504d8c4342b1ad21e",
       "cached": false,
       "source_run_id": null
     },
@@ -43,7 +43,7 @@
       "shard": null
     },
     "shard": {
-      "index": 2,
+      "index": 1,
       "of": 2
     },
     "builds": [
@@ -60,10 +60,10 @@
           "digest": "c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"
         },
         "source": {
-          "run_id": "20260925t152603034z-1caddd-b0000000000",
+          "run_id": "20260925t154103950z-1f963c-b0000000000",
           "part": {
             "kind": "shard",
-            "index": 2,
+            "index": 1,
             "of": 2
           },
           "toolchain": {
@@ -74,9 +74,9 @@
             "arch": "x86_64"
           },
           "timing": {
-            "started": "2026-09-25T15:26:03.034695467Z",
-            "finished": "2026-09-25T15:26:36.4723371Z",
-            "duration_ms": 33437
+            "started": "2026-09-25T15:41:03.950805126Z",
+            "finished": "2026-09-25T15:41:38.138321188Z",
+            "duration_ms": 34187
           },
           "accounting": {
             "targets": {
@@ -149,19 +149,19 @@
           ],
           "mutants": [
             {
-              "catalog_index": 1,
-              "id": "aaa2ce24eee3548cd2837b2fda40be1b2b38b148719d7edc67cab93899bf6c4a",
-              "display_id": "aaa2ce24eee3548cd283",
+              "catalog_index": 0,
+              "id": "754587d92aeadc857975a4cea72f9e04155efc7f1c81685185d0fa321ab3555d",
+              "display_id": "754587d92aeadc857975",
               "path": "src/lib.rs",
               "position": {
                 "line": 9,
-                "column": 7,
-                "character_column": 7
+                "column": 5,
+                "character_column": 5
               },
-              "rule": "gt-to-ge",
+              "rule": "return-true",
               "item": "is_positive",
-              "original": ">",
-              "replacement": ">=",
+              "original": "n > 0",
+              "replacement": "true",
               "decision": {
                 "outcome": "killed",
                 "killed_by": "fixture-assured/lib/fixture_assured",
@@ -189,19 +189,19 @@
               }
             },
             {
-              "catalog_index": 3,
-              "id": "9e156499bc852ea65db35d70f2cdc891f74c74f83175460e433affe6b6bb2340",
-              "display_id": "9e156499bc852ea65db3",
+              "catalog_index": 2,
+              "id": "e1a8798fb39e6bd0105369d707d184b2160fd1f242f52cec8313b4c219034d1b",
+              "display_id": "e1a8798fb39e6bd01053",
               "path": "src/lib.rs",
               "position": {
                 "line": 15,
-                "column": 7,
-                "character_column": 7
+                "column": 5,
+                "character_column": 5
               },
-              "rule": "mul-to-div",
+              "rule": "return-default",
               "item": "double",
-              "original": "*",
-              "replacement": "/",
+              "original": "n * 2",
+              "replacement": "Default::default()",
               "decision": {
                 "outcome": "killed",
                 "killed_by": "fixture-assured/test/doubling",
