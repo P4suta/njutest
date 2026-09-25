@@ -13,15 +13,13 @@ The test still passes, and that pass is not a survival: the run sees the child s
 `gt-to-ge` starts no child for 7 and survives as it always did.
 `doubled` runs only in the child, which the baseline never starts, so its mutants are unreached.
 
-The fates are read with `--jobs 1`.
-On Windows an orphan cannot name its parent, so while executions overlap the child `return-true` starts is charged to every one of them, and a neighbour's survival reads as inconclusive.
-One execution at a time makes the attribution exact on every platform; the flag goes when [#145](https://github.com/P4suta/njutest/issues/145) attributes a Windows orphan by the job it ran in.
+Executions run side by side, and the child `return-true` starts is charged only to the execution that started it: on Unix by the parent it names, and on Windows, where it can name none, by the job object whose completion port named it as a member.
 
 | Path | Unit | Candidates |
 | --- | --- | --- |
 | `src/lib.rs` | lib | `delegated`: its comparison; `doubled`: its arithmetic |
 
-```fates --jobs 1
+```fates
 src/bin/child.rs:8:14 int-decrement unreached
 src/bin/child.rs:8:14 int-increment unreached
 src/lib.rs:9:5 return-true inconclusive
