@@ -356,6 +356,9 @@ pub enum CiCommand {
         /// Write for this host rather than the one the environment names.
         #[arg(long, value_enum, value_name = "HOST")]
         host: Option<HostArg>,
+        /// Annotate only the survivors on lines that differ from this revision; the summary still counts every one.
+        #[arg(long, value_name = "REV")]
+        changed_from: Option<String>,
     },
 }
 

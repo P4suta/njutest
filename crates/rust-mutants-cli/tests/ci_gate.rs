@@ -230,7 +230,7 @@ impl Said {
 
 fn gate(host: CiHost, root: &Path, args: &[&OsString]) -> Said {
     let environment = Environment {
-        vars: Vec::new(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: std::env::temp_dir(),
         program: PathBuf::from("this test never runs it"),
         cache_directory: root.join("cache"),
@@ -549,5 +549,100 @@ fn every_verdict_is_one_code_and_one_word() {
         Verdict::of(143),
         None,
         "a code no verdict carries has no word, so a later step is never told one"
+    );
+}
+
+/// A file of `count` lines, each saying which it is.
+fn numbered(count: u32, changed: &[u32]) -> String {
+    (1..=count)
+        .map(|line| {
+            if changed.contains(&line) {
+                format!("let changed_{line} = {line};\n")
+            } else {
+                format!("let line_{line} = {line};\n")
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn with_a_change_only_the_survivors_on_its_lines_are_annotated() {
+    let repo = njutest_devkit::repo::Repo::new();
+    repo.write("src/lib.rs", &numbered(20, &[]));
+    repo.commit();
+    repo.write("src/lib.rs", &numbered(20, &[12]));
+    let job = Job::new();
+    let report = job.report(&document(3));
+    let said = gate(
+        CiHost::GitHub {
+            summary: job.path("summary.md"),
+            output: job.path("output.txt"),
+            workspace: repo.root().to_path_buf(),
+        },
+        repo.root(),
+        &[
+            &os("--report"),
+            &report.into_os_string(),
+            &os("--host"),
+            &os("github"),
+            &os("--changed-from"),
+            &os("HEAD"),
+        ],
+    );
+    assert_eq!(said.code, 1, "{}", said.err);
+    let annotations = said.annotations();
+    assert!(
+        annotations.len() == 1
+            && annotations
+                .iter()
+                .all(|line| line.contains("file=src/lib.rs,line=12,")),
+        "of the survivors on lines 11, 12 and 13, only the one on the line the change \
+         touched is put in front of its author: {annotations:?}"
+    );
+    let summary = job.read("summary.md");
+    assert!(
+        summary.contains(
+            "2 more survivors are on lines this change did not touch; they are in the report."
+        ),
+        "and the summary says the others exist rather than letting the annotations read as \
+         all there is: {summary}"
+    );
+}
+
+#[test]
+fn a_change_git_cannot_be_asked_for_is_refused_rather_than_read_as_none() {
+    let job = Job::new();
+    let report = job.report(&document(1));
+    let said = gate(
+        job.github(),
+        &job.checkout(),
+        &[
+            &os("--report"),
+            &report.into_os_string(),
+            &os("--host"),
+            &os("github"),
+            &os("--changed-from"),
+            &os("HEAD"),
+        ],
+    );
+    assert_eq!(said.code, 2, "{}", said.out);
+    assert!(
+        said.err.contains("RM0010") && said.annotations().is_empty(),
+        "a checkout that is not a repository says nothing about which lines changed, and \
+         that is not the same as no line changing: {}",
+        said.err
+    );
+}
+
+#[test]
+fn the_survivors_off_the_change_are_counted_in_a_sentence_that_agrees_with_its_number() {
+    use rust_mutants_cli::app::ci::untouched;
+    assert_eq!(
+        untouched(1),
+        "1 more survivor is on a line this change did not touch; it is in the report."
+    );
+    assert_eq!(
+        untouched(3),
+        "3 more survivors are on lines this change did not touch; they are in the report."
     );
 }
