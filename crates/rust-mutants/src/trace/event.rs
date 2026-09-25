@@ -840,6 +840,8 @@ pub struct MutantExecRecord {
     pub timeout_source: String,
     /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
     pub alone: bool,
+    /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's.
+    pub lingered: bool,
 }
 
 /// What the outcome store was asked about one mutant.

@@ -968,6 +968,7 @@ fn one_of_each_execution(recorder: &Recorder) {
         timeout_ms: 90_000,
         timeout_source: "derived".to_owned(),
         alone: true,
+        lingered: false,
         step_notice: None,
     });
     recorder.cache(rust_mutants::trace::CacheRecord {
@@ -1095,7 +1096,8 @@ fn the_trace_schema_ties_step_evidence_to_exactly_the_step_outcome() {
                 "failed_tests": [],
                 "timeout_ms": 1000,
                 "timeout_source": "configured",
-                "alone": true
+                "alone": true,
+                "lingered": false
             }
         }
     });

@@ -1670,6 +1670,7 @@
                 "failed_tests",
                 "id",
                 "index",
+                "lingered",
                 "outcome",
                 "signal",
                 "step_notice",
@@ -1739,6 +1740,10 @@
                 "alone": {
                   "type": "boolean",
                   "description": "Whether it ran with nothing else the run started running beside it, which is what a confirming retry does."
+                },
+                "lingered": {
+                  "type": "boolean",
+                  "description": "Whether the harness had already answered when the clock ended the process, so the verdict is the harness's."
                 },
                 "step_notice": {
                   "oneOf": [

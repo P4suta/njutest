@@ -1269,6 +1269,7 @@ impl Session {
             timeout_ms: duration_ms(timeout)?,
             timeout_source: source.name().to_owned(),
             alone,
+            lingered: result.lingered,
         });
         Ok(())
     }
@@ -1336,6 +1337,7 @@ impl Session {
                 timeout_ms: duration_ms(timeout)?,
                 timeout_source: source.name().to_owned(),
                 alone: false,
+                lingered: result.lingered,
             });
             if let Some(log) = log.as_deref() {
                 let steadiness = if unrecorded {
@@ -1510,6 +1512,7 @@ impl Session {
                 timeout_ms: duration_ms(timeout)?,
                 timeout_source: source.name().to_owned(),
                 alone: false,
+                lingered: result.lingered,
             });
             if cancel.is_cancelled() {
                 return Ok(result);
