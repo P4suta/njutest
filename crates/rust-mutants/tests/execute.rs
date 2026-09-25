@@ -135,6 +135,7 @@ const fn result(exit_code: i32) -> Observation {
     }
 }
 
+#[cfg(unix)]
 const fn signalled(signal: i32) -> Observation {
     Observation {
         stopped: Stopped::Exited {

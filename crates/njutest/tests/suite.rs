@@ -57,6 +57,8 @@ mod fuzz_seeds;
 mod gallery;
 #[path = "git.rs"]
 mod git;
+#[path = "guard.rs"]
+mod guard;
 #[path = "hollow.rs"]
 mod hollow;
 #[path = "identity.rs"]
@@ -83,6 +85,8 @@ mod measured_sources;
 mod moved;
 #[path = "mutation_evidence.rs"]
 mod mutation_evidence;
+#[path = "next.rs"]
+mod next;
 #[path = "plan_failures.rs"]
 mod plan_failures;
 #[path = "presentation.rs"]

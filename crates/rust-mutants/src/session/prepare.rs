@@ -71,7 +71,6 @@ pub(super) fn pristine(
     }
 }
 
-/// The digest of the pristine sources every unit of the build compiled.
 /// What the build read that no survey of the tree sees: every file outside the copy and outside the build's own output, and every variable the compiler read.
 fn inputs_of(
     workspace: &Workspace,
@@ -246,36 +245,73 @@ fn watched_of(
     Ok(crate::select::Watched::Paths { inside, outside })
 }
 
+/// The digest of everything the build read: every file any unit's dep-info names, build scripts and generated files included, and every environment variable rustc recorded reading.
+/// A file under the root is named relative to it and one the build generated relative to the target directory, so the digest travels with the tree; anything else outside is the lock file's to key.
 fn closure_of(
     workspace: &Workspace,
     checked: &crate::cargo::Compiled,
-) -> Result<String, SessionError> {
+) -> Result<String, EngineError> {
     let root = workspace.snapshot_root();
-    let units = &checked.units;
+    let target = workspace.target_dir();
+    let mut read: BTreeSet<PathBuf> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.inputs.iter().cloned())
+        .collect();
+    read.extend(crate::cargo::compile_time_inputs(&checked.messages, root)?);
     let mut files: BTreeMap<String, String> = BTreeMap::new();
-    for unit in units {
-        for path in &unit.sources {
-            let Ok(relative) = path.strip_prefix(root) else {
-                continue;
-            };
-            let relative_text = relative
-                .to_str()
-                .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
-            let name = crate::id::normalize_path(relative_text).map_err(|source| {
-                SessionError::EvidencePathInvalid {
-                    path: path.clone(),
-                    source,
-                }
-            })?;
-            if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(name) {
-                let bytes =
-                    std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
-                        path: path.clone(),
-                        source,
-                    })?;
-                entry.insert(crate::id::digest(&bytes));
+    for path in &read {
+        let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
+            (Ok(relative), _) => (relative, ""),
+            (Err(_), Ok(relative)) => (relative, "$target/"),
+            (Err(_), Err(_)) => continue,
+        };
+        let relative_text = relative
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
+        let name = crate::id::normalize_path(relative_text).map_err(|source| {
+            SessionError::EvidencePathInvalid {
+                path: path.clone(),
+                source,
             }
+        })?;
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            files.entry(format!("{class}{name}"))
+        {
+            let bytes = std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
+                path: path.clone(),
+                source,
+            })?;
+            entry.insert(crate::id::digest(&bytes));
         }
+    }
+    let target_text = target
+        .to_str()
+        .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
+            path: target.to_path_buf(),
+        })?;
+    let root_text = root
+        .to_str()
+        .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
+            path: root.to_path_buf(),
+        })?;
+    let env: BTreeMap<&str, Option<&str>> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.env.iter())
+        .map(|(name, value)| (name.as_str(), value.as_deref()))
+        .collect();
+    for (name, value) in env {
+        let value = value.map_or_else(
+            || "unset".to_owned(),
+            |value| {
+                let portable = value
+                    .replace(target_text, "$target")
+                    .replace(root_text, "$root");
+                format!("set:{}", crate::id::digest(portable.as_bytes()))
+            },
+        );
+        files.insert(format!("$env/{name}"), value);
     }
     if files.is_empty() {
         return Ok(String::new());

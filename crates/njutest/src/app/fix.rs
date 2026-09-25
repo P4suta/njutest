@@ -118,6 +118,27 @@ fn listed(candidate: &CandidateRecord) -> String {
     )
 }
 
+/// What a recorded candidate is checked again with, before anything is written.
+pub(crate) fn checking<'a>(
+    (root, environment): (&'a Path, &'a Environment),
+    config: &crate::config::Config,
+    cargo: Cargo,
+) -> Checking<'a> {
+    let config = config.clone();
+    Checking {
+        root,
+        environment,
+        cargo,
+        build: config.execution.build(),
+        harness_args: config.execution.test_binary_args,
+        skip_targets: config.execution.skip_targets,
+        timeout: RECHECK_TIMEOUT,
+        steps: config.execution.steps,
+        build_timeout: config.execution.build_timeout,
+        reports: config.reports.directory,
+    }
+}
+
 /// What an application runs with.
 struct Applying<'a> {
     root: &'a Path,
@@ -141,23 +162,14 @@ fn apply(
     } = *applying;
     let trace = Recorder::disabled();
     let watch = Watch::new(&environment.cancel, &trace);
-    let config = config.clone();
-    let build = config.execution.build();
-    let checking = Checking {
-        root,
-        environment,
-        cargo: Cargo {
+    let checking = checking(
+        (root, environment),
+        config,
+        Cargo {
             offline: arguments.offline,
             locked: arguments.locked,
         },
-        build,
-        harness_args: config.execution.test_binary_args,
-        skip_targets: config.execution.skip_targets,
-        timeout: RECHECK_TIMEOUT,
-        steps: config.execution.steps,
-        build_timeout: config.execution.build_timeout,
-        reports: config.reports.directory,
-    };
+    );
     let mut written = 0u32;
     let mut already = 0u32;
     let mut refused = 0u32;
@@ -198,7 +210,7 @@ fn apply(
 }
 
 /// What became of one candidate a `--apply` looked at.
-enum Taken {
+pub(crate) enum Taken {
     /// It holds up and is the file to write.
     Written(crate::repair::Proposal),
     /// The tree already holds exactly what it would write.
@@ -207,7 +219,7 @@ enum Taken {
 
 /// Why a recorded repair cannot be written to the current tree.
 #[derive(Debug, thiserror::Error)]
-enum CandidateError {
+pub(crate) enum CandidateError {
     /// The earlier run did not establish the candidate.
     #[error("skipped {path}: {standing}")]
     NotAccepted { path: String, standing: String },
@@ -253,7 +265,7 @@ enum CandidateError {
         reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
     )
 )]
-fn one(
+pub(crate) fn one(
     candidate: &CandidateRecord,
     checking: &Checking<'_>,
     watch: Watch<'_>,
@@ -310,7 +322,7 @@ fn one(
         reason = "the error carries the runner's own, which this platform lays out past the lint's threshold and unix does not; boxing a shared error type to answer a platform's layout would move the cost to every caller on both"
     )
 )]
-fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), CandidateError> {
+pub(crate) fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), CandidateError> {
     let path = root.join(&proposal.path);
     rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| CandidateError::Write {
         path: failure.path,

@@ -368,7 +368,7 @@ pub fn every_payload() -> Vec<Payload> {
         },
         Payload::RunEnd {
             run: RunRecord {
-                outcome: "failed".to_owned(),
+                outcome: crate::trace::RunOutcome::Failed,
                 error: Some("one failure".to_owned()),
                 events_emitted: 22,
                 events_dropped: 1,

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 use rust_mutants::EngineError;
 use rust_mutants::id::RunId;
+use rust_mutants::killers::Killers;
 use rust_mutants::report::explain;
 use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
@@ -1100,6 +1101,7 @@ fn whole(
     let shard = shard.map(run::Shard::parse).transpose()?;
     let asking = asking_equivalence(settings, open);
     let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
+    let killers = Killers::new(&environment.cache_directory);
     let (keyed, expectations) = (keyed(session, whole), expectations(settings));
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
@@ -1113,6 +1115,7 @@ fn whole(
             store: &outcomes,
             keyed: &keyed,
             run_id: id.as_str(),
+            killers: &killers,
         }),
         filter: Some(filter),
         fail_fast,

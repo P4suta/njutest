@@ -34,10 +34,11 @@ The suite is itself mutation-tested twice — weekly by cargo-mutants, and from 
 `mise run check` runs every local gate, the ones that answer quickest first.
 That is not the order CI runs them in, because CI runs the jobs at once and waits for all of them while a person waits for each in turn: formatting answers in seconds, `lint` — clippy, rustdoc, the repository gates, the fuzz crate's own type check, spelling, TOML, workflows — in tens of them, and the suite in minutes.
 
-It is also what the pre-push hook runs.
+It is also what the pre-push hook runs, through `cargo xtask pre-push` (`xtask/src/prepush.rs`).
 The hook refuses a ref whose object is not the checked-out `HEAD`, and an update of an existing remote ref unless its old commit is present locally and is an ancestor of that `HEAD`.
-It then asks Git to render the object into a fresh detached worktree and checks the isolated tree again afterwards.
+It then checks the object out into the repository's one gate tree and checks that tree again afterwards.
 Adjacent edits, ignored local files, and a mistaken non-fast-forward command therefore cannot become inputs to an answer attributed to the commit going out.
+How that tree is shared between worktrees and sessions is [One machine, several sessions](#one-machine-several-sessions).
 A push that goes out has already answered everything CI asks but four things this machine cannot answer: the suite on Linux and Windows, the coverage ratchets, the suite under Miri, and the composite action driven the way another repository drives it.
 `xtask/tests/tasks.rs` holds the correspondence — a job added to `ci-success` has to name the local task that answers it first, or say why none can.
 
@@ -62,6 +63,7 @@ Among them, `cargo xtask all` is this repository's own:
 | `tracked` | a committed path under a directory named `target`, which is build output: the next build writes it again, and `git add -A` picked up 196 files of trybuild's output from a crate-level `target/` that `.gitignore`, anchored at the root, did not name. `.gitignore` now names every `target/`, and the gate refuses a force-added one too. It reads what git tracks, so it runs git with every variable that could point it at another repository removed, and it finds three planted build outputs and passes three lookalikes before its silence about the tree is believed |
 | `release-check` | a workspace version that disagrees with the release manifest, or a member that does not inherit it |
 | `milestones` | a milestone-shaped reference in the book that has no unique row in the roadmap |
+| `adrs` | a file under `docs/adr/` not named `NNNN-slug.md`, two decision records of one number, a heading that does not carry its own number, a record the book lists under another number, twice, or not at all, and a name of a decision record, anywhere in the tree, that no record has |
 | `surfaces` | a workspace crate that does not declare its Rust visibility as `public`, `incidental`, or `test-support`; an incidental crate absent from the actual `surface-*` binary targets; a harness binary that names no incidental crate; publishable test apparatus |
 | `reached` | a public function of a crate whose surface is `incidental` that a test names and nothing shipping does, ratcheted against `xtask/reached_ceiling.txt`. A capability with a test is a capability somebody believed shipped ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)): `Interposer::during()` had a test, passed it, and production never called it, so the test was evidence about a function nothing used. Where a crate's surface is an API the rule says nothing, because a function with no caller here is what an API is for; where it is public only because Rust needed it to be, a function only a test reaches is a function nothing reaches. Anything a `cfg` puts behind a test is test support and outside the rule, `cfg(feature = "testkit")` included — reading only `cfg(test)` reported sixteen of those, which was the gate believing its own omission |
 
@@ -214,7 +216,7 @@ proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 vio
 Where the recording does not carry enough to decide something again — which survivors a reviewer accepted, what a reused disposition was routed under,
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
-One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
+One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 1 with violations, 3 with none and something left `unaudited`, 0 only when every layer was decided, and 2 when the run directory could not be read at all, so a step that reads only the code cannot take an audit that looked at part of a run for one that looked at all of it.
 Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its eleven layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed
@@ -247,6 +249,41 @@ When a rule learns a new form, the form gets a shape of its own beside the test 
 A shape proves that its form is found, not which reader found it.
 With the guard reader removed, a guarded arm over a typed parameter was still found, because the parameter's type named the set; only a scrutinee with no typed binding leaves the guarded arm as the one thing naming the set, and that is the shape that went red.
 So a shape is written against the reader it exists for, and checked by removing that reader and watching the gate refuse.
+
+## One machine, several sessions
+
+Several sessions develop this repository on one machine at once, each in a worktree of its own, and a run that compiles or tests the whole workspace uses all of the machine.
+Two of them together do not finish sooner than one after the other: each takes about twice as long, and a test with a bound starts failing for a reason that is about the machine and not the code.
+[ADR 0030](adr/0030-one-machine-several-sessions.md) records the decision; what it means in practice is below.
+
+**One gate tree per repository.** `cargo xtask pre-push` keys its tree by the repository's common Git directory, not by the worktree, and keeps it under the user's cache directory (`~/Library/Caches/njutest/pre-push` on macOS, `$XDG_CACHE_HOME/njutest/pre-push` elsewhere, or `NJUTEST_PRE_PUSH_CACHE`).
+Cargo writes each package's absolute path into its fingerprints, so a tree per worktree made every push from a fresh worktree — which is every push the merge queue makes — a build from nothing.
+The tree is checked out in place, so only the files that differ from the last push get a new modification time and only what they feed is compiled again.
+
+**One whole-workspace run at a time.** `cargo xtask slot heavy -- <command>` runs a command once this machine's `heavy` lane is free and holds the lane until the command ends; the pre-push gate takes the same lane before it touches its tree.
+A run that has to wait says whom it is waiting for — pid, worktree, revision, command, and the load when that run started — and repeats it every thirty seconds.
+The lane is an operating-system lock held by the xtask process and closed on exec, so a daemon started along the way (the compilation cache's server, Git's file monitor) cannot carry it off, and a holder that dies, however it dies, lets the next run in.
+Inside a held lane `NJUTEST_SLOT_HELD` names it, and asking for it again passes straight through: the gate hands it to its check, so a `cargo xtask slot heavy` somewhere inside the check does not wait for the gate.
+The gate's tree has a lane of its own, taken whatever `NJUTEST_SLOT_HELD` says, so two gates never write one tree at once.
+The work a lane admits runs in a process group of its own; `SIGINT`, `SIGTERM` and `SIGHUP` stop that whole group before the holder ends, and a bound stops it with `SIGTERM`, then `SIGKILL` after five seconds.
+
+**One pass, bounded by quiet.** The gate runs `mise run check` once, with its output passed on as it arrives.
+Following [ADR 0026](adr/0026-a-bound-measures-quiet-not-duration.md), what stops it is quiet rather than duration: a check that says nothing for `NJUTEST_PUSH_QUIET_SECONDS` (600 by default) is stopped, and `NJUTEST_PUSH_BUDGET_SECONDS` (3600) is only the ceiling behind it.
+A check that is slow because the machine is loaded keeps talking, so it is not stopped for how long it took.
+The lane's record names the work's leader and when it started, and the next run waits for that leader to end, so a holder killed outright still keeps its work from sharing the machine.
+A narrowed run — one crate, one test binary, one filter — does not take the lane: it is the inner loop, and queueing it behind a push would cost more than it saves.
+Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextest run --workspace --all-targets --all-features`.
+
+**A pass is remembered for an hour.** A commit that passed the gate against the same base is not checked again within the hour, so pushing it to the hub and then to origin costs one gate rather than two.
+What is remembered is the commit, the base the commit-message check reads, and the bytes of the gate that passed it; a moved base or a changed gate is a question nobody has answered yet.
+
+**Every temporary directory has an owner.** `mise run test:fast` and CI's fast suite run under `cargo xtask tidy`, which hands the suite an empty temporary directory and fails naming whatever it finds there afterwards ([ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md)).
+Before the rule, one day's runs left 1,545 directories in the machine's shared one.
+A test that needs a project tree takes `njutest_devkit::paths::Project`, whose root sits inside a directory of its own, and `temp_beside` refuses a root that sits directly in the shared temporary directory.
+
+**The machine has to let a new executable run.** macOS evaluates every newly written executable before its first run, and under the load several sessions make that cost seconds per file — see [the limitation](limitations.md#on-macos-measure-what-an-execution-costs-before-measuring-anything-else).
+Every relinked test binary, fixture build, and mutant pays it.
+Switch the applications that start the sessions on under System Settings → Privacy & Security → Developer Tools; on the development machine that is the terminal and the multiplexer running in it.
 
 ## Test harness
 

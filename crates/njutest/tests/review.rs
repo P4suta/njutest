@@ -19,6 +19,7 @@ fn spot(line: u32, standing: Standing, locator: &str) -> Spot {
         standing,
         blind_in: Vec::new(),
         locator: locator.to_owned(),
+        mutant: String::new(),
     }
 }
 
