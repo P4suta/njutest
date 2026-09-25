@@ -585,15 +585,44 @@ pub fn run_resuming(
     mutation.sources = session.catalog().sources().map_err(|refused| {
         rust_mutants::EngineError::from(rust_mutants::discover::DiscoverError::from(refused))
     })?;
+    let confirmed: Vec<Drift> = mutation
+        .judged
+        .iter()
+        .flat_map(|judged| judged.observed.iter().cloned())
+        .collect();
+    let compared = compared_alone(session, &confirmed, watch)?;
     mutation.drift = crate::report::drift::folded(
         session.touched().targets.keys().map(String::as_str),
-        mutation
-            .judged
-            .iter()
-            .flat_map(|judged| judged.observed.iter().cloned()),
+        confirmed.into_iter().chain(compared),
     );
     phase.end();
     Ok(mutation)
+}
+
+/// Runs, once and whole, every target no control confirming a kill compared, so that every target's reach is compared with a second run of it whether or not it noticed anything.
+fn compared_alone(
+    session: &Session,
+    confirmed: &[Drift],
+    watch: Watch<'_>,
+) -> Result<Vec<Drift>, crate::error::RunnerError> {
+    let seen: BTreeSet<&str> = confirmed.iter().map(Drift::target).collect();
+    let mut compared = Vec::new();
+    for target in session.touched().targets.keys() {
+        if seen.contains(target.as_str()) || watch.cancel.is_cancelled() {
+            continue;
+        }
+        let request = Request::new(String::new()).with_target(target.as_str());
+        let control = session.control(&request, watch.cancel, Observing::Reach)?;
+        for one in &control.observed {
+            let drift = Drift::of(&one.target, &one.steadiness);
+            watch.trace.drift(crate::trace::DriftRecord {
+                mutant: None,
+                observed: drift.clone(),
+            });
+            compared.push(drift);
+        }
+    }
+    Ok(compared)
 }
 
 /// What one mutant comes to, without committing anything a report will carry.
@@ -1306,16 +1335,17 @@ fn against(
             };
             Ok(TargetFact::StepLimitReached { on: name, boundary })
         }
-        MutantConclusion::Errored | MutantConclusion::Inconclusive | MutantConclusion::NotRun => {
-            Ok(TargetFact::Errored {
-                on: name,
-                detail: format!(
-                    "the harness answered {}: {}",
-                    result.outcome().name(),
-                    tail(&result.output)
-                ),
-            })
-        }
+        MutantConclusion::Errored
+        | MutantConclusion::Inconclusive
+        | MutantConclusion::Unobserved
+        | MutantConclusion::NotRun => Ok(TargetFact::Errored {
+            on: name,
+            detail: format!(
+                "the harness answered {}: {}",
+                result.outcome().name(),
+                tail(&result.output)
+            ),
+        }),
     }
 }
 
@@ -1463,7 +1493,7 @@ impl Controls {
             .collect();
         for one in &drift {
             watch.trace.drift(crate::trace::DriftRecord {
-                mutant: request.mutant.clone(),
+                mutant: Some(request.mutant.clone()),
                 observed: one.clone(),
             });
         }

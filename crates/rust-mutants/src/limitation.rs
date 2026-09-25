@@ -45,8 +45,11 @@ pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 /// The target's guards recorded what they reached and the record did not read back, so nothing of it is believed.
 pub const TOUCH_LOG_UNREADABLE: &str = "touch-log-unreadable";
 
+/// A process of the target's tree ran without the environment the run gave it, so no mutant could be active in it and nothing recorded what it entered: the target's reach is not measured and a survival it reports is not one.
+pub const UNCONTROLLED_CHILD: &str = "uncontrolled-child";
+
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 14] = [
+pub const ALL: [&str; 15] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
@@ -56,6 +59,7 @@ pub const ALL: [&str; 14] = [
     BASELINE_PASSED_UNPARSED,
     TOUCH_NOT_RECORDED,
     TOUCH_LOG_UNREADABLE,
+    UNCONTROLLED_CHILD,
     COVERAGE_BUILD_FAILED,
     COVERAGE_TOOLS_MISSING,
     COVERAGE_NOT_MEASURED,

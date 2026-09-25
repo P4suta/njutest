@@ -174,6 +174,72 @@ fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
     );
 }
 #[test]
+fn a_unit_names_every_file_and_variable_the_compiler_read_for_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).expect("mkdir");
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"reads\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .expect("manifest");
+    std::fs::write(root.join("src/greeting.txt"), "hello\n").expect("data");
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub const GREETING: &str = include_str!(\"greeting.txt\");\n\
+         pub const WHO: Option<&str> = option_env!(\"RUST_MUTANTS_PROBE_UNSET\");\n",
+    )
+    .expect("source");
+    let tc = toolchain(root);
+    let target = scratch_target("reads");
+    let mut spec = tc.command(
+        root,
+        ["check", "--lib", "--message-format=json", "--offline"],
+    );
+    spec.argv.push("--target-dir".into());
+    spec.argv.push(target.path().into());
+    spec.structured_stdout = Some(64 << 20);
+    let result = run(&spec, &Cancel::new());
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the tree writes exact UTF-8")
+    );
+    let messages = parse_messages(&result.stdout).expect("messages");
+    let units = units_of(&messages, root).expect("units");
+    let [unit] = units.as_slice() else {
+        panic!("one library unit: {units:?}");
+    };
+    let root = root
+        .canonicalize()
+        .expect("the tree has a physical spelling");
+    let inputs: Vec<String> = unit
+        .inputs
+        .iter()
+        .map(|path| under(&root, &path.canonicalize().expect("an input is a file")))
+        .collect();
+    assert_eq!(
+        inputs,
+        ["src/greeting.txt", "src/lib.rs"],
+        "an included file is read by the compiler as surely as a compiled one"
+    );
+    assert_eq!(
+        unit.sources
+            .iter()
+            .map(|path| under(&root, &path.canonicalize().expect("a source")))
+            .collect::<Vec<_>>(),
+        ["src/lib.rs"],
+        "what is compiled stays what is compiled"
+    );
+    assert_eq!(
+        unit.env.get("RUST_MUTANTS_PROBE_UNSET"),
+        Some(&None),
+        "an unset variable the compiler read is a fact about the build: {:?}",
+        unit.env
+    );
+}
+
+#[test]
 fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     let dir = fixture("fixture-simple");
     let tc = toolchain(&dir);

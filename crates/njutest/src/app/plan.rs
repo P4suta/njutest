@@ -174,7 +174,7 @@ fn workplace(environment: &Environment) -> Result<crate::scratch::Scratch, PlanE
 }
 
 /// The toolchain and what it says the workspace holds.
-fn locate(
+pub(crate) fn locate(
     root: &std::path::Path,
     environment: &Environment,
     cargo: Cargo,
