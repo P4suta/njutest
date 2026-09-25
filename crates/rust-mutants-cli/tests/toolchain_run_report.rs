@@ -1456,6 +1456,40 @@ fn a_run_keeps_the_skeletons_an_answer_would_be_carried_by() {
 }
 
 #[test]
+fn a_unit_names_every_entry_its_skeleton_folds() {
+    let fixture = Fixture::copy("fixture-carry");
+    let kept = carried(&fixture);
+    let library = kept["units"]
+        .as_array()
+        .expect("the units")
+        .iter()
+        .find(|unit| unit["target"] == "fixture_carry" && unit["test"] == false)
+        .expect("the library unit");
+    let names: Vec<&str> = library["entries"]
+        .as_object()
+        .expect("the entries")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for wanted in ["$root/src/lib.rs", "$root/src/answer.txt", "$env/OUT_DIR"] {
+        assert!(
+            names.contains(&wanted),
+            "{wanted} is something the library compiled: {names:?}"
+        );
+    }
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("$target/") && name.ends_with("/limit.rs"))
+            && names
+                .iter()
+                .any(|name| name.starts_with("$emitted/$target/")),
+        "and so are the file its build script generated and what that script emitted, named \
+         from the target directory rather than from wherever this run put it: {names:?}"
+    );
+}
+
+#[test]
 fn an_edit_inside_a_sealed_body_moves_only_its_digest_and_one_outside_moves_the_skeleton() {
     let fixture = Fixture::copy("fixture-carry");
     let then = carried(&fixture);

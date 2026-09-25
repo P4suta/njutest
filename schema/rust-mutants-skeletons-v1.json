@@ -163,7 +163,8 @@
         "target",
         "kind",
         "test",
-        "skeleton"
+        "skeleton",
+        "entries"
       ],
       "properties": {
         "package": {
@@ -186,8 +187,19 @@
           "type": "boolean"
         },
         "skeleton": {
-          "description": "The SHA-256 of the unit's inputs with each sealed body replaced by a placeholder naming its item.",
+          "description": "The SHA-256 of the unit's inputs with each sealed body replaced by a placeholder naming its item: the fold of `entries`.",
           "$ref": "#/$defs/digest"
+        },
+        "entries": {
+          "description": "Every entry the skeleton folds, by name: a file under the root or the target directory, a variable, or a build script's output, with its digest or value.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[$](root|target|env|emitted)/"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     }
