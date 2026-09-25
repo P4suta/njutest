@@ -728,6 +728,13 @@ fn options(program: &str, command: Option<&str>) -> Option<Vec<(String, bool)>> 
         "njutest" => "crates/njutest",
         _ => "crates/rust-mutants-cli",
     };
+    if command.is_some_and(|command| {
+        !command.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    }) {
+        return None;
+    }
     let name = command.map_or_else(
         || "help.golden".to_owned(),
         |command| format!("help-{command}.golden"),
