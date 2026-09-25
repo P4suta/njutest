@@ -702,6 +702,35 @@ fn amended(at: usize, overrides: Value) -> Vec<Value> {
     events
 }
 
+/// The clean recording with the target's baseline passing two named tests, and the kill naming a third.
+fn killed_by_a_stranger() -> Vec<Value> {
+    let mut events = inserted(
+        7,
+        json!({
+            "timestamp": "2026-09-06T10:15:01Z", "elapsed_ms": 55,
+            "type": "touch",
+            "touch": {
+                "target": TARGET, "measured": "baseline", "mutant": null,
+                "passed": ["larger_works", "smaller_works"],
+                "summary": { "protocol": "libtest", "tests_run": 2 },
+                "reached_sites": [0, 1], "entered_bodies": [], "infected_sites": [],
+                "tests": 2, "sites": 2, "loose": 0, "infected": 0, "entered": 1,
+                "entered_items": [0]
+            }
+        }),
+    );
+    if let Some(event) = events.get_mut(9) {
+        merge(
+            event,
+            json!({ "mutant": { "failed_tests": ["no_such_test"] } }),
+        );
+    }
+    if let Some(end) = events.last_mut() {
+        merge(end, json!({ "run": { "events_emitted": 13 } }));
+    }
+    events
+}
+
 /// The clean recording with `event` put at `at` and every sequence number counted again.
 fn inserted(at: usize, event: Value) -> Vec<Value> {
     let mut events = recording();
@@ -949,6 +978,22 @@ impl Layer {
                 Perturbation {
                     name: "an execution that disagrees with its row",
                     events: amended(8, json!({ "mutant": { "outcome": "survived" } })),
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "a route that says a target ran that no execution ran",
+                    document: with(json!({
+                        "mutants": [{ "route": { "executed": ["demo/test/other", TARGET] } }]
+                    })),
+                    events: amended(
+                        7,
+                        json!({ "route": { "executed": ["demo/test/other", TARGET] } }),
+                    ),
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "a kill named by a test its target's baseline never ran",
+                    events: killed_by_a_stranger(),
                     ..clean
                 },
             ],

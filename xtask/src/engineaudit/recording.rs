@@ -3,7 +3,7 @@
 
 //! The report held to the recording of what the run actually did.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -32,7 +32,7 @@ pub(super) fn trace(
     instrumented(&recorded.events, &mut notes);
     verified(&recorded.events, &mut notes);
     condemned(report, &recorded.events, &mut notes);
-    routed(report, &recorded.routing, &mut notes);
+    routed(report, recorded, &mut notes);
     notes.looked()
 }
 
@@ -301,7 +301,9 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
 }
 
 /// Every row against the route and the executions the recording holds for it.
-fn routed(report: &Report, routing: &crate::route::Routing, notes: &mut Notes<'_>) {
+fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
+    let routing = &recorded.routing;
+    let tests = baseline_tests(&recorded.events);
     if routing.routes.is_empty() && routing.execs.is_empty() {
         notes.unaudited(
             "route",
@@ -358,9 +360,79 @@ fn routed(report: &Report, routing: &crate::route::Routing, notes: &mut Notes<'_
         };
         let execs: Vec<&crate::route::Exec> = routing.execs_for(&row.id, &row.display_id).collect();
         reported_route(row, route, notes);
+        ran_in_order(row, route, &execs, notes);
+        named_its_tests(row, &execs, &tests, notes);
         answered(row, &execs, notes);
         reached(row, route, &execs, notes);
         discharged(row, route, &execs, notes);
+    }
+}
+
+/// Every test each target's baseline passed, by target, from the baseline touch records the run kept.
+fn baseline_tests(events: &[Value]) -> BTreeMap<String, BTreeSet<String>> {
+    crate::drift::of_events(events)
+        .touches
+        .into_iter()
+        .filter(|touch| touch.measured == crate::drift::Measured::Baseline)
+        .map(|touch| (touch.target, touch.passed))
+        .collect()
+}
+
+/// The targets a route says ran are the ones the recording ran, in the order it ran them, the retry of a waited execution apart: a recorded killer asked first is first in both.
+fn ran_in_order(
+    row: &Row,
+    route: &crate::route::Route,
+    execs: &[&crate::route::Exec],
+    notes: &mut Notes<'_>,
+) {
+    let mut ran: Vec<&str> = execs.iter().map(|exec| exec.target.as_str()).collect();
+    if row.retried {
+        ran.pop();
+    }
+    if ran
+        != route
+            .executed
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    {
+        notes.violated(
+            row.label(),
+            format!(
+                "the route says {:?} ran, in that order, and the recording ran {ran:?}; a route \
+                 that names work nobody did, or leaves out work somebody did, is not an account \
+                 of the run",
+                route.executed
+            ),
+        );
+    }
+}
+
+/// Every failing test a kill names is a test its target's baseline ran, which is what tells a test that failed from a line of output read as one.
+fn named_its_tests(
+    row: &Row,
+    execs: &[&crate::route::Exec],
+    tests: &BTreeMap<String, BTreeSet<String>>,
+    notes: &mut Notes<'_>,
+) {
+    for exec in execs.iter().filter(|exec| exec.outcome == KILLED) {
+        let Some(known) = tests.get(&exec.target) else {
+            continue;
+        };
+        for test in exec
+            .failed_tests
+            .iter()
+            .filter(|test| !known.contains(*test))
+        {
+            notes.violated(
+                row.label(),
+                format!(
+                    "an execution against {} is counted killed by {test}, which is not a test \
+                     its baseline ran; a failure the harness never reported is no kill",
+                    exec.target
+                ),
+            );
+        }
     }
 }
 
