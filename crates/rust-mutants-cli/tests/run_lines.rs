@@ -276,7 +276,7 @@ fn cohere(document: &mut RunDocument) {
     } else if document.findings.is_empty() {
         rust_mutants::run::EXIT_DETECTED
     } else {
-        rust_mutants::run::EXIT_UNDETECTED
+        rust_mutants::run::EXIT_FOUND
     };
 }
 

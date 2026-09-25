@@ -131,9 +131,10 @@ fn run_with_trace_records_under_the_run_directory_and_ends_with_run_end() {
         Some(if output.status.code() == Some(0) {
             "detected"
         } else {
-            "undetected"
+            "found"
         }),
-        "{end}"
+        "exit 1 is a finding of any kind, and the recording names it for that rather than for one \
+         kind of finding: {end}"
     );
     assert_eq!(
         end.pointer("/payload/run/events_dropped")

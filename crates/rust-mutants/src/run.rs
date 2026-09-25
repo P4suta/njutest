@@ -80,8 +80,8 @@ impl Expectation {
 /// The exit code of a run that established detection for everything it executed.
 pub const EXIT_DETECTED: u8 = 0;
 
-/// The exit code of a run that left something the tests did not notice.
-pub const EXIT_UNDETECTED: u8 = 1;
+/// The exit code of a run that reported a finding a person has to act on: a survivor, a stale claim, or something it could not decide.
+pub const EXIT_FOUND: u8 = 1;
 
 /// The exit code of a run that was interrupted.
 pub const EXIT_INTERRUPTED: u8 = 130;
@@ -515,7 +515,7 @@ impl Run {
         if findings.is_empty() {
             EXIT_DETECTED
         } else {
-            EXIT_UNDETECTED
+            EXIT_FOUND
         }
     }
 }

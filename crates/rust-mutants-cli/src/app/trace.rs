@@ -151,7 +151,7 @@ pub fn ended(
 const fn verdict_of(code: u8) -> rust_mutants::trace::RunOutcome {
     match code {
         crate::run::EXIT_DETECTED => rust_mutants::trace::RunOutcome::Detected,
-        crate::run::EXIT_UNDETECTED => rust_mutants::trace::RunOutcome::Undetected,
+        crate::run::EXIT_FOUND => rust_mutants::trace::RunOutcome::Found,
         crate::run::EXIT_INTERRUPTED => rust_mutants::trace::RunOutcome::Interrupted,
         _ => rust_mutants::trace::RunOutcome::Failed,
     }

@@ -104,7 +104,7 @@ pub fn exit_codes() -> String {
             "every mutant the run decided, the tests noticed",
         ),
         (
-            run::EXIT_UNDETECTED,
+            run::EXIT_FOUND,
             "there is a finding: a survivor, a stale claim, something the run could not decide",
         ),
         (

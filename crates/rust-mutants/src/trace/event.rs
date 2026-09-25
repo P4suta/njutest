@@ -910,8 +910,8 @@ pub struct NoteRecord {
 pub enum RunOutcome {
     /// Every mutation the run judged was noticed.
     Detected,
-    /// Some mutation the run judged was not noticed.
-    Undetected,
+    /// The run reported a finding a person has to act on: a survivor, a stale claim, or something it could not decide.
+    Found,
     /// The run was cancelled before it finished.
     Interrupted,
     /// The run stopped on an error.
@@ -926,7 +926,7 @@ impl RunOutcome {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Detected => "detected",
-            Self::Undetected => "undetected",
+            Self::Found => "found",
             Self::Interrupted => "interrupted",
             Self::Failed => "failed",
             Self::Completed => "completed",

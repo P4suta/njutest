@@ -53,4 +53,4 @@
 {"seq":53,"timestamp":"2026-09-19T17:36:15.938253Z","elapsed_ms":1341,"payload":{"type":"evidence","evidence":{"file":"reached-v1.json","bytes":49,"digest":"d77c1d7db0f396354fd4d4452ebb966d883214ffd12e44f64c4da9727d66227f"}}}
 {"seq":54,"timestamp":"2026-09-19T17:36:15.941809Z","elapsed_ms":1345,"payload":{"type":"evidence","evidence":{"file":"touched-v1.json","bytes":300,"digest":"10cd698c4b1395ba23794c2963c1b1a271c0338f3ac5f9d88083a6dedbdac458"}}}
 {"seq":55,"timestamp":"2026-09-19T17:36:15.944678Z","elapsed_ms":1347,"payload":{"type":"evidence","evidence":{"file":"catalog-v1.json","bytes":4097,"digest":"e6b018db5030a75d2d26c44c08d088c433bf1e0f143e989c9c708e34a26fb090"}}}
-{"seq":56,"timestamp":"2026-09-19T17:36:15.950098Z","elapsed_ms":1353,"payload":{"type":"run-end","run":{"outcome":"undetected","events_emitted":55,"events_dropped":0}}}
+{"seq":56,"timestamp":"2026-09-19T17:36:15.950098Z","elapsed_ms":1353,"payload":{"type":"run-end","run":{"outcome":"found","events_emitted":55,"events_dropped":0}}}

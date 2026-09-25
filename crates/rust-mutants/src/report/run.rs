@@ -1344,6 +1344,6 @@ fn exit_code_of(merged: &RunDocument) -> u8 {
     if merged.findings.is_empty() {
         crate::run::EXIT_DETECTED
     } else {
-        crate::run::EXIT_UNDETECTED
+        crate::run::EXIT_FOUND
     }
 }
