@@ -353,6 +353,32 @@ fn a_row_says_it_lingered_exactly_when_its_recorded_execution_did() {
 }
 
 #[test]
+fn a_kill_recorded_from_a_signal_sent_from_outside_is_a_violation() {
+    let mut events = recording();
+    events[8]["mutant"]["signal"] = serde_json::json!(9);
+    events[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 9")),
+        "a SIGKILL with no failing test named is what a cancelled job or an out-of-memory \
+         killer leaves, and a kill kept from it hides a survivor from every run that reads it \
+         back: {audit}"
+    );
+    let mut raised = recording();
+    raised[8]["mutant"]["signal"] = serde_json::json!(6);
+    raised[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &raised);
+    assert!(
+        !violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 6")),
+        "an abort the process raised itself is a kill a mutation can cause: {audit}"
+    );
+}
+
+#[test]
 fn an_instrument_record_that_moved_a_line_is_a_violation() {
     let mut events = recording();
     events[2]["instrument"]["lines_after"] = serde_json::json!(41);

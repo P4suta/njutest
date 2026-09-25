@@ -100,6 +100,10 @@ pub struct Exec {
     pub alone: Isolation,
     /// Whether the harness had answered before the clock ended the process, which only the engine records.
     pub lingered: Linger,
+    /// The signal the process died of, where the producer recorded one.
+    pub signal: Option<i64>,
+    /// Every test the harness said failed, which only the engine records.
+    pub failed_tests: Vec<String>,
 }
 
 /// What a recording establishes about whether a process outlived its harness's answer.
@@ -313,6 +317,8 @@ fn exec(record: &Value) -> Exec {
         duration_ms: number(record, "duration_ms"),
         alone: Isolation::recorded(record.get("alone")),
         lingered: Linger::recorded(record.get("lingered")),
+        signal: record.get("signal").and_then(Value::as_i64),
+        failed_tests: strings(record, "failed_tests"),
     }
 }
 
