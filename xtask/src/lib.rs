@@ -425,6 +425,17 @@ fn slot(
     }
 }
 
+/// Every variable a platform's standard library or a POSIX tool reads its temporary directory from.
+const TEMPORARY_VARIABLES: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
+
+/// The variables that name this platform's temporary directory, in the order its standard library reads them.
+#[cfg(windows)]
+const TEMPORARY_READ_FROM: [&str; 3] = ["TMP", "TEMP", "TMPDIR"];
+
+/// The variables that name this platform's temporary directory, in the order its standard library reads them.
+#[cfg(not(windows))]
+const TEMPORARY_READ_FROM: [&str; 1] = ["TMPDIR"];
+
 /// Runs `command` with a temporary directory nothing else uses, and refuses whatever it leaves there.
 fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> ExitCode {
     let Some((program, arguments)) = command.split_first() else {
@@ -433,10 +444,13 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
             ExitCode::from(2),
         );
     };
-    let parent = match lanes::variable(process.environment, "TMPDIR") {
-        Some(named) => std::path::PathBuf::from(named),
-        None => std::path::PathBuf::from("/tmp"),
-    };
+    let parent = TEMPORARY_READ_FROM
+        .iter()
+        .find_map(|name| lanes::variable(process.environment, name))
+        .map_or_else(
+            || std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from,
+        );
     let scratch = match tempfile::Builder::new()
         .prefix("njutest-tidy-")
         .tempdir_in(&parent)
@@ -460,7 +474,10 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
         }
     };
     let mut running = Command::new(program);
-    running.args(arguments).env("TMPDIR", scratch.path());
+    running.args(arguments);
+    for name in TEMPORARY_VARIABLES {
+        running.env(name, scratch.path());
+    }
     let ran = work::run(&mut running, None, &stops, |_leader| Ok(()));
     let code = match ran {
         Ok(work::Ended::Exited(status)) => exit_status(status),
