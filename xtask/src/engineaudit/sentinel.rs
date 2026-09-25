@@ -462,7 +462,8 @@ fn carry_beside(
     };
     let body = source.as_bytes().get(start..end).unwrap_or_default();
     let mut item = json!({
-        "index": 0, "path": path, "name": "larger",
+        "index": 0, "name": "larger",
+        "item": { "package": "demo", "path": path, "ordinal": 0 },
         "body_digest": crate::engineaudit::carry::digest_of(body),
         "sealed": true, "unsealed": null
     });
@@ -515,6 +516,17 @@ fn carry_plants() -> Vec<Perturbation> {
                 &json!([]),
             ),
             tree: vec![("src/lib.rs", sealed.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an item named by another place than its own among its file's items",
+            beside: carry_beside(
+                "src/other.rs",
+                &sealed,
+                &json!({ "item": { "ordinal": 1 } }),
+                &json!([]),
+            ),
+            tree: vec![("src/other.rs", sealed.clone())],
             ..clean.clone()
         },
         Perturbation {

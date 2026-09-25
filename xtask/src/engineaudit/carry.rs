@@ -485,6 +485,7 @@ const PAGE: &str = include_str!("../../../docs/engine/carry.md");
 struct Cataloged {
     index: u64,
     path: String,
+    claimed: (String, u64),
     name: String,
     body: std::ops::Range<usize>,
     digest: String,
@@ -517,9 +518,15 @@ fn cataloged(skeletons: &serde_json::Value, touched: &serde_json::Value) -> Vec<
         .filter_map(|item| {
             let index = item.get("index")?.as_u64()?;
             let (path, body) = spans.get(&index)?.clone();
+            let named = item.get("item")?;
+            let claimed = (
+                named.get("path")?.as_str()?.to_owned(),
+                named.get("ordinal")?.as_u64()?,
+            );
             Some(Cataloged {
                 index,
                 path,
+                claimed,
                 name: item.get("name")?.as_str()?.to_owned(),
                 body,
                 digest: item.get("body_digest")?.as_str()?.to_owned(),
@@ -527,6 +534,29 @@ fn cataloged(skeletons: &serde_json::Value, touched: &serde_json::Value) -> Vec<
             })
         })
         .collect()
+}
+
+/// Every item's name held to the guards' record: its file, and its place among that file's items in catalog order.
+fn refs(items: &[Cataloged], notes: &mut super::Notes<'_>) {
+    let mut files: std::collections::BTreeMap<&str, Vec<&Cataloged>> =
+        std::collections::BTreeMap::new();
+    for item in items {
+        files.entry(item.path.as_str()).or_default().push(item);
+    }
+    for file in files.values_mut() {
+        file.sort_by_key(|item| item.index);
+    }
+    for (ordinal, item) in files.values().flat_map(|file| file.iter().enumerate()) {
+        if item.claimed.0 != item.path || usize::try_from(item.claimed.1) != Ok(ordinal) {
+            notes.violated(
+                &format!("{}#{}", item.path, item.index),
+                format!(
+                    "{} is named {}#{}, and the guards' record makes it {}#{ordinal}",
+                    item.name, item.claimed.0, item.claimed.1, item.path
+                ),
+            );
+        }
+    }
 }
 
 /// A byte offset the evidence keeps, where it is one this platform can index by.
@@ -592,6 +622,7 @@ pub(super) fn layer(
     for item in &items {
         bodies(item, &mut read, (page.lists(), skeletons), &mut notes);
     }
+    refs(&items, &mut notes);
     skeleton_folds(skeletons, &items, &mut read, &mut notes);
 }
 
@@ -839,7 +870,7 @@ fn skeleton_folds(
 /// `text` with every sealed body of the file at `path` replaced by the placeholder naming it, as the page defines it.
 fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> String {
     let mut ordered: Vec<&Cataloged> = items.iter().filter(|item| item.path == path).collect();
-    ordered.sort_by_key(|item| item.body.start);
+    ordered.sort_by_key(|item| item.index);
     let mut rendered = String::new();
     let mut at = 0_usize;
     for (ordinal, item) in ordered.iter().enumerate() {
