@@ -419,11 +419,85 @@ jobs:
             test -f "fixtures/fixture-assured/$path" || { echo "$name names '$path', which is not a file"; exit 1; }
           done
 
+  action-smoke-rust-mutants:
+    name: action-smoke-rust-mutants
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+      - name: Build the rust-mutants this commit would ship and put it on the path
+        run: |
+          cargo build --locked --release --bin rust-mutants
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+      - name: Run the action over a tree whose tests notice every mutant
+        id: detected
+        uses: ./.github/actions/rust-mutants
+        with:
+          working-directory: fixtures/fixture-assured
+          args: --offline --locked
+          changed-from: ""
+          upload-sarif: "false"
+      - name: Run the action over a tree that leaves a finding
+        id: found
+        continue-on-error: true
+        uses: ./.github/actions/rust-mutants
+        with:
+          working-directory: fixtures/fixture-simple
+          args: --offline --locked
+          changed-from: ""
+          upload-sarif: "false"
+      - name: Run the action over a change that touches nothing it measures
+        id: untouched
+        uses: ./.github/actions/rust-mutants
+        with:
+          working-directory: fixtures/fixture-assured
+          args: --offline --locked
+          changed-from: HEAD
+          upload-sarif: "false"
+      - name: Each verdict is the one its run reached, the job fails exactly where it should, and every path is a file
+        env:
+          DETECTED: ${{ toJSON(steps.detected.outputs) }}
+          FOUND: ${{ toJSON(steps.found.outputs) }}
+          FOUND_OUTCOME: ${{ steps.found.outcome }}
+          UNTOUCHED: ${{ toJSON(steps.untouched.outputs) }}
+        run: |
+          test "$(jq -r .verdict <<<"$UNTOUCHED")" = untouched || { echo "untouched: $UNTOUCHED"; exit 1; }
+          test "$(jq -r .verdict <<<"$DETECTED")" = detected || { echo "detected: $DETECTED"; exit 1; }
+          test "$(jq -r .verdict <<<"$FOUND")" = found || { echo "found: $FOUND"; exit 1; }
+          test "$FOUND_OUTCOME" = failure || { echo "a run with a finding let the job pass"; exit 1; }
+          for outputs in "$DETECTED" "$FOUND"; do
+            named=$(jq -r 'keys - ["verdict"] | join(",")' <<<"$outputs")
+            test "$named" = "report,sarif" || { echo "the action reported the paths '$named'"; exit 1; }
+            for name in report sarif; do
+              path=$(jq -r --arg name "$name" '.[$name]' <<<"$outputs")
+              test -f "$path" || { echo "$name names '$path', which is not a file"; exit 1; }
+            done
+          done
+
   ci-success:
     name: ci-success
     if: always()
     needs:
-      [test, lint, deny, audit, coverage, package-install, book, soundness, kani-verified, action-smoke]
+      [
+        test,
+        lint,
+        deny,
+        audit,
+        coverage,
+        package-install,
+        book,
+        soundness,
+        kani-verified,
+        action-smoke,
+        action-smoke-rust-mutants,
+      ]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
