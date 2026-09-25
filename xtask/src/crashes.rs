@@ -140,7 +140,10 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
     for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
         match event.get("type").and_then(Value::as_str) {
             Some("crash-exec") => {
-                let Some(record) = event.get("crash") else {
+                let Some((crash, record)) = event
+                    .get("crash")
+                    .and_then(|record| Some((text(record, "crash")?, record)))
+                else {
                     crashed
                         .steps
                         .push((String::new(), Step::Unread("crash-exec".to_owned())));
@@ -151,46 +154,29 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
                     Said::Whole(issued) => Some(issued),
                     Said::Unwhole => {
                         crashed.steps.push((
-                            text(record, "crash"),
+                            crash,
                             Step::Unread("crash-exec without a whole `issued`".to_owned()),
                         ));
                         continue;
                     }
                 };
-                let Some(noticed) = record.get("noticed").and_then(Value::as_bool) else {
-                    crashed.steps.push((
-                        text(record, "crash"),
-                        Step::Unread("crash-exec without `noticed`".to_owned()),
-                    ));
-                    continue;
+                let step = match ran(record, issued) {
+                    Some(run) => Step::Ran(run),
+                    None => Step::Unread("crash-exec without a field it requires".to_owned()),
                 };
-                crashed.steps.push((
-                    text(record, "crash"),
-                    Step::Ran(Run {
-                        target: text(record, "target"),
-                        test: text(record, "test"),
-                        stage: text(record, "stage"),
-                        exit_code: record
-                            .get("exit_code")
-                            .and_then(Value::as_i64)
-                            .unwrap_or(-1),
-                        outcome: text(record, "outcome"),
-                        noticed,
-                        issued,
-                        left: texts(record, "left"),
-                        failed: texts(record, "failed"),
-                    }),
-                ));
+                crashed.steps.push((crash, step));
             }
             Some("crash-step") => {
-                let Some(record) = event.get("step") else {
+                let Some((crash, taken)) = event
+                    .get("step")
+                    .and_then(|record| Some((text(record, "crash")?, record.get("taken")?)))
+                else {
                     crashed
                         .steps
                         .push((String::new(), Step::Unread("crash-step".to_owned())));
                     continue;
                 };
-                let taken = record.get("taken").cloned().unwrap_or_default();
-                crashed.steps.push((text(record, "crash"), step(&taken)));
+                crashed.steps.push((crash, step(taken)));
             }
             Some(_) | None => {}
         }
@@ -198,14 +184,33 @@ pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
     Ok(crashed)
 }
 
+/// One run of a crash as the runner writes it, or nothing where a field the schema requires is not there.
+fn ran(record: &Value, issued: Option<Issued>) -> Option<Run> {
+    Some(Run {
+        target: text(record, "target")?,
+        test: text(record, "test")?,
+        stage: text(record, "stage")?,
+        exit_code: record.get("exit_code")?.as_i64()?,
+        outcome: text(record, "outcome")?,
+        noticed: record.get("noticed")?.as_bool()?,
+        issued,
+        left: texts(record, "left")?,
+        failed: texts(record, "failed")?,
+    })
+}
+
 /// One step as the runner writes it.
 fn step(taken: &Value) -> Step {
-    match text(taken, "kind").as_str() {
-        "rejected" => Step::Rejected,
-        "tainted" => Step::Tainted,
-        "outside" => Step::Outside,
-        "route" => routed_as(taken).map_or_else(|| Step::Unread("route".to_owned()), Step::Route),
-        other => Step::Unread(other.to_owned()),
+    match taken.get("kind").and_then(Value::as_str) {
+        Some("rejected") => Step::Rejected,
+        Some("tainted") => Step::Tainted,
+        Some("outside") => Step::Outside,
+        Some("route") => match routed_as(taken) {
+            Some(asked) => Step::Route(asked),
+            None => Step::Unread("route".to_owned()),
+        },
+        Some(other) => Step::Unread(other.to_owned()),
+        None => Step::Unread("a step that names no kind".to_owned()),
     }
 }
 
@@ -316,17 +321,19 @@ pub fn issued_disagreements(
     found
 }
 
-/// One site as a report writes it.
+/// One site as a report writes it, or nothing where it is not the shape a run writes.
+///
+/// A decision says `on`, `left` and `failed` only where its kind carries them, and a site holds one it does not say as empty, as a site the steps decide does.
 #[must_use]
-pub fn site(record: &Value) -> Site {
-    let decision = record.get("decision").cloned().unwrap_or_default();
-    Site {
-        crash: text(record, "display_id"),
-        decision: text(&decision, "decision"),
-        on: text(&decision, "on"),
-        left: texts(&decision, "left"),
-        failed: texts(&decision, "failed"),
-    }
+pub fn site(record: &Value) -> Option<Site> {
+    let decision = record.get("decision")?;
+    Some(Site {
+        crash: text(record, "display_id")?,
+        decision: text(decision, "decision")?,
+        on: said(decision, "on")?,
+        left: said_list(decision, "left")?,
+        failed: said_list(decision, "failed")?,
+    })
 }
 
 /// What the ordered steps of one crash decide, by the run's own steps and none of its code.
@@ -540,14 +547,12 @@ fn stopped(run: &Run) -> bool {
 /// Each crash's steps decide it exactly, every recorded crash is a site of the report and every site is a recorded crash, and once a stop wrote into the tree every later crash is left undecided.
 #[must_use]
 pub fn disagreements(reported: &[Site], crashed: &Crashed) -> Vec<(String, String)> {
-    let mut order: Vec<&str> = Vec::new();
-    let mut steps: BTreeMap<&str, Vec<&Step>> = BTreeMap::new();
+    let mut steps: Vec<(&str, Vec<&Step>)> = Vec::new();
     for (crash, step) in &crashed.steps {
-        let held = steps.entry(crash.as_str()).or_insert_with(|| {
-            order.push(crash.as_str());
-            Vec::new()
-        });
-        held.push(step);
+        match steps.iter_mut().find(|(held, _)| *held == crash.as_str()) {
+            Some((_, held)) => held.push(step),
+            None => steps.push((crash.as_str(), vec![step])),
+        }
     }
     let mut sites: BTreeMap<&str, &Site> = BTreeMap::new();
     let mut found = Vec::new();
@@ -560,26 +565,25 @@ pub fn disagreements(reported: &[Site], crashed: &Crashed) -> Vec<(String, Strin
         }
     }
     let mut stained = false;
-    for crash in order {
-        let held = steps.get(crash).map_or(&[][..], Vec::as_slice);
+    for (crash, held) in &steps {
         let derived = match decided(crash, held, stained) {
             Ok(derived) => derived,
             Err(unmade) => {
-                found.push((crash.to_owned(), unmade.why));
+                found.push(((*crash).to_owned(), unmade.why));
                 continue;
             }
         };
         stained |= derived.outside;
         match sites.remove(crash) {
             None => found.push((
-                crash.to_owned(),
+                (*crash).to_owned(),
                 format!(
                     "the recording decides {} and no site of the report holds it",
                     derived.site.decision
                 ),
             )),
             Some(site) if *site != derived.site => found.push((
-                crash.to_owned(),
+                (*crash).to_owned(),
                 format!(
                     "the report says {} on {:?} and the recorded steps decide {} on {:?}",
                     site.decision, site.on, derived.site.decision, derived.site.on
@@ -604,26 +608,33 @@ fn unmade(why: &str) -> Unmade {
     }
 }
 
-/// One string field, or the empty string where the recording does not carry it.
-fn text(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .unwrap_or_default()
+/// One string field, or nothing where it is not there or is not a string.
+fn text(value: &Value, key: &str) -> Option<String> {
+    value.get(key)?.as_str().map(ToOwned::to_owned)
 }
 
-/// One list of strings, or none where the recording does not carry it.
-fn texts(value: &Value, key: &str) -> Vec<String> {
+/// One list of strings, or nothing where it is not there or holds something that is not a string.
+fn texts(value: &Value, key: &str) -> Option<Vec<String>> {
     value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+        .get(key)?
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(ToOwned::to_owned))
+        .collect()
+}
+
+/// A string field only some decisions carry: absent is a decision that does not say it, held as empty; present and not a string is nothing.
+fn said(value: &Value, key: &str) -> Option<String> {
+    match value.get(key) {
+        None => Some(String::new()),
+        Some(_) => text(value, key),
+    }
+}
+
+/// A list field only some decisions carry: absent is a decision that does not say it, held as empty; present and not a list of strings is nothing.
+fn said_list(value: &Value, key: &str) -> Option<Vec<String>> {
+    match value.get(key) {
+        None => Some(Vec::new()),
+        Some(_) => texts(value, key),
+    }
 }

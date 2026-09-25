@@ -445,3 +445,58 @@ fn a_function_behind_a_test_feature_is_test_support_rather_than_an_unreached_cap
          declaration of test support that it is: {report}"
     );
 }
+
+#[test]
+fn a_defaulting_call_is_counted_and_a_test_module_is_not() {
+    let source = "fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) + v.map_or(1, |x| x) }\n\
+                  fn all(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }\n\
+                  #[cfg(test)] mod tests { fn t(v: Option<u8>) -> u8 { v.unwrap_or_default() } }\n";
+    assert_eq!(
+        xtask::defaulted::defaulted_in(source).expect("the source parses"),
+        3,
+        "a value supplied where the input gave none is counted where the audit runs, and a test \
+         building its own specimen is not the audit"
+    );
+}
+
+#[test]
+fn a_reader_is_held_to_exactly_its_ceiling() {
+    let counted: std::collections::BTreeMap<String, usize> =
+        std::iter::once(("xtask/src/wire.rs".to_owned(), 3)).collect();
+    assert_eq!(
+        xtask::defaulted::held(&counted, "3 xtask/src/wire.rs\n"),
+        Ok(3)
+    );
+    let above = xtask::defaulted::held(&counted, "2 xtask/src/wire.rs\n").expect_err("above");
+    assert!(
+        above
+            .iter()
+            .any(|one| one.contains("against a ceiling of 2")),
+        "{above:?}"
+    );
+    let below = xtask::defaulted::held(&counted, "5 xtask/src/wire.rs\n").expect_err("below");
+    assert!(
+        below
+            .iter()
+            .any(|one| one.contains("lower the ceiling to 3")),
+        "a fall is kept by lowering the ceiling to it, or the next change can spend it: {below:?}"
+    );
+    let fallen: std::collections::BTreeMap<String, usize> =
+        std::iter::once(("xtask/src/wire.rs".to_owned(), 0)).collect();
+    let none = xtask::defaulted::held(&fallen, "3 xtask/src/wire.rs\n").expect_err("fallen");
+    assert!(
+        none.iter().any(|one| one.contains("remove its line")),
+        "{none:?}"
+    );
+    let unnamed = xtask::defaulted::held(&counted, "").expect_err("unnamed");
+    assert!(
+        unnamed.iter().any(|one| one.contains("ceiling of 0")),
+        "{unnamed:?}"
+    );
+    let gone = xtask::defaulted::held(&std::collections::BTreeMap::new(), "4 xtask/src/gone.rs\n")
+        .expect_err("a stale line");
+    assert!(
+        gone.iter().any(|one| one.contains("remove the line")),
+        "{gone:?}"
+    );
+}

@@ -131,7 +131,10 @@ impl Started {
             (Some(_), None, true) => Role::Delayed,
             (None, Some(_), true) => Role::Undelayed,
             (None, None, true) => Role::Unknown,
-            (None, None, false) => self.knob().map_or(Role::Unknown, Role::Knob),
+            (None, None, false) => match self.knob() {
+                Some(knob) => Role::Knob(knob),
+                None => Role::Unknown,
+            },
             (Some(_), Some(_), _) | (Some(_), None, false) | (None, Some(_), false) => {
                 Role::Unknown
             }
@@ -152,7 +155,10 @@ impl Started {
         let mut words: Vec<String> = self
             .environment
             .iter()
-            .map(|(name, value)| format!("{name}={}", value.as_deref().unwrap_or("<not text>")))
+            .map(|(name, value)| match value {
+                Some(value) => format!("{name}={value}"),
+                None => format!("{name}=<not text>"),
+            })
             .collect();
         words.extend(self.launcher.iter().cloned());
         words.extend(self.arguments.iter().cloned());

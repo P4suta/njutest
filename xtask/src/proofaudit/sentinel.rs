@@ -203,13 +203,14 @@ fn crashes_planted_against_evidence(clean: &Perturbation) -> Vec<Perturbation> {
             "a stop claimed over a run issued another mutation than the site",
             crash_reported(&restarted, "restarted", None),
             reissued(crash_recorded(crash_restarted()), |issued| {
+                let nonce = "a".repeat(32);
                 let other = format!(
-                    "{}\t{}\t{}\t{}\n",
+                    "{}\t{nonce}\t{}\t{}\n",
                     crate::crashes::NOTICE_SCHEMA,
-                    issued["nonce"].as_str().unwrap_or_default(),
                     "c".repeat(64),
                     "e".repeat(64)
                 );
+                issued["nonce"] = json!(nonce);
                 issued["mutant"] = json!("e".repeat(64));
                 issued["read"] = json!(other);
             }),
@@ -243,16 +244,13 @@ fn notice(nonce: &str) -> String {
 
 /// `events` with every crashed run issued a nonce of its own, and the notice it published naming that nonce.
 fn nonced(mut events: Vec<Value>) -> Vec<Value> {
-    let mut next = 0_u32;
-    for event in &mut events {
-        let Some(issued) = event
+    let issued_runs = events.iter_mut().filter_map(|event| {
+        event
             .get_mut("crash")
             .and_then(|crash| crash.get_mut("issued"))
             .filter(|issued| issued.is_object())
-        else {
-            continue;
-        };
-        next = next.checked_add(1).unwrap_or(next);
+    });
+    for (issued, next) in issued_runs.zip(1_u32..) {
         let nonce = format!("{next:032x}");
         if issued.get("read").is_some_and(Value::is_string) {
             issued["read"] = json!(notice(&nonce));
@@ -1175,13 +1173,7 @@ pub fn clean() -> Perturbation {
             document
         },
         events: Some(routes()),
-        engine: Some(vec![
-            built(),
-            verified(&["--test-threads=1"]),
-            touch("baseline", &[0, 1]),
-            touch("control", &[0, 1]),
-            perturbed("survived", &[], &recorded_reach(&[0, 1])),
-        ]),
+        engine: Some(clean_engine()),
         shards: Vec::new(),
         outputs: Vec::new(),
     }
@@ -1339,6 +1331,17 @@ fn explored_as(document: &mut Value, explored: Value) {
     }
 }
 
+/// The engine recording of the clean specimen: its build, its single-threaded baseline, one control, and one knob's control that held.
+fn clean_engine() -> Vec<Value> {
+    vec![
+        built(),
+        verified(&["--test-threads=1"]),
+        touch("baseline", &[0, 1]),
+        touch("control", &[0, 1]),
+        perturbed("survived", &[], &recorded_reach(&[0, 1])),
+    ]
+}
+
 /// The planted defect of the concurrency layer: a delayed guard whose control ran past its bound, recorded as a sample that passed.
 fn waited_yet_sampled(clean: Perturbation) -> Perturbation {
     let mut document = clean.document.clone();
@@ -1354,7 +1357,7 @@ fn waited_yet_sampled(clean: Perturbation) -> Perturbation {
             "delay": { "site": 0, "pause_ms": 100 }
         } } }),
     );
-    let mut engine = clean.engine.clone().unwrap_or_default();
+    let mut engine = clean_engine();
     engine.push(delayed);
     Perturbation {
         name: "a delayed guard whose control ran past its bound, recorded as a sample that passed",
@@ -1386,7 +1389,7 @@ fn passed_yet_broke(clean: Perturbation) -> Perturbation {
             "delay": { "site": 0, "pause_ms": 100 }
         } } }),
     );
-    let mut engine = clean.engine.clone().unwrap_or_default();
+    let mut engine = clean_engine();
     engine.push(delayed);
     Perturbation {
         name: "a delayed guard whose control passed, recorded as a schedule that broke the binary",

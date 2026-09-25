@@ -74,6 +74,8 @@ pub enum XtCode {
     ProofShardNotMerged,
     /// A document on its schema is not one this audit can read.
     ProofUnshaped,
+    /// A report on its schema lacks a field a layer reads.
+    ProofUnreadReport,
     /// A thread standing contradicts the recording.
     ThreadsContradicted,
     /// An exploration contradicts its recorded controls.
@@ -132,6 +134,8 @@ pub enum XtCode {
     RecordingLine,
     /// A recording line departs from its producer's schema.
     RecordingOffSchema,
+    /// A recording line on its schema lacks a field a reader reads.
+    RecordingUnread,
     /// A report of `report-diff` could not be read.
     DiffUnreadable,
     /// The bill of materials could not be made.
@@ -335,6 +339,11 @@ impl XtCode {
                 "The document is on its published schema and is not one this audit can read into a complete report or a shard.",
                 "report it; a document on its schema that this audit cannot read is a gap in the audit",
             ),
+            Self::ProofUnreadReport => (
+                "XT2011",
+                "The report passed its schema and still lacks a field a layer of this audit reads, so the schema and the reader disagree.",
+                "report it; either the schema should require the field or the reader should not demand it",
+            ),
             Self::ThreadsContradicted => (
                 "XT2101",
                 "A report's thread standing for a test binary contradicts what the engine recording witnesses, or is no standing a run gives.",
@@ -479,6 +488,11 @@ impl XtCode {
                 "XT6003",
                 "A line of a recording departs from its producer's published schema, so a reader could meet an absent required field.",
                 "re-run with `--trace` using this release; a recording off its schema is not one to re-decide",
+            ),
+            Self::RecordingUnread => (
+                "XT6004",
+                "A line of a recording passed its producer's schema and still lacks a field a reader of this audit reads, so the schema and the reader disagree.",
+                "report it; either the schema should require the field or the reader should not demand it",
             ),
             Self::DiffUnreadable => (
                 "XT7001",

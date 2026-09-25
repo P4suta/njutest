@@ -2187,6 +2187,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         adrs,
         surfaces,
         reached,
+        defaulted,
         waivers,
         tracked,
     ] {
@@ -3132,6 +3133,49 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
          under the ceiling of {ceiling}",
         only_tests.len()
     ))
+}
+
+/// Every audit reader supplies no more values its input never gave than `xtask/defaulted_ceiling.txt` allows it, and exactly that many.
+///
+/// # Errors
+/// Every file above or below its ceiling, and a source or ceiling that does not read.
+pub fn defaulted(root: &Path) -> Result<String, GateFailure> {
+    let mut counted = BTreeMap::new();
+    for file in rust_files_under(&root.join("xtask/src"))? {
+        let relative = file
+            .strip_prefix(root)
+            .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?
+            .components()
+            .map(|part| {
+                part.as_os_str().to_str().ok_or_else(|| {
+                    GateFailure(format!("{}: a path that is not UTF-8", file.display()))
+                })
+            })
+            .collect::<Result<Vec<&str>, GateFailure>>()?
+            .join("/");
+        if !crate::defaulted::reads_for_an_audit(&relative) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+        let count = crate::defaulted::defaulted_in(&text)
+            .map_err(|error| GateFailure(format!("{relative}: {error}")))?;
+        counted.insert(relative, count);
+    }
+    let ceiling = root.join("xtask/defaulted_ceiling.txt");
+    let written = std::fs::read_to_string(&ceiling)
+        .map_err(|error| GateFailure(format!("{}: {error}", ceiling.display())))?;
+    match crate::defaulted::held(&counted, &written) {
+        Ok(total) => Ok(format!(
+            "defaulted: {total} value(s) supplied where an audit reader's input gave none, each \
+             file at its ceiling"
+        )),
+        Err(refused) => Err(GateFailure(format!(
+            "defaulted: an audit reader holds a record to a schema and then answers for an absent \
+             field anyway:\n  {}",
+            refused.join("\n  ")
+        ))),
+    }
 }
 
 /// Every `.rs` file under `directory`, skipping anything built.

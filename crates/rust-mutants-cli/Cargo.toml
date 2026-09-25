@@ -114,6 +114,10 @@ name = "toolchain_doctest"
 path = "tests/toolchain_doctest.rs"
 
 [[test]]
+name = "toolchain_engine_runs"
+path = "tests/toolchain_engine_runs.rs"
+
+[[test]]
 name = "toolchain_errors"
 path = "tests/toolchain_errors.rs"
 
