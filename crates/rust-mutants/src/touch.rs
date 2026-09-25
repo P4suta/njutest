@@ -332,7 +332,7 @@ pub struct ItemRef {
 pub enum Completeness {
     /// The process ran to its end, so the union is every item it entered.
     Whole,
-    /// The process was ended at its first failing test, so the union holds what came before that failure: enough to say why it failed, not what a longer run would have entered.
+    /// A test failed, and a process may be ended at its first failure, so the union is claimed only up to it: enough to say why it failed, not what a longer run would have entered.
     UpToFirstFailure,
     /// A clock, a signal, or a cancellation ended the process, so the union says nothing about what it would have entered.
     Cut,

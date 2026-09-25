@@ -338,6 +338,9 @@ pub struct PrepareOptions {
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again.
     pub exclude: Vec<Pattern>,
+    /// The files a change set leaves this run to mutate, among those `include` and `exclude` select.
+    /// Empty narrows nothing.
+    pub narrowing: Vec<Pattern>,
     /// The member packages to mutate.
     /// Empty means every member.
     pub packages: Vec<String>,
@@ -381,6 +384,18 @@ pub struct PrepareOptions {
     pub validation_filter: Option<crate::run::Filter>,
 }
 
+impl PrepareOptions {
+    /// The patterns a file must match to be mutated: the change set's where there is one, the configuration's otherwise.
+    #[must_use]
+    pub fn mutable(&self) -> &[Pattern] {
+        if self.narrowing.is_empty() {
+            &self.include
+        } else {
+            &self.narrowing
+        }
+    }
+}
+
 impl Default for PrepareOptions {
     fn default() -> Self {
         Self {
@@ -389,6 +404,7 @@ impl Default for PrepareOptions {
             scratch_working_directory: false,
             include: Vec::new(),
             exclude: Vec::new(),
+            narrowing: Vec::new(),
             packages: Vec::new(),
             skips: Vec::new(),
             measurements: None,
@@ -453,8 +469,8 @@ impl Request {
             test: None,
             args: Vec::new(),
             timeout: None,
-            entered: Recording::Off,
             first: None,
+            entered: Recording::Off,
         }
     }
 
@@ -1735,17 +1751,10 @@ impl Session {
                 Err(_beyond_this_target) => None,
             })
             .collect::<Option<BTreeSet<_>>>()?;
-        let completeness = match result.conclusion {
-            _ if cancel.is_cancelled() => crate::touch::Completeness::Cut,
-            MutantConclusion::Killed | MutantConclusion::Survived => {
-                crate::touch::Completeness::Whole
-            }
-            MutantConclusion::NotRun
-            | MutantConclusion::StepLimitReached { .. }
-            | MutantConclusion::Waited
-            | MutantConclusion::Inconclusive
-            | MutantConclusion::Unobserved
-            | MutantConclusion::Errored => crate::touch::Completeness::Cut,
+        let completeness = if cancel.is_cancelled() {
+            crate::touch::Completeness::Cut
+        } else {
+            completeness_of(&result.stopped, &result.conclusion)
         };
         let written = text
             .lines()
@@ -1798,6 +1807,7 @@ impl Session {
         (timeout, source): (Duration, TimeoutSource),
     ) -> Result<(), EngineError> {
         self.workspace.trace.mutant_exec(MutantExecRecord {
+            entered_records: None,
             id: String::new(),
             index: u32::MAX,
             target: target.id.clone(),
@@ -1812,7 +1822,6 @@ impl Session {
             timeout_source: source.name().to_owned(),
             alone: false,
             lingered: result.lingered,
-            entered_records: None,
         });
         Ok(())
     }
@@ -2295,6 +2304,7 @@ pub fn preview(
             selection: selection(options)?,
             include: options.include.clone(),
             exclude: options.exclude.clone(),
+            narrowing: options.narrowing.clone(),
             packages: options.packages.clone(),
             skips: options.skips.clone(),
         },
@@ -2769,6 +2779,44 @@ impl TargetAggregate {
     }
 }
 
+/// How much of a process its union of entered items accounts for, read from the one way it ended and then from what it concluded.
+const fn completeness_of(
+    stopped: &execute::Stopped,
+    conclusion: &MutantConclusion,
+) -> crate::touch::Completeness {
+    use crate::touch::Completeness;
+    use execute::Stopped;
+    match stopped {
+        Stopped::Exited { .. } => match conclusion {
+            MutantConclusion::Survived => Completeness::Whole,
+            MutantConclusion::Killed => Completeness::UpToFirstFailure,
+            MutantConclusion::NotRun
+            | MutantConclusion::StepLimitReached { .. }
+            | MutantConclusion::Waited
+            | MutantConclusion::Inconclusive
+            | MutantConclusion::Unobserved
+            | MutantConclusion::Errored => Completeness::Cut,
+        },
+        Stopped::Answered => match conclusion {
+            MutantConclusion::Killed => Completeness::UpToFirstFailure,
+            MutantConclusion::Survived
+            | MutantConclusion::NotRun
+            | MutantConclusion::StepLimitReached { .. }
+            | MutantConclusion::Waited
+            | MutantConclusion::Inconclusive
+            | MutantConclusion::Unobserved
+            | MutantConclusion::Errored => Completeness::Cut,
+        },
+        Stopped::NotStarted
+        | Stopped::TimedOut { .. }
+        | Stopped::Stalled { .. }
+        | Stopped::Cancelled { .. }
+        | Stopped::WaitFailed
+        | Stopped::StepLimitReached { .. }
+        | Stopped::StepProtocolFailed { .. } => Completeness::Cut,
+    }
+}
+
 #[cfg(kani)]
 mod kani_laws {
     use super::{AttemptLedger, TargetAggregate, WaitedAttempt, aggregate_outcomes, retry_outcome};
@@ -3169,6 +3217,7 @@ const fn unreached() -> MutantResult {
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
         leader: None,
+        stopped: execute::Stopped::NotStarted,
         lingered: false,
     }
 }
@@ -3190,20 +3239,10 @@ mod tests {
 
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {
-            entered: None,
             conclusion,
-            target: "target".to_owned(),
-            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
-            protocol: crate::execute::Protocol::Unanswered,
-            summary: None,
-            signal: None,
-            failed_tests: Vec::new(),
-            passed_tests: Vec::new(),
-            ignored_tests: Vec::new(),
-            leader: None,
-            lingered: false,
+            ..MutantResult::apparatus_error("target", String::new())
         }
     }
 

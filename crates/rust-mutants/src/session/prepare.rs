@@ -290,15 +290,20 @@ fn closure_of(
         text.replace(target_text, "$target")
             .replace(root_text, "$root")
     };
-    for read in &checked.inputs.env {
-        files.insert(
-            format!("$env/{}", read.name),
-            env_value(read.value.as_deref(), portable),
-        );
+    let env: BTreeMap<&str, Option<&str>> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.env.iter())
+        .map(|(name, value)| (name.as_str(), value.as_deref()))
+        .collect();
+    for (name, value) in env {
+        files.insert(format!("$env/{name}"), env_value(value, portable));
     }
-    for told in &checked.inputs.emitted {
-        let (name, digest) = emitted_entry(told, (root, target), portable)?;
-        files.insert(name, digest);
+    for scripts in crate::cargo::emitted_of(&checked.messages).values() {
+        for told in scripts {
+            let (name, digest) = emitted_entry(told, (root, target), portable)?;
+            files.insert(name, digest);
+        }
     }
     if files.is_empty() {
         return Ok(String::new());
@@ -725,6 +730,7 @@ fn gated(
             selection: selection(options)?,
             include: options.include.clone(),
             exclude: options.exclude.clone(),
+            narrowing: options.narrowing.clone(),
             packages: options.packages.clone(),
             skips: options.skips.clone(),
         },
@@ -765,11 +771,12 @@ fn unit_sources(
         .iter()
         .map(|package| (package.id.as_str(), package.name.as_str()))
         .collect();
+    let emitted = crate::cargo::emitted_of(&checked.messages);
     let mut read: BTreeMap<PathBuf, Vec<u8>> = BTreeMap::new();
     let mut units = Vec::new();
-    for unit in crate::cargo::unit_inputs_of(&checked.messages, root)? {
+    for unit in crate::cargo::every_unit_of(&checked.messages, root)? {
         let mut files = BTreeMap::new();
-        for path in &unit.inputs.files {
+        for path in &unit.inputs {
             let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
                 (Ok(relative), _) => (relative, "$root/"),
                 (Err(_), Ok(relative)) => (relative, "$target/"),
@@ -789,6 +796,10 @@ fn unit_sources(
             };
             files.insert(format!("{class}{name}"), bytes);
         }
+        let told: &[crate::cargo::Emitted] = match emitted.get(&unit.package_id) {
+            Some(told) if !unit.target.is_custom_build() => told,
+            Some(_) | None => &[],
+        };
         units.push(crate::skeleton::UnitSource {
             package: names
                 .get(unit.package_id.as_str())
@@ -798,19 +809,11 @@ fn unit_sources(
             test: unit.test,
             files,
             env: unit
-                .inputs
                 .env
                 .iter()
-                .map(|read| {
-                    (
-                        read.name.clone(),
-                        env_value(read.value.as_deref(), portable),
-                    )
-                })
+                .map(|(name, value)| (name.clone(), env_value(value.as_deref(), portable)))
                 .collect(),
-            emitted: unit
-                .inputs
-                .emitted
+            emitted: told
                 .iter()
                 .map(|told| emitted_entry(told, (root, target), portable))
                 .collect::<Result<_, _>>()?,
@@ -1178,7 +1181,7 @@ fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, En
     let mut sources: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut placements: BTreeMap<String, Vec<Placement>> = BTreeMap::new();
     for file in &discovery.files {
-        if file.whole_file.is_some() {
+        if file.whole_file.is_some() && !discovery.marked_only.contains(&file.path) {
             continue;
         }
         let source =

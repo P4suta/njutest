@@ -125,6 +125,7 @@ fn options<'r>() -> DiscoverOptions<'r> {
         selection: Selection::tier(&REGISTRY, Tier::All),
         include: Vec::new(),
         exclude: Vec::new(),
+        narrowing: Vec::new(),
         packages: Vec::new(),
         skips: Vec::new(),
     }

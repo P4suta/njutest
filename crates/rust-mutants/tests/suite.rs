@@ -87,6 +87,8 @@ mod runner;
 mod sentinel;
 #[path = "session.rs"]
 mod session;
+#[path = "skeleton.rs"]
+mod skeleton;
 #[path = "snapshot.rs"]
 mod snapshot;
 #[path = "snapshot_layout.rs"]

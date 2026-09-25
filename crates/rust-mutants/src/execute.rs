@@ -1843,6 +1843,8 @@ pub struct MutantResult {
     pub ignored_tests: Vec<String>,
     /// The items the whole process entered, when the execution was asked to record them and could.
     pub entered: Option<crate::touch::Entered>,
+    /// The one way the process ended, which is what an account of it can claim to be whole on.
+    pub stopped: Stopped,
     /// The id of the process the execution started, which is the parent of whatever it starts, or nothing where none started.
     pub leader: Option<u32>,
     /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's and the process outlived it.
@@ -1900,6 +1902,7 @@ impl MutantResult {
     pub(crate) fn apparatus_error(target: &str, message: String) -> Self {
         Self {
             entered: None,
+            stopped: Stopped::NotStarted,
             conclusion: MutantConclusion::Errored,
             target: target.to_owned(),
             exit_code: EXIT_CODE_UNAVAILABLE,
@@ -2056,6 +2059,7 @@ pub fn exec(
         ignored_tests: lines.ignored,
         leader: result.leader,
         lingered,
+        stopped: observation.stopped,
     }
 }
 
