@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
-    Toolchain, emitted_of, parse_messages, resolve_executable, units_of,
+    Toolchain, compile_time_inputs, emitted_of, parse_messages, resolve_executable, units_of,
 };
 use rust_mutants::runner::{Cancel, run};
 use rust_mutants::trace::Recorder;
@@ -423,9 +423,18 @@ fn emitted_in(copy: &Path, target: &Path) -> Vec<Vec<rust_mutants::cargo::Emitte
         "{}",
         std::str::from_utf8(&result.output).expect("the fixture writes exact UTF-8")
     );
-    emitted_of(&parse_messages(&result.stdout).expect("messages"))
-        .into_values()
-        .collect()
+    let messages = parse_messages(&result.stdout).expect("messages");
+    let compile_time = compile_time_inputs(&messages, copy).expect("compile-time inputs");
+    let copy = copy
+        .canonicalize()
+        .expect("the copy has a physical spelling");
+    assert!(
+        compile_time.iter().any(|path| path
+            .canonicalize()
+            .is_ok_and(|path| path == copy.join("build.rs"))),
+        "the build script's own source is read for the build: {compile_time:?}"
+    );
+    emitted_of(&messages).into_values().collect()
 }
 
 #[test]
