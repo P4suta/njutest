@@ -1012,9 +1012,16 @@ fn a_child_that_lost_the_environment_belongs_to_the_execution_that_started_it() 
         !ours(&child(4_100_000), Some(4_200_000), &others),
         "a child whose parent led another execution is that one's, however close in time"
     );
+    #[cfg(unix)]
     assert!(
         !ours(&child(std::process::id()), Some(4_200_000), &others),
         "a child whose parent is still running belongs to whatever is running"
+    );
+    #[cfg(not(unix))]
+    assert!(
+        ours(&child(std::process::id()), Some(4_200_000), &others),
+        "a platform that is not asked whether a process still runs cannot rule out that it \
+         left this execution's child, so the survival is not read past it"
     );
     assert!(
         ours(&child(0), Some(4_200_000), &others)
