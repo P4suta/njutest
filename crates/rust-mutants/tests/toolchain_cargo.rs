@@ -458,9 +458,9 @@ fn what_a_build_script_emitted_is_kept_for_the_package_it_builds_for() {
     let after = emitted_in(&copy, target.path());
     assert_eq!(
         after
-            .iter()
-            .flatten()
-            .map(|told| told.cfgs.clone())
+            .concat()
+            .into_iter()
+            .map(|told| told.cfgs)
             .collect::<Vec<_>>(),
         [vec!["waived".to_owned()]],
         "a configuration the build script sets is in no dep-info, and changes what compiles"
