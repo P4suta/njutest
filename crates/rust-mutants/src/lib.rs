@@ -19,6 +19,7 @@ pub mod equivalence;
 pub mod error;
 pub mod execcost;
 pub mod execute;
+pub mod facts;
 pub mod flatten;
 pub mod git;
 pub mod glob;
