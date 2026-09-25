@@ -446,4 +446,14 @@ fn every_unit_names_each_file_it_read_whatever_its_kind_and_each_variable_it_ask
          unit of its own, and a library reads a text file and a generated file as surely \
          as it reads its Rust"
     );
+    for unit in &units {
+        let told = unit.inputs.emitted.len();
+        let expected = usize::from(!unit.target.is_custom_build());
+        assert_eq!(
+            told, expected,
+            "{}: every unit of the package is compiled with what its build script emitted, \
+             and the build script itself with none of it",
+            unit.target.name
+        );
+    }
 }

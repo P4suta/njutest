@@ -4,7 +4,7 @@
 //! Preparing a workspace: the gate it stands on, what the proof layers establish before anything is instrumented, and the one build every accepted mutant lives in.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{PrepareOptions, Session, Verified, verify};
@@ -127,6 +127,14 @@ fn closure_of(
         );
         files.insert(format!("$env/{}", read.name), value);
     }
+    let portable = |text: &str| {
+        text.replace(target_text, "$target")
+            .replace(root_text, "$root")
+    };
+    for told in &checked.inputs.emitted {
+        let (name, digest) = emitted_entry(told, portable);
+        files.insert(name, digest);
+    }
     if files.is_empty() {
         return Ok(String::new());
     }
@@ -135,6 +143,42 @@ fn closure_of(
             .iter()
             .map(|(name, digest)| (name.as_str(), digest.as_str())),
     ))
+}
+
+/// What one build script emitted, as a closure entry: named by the directory it wrote into, and digested over every configuration, variable, and link request, with the run's own directories spelled portably.
+fn emitted_entry(
+    told: &crate::cargo::Emitted,
+    portable: impl Fn(&str) -> String,
+) -> (String, String) {
+    let named = told
+        .out_dir
+        .as_deref()
+        .and_then(Path::to_str)
+        .map_or_else(|| "unnamed".to_owned(), &portable);
+    let mut said = String::new();
+    for (kind, values) in [
+        ("cfg", told.cfgs.clone()),
+        (
+            "env",
+            told.env
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect(),
+        ),
+        ("lib", told.linked_libs.clone()),
+        ("path", told.linked_paths.clone()),
+    ] {
+        for value in values {
+            said.push_str(kind);
+            said.push('\0');
+            said.push_str(&portable(&value));
+            said.push('\n');
+        }
+    }
+    (
+        format!("$emitted/{named}"),
+        crate::id::digest(said.as_bytes()),
+    )
 }
 
 /// The digest of every manifest, the lock file, and the cargo configuration the build read.
@@ -829,10 +873,7 @@ fn resealed(
 /// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
-fn plan_tree(
-    root: &std::path::Path,
-    discovery: &discover::Discovery,
-) -> Result<Planned, EngineError> {
+fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, EngineError> {
     let found: Vec<Found> = discovery
         .candidates
         .iter()
