@@ -457,6 +457,7 @@ pub fn sharded_clean() -> Result<Perturbation, SpecimenError> {
         events: None,
         engine: None,
         shards,
+        outputs: Vec::new(),
     })
 }
 

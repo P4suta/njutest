@@ -652,11 +652,13 @@ struct RunnerEvidence {
 /// # Errors
 /// The first line that does not read, as the recording's own reader says it.
 fn executions_of(text: &str) -> Result<Vec<serde_json::Value>, crate::route::ReadError> {
-    Ok(crate::route::events(text)?
-        .into_iter()
-        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
-        .filter_map(|mut event| event.get_mut("exec").map(serde_json::Value::take))
-        .collect())
+    Ok(
+        crate::route::events(text, crate::schemas::Producer::Runner)?
+            .into_iter()
+            .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
+            .filter_map(|mut event| event.get_mut("exec").map(serde_json::Value::take))
+            .collect(),
+    )
 }
 
 /// The flat view of the report at `path` holding `text`, once it is JSON, on its published schema, and one build measured whole.
