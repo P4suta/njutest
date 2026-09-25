@@ -81,18 +81,14 @@ impl Toolchain {
         let cargo_version = banner(&cargo)?;
         let rustc_version = banner(&rustc)?;
         let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel)?;
-        let pinned_cargo = pinned(
-            (&cargo, "cargo"),
-            sysroot.as_deref(),
-            &cargo_version,
-            banner,
-        )?;
-        let pinned_rustc = pinned(
-            (&rustc, "rustc"),
-            sysroot.as_deref(),
-            &rustc_version,
-            banner,
-        )?;
+        let chosen_by_path = name.components().count() == 1 && !name.is_absolute();
+        let toolchain = if chosen_by_path {
+            sysroot.as_deref()
+        } else {
+            None
+        };
+        let pinned_cargo = pinned((&cargo, "cargo"), toolchain, &cargo_version, banner)?;
+        let pinned_rustc = pinned((&rustc, "rustc"), toolchain, &rustc_version, banner)?;
         let env = match options.env.clone() {
             Some(env) if pinned_rustc != rustc => {
                 Some(with_toolchain(env, &pinned_rustc, sysroot.as_deref())?)
@@ -241,6 +237,7 @@ fn diagnostic_os(value: &OsStr) -> String {
 /// The executable `name` in the toolchain directory `sysroot` where it says exactly what `located` said, which is the same program without whatever chose it, and otherwise `located`.
 ///
 /// A shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is asked once, in the directory the run was asked in; every later command runs in a snapshot, which such a shim may refuse or answer differently.
+/// Only a cargo found by its bare name is pinned: one named by its path is somebody's choice, a wrapper perhaps, and is run as named.
 fn pinned(
     (located, name): (&Path, &str),
     sysroot: Option<&Path>,

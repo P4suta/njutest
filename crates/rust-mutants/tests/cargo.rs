@@ -637,3 +637,54 @@ fn a_toolchain_chosen_where_the_run_was_asked_is_the_one_every_later_command_run
         "and cargo compiles with that toolchain's own rustc rather than asking the shim again"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_cargo_named_by_its_path_is_the_one_every_command_runs() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let root = std::fs::canonicalize(temp.path())
+        .unwrap_or_else(|error| panic!("canonical tempdir: {error}"));
+    let bin = root.join("toolchain").join("bin");
+    let wrapper = root.join("wrapper");
+    for dir in [&bin, &wrapper] {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", dir.display()));
+    }
+    let write = |path: &Path, script: &str| {
+        std::fs::write(path, script)
+            .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("chmod {}: {error}", path.display()));
+    };
+    write(
+        &bin.join("cargo"),
+        "#!/bin/sh\nprintf 'cargo 1.98.1 (797e8a9bc 2026-08-05)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+    );
+    write(
+        &bin.join("rustc"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = --print ]; then echo '{}'; exit 0; fi\nprintf 'rustc 1.98.1 (48a229cea 2026-09-01)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+            root.join("toolchain").display()
+        ),
+    );
+    let named = wrapper.join("cargo");
+    write(
+        &named,
+        &format!("#!/bin/sh\nexec '{}' \"$@\"\n", bin.join("cargo").display()),
+    );
+    let path = std::ffi::OsString::from(&bin);
+    let options = LocateOptions {
+        cargo: Some(named.clone()),
+        search_path: Some(path.clone()),
+        env: Some(vec![("PATH".into(), path)]),
+    };
+    let toolchain = Toolchain::locate(&options, &root, &Cancel::new())
+        .unwrap_or_else(|error| panic!("the named cargo answers: {error}"));
+    assert_eq!(
+        toolchain.cargo(),
+        named.as_path(),
+        "a cargo somebody named by its path is a choice, a wrapper that records or rewrites what \
+         it runs perhaps, and running the toolchain's own cargo instead would silently undo it"
+    );
+}
