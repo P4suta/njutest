@@ -11,6 +11,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+autotests = false
 
 [package.metadata.njutest]
 surface = "incidental"
@@ -42,3 +43,7 @@ xtask = { path = ".", features = ["testkit"] }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/suite.rs"

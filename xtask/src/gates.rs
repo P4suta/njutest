@@ -194,7 +194,8 @@ fn source_universe(
                     target: Some(target),
                     ..
                 } => {
-                    ALLOWED_PATH_REDIRECTS.contains(&(file.as_str(), target.as_str()))
+                    (ALLOWED_PATH_REDIRECTS.contains(&(file.as_str(), target.as_str()))
+                        || suite_member(file, &target))
                         && resolve_redirect(file, &target)
                             .is_some_and(|path| labels.contains(&path))
                 }
@@ -214,6 +215,17 @@ fn source_universe(
 
     validate_proc_macros(&proc_macros, &canonical_labels, sources, &mut found)?;
     Ok(found)
+}
+
+/// Whether `target` is a sibling test file a crate's one test suite, `file`, compiles as a module.
+fn suite_member(file: &str, target: &str) -> bool {
+    let path = Path::new(target);
+    file.ends_with("/tests/suite.rs")
+        && path.extension().is_some_and(|extension| extension == "rs")
+        && matches!(
+            path.components().collect::<Vec<_>>().as_slice(),
+            [Component::Normal(_)]
+        )
 }
 
 fn support_include(target: &str) -> bool {

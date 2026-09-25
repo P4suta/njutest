@@ -253,6 +253,13 @@ A suite that starts a real `cargo` is named `toolchain_*.rs`, and every other on
 `mise run test:fast` is the inner loop and runs the second half in seconds; `mise run test:slow` runs the first; `mise run test` runs both and the doctests, which is what the pipeline runs.
 `cargo xtask test`'s own suite (`xtask/tests/tasks.rs`) holds the naming to the rule, so a test that quietly starts a toolchain cannot land in the inner loop.
 
+### One binary per crate
+
+Every file under a crate's `tests/` that needs no toolchain is a module of one binary, `tests/suite.rs`, rather than a binary of its own; each `toolchain_*.rs` stays a `[[test]]` with its own name, so the two halves are still told apart by binary.
+About two hundred and seventy test executables were each linked against the whole dependency graph after every change to a library, which was nine tenths of the CPU an incremental `cargo test` spent; a crate now links one for the fast half.
+With `autotests = false` a file nothing names is never compiled and never fails, so `xtask/tests/suites.rs` requires every top-level test file to be named exactly once — a module of the suite, or a toolchain `[[test]]` — and every name to be a file.
+A test is run by its path within the suite, `cargo test -p xtask --test suite docs::`, and a test that runs its own binary again names itself through `njutest_devkit::process::test_name(module_path!(), …)`, which is right in either shape.
+
 ### The platform this machine is not
 
 The pipeline runs the suite on Linux, macOS, and Windows, and most of what the other two answer differently needs their machine to find out.

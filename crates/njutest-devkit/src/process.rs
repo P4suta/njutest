@@ -353,12 +353,21 @@ fn status(code: u8) -> ExitStatus {
     ExitStatus::from_raw(u32::from(code))
 }
 
+/// The name libtest runs the test `name` under, from the `module_path!()` of the file that declares it: the module path without the crate, so the name is right whether the file is a binary of its own or a module of a crate's one suite.
+#[must_use]
+pub fn test_name(module: &str, name: &str) -> String {
+    match module.split_once("::") {
+        Some((_crate, within)) => format!("{within}::{name}"),
+        None => name.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    use super::{ChildError, ChildOwner};
+    use super::{ChildError, ChildOwner, test_name};
 
     const OWNERSHIP_CHILD: &str = "NJUTEST_DEVKIT_OWNERSHIP_CHILD";
 
@@ -399,5 +408,15 @@ mod tests {
                 "mandatory cleanup did not retain the exact wait failure: {other:?}"
             ))),
         }
+    }
+
+    #[test]
+    fn a_test_name_drops_the_crate_and_keeps_every_module_within_it() {
+        assert_eq!(test_name("suite::runner", "reaps"), "runner::reaps");
+        assert_eq!(test_name("paths", "reaps"), "reaps");
+        assert_eq!(
+            test_name("njutest_devkit::process::tests", "reaps"),
+            "process::tests::reaps"
+        );
     }
 }
