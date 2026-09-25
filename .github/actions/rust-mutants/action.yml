@@ -102,6 +102,8 @@ runs:
         XDG_CACHE_HOME: ${{ runner.temp }}/rust-mutants-cache
       run: |
         set -uo pipefail
+        # The runner starts this shell with -e, and the status below is what this step exists to read.
+        set +e
         changed=()
         if [ -n "${REVISION}" ]; then
           changed=(--changed-from "${REVISION}")
@@ -137,6 +139,8 @@ runs:
         REVISION: ${{ inputs.changed-from }}
       run: |
         set -uo pipefail
+        # The runner starts this shell with -e, and the status below is what this step exists to read.
+        set +e
         changed=()
         if [ -n "${REVISION}" ]; then
           changed=(--changed-from "${REVISION}")
