@@ -334,6 +334,7 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Sentinel { .. } => "sentinel",
         Payload::Model { .. } => "model",
         Payload::Drift { .. } => "drift",
+        Payload::Knob { .. } => "knob",
         Payload::Note { .. } => "note",
         Payload::RunEnd { .. } => "run",
     }
@@ -379,6 +380,8 @@ pub mod payload {
         Model,
         /// A control's drift observation.
         Drift(&'a crate::trace::DriftRecord),
+        /// A knob record.
+        Knob(&'a crate::report::knobs::KnobRecord),
         /// A note.
         Note(&'a crate::trace::NoteRecord),
         /// A run-end record.
@@ -404,6 +407,7 @@ pub mod payload {
             Payload::Sentinel { sentinel } => Ref::Sentinel(sentinel),
             Payload::Model { .. } => Ref::Model,
             Payload::Drift { drift } => Ref::Drift(drift),
+            Payload::Knob { knob } => Ref::Knob(knob),
             Payload::Note { note } => Ref::Note(note),
             Payload::RunEnd { .. } => Ref::RunEnd,
         }
@@ -592,6 +596,15 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 crate::report::ModelIneligibility::Effect,
             )),
         },
+        Payload::Knob {
+            knob: crate::report::knobs::KnobRecord {
+                target: "demo/lib/demo".to_owned(),
+                knob: crate::report::knobs::Knob::Timezone,
+                standing: crate::report::knobs::Standing::Broke {
+                    failed: vec!["the_zone_is_utc".to_owned()],
+                },
+            },
+        },
         Payload::Drift {
             drift: crate::trace::DriftRecord {
                 mutant: Some("abcdef".to_owned()),
@@ -758,7 +771,7 @@ pub fn documented_specimen() -> crate::config::Config {
 
     use crate::config::{
         Acceptance, Cache, Config, Configuration, Contract, Execution, Fuzz, Generation, Mutation,
-        Project, Reports, Resource, Soundness, Verification,
+        Project, Repeatable, Reports, Resource, Soundness, Verification,
     };
 
     Config {
@@ -806,6 +819,12 @@ pub fn documented_specimen() -> crate::config::Config {
             run: true,
             max_total_time: Duration::from_secs(60),
             targets: vec!["libtest_summary".to_owned()],
+        },
+        repeatable: Repeatable {
+            knobs: vec![
+                crate::report::knobs::Knob::Timezone,
+                crate::report::knobs::Knob::Threads,
+            ],
         },
         resources: BTreeMap::from([(
             "api".to_owned(),

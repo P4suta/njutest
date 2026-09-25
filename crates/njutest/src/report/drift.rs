@@ -20,7 +20,9 @@ pub struct Moved {
 }
 
 impl Moved {
-    fn of(moved: &rust_mutants::touch::Moved) -> Self {
+    /// The engine's record of what moved, as the report keeps it.
+    #[must_use]
+    pub fn of(moved: &rust_mutants::touch::Moved) -> Self {
         Self {
             gained: moved.gained.clone(),
             lost: moved.lost.clone(),
@@ -53,7 +55,24 @@ pub enum Unmeasured {
 }
 
 impl Unmeasured {
-    const fn of(why: rust_mutants::touch::Unmeasured) -> Self {
+    /// Why nothing was compared, as a clause a reader is told.
+    #[must_use]
+    pub const fn said(self) -> &'static str {
+        match self {
+            Self::NoControl => "no control of the whole target ran",
+            Self::Unrecorded => "the control could not record what its guards reached",
+            Self::Unreadable => "the control's record did not read back",
+            Self::ControlFailed => "the control did not pass",
+            Self::OtherTests => "the control passed other tests than its baseline did",
+            Self::NoBaseline => "the baseline recorded nothing to compare against",
+            Self::BaselineRetried => "the baseline passed only when run again",
+            Self::Unparsed => "the tests a run was read as passing do not come to its own count",
+        }
+    }
+
+    /// The engine's reason, as the report keeps it.
+    #[must_use]
+    pub const fn of(why: rust_mutants::touch::Unmeasured) -> Self {
         match why {
             rust_mutants::touch::Unmeasured::Unrecorded => Self::Unrecorded,
             rust_mutants::touch::Unmeasured::Unreadable => Self::Unreadable,
@@ -207,15 +226,7 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
             Drift::Held { .. } | Drift::NotMeasured { .. } => None,
         })
         .map(|target| {
-            let discharged = records
-                .iter()
-                .filter(|record| record.outcome.outcome() == Outcome::Survived)
-                .filter(|record| rests_on(record.routing.as_ref(), target))
-                .count();
-            let unreached = records
-                .iter()
-                .filter(|record| record.outcome.outcome() == Outcome::Unreached)
-                .count();
+            let (discharged, unreached) = resting(records, target);
             Finding::new(
                 FindingKind::UnstableBaseline,
                 target,
@@ -223,6 +234,31 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
             )
         })
         .collect()
+}
+
+/// How many of `records` a proof decided on `target`'s baseline: survivors whose route did not put them to it, and mutations no test reached, each of which says it reached nothing.
+#[must_use]
+pub fn resting(records: &[MutantRecord], target: &str) -> (usize, usize) {
+    let discharged = records
+        .iter()
+        .filter(|record| record.outcome.outcome() == Outcome::Survived)
+        .filter(|record| rests_on(record.routing.as_ref(), target))
+        .count();
+    let unreached = records
+        .iter()
+        .filter(|record| record.outcome.outcome() == Outcome::Unreached)
+        .count();
+    (discharged, unreached)
+}
+
+/// How many mutations, in the words a finding counts them in.
+#[must_use]
+pub fn mutations(count: usize) -> String {
+    if count == 1 {
+        "1 mutation".to_owned()
+    } else {
+        format!("{count} mutations")
+    }
 }
 
 /// Whether a mutation's standing rests on `target`'s baseline reach: its route did not put it to `target`, so a discharge or the reach itself removed `target`, or it carries no route this run decided and so nothing this run can vouch for.
@@ -236,19 +272,11 @@ fn unstable(target: &str, discharged: usize, unreached: usize) -> String {
     format!(
         "{target} reached something on an original-code control that it did not reach on its \
          baseline, over the same passing tests, so what it reaches is not a function of the \
-         target and every proof read off its baseline is unfounded: {discharged} {} a proof \
-         removed its run of, and {unreached} {} no test reached, rest on it. Make what the \
-         suite reaches independent of order, time and earlier processes, and run again",
-        if discharged == 1 {
-            "mutation"
-        } else {
-            "mutations"
-        },
-        if unreached == 1 {
-            "mutation"
-        } else {
-            "mutations"
-        },
+         target and every proof read off its baseline is unfounded: {} a proof removed its run \
+         of, and {} no test reached, rest on it. Make what the suite reaches independent of \
+         order, time and earlier processes, and run again",
+        mutations(discharged),
+        mutations(unreached),
     )
 }
 

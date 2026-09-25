@@ -288,6 +288,7 @@ pub fn phase_line(event: &Event) -> Option<String> {
         | Payload::Build { .. }
         | Payload::Verify { .. }
         | Payload::Touch { .. }
+        | Payload::PerturbedControl { .. }
         | Payload::Witness { .. }
         | Payload::SkipClaim { .. }
         | Payload::Kept { .. }

@@ -64,9 +64,15 @@ pub const SEAM_NOT_WATCHED: &str = "seam-not-watched";
 /// A target's baseline was measured and no original-code control over the same passing tests recorded what it reached, so whether its reach is a function of the target is not known.
 pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
+/// A knob was asked for and not put on a target, so nothing is claimed about whether the target depends on what it sets.
+pub const KNOB_NOT_PUT: &str = "knob-not-put";
+
+/// A control under a knob established nothing to compare, so whether a target's verdict and reach hold there is not known.
+pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 20] = [
+pub const ALL: [&str; 22] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -87,4 +93,6 @@ pub const ALL: [&str; 20] = [
     RESOURCE_NOT_STOPPED,
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
+    KNOB_NOT_PUT,
+    KNOB_NOT_COMPARED,
 ];
