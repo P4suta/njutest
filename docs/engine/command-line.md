@@ -85,9 +85,21 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `doctor` | `--json` |
 | `init` | `--force` |
 | `cache` | `--gc`, `--all`, `--kept`, `--clear-outcomes`, `--cache-dir DIR` |
+| `ci gate` | `--run ID`, `--report FILE`, `--sarif FILE`, `--host github\|gitlab\|plain` |
 
 `--run` names a stored run, and the newest is read when nothing is named.
 A name no directory answers to is refused (`RM0007`) rather than answered from another run: a reader who mistyped it would otherwise be told confidently about a run they did not ask for, and `replay` would report the stored answer as having changed when what changed was which run it read.
+
+## In a continuous integration job
+
+`ci gate` reads one run, a stored one or the report `--report` names, writes it where the job shows it, and exits with the run's own code.
+The host is the one the environment names, or the one `--host` asks for; asking for GitHub outside a GitHub Actions step is refused (`RM0014`).
+
+On GitHub Actions it appends the Markdown report to the step summary, appends `verdict=`, `report=` and, with `--sarif`, `sarif=` to the step outputs, and writes one `::error` annotation per survivor no claim accounts for.
+`verdict` is `detected`, `found`, `failed` or `interrupted`, the words for exit codes 0, 1, 2 and 130.
+A runner shows ten error annotations per step; past that the summary says how many were shown of how many, and where all of them are.
+An annotation's file is named from the checkout `GITHUB_WORKSPACE` names, so a root outside it is refused (`RM0015`) rather than annotated where the runner cannot place it.
+On GitLab CI, and with `--host plain`, it writes the lines `report` writes.
 
 ## What a run's exit code says
 

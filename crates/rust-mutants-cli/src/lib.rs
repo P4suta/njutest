@@ -57,6 +57,26 @@ pub struct Environment {
     pub stdout_is_terminal: bool,
     /// Whether what the command writes is painted, which `--color` settles from the two above.
     pub paints: bool,
+    /// The continuous integration service the command runs under.
+    pub ci: CiHost,
+}
+
+/// A continuous integration service, and where it takes what a step reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CiHost {
+    /// GitHub Actions.
+    GitHub {
+        /// The file a step appends its Markdown summary to, which `GITHUB_STEP_SUMMARY` names.
+        summary: PathBuf,
+        /// The file a step appends its `name=value` outputs to, which `GITHUB_OUTPUT` names.
+        output: PathBuf,
+        /// The checkout an annotation's path is relative to, which `GITHUB_WORKSPACE` names.
+        workspace: PathBuf,
+    },
+    /// GitLab CI.
+    GitLab,
+    /// No service this release writes for.
+    None,
 }
 
 impl Environment {
@@ -146,6 +166,35 @@ impl Environment {
     pub fn no_color_of(vars: &[(OsString, OsString)]) -> bool {
         vars.iter()
             .any(|(key, value)| key == "NO_COLOR" && !value.is_empty())
+    }
+
+    /// The service `vars` says the command runs under: GitHub Actions only when it names every file a step reports through.
+    #[must_use]
+    pub fn ci_host_of(vars: &[(OsString, OsString)]) -> CiHost {
+        let named = |wanted: &str| {
+            vars.iter()
+                .rev()
+                .find(|(key, _)| key == wanted)
+                .map(|(_, value)| value)
+                .filter(|value| !value.is_empty())
+        };
+        if named("GITHUB_ACTIONS").is_some_and(|value| value == "true")
+            && let (Some(summary), Some(output), Some(workspace)) = (
+                named("GITHUB_STEP_SUMMARY"),
+                named("GITHUB_OUTPUT"),
+                named("GITHUB_WORKSPACE"),
+            )
+        {
+            return CiHost::GitHub {
+                summary: PathBuf::from(summary),
+                output: PathBuf::from(output),
+                workspace: PathBuf::from(workspace),
+            };
+        }
+        if named("GITLAB_CI").is_some_and(|value| value == "true") {
+            return CiHost::GitLab;
+        }
+        CiHost::None
     }
 }
 
