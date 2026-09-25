@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 2,
-    "run_id": "20260925t150233756z-1277ef",
+    "run_id": "20260925t152639285z-1ccd1a",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "2a8648476776320e634089a6df9ea5df96c5068f16b467a3feee06e62fafca11",
+      "identity": "b18a41458a200931d1fc4a6ed0696e2969a70525c1855022adf6a85f5fa96fea",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20260925t150223603z-126b83",
+          "run_id": "20260925t152515812z-1c7e55",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20260925t150228878z-1271cc",
+          "run_id": "20260925t152603034z-1caddd",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,7 +76,7 @@
         },
         "parts": [
           {
-            "run_id": "20260925t150223603z-126b83-b0000000000",
+            "run_id": "20260925t152515812z-1c7e55-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
@@ -90,9 +90,9 @@
               "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-25T15:02:23.603162043Z",
-              "finished": "2026-09-25T15:02:28.763106746Z",
-              "duration_ms": 5159
+              "started": "2026-09-25T15:25:15.812809696Z",
+              "finished": "2026-09-25T15:25:59.437831701Z",
+              "duration_ms": 43625
             },
             "accounting": {
               "targets": {
@@ -145,7 +145,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 25,
+                "duration_ms": 26,
                 "message": null
               },
               {
@@ -273,7 +273,7 @@
             "knobs": []
           },
           {
-            "run_id": "20260925t150228878z-1271cc-b0000000000",
+            "run_id": "20260925t152603034z-1caddd-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
@@ -287,9 +287,9 @@
               "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-25T15:02:28.878007032Z",
-              "finished": "2026-09-25T15:02:33.630607751Z",
-              "duration_ms": 4752
+              "started": "2026-09-25T15:26:03.034695467Z",
+              "finished": "2026-09-25T15:26:36.4723371Z",
+              "duration_ms": 33437
             },
             "accounting": {
               "targets": {

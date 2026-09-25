@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t150220452z",
-    "started_at": "2026-09-25T15:02:20.452975762Z",
-    "finished_at": "2026-09-25T15:02:23.554973608Z",
-    "duration_ms": 274,
+    "id": "20260925t152446338z",
+    "started_at": "2026-09-25T15:24:46.338097324Z",
+    "finished_at": "2026-09-25T15:25:10.499437933Z",
+    "duration_ms": 4500,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -16,9 +16,9 @@
     }
   },
   "workspace": {
-    "root_name": "tmp.dgom7K6NHh",
+    "root_name": "tmp.l2pwRfRjKB",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "c73e1fc6c8c94633a8b1b871e25727c16ef3bf55b4a691e5a17273bb79df1f8f",
+    "workspace_digest": "fb18dbf64f4114948100687e2ac36c7cab6f7f52b2f9323f4f5e49572fad438a",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "gnu",
@@ -98,7 +98,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 39,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -145,7 +145,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 81,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -192,7 +192,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -239,7 +239,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 50,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
