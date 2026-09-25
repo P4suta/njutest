@@ -316,3 +316,30 @@ fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
          rather than read as holding nothing"
     );
 }
+
+#[test]
+fn a_reported_site_holds_what_its_decision_does_not_say_as_empty_and_refuses_another_shape() {
+    let site = |decision: serde_json::Value| {
+        xtask::crashes::site(&serde_json::json!({
+            "display_id": "d".repeat(20),
+            "decision": decision,
+        }))
+    };
+    let unreached = site(serde_json::json!({ "decision": "unreached" }))
+        .expect("an unreached site says no target, which is its shape");
+    assert!(
+        unreached.on.is_empty() && unreached.left.is_empty() && unreached.failed.is_empty(),
+        "a decision that does not say `on`, `left` or `failed` is held as saying none, as a site \
+         the steps decide is: {unreached:?}"
+    );
+    assert_eq!(
+        site(serde_json::json!({ "decision": "restarted", "on": 7, "left": [] })),
+        None,
+        "an `on` that is there and is not a name is not read as no name"
+    );
+    assert_eq!(
+        site(serde_json::json!({ "on": "pkg/lib/pkg t" })),
+        None,
+        "a decision that names no decision is not read as one"
+    );
+}

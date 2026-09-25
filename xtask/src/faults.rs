@@ -72,6 +72,8 @@ pub struct Faulted {
     pub besides: Vec<Beside>,
     /// Every pair of runs behind that evidence, in recording order.
     pub pairs: Vec<Pair>,
+    /// The fault records that lack a field their schema requires, by event type, which nothing is held to.
+    pub unread: Vec<String>,
 }
 
 /// One pair of runs of a target: the fault alone, then the survivor beside it.
@@ -120,104 +122,116 @@ pub fn derived(pairs: &[&Pair]) -> Option<(String, &'static str)> {
 pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
     let mut faulted = Faulted::default();
     for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
-        if let Some(record) = event.get("beside") {
-            faulted.besides.push(beside(record));
-        }
-        if let Some(record) = event.get("pair") {
-            faulted.pairs.push(Pair {
-                mutant: text(record, "mutant"),
-                fault: text(record, "fault"),
-                target: text(record, "target"),
-                alone: text(record, "alone"),
-                with: text(record, "with"),
-            });
-        }
-        let kind = event.get("type").and_then(Value::as_str);
-        if kind == Some("fault-route")
-            && let Some(record) = event.get("route")
-        {
-            let reaching = record
-                .get("reaching")
-                .and_then(Value::as_array)
-                .map(|targets| {
-                    targets
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(ToOwned::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default();
-            faulted.routes.push((text(record, "fault"), reaching));
-            continue;
-        }
-        if kind == Some("fault-attribution")
-            && let Some(record) = event.get("attribution")
-        {
-            let flag = |key: &str| record.get(key).and_then(Value::as_bool);
-            if flag("faulted") == Some(true)
-                && flag("passed") == Some(true)
-                && record.get("unfaulted").and_then(Value::as_str) == Some("did-not-write")
-            {
-                faulted.attributed.push(text(record, "fault"));
-            }
-            continue;
-        }
-        if kind == Some("fault-rejected")
-            && let Some(record) = event.get("rejected")
-        {
-            faulted.rejected.push(text(record, "fault"));
-            continue;
-        }
-        if event.get("type").and_then(Value::as_str) == Some("fault-control")
-            && let Some(record) = event.get("control")
-        {
-            faulted.controls.push(Control {
-                fault: text(record, "fault"),
-                target: text(record, "target"),
-                passed: record.get("passed").and_then(Value::as_bool) == Some(true),
-            });
-            continue;
-        }
-        let Some(record) = event.get("fault") else {
+        let Some(kind) = event.get("type").and_then(Value::as_str) else {
+            faulted
+                .unread
+                .push("an event that names no type".to_owned());
             continue;
         };
-        match event.get("type").and_then(Value::as_str) {
-            Some("fault-exec") => faulted.execs.push(Exec {
-                fault: text(record, "fault"),
-                target: text(record, "target"),
-                outcome: text(record, "outcome"),
-                role: text(record, "role"),
-            }),
-            Some("fault") => faulted.sites.push(site(record)),
-            _ => {}
+        if !held(&mut faulted, kind, &event) {
+            faulted.unread.push(kind.to_owned());
         }
     }
     Ok(faulted)
 }
 
-/// One piece of evidence beside a fault as a report or a recording writes it.
-#[must_use]
-pub fn beside(record: &Value) -> Beside {
-    Beside {
-        mutant: text(record, "mutant"),
-        fault: text(record, "fault"),
-        target: text(record, "target"),
-        failed: text(record, "failed"),
-    }
+/// Holds `event`, of type `kind`, in `faulted` where it is a fault record; whether it was read, which it is not where a field its schema requires is missing.
+fn held(faulted: &mut Faulted, kind: &str, event: &Value) -> bool {
+    let read = match kind {
+        "beside" => event
+            .get("beside")
+            .and_then(beside)
+            .map(|one| faulted.besides.push(one)),
+        "beside-run" => event
+            .get("pair")
+            .and_then(pair)
+            .map(|one| faulted.pairs.push(one)),
+        "fault-route" => event
+            .get("route")
+            .and_then(|record| Some((text(record, "fault")?, texts(record, "reaching")?)))
+            .map(|one| faulted.routes.push(one)),
+        "fault-attribution" => event.get("attribution").and_then(|record| {
+            let flag = |key: &str| record.get(key).and_then(Value::as_bool);
+            let fault = text(record, "fault")?;
+            let tied = flag("faulted")?
+                && flag("passed")?
+                && text(record, "unfaulted")? == "did-not-write";
+            if tied {
+                faulted.attributed.push(fault);
+            }
+            Some(())
+        }),
+        "fault-rejected" => event
+            .get("rejected")
+            .and_then(|record| text(record, "fault"))
+            .map(|fault| faulted.rejected.push(fault)),
+        "fault-control" => event
+            .get("control")
+            .and_then(|record| {
+                Some(Control {
+                    fault: text(record, "fault")?,
+                    target: text(record, "target")?,
+                    passed: record.get("passed")?.as_bool()?,
+                })
+            })
+            .map(|one| faulted.controls.push(one)),
+        "fault-exec" => event
+            .get("fault")
+            .and_then(|record| {
+                Some(Exec {
+                    fault: text(record, "fault")?,
+                    target: text(record, "target")?,
+                    outcome: text(record, "outcome")?,
+                    role: text(record, "role")?,
+                })
+            })
+            .map(|one| faulted.execs.push(one)),
+        "fault" => event
+            .get("fault")
+            .and_then(site)
+            .map(|one| faulted.sites.push(one)),
+        _ => Some(()),
+    };
+    read.is_some()
 }
 
-/// One site as a report or a recording writes it.
+/// One piece of evidence beside a fault as a report or a recording writes it, or nothing where a field it requires is missing.
 #[must_use]
-pub fn site(record: &Value) -> Site {
-    let decision = record.get("decision").cloned().unwrap_or_default();
-    Site {
-        fault: text(record, "display_id"),
-        decision: text(&decision, "decision"),
-        by: decision
-            .get("by")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-    }
+pub fn beside(record: &Value) -> Option<Beside> {
+    Some(Beside {
+        mutant: text(record, "mutant")?,
+        fault: text(record, "fault")?,
+        target: text(record, "target")?,
+        failed: text(record, "failed")?,
+    })
+}
+
+/// One pair of runs as the recording writes it, or nothing where a field it requires is missing.
+fn pair(record: &Value) -> Option<Pair> {
+    Some(Pair {
+        mutant: text(record, "mutant")?,
+        fault: text(record, "fault")?,
+        target: text(record, "target")?,
+        alone: text(record, "alone")?,
+        with: text(record, "with")?,
+    })
+}
+
+/// One site as a report or a recording writes it, or nothing where it is not the shape a run writes.
+///
+/// Only a decision that a target noticed carries `by`, so a site holds its absence as no target named.
+#[must_use]
+pub fn site(record: &Value) -> Option<Site> {
+    let decision = record.get("decision")?;
+    let by = match decision.get("by") {
+        None => None,
+        Some(by) => Some(by.as_str()?.to_owned()),
+    };
+    Some(Site {
+        fault: text(record, "display_id")?,
+        decision: text(decision, "decision")?,
+        by,
+    })
 }
 
 /// Everything a recording holds about one fault.
@@ -257,6 +271,9 @@ impl Faulted {
 /// What the executions of a fault contradict about the decision the run gave it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Contradiction {
+    /// The run says a target noticed it and names none.
+    #[error("the run says a target noticed it, and names no target")]
+    NoticedByNoOne,
     /// A target was named as noticing and no execution failed on it.
     #[error(
         "the run says {by} noticed it, and the recording holds no execution of it that failed on {by}"
@@ -337,7 +354,9 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradictio
         .any(|one| one.outcome == "waited" || one.outcome == "step_limit_reached");
     match site.decision.as_str() {
         "noticed" => {
-            let by = site.by.clone().unwrap_or_default();
+            let Some(by) = site.by.clone() else {
+                return Err(Contradiction::NoticedByNoOne);
+            };
             let failed_as = |role: &str| {
                 execs
                     .iter()
@@ -362,11 +381,12 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradictio
         "unnoticed" if !ran => Err(Contradiction::NothingRan {
             decision: site.decision.clone(),
         }),
-        "unnoticed" => failed.map_or(Ok(()), |one| {
-            Err(Contradiction::NotAllPassed {
+        "unnoticed" => match failed {
+            None => Ok(()),
+            Some(one) => Err(Contradiction::NotAllPassed {
                 outcome: one.outcome.clone(),
-            })
-        }),
+            }),
+        },
         "undecided" if ran && failed.is_none() => {
             Err(Contradiction::UndecidedThoughPassed { runs: execs.len() })
         }
@@ -390,11 +410,17 @@ pub fn supports(site: &Site, evidence: &Evidence<'_>) -> Result<(), Contradictio
     }
 }
 
-/// One string field, or the empty string where the recording does not carry it.
-fn text(value: &Value, key: &str) -> String {
+/// One string field, or nothing where it is not there or is not a string.
+fn text(value: &Value, key: &str) -> Option<String> {
+    value.get(key)?.as_str().map(ToOwned::to_owned)
+}
+
+/// One list of strings, or nothing where it is not there or holds something that is not a string.
+fn texts(value: &Value, key: &str) -> Option<Vec<String>> {
     value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .unwrap_or_default()
+        .get(key)?
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(ToOwned::to_owned))
+        .collect()
 }

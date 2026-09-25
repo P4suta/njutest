@@ -101,6 +101,12 @@ pub enum ContradictionError {
         /// The state.
         state: String,
     },
+    /// A part of the standing is not the shape a run writes it in.
+    #[error("its {part} is not the shape a run writes")]
+    Unshaped {
+        /// The part.
+        part: &'static str,
+    },
 }
 
 /// The libtest options that take the next word as their value.
@@ -207,10 +213,10 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
     let state = standing
         .get("state")
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .ok_or(ContradictionError::Unshaped { part: "state" })?
         .to_owned();
     known(standing)?;
-    let named = |list: &str, witnessable: &[&str]| named(standing, list, witnessable);
+    let named = |list: &'static str, witnessable: &[&str]| named(standing, list, witnessable);
     let same = |reported: &BTreeSet<String>, witnessed: &BTreeSet<&'static str>| {
         reported.len() == witnessed.len() && witnessed.iter().all(|one| reported.contains(*one))
     };
@@ -231,7 +237,7 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
             }
         }
         "concurrent" => {
-            let (count, reported) = named("because", &WITNESSED_BECAUSE);
+            let (count, reported) = named("because", &WITNESSED_BECAUSE)?;
             if count == 0 {
                 Err(ContradictionError::Unknown { state })
             } else if same(&reported, &derived.because) {
@@ -245,7 +251,7 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
             }
         }
         "not-proven" => {
-            let (count, reported) = named("why", &WITNESSED_WHY);
+            let (count, reported) = named("why", &WITNESSED_WHY)?;
             if !derived.because.is_empty() {
                 Err(ContradictionError::Concurrent {
                     because: derived.because.clone(),
@@ -269,16 +275,11 @@ pub fn agrees(standing: &Value, derived: &Derived) -> Result<(), ContradictionEr
 /// Whether every reason `standing` gives is one a run gives.
 fn known(standing: &Value) -> Result<(), ContradictionError> {
     for (list, known) in [("because", &BECAUSE[..]), ("why", &WHY[..])] {
-        for reason in standing
-            .get(list)
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
+        for reason in reasons(standing, list)? {
             let kind = reason
                 .get("kind")
                 .and_then(Value::as_str)
-                .unwrap_or_default();
+                .ok_or(ContradictionError::Unshaped { part: "reason" })?;
             if !known.contains(&kind) {
                 return Err(ContradictionError::Reason {
                     kind: kind.to_owned(),
@@ -289,25 +290,43 @@ fn known(standing: &Value) -> Result<(), ContradictionError> {
     Ok(())
 }
 
+/// The reasons `standing` gives in `list`: none where it has no such list, which is how a state that carries no reasons of that kind is written.
+///
+/// # Errors
+/// [`ContradictionError::Unshaped`] where the list is there and is not a list.
+fn reasons<'a>(standing: &'a Value, list: &'static str) -> Result<&'a [Value], ContradictionError> {
+    match standing.get(list) {
+        None => Ok(&[]),
+        Some(Value::Array(reasons)) => Ok(reasons),
+        Some(_) => Err(ContradictionError::Unshaped { part: list }),
+    }
+}
+
 /// How many reasons `standing` gives in `list`, and which of them are `witnessable`.
-fn named(standing: &Value, list: &str, witnessable: &[&str]) -> (usize, BTreeSet<String>) {
-    let all: Vec<String> = standing
-        .get(list)
-        .and_then(Value::as_array)
-        .map(|reasons| {
-            reasons
-                .iter()
-                .filter_map(|reason| reason.get("kind").and_then(Value::as_str))
+///
+/// # Errors
+/// [`ContradictionError::Unshaped`] where the list, or a reason in it, is not the shape a run writes.
+fn named(
+    standing: &Value,
+    list: &'static str,
+    witnessable: &[&str],
+) -> Result<(usize, BTreeSet<String>), ContradictionError> {
+    let all: Vec<String> = reasons(standing, list)?
+        .iter()
+        .map(|reason| {
+            reason
+                .get("kind")
+                .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
-                .collect()
+                .ok_or(ContradictionError::Unshaped { part: "reason" })
         })
-        .unwrap_or_default();
+        .collect::<Result<_, _>>()?;
     let witnessed = all
         .iter()
         .filter(|kind| witnessable.contains(&kind.as_str()))
         .cloned()
         .collect();
-    (all.len(), witnessed)
+    Ok((all.len(), witnessed))
 }
 
 /// How many rounds confirm a delayed failure, written again from the runner's contract rather than read from its code.
@@ -461,23 +480,25 @@ pub struct Context {
     pub single_threaded: bool,
     /// Whether its baseline passed.
     pub passing: bool,
-    /// How many guards its baseline reached.
-    pub reached: usize,
+    /// How many guards its baseline reached, or nothing where no baseline reach of it was recorded.
+    pub reached: Option<usize>,
     /// Whether the run delayed any guard of any binary, which is what asking for schedules does.
     pub asked_any: bool,
 }
 
-/// Why a binary with no delayed control was not explored, as the recording decides it.
+/// Why a binary with no delayed control was not explored, as the recording decides it, or nothing where it cannot: a passing binary whose baseline reach was not recorded.
 #[must_use]
-pub const fn unexplored_because(context: Context) -> &'static str {
+pub const fn unexplored_because(context: Context) -> Option<&'static str> {
     if context.single_threaded {
-        "not-needed"
+        Some("not-needed")
     } else if !context.passing {
-        "not-passing"
-    } else if context.reached == 0 {
-        "no-site"
+        Some("not-passing")
     } else {
-        "not-asked"
+        match context.reached {
+            Some(0) => Some("no-site"),
+            Some(_) => Some("not-asked"),
+            None => None,
+        }
     }
 }
 
@@ -500,11 +521,10 @@ pub fn agrees_explored(
     };
     let asked = explored.get("asked").and_then(Value::as_u64);
     let holds = match (explored.get("state").and_then(Value::as_str), derived) {
-        (Some("unexplored"), Explored::Nothing) => {
-            let why = unexplored_because(context);
+        (Some("unexplored"), Explored::Nothing) => unexplored_because(context).is_some_and(|why| {
             explored.get("why").and_then(Value::as_str) == Some(why)
                 && !(why == "not-asked" && context.asked_any)
-        }
+        }),
         (Some("sampled"), Explored::Sampled { delayed }) => {
             !context.single_threaded
                 && sites("delayed").as_ref() == Some(delayed)
@@ -558,9 +578,9 @@ pub fn agrees_explored(
     }
 }
 
-/// Whether `delayed` is as many guards as were asked for, or every guard reached where fewer were.
-fn fits(asked: Option<u64>, delayed: &[u64], reached: usize) -> bool {
-    asked.is_some_and(|asked| {
+/// Whether `delayed` is as many guards as were asked for, or every guard reached where fewer were; never where the baseline's reach was not recorded, which is what the count is held to.
+fn fits(asked: Option<u64>, delayed: &[u64], reached: Option<usize>) -> bool {
+    asked.zip(reached).is_some_and(|(asked, reached)| {
         usize::try_from(asked).is_ok_and(|asked| delayed.len() == asked.min(reached))
     })
 }

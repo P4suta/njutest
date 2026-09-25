@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t164303703z",
-    "started_at": "2026-09-25T16:43:03.703479046Z",
-    "finished_at": "2026-09-25T16:43:08.670411846Z",
-    "duration_ms": 221,
+    "id": "20260925t173158991z",
+    "started_at": "2026-09-25T17:31:58.991841Z",
+    "finished_at": "2026-09-25T17:32:01.477659Z",
+    "duration_ms": 254,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -16,14 +16,14 @@
     }
   },
   "workspace": {
-    "root_name": "tmp.JANlLqV3li",
+    "root_name": "fixture-rejectable",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "d22c14a9aa34864f405805df03cbe73dd7119fea32af1de79b22fcbca6bed7c4",
+    "workspace_digest": "3f2019f69d77eaf9991acf2c7e5e2f9aabea40e6ce3edbfe99349db07950868e",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
-      "os": "gnu",
-      "arch": "x86_64",
-      "target": "x86_64-unknown-linux-gnu"
+      "os": "darwin",
+      "arch": "aarch64",
+      "target": "aarch64-apple-darwin"
     }
   },
   "selection": {
@@ -738,7 +738,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n   --> src/lib.rs:12:171\n    |\n 12 | ...Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n    |                                                            ---- ^ --- &str\n    |                                                            |\n    |                                                            String\n    |\nnote: `String` does not implement `Sub<&str>`\n   --> /home/yasunobu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/string.rs:353:1\n    |\n353 | pub struct String {\n    | ^^^^^^^^^^^^^^^^^ `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:171\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
       "isolated": true
     },
     {

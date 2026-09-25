@@ -91,6 +91,15 @@ pub enum AuditError {
         #[source]
         source: crate::route::ReadError,
     },
+    /// The report passed its schema and still lacks a field a layer reads, which the schema and the reader disagree about.
+    #[error("{path}: the report has no field a layer reads: {cause}")]
+    UnreadReport {
+        /// The report.
+        path: String,
+        /// Which field.
+        #[source]
+        cause: crate::route::ReadCause,
+    },
     /// A report given with its shards is not the merge of any.
     #[error("{path}: not a report merged from shards, so there are no shards to hold it to")]
     NotMerged {
@@ -162,6 +171,7 @@ impl crate::error::Coded for AuditError {
             Self::ShardGivenTwice { .. } => crate::error::XtCode::ProofShardTwice,
             Self::ShardNotMerged { .. } => crate::error::XtCode::ProofShardNotMerged,
             Self::Unshaped { .. } => crate::error::XtCode::ProofUnshaped,
+            Self::UnreadReport { .. } => crate::error::XtCode::ProofUnreadReport,
         }
     }
 }
@@ -561,7 +571,10 @@ pub fn audit_with(
 ) -> Result<Audit, AuditError> {
     let document = read_report(path, text)?;
     let recorded_runner = recorded.runner;
-    let mut recording = Recording::of(&document);
+    let mut recording = Recording::of(&document).map_err(|cause| AuditError::UnreadReport {
+        path: path.to_owned(),
+        cause,
+    })?;
     recording.verdict = match recorded.runner {
         Some((recording_path, text)) => {
             concluded(text).map_err(|source| AuditError::MalformedRecording {
@@ -850,6 +863,9 @@ fn unrecorded(rows: &[serde_json::Value], touched: &crate::drift::Touched, notes
     }
 }
 
+/// What a thread record the report holds that names no target, or no standing or exploration, is.
+const UNSHAPED_THREADS: &str = "a thread record of the report is not the shape a run writes it in";
+
 /// Each test binary the report calls single-threaded, or concurrent for reach off its tests' threads, held to what the engine's baseline touch record says it reached there.
 ///
 /// The source half of the proof is a scan of every package the binary links, which this audit does not repeat, so it is said to be unaudited rather than read as agreement.
@@ -883,8 +899,10 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
     unrecorded(rows, touched, &mut notes);
     let mut proven: Vec<String> = Vec::new();
     for row in rows {
-        let target = field(row, "target").unwrap_or_default();
-        let standing = row.get("standing").unwrap_or(&serde_json::Value::Null);
+        let Some((target, standing)) = field(row, "target").zip(row.get("standing")) else {
+            notes.violated("concurrency", UNSHAPED_THREADS.to_owned());
+            continue;
+        };
         let witnessed = crate::concurrency::Witnessed {
             loose: touched
                 .touches
@@ -955,7 +973,10 @@ fn explorations(rows: &[serde_json::Value], engines: &[Engine], notes: &mut Note
     let explored = engine_of(engines);
     let touched = &engine.touched;
     for row in rows {
-        let target = field(row, "target").unwrap_or_default();
+        let Some((target, reported)) = field(row, "target").zip(row.get("explored")) else {
+            notes.violated("concurrency", UNSHAPED_THREADS.to_owned());
+            continue;
+        };
         let runs: Vec<crate::concurrency::Run> = explored
             .iter()
             .filter(|control| control.target == target)
@@ -980,10 +1001,9 @@ fn explorations(rows: &[serde_json::Value], engines: &[Engine], notes: &mut Note
                 .find(|touch| {
                     touch.measured == crate::drift::Measured::Baseline && touch.target == target
                 })
-                .map_or(0, |touch| touch.reached.len()),
+                .map(|touch| touch.reached.len()),
             asked_any: !explored.is_empty(),
         };
-        let reported = row.get("explored").unwrap_or(&serde_json::Value::Null);
         match crate::concurrency::replayed(&runs) {
             Ok(derived) => {
                 if let Err(why) = crate::concurrency::agrees_explored(reported, &derived, context) {
@@ -2683,10 +2703,27 @@ fn faults(
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Faults);
-    let reported: Vec<crate::faults::Site> = rows(recording.document, "faults")
-        .iter()
-        .map(crate::faults::site)
-        .collect();
+    let mut reported: Vec<crate::faults::Site> = Vec::new();
+    for row in rows(recording.document, "faults") {
+        match crate::faults::site(row) {
+            Some(site) => reported.push(site),
+            None => notes.violated(
+                "faults",
+                "a fault site of the report is not the shape a run writes it in".to_owned(),
+            ),
+        }
+    }
+    if let Some(unread) = faulted.filter(|faulted| !faulted.unread.is_empty()) {
+        notes.unaudited(
+            "faults",
+            format!(
+                "the recording holds {} fault record(s) without a field their schema requires ({}), \
+                 which nothing is held to",
+                unread.unread.len(),
+                unread.unread.join(", ")
+            ),
+        );
+    }
     fault_counts(recording, &reported, &mut notes);
     fault_findings(recording, &reported, &mut notes);
     besides(recording, &reported, faulted, &mut notes);
@@ -2731,6 +2768,9 @@ fn faults(
     notes.looked()
 }
 
+/// What a crash site the report holds that is not the shape a run writes is.
+const UNSHAPED_CRASH: &str = "a crash site of the report is not the shape a run writes it in";
+
 /// What each call that writes came to, re-derived from the recording's crash steps and held to the report exactly, with its counts and its findings in both directions (ADR 0035).
 fn crashes(
     recording: &Recording<'_>,
@@ -2738,10 +2778,13 @@ fn crashes(
     audit: &mut Audit,
 ) -> Decided {
     let mut notes = Notes::on(audit, Layer::Crashes);
-    let reported: Vec<crate::crashes::Site> = rows(recording.document, "crashes")
-        .iter()
-        .map(crate::crashes::site)
-        .collect();
+    let mut reported: Vec<crate::crashes::Site> = Vec::new();
+    for row in rows(recording.document, "crashes") {
+        match crate::crashes::site(row) {
+            Some(site) => reported.push(site),
+            None => notes.violated("crashes", UNSHAPED_CRASH.to_owned()),
+        }
+    }
     crash_findings(recording, &reported, &mut notes);
     crash_accounting(recording.document, &reported, &mut notes);
     let Some(crashed) = crashed else {
@@ -2768,15 +2811,15 @@ fn crashes(
     for (crash, why) in crate::crashes::disagreements(&reported, crashed) {
         notes.violated(&crash, why);
     }
-    let ids: BTreeMap<String, String> = rows(recording.document, "crashes")
-        .iter()
-        .map(|row| {
-            (
-                field(row, "display_id").unwrap_or_default(),
-                field(row, "id").unwrap_or_default(),
-            )
-        })
-        .collect();
+    let mut ids: BTreeMap<String, String> = BTreeMap::new();
+    for row in rows(recording.document, "crashes") {
+        match field(row, "display_id").zip(field(row, "id")) {
+            Some((display, id)) => {
+                ids.insert(display, id);
+            }
+            None => notes.violated("crashes", UNSHAPED_CRASH.to_owned()),
+        }
+    }
     for (crash, why) in crate::crashes::issued_disagreements(&ids, crashed) {
         notes.violated(&crash, why);
     }
@@ -2853,7 +2896,6 @@ fn crash_accounting(
         counted
             .and_then(|crashes| crashes.get(field))
             .and_then(serde_json::Value::as_u64)
-            .unwrap_or_default()
     };
     let held = |decision: &str| {
         u64::try_from(
@@ -2873,11 +2915,15 @@ fn crash_accounting(
         ("not_put", "not-put"),
     ] {
         let holds = held(decision);
-        if holds != Ok(count(field)) {
+        let agrees = match (&holds, count(field)) {
+            (Ok(held), Some(counted)) => *held == counted,
+            (Ok(_) | Err(_), None) | (Err(_), Some(_)) => false,
+        };
+        if !agrees {
             notes.violated(
                 "crashes",
                 format!(
-                    "the report counts {} crash(es) as {field} and holds {holds:?}",
+                    "the report counts {:?} crash(es) as {field} and holds {holds:?}",
                     count(field)
                 ),
             );
@@ -3044,6 +3090,22 @@ fn holed_dimensions(recording: &Recording<'_>) -> BTreeSet<&'static str> {
     holed
 }
 
+/// Every survivor's evidence beside a fault the report holds, each that is not the shape a run writes a violation.
+fn besides_of(recording: &Recording<'_>, notes: &mut Notes<'_>) -> Vec<crate::faults::Beside> {
+    let mut held: Vec<crate::faults::Beside> = Vec::new();
+    for row in rows(recording.document, "beside") {
+        match crate::faults::beside(row) {
+            Some(one) => held.push(one),
+            None => notes.violated(
+                "beside",
+                "a survivor's evidence beside a fault is not the shape a run writes it in"
+                    .to_owned(),
+            ),
+        }
+    }
+    held
+}
+
 /// The evidence a report holds beside faults, held to survivors and faults it holds and to what the recording says was told apart, in both directions.
 fn besides(
     recording: &Recording<'_>,
@@ -3051,10 +3113,7 @@ fn besides(
     faulted: Option<&crate::faults::Faulted>,
     notes: &mut Notes<'_>,
 ) {
-    let mut held: Vec<crate::faults::Beside> = rows(recording.document, "beside")
-        .iter()
-        .map(crate::faults::beside)
-        .collect();
+    let mut held = besides_of(recording, notes);
     held.sort();
     for one in &held {
         let survivor = recording
@@ -3644,72 +3703,74 @@ struct Recording<'a> {
 }
 
 impl<'a> Recording<'a> {
-    fn of(document: &'a serde_json::Value) -> Self {
-        Self {
+    /// The rows every layer reads, each field its schema requires demanded rather than supplied.
+    fn of(document: &'a serde_json::Value) -> Result<Self, crate::route::ReadCause> {
+        use crate::route::required;
+        let text = |value: &serde_json::Value| value.as_str().map(str::to_owned);
+        let targets = rows(document, "targets")
+            .iter()
+            .map(|row| {
+                Ok(TargetRow {
+                    id: required(row, "id", text)?,
+                    name: required(row, "name", text)?,
+                    status: required(row, "status", text)?,
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        let mutants = rows(document, "mutants")
+            .iter()
+            .map(|row| {
+                let decision = required(row, "decision", Some)?;
+                Ok(MutantRow {
+                    id: required(row, "id", text)?,
+                    display_id: required(row, "display_id", text)?,
+                    catalog_index: row.get("catalog_index").and_then(serde_json::Value::as_u64),
+                    outcome: required(decision, "outcome", text)?,
+                    acceptance: AcceptanceFact::from_json(row.get("accepted")),
+                    killed_by: field(decision, "killed_by"),
+                    read_back_from: row
+                        .get("reuse")
+                        .and_then(|reuse| field(reuse, "source_run_id")),
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        let findings = rows(document, "findings")
+            .iter()
+            .map(|row| {
+                Ok(FindingRow {
+                    kind: required(row, "kind", text)?,
+                    subject: required(row, "subject", text)?,
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        let models = rows(document, "models")
+            .iter()
+            .map(|row| {
+                let answer = required(row, "answer", Some)?.clone();
+                Ok(ModelRow {
+                    mutant: required(row, "mutant", text)?,
+                    decision: required(&answer, "decision", text)?,
+                    evidence: answer.get("evidence").cloned(),
+                    attempt: answer.get("attempt").cloned(),
+                    answer,
+                    raw: row.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        Ok(Self {
             document,
-            run_id: field(document, "run_id").unwrap_or_default(),
-            contract: field(document, "contract").unwrap_or_default(),
-            targets: rows(document, "targets")
-                .iter()
-                .map(|row| TargetRow {
-                    id: field(row, "id").unwrap_or_default(),
-                    name: field(row, "name").unwrap_or_default(),
-                    status: field(row, "status").unwrap_or_default(),
-                })
-                .collect(),
-            mutants: rows(document, "mutants")
-                .iter()
-                .map(|row| {
-                    let decision = row
-                        .get("decision")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    MutantRow {
-                        id: field(row, "id").unwrap_or_default(),
-                        display_id: field(row, "display_id").unwrap_or_default(),
-                        catalog_index: row.get("catalog_index").and_then(serde_json::Value::as_u64),
-                        outcome: field(&decision, "outcome").unwrap_or_default(),
-                        acceptance: AcceptanceFact::from_json(row.get("accepted")),
-                        killed_by: field(&decision, "killed_by"),
-                        read_back_from: row
-                            .get("reuse")
-                            .and_then(|reuse| field(reuse, "source_run_id")),
-                    }
-                })
-                .collect(),
-            findings: rows(document, "findings")
-                .iter()
-                .map(|row| FindingRow {
-                    kind: field(row, "kind").unwrap_or_default(),
-                    subject: field(row, "subject").unwrap_or_default(),
-                })
-                .collect(),
+            run_id: required(document, "run_id", text)?,
+            contract: required(document, "contract", text)?,
+            targets,
+            mutants,
+            findings,
             shard: document
                 .get("scope")
                 .and_then(|scope| field(scope, "shard")),
-            target: document
-                .get("toolchain")
-                .and_then(|toolchain| field(toolchain, "target"))
-                .unwrap_or_default(),
-            models: rows(document, "models")
-                .iter()
-                .map(|row| {
-                    let answer = row
-                        .get("answer")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    ModelRow {
-                        mutant: field(row, "mutant").unwrap_or_default(),
-                        decision: field(&answer, "decision").unwrap_or_default(),
-                        evidence: answer.get("evidence").cloned(),
-                        attempt: answer.get("attempt").cloned(),
-                        answer,
-                        raw: row.clone(),
-                    }
-                })
-                .collect(),
+            target: required(required(document, "toolchain", Some)?, "target", text)?,
+            models,
             verdict: None,
-        }
+        })
     }
 
     fn dispositions(&self, outcome: &str) -> usize {

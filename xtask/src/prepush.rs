@@ -371,6 +371,7 @@ fn decide(
         stops: &stops,
     };
     let (turn, tree) = take_lanes(&lanes, &place, asking, progress)?;
+    let owner = place.own()?;
     if remembered(&memory)? {
         say(progress, &passed())?;
         return Ok(Passed::Remembered);
@@ -401,6 +402,7 @@ fn decide(
         return Err(PrePushError::Interrupted { signal });
     }
     remember(&memory, &head)?;
+    drop(owner);
     drop(tree);
     drop(turn);
     Ok(Passed::Checked)
@@ -710,6 +712,28 @@ struct Place {
     home: PathBuf,
     tree: PathBuf,
     target: PathBuf,
+    common: PathBuf,
+}
+
+/// The owner marker of ADR 0006 over the gate's directory, which a collector reads to know the directory is a cache and what it is keyed to.
+#[derive(Debug, serde::Serialize)]
+struct OwnerMarker {
+    schema: &'static str,
+    pid: u32,
+    started: String,
+    kept: bool,
+    role: &'static str,
+    keyed_to: String,
+}
+
+/// The gate's claim on its directory: the lock a collector waits on while the gate runs.
+#[derive(Debug)]
+struct Owned {
+    #[expect(
+        dead_code,
+        reason = "the file is held for what dropping it does: the operating system releases the lock"
+    )]
+    lock: std::fs::File,
 }
 
 impl Place {
@@ -724,7 +748,35 @@ impl Place {
             tree: home.join("tree"),
             target: home.join("target"),
             home,
+            common,
         })
+    }
+
+    /// Claims the gate's directory for as long as the returned value lives, waiting out a collector that holds it, and marks it a cache keyed to this repository.
+    fn own(&self) -> Result<Owned, PrePushError> {
+        std::fs::create_dir_all(&self.home).map_err(|source| io_error(&self.home, source))?;
+        let path = self.home.join("owner.lock");
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|source| io_error(&path, source))?;
+        lock.lock().map_err(|source| io_error(&path, source))?;
+        let marker = OwnerMarker {
+            schema: "njutest-temp-owner-v1",
+            pid: std::process::id(),
+            started: jiff::Timestamp::now().to_string(),
+            kept: false,
+            role: "cache",
+            keyed_to: self.common.display().to_string(),
+        };
+        let written = self.home.join("owner.json");
+        let mut text = serde_json::to_string(&marker)
+            .map_err(|source| io_error(&written, std::io::Error::other(source)))?;
+        text.push('\n');
+        std::fs::write(&written, text).map_err(|source| io_error(&written, source))?;
+        Ok(Owned { lock })
     }
 
     fn memory(&self, head: &str, base: Option<&str>, identity: &str) -> PathBuf {

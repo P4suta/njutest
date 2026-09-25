@@ -48,6 +48,8 @@ pub enum XtCode {
     ProofShardNotMerged,
     /// A document on its schema is not one this audit can read.
     ProofUnshaped,
+    /// A report on its schema lacks a field a layer reads.
+    ProofUnreadReport,
     /// An engine run directory holds no report.
     EngineUnreadable,
     /// An engine report is not JSON.
@@ -227,6 +229,11 @@ impl XtCode {
                 "XT2010",
                 "The document is on its published schema and is not one this audit can read into a complete report or a shard.",
                 "report it; a document on its schema that this audit cannot read is a gap in the audit",
+            ),
+            Self::ProofUnreadReport => (
+                "XT2011",
+                "The report passed its schema and still lacks a field a layer of this audit reads, so the schema and the reader disagree.",
+                "report it; either the schema should require the field or the reader should not demand it",
             ),
             Self::EngineUnreadable => (
                 "XT3001",
