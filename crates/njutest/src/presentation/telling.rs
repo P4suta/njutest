@@ -149,6 +149,7 @@ fn spot(mutant: &ProjectedMutant, _finding: &Finding) -> Spot {
         standing,
         blind_in: across,
         locator: locator(mutant),
+        mutant: mutant.display_id().to_owned(),
     }
 }
 
@@ -239,6 +240,10 @@ fn locator(mutant: &ProjectedMutant) -> String {
 /// A mutation nothing reached and a mutation every test ran past are one kind of finding in the report and two different things to be told, so the mutant's own outcome decides between them.
 ///
 /// Matched without a catch-all, so a finding kind added later is one the compiler makes somebody decide how to show rather than one that quietly reads as "the run found something".
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per finding kind is the list, and a list split in two is two places to add the next kind to"
+)]
 const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &'static str) {
     match kind {
         FindingKind::WireUnnoticed => (
@@ -256,6 +261,19 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             "NJ-UNSTABLE-BASELINE",
             "this test target reached different code on two runs of the same passing tests, \
              so every proof that removed a run because of what it reached is unfounded",
+        ),
+        FindingKind::EnvironmentDependent => (
+            Severity::Refusal,
+            "NJ-ENVIRONMENT",
+            "this test target passes here and fails where something a machine may set \
+             differently is set differently",
+        ),
+        FindingKind::EnvironmentDependentReach => (
+            Severity::Limitation,
+            "NJ-ENVIRONMENT-REACH",
+            "this test target reached different code where something a machine may set \
+             differently was set differently, so every proof that removed a run because of what \
+             it reached is unfounded there",
         ),
         FindingKind::SurvivingMutant if unreached => (
             Severity::Gap,

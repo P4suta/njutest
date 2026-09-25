@@ -13,7 +13,7 @@
 # reasoning as the linker above.
 
 [alias]
-xtask = "run --quiet --locked --package xtask --"
+xtask = "run --quiet --locked --package xtask --target-dir target/xtask --"
 
 [net]
 # CI on slow / flaky networks benefits from extra retries on registry fetches.

@@ -5,8 +5,12 @@
 //!
 //! [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
+mod knobs;
+pub mod merge;
 pub mod sentinel;
+pub mod soundness;
 
+pub use crate::layers::Coverage;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -17,11 +21,11 @@ use sha2::Digest as _;
 /// The document a completed run leaves in its directory.
 pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
 
-/// The schema this audit knows how to re-decide.
-pub const SCHEMA: &str = "njutest-assurance-report-v1";
-
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;
+
+/// The exit code an audit that found no violation and left something unaudited earns, kept apart so a step that reads only the code cannot take it for an audit that checked everything.
+pub const EXIT_UNAUDITED: u8 = 3;
 
 const KILLED: &str = "killed";
 const SURVIVED: &str = "survived";
@@ -72,6 +76,53 @@ pub enum AuditError {
         #[source]
         source: crate::route::ReadError,
     },
+    /// A report given with its shards is not the merge of any.
+    #[error("{path}: not a report merged from shards, so there are no shards to hold it to")]
+    NotMerged {
+        /// The document.
+        path: String,
+    },
+    /// A document given as a shard is not one.
+    #[error("{path}: given as a shard, and not a shard document")]
+    NotAShard {
+        /// The document.
+        path: String,
+    },
+    /// One shard was given more than once.
+    #[error("shard {run_id} was given more than once")]
+    ShardGivenTwice {
+        /// The run it names.
+        run_id: String,
+    },
+    /// The document is on its published schema and not one this audit can read into the two documents that schema describes.
+    #[error("{path}: on its schema and not a document this audit reads: {source}")]
+    Unshaped {
+        /// The document.
+        path: String,
+        /// What serde said.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A shard was given that the merged report does not name.
+    #[error("{path}: shard {run_id} is not one the report was merged from")]
+    ShardNotMerged {
+        /// The shard document.
+        path: String,
+        /// The run it names.
+        run_id: String,
+    },
+    /// The document is a complete report off its published schema, so a reader could meet an absent required field.
+    #[error("{path}: off the published report schema: {source}")]
+    OffSchema {
+        /// The document.
+        path: String,
+        /// Where and how.
+        #[source]
+        source: crate::schemas::OffSchema,
+    },
+    /// The published report schema itself does not compile.
+    #[error(transparent)]
+    Schema(#[from] crate::schemas::SchemaError),
     /// The document is a whole report of a shape this audit does not project onto the one build it re-decides.
     #[error("{path}: {shape}; this audit re-decides one configured build measured whole")]
     Unprojected {
@@ -80,26 +131,30 @@ pub enum AuditError {
         /// What it holds instead.
         shape: Unprojectable,
     },
-    /// The document is JSON and calls itself something other than the assurance report.
-    #[error("{path}: {schema:?} is not the assurance report this audit re-decides")]
-    Unrecognised {
-        /// The document.
-        path: String,
-        /// What it calls itself.
-        schema: String,
-    },
+}
+
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unreadable { .. } => crate::error::XtCode::ProofUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::ProofUnparsable,
+            Self::MalformedRecording { .. } => crate::error::XtCode::ProofRecording,
+            Self::Unprojected { .. } => crate::error::XtCode::ProofUnprojected,
+            Self::OffSchema { .. } => crate::error::XtCode::ProofOffSchema,
+            Self::Schema(_) => crate::error::XtCode::SchemaUncompilable,
+            Self::NotMerged { .. } => crate::error::XtCode::ProofNotMerged,
+            Self::NotAShard { .. } => crate::error::XtCode::ProofNotAShard,
+            Self::ShardGivenTwice { .. } => crate::error::XtCode::ProofShardTwice,
+            Self::ShardNotMerged { .. } => crate::error::XtCode::ProofShardNotMerged,
+            Self::Unshaped { .. } => crate::error::XtCode::ProofUnshaped,
+        }
+    }
 }
 
 /// What a report holds instead of the one configured build measured whole this audit re-decides.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Unprojectable {
-    /// The document is one part of a catalog rather than a complete answer.
-    #[error("a {kind} document is one part of a catalog")]
-    Part {
-        /// What the document calls itself.
-        kind: String,
-    },
     /// The report measured more than one configured build, or none.
     #[error("a report of {count} configured builds")]
     Builds {
@@ -112,6 +167,15 @@ pub enum Unprojectable {
         /// How many it holds.
         count: usize,
     },
+    /// The document is one part laid flat, which no run writes.
+    #[error("a flat part with no `document_type`, which no run writes")]
+    Flat,
+}
+
+impl crate::error::Coded for Unprojectable {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::ProofUnprojected
+    }
 }
 
 /// What the re-decision was able to conclude about one thing it looked at.
@@ -155,10 +219,18 @@ pub enum Layer {
     Wire,
     /// Affirmative model answers re-derived from retained generated source and raw Kani JSON.
     Model,
+    /// A merged report's parts, held to the shard documents it names.
+    Merge,
     /// Which targets reached something different on a control than on their baseline, re-derived from the engine's touch records and held to what the report says of each.
     Drift,
+    /// What each disposition run again against a moved target came to, re-derived from its own execution and touch record (ADR 0036).
+    Repair,
+    /// What each control started under a knob established, re-derived from the engine's perturbed-control records and held to what the report says of each.
+    Knobs,
     /// Each mutation's reported outcome, held to the executions of it the recording holds.
     Executions,
+    /// What interpreting the suite established, re-derived from what the interpreter said.
+    Soundness,
 }
 
 impl Layer {
@@ -175,11 +247,20 @@ impl Layer {
             Self::Hollow => "hollow",
             Self::Wire => "wire",
             Self::Model => "model",
+            Self::Merge => "merge",
             Self::Drift => "drift",
+            Self::Repair => "repair",
+            Self::Knobs => "knobs",
             Self::Executions => "executions",
+            Self::Soundness => "soundness",
         }
     }
 }
+
+/// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.
+#[must_use]
+#[derive(Debug)]
+struct Decided(());
 
 /// One thing the re-decision has to say about one part of one recording.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -218,6 +299,8 @@ pub struct Audit {
     pub targets: usize,
     /// Everything it has to say, grouped by layer with the violations of each first.
     pub remarks: Vec<Remark>,
+    /// How far each layer got.
+    pub coverage: BTreeMap<Layer, Coverage>,
 }
 
 impl Audit {
@@ -245,7 +328,13 @@ impl Audit {
     /// A recording that could not be read at all never reaches here and earns [`EXIT_UNREADABLE`] instead.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
-        u8::from(self.violations() > 0)
+        if self.violations() > 0 {
+            1
+        } else if self.unaudited() > 0 {
+            EXIT_UNAUDITED
+        } else {
+            0
+        }
     }
 
     fn standing(&self, standing: Standing) -> usize {
@@ -260,6 +349,9 @@ impl fmt::Display for Audit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for remark in &self.remarks {
             writeln!(f, "{remark}")?;
+        }
+        for (layer, coverage) in &self.coverage {
+            writeln!(f, "layer: {}: {coverage}", layer.label())?;
         }
         write!(
             f,
@@ -291,6 +383,30 @@ impl<'a> Notes<'a> {
 
     fn unaudited(&mut self, subject: &str, detail: String) {
         self.note(Standing::Unaudited, subject, detail);
+    }
+
+    /// The layer looked at everything the recording owes it, and its remarks say what it found.
+    fn looked(self) -> Decided {
+        let partly = self
+            .audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == self.layer && remark.standing == Standing::Unaudited);
+        let coverage = if partly {
+            Coverage::Partly
+        } else {
+            Coverage::Rederived
+        };
+        self.audit.coverage.insert(self.layer, coverage);
+        Decided(())
+    }
+
+    /// The recording holds nothing this layer re-decides, for the reason `why`.
+    fn absent(self, why: &'static str) -> Decided {
+        self.audit
+            .coverage
+            .insert(self.layer, Coverage::Absent(why));
+        Decided(())
     }
 
     fn note(&mut self, standing: Standing, subject: &str, detail: String) {
@@ -386,40 +502,100 @@ pub struct Recorded<'a> {
     pub runner: Option<(&'a str, &'a str)>,
     /// Every configured build's engine recording, in namespace order.
     pub engines: &'a [(String, String)],
+    /// What the recording kept of each run the audit re-derives from, by the path its exec record gives, held to that record's size and digest.
+    pub outputs: &'a [(String, soundness::Kept)],
 }
 
 /// Re-decides a report against what the run recorded beside it and, when `run` is present, re-reads every retained model-checker artifact from that exact run directory.
 ///
 /// # Errors
-/// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::Unprojected`] for a report this audit does not re-decide as one build,
-/// [`AuditError::Unrecognised`] for one that is not the assurance report, [`AuditError::MalformedRecording`] for a recording with a corrupt line, and the corresponding retained-artifact error when `run` cannot be re-read.
+/// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::OffSchema`] for a complete report off its published schema,
+/// [`AuditError::Unprojected`] for a report this audit does not re-decide as one build, [`AuditError::MalformedRecording`] for a recording with a corrupt line, and the corresponding retained-artifact error when `run` cannot be re-read.
 pub fn audit_with(
     path: &str,
     text: &str,
     recorded: Recorded<'_>,
     run: Option<&Path>,
 ) -> Result<Audit, AuditError> {
-    let read: serde_json::Value =
-        crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
-            path: path.to_owned(),
-            source,
-        })?;
-    let document = projected(read).map_err(|shape| AuditError::Unprojected {
-        path: path.to_owned(),
-        shape,
-    })?;
-    let schema = document
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if schema != SCHEMA {
-        return Err(AuditError::Unrecognised {
-            path: path.to_owned(),
-            schema: schema.to_owned(),
-        });
-    }
+    let document = read_report(path, text)?;
     let recorded_runner = recorded.runner;
-    let recording = Recording::of(&document);
+    let mut recording = Recording::of(&document);
+    recording.verdict = match recorded.runner {
+        Some((recording_path, text)) => {
+            concluded(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })?
+        }
+        None => None,
+    };
+    let RunnerEvidence {
+        routing,
+        watched,
+        repairs,
+        recorded_executions,
+    } = runner_evidence(recorded_runner)?;
+    let engines = recorded
+        .engines
+        .iter()
+        .map(|(recording_path, text)| {
+            let malformed = |source| AuditError::MalformedRecording {
+                path: recording_path.clone(),
+                source,
+            };
+            Ok(Engine {
+                touched: crate::drift::read(text).map_err(malformed)?,
+                perturbed: crate::knobs::read(text).map_err(malformed)?,
+            })
+        })
+        .collect::<Result<Vec<_>, AuditError>>()?;
+    let mut audit = Audit {
+        run_id: recording.run_id.clone(),
+        mutants: recording.mutants.len(),
+        targets: recording.targets.len(),
+        remarks: Vec::new(),
+        coverage: BTreeMap::new(),
+    };
+    for layer in Layer::ALL {
+        let Decided(()) = match layer {
+            Layer::Accounting => accounting(&recording, &mut audit),
+            Layer::Killers => killers(&recording, &mut audit),
+            Layer::Findings => findings(&recording, &mut audit),
+            Layer::Acceptances => acceptances(&recording, &mut audit),
+            Layer::Reuse => reuse(&recording, &mut audit),
+            Layer::Proofs => proofs(&recording, routing.as_ref(), &repairs, &mut audit),
+            Layer::Executions => executions(&recording, routing.as_ref(), &mut audit),
+            Layer::Hollow => hollow(&recording, routing.as_ref(), &mut audit),
+            Layer::Wire => wire(&recording, watched.as_ref(), &mut audit),
+            Layer::Model => models(&recording, run, &mut audit),
+            Layer::Merge => Notes::on(&mut audit, Layer::Merge)
+                .absent("this report is one run's, and a merge is audited against its shards"),
+            Layer::Drift => drift(
+                &recording,
+                (&engines, &repairs, routing.as_ref()),
+                &mut audit,
+            ),
+            Layer::Repair => repaired(
+                &recording,
+                (&engines, &repairs, routing.as_ref()),
+                &mut audit,
+            ),
+            Layer::Knobs => knobs::audited(&recording, &engines, &mut audit),
+            Layer::Soundness => soundness::audited(
+                &recording,
+                recorded_executions.as_deref(),
+                recorded.outputs,
+                &mut audit,
+            ),
+        };
+    }
+    audit.remarks.sort();
+    audit.remarks.dedup();
+    Ok(audit)
+}
+
+/// What the runner's recording says of routing, seams, repairs and executions, each read from the stream alone; nothing where the run kept none.
+fn runner_evidence(recorded_runner: Option<(&str, &str)>) -> Result<RunnerEvidence, AuditError> {
     let routing = recorded_runner
         .map(|(recording_path, text)| {
             crate::route::read(text, crate::schemas::Producer::Runner).map_err(|source| {
@@ -438,62 +614,129 @@ pub fn audit_with(
             })
         })
         .transpose()?;
-    let engines = recorded
-        .engines
-        .iter()
+    let repairs = recorded_runner
         .map(|(recording_path, text)| {
-            crate::drift::read(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.clone(),
+            crate::repair::read(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
                 source,
             })
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut audit = Audit {
-        run_id: recording.run_id.clone(),
-        mutants: recording.mutants.len(),
-        targets: recording.targets.len(),
-        remarks: Vec::new(),
-    };
-    target_columns(&recording, &mut audit);
-    mutant_columns(&recording, &mut audit);
-    equations(&recording, &mut audit);
-    verdict(&recording, &mut audit);
-    killers(&recording, &mut audit);
-    findings(&recording, &mut audit);
-    acceptances(&recording, &mut audit);
-    reuse(&recording, &mut audit);
-    proofs(&recording, routing.as_ref(), &mut audit);
-    executions(&recording, routing.as_ref(), &mut audit);
-    hollow(&recording, routing.as_ref(), &mut audit);
-    wire(&recording, watched.as_ref(), &mut audit);
-    models(&recording, run, &mut audit);
-    drift(&recording, &engines, &mut audit);
-    audit.remarks.sort();
-    audit.remarks.dedup();
-    Ok(audit)
+        .transpose()?
+        .unwrap_or_default();
+    let recorded_executions = recorded_runner
+        .map(|(recording_path, text)| {
+            executions_of(text).map_err(|source| AuditError::MalformedRecording {
+                path: recording_path.to_owned(),
+                source,
+            })
+        })
+        .transpose()?;
+    Ok(RunnerEvidence {
+        routing,
+        watched,
+        repairs,
+        recorded_executions,
+    })
 }
 
-/// The flat view of one configured build measured whole that every layer re-decides, taken from a complete report or as it is.
-fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
-    let Some(kind) = document.get("document_type") else {
-        return Ok(document);
-    };
-    if kind.as_str() != Some("complete") {
-        return Err(Unprojectable::Part {
-            kind: kind.to_string(),
-        });
+/// What the runner's recording says, read once.
+struct RunnerEvidence {
+    routing: Option<crate::route::Routing>,
+    watched: Option<crate::wire::Watched>,
+    repairs: Vec<crate::repair::Repair>,
+    recorded_executions: Option<Vec<serde_json::Value>>,
+}
+
+/// Every exec record a runner's recording holds, in the order it holds them.
+///
+/// # Errors
+/// The first line that does not read, as the recording's own reader says it.
+fn executions_of(text: &str) -> Result<Vec<serde_json::Value>, crate::route::ReadError> {
+    Ok(
+        crate::route::events(text, crate::schemas::Producer::Runner)?
+            .into_iter()
+            .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
+            .filter_map(|mut event| event.get_mut("exec").map(serde_json::Value::take))
+            .collect(),
+    )
+}
+
+/// The flat view of the report at `path` holding `text`, once it is JSON, on its published schema, and one build measured whole.
+///
+/// # Errors
+/// [`AuditError::Unparsable`], [`AuditError::OffSchema`], [`AuditError::Schema`] or [`AuditError::Unprojected`], in that order.
+fn read_report(path: &str, text: &str) -> Result<serde_json::Value, AuditError> {
+    let read: serde_json::Value =
+        crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
+            path: path.to_owned(),
+            source,
+        })?;
+    if read.get("document_type").is_some() {
+        crate::schemas::Checker::assurance_report()?
+            .check(&read)
+            .map_err(|source| AuditError::OffSchema {
+                path: path.to_owned(),
+                source,
+            })?;
     }
-    let report = document.get("report").cloned().unwrap_or_default();
+    projected(&read).map_err(|shape| AuditError::Unprojected {
+        path: path.to_owned(),
+        shape,
+    })
+}
+
+/// What the runner's recording says the run concluded, from its `run-end`; nothing where it holds none.
+///
+/// # Errors
+/// A line that is not JSON, or not on the runner's schema.
+fn concluded(text: &str) -> Result<Option<String>, crate::route::ReadError> {
+    Ok(
+        crate::route::events(text, crate::schemas::Producer::Runner)?
+            .iter()
+            .rev()
+            .find(|event| field(event, "type").as_deref() == Some("run-end"))
+            .and_then(|event| event.get("run"))
+            .and_then(|run| field(run, "verdict")),
+    )
+}
+
+/// The flat view of the one part of one configured build that every layer re-decides: a complete report's one build measured whole, or a shard's one build with the shard it is written into its scope.
+fn projected(document: &serde_json::Value) -> Result<serde_json::Value, Unprojectable> {
+    let Some(kind) = document.get("document_type") else {
+        return Err(Unprojectable::Flat);
+    };
+    let mut report = document.get("report").cloned().unwrap_or_default();
     let builds = rows(&report, "builds");
     let [build] = builds else {
         return Err(Unprojectable::Builds {
             count: builds.len(),
         });
     };
-    let parts = rows(build, "parts");
-    let [part] = parts else {
-        return Err(Unprojectable::Parts { count: parts.len() });
+    let part = if kind.as_str() == Some("shard") {
+        build.get("source").cloned().unwrap_or_default()
+    } else {
+        let parts = rows(build, "parts");
+        let [part] = parts else {
+            return Err(Unprojectable::Parts { count: parts.len() });
+        };
+        part.clone()
     };
+    let owned = report.get("shard").and_then(|shard| {
+        Some(format!(
+            "{}/{}",
+            shard.get("index")?.as_u64()?,
+            shard.get("of")?.as_u64()?
+        ))
+    });
+    if let (Some(owned), Some(scope)) = (
+        owned,
+        report
+            .get_mut("scope")
+            .and_then(serde_json::Value::as_object_mut),
+    ) {
+        scope.insert("shard".to_owned(), serde_json::Value::String(owned));
+    }
+    let part = &part;
     let mut flat = serde_json::Map::new();
     for key in [
         "schema",
@@ -514,6 +757,7 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
         "mutants",
         "limitations",
         "drift",
+        "knobs",
     ] {
         if let Some(value) = part.get(key) {
             flat.insert(key.to_owned(), value.clone());
@@ -536,14 +780,24 @@ fn projected(document: serde_json::Value) -> Result<serde_json::Value, Unproject
 
 /// The finding a report raises about a target whose baseline reach moved.
 const UNSTABLE_BASELINE: &str = "unstable-baseline";
+const REACH_MOVED: &str = "reach-moved";
 
 /// The limitation a report states about the targets no comparable control measured.
 const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
 /// Which targets moved between their baseline and a control, re-derived from the engine's touch records and held to the report's records, findings, and limitation.
-fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &mut Audit) {
-    let mut notes = Notes::on(audit, Layer::Drift);
-    let recorded = recording.document.get("drift").map(|rows| {
+/// What one engine recording holds, as the layers that re-derive from it read it.
+#[derive(Debug)]
+struct Engine {
+    /// Every touch record.
+    touched: crate::drift::Touched,
+    /// Every perturbed control.
+    perturbed: crate::knobs::Perturbations,
+}
+
+/// Each target and state the report's drift records name; nothing where the report records no drift.
+fn recorded_drift(recording: &Recording<'_>) -> Option<Vec<(String, String)>> {
+    recording.document.get("drift").map(|rows| {
         rows.as_array()
             .map(Vec::as_slice)
             .unwrap_or_default()
@@ -554,10 +808,27 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
                     field(row, "state").unwrap_or_default(),
                 )
             })
-            .collect::<Vec<(String, String)>>()
-    });
+            .collect()
+    })
+}
+
+fn drift(
+    recording: &Recording<'_>,
+    (engines, repairs, routing): (
+        &[Engine],
+        &[crate::repair::Repair],
+        Option<&crate::route::Routing>,
+    ),
+    audit: &mut Audit,
+) -> Decided {
+    let mut notes = Notes::on(audit, Layer::Drift);
+    let recorded = recorded_drift(recording);
     let touched = match (engines, recorded.as_ref()) {
-        ([], None) => return,
+        ([], None) => {
+            return notes.absent(
+                "the report records no drift and the run kept no engine recording to derive one from",
+            );
+        }
         ([], Some(_)) => {
             notes.unaudited(
                 "drift",
@@ -565,9 +836,9 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
                  baseline and a control cannot be re-derived"
                     .to_owned(),
             );
-            return;
+            return notes.looked();
         }
-        ([one], _) => one,
+        ([one], _) => &one.touched,
         (several, _) => {
             notes.unaudited(
                 "drift",
@@ -577,15 +848,16 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
                     several.len()
                 ),
             );
-            return;
+            return notes.looked();
         }
     };
     if touched.unreadable > 0 {
         notes.unaudited(
             "drift",
             format!(
-                "{} touch record(s) do not say which run they were measured on or what it \
-                 reached, so what they would have shown cannot be counted as agreement",
+                "{} touch record(s) do not say which run they were measured on, which mutation \
+                 a repair ran, or what it reached, so what they would have shown cannot be \
+                 counted as agreement",
                 touched.unreadable
             ),
         );
@@ -602,14 +874,59 @@ fn drift(recording: &Recording<'_>, engines: &[crate::drift::Touched], audit: &m
                 ),
             );
         }
-        return;
+        return notes.looked();
     };
     held_to_records(&derived, &recorded, &mut notes);
     if recording.shard.is_some() {
-        return;
+        notes.unaudited(
+            "drift",
+            "this shard does not hold the whole catalog, so which moved targets are owed \
+             unstable-baseline and which unmeasured ones drift-not-measured is decided over the \
+             combined parts when they are merged"
+                .to_owned(),
+        );
+        return notes.looked();
     }
-    held_to_findings(recording, &derived, &mut notes);
+    let resting = resting(recording, &derived, (repairs, routing));
+    held_to_findings(recording, &resting, &mut notes);
     held_to_limitation(recording, &derived, &mut notes);
+    held_to_repairs(recording, &resting, &mut notes);
+    notes.looked()
+}
+
+/// How many dispositions still rest on each moved target: a survivor or an unreached claim whose route did not put the target to it, and which no repair against it that reached the site decided again; every one where the run kept no routing to tell.
+fn resting(
+    recording: &Recording<'_>,
+    derived: &BTreeMap<String, crate::drift::Standing>,
+    (repairs, routing): (&[crate::repair::Repair], Option<&crate::route::Routing>),
+) -> BTreeMap<String, Option<usize>> {
+    derived
+        .iter()
+        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .map(|(target, _)| {
+            let count = routing.map(|routing| {
+                recording
+                    .mutants
+                    .iter()
+                    .filter(|row| row.outcome == SURVIVED || row.outcome == UNREACHED)
+                    .filter(|row| {
+                        !routing.routes.iter().any(|route| {
+                            route.names(&row.id, &row.display_id)
+                                && route.reaching.iter().any(|one| one == target)
+                        })
+                    })
+                    .filter(|row| {
+                        !repairs.iter().any(|repair| {
+                            repair.mutant == row.display_id
+                                && repair.target == *target
+                                && repair.reached == "reached"
+                        })
+                    })
+                    .count()
+            });
+            (target.clone(), count)
+        })
+        .collect()
 }
 
 fn held_to_records(
@@ -662,14 +979,289 @@ fn held_to_records(
     }
 }
 
-fn held_to_findings(
+/// The `reach-moved` limitation, owed exactly for each moved target nothing rests on any more, naming it.
+fn held_to_repairs(
     recording: &Recording<'_>,
-    derived: &BTreeMap<String, crate::drift::Standing>,
+    resting: &BTreeMap<String, Option<usize>>,
     notes: &mut Notes<'_>,
 ) {
-    let owed: BTreeSet<&str> = derived
+    let stated: Vec<String> = rows(recording.document, "limitations")
         .iter()
-        .filter(|(_, standing)| **standing == crate::drift::Standing::Moved)
+        .filter(|row| field(row, "name").as_deref() == Some(REACH_MOVED))
+        .map(|row| field(row, "detail").unwrap_or_default())
+        .collect();
+    for (target, count) in resting {
+        let named = stated.iter().any(|detail| listed(detail, target));
+        match (count, named) {
+            (Some(0), false) => notes.violated(
+                target,
+                format!(
+                    "the reach of {target} moved and every disposition resting on it was decided \
+                     again, and the report does not say {REACH_MOVED} about it"
+                ),
+            ),
+            (Some(0), true) | (None | Some(_), false) => {}
+            (None | Some(_), true) => notes.violated(
+                target,
+                format!(
+                    "the report says {REACH_MOVED} about {target}, and something still rests on it"
+                ),
+            ),
+        }
+    }
+}
+
+/// What each disposition run again against a moved target came to, re-derived from its own execution and touch record and held to the repair record and the report (ADR 0036).
+fn repaired(
+    recording: &Recording<'_>,
+    (engines, repairs, routing): (
+        &[Engine],
+        &[crate::repair::Repair],
+        Option<&crate::route::Routing>,
+    ),
+    audit: &mut Audit,
+) -> Decided {
+    let mut notes = Notes::on(audit, Layer::Repair);
+    if repairs.is_empty() {
+        return notes.absent("the run ran no disposition again against a target whose reach moved");
+    }
+    let (Some(routing), [Engine { touched, .. }]) = (routing, engines) else {
+        notes.unaudited(
+            "repair",
+            format!(
+                "the report rests on {} repair(s), and the recording holds no routing or not \
+                 exactly one engine recording to re-derive them from",
+                repairs.len()
+            ),
+        );
+        return notes.looked();
+    };
+    let moved = crate::drift::standings(touched);
+    let paired = paired(recording, repairs, (routing, touched), &mut notes);
+    for (at, repair) in repairs.iter().enumerate() {
+        let before = repairs
+            .get(..at)
+            .and_then(|earlier| earlier.iter().rev().find(|one| one.mutant == repair.mutant))
+            .map(|earlier| earlier.now.as_str());
+        one_repair(
+            recording,
+            (repair, before, &moved, routing),
+            &paired,
+            &mut notes,
+        );
+    }
+    for row in &recording.mutants {
+        if let Some(last) = repairs
+            .iter()
+            .rev()
+            .find(|one| one.mutant == row.display_id)
+            && row.outcome.replace('_', "-") != last.now
+        {
+            notes.violated(
+                &row.display_id,
+                format!(
+                    "the last repair of {} made it {}, and the report says {}",
+                    row.display_id, last.now, row.outcome
+                ),
+            );
+        }
+    }
+    notes.looked()
+}
+
+/// Each repair's last execution against its moved target, paired with the one engine repair touch record naming that mutation and target; a repair touch no repair names, or a repair two of them name, is a violation.
+fn paired<'a>(
+    recording: &Recording<'_>,
+    repairs: &[crate::repair::Repair],
+    (routing, touched): (&'a crate::route::Routing, &'a crate::drift::Touched),
+    notes: &mut Notes<'_>,
+) -> Vec<(&'a crate::route::Exec, Option<&'a crate::drift::Touch>)> {
+    let full = |display: &str| {
+        recording
+            .mutants
+            .iter()
+            .find(|row| row.display_id == display)
+            .map(|row| row.id.clone())
+    };
+    let repair_touches: Vec<&crate::drift::Touch> = touched
+        .touches
+        .iter()
+        .filter(|touch| touch.measured == crate::drift::Measured::Repair)
+        .collect();
+    for touch in &repair_touches {
+        let claimed = repairs.iter().any(|repair| {
+            repair.target == touch.target
+                && full(&repair.mutant).is_none_or(|id| touch.mutant.as_ref() == Some(&id))
+        });
+        if !claimed {
+            notes.violated(
+                &touch.target,
+                format!(
+                    "the engine recorded a repair touch of {} against {}, and no repair record \
+                     says that mutation was run again there",
+                    touch.mutant.as_deref().unwrap_or_default(),
+                    touch.target
+                ),
+            );
+        }
+    }
+    let mut pairs = Vec::new();
+    for repair in repairs {
+        let id = full(&repair.mutant);
+        let Some(exec) = routing.execs.iter().rev().find(|exec| {
+            exec.target == repair.target
+                && (exec.mutant == repair.mutant || id.as_ref() == Some(&exec.mutant))
+        }) else {
+            continue;
+        };
+        let naming: Vec<&crate::drift::Touch> = repair_touches
+            .iter()
+            .copied()
+            .filter(|touch| {
+                touch.target == repair.target && touch.mutant.is_some() && touch.mutant == id
+            })
+            .collect();
+        match naming.as_slice() {
+            [] => pairs.push((exec, None)),
+            [one] => pairs.push((exec, Some(*one))),
+            several => notes.violated(
+                &repair.mutant,
+                format!(
+                    "{} repair touch records name it against {}, so which one its repair \
+                     reached through cannot be told",
+                    several.len(),
+                    repair.target
+                ),
+            ),
+        }
+    }
+    pairs
+}
+
+/// Whether a repair's disposition rested on its target: the target moved, the route did not put it, and what it was is what the last earlier repair of it made it, or its route where none did.
+fn rested(
+    (repair, before): (&crate::repair::Repair, Option<&str>),
+    (moved, routing): (
+        &BTreeMap<String, crate::drift::Standing>,
+        &crate::route::Routing,
+    ),
+    notes: &mut Notes<'_>,
+) {
+    let subject = &repair.mutant;
+    if moved.get(&repair.target) != Some(&crate::drift::Standing::Moved) {
+        notes.violated(
+            subject,
+            format!(
+                "it was run again against {}, whose reach the touch records do not show moving",
+                repair.target
+            ),
+        );
+    }
+    let route = routing.routes.iter().find(|route| route.mutant == *subject);
+    if route.is_some_and(|route| route.reaching.contains(&repair.target)) {
+        notes.violated(
+            subject,
+            format!(
+                "its route already put {} to it, so nothing of it rested on that target",
+                repair.target
+            ),
+        );
+    }
+    let (expected_was, by) = match before {
+        Some(now) => (now, "the repair of it before this one made it"),
+        None if route.is_some_and(|route| route.granularity == UNREACHED) => {
+            (UNREACHED, "its route makes it")
+        }
+        None => (SURVIVED, "its route makes it"),
+    };
+    if repair.was != expected_was {
+        notes.violated(
+            subject,
+            format!(
+                "the repair says it was {}, and {by} {expected_was}",
+                repair.was
+            ),
+        );
+    }
+}
+
+/// One repair held to what its target, route, last execution and touch record decide.
+fn one_repair(
+    recording: &Recording<'_>,
+    (repair, before, moved, routing): (
+        &crate::repair::Repair,
+        Option<&str>,
+        &BTreeMap<String, crate::drift::Standing>,
+        &crate::route::Routing,
+    ),
+    paired: &[(&crate::route::Exec, Option<&crate::drift::Touch>)],
+    notes: &mut Notes<'_>,
+) {
+    let subject = &repair.mutant;
+    rested((repair, before), (moved, routing), notes);
+    let Some((last, touch)) = paired
+        .iter()
+        .rev()
+        .find(|(exec, _)| exec.mutant == *subject && exec.target == repair.target)
+    else {
+        notes.violated(
+            subject,
+            crate::repair::Contradiction::NotRun {
+                target: repair.target.clone(),
+            }
+            .to_string(),
+        );
+        return;
+    };
+    let Some(index) = recording
+        .mutants
+        .iter()
+        .find(|row| row.display_id == *subject)
+        .and_then(|row| row.catalog_index)
+    else {
+        notes.unaudited(
+            subject,
+            "the report names no catalog index for it, so whether its repair reached its site \
+             cannot be read from the touch record"
+                .to_owned(),
+        );
+        return;
+    };
+    match crate::repair::derived(&repair.was, &last.outcome, (index, *touch)) {
+        Ok(derived) => {
+            if repair.reached != derived.reached {
+                notes.violated(
+                    subject,
+                    format!(
+                        "the repair says its run {} the site, and its touch record says {}",
+                        repair.reached, derived.reached
+                    ),
+                );
+            }
+            if !derived.now.contains(&repair.now) {
+                notes.violated(
+                    subject,
+                    format!(
+                        "the repair made it {}, and its last execution against {} decides {}",
+                        repair.now,
+                        repair.target,
+                        derived.now.join(" or ")
+                    ),
+                );
+            }
+        }
+        Err(why) => notes.violated(subject, why.to_string()),
+    }
+}
+
+fn held_to_findings(
+    recording: &Recording<'_>,
+    resting: &BTreeMap<String, Option<usize>>,
+    notes: &mut Notes<'_>,
+) {
+    let owed: BTreeSet<&str> = resting
+        .iter()
+        .filter(|(_, count)| count.is_none_or(|count| count > 0))
         .map(|(target, _)| target.as_str())
         .collect();
     let named: BTreeSet<&str> = recording
@@ -683,7 +1275,8 @@ fn held_to_findings(
             target,
             format!(
                 "a control of {target} that passed the same tests reached something its \
-                 baseline did not, and the report raises no {UNSTABLE_BASELINE} finding about it"
+                 baseline did not, something still rests on it, and the report raises no \
+                 {UNSTABLE_BASELINE} finding about it"
             ),
         );
     }
@@ -691,8 +1284,8 @@ fn held_to_findings(
         notes.violated(
             target,
             format!(
-                "the report raises {UNSTABLE_BASELINE} about {target}, and the engine's touch \
-                 records do not show its reach moving"
+                "the report raises {UNSTABLE_BASELINE} about {target}, and either the engine's \
+                 touch records do not show its reach moving or nothing rests on it any more"
             ),
         );
     }
@@ -753,12 +1346,18 @@ fn held_to_limitation(
     }
 }
 
-/// Whether a limitation's detail names `target` in its closing list, which is how a report names the targets a limitation is about.
+/// Whether a limitation's detail names `target` in its closing list.
 fn listed(detail: &str, target: &str) -> bool {
+    named(detail).contains(&target)
+}
+
+/// The targets a limitation's detail names in its closing list, which is how a report names the targets a limitation is about.
+fn named(detail: &str) -> Vec<&str> {
     detail
         .rsplit_once(" (")
         .and_then(|(_, list)| list.strip_suffix(')'))
-        .is_some_and(|list| list.split(", ").any(|one| one == target))
+        .map(|list| list.split(", ").collect())
+        .unwrap_or_default()
 }
 
 #[derive(Debug)]
@@ -772,11 +1371,11 @@ struct TargetRow {
 struct MutantRow {
     id: String,
     display_id: String,
+    catalog_index: Option<u64>,
     outcome: String,
     acceptance: AcceptanceFact,
     killed_by: Option<String>,
-    reused: bool,
-    source_run_id: Option<String>,
+    read_back_from: Option<String>,
 }
 
 /// The three distinct facts a report can state about row-local review acceptance.
@@ -831,7 +1430,7 @@ struct ModelRow {
     raw: serde_json::Value,
 }
 
-fn models(recording: &Recording<'_>, run: Option<&Path>, audit: &mut Audit) {
+fn models(recording: &Recording<'_>, run: Option<&Path>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Model);
     let mut identities = BTreeSet::new();
     if recording.contract != "verified-v1" && !recording.models.is_empty() {
@@ -862,6 +1461,7 @@ fn models(recording: &Recording<'_>, run: Option<&Path>, audit: &mut Audit) {
         }
     }
     model_columns(recording, &mut notes);
+    notes.looked()
 }
 
 fn audit_model<'model>(
@@ -1651,10 +2251,20 @@ fn model_columns(recording: &Recording<'_>, notes: &mut Notes<'_>) {
 /// A part of a catalog is not held to this at all.
 /// Whether a target notices anything is a statement about the whole catalog, and a part has seen a slice: a target silent in this part may have noticed something in another,
 /// and demanding a finding here would demand one the whole would contradict.
-fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, audit: &mut Audit) {
+fn hollow(
+    recording: &Recording<'_>,
+    routing: Option<&crate::route::Routing>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Hollow);
     if recording.shard.is_some() {
-        return;
+        notes.unaudited(
+            "hollow",
+            "this shard does not hold the whole catalog, so which targets answered about a \
+             mutation and noticed none is decided over the combined parts when they are merged"
+                .to_owned(),
+        );
+        return notes.looked();
     }
     let Some(routing) = routing else {
         notes.unaudited(
@@ -1663,7 +2273,7 @@ fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
              mutation and noticed none cannot be re-derived"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     if routing.execs.is_empty() {
         notes.unaudited(
@@ -1672,7 +2282,7 @@ fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
              this audit could hold it to"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     }
     let asked = match asked_targets(routing) {
         Ok(asked) => asked,
@@ -1681,7 +2291,7 @@ fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
                 overflow.target,
                 "the execution count exceeds the report wire's u64 range".to_owned(),
             );
-            return;
+            return notes.looked();
         }
     };
     let owed: BTreeSet<&str> = asked
@@ -1719,6 +2329,7 @@ fn hollow(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
             ),
         );
     }
+    notes.looked()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1763,13 +2374,23 @@ fn named_hollow_targets<'a>(recording: &'a Recording<'_>) -> BTreeSet<&'a str> {
 /// The faults a seam recording licensed, re-derived here and held to what the run says became of them.
 ///
 /// The catalogue is minted again from the exchanges alone, by the rules and the identity recipe written out in `crate::wire`, so a fault this audit does not derive is one the run invented and a fault it derives that the run never put is a question the report is quiet about.
-fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit: &mut Audit) {
+fn wire(
+    recording: &Recording<'_>,
+    watched: Option<&crate::wire::Watched>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Wire);
     let Some(watched) = watched else {
-        return;
+        notes.unaudited(
+            "exchanges",
+            "the run kept no recording of what it ran, so whether any exchange went past a seam \
+             cannot be re-derived"
+                .to_owned(),
+        );
+        return notes.looked();
     };
     if watched.exchanges.is_empty() && watched.execs.is_empty() {
-        return;
+        return notes.absent("no exchange went past a seam and no fault was put");
     }
     let mut owed: BTreeMap<String, String> = BTreeMap::new();
     for exchange in &watched.exchanges {
@@ -1804,7 +2425,7 @@ fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit
                 owed.len()
             ),
         );
-        return;
+        return notes.looked();
     }
     for (id, rule) in &owed {
         if !put.contains_key(id.as_str()) {
@@ -1830,6 +2451,7 @@ fn wire(recording: &Recording<'_>, watched: Option<&crate::wire::Watched>, audit
         }
     }
     gaps(recording, &put, &mut notes);
+    notes.looked()
 }
 
 /// The questions the recording says nothing noticed, held to the findings that name them.
@@ -1889,7 +2511,7 @@ fn executions(
     recording: &Recording<'_>,
     routing: Option<&crate::route::Routing>,
     audit: &mut Audit,
-) {
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Executions);
     let Some(routing) = routing else {
         notes.unaudited(
@@ -1898,7 +2520,7 @@ fn executions(
              ran"
             .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     if routing.execs.is_empty() {
         notes.unaudited(
@@ -1906,7 +2528,7 @@ fn executions(
             "the recording holds no mutation execution, so no outcome can be held to what ran"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     }
     let mut ran: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for exec in &routing.execs {
@@ -1914,7 +2536,11 @@ fn executions(
             .or_default()
             .push(exec.outcome.as_str());
     }
-    for mutant in recording.mutants.iter().filter(|mutant| !mutant.reused) {
+    for mutant in recording
+        .mutants
+        .iter()
+        .filter(|mutant| mutant.read_back_from.is_none())
+    {
         let mut recorded: Vec<&str> = Vec::new();
         for key in [mutant.display_id.as_str(), mutant.id.as_str()] {
             if let Some(outcomes) = ran.get(key) {
@@ -1937,6 +2563,7 @@ fn executions(
             );
         }
     }
+    notes.looked()
 }
 
 /// Why `reported` is not an outcome the executions `recorded` could have come to, if it is not.
@@ -1990,7 +2617,12 @@ fn contradicted(reported: &str, recorded: &[&str]) -> Option<String> {
     }
 }
 
-fn proofs(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, audit: &mut Audit) {
+fn proofs(
+    recording: &Recording<'_>,
+    routing: Option<&crate::route::Routing>,
+    repairs: &[crate::repair::Repair],
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let Some(routing) = routing else {
         notes.unaudited(
@@ -1999,7 +2631,7 @@ fn proofs(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
              cannot be re-derived"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let removed: BTreeMap<String, BTreeMap<String, String>> = routing
         .routes
@@ -2013,14 +2645,21 @@ fn proofs(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
             (route.mutant.clone(), discharged)
         })
         .collect();
+    let licensed = |exec: &&crate::route::Exec| {
+        !repairs
+            .iter()
+            .any(|repair| repair.mutant == exec.mutant && repair.target == exec.target)
+    };
     let executed: BTreeSet<String> = routing
         .execs
         .iter()
+        .filter(licensed)
         .map(|exec| exec.mutant.clone())
         .collect();
     let ran: Vec<(String, String, String)> = routing
         .execs
         .iter()
+        .filter(licensed)
         .map(|exec| {
             (
                 exec.mutant.clone(),
@@ -2036,7 +2675,7 @@ fn proofs(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
              nothing to hold a layer to"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     }
     let known: BTreeSet<&str> = recording
         .targets
@@ -2047,6 +2686,7 @@ fn proofs(recording: &Recording<'_>, routing: Option<&crate::route::Routing>, au
     kept(&routing.routes, &ran, &mut notes);
     reach(&routing.routes, &known, &executed, &mut notes);
     believed(&routing.routes, &mut notes);
+    notes.looked()
 }
 
 /// Reuse, re-derived: a route names the run whose answer it took, or why it took none, and never both.
@@ -2209,6 +2849,8 @@ struct Recording<'a> {
     shard: Option<String>,
     target: String,
     models: Vec<ModelRow>,
+    /// What the run concluded, as its recording's `run-end` says; a complete report stores no verdict.
+    verdict: Option<String>,
 }
 
 impl<'a> Recording<'a> {
@@ -2232,18 +2874,16 @@ impl<'a> Recording<'a> {
                         .get("decision")
                         .cloned()
                         .unwrap_or(serde_json::Value::Null);
-                    let reuse = row.get("reuse").cloned().unwrap_or(serde_json::Value::Null);
                     MutantRow {
                         id: field(row, "id").unwrap_or_default(),
                         display_id: field(row, "display_id").unwrap_or_default(),
+                        catalog_index: row.get("catalog_index").and_then(serde_json::Value::as_u64),
                         outcome: field(&decision, "outcome").unwrap_or_default(),
                         acceptance: AcceptanceFact::from_json(row.get("accepted")),
                         killed_by: field(&decision, "killed_by"),
-                        reused: reuse
-                            .get("reused")
-                            .and_then(serde_json::Value::as_bool)
-                            .unwrap_or_default(),
-                        source_run_id: field(&reuse, "source_run_id"),
+                        read_back_from: row
+                            .get("reuse")
+                            .and_then(|reuse| field(reuse, "source_run_id")),
                     }
                 })
                 .collect(),
@@ -2278,6 +2918,7 @@ impl<'a> Recording<'a> {
                     }
                 })
                 .collect(),
+            verdict: None,
         }
     }
 
@@ -2353,7 +2994,7 @@ fn mutant_columns(recording: &Recording<'_>, audit: &mut Audit) {
         let recorded = recording
             .mutants
             .iter()
-            .filter(|mutant| mutant.outcome == outcome && mutant.reused)
+            .filter(|mutant| mutant.outcome == outcome && mutant.read_back_from.is_some())
             .count();
         notes.tally(Column {
             subject: &format!("accounting.mutants.{name}"),
@@ -2488,7 +3129,7 @@ impl Relation {
 
 /// Whether the verdict is one the accounting and the findings support.
 fn verdict(recording: &Recording<'_>, audit: &mut Audit) {
-    let Some(concluded) = field(recording.document, "verdict") else {
+    let Some(concluded) = recording.verdict.clone() else {
         Notes::on(audit, Layer::Accounting).unaudited(
             "verdict",
             "the recording does not say what the run concluded, so there is nothing to hold its \
@@ -2631,7 +3272,7 @@ fn defect(recording: &Recording<'_>, audit: &mut Audit) {
 }
 
 /// Whether every kill names a target this run itself saw pass on the original tree.
-fn killers(recording: &Recording<'_>, audit: &mut Audit) {
+fn killers(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Killers);
     for mutant in recording
         .mutants
@@ -2673,10 +3314,11 @@ fn killers(recording: &Recording<'_>, audit: &mut Audit) {
             );
         }
     }
+    notes.looked()
 }
 
 /// Whether the mutations nothing noticed and the findings that raise them are the same set.
-fn findings(recording: &Recording<'_>, audit: &mut Audit) {
+fn findings(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Findings);
     let mutation_kinds = [
         SURVIVING_MUTANT,
@@ -2741,10 +3383,11 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) {
             );
         }
     }
+    notes.looked()
 }
 
 /// Whether a finding that calls an acceptance unmatched is supported by the complete catalog.
-fn acceptances(recording: &Recording<'_>, audit: &mut Audit) {
+fn acceptances(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Acceptances);
     for finding in recording
         .findings
@@ -2784,44 +3427,32 @@ fn acceptances(recording: &Recording<'_>, audit: &mut Audit) {
             );
         }
     }
+    notes.looked()
 }
 
 /// Whether every disposition read back from an earlier run names one a reader could go and read.
-fn reuse(recording: &Recording<'_>, audit: &mut Audit) {
+fn reuse(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
     let mut read_back = 0_usize;
     let mut notes = Notes::on(audit, Layer::Reuse);
     for mutant in &recording.mutants {
-        match (mutant.reused, mutant.source_run_id.as_deref()) {
-            (true, None) => notes.violated(
-                mutant.label(),
-                "the disposition was read back from an earlier run and does not name it; a \
-                 verdict a reader cannot trace back is one taken on trust"
-                    .to_owned(),
-            ),
-            (true, Some(run)) if run == recording.run_id => notes.violated(
+        match mutant.read_back_from.as_deref() {
+            Some(run) if run == recording.run_id => notes.violated(
                 mutant.label(),
                 "the disposition names this run itself as the run it was read back from; a run \
                  cannot have read its own answer back"
                     .to_owned(),
             ),
-            (true, Some(_)) => match read_back.checked_add(1) {
+            Some(_) => match read_back.checked_add(1) {
                 Some(count) => read_back = count,
                 None => {
                     notes.violated(
                         "provenance",
                         "the number of reused dispositions exceeds usize".to_owned(),
                     );
-                    return;
+                    return notes.looked();
                 }
             },
-            (false, Some(run)) => notes.violated(
-                mutant.label(),
-                format!(
-                    "this run established the disposition itself and also names {run:?} as the \
-                     run it came from; one of the two is wrong and a reader cannot tell which"
-                ),
-            ),
-            (false, None) => {}
+            None => {}
         }
     }
     if read_back > 0 {
@@ -2834,6 +3465,16 @@ fn reuse(recording: &Recording<'_>, audit: &mut Audit) {
             ),
         );
     }
+    notes.looked()
+}
+
+/// The columns of the accounting, against the records they summarise and against the verdict they carry.
+fn accounting(recording: &Recording<'_>, audit: &mut Audit) -> Decided {
+    target_columns(recording, audit);
+    mutant_columns(recording, audit);
+    equations(recording, audit);
+    verdict(recording, audit);
+    Notes::on(audit, Layer::Accounting).looked()
 }
 
 /// A string the recording says something in.

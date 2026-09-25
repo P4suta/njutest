@@ -39,8 +39,8 @@ fn fixture() -> Fixture {
 }
 
 /// The generation provider a run asks, as a program every platform can start.
-fn provider() -> PathBuf {
-    njutest_devkit::fake_cargo::example("fake_provider")
+fn provider(own: &Path) -> PathBuf {
+    njutest_devkit::fake_cargo::example_in("fake_provider", own)
 }
 
 fn declaring(fixture: &Fixture) {
@@ -49,7 +49,9 @@ fn declaring(fixture: &Fixture) {
         format!(
             "version = 1\n\n[generation]\ncommand = [{:?}, \"generation\"]\n\
              environment = [\"FAKE_GENERATOR_OFFERS\"]\n",
-            provider().to_str().expect("test protocol paths are UTF-8")
+            provider(fixture.root.parent().expect("the fixture's own directory"))
+                .to_str()
+                .expect("test protocol paths are UTF-8")
         ),
     )
     .expect("write");
@@ -87,7 +89,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -340,4 +342,32 @@ fn a_digest_that_names_no_candidate_is_not_a_run_that_was_offered_none() {
         "and how many there were to choose from, because that is what tells a person \
          whether to look again or to stop looking: {refusal}"
     );
+}
+
+#[test]
+fn next_offers_the_checked_test_first_and_takes_it_only_once_it_holds_up_again() {
+    let fixture = fixture();
+    declaring(&fixture);
+    let offers = offering("tests/zero.rs", OFFERED);
+    let verified = njutest(&fixture, &["verify", "--offline", "--locked"], &offers);
+    assert_eq!(verified.status.code(), Some(2), "{verified:?}");
+
+    let taken = njutest(
+        &fixture,
+        &["next", "--take", "--offline", "--locked"],
+        &offers,
+    );
+    let said = njutest_devkit::process::strict_utf8(&taken.stdout).into_owned();
+    assert_eq!(taken.status.code(), Some(0), "{taken:?}");
+    assert!(
+        said.contains("the cheapest thing you can do closes"),
+        "the gap a checked test closes is the one offered first: {said}"
+    );
+    assert!(said.contains("tests/zero.rs"), "{said}");
+    assert!(
+        said.contains("wrote tests/zero.rs"),
+        "a test somebody took is written once it holds up again against the tree as it is: {said}"
+    );
+    let written = std::fs::read_to_string(fixture.root.join("tests/zero.rs")).expect("the test");
+    assert!(written.contains("zero_has_a_sign_of_its_own"), "{written}");
 }

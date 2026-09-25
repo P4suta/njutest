@@ -29,9 +29,9 @@ const SPOKEN: [&str; 3] = [
 ];
 
 /// The provider every test here drives, as a program every platform can start.
-fn provider() -> Vec<String> {
+fn provider(own: &Path) -> Vec<String> {
     vec![
-        njutest_devkit::fake_cargo::example("fake_provider")
+        njutest_devkit::fake_cargo::example_in("fake_provider", own)
             .to_str()
             .expect("test protocol paths are UTF-8")
             .to_owned(),
@@ -78,13 +78,14 @@ fn place(dir: &Path, ready: &str) -> Where {
 
 #[test]
 fn a_run_holds_what_the_provider_started_and_tells_its_tests_where_it_is() {
+    let own = tempfile::tempdir().expect("a directory of this test's own");
     let dir = tempfile::tempdir().expect("tempdir");
     let mut manager = Manager::new(place(
         dir.path(),
         r#"{"version":1,"status":"ready","instance":"pg-1","environment":{"DATABASE_URL":"postgres://127.0.0.1/test"}}"#,
     ));
     let lease = manager
-        .start("postgres", &resource(provider()))
+        .start("postgres", &resource(provider(own.path())))
         .expect("the provider is ready");
     assert_eq!(lease.instance.as_str(), "pg-1");
     assert_eq!(
@@ -100,18 +101,19 @@ fn a_run_holds_what_the_provider_started_and_tells_its_tests_where_it_is() {
 
 #[test]
 fn asking_twice_for_one_capability_holds_one_instance() {
+    let own = tempfile::tempdir().expect("a directory of this test's own");
     let dir = tempfile::tempdir().expect("tempdir");
     let mut manager = Manager::new(place(
         dir.path(),
         r#"{"version":1,"status":"ready","instance":"pg-1","environment":{}}"#,
     ));
     let first = manager
-        .start("postgres", &resource(provider()))
+        .start("postgres", &resource(provider(own.path())))
         .expect("ready")
         .instance
         .clone();
     let again = manager
-        .start("postgres", &resource(provider()))
+        .start("postgres", &resource(provider(own.path())))
         .expect("ready")
         .instance
         .clone();
@@ -122,12 +124,13 @@ fn asking_twice_for_one_capability_holds_one_instance() {
 
 #[test]
 fn a_provider_that_says_nothing_ends_the_lease_rather_than_the_run_waiting_on_it() {
+    let own = tempfile::tempdir().expect("a directory of this test's own");
     let dir = tempfile::tempdir().expect("tempdir");
     let mut manager = Manager::new(Where {
         dir: dir.path().to_path_buf(),
         env: saying("", true),
     });
-    let mut slow = resource(provider());
+    let mut slow = resource(provider(own.path()));
     slow.timeout = Duration::from_millis(200);
     let refused = manager
         .start("silent", &slow)
@@ -138,13 +141,14 @@ fn a_provider_that_says_nothing_ends_the_lease_rather_than_the_run_waiting_on_it
 
 #[test]
 fn a_provider_that_offers_what_a_run_composes_itself_is_refused_and_stopped() {
+    let own = tempfile::tempdir().expect("a directory of this test's own");
     let dir = tempfile::tempdir().expect("tempdir");
     let mut manager = Manager::new(place(
         dir.path(),
         r#"{"version":1,"status":"ready","instance":"pg-1","environment":{"CARGO_TARGET_DIR":"/elsewhere"}}"#,
     ));
     let refused = manager
-        .start("greedy", &resource(provider()))
+        .start("greedy", &resource(provider(own.path())))
         .expect_err("refused");
     assert!(matches!(refused, ResourceError::EnvironmentRefused { .. }));
     assert_eq!(refused.code().code, "NJ5005");
@@ -153,26 +157,28 @@ fn a_provider_that_offers_what_a_run_composes_itself_is_refused_and_stopped() {
 
 #[test]
 fn a_provider_that_answers_another_protocol_is_not_guessed_at() {
+    let own = tempfile::tempdir().expect("a directory of this test's own");
     let dir = tempfile::tempdir().expect("tempdir");
     let mut manager = Manager::new(place(
         dir.path(),
         r#"{"version":2,"status":"ready","instance":"pg-1"}"#,
     ));
     let refused = manager
-        .start("future", &resource(provider()))
+        .start("future", &resource(provider(own.path())))
         .expect_err("refused");
     assert_eq!(refused.code().code, "NJ5003", "{refused}");
 }
 
 #[test]
 fn a_provider_that_says_it_cannot_says_so_in_the_run() {
+    let own = tempfile::tempdir().expect("a directory of this test's own");
     let dir = tempfile::tempdir().expect("tempdir");
     let mut manager = Manager::new(place(
         dir.path(),
         r#"{"version":1,"status":"error","message":"no docker"}"#,
     ));
     let refused = manager
-        .start("unwilling", &resource(provider()))
+        .start("unwilling", &resource(provider(own.path())))
         .expect_err("refused");
     assert_eq!(refused.code().code, "NJ5004", "{refused}");
     assert!(refused.to_string().contains("no docker"), "{refused}");

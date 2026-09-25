@@ -191,6 +191,7 @@ pub fn run(
                     restore: restore.as_ref(),
                     journal: &mut journal,
                     session: &session,
+                    scratch: &scratch,
                 },
                 &mut model,
                 notes,
@@ -1005,9 +1006,16 @@ impl Journal {
         judged: &mutation::Judged,
     ) -> Result<(), crate::checkpoint::CheckpointError> {
         let disposition = match &judged.disposition {
-            mutation::Disposition::Killed { by } => {
-                crate::checkpoint::SavedDisposition::Killed { by: by.clone() }
-            }
+            mutation::Disposition::Killed { by } => crate::checkpoint::SavedDisposition::Killed {
+                by: by.clone(),
+                before: judged
+                    .routing
+                    .iter()
+                    .flat_map(|routing| &routing.answered)
+                    .take_while(|answer| answer.target != *by)
+                    .cloned()
+                    .collect(),
+            },
             mutation::Disposition::StepLimitReached { .. }
             | mutation::Disposition::Waited { .. }
             | mutation::Disposition::Rejected { .. }
@@ -1259,6 +1267,8 @@ struct Mutating<'a> {
     unsafe_packages: &'a BTreeSet<String>,
     /// The prepared workspace: what built the trees, ran every target once, and decides which tests could notice a mutation.
     session: &'a rust_mutants::session::Session,
+    /// This run's own directory, which the knobs make the directories they start controls in under.
+    scratch: &'a Scratch,
 }
 
 /// The acceptance entries that one catalog can honour, and the entries it cannot match.
@@ -1327,6 +1337,12 @@ fn run_mutation(
     notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
+    mutating.report.knobs = repeated(
+        mutating.request,
+        (mutating.session, mutating.baseline, mutating.scratch),
+        mutating.environment,
+        (notes, watch),
+    )?;
     notes.phase("mutation")?;
     watch.trace.stage("mutation");
     let session = mutating.session;
@@ -1443,6 +1459,32 @@ fn prove_equivalence(
     equivalence::settle(&mut mutation.judged, &decided, watch)?;
     phase.end();
     Ok(())
+}
+
+/// What each knob the configuration asks for establishes about each target whose baseline passed, or nothing where it asks for none.
+fn repeated(
+    request: &Request,
+    (session, baseline, scratch): (
+        &rust_mutants::session::Session,
+        &baseline::Baseline,
+        &Scratch,
+    ),
+    environment: &Environment,
+    (notes, watch): (&mut Notes<'_>, Watch<'_>),
+) -> Result<Vec<crate::report::knobs::KnobRecord>, RunnerError> {
+    let asked = &request.config.repeatable.knobs;
+    if asked.is_empty() {
+        return Ok(Vec::new());
+    }
+    notes.phase("repeatable")?;
+    watch.trace.stage("repeatable");
+    let place = super::knobs::Place::probed(scratch.dir(), &environment.vars, watch.cancel)?;
+    super::knobs::measured(
+        session,
+        asked,
+        (&super::knobs::passing(baseline), &place),
+        watch,
+    )
 }
 
 /// The prepared workspace: the trees, the one run of every target with nothing active, and what its guards recorded.
@@ -1570,7 +1612,7 @@ fn narrowing(
     let Some(change) = request.changed.as_ref() else {
         return Ok(configured);
     };
-    rust_mutants::git::within(change, &configured)
+    rust_mutants::git::within(change, &configured)?.patterns()
 }
 
 /// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.
@@ -1614,15 +1656,14 @@ pub fn record(
     report.drift.clone_from(&mutation.drift);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
-        report
-            .findings
-            .extend(crate::report::hollow::found(&report.mutants));
-        report
-            .findings
-            .extend(crate::report::drift::found(&report.drift, &report.mutants));
-        report
-            .limitations
-            .extend(crate::report::drift::unmeasured(&report.drift));
+        let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
+        report.findings.extend(whole.findings);
+        report.limitations.extend(whole.limitations);
+        report.limitations.extend(crate::report::drift::repaired(
+            &report.drift,
+            &report.mutants,
+            &mutation.repaired,
+        ));
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
@@ -1868,6 +1909,12 @@ pub fn limitation_detail(name: &str) -> String {
         rust_mutants::limitation::TOUCH_LOG_UNREADABLE => {
             "the target recorded what its guards reached and the record did not read back, \
              so nothing of it is believed and every test of it runs"
+        }
+        rust_mutants::limitation::UNCONTROLLED_CHILD => {
+            "a process of the target's tree ran without the environment the run gave it, as a \
+             test that clears a child's environment starts one: no mutant can be active in it \
+             and nothing records what it entered, so every test of the target stays in every \
+             route and a survival it reports is inconclusive"
         }
         rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION => {
             "the configuration named this target as one never to start, so no mutation was \

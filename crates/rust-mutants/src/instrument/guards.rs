@@ -135,6 +135,7 @@ impl Paths<'_> {
 
 /// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own.
 /// The outer generated macro invocation is load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.
+/// The original is held in one too, or in the comparison call that wraps it, for the same reason: `!active(k) && a || b` leaves `b` deciding while mutant `k` is live.
 /// Unlike a generic function,
 /// the identity macro preserves the surrounding expression's coercion site.
 fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
@@ -160,8 +161,16 @@ fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> 
         let written = write!(text, "{}({}, {value}!(", paths.differing(), one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
+    let held = comparable.is_empty();
+    if held {
+        let written = write!(text, "{value}!(");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
     let original_at = text.len();
     text.push_str(original);
+    if held {
+        text.push(')');
+    }
     for one in comparable.iter().rev() {
         let written = write!(text, "), || {value}!({}))", one.text);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
@@ -241,5 +250,63 @@ fn chain(
         alternatives: spans,
         original_at,
         compared: probed.iter().map(|one| one.index).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Alternative, Paths, compose};
+    use crate::syntax::Form;
+
+    const ORIGINAL: &str = "a() || b()";
+
+    /// Every form, and what must stand on either side of the original it holds.
+    fn around(form: Form) -> (&'static str, &'static str) {
+        match form {
+            Form::C => ("rt::value!(", ")"),
+            Form::E | Form::S => ("else { ", " }"),
+            Form::M => ("", " if "),
+        }
+    }
+
+    fn alternative(index: u32, comparable: bool) -> Alternative {
+        Alternative {
+            index,
+            text: "false".to_owned(),
+            comparable,
+            probe: None,
+        }
+    }
+
+    #[test]
+    fn the_original_is_one_operand_whatever_operators_it_holds() {
+        let paths = Paths {
+            module: "rt",
+            depth: 0,
+        };
+        for form in Form::ALL {
+            for comparable in [false, true] {
+                let Ok(composed) = compose(
+                    form,
+                    &paths,
+                    &[alternative(7, comparable), alternative(8, false)],
+                    ORIGINAL,
+                ) else {
+                    panic!("{form:?} composes");
+                };
+                let (open, close) = around(form);
+                let (before, rest) = composed.text.split_at(composed.original_at);
+                assert!(
+                    before.ends_with(open)
+                        && rest
+                            .strip_prefix(ORIGINAL)
+                            .is_some_and(|after| after.starts_with(close)),
+                    "form {form:?}, comparable {comparable}: the original must sit alone between \
+                     {open:?} and {close:?}, or an operator in it binds to the guard around it \
+                     and a live mutant leaves part of the original deciding: {}",
+                    composed.text
+                );
+            }
+        }
     }
 }

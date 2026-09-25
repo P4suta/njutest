@@ -31,7 +31,22 @@ fn found(subject: &str, detail: &str, line: u32) -> Finding {
 }
 
 fn report_with(findings: Vec<Finding>) -> Report {
+    report_measured(findings, Vec::new())
+}
+
+fn report_measured(findings: Vec<Finding>, drift: Vec<njutest::report::drift::Drift>) -> Report {
+    report_recorded(findings, drift, Vec::new())
+}
+
+/// The report of a whole run whose part holds `findings` and the `drift` and `knobs` records the catalog's conclusion is drawn from.
+fn report_recorded(
+    findings: Vec<Finding>,
+    drift: Vec<njutest::report::drift::Drift>,
+    knobs: Vec<njutest::report::knobs::KnobRecord>,
+) -> Report {
     let mut source = BuildReport::new("fixture-evidence", RunKind::Full, Contract::StandardV1);
+    source.drift = drift;
+    source.knobs = knobs;
     source.repository.root_name = "workspace".to_owned();
     source.repository.workspace_digest = "a".repeat(64);
     source.repository.configuration_digest = "b".repeat(64);
@@ -399,10 +414,12 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     };
-    let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
-    findings.extend(njutest::report::drift::found(&[moved], &[]));
-    let report = report_with(findings);
+    let report = report_measured(
+        vec![found("cccccccccccccccccccc", "no test noticed it", 12)],
+        vec![moved],
+    );
     let root = tempfile::tempdir().expect("a directory with no source in it");
     let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
     let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");
@@ -434,10 +451,66 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
             "workspace/lib/workspace reached something on an original-code control that it \
              did not reach on its baseline, over the same passing tests, so what it reaches \
              is not a function of the target and every proof read off its baseline is \
-             unfounded: 0 mutations a proof removed its run of, and 0 mutations no test \
+             unfounded: 1 mutation a proof removed its run of, and 0 mutations no test \
              reached, rest on it. Make what the suite reaches independent of order, time and \
              earlier processes, and run again"
         ],
         "the sentence names what moved, what rests on it, and what to do"
+    );
+}
+
+#[test]
+fn a_knob_that_broke_a_target_is_told_as_a_suite_that_depends_on_its_machine() {
+    use njutest::report::knobs::{Knob, KnobRecord, Standing};
+    let broke = KnobRecord {
+        target: "environment/test/timezone".to_owned(),
+        knob: Knob::Timezone,
+        standing: Standing::Broke {
+            failed: vec!["the_zone_is_not_lord_howe".to_owned()],
+        },
+    };
+    let report = report_recorded(
+        vec![found("cccccccccccccccccccc", "no test noticed it", 12)],
+        Vec::new(),
+        vec![broke],
+    );
+    let root = tempfile::tempdir().expect("a directory with no source in it");
+    let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
+    let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");
+    let said: Vec<&njutest::presentation::Diagnostic> = told
+        .diagnostics
+        .iter()
+        .filter(|one| one.code == "NJ-ENVIRONMENT")
+        .collect();
+    let [diagnostic] = said.as_slice() else {
+        panic!(
+            "one target a knob broke is one thing to be told: {:?}",
+            told.diagnostics
+        );
+    };
+    assert_eq!(
+        diagnostic.severity,
+        njutest::presentation::Severity::Refusal,
+        "a suite whose answer depends on the machine is a defect, and is told as one"
+    );
+    assert_eq!(
+        diagnostic.title,
+        "this test target passes here and fails where something a machine may set \
+         differently is set differently",
+    );
+    assert!(
+        diagnostic.at.is_none(),
+        "the finding is about a target, and no line of the source is where it is"
+    );
+    assert_eq!(
+        diagnostic.notes,
+        [
+            "environment/test/timezone passed on its baseline and failed with \
+             TZ=Australia/Lord_Howe: the_zone_is_not_lord_howe. What it answers depends on \
+             something that differs between machines; set it in the test, or make the code not \
+             read it, and run again"
+        ],
+        "the sentence names the knob, the value it was put to, the tests that failed, and what \
+         to do"
     );
 }

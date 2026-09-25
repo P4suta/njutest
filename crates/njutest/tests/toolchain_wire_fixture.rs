@@ -216,7 +216,13 @@ fn pointed_at_the_provider(fixture: &Fixture) {
         "the fixture no longer says where its provider goes, so this driver would run it \
          against whatever {PLACEHOLDER} was replaced with"
     );
-    let provider = njutest_devkit::fake_cargo::example("fake_upstream");
+    let provider = njutest_devkit::fake_cargo::example_in(
+        "fake_upstream",
+        fixture
+            .root()
+            .parent()
+            .expect("the fixture's own directory"),
+    );
     std::fs::write(
         &path,
         written.replace(
@@ -246,7 +252,7 @@ fn environment(fixture: &Fixture) -> Environment {
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         temp_directory: fixture.temp().to_path_buf(),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[]),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),

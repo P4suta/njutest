@@ -24,13 +24,24 @@ const SAMPLES: [(&str, &str); 3] = [
     ("engine-run-unreached", "fixture-unreached"),
 ];
 
-/// The documents a run leaves beside its report that a committed run keeps.
-const DOCUMENTS: [&str; 4] = [
-    "run-report-v1.json",
-    "catalog-v1.json",
-    "reached-v1.json",
-    "touched-v1.json",
-];
+/// Every document a run left at the top of `directory`, by name, which is every document a committed run keeps: a list written here would miss the next one the engine learns to write.
+fn documents(directory: &Path) -> BTreeSet<String> {
+    std::fs::read_dir(directory)
+        .expect("the run's directory")
+        .map(|entry| {
+            entry
+                .expect("an entry of the run's directory")
+                .file_name()
+                .into_string()
+                .expect("a document is named in UTF-8")
+        })
+        .filter(|name| {
+            Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        })
+        .collect()
+}
 
 /// The recording a run keeps, beside its documents.
 const RECORDING: &str = "trace/trace.jsonl";
@@ -97,11 +108,12 @@ fn shape(value: &serde_json::Value, at: &str, into: &mut BTreeSet<String>) {
 /// The shape of every document and of every kind of event the run in `directory` kept.
 fn shapes(directory: &Path) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    for document in DOCUMENTS {
-        let text = std::fs::read_to_string(directory.join(document)).expect("a document");
+    for document in documents(directory) {
+        found.insert(format!("{document}:kept"));
+        let text = std::fs::read_to_string(directory.join(&document)).expect("a document");
         let value: serde_json::Value =
             njutest_devkit::strictjson::decode_str(&text).expect("a document is JSON");
-        shape(&value, document, &mut found);
+        shape(&value, &document, &mut found);
     }
     let recording = std::fs::read_to_string(directory.join(RECORDING)).expect("the recording");
     for line in recording.lines().filter(|line| !line.trim().is_empty()) {
@@ -117,10 +129,14 @@ fn shapes(directory: &Path) -> BTreeSet<String> {
     found
 }
 
-/// Replaces the committed run `name` with the one in `fresh`, its documents and its recording, and none of the output it kept.
+/// Replaces the committed run `name` with the one in `fresh`, its documents and its recording, and none of the output it kept; a document the engine no longer writes goes.
 fn rewrite(name: &str, fresh: &Path) {
     let into = committed(name);
-    for document in DOCUMENTS.iter().chain(std::iter::once(&RECORDING)) {
+    let written = documents(fresh);
+    for gone in documents(&into).difference(&written) {
+        std::fs::remove_file(into.join(gone)).expect("a document the engine no longer writes");
+    }
+    for document in written.iter().map(String::as_str).chain([RECORDING]) {
         let to = into.join(document);
         std::fs::create_dir_all(to.parent().expect("a parent")).expect("the directory");
         std::fs::copy(fresh.join(document), &to).expect("the committed copy");

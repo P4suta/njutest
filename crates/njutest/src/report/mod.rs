@@ -10,6 +10,7 @@ pub mod hollow;
 pub mod html;
 pub mod json;
 pub mod junit;
+pub mod knobs;
 pub mod lines;
 pub mod merge;
 pub mod sarif;
@@ -733,15 +734,15 @@ pub struct Routing {
     /// What widened the question, when the run could not narrow it.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub fallback: Option<rust_mutants::session::Fallback>,
-    /// The targets the run actually asked, in the order it asked them, with what each answered.
+    /// The targets actually asked, in the order they were asked, with what each answered: by this run, or by the run a read-back or resumed disposition came from.
     /// A target in `reaching` and not here reached the mutation and was never given the chance, because one asked before it noticed.
     pub answered: Vec<Answered>,
 }
 
 impl Routing {
-    /// What a route says, as a report records it.
+    /// What a route says, with what the targets asked about it answered, as a report records it.
     #[must_use]
-    pub fn of(route: &rust_mutants::session::Route) -> Self {
+    pub fn of(route: &rust_mutants::session::Route, answered: Vec<Answered>) -> Self {
         Self {
             granularity: route.granularity(),
             reaching: route
@@ -758,7 +759,7 @@ impl Routing {
                 })
                 .collect(),
             fallback: route.fallback(),
-            answered: Vec::new(),
+            answered,
         }
     }
 }
@@ -816,6 +817,16 @@ impl Decision {
             Self::ModelNoticed => 7,
             Self::Proved => 8,
             Self::ModelProved => 9,
+        }
+    }
+
+    /// Whichever of the two a mutation stands less on, which is what the two together stand on.
+    #[must_use]
+    pub const fn weaker(self, other: Self) -> Self {
+        if other.standing() < self.standing() {
+            other
+        } else {
+            self
         }
     }
 
@@ -1609,6 +1620,8 @@ pub struct BuildPartEvidence {
     limitations: Vec<Limitation>,
     /// Whether each target this source's baseline measured held its reach on a control.
     drift: Vec<drift::Drift>,
+    /// What each knob asked for established about each target whose baseline passed.
+    knobs: Vec<knobs::KnobRecord>,
 }
 
 impl BuildPartEvidence {
@@ -1634,6 +1647,7 @@ impl BuildPartEvidence {
             findings,
             limitations: report.limitations.clone(),
             drift: report.drift.clone(),
+            knobs: report.knobs.clone(),
         };
         validate_part_evidence(&evidence)?;
         Ok(evidence)
@@ -1658,6 +1672,7 @@ struct BuildPartEvidenceWire {
     findings: Vec<Finding>,
     limitations: Vec<Limitation>,
     drift: Vec<drift::Drift>,
+    knobs: Vec<knobs::KnobRecord>,
 }
 
 impl<'de> Deserialize<'de> for BuildPartEvidence {
@@ -1681,6 +1696,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             findings: wire.findings,
             limitations: wire.limitations,
             drift: wire.drift,
+            knobs: wire.knobs,
         };
         validate_part_evidence(&held).map_err(serde::de::Error::custom)?;
         Ok(held)
@@ -1920,6 +1936,14 @@ pub enum PartLedgerError {
         /// The owning source.
         run_id: rust_mutants::id::RunId,
     },
+    /// A knob was recorded twice for one target, or put on other targets than another knob was, when every knob asked for is put once on every target whose baseline passed.
+    #[error("source {run_id} has knob records that say two things or leave a target out: {about}")]
+    KnobRecords {
+        /// The owning source.
+        run_id: rust_mutants::id::RunId,
+        /// Which.
+        about: String,
+    },
 }
 
 impl PartLedger {
@@ -2040,6 +2064,39 @@ fn validate_part_catalog(part: &BuildPartEvidence) -> Result<(), PartLedgerError
     Ok(())
 }
 
+/// Every knob asked for is put once on every target whose baseline passed, so the records of one part are one per knob and target, and every knob's are over one set of targets.
+fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    let refused = |about: String| PartLedgerError::KnobRecords {
+        run_id: part.run_id.clone(),
+        about,
+    };
+    let mut by_knob: BTreeMap<knobs::Knob, BTreeSet<&str>> = BTreeMap::new();
+    for one in &part.knobs {
+        if !by_knob
+            .entry(one.knob)
+            .or_default()
+            .insert(one.target.as_str())
+        {
+            return Err(refused(format!(
+                "{} is recorded twice for {}",
+                one.knob.name(),
+                one.target
+            )));
+        }
+    }
+    let mut knobs = by_knob.iter();
+    if let Some((first, covered)) = knobs.next()
+        && let Some((other, _)) = knobs.find(|(_, targets)| *targets != covered)
+    {
+        return Err(refused(format!(
+            "{} was put on other targets than {}",
+            other.name(),
+            first.name()
+        )));
+    }
+    Ok(())
+}
+
 fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
     validate_part_catalog(part)?;
     let started = canonical_timestamp(part, "started", &part.timing.started)?;
@@ -2063,6 +2120,7 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
             about: "mutation",
         });
     }
+    validate_knob_records(part)?;
     let mut target_ids = BTreeSet::new();
     for target in &part.targets {
         if !target_ids.insert(target.id.as_str()) {
@@ -4216,6 +4274,10 @@ pub enum FindingKind {
     WireUnnoticed,
     /// A target reached something on an original-code control that it did not reach on its baseline, so every proof read off its baseline is unfounded.
     UnstableBaseline,
+    /// A target that passed on its baseline failed on a control started with something the contract lets differ between machines set differently.
+    EnvironmentDependent,
+    /// A target reached something else on a control started with something the contract lets differ between machines set differently, so every proof read off its baseline is unfounded where that differs.
+    EnvironmentDependentReach,
 }
 
 /// Which configured-build evidence raised a finding.
@@ -4236,6 +4298,28 @@ pub enum FindingOrigin {
 }
 
 impl FindingKind {
+    /// Whether only the whole catalog decides it, so no part carries it and every conclusion derives it over all the parts of a build.
+    #[must_use]
+    pub const fn catalog_wide(self) -> bool {
+        match self {
+            Self::HollowTarget
+            | Self::UnstableBaseline
+            | Self::EnvironmentDependent
+            | Self::EnvironmentDependentReach => true,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::TargetMissing
+            | Self::SurvivingMutant
+            | Self::Timeout
+            | Self::WaitedMutant
+            | Self::StepLimitReachedMutant
+            | Self::NotMeasured
+            | Self::UnmatchedAcceptance
+            | Self::UndefinedBehaviour
+            | Self::WireUnnoticed => false,
+        }
+    }
+
     /// The name this carries in a report, which is the one a person greps for.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -4253,6 +4337,8 @@ impl FindingKind {
             Self::HollowTarget => "hollow-target",
             Self::WireUnnoticed => "wire-unnoticed",
             Self::UnstableBaseline => "unstable-baseline",
+            Self::EnvironmentDependent => "environment-dependent",
+            Self::EnvironmentDependentReach => "environment-dependent-reach",
         }
     }
 
@@ -4260,7 +4346,10 @@ impl FindingKind {
     #[must_use]
     pub const fn is_defect(self) -> bool {
         match self {
-            Self::BuildFailure | Self::FailingTest | Self::UndefinedBehaviour => true,
+            Self::BuildFailure
+            | Self::FailingTest
+            | Self::UndefinedBehaviour
+            | Self::EnvironmentDependent => true,
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout
@@ -4270,7 +4359,8 @@ impl FindingKind {
             | Self::UnmatchedAcceptance
             | Self::HollowTarget
             | Self::WireUnnoticed
-            | Self::UnstableBaseline => false,
+            | Self::UnstableBaseline
+            | Self::EnvironmentDependentReach => false,
         }
     }
 }
@@ -4525,6 +4615,8 @@ pub struct BuildReport {
     pub limitations: Vec<Limitation>,
     /// Whether each target its baseline measured reached, on an original-code control, what it reached on that baseline.
     pub drift: Vec<drift::Drift>,
+    /// What each knob asked for established about each target whose baseline passed.
+    pub knobs: Vec<knobs::KnobRecord>,
 }
 
 impl BuildReport {
@@ -4563,6 +4655,7 @@ impl BuildReport {
             findings: Vec::new(),
             limitations: Vec::new(),
             drift: Vec::new(),
+            knobs: Vec::new(),
         }
     }
 
@@ -4595,7 +4688,7 @@ impl BuildReport {
         }
         let observed = self.accounting.targets.passed > 0;
         let asked = self.accounting.mutants.executed > 0;
-        if !observed || !asked || moved(&self.drift) {
+        if !observed || !asked || moved(&self.drift) || knobs::shaken(&self.knobs) {
             return Verdict::Insufficient;
         }
         if self.scope.shard.is_some() {
@@ -5964,17 +6057,7 @@ impl Report {
                 .collect(),
             mutants,
             findings,
-            limitations: self
-                .builds
-                .iter()
-                .flat_map(|build| {
-                    build
-                        .parts
-                        .iter()
-                        .flat_map(|part| part.limitations.iter().cloned())
-                        .chain(merged_drift_limitation(build))
-                })
-                .collect(),
+            limitations: self.builds.iter().flat_map(stated_by).collect(),
             sources: self
                 .builds
                 .iter()
@@ -6297,7 +6380,9 @@ fn shard_verdict(builds: &ShardBuildLedger, global_findings: &[Finding]) -> Verd
     });
     let no_findings =
         global_findings.is_empty() && builds.iter().all(|build| build.source.findings.is_empty());
-    let steady = builds.iter().all(|build| !moved(&build.source.drift));
+    let steady = builds
+        .iter()
+        .all(|build| !moved(&build.source.drift) && !knobs::shaken(&build.source.knobs));
     if answered && observed && no_findings && steady {
         Verdict::Partial
     } else {
@@ -6413,10 +6498,7 @@ fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
                 .map(move |row| (part.run_id.clone(), part.part, row))
         });
         for (projection, (run_id, part, row)) in projected.iter_mut().zip(rows) {
-            let candidate = row.outcome.decision();
-            if candidate.standing() < projection.decision.standing() {
-                projection.decision = candidate;
-            }
+            projection.decision = projection.decision.weaker(row.outcome.decision());
             projection.by_build.push(BuildMutationDecision {
                 build: build.name.clone(),
                 run_id,
@@ -6502,14 +6584,24 @@ fn projected_findings(
         .collect();
     let mut projected = global_findings.to_vec();
     for build in builds.iter() {
-        projected.extend(merged_drift_findings(build));
+        let from = projected.len();
+        projected.extend(catalog_of(build).findings);
         for part in build.parts.iter() {
-            for finding in &part.findings {
+            for finding in part
+                .findings
+                .iter()
+                .filter(|finding| !finding.kind.catalog_wide())
+            {
                 let answered_by_model = finding.kind == FindingKind::SurvivingMutant
                     && affirmative.iter().any(|(full, display)| {
                         finding.subject == *full || finding.subject == *display
                     });
-                if answered_by_model {
+                let stated = projected.iter().skip(from).any(|one| {
+                    one.kind == finding.kind
+                        && one.subject == finding.subject
+                        && one.detail == finding.detail
+                });
+                if answered_by_model || stated {
                     continue;
                 }
                 projected.push(finding.clone());
@@ -6519,53 +6611,132 @@ fn projected_findings(
     projected
 }
 
-/// Whether a build was measured in parts, which is when its drift finding and limitation are raised over the combined records rather than by a part.
-fn sharded(build: &BuildEvidence) -> bool {
-    build
-        .parts
-        .iter()
-        .any(|part| matches!(part.part, CatalogPart::Shard(_)))
+/// What only the whole catalog decides, which neither a shard nor any one part can.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WholeCatalog {
+    /// The findings it raises.
+    pub findings: Vec<Finding>,
+    /// The limitations it states.
+    pub limitations: Vec<Limitation>,
 }
 
-/// The `unstable-baseline` findings of a build measured in parts, over every part's records and rows, each attributed to the part that saw its target move.
-fn merged_drift_findings(build: &BuildEvidence) -> Vec<Finding> {
-    if !sharded(build) {
-        return Vec::new();
+/// What only the whole catalog decides, over its `drift` and `knobs` records and its mutant `rows`: raised once by a run that measured the catalog whole, and by a merge over the combined records of every part.
+#[must_use]
+pub fn whole_catalog(
+    drift: &[drift::Drift],
+    knobs: &[knobs::KnobRecord],
+    rows: &[MutantRecord],
+) -> WholeCatalog {
+    let mut findings = hollow::found(rows);
+    findings.extend(drift::found(drift, rows));
+    findings.extend(knobs::found(knobs, rows));
+    let mut limitations: Vec<Limitation> = drift::unmeasured(drift).into_iter().collect();
+    limitations.extend(knobs::limited(knobs));
+    WholeCatalog {
+        findings,
+        limitations,
     }
+}
+
+/// Every unmatched-acceptance finding among `findings` whose subject names exactly one of `rows`, with the mutation it names: the catalog resolves it, so calling it unmatched contradicts the rows.
+///
+/// Only the whole catalog decides it, so a run measured whole asks it of its own rows and a merge asks it of every part's rows together; one shard's rows could miss the mutation the acceptance names.
+#[must_use]
+pub fn acceptances_the_catalog_resolves(
+    findings: &[Finding],
+    rows: &[MutantRecord],
+) -> Vec<(String, String)> {
+    findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::UnmatchedAcceptance)
+        .filter_map(|finding| {
+            let subject = finding.subject.as_str();
+            let valid = (rust_mutants::id::MIN_PREFIX_LENGTH..=rust_mutants::id::ID_HEX_LENGTH)
+                .contains(&subject.len())
+                && subject
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            if !valid {
+                return None;
+            }
+            let mut matches = rows.iter().filter(|row| row.id.starts_with(subject));
+            let mutant = matches.next()?;
+            matches
+                .next()
+                .is_none()
+                .then(|| (finding.subject.clone(), mutant.id.clone()))
+        })
+        .collect()
+}
+
+/// Every limitation `build` states: each its parts state, once however many parts state it, and what only the whole catalog decides.
+fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
+    let mut stated: Vec<Limitation> = Vec::new();
+    for limitation in build
+        .parts
+        .iter()
+        .flat_map(|part| part.limitations.iter())
+        .filter(|limitation| {
+            ![
+                crate::limitation::DRIFT_NOT_MEASURED,
+                crate::limitation::KNOB_NOT_PUT,
+                crate::limitation::KNOB_NOT_COMPARED,
+            ]
+            .contains(&limitation.name.as_str())
+        })
+    {
+        if !stated.contains(limitation) {
+            stated.push(limitation.clone());
+        }
+    }
+    stated.extend(catalog_of(build).limitations);
+    stated
+}
+
+/// What only the whole catalog decides about `build`, over every part's records together, whether it was measured whole or in shards: the one place a conclusion gets it, so no producer can store it or forget it.
+///
+/// Each finding names the part holding the record it rests on; one no part holds is left run-wide rather than credited to a part that did not see it.
+fn catalog_of(build: &BuildEvidence) -> WholeCatalog {
     let records = drift::combined(build.parts.iter().flat_map(|part| part.drift.iter()));
+    let knob_records = knobs::combined(build.parts.iter().flat_map(|part| part.knobs.iter()));
     let rows: Vec<MutantRecord> = build
         .parts
         .iter()
         .flat_map(|part| part.mutants.iter().cloned())
         .collect();
-    drift::found(&records, &rows)
-        .into_iter()
-        .map(|mut finding| {
-            let saw = build.parts.iter().find(|part| {
-                part.drift.iter().any(|one| {
-                    matches!(one, drift::Drift::Moved { .. }) && one.target() == finding.subject
-                })
-            });
-            if let Some(part) = saw {
-                finding.origin = FindingOrigin::Source {
-                    build: build.name.clone(),
-                    run_id: part.run_id.clone(),
-                    part: part.part,
-                };
-            }
-            finding
-        })
-        .collect()
+    let mut whole = whole_catalog(&records, &knob_records, &rows);
+    for finding in &mut whole.findings {
+        if let Some(part) = build.parts.iter().find(|part| saw(part, finding)) {
+            finding.origin = FindingOrigin::Source {
+                build: build.name.clone(),
+                run_id: part.run_id.clone(),
+                part: part.part,
+            };
+        }
+    }
+    whole
 }
 
-/// The `drift-not-measured` limitation of a build measured in parts, over every part's records.
-fn merged_drift_limitation(build: &BuildEvidence) -> Option<Limitation> {
-    if !sharded(build) {
-        return None;
-    }
-    drift::unmeasured(&drift::combined(
-        build.parts.iter().flat_map(|part| part.drift.iter()),
-    ))
+/// Whether `part` holds the record `finding` rests on: the move of the target it names, the control a knob broke or moved it under, or a row that target answered about.
+fn saw(part: &BuildPartEvidence, finding: &Finding) -> bool {
+    part.drift
+        .iter()
+        .any(|one| matches!(one, drift::Drift::Moved { .. }) && one.target() == finding.subject)
+        || part.knobs.iter().any(|one| {
+            one.target == finding.subject
+                && matches!(
+                    one.standing,
+                    knobs::Standing::Broke { .. } | knobs::Standing::Moved { .. }
+                )
+        })
+        || part.mutants.iter().any(|row| {
+            row.routing.as_ref().is_some_and(|routing| {
+                routing
+                    .answered
+                    .iter()
+                    .any(|answered| answered.target == finding.subject)
+            })
+        })
 }
 
 fn spanning_timing(builds: &BuildLedger) -> ConclusionTiming {

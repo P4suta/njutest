@@ -75,7 +75,7 @@ pub struct Summary {
     /// How many the run admits it lost.
     pub dropped: u64,
     /// How the run ended, in its own words.
-    pub outcome: String,
+    pub outcome: Option<super::RunOutcome>,
     /// How many events of each type.
     pub counts: BTreeMap<String, u64>,
     /// Every phase, in the order they began, with what each took.
@@ -161,7 +161,7 @@ fn counted(
                 })?;
         }
         Payload::RunEnd { run } => {
-            summary.outcome.clone_from(&run.outcome);
+            summary.outcome = Some(run.outcome);
             summary.dropped = run.events_dropped;
         }
         Payload::RunStart { .. }
@@ -172,6 +172,7 @@ fn counted(
         | Payload::Build { .. }
         | Payload::Verify { .. }
         | Payload::Touch { .. }
+        | Payload::PerturbedControl { .. }
         | Payload::Witness { .. }
         | Payload::SkipClaim { .. }
         | Payload::Kept { .. }
@@ -250,8 +251,8 @@ pub fn render(summary: &Summary) -> String {
     if summary.dropped > 0 {
         line(&mut out, format_args!("DROPPED\t{}", summary.dropped));
     }
-    if !summary.outcome.is_empty() {
-        line(&mut out, format_args!("OUTCOME\t{}", summary.outcome));
+    if let Some(outcome) = summary.outcome {
+        line(&mut out, format_args!("OUTCOME\t{}", outcome.name()));
     }
     for (name, count) in &summary.counts {
         line(&mut out, format_args!("TYPE\t{name}\t{count}"));

@@ -105,3 +105,69 @@ pub fn prohibited_direct_dependencies<'a>(
     refused.dedup();
     refused
 }
+
+/// The crates a release ships, whose dependencies are built with the features their own edges ask for.
+pub const SHIPPED: [&str; 4] = [
+    "njutest",
+    "njutest-macros",
+    "rust-mutants",
+    "rust-mutants-cli",
+];
+
+/// The targets a release builds, each of which unifies features over its own graph.
+pub const SHIPPED_TARGETS: [&str; 3] = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+];
+
+/// Every package named in `direct` that the shipped graph `shipped` holds, with each feature the graph with development edges `developed` builds it with and the shipped graph does not.
+///
+/// Both are `cargo tree --prefix none --format "{p}|{f}"` over the same packages; a feature only a development edge turns on is one every test builds with and no release does.
+#[must_use]
+pub fn features_only_tests_build_with(
+    (shipped, developed): (&str, &str),
+    direct: &std::collections::BTreeSet<String>,
+) -> Vec<(String, Vec<String>)> {
+    let read =
+        |tree: &str| -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+            let mut read = std::collections::BTreeMap::new();
+            for line in tree.lines() {
+                let Some((package, features)) =
+                    line.trim().trim_end_matches(" (*)").split_once('|')
+                else {
+                    continue;
+                };
+                let package = package.to_owned();
+                let entry: &mut std::collections::BTreeSet<String> =
+                    read.entry(package).or_default();
+                entry.extend(
+                    features
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|feature| !feature.is_empty())
+                        .map(str::to_owned),
+                );
+            }
+            read
+        };
+    let shipped = read(shipped);
+    let developed = read(developed);
+    shipped
+        .iter()
+        .filter(|(package, _)| {
+            package
+                .split_whitespace()
+                .next()
+                .is_some_and(|name| direct.contains(name))
+        })
+        .filter_map(|(package, features)| {
+            let extra: Vec<String> = developed
+                .get(package)?
+                .difference(features)
+                .cloned()
+                .collect();
+            (!extra.is_empty()).then(|| (package.clone(), extra))
+        })
+        .collect()
+}

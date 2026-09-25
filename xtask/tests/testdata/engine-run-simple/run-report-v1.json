@@ -1,20 +1,24 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 2,
+  "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260924t141452551z",
-    "started_at": "2026-09-24T14:14:52.551334Z",
-    "finished_at": "2026-09-24T14:14:55.060936Z",
-    "duration_ms": 354,
+    "id": "20260925t163710135z",
+    "started_at": "2026-09-25T16:37:10.135716Z",
+    "finished_at": "2026-09-25T16:37:12.697153Z",
+    "duration_ms": 389,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
   },
   "workspace": {
     "root_name": "fixture-simple",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "17ca8cfe1abbaca34016c5f29cc8a1ea7410c8107b7945a9b0f1962af229826f",
+    "workspace_digest": "2a156923b47307d215c1287d9ad7942587b5357ab6cf09d7bc2288e929ea93d4",
     "catalog_digest": "82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624",
     "platform": {
       "os": "darwin",
@@ -101,13 +105,14 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 26,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -147,13 +152,14 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 29,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -193,13 +199,14 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 27,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -239,13 +246,14 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 25,
+      "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -290,6 +298,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "discharged",
       "route": {
         "granularity": "discharged",
@@ -330,13 +339,14 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 29,
+      "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -376,13 +386,14 @@
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
       "exit_code": 101,
-      "duration_ms": 32,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -429,6 +440,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -475,6 +487,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -514,13 +527,14 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": 101,
-      "duration_ms": 29,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -567,6 +581,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -613,6 +628,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -652,13 +668,14 @@
       "step_notice": null,
       "target": "fixture-simple/test/parity",
       "exit_code": 101,
-      "duration_ms": 31,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",

@@ -74,7 +74,14 @@ fn a_report_nothing_could_attribute_is_one_every_test_made() {
 
 #[test]
 fn the_last_site_the_catalog_holds_is_one_a_record_may_name() {
-    let touches = touch::read(&log("t\talpha\t3\n"), CATALOG, 4);
+    let touches = touch::read(
+        &log("t\talpha\t3\n"),
+        CATALOG,
+        touch::Bounds {
+            mutants: 4,
+            items: 0,
+        },
+    );
     assert_eq!(result_state(&touches), Returned, "log: {touches:?}");
     let Ok(touches) = touches else { return };
     assert_eq!(
@@ -84,7 +91,14 @@ fn the_last_site_the_catalog_holds_is_one_a_record_may_name() {
     );
     assert!(
         matches!(
-            touch::read(&log("t\talpha\t4\n"), CATALOG, 4),
+            touch::read(
+                &log("t\talpha\t4\n"),
+                CATALOG,
+                touch::Bounds {
+                    mutants: 4,
+                    items: 0
+                }
+            ),
             Err(TouchError::BeyondCatalog {
                 index: 4,
                 count: 4,
@@ -105,7 +119,14 @@ fn a_header_that_names_anything_but_one_catalog_says_nothing() {
         let text = format!("{} {rest}\nt\talpha\t0\n", touch::SCHEMA);
         assert!(
             matches!(
-                touch::read(&text, CATALOG, 4),
+                touch::read(
+                    &text,
+                    CATALOG,
+                    touch::Bounds {
+                        mutants: 4,
+                        items: 0
+                    }
+                ),
                 Err(TouchError::Malformed { line: 1, .. })
             ),
             "a header is the schema and one catalog, and anything else is a header this run \
@@ -119,7 +140,14 @@ fn a_record_that_is_not_a_kind_a_thread_and_a_list_says_nothing() {
     for record in ["t\talpha\n", "t\talpha\t0\textra\n", "t\n", "\t\t\n"] {
         assert!(
             matches!(
-                touch::read(&log(record), CATALOG, 4),
+                touch::read(
+                    &log(record),
+                    CATALOG,
+                    touch::Bounds {
+                        mutants: 4,
+                        items: 0
+                    }
+                ),
                 Err(TouchError::Malformed { line: 2, .. })
             ),
             "a record has three fields and this has not: {record:?}"
@@ -133,7 +161,14 @@ fn a_site_that_is_not_a_number_says_nothing() {
         let text = log(&format!("t\talpha\t{indices}\n"));
         assert!(
             matches!(
-                touch::read(&text, CATALOG, 4),
+                touch::read(
+                    &text,
+                    CATALOG,
+                    touch::Bounds {
+                        mutants: 4,
+                        items: 0
+                    }
+                ),
                 Err(TouchError::Malformed { .. })
             ),
             "a list of sites is a list of numbers: {indices:?}"
@@ -143,7 +178,14 @@ fn a_site_that_is_not_a_number_says_nothing() {
 
 #[test]
 fn a_blank_line_is_not_the_end_of_the_log() {
-    let touches = touch::read(&log("t\talpha\t0\n\nt\tbeta\t1\n"), CATALOG, 4);
+    let touches = touch::read(
+        &log("t\talpha\t0\n\nt\tbeta\t1\n"),
+        CATALOG,
+        touch::Bounds {
+            mutants: 4,
+            items: 0,
+        },
+    );
     assert_eq!(result_state(&touches), Returned, "log: {touches:?}");
     let Ok(touches) = touches else { return };
     assert_eq!(
@@ -162,7 +204,14 @@ fn the_header_a_runtime_writes_is_the_one_the_reader_wants() {
         "the generated runtime writes this line and this reader reads it, so it is one thing \
          said twice and this is where the two are held together"
     );
-    let parsed = touch::read(&header, CATALOG, 4);
+    let parsed = touch::read(
+        &header,
+        CATALOG,
+        touch::Bounds {
+            mutants: 4,
+            items: 0,
+        },
+    );
     assert_eq!(
         result_state(&parsed),
         Returned,
@@ -224,4 +273,132 @@ fn a_thread_that_passed_no_test_is_folded_into_what_every_test_reached() {
     );
     assert_eq!(attributed.tests.len(), 1, "{attributed:?}");
     assert_eq!(attributed.loose, set(&[2]), "{attributed:?}");
+}
+
+#[test]
+fn an_entered_item_is_bounded_by_the_item_catalog_and_not_by_the_mutants() {
+    let bounds = touch::Bounds {
+        mutants: 1,
+        items: 3,
+    };
+    let touches = touch::read(&log("e\talpha\t2\ne\t-\t0\n"), CATALOG, bounds);
+    assert_eq!(result_state(&touches), Returned, "log: {touches:?}");
+    let Ok(touches) = touches else { return };
+    assert_eq!(
+        touches.entered,
+        seen(&[("alpha", &[2])], &[0]),
+        "item 2 is past the one mutant and within the three items, which is the catalog it names"
+    );
+    assert!(
+        touches.reached == Seen::default(),
+        "and an entry is not a site"
+    );
+    assert!(
+        matches!(
+            touch::read(&log("e\talpha\t3\n"), CATALOG, bounds),
+            Err(TouchError::BeyondItems {
+                index: 3,
+                count: 3,
+                line: 2
+            })
+        ),
+        "the item catalog holds three"
+    );
+    assert!(
+        matches!(
+            touch::read(&log("t\talpha\t2\n"), CATALOG, bounds),
+            Err(TouchError::BeyondCatalog { index: 2, .. })
+        ),
+        "and a site is still bounded by the mutants"
+    );
+}
+
+/// A target whose three tests entered what `entered` says.
+fn target(entered: Seen) -> touch::TargetTouches {
+    let mut touches = touch::TargetTouches::default();
+    touches.entered = entered;
+    touches.ran = vec!["alpha".to_owned(), "beta".to_owned(), "gamma".to_owned()];
+    touches
+}
+
+#[test]
+fn which_tests_entered_an_item_is_read_the_way_which_reached_a_site_is() {
+    let touches = target(seen(&[("alpha", &[0, 1]), ("beta", &[1])], &[2]));
+    assert_eq!(
+        touches.entering(0),
+        touch::Reaching::Tests(vec!["alpha".to_owned()])
+    );
+    assert_eq!(
+        touches.entering(2),
+        touch::Reaching::Whole,
+        "an entry nothing could attribute is one every test made"
+    );
+    assert_eq!(touches.entering(3), touch::Reaching::Nothing);
+    assert_eq!(touches.entered_by("beta"), set(&[1, 2]));
+    assert_eq!(
+        touches.entered_by("delta"),
+        set(&[2]),
+        "a test the record does not name entered what nothing could attribute"
+    );
+    assert_eq!(touches.entered_by_any(), set(&[0, 1, 2]));
+}
+
+#[test]
+fn a_change_belongs_to_the_innermost_item_whose_body_holds_all_of_it() {
+    let touched = serde_json::from_value::<touch::Touched>(serde_json::json!({
+        "targets": {},
+        "limitations": [],
+        "items": [
+            { "index": 0, "package": "demo", "path": "src/lib.rs", "name": "outer",
+              "span": { "start": 0, "end": 100 }, "body": { "start": 10, "end": 100 },
+              "measurable": true },
+            { "index": 1, "package": "demo", "path": "src/lib.rs", "name": "outer::inner",
+              "span": { "start": 20, "end": 50 }, "body": { "start": 30, "end": 50 },
+              "measurable": true },
+            { "index": 2, "package": "demo", "path": "src/other.rs", "name": "elsewhere",
+              "span": { "start": 0, "end": 100 }, "body": { "start": 0, "end": 100 },
+              "measurable": true }
+        ]
+    }));
+    assert_eq!(result_state(&touched), Returned, "document: {touched:?}");
+    let Ok(touched) = touched else { return };
+    let at = |start, end| {
+        touched
+            .item_holding("src/lib.rs", rust_mutants::span::Span { start, end })
+            .map(|item| item.name.as_str())
+    };
+    assert_eq!(at(35, 40), Some("outer::inner"));
+    assert_eq!(at(60, 70), Some("outer"));
+    assert_eq!(
+        at(45, 60),
+        Some("outer"),
+        "a change that leaves the inner body is a change of the outer one"
+    );
+    assert_eq!(
+        at(22, 25),
+        Some("outer"),
+        "a change to the inner item's signature is a change of the body it sits in"
+    );
+    assert_eq!(at(0, 5), None, "the signature of an item is in no body");
+}
+
+#[test]
+fn an_item_only_one_whole_run_entered_is_a_move_even_where_every_site_agrees() {
+    let entering = |entered: Seen| {
+        let mut recorded = touch::Touches::default();
+        recorded.reached = seen(&[("alpha", &[1])], &[]);
+        recorded.entered = entered;
+        touch::TargetTouches::of(recorded, &["alpha".to_owned()])
+    };
+    let baseline = entering(seen(&[("alpha", &[4])], &[]));
+    let control = entering(seen(&[("alpha", &[4, 5])], &[]));
+    let moved = touch::unions_differ(&baseline, &control).expect(
+        "an item the control entered and the baseline did not is what a selection would have \
+         skipped a change to, so reach is not a function of the target by the measure select reads",
+    );
+    assert_eq!(moved.entered.gained, set(&[5]), "{moved:?}");
+    assert!(
+        moved.reached.is_empty() && moved.bodies.is_empty() && moved.infected.is_empty(),
+        "and nothing else moved: {moved:?}"
+    );
 }

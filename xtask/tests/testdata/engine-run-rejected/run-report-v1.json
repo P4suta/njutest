@@ -1,20 +1,24 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 2,
+  "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260924t141455235z",
-    "started_at": "2026-09-24T14:14:55.235915Z",
-    "finished_at": "2026-09-24T14:14:59.057572Z",
-    "duration_ms": 187,
+    "id": "20260925t163712776z",
+    "started_at": "2026-09-25T16:37:12.776127Z",
+    "finished_at": "2026-09-25T16:37:15.673336Z",
+    "duration_ms": 336,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
   },
   "workspace": {
     "root_name": "fixture-rejectable",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "cd84a068441097f4bdf801085892062e48ae7d1986eddfb1a6025daea650702f",
+    "workspace_digest": "b6af946618595f6a181e870292b6554e52bc54222a6c154ce3d24e02b6ca341b",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
       "os": "darwin",
@@ -95,6 +99,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -135,6 +140,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -175,6 +181,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -215,6 +222,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -255,6 +263,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -295,6 +304,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -335,6 +345,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -375,6 +386,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -415,6 +427,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -455,6 +468,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -495,6 +509,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -535,6 +550,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -575,6 +591,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -615,6 +632,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -655,6 +673,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -695,6 +714,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -718,7 +738,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:147\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:171\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
       "isolated": true
     },
     {
@@ -728,7 +748,7 @@
       "path": "src/lib.rs",
       "rule": "range-to-inclusive",
       "code": "E0308",
-      "diagnostic": "error[E0308]: mismatched types\n  --> src/lib.rs:17:142\n   |\n16 | ...-> std::ops::Range<usize> {\n   |       ---------------------- expected `std::ops::Range<usize>` because of return type\n17 | ...point(); __rm_b1a35a68::value!(if __rm_b1a35a68::active(4) { Default::default() } else if __rm_b1a35a68::active(5) { 0..=n } else...\n   |                                                                                                                         ^^^^^ expected `Range<usize>`, found `RangeInclusive<usize>`\n   |\n   = note: expected struct `std::ops::Range<usize>`\n              found struct `std::ops::RangeInclusive<usize>`\n\n",
+      "diagnostic": "error[E0308]: mismatched types\n  --> src/lib.rs:17:166\n   |\n16 | ...-> std::ops::Range<usize> {\n   |       ---------------------- expected `std::ops::Range<usize>` because of return type\n17 | ...1); __rm_b1a35a68::checkpoint(); __rm_b1a35a68::value!(if __rm_b1a35a68::active(4) { Default::default() } else if __rm_b1a35a68::active(5) { 0..=n } ...\n   |                                                                                                                                                 ^^^^^ expected `Range<usize>`, found `RangeInclusive<usize>`\n   |\n   = note: expected struct `std::ops::Range<usize>`\n              found struct `std::ops::RangeInclusive<usize>`\n\n",
       "isolated": true
     },
     {
@@ -738,7 +758,7 @@
       "path": "src/lib.rs",
       "rule": "mul-to-div",
       "code": "unconditional_panic",
-      "diagnostic": "error: this operation will panic at runtime\n  --> src/lib.rs:22:142\n   |\n22 | ...fault() } else if __rm_b1a35a68::active(7) { value / 0 } else { value * __rm_b1a35a68::value!(if __rm_b1a35a68::active(8) { 1 } e...\n   |                                                 ^^^^^^^^^ attempt to divide `_` by zero\n   |\n   = note: `#[deny(unconditional_panic)]` on by default\n\n",
+      "diagnostic": "error: this operation will panic at runtime\n  --> src/lib.rs:22:166\n   |\n22 | ...fault() } else if __rm_b1a35a68::active(7) { value / 0 } else { value * __rm_b1a35a68::value!(if __rm_b1a35a68::active(8) { 1 } e...\n   |                                                 ^^^^^^^^^ attempt to divide `_` by zero\n   |\n   = note: `#[deny(unconditional_panic)]` on by default\n\n",
       "isolated": true
     },
     {
@@ -748,7 +768,7 @@
       "path": "src/lib.rs",
       "rule": "return-default",
       "code": "E0277",
-      "diagnostic": "error[E0277]: the trait bound `Label: Default` is not satisfied\n  --> src/lib.rs:27:86\n   |\n27 | ...if __rm_b1a35a68::active(9) { Default::default() } else { Label(__rm_b1a35a68::value!(if __rm_b1a35a68::active(10) { \"\" } else { ...\n   |                                  ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Label`\n   |\nhelp: consider annotating `Label` with `#[derive(Default)]`\n   |\n 8 + #[derive(Default)]\n 9 | pub struct Label(pub &'static str);\n   |\n\n",
+      "diagnostic": "error[E0277]: the trait bound `Label: Default` is not satisfied\n  --> src/lib.rs:27:110\n   |\n27 | ...if __rm_b1a35a68::active(9) { Default::default() } else { Label(__rm_b1a35a68::value!(if __rm_b1a35a68::active(10) { \"\" } else { ...\n   |                                  ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Label`\n   |\nhelp: consider annotating `Label` with `#[derive(Default)]`\n   |\n 8 + #[derive(Default)]\n 9 | pub struct Label(pub &'static str);\n   |\n\n",
       "isolated": true
     }
   ],

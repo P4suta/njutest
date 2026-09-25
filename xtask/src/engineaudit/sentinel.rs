@@ -41,7 +41,7 @@ fn killed() -> Value {
         "original": ">", "replacement": ">=",
         "outcome": "killed", "target": TARGET, "exit_code": 101,
         "duration_ms": 7, "tests_run": 2, "killed_by": ["larger_works"],
-        "signal": null, "step_notice": null, "retried": false,
+        "signal": null, "step_notice": null, "retried": false, "lingered": false,
         "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
@@ -62,7 +62,7 @@ fn survived() -> Value {
         "original": "if a > b { a } else { b }", "replacement": "Default::default()",
         "outcome": "survived", "target": TARGET, "exit_code": 0,
         "duration_ms": 5, "tests_run": 2, "killed_by": [], "signal": null,
-        "step_notice": null, "retried": false, "not_run_reason": null,
+        "step_notice": null, "retried": false, "lingered": false, "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": true, "unreached": false,
@@ -75,7 +75,7 @@ fn survived() -> Value {
 pub fn base() -> Value {
     json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
+        "schema_version": super::SCHEMA_VERSION,
         "tool_version": "0.1.0",
         "run": {
             "id": RUN,
@@ -84,7 +84,8 @@ pub fn base() -> Value {
             "duration_ms": 2000,
             "interrupted": false,
             "exit_code": 0,
-            "shard": null
+            "shard": null,
+            "jobs": {"asked": "auto", "used": 1}
         },
         "workspace": {
             "root_name": "demo",
@@ -175,7 +176,7 @@ fn judged(seq: (u64, u64), index: u64, id: &str, outcome: &str) -> [Value; 2] {
         json!({"seq":seq.1,"timestamp":"2026-09-06T10:15:02Z",
             "elapsed_ms":61,"type":"mutant-exec","mutant":{"id":short(id),
             "index":index,"target":TARGET,"outcome":outcome,
-            "exit_code":exit,"duration_ms":5,"tests_run":2}}),
+            "exit_code":exit,"duration_ms":5,"tests_run":2,"lingered":false}}),
     ]
 }
 
@@ -256,6 +257,17 @@ pub enum SpecimenError {
     },
 }
 
+impl crate::error::Coded for SpecimenError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Directory { .. } | Self::Unwritable { .. } => {
+                crate::error::XtCode::SpecimenUnwritable
+            }
+            Self::NotAnObject { .. } | Self::Envelope { .. } => crate::error::XtCode::SpecimenEvent,
+        }
+    }
+}
+
 fn directory() -> Result<TempDir, SpecimenError> {
     tempfile::tempdir().map_err(|source| SpecimenError::Directory { source })
 }
@@ -326,6 +338,8 @@ pub struct Perturbation {
     pub ledger: Option<String>,
     /// Documents the run keeps beside its report, by file name.
     pub beside: Vec<(&'static str, Value)>,
+    /// The tree the run measured, by workspace-relative path, which the carry layer reads again; empty lays no tree.
+    pub tree: Vec<(&'static str, String)>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -338,6 +352,7 @@ pub fn clean() -> Perturbation {
         shards: Vec::new(),
         ledger: Some(ledger(&[SURVIVED])),
         beside: Vec::new(),
+        tree: Vec::new(),
     }
 }
 
@@ -353,9 +368,16 @@ pub struct Laid {
     aside: TempDir,
     shards: Vec<PathBuf>,
     ledger: Option<PathBuf>,
+    root: Option<TempDir>,
 }
 
 impl Laid {
+    /// The tree the run measured, when the perturbation lays one.
+    #[must_use]
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_ref().map(TempDir::path)
+    }
+
     /// The run directory.
     #[must_use]
     pub fn run(&self) -> &Path {
@@ -407,14 +429,268 @@ impl Perturbation {
                 written(&path, text).map(|()| path)
             })
             .transpose()?;
+        let root = if self.tree.is_empty() {
+            None
+        } else {
+            let root = directory()?;
+            for (path, text) in &self.tree {
+                let file = root.path().join(path);
+                if let Some(parent) = file.parent() {
+                    std::fs::create_dir_all(parent).map_err(|source| {
+                        SpecimenError::Unwritable {
+                            path: parent.display().to_string(),
+                            source,
+                        }
+                    })?;
+                }
+                written(&file, text)?;
+            }
+            Some(root)
+        };
         Ok(Laid {
             run,
             trace,
             aside,
             shards,
             ledger,
+            root,
         })
     }
+}
+
+/// A function whose body is `body`, as a file of the measured tree.
+fn carried_source(body: &str) -> String {
+    format!("pub fn larger(a: u32, b: u32) -> u32 {body}\n")
+}
+
+/// The carry evidence for `source`: the guards' record of its one item's body span, and the skeletons document with `claims` laid over that item and `units` as the units.
+fn carry_beside(
+    path: &str,
+    source: &str,
+    claims: &Value,
+    units: &Value,
+) -> Vec<(&'static str, Value)> {
+    let braces = source
+        .find('{')
+        .zip(source.rfind('}').and_then(|at| at.checked_add(1)));
+    let Some((start, end)) = braces else {
+        return Vec::new();
+    };
+    let body = source.as_bytes().get(start..end).unwrap_or_default();
+    let mut item = json!({
+        "index": 0, "name": "larger",
+        "item": { "package": "demo", "path": path, "ordinal": 0 },
+        "body_digest": crate::engineaudit::carry::digest_of(body),
+        "sealed": true, "unsealed": null
+    });
+    merge(&mut item, claims.clone());
+    vec![
+        (
+            "touched-v1.json",
+            json!({
+                "targets": {}, "limitations": [],
+                "items": [{
+                    "index": 0, "package": "demo", "path": path, "name": "larger",
+                    "span": { "start": 0, "end": source.len() },
+                    "body": { "start": start, "end": end },
+                    "measurable": true
+                }]
+            }),
+        ),
+        (
+            "skeletons-v1.json",
+            json!({
+                "document_type": "rust-mutants/skeletons", "schema_version": 1,
+                "items": [item], "units": units
+            }),
+        ),
+    ]
+}
+
+/// A run that carried one answer about the row at `row`, whose evidence agrees with it everywhere `planted` does not change.
+fn believed_beside(
+    name: &'static str,
+    (row, outcome, other): (usize, &str, &str),
+    planted: fn(&mut Value),
+) -> Perturbation {
+    let path = "src/lib.rs";
+    let source = carried_source("{ if a > b { a } else { b } }");
+    let (Some(start), Some(site)) = (
+        source.find('{'),
+        source.find("a > b").and_then(|at| at.checked_add(2)),
+    ) else {
+        return Perturbation { name, ..clean() };
+    };
+    let Some(end) = source.rfind('}').and_then(|at| at.checked_add(1)) else {
+        return Perturbation { name, ..clean() };
+    };
+    let body = source.as_bytes().get(start..end).unwrap_or_default();
+    let digest = crate::engineaudit::carry::digest_of(body);
+    let item = json!({ "package": "demo", "path": path, "ordinal": 0 });
+    let (rule, replacement) = if row == 0 {
+        ("gt-to-ge@1", ">=")
+    } else {
+        ("return-default@1", "Default::default()")
+    };
+    let executions: Vec<Value> = [TARGET, other]
+        .iter()
+        .enumerate()
+        .map(|(at, target)| {
+            json!({
+                "target": target, "filter": null,
+                "skeleton": crate::engineaudit::carry::digest_of(b""),
+                "entered": [{ "item": item, "body_digest": digest }],
+                "completeness": "whole",
+                "detected": outcome == "killed" && at == 1
+            })
+        })
+        .collect();
+    let mut believed = json!({
+        "mutant": if row == 0 { KILLED } else { SURVIVED },
+        "record": {
+            "schema": "rust-mutants-carried-v1",
+            "locus": {
+                "item": item, "body_digest": digest,
+                "start": site.checked_sub(start), "end": site.checked_sub(start).and_then(|at| at.checked_add(1)),
+                "replacement": replacement, "rule": rule
+            },
+            "keyed": {}, "outcome": outcome, "target": other, "tests_run": 2,
+            "failed_tests": [], "run_id": "earlier-run", "executions": executions
+        },
+        "plan": [{ "target": TARGET, "filter": null }, { "target": other, "filter": null }]
+    });
+    planted(&mut believed);
+    let mut rows = vec![json!({}), json!({})];
+    if let Some(one) = rows.get_mut(row) {
+        *one = json!({
+            "start_byte": site, "end_byte": site.checked_add(1),
+            "replacement": replacement, "source_run_id": "earlier-run"
+        });
+    }
+    let mut beside = carry_beside(path, &source, &json!({}), &json!([]));
+    for (file, document) in &mut beside {
+        if *file == "touched-v1.json" {
+            merge(
+                document,
+                json!({ "targets": {
+                    TARGET: { "reached": { "loose": [0, 1] }, "ran": [] },
+                    other: { "reached": { "loose": [0, 1] }, "ran": [] }
+                } }),
+            );
+        }
+    }
+    beside.push((
+        "carried-v1.json",
+        json!({
+            "document_type": "rust-mutants/carried", "schema_version": 1,
+            "records": [believed]
+        }),
+    ));
+    Perturbation {
+        name,
+        document: with(json!({ "mutants": rows })),
+        beside,
+        ..clean()
+    }
+}
+
+/// The defects planted in the carried answers a run believed.
+fn believed_plants() -> Vec<Perturbation> {
+    vec![
+        believed_beside(
+            "a kill carried across a body its killer entered that has changed since",
+            (0, "killed", "demo/test/other"),
+            |believed| {
+                merge(
+                    believed,
+                    json!({ "record": { "executions": [{}, {
+                        "entered": [{ "body_digest": "0".repeat(64) }]
+                    }] } }),
+                );
+            },
+        ),
+        believed_beside(
+            "a survival carried though the route runs a target no recorded execution ran",
+            (1, "survived", "demo/test/other"),
+            |believed| {
+                if let Some(executions) = believed
+                    .pointer_mut("/record/executions")
+                    .and_then(Value::as_array_mut)
+                {
+                    executions.truncate(1);
+                }
+                merge(believed, json!({ "record": { "target": TARGET } }));
+            },
+        ),
+        believed_beside(
+            "a kill carried across a skeleton that has changed since",
+            (0, "killed", "demo/test/other"),
+            |believed| {
+                merge(
+                    believed,
+                    json!({ "record": { "executions": [{}, { "skeleton": "1".repeat(64) }] } }),
+                );
+            },
+        ),
+    ]
+}
+
+/// The defects planted for the carry layer.
+fn carry_plants() -> Vec<Perturbation> {
+    let clean = clean();
+    let sealed = carried_source("{ if a > b { a } else { b } }");
+    let macro_body = carried_source("{ foo!(a, b) }");
+    let mut plants = believed_plants();
+    plants.extend([
+        Perturbation {
+            name: "a body called sealed that invokes a macro off the page's list",
+            beside: carry_beside("src/other.rs", &macro_body, &json!({}), &json!([])),
+            tree: vec![("src/other.rs", macro_body.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a body digest its bytes do not hash to, in the file the run measured",
+            document: with(json!({ "mutants": [
+                { "source_digest": crate::engineaudit::carry::digest_of(sealed.as_bytes()) },
+                { "source_digest": crate::engineaudit::carry::digest_of(sealed.as_bytes()) }
+            ] })),
+            beside: carry_beside(
+                "src/lib.rs",
+                &sealed,
+                &json!({ "body_digest": "0".repeat(64) }),
+                &json!([]),
+            ),
+            tree: vec![("src/lib.rs", sealed.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "an item named by another place than its own among its file's items",
+            beside: carry_beside(
+                "src/other.rs",
+                &sealed,
+                &json!({ "item": { "ordinal": 1 } }),
+                &json!([]),
+            ),
+            tree: vec![("src/other.rs", sealed.clone())],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a skeleton that is not the fold of the entries it keeps",
+            beside: carry_beside(
+                "src/other.rs",
+                &sealed,
+                &json!({}),
+                &json!([{
+                    "package": "demo", "target": "demo", "kind": "lib", "test": false,
+                    "skeleton": "0".repeat(64),
+                    "entries": { "$env/NOTHING": "unset" }
+                }]),
+            ),
+            tree: vec![("src/other.rs", sealed)],
+            ..clean
+        },
+    ]);
+    plants
 }
 
 /// The clean recording with `overrides` laid over the event at `at`.
@@ -522,6 +798,26 @@ pub fn touched() -> Value {
             }
         },
         "limitations": []
+    })
+}
+
+/// The record the guards left for the clean run, with the item both of its mutants sit in and `entered` as given.
+#[must_use]
+pub fn entered(entered: &Value, measurable: bool) -> Value {
+    json!({
+        "targets": {
+            TARGET: {
+                "reached": { "tests": { "larger_works": [0, 1] } },
+                "entered": entered,
+                "ran": ["larger_works", "smaller_works"]
+            }
+        },
+        "limitations": [],
+        "items": [{
+            "index": 0, "package": "demo", "path": "src/lib.rs", "name": "larger",
+            "span": { "start": 50, "end": 300 }, "body": { "start": 60, "end": 290 },
+            "measurable": measurable
+        }]
     })
 }
 
@@ -688,6 +984,25 @@ impl Layer {
                     ..clean
                 },
             ],
+            Self::Entry => vec![
+                Perturbation {
+                    name: "a test that noticed a mutation and never entered the item it is in",
+                    beside: vec![(
+                        "touched-v1.json",
+                        entered(&json!({ "tests": { "smaller_works": [0] } }), true),
+                    )],
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "a site reached inside an item nothing can record entering",
+                    beside: vec![(
+                        "touched-v1.json",
+                        entered(&json!({ "tests": { "larger_works": [0] } }), false),
+                    )],
+                    ..clean
+                },
+            ],
+            Self::Carry => carry_plants(),
         }
     }
 }

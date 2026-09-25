@@ -102,6 +102,7 @@ impl Document {
             interrupted,
             exit_code,
             _shard: _,
+            _jobs: _,
         } = run;
         let Workspace {
             _root_name: _,
@@ -159,6 +160,17 @@ struct Run {
     #[serde(rename = "shard")]
     #[serde(deserialize_with = "required_option")]
     _shard: Option<String>,
+    #[serde(rename = "jobs")]
+    _jobs: Jobs,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Jobs {
+    #[serde(rename = "asked")]
+    _asked: String,
+    #[serde(rename = "used")]
+    _used: u64,
 }
 
 #[derive(Deserialize)]
@@ -262,6 +274,10 @@ impl Target {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact the published report row states, and the wire shape is the schema's"
+)]
 struct Mutant {
     index: u64,
     id: String,
@@ -272,8 +288,7 @@ struct Mutant {
     #[serde(rename = "family")]
     _family: String,
     rule: String,
-    #[serde(rename = "item")]
-    _item: String,
+    item: String,
     rule_version: u64,
     #[serde(rename = "line")]
     _line: u64,
@@ -294,12 +309,12 @@ struct Mutant {
     _duration_ms: u64,
     #[serde(deserialize_with = "required_option")]
     tests_run: Option<u64>,
-    #[serde(rename = "killed_by")]
-    _killed_by: Vec<String>,
+    killed_by: Vec<String>,
     #[serde(rename = "signal")]
     #[serde(deserialize_with = "required_option")]
     _signal: Option<i64>,
     retried: bool,
+    lingered: bool,
     #[serde(deserialize_with = "required_option")]
     not_run_reason: Option<NotRunReason>,
     #[serde(deserialize_with = "required_option")]
@@ -336,7 +351,7 @@ impl Mutant {
             _package: _,
             _family: _,
             rule,
-            _item: _,
+            item,
             rule_version,
             _line: _,
             _column: _,
@@ -351,9 +366,10 @@ impl Mutant {
             _exit_code: _,
             _duration_ms: _,
             tests_run,
-            _killed_by: _,
+            killed_by,
             _signal: _,
             retried,
+            lingered,
             not_run_reason,
             route,
             _identical: _,
@@ -380,7 +396,10 @@ impl Mutant {
             step_notice,
             target,
             tests_run,
+            killed_by,
+            item,
             retried,
+            lingered,
             expected,
             unreached,
             not_run_reason,
@@ -629,6 +648,7 @@ fn reject_touched_nulls(value: &Value) -> Result<(), serde_json::Error> {
         ));
     };
     reject_null(root.get("narrowing"), "touched narrowing")?;
+    reject_null(root.get("items"), "the touched item catalog")?;
     let Some(targets) = root.get("targets").and_then(Value::as_object) else {
         return Ok(());
     };
@@ -636,7 +656,7 @@ fn reject_touched_nulls(value: &Value) -> Result<(), serde_json::Error> {
         let Some(target) = target.as_object() else {
             continue;
         };
-        for kind in ["reached", "bodies", "infected"] {
+        for kind in ["reached", "bodies", "infected", "entered"] {
             let seen = target.get(kind);
             reject_null(seen, "a touched target record")?;
             let Some(seen) = seen.and_then(Value::as_object) else {
@@ -698,6 +718,36 @@ struct TouchedEvidence {
     _limitations: Vec<String>,
     #[serde(rename = "narrowing")]
     _narrowing: Option<TouchedNarrowing>,
+    #[serde(rename = "items")]
+    _items: Option<Vec<TouchedItem>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TouchedItem {
+    #[serde(rename = "index")]
+    _index: u64,
+    #[serde(rename = "package")]
+    _package: String,
+    #[serde(rename = "path")]
+    _path: String,
+    #[serde(rename = "name")]
+    _name: String,
+    #[serde(rename = "span")]
+    _span: TouchedSpan,
+    #[serde(rename = "body")]
+    _body: TouchedSpan,
+    #[serde(rename = "measurable")]
+    _measurable: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TouchedSpan {
+    #[serde(rename = "start")]
+    _start: u64,
+    #[serde(rename = "end")]
+    _end: u64,
 }
 
 #[derive(Deserialize)]
@@ -718,6 +768,8 @@ struct TouchedTarget {
     _bodies: Option<TouchedSeen>,
     #[serde(rename = "infected")]
     _infected: Option<TouchedSeen>,
+    #[serde(rename = "entered")]
+    _entered: Option<TouchedSeen>,
     #[serde(rename = "ran")]
     _ran: Vec<String>,
 }

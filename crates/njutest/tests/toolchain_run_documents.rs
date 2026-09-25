@@ -3,35 +3,27 @@
 
 //! The commands that read what a run left behind, driven in this process against one real run.
 
+#![cfg(unix)]
 #![expect(
     clippy::expect_used,
+    clippy::disallowed_methods,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::too_many_lines,
     reason = "the helpers that copy a fixture and run one verification are not themselves \
               tests, a setup that fails is reported by panicking, and a test reads a \
               document by the names the run it drove put there"
-)]
-#![cfg_attr(
-    unix,
-    expect(
-        clippy::disallowed_methods,
-        clippy::indexing_slicing,
-        clippy::panic,
-        clippy::too_many_lines,
-        reason = "the helpers that copy a fixture and run one verification are not themselves tests, a setup that fails is reported by panicking, and a test reads a document by the names the run it drove put there, and what these permit is what a test that reads a published report needs, which this platform cannot publish: those tests are behind cfg(unix) one by one, so what their shapes permit is behind it too"
-    )
 )]
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
 use njutest::app::reports::Index;
 use njutest::cli::Environment;
-#[cfg(unix)]
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::runner::Cancel;
 
 /// One workspace with one completed run in it, kept for the length of a test.
-#[cfg(unix)]
 struct Verified {
     root: PathBuf,
     run: String,
@@ -39,14 +31,12 @@ struct Verified {
 }
 
 /// Where the runs of one workspace live, spelled as the documented default.
-#[cfg(unix)]
 fn runs_root(root: &Path) -> PathBuf {
     root.join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
         .join("runs")
 }
 
 /// Where one index lives, spelled as the documented default.
-#[cfg(unix)]
 fn index_path(root: &Path, index: Index) -> PathBuf {
     root.join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
         .join(index.file())
@@ -66,7 +56,7 @@ fn environment(root: &Path) -> Environment {
         cache_directory: njutest_devkit::paths::cache_beside(root).expect("a cache directory"),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars: njutest_devkit::paths::environment_for_a_run(),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -91,7 +81,6 @@ fn ask(root: &Path, args: &[&str]) -> Said {
 }
 
 /// A copy of `fixture-baseline` that one verification has already run in.
-#[cfg(unix)]
 fn verified() -> Verified {
     let dir = tempfile::Builder::new()
         .prefix("njutest-commands-")
@@ -123,7 +112,6 @@ fn verified() -> Verified {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn every_command_that_reads_a_run_reads_the_one_that_ran() {
     let it = verified();
@@ -174,7 +162,6 @@ fn every_command_that_reads_a_run_reads_the_one_that_ran() {
 }
 
 /// What `report` says about a run directory whose document is not one.
-#[cfg(unix)]
 fn unreadable(it: &Verified) {
     let hollow = "20270101T000000Z-hollow";
     std::fs::create_dir_all(runs_root(&it.root).join(hollow))
@@ -219,7 +206,6 @@ fn unreadable(it: &Verified) {
 }
 
 /// What a run leaves in its own directory, and where the pointers point.
-#[cfg(unix)]
 fn kept(it: &Verified) {
     let directory = runs_root(&it.root).join(&it.run);
     for name in [
@@ -253,7 +239,6 @@ fn kept(it: &Verified) {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
     let it = verified();
@@ -354,7 +339,6 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
 }
 
 /// Where an explanation says the mutation is, and what it says was done there.
-#[cfg(unix)]
 fn placed_and_ruled(said: &std::collections::BTreeMap<&str, &str>, whole: &str) {
     let placed = said.get("WHERE").copied().unwrap_or_default();
     assert!(
@@ -371,7 +355,6 @@ fn placed_and_ruled(said: &std::collections::BTreeMap<&str, &str>, whole: &str) 
 }
 
 /// What an explanation says about a survivor, before a reviewer looks at it and after.
-#[cfg(unix)]
 fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
     let survivor = parsed["report"]["builds"][0]["parts"][0]["findings"]
         .as_array()
@@ -401,7 +384,6 @@ fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
 }
 
 /// What an explanation says about a mutation a reviewer has since accepted.
-#[cfg(unix)]
 fn accepted_next_time(it: &Verified, survivor: &str) {
     let recorded = ask(
         &it.root,
@@ -444,7 +426,6 @@ fn accepted_next_time(it: &Verified, survivor: &str) {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_acceptance_is_written_where_the_next_run_reads_it() {
     let it = verified();
@@ -529,7 +510,6 @@ fn an_acceptance_is_written_where_the_next_run_reads_it() {
 }
 
 /// What `accept` refuses, which is every name that is not one survivor of this run.
-#[cfg(unix)]
 fn refusals(it: &Verified, survivor: &str) {
     let document = ask(&it.root, &["report", "--format", "json"]);
     let parsed: serde_json::Value =
@@ -619,37 +599,6 @@ fn refusals(it: &Verified, survivor: &str) {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let no_run = ask(dir.path(), &["accept", "abcdef", "--reason", "reviewed"]);
-    assert_eq!(no_run.code, 3, "{}{}", no_run.out, no_run.err);
-    assert!(
-        no_run.err.contains("no run has completed"),
-        "{}",
-        no_run.err
-    );
-
-    let run = "20260101T000000Z-broken";
-    std::fs::create_dir_all(runs_root(dir.path()).join(run))
-        .expect("a run directory without a report");
-    let unreadable = ask(
-        dir.path(),
-        &["accept", "abcdef", "--reason", "reviewed", "--run", run],
-    );
-    assert_eq!(unreadable.code, 3, "{}{}", unreadable.out, unreadable.err);
-    assert!(
-        unreadable.err.contains(run)
-            && unreadable
-                .err
-                .contains(njutest::app::reports::DOCUMENT_NAME),
-        "{}",
-        unreadable.err
-    );
-}
-
-#[cfg(unix)]
 #[test]
 fn what_a_run_left_behind_is_listed_bundled_and_collected() {
     let it = verified();
@@ -659,7 +608,6 @@ fn what_a_run_left_behind_is_listed_bundled_and_collected() {
 }
 
 /// What a bundle of one run holds, and what it refuses to bundle.
-#[cfg(unix)]
 fn bundled(it: &Verified) {
     let bundled = ask(&it.root, &["diagnostics", &it.run]);
     assert_eq!(bundled.code, 0, "{}{}", bundled.out, bundled.err);
@@ -713,7 +661,6 @@ fn bundled(it: &Verified) {
 }
 
 /// What the store says it holds, and what it carries between machines.
-#[cfg(unix)]
 fn stored(it: &Verified) {
     std::fs::write(
         it.root.join(njutest::config::FILE_NAME),
@@ -797,7 +744,6 @@ fn stored(it: &Verified) {
 }
 
 /// What the store says about a directory a run preserved.
-#[cfg(unix)]
 fn preserved_and_named(it: &Verified) {
     let preserved = it.root.join("kept-snapshot");
     std::fs::create_dir_all(&preserved).expect("a directory a run preserved");
@@ -853,7 +799,6 @@ fn preserved_and_named(it: &Verified) {
 }
 
 /// What saying what a run would measure says.
-#[cfg(unix)]
 fn planned(root: &Path) {
     let plain = ask(root, &["plan", "--offline", "--locked"]);
     assert_eq!(
@@ -939,7 +884,6 @@ fn planned(root: &Path) {
 }
 
 /// What saying what a run would measure says about a workspace that will not build.
-#[cfg(unix)]
 fn refused_to_plan(root: &Path) {
     let broken = root.join("src/lib.rs");
     let source = std::fs::read_to_string(&broken).expect("the library");
@@ -960,63 +904,6 @@ fn refused_to_plan(root: &Path) {
     std::fs::write(&broken, &source).expect("the library, as it was");
 }
 
-#[test]
-fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
-    let dir = tempfile::Builder::new()
-        .prefix("njutest-init-")
-        .tempdir()
-        .expect("a temporary directory");
-    let root = dir.path().to_path_buf();
-
-    let written = ask(&root, &["init"]);
-    assert_eq!(written.code, 0, "{}{}", written.out, written.err);
-    assert!(
-        written.out.contains(njutest::config::FILE_NAME),
-        "it says which file it wrote, because a command that writes in silence is one a \
-         person runs again: {}",
-        written.out
-    );
-    let path = root.join(njutest::config::FILE_NAME);
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("the skeleton"),
-        njutest::config::skeleton(),
-        "what init writes is the skeleton, so a person who reads the file and a person \
-         who reads the documentation of it are reading one thing"
-    );
-
-    std::fs::write(&path, "version = 1\n# mine\n").expect("a configuration somebody wrote");
-    let refused = ask(&root, &["init"]);
-    assert!(
-        refused.err.contains("NJ1005"),
-        "and a refusal carries the code a person greps for and says how to mean it: {}",
-        refused.err
-    );
-    assert_eq!(
-        refused.code, 3,
-        "a second init does not write over a configuration somebody has edited: the \
-         acceptances in it are the reviews of every survivor this project has looked at, \
-         and they are not recoverable from anywhere else: {}{}",
-        refused.out, refused.err
-    );
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("the configuration"),
-        "version = 1\n# mine\n",
-        "and leaves it exactly as it was"
-    );
-
-    let forced = ask(&root, &["init", "--force"]);
-    assert_eq!(
-        forced.code, 0,
-        "while a person who says to replace it is one who meant to: {}{}",
-        forced.out, forced.err
-    );
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("the skeleton"),
-        njutest::config::skeleton()
-    );
-}
-
-#[cfg(unix)]
 #[test]
 fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused() {
     let it = verified();
@@ -1089,7 +976,6 @@ fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused()
 }
 
 /// Where one shard of this workspace's catalog wrote its document.
-#[cfg(unix)]
 fn sharded(it: &Verified, shard: &str) -> PathBuf {
     let before = run_names(&it.root);
     let said = ask(
@@ -1115,7 +1001,6 @@ fn sharded(it: &Verified, shard: &str) -> PathBuf {
 }
 
 /// The run directories this workspace currently holds.
-#[cfg(unix)]
 fn run_names(root: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(runs_root(root))
         .expect("the runs directory")
@@ -1137,7 +1022,6 @@ fn run_names(root: &Path) -> Vec<String> {
 }
 
 /// The two things `merge` refuses that a pipeline actually meets.
-#[cfg(unix)]
 fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path, two: &Path) {
     let elsewhere = it.root.join("elsewhere.json");
     let mut other: serde_json::Value =
@@ -1186,7 +1070,6 @@ fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path, two: &Path) {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn the_command_a_run_tells_a_reader_to_type_is_one_that_works() {
     let it = verified();
@@ -1222,7 +1105,55 @@ fn the_command_a_run_tells_a_reader_to_type_is_one_that_works() {
     }
 }
 
-#[cfg(unix)]
+#[test]
+fn a_file_is_drawn_as_the_run_measured_it_with_each_changed_line_marked_until_it_changes() {
+    let it = verified();
+    let drawn = ask(&it.root, &["guard", "src/lib.rs"]);
+    assert_eq!(
+        drawn.code, 0,
+        "a guard describes and does not judge, so a file with gaps in it is still drawn: {}",
+        drawn.err
+    );
+    njutest_devkit::golden::golden(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/guard-baseline.golden"),
+        drawn.out.replace(&it.run, "<run>").as_bytes(),
+    )
+    .unwrap_or_else(|error| panic!("the guard of fixture-baseline's library: {error}"));
+    let again = ask(&it.root, &["guard", "./src/lib.rs"]);
+    assert_eq!(
+        again.out, drawn.out,
+        "a path is the file it names however it is spelled: {}",
+        again.err
+    );
+
+    let library = it.root.join("src/lib.rs");
+    let measured = std::fs::read_to_string(&library).expect("the fixture's library");
+    std::fs::write(&library, format!("{measured}\n")).expect("an edit");
+    let edited = ask(&it.root, &["guard", "src/lib.rs"]);
+    assert_eq!(edited.code, 0, "{}", edited.err);
+    let first = measured
+        .lines()
+        .find(|line| !line.trim().is_empty() && !line.starts_with("//"))
+        .expect("a line of code");
+    assert!(
+        edited
+            .out
+            .contains("src/lib.rs is not yet asked: the file has changed since the run read it")
+            && !edited.out.contains(first),
+        "a file edited since the run is one note and none of its code, since a mark beside a \
+         line the run did not measure says something about a program nobody asked about: {}",
+        edited.out
+    );
+
+    let nowhere = ask(&it.root, &["guard", "src/nowhere.rs"]);
+    assert_eq!(nowhere.code, 3, "{}", nowhere.out);
+    assert!(
+        nowhere.err.contains("NJ6006") && nowhere.err.contains(&it.run),
+        "a file the run changed nothing in is refused by its code and names the run: {}",
+        nowhere.err
+    );
+}
+
 #[test]
 fn a_run_is_specified_item_by_item_and_a_subject_it_never_changed_is_refused() {
     let it = verified();

@@ -8,12 +8,17 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::{
-    Audit, CheckedRecording, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row, STOPPED_EARLY,
-    StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string, strings,
+    Audit, CheckedRecording, Decided, INCONCLUSIVE, KILLED, Layer, NOT_RUN, Notes, Report, Row,
+    STOPPED_EARLY, StepNotice, UNREACHED, UNSELECTED, WAITED, array, number, numbers, string,
+    strings,
 };
 
 /// The recording, against the report it is supposed to be the exhaust of.
-pub(super) fn trace(report: &Report, recorded: Option<&CheckedRecording>, audit: &mut Audit) {
+pub(super) fn trace(
+    report: &Report,
+    recorded: Option<&CheckedRecording>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Trace);
     let Some(recorded) = recorded else {
         notes.unaudited(
@@ -21,13 +26,14 @@ pub(super) fn trace(report: &Report, recorded: Option<&CheckedRecording>, audit:
             "the run kept no recording, so what it did cannot be held to what it reported"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     complete(&recorded.events, &mut notes);
     instrumented(&recorded.events, &mut notes);
     verified(&recorded.events, &mut notes);
     condemned(report, &recorded.events, &mut notes);
     routed(report, &recorded.routing, &mut notes);
+    notes.looked()
 }
 
 /// Whether the recording begins, ends, lost nothing, and closed every phase it opened.
@@ -421,6 +427,9 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     if execs.is_empty() {
         return;
     }
+    for exec in execs {
+        attributed(row, exec, notes);
+    }
     let Some(answer) = execs.iter().rev().find(|exec| exec.target == row.target) else {
         notes.violated(
             row.label(),
@@ -472,8 +481,91 @@ fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     retried(row, execs, notes);
 }
 
+/// Whether the row says its process outlived its harness's answer exactly when a recorded execution of it did.
+fn lingered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
+    let recorded = execs
+        .iter()
+        .try_fold(false, |any, exec| match exec.lingered {
+            crate::route::Linger::Unrecorded => None,
+            crate::route::Linger::Ended => Some(any),
+            crate::route::Linger::Outlived => Some(true),
+        });
+    match recorded {
+        None => notes.unaudited(
+            &row.display_id,
+            "an execution of it does not say whether its process outlived its harness's answer, \
+             so the row's `lingered` is not re-derived"
+                .to_owned(),
+        ),
+        Some(recorded) if recorded != row.lingered => notes.violated(
+            &row.display_id,
+            format!(
+                "the row says lingered is {} and the recording's executions of it say {recorded}; \
+                 whether the harness or the clock decided it is a fact the recording holds",
+                row.lingered
+            ),
+        ),
+        Some(_) => {}
+    }
+}
+
+/// Whether a killed execution that ended on a signal can be credited to the tests: a failing test named, or a signal the process raised by what it did.
+fn attributed(row: &Row, exec: &crate::route::Exec, notes: &mut Notes<'_>) {
+    let Some(signal) = exec.signal else {
+        return;
+    };
+    if exec.outcome != KILLED || !exec.failed_tests.is_empty() {
+        return;
+    }
+    match raised(signal) {
+        Raised::Itself => {}
+        Raised::Outside => notes.violated(
+            row.label(),
+            format!(
+                "an execution against {} is counted killed on signal {signal}, which another \
+                 process sends, and names no failing test; nothing the tests did ended it",
+                exec.target
+            ),
+        ),
+        Raised::Unknown => notes.unaudited(
+            row.label(),
+            format!(
+                "signal {signal} means a different thing on different platforms and the \
+                 recording does not say which it ran on, so whether the process raised it is \
+                 not known"
+            ),
+        ),
+    }
+}
+
+/// Who raised the signal a process died of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Raised {
+    Itself,
+    Outside,
+    Unknown,
+}
+
+/// Who raised `signal`, read from the numbers every POSIX platform shares and nothing else.
+const fn raised(signal: i64) -> Raised {
+    match signal {
+        4 | 5 | 6 | 8 | 11 => Raised::Itself,
+        7 | 10 | 12 | 31 => Raised::Unknown,
+        _ => Raised::Outside,
+    }
+}
+
 /// A wall-clock expiry the run believed, against the serial retry that is what believing one takes.
 fn retried(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
+    lingered(row, execs, notes);
+    if row.lingered && row.outcome == WAITED {
+        notes.violated(
+            &row.display_id,
+            "the row says its harness had already answered when the clock ended the process, and \
+             that the clock decided it; a verdict the harness gave is not a wait"
+                .to_owned(),
+        );
+    }
     let waited = execs.iter().filter(|exec| exec.outcome == WAITED).count();
     if row.outcome == WAITED && (waited < 2 || !row.retried) {
         notes.violated(
@@ -563,7 +655,11 @@ fn discharged(
 
 /// The ledger of accepted survivors, against the run that was asked to hold to it.
 /// The work the report claims, against the routes it claims it from and the recording of what ran.
-pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: &mut Audit) {
+pub(super) fn work(
+    report: &Report,
+    recorded: Option<&CheckedRecording>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Work);
     let targets = report.targets.len();
     if targets == 0 {
@@ -573,7 +669,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
              re-derived"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     }
     let built: BTreeSet<&str> = report.targets.iter().map(String::as_str).collect();
     let mut started: u64 = 0;
@@ -588,7 +684,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
                     row.label(),
                     "the route's execution count exceeds the report's integer width".to_owned(),
                 );
-                return;
+                return notes.looked();
             };
             let Some(next) = started
                 .checked_add(executed)
@@ -598,7 +694,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
                     "executions",
                     "the execution total exceeds the report's integer width".to_owned(),
                 );
-                return;
+                return notes.looked();
             };
             started = next;
         }
@@ -610,19 +706,26 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
              ran"
             .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let ran = recorded
         .events
         .iter()
-        .filter(|event| string(event, "type").as_deref() == Some("mutant-exec"))
+        .filter(|event| {
+            string(event, "type").as_deref() == Some("mutant-exec")
+                && event
+                    .get("mutant")
+                    .and_then(|record| record.get("id"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.is_empty())
+        })
         .count();
     let Ok(ran) = u64::try_from(ran) else {
         notes.violated(
             "executions",
             "the recording's execution count exceeds the report's integer width".to_owned(),
         );
-        return;
+        return notes.looked();
     };
     if ran != started {
         notes.violated(
@@ -633,6 +736,7 @@ pub(super) fn work(report: &Report, recorded: Option<&CheckedRecording>, audit: 
             ),
         );
     }
+    notes.looked()
 }
 
 /// Whether one row's pairs are ones the run built targets for and its own route reached.

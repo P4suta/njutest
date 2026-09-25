@@ -34,7 +34,7 @@ fn the_defaults_are_the_numbers_the_contract_states() {
     assert_eq!(config.version, 1);
     assert_eq!(config.contract, Contract::StandardV1);
     assert_eq!(config.execution.timeout, DEFAULT_TIMEOUT);
-    assert_eq!(config.execution.jobs, 0);
+    assert_eq!(config.execution.jobs, rust_mutants::run::Jobs::Auto);
     assert_eq!(config.cache.max_bytes, DEFAULT_CACHE_MAX_BYTES);
     assert_eq!(config.cache.ttl, DEFAULT_CACHE_TTL);
     assert_eq!(config.reports.keep, DEFAULT_REPORTS_KEEP);
@@ -386,7 +386,10 @@ ticket = "QA-123"
     assert_eq!(config.execution.features, ["postgres"]);
     assert!(config.execution.all_features && config.execution.no_default_features);
     assert_eq!(config.execution.timeout, Duration::from_secs(300));
-    assert_eq!(config.execution.jobs, 3);
+    assert_eq!(
+        config.execution.jobs,
+        rust_mutants::run::Jobs::count(3).expect("a positive count")
+    );
     assert_eq!(config.execution.skip_targets, ["fixture-app/test/cli"]);
     assert_eq!(config.cache.max_bytes, 1024);
     assert_eq!(config.cache.ttl, Duration::from_hours(24));
@@ -601,7 +604,7 @@ fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it
         vars: Vec::new(),
         working_directory: PathBuf::from("/somewhere/a/caller/named"),
         temp_directory: PathBuf::from("/tmp"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         cache_directory: PathBuf::from("/tmp/cache"),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -652,4 +655,27 @@ fn an_exclude_pattern_that_is_not_a_pattern_is_refused() {
             "a refusal names the key it is about: {error}"
         );
     }
+}
+
+#[test]
+fn a_knob_is_named_from_the_closed_set_and_a_name_outside_it_is_refused_by_that_name() {
+    let asked = Config::parse(
+        "[repeatable]\nknobs = [\"timezone\", \"threads\"]\n",
+        std::path::Path::new("njutest.toml"),
+    )
+    .expect("two knobs by their names");
+    assert_eq!(
+        asked.repeatable.knobs,
+        [
+            njutest::report::knobs::Knob::Timezone,
+            njutest::report::knobs::Knob::Threads
+        ]
+    );
+    let refused = expect_error("[repeatable]\nknobs = [\"weather\"]\n");
+    assert_eq!(refused.kind(), ConfigErrorKind::Unparsable);
+    assert!(
+        refused.to_string().contains("weather") && refused.to_string().contains("NJ1002"),
+        "a knob this release cannot put is a mistake in the file, not a knob quietly left off: \
+         {refused}"
+    );
 }

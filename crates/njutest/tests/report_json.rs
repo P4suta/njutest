@@ -1121,3 +1121,118 @@ fn the_document_a_run_writes_is_a_closed_nested_decision() {
         "the pairing is one closed object both inside the program and on the v1 wire: {held}"
     );
 }
+
+/// One knob record of every standing, each for a knob of its own on one target.
+fn every_standing() -> Vec<njutest::report::knobs::KnobRecord> {
+    use njutest::report::drift::{Moved, Unmeasured};
+    use njutest::report::knobs::{Knob, KnobRecord, NotPut, Reach, Standing, Unsettled};
+    let moved = || Moved {
+        gained: std::collections::BTreeSet::from([0]),
+        lost: std::collections::BTreeSet::new(),
+    };
+    [
+        (Knob::Timezone, Standing::Stable),
+        (Knob::TempDirectory, Standing::Passed),
+        (
+            Knob::Home,
+            Standing::Broke {
+                failed: vec!["adds::works".to_owned()],
+            },
+        ),
+        (
+            Knob::Umask,
+            Standing::Moved {
+                reach: Box::new(Reach {
+                    reached: moved(),
+                    bodies: moved(),
+                    infected: moved(),
+                }),
+            },
+        ),
+        (
+            Knob::Columns,
+            Standing::Uncompared {
+                why: Unmeasured::OtherTests,
+            },
+        ),
+        (
+            Knob::Threads,
+            Standing::Unsettled {
+                why: Unsettled::Waited,
+            },
+        ),
+        (
+            Knob::Locale,
+            Standing::NotPut {
+                why: NotPut::LocaleMissing,
+            },
+        ),
+    ]
+    .into_iter()
+    .map(|(knob, standing)| KnobRecord {
+        target: "core/lib/core".to_owned(),
+        knob,
+        standing,
+    })
+    .collect()
+}
+
+#[test]
+fn a_knob_record_of_every_standing_is_one_the_published_schema_accepts_and_reads_back() {
+    let report = populated_varying(&|source| {
+        source.knobs = every_standing();
+        let found = njutest::report::knobs::found(&source.knobs, &source.mutants);
+        source.findings.extend(found);
+        let limited = njutest::report::knobs::limited(&source.knobs);
+        source.limitations.extend(limited);
+        source.verdict = source.concluded();
+    })
+    .expect("a report whose knob records are sound");
+    let text = json::document(&report).expect("a sound report is written");
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&text).expect("JSON");
+    assert!(problems(&document).is_empty(), "{:?}", problems(&document));
+    assert_eq!(
+        document["report"]["builds"][0]["parts"][0]["knobs"]
+            .as_array()
+            .map(Vec::len),
+        Some(7),
+        "every record is written"
+    );
+    let read = json::parse(&text).expect("the document reads back");
+    assert_eq!(read, report, "a knob record reads back as the one written");
+}
+
+#[test]
+fn knob_records_that_repeat_or_cover_different_targets_are_refused() {
+    use njutest::report::knobs::{Knob, KnobRecord, Standing};
+    let record = |knob, target: &str| KnobRecord {
+        target: target.to_owned(),
+        knob,
+        standing: Standing::Stable,
+    };
+    for (records, said) in [
+        (
+            vec![
+                record(Knob::Timezone, "core/lib/core"),
+                record(Knob::Timezone, "core/lib/core"),
+            ],
+            "timezone is recorded twice for core/lib/core",
+        ),
+        (
+            vec![
+                record(Knob::Timezone, "core/lib/core"),
+                record(Knob::Timezone, "core/test/it"),
+                record(Knob::Locale, "core/lib/core"),
+            ],
+            "locale was put on other targets than timezone",
+        ),
+    ] {
+        let refused = populated_varying(&|source| source.knobs.clone_from(&records)).expect_err(
+            "a part whose knob records say two things about one target, or leave one out",
+        );
+        assert!(
+            refused.to_string().contains(said),
+            "a knob asked for is put on every target whose baseline passed, once: {refused}"
+        );
+    }
+}

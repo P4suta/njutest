@@ -26,10 +26,11 @@ use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 7] = [
+pub const RESERVED_ENV: [&str; 8] = [
     ACTIVE_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
+    crate::instrument::TOUCH_ITEMS_ENV,
     STEPS_ENV,
     STEP_NOTICE_ENV,
     STEP_NONCE_ENV,
@@ -37,16 +38,109 @@ pub const RESERVED_ENV: [&str; 7] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 8] = [
+pub const COMPOSED_ENV: [&str; 9] = [
     ACTIVE_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
+    crate::instrument::TOUCH_ITEMS_ENV,
     STEPS_ENV,
     STEP_NOTICE_ENV,
     STEP_NONCE_ENV,
     STEP_STATE_ENV,
     crate::coverage::PROFILE_ENV,
 ];
+
+/// A variable a control may be started with another value of: one the contract lets differ between machines, and never one the run composes to measure with.
+///
+/// A closed set, so that no perturbation can reach the variables that activate a mutant, record what a process reached, count its steps, or find its libraries: a control run with one of those changed would measure the apparatus rather than the suite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, njutest_macros::AllVariants)]
+pub enum Variable {
+    /// The time zone.
+    Tz,
+    /// The locale every category reads.
+    LcAll,
+    /// The temporary directory, as unix names it.
+    Tmpdir,
+    /// The temporary directory, as Windows names it first.
+    Tmp,
+    /// The temporary directory, as Windows names it second.
+    Temp,
+    /// The home directory.
+    Home,
+    /// Where cargo keeps what it downloads, which follows the home directory unless set.
+    CargoHome,
+    /// Where rustup keeps toolchains, which follows the home directory unless set.
+    RustupHome,
+    /// How many columns a terminal has.
+    Columns,
+    /// How many lines a terminal has.
+    Lines,
+}
+
+impl Variable {
+    /// The name a process reads it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Tz => "TZ",
+            Self::LcAll => "LC_ALL",
+            Self::Tmpdir => "TMPDIR",
+            Self::Tmp => "TMP",
+            Self::Temp => "TEMP",
+            Self::Home => "HOME",
+            Self::CargoHome => "CARGO_HOME",
+            Self::RustupHome => "RUSTUP_HOME",
+            Self::Columns => "COLUMNS",
+            Self::Lines => "LINES",
+        }
+    }
+}
+
+/// A program a control is started through, from a closed set each of which replaces itself with the test binary, so the process is still the one the run started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launcher {
+    /// A shell that sets the file-creation mask and then becomes the test binary.
+    Umask {
+        /// The mask, as `umask` takes it.
+        mask: u32,
+    },
+}
+
+impl Launcher {
+    /// The program and arguments that start the test binary this way, or nothing on a platform that has no such program.
+    #[must_use]
+    pub fn argv(self) -> Option<Vec<OsString>> {
+        match self {
+            Self::Umask { mask } => cfg!(unix).then(|| {
+                vec![
+                    OsString::from("sh"),
+                    OsString::from("-c"),
+                    OsString::from(format!("umask {mask:03o}; exec \"$0\" \"$@\"")),
+                ]
+            }),
+        }
+    }
+}
+
+/// How a control's harness schedules its tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Schedule {
+    /// As the baseline did.
+    AsConfigured,
+    /// One test at a time, on one thread, which libtest does in name order.
+    OneThread,
+}
+
+impl Schedule {
+    /// The harness arguments that ask for it, which only libtest takes.
+    #[must_use]
+    pub const fn arguments(self) -> &'static [&'static str] {
+        match self {
+            Self::AsConfigured => &[],
+            Self::OneThread => &["--test-threads=1"],
+        }
+    }
+}
 
 /// How many quiet windows a step-counted execution may run for in all before the clock ends it anyway.
 pub const QUIET_WINDOWS_PER_CEILING: u32 = 10;
@@ -289,11 +383,14 @@ fn parse_lines_text(text: &str) -> Lines {
     lines
 }
 
+/// What libtest writes after the name of a test that expects a panic, which is not part of the name.
+const SHOULD_PANIC: &str = " - should panic";
+
 /// The name and verdict of one `test <name> ... <verdict>` line.
 fn verdict_of(line: &str) -> Option<(&str, &str)> {
     let rest = line.trim_end().strip_prefix("test ")?;
     let (name, verdict) = rest.rsplit_once(" ... ")?;
-    let name = name.trim();
+    let name = name.strip_suffix(SHOULD_PANIC).unwrap_or(name).trim();
     (!name.is_empty()).then_some((name, verdict.trim()))
 }
 
@@ -365,8 +462,7 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
 ///
 /// Four booleans and an exit code could say a process was both unstarted and killed by a clock, and the precedence that made that impossible lived in the order of a chain of `if`s.
 /// A process ends exactly one way, so the type says so and the policy reading it is a total match rather than a sequence somebody has to keep in the right order (ADR 0023).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stopped {
     /// The process could not be started at all.
     NotStarted,
@@ -396,6 +492,8 @@ pub enum Stopped {
     },
     /// The operating system did not yield a trustworthy final status.
     WaitFailed,
+    /// The harness said a test failed, which is the whole answer about the mutant, and the run ended the process there.
+    Answered,
     /// The execution monitor stopped the tree and its notice was verified.
     StepLimitReached {
         /// The verified notice that caused the stop.
@@ -489,7 +587,8 @@ pub enum StepProtocolFailure {
     },
 }
 
-#[derive(serde::Deserialize)]
+/// How a stop is spelled in a recording, in both directions, so a stop the engine can reach is one a reader can read.
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum StoppedWire {
     NotStarted {},
@@ -498,8 +597,29 @@ enum StoppedWire {
     Stalled { raised: Option<u64> },
     Cancelled { started: bool },
     WaitFailed {},
+    Answered {},
     StepLimitReached { notice: StepLimitNotice },
     StepProtocolFailed { reason: StepProtocolFailure },
+}
+
+impl serde::Serialize for Stopped {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self.clone() {
+            Self::NotStarted => StoppedWire::NotStarted {},
+            Self::Exited { exit } => StoppedWire::Exited { exit },
+            Self::TimedOut { raised } => StoppedWire::TimedOut { raised },
+            Self::Stalled { raised } => StoppedWire::Stalled { raised },
+            Self::Cancelled { started } => StoppedWire::Cancelled { started },
+            Self::WaitFailed => StoppedWire::WaitFailed {},
+            Self::Answered => StoppedWire::Answered {},
+            Self::StepLimitReached { notice } => StoppedWire::StepLimitReached { notice },
+            Self::StepProtocolFailed { reason } => StoppedWire::StepProtocolFailed { reason },
+        }
+        .serialize(serializer)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Stopped {
@@ -515,6 +635,7 @@ impl<'de> serde::Deserialize<'de> for Stopped {
                 StoppedWire::Stalled { raised } => Self::Stalled { raised },
                 StoppedWire::Cancelled { started } => Self::Cancelled { started },
                 StoppedWire::WaitFailed {} => Self::WaitFailed,
+                StoppedWire::Answered {} => Self::Answered,
                 StoppedWire::StepLimitReached { notice } => Self::StepLimitReached { notice },
                 StoppedWire::StepProtocolFailed { reason } => Self::StepProtocolFailed { reason },
             },
@@ -689,6 +810,7 @@ impl Stopped {
             },
             Termination::Cancelled { started } => Self::Cancelled { started: *started },
             Termination::WaitFailed { .. } => Self::WaitFailed,
+            Termination::Answered => Self::Answered,
         }
     }
 }
@@ -712,7 +834,7 @@ impl StepProtocolFailure {
 pub struct Observation {
     /// Its single terminal fact.
     pub stopped: Stopped,
-    /// Whether the runtime said the binary was built from another catalog.
+    /// Whether the process itself was refused by its runtime for carrying another catalog: it exited with the refusal's code and said so, which a test relaying a child's refusal does not.
     pub stale_catalog: bool,
 }
 
@@ -721,7 +843,10 @@ impl Observation {
         let stopped = observed_stop(result, step);
         Self {
             stopped,
-            stale_catalog: said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
+            stale_catalog: matches!(
+                result.termination,
+                Termination::Exited(ProcessExit::Code(crate::instrument::STALE_CATALOG_EXIT))
+            ) && said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
         }
     }
 }
@@ -1116,6 +1241,18 @@ fn remove_notice(path: &Path) -> Result<(), NoticeError> {
     }
 }
 
+/// Whether one failing test is the whole answer this process is run for: a libtest target with a mutant active and nothing measured but the items it enters, which it writes as it enters them, so ending it at that failure loses no evidence.
+const fn answered_by_one_failure(target: &TestTarget, context: &Context<'_>) -> bool {
+    let recording_allows = match &context.touch {
+        None => true,
+        Some(touching) => match touching.scope {
+            TouchScope::Items => true,
+            TouchScope::Everything => false,
+        },
+    };
+    target.harness && context.active.is_some() && recording_allows && context.profile.is_none()
+}
+
 fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     if matches!(
         result.termination,
@@ -1170,20 +1307,30 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What one run of a test binary establishes about the mutant that was active during it.
-/// See the module documentation for the order.
+/// What one run of a test binary establishes about its mutant, given what its harness said before it stopped: a failed test or a signal the process raised itself is a kill, a complete summary with none failed a survivor, and a signal sent from outside inconclusive.
 #[must_use]
-pub const fn outcome_of(
+pub fn outcome_of(
     observed: &Observation,
     summary: Option<Summary>,
-    harness: bool,
+    (harness, failed): (bool, &[String]),
 ) -> Outcome {
     let exit = match &observed.stopped {
         Stopped::NotStarted | Stopped::WaitFailed | Stopped::StepProtocolFailed { .. } => {
             return Outcome::Errored;
         }
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. } if harness && !failed.is_empty() => {
+            return Outcome::Killed;
+        }
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. }
+            if harness
+                && matches!(summary, Some(said) if said.ok && said.failed == 0 && !said.ran_nothing()) =>
+        {
+            return Outcome::Survived;
+        }
         Stopped::TimedOut { .. } | Stopped::Stalled { .. } => return Outcome::Waited,
         Stopped::Cancelled { .. } => return Outcome::NotRun,
+        Stopped::Answered if harness && !failed.is_empty() => return Outcome::Killed,
+        Stopped::Answered => return Outcome::Inconclusive,
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
     };
@@ -1192,7 +1339,9 @@ pub const fn outcome_of(
     }
     let code = match exit {
         ProcessExit::Code(code) => code,
-        ProcessExit::Signal(_) => return Outcome::Killed,
+        ProcessExit::Signal(_) if exit.raised_by_itself() => return Outcome::Killed,
+        ProcessExit::Signal(_) if harness && !failed.is_empty() => return Outcome::Killed,
+        ProcessExit::Signal(_) => return Outcome::Inconclusive,
         ProcessExit::Unknown => return Outcome::NotRun,
     };
     if code != 0 {
@@ -1305,6 +1454,15 @@ pub fn environment(
     if let Some(touch) = context.touch {
         env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
         env.insert(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
+        match touch.scope {
+            TouchScope::Everything => {}
+            TouchScope::Items => {
+                env.insert(
+                    OsString::from(crate::instrument::TOUCH_ITEMS_ENV),
+                    OsString::from("1"),
+                );
+            }
+        }
     }
     match (context.profile, scratch) {
         (Some(profile), _) => {
@@ -1399,6 +1557,10 @@ pub struct ExecRequest<'a> {
     scratch: Option<PathBuf>,
     /// Whether the process starts in its scratch directory rather than in the one cargo would give it.
     scratch_cwd: bool,
+    /// Variables set over the environment the process would otherwise have, each replacing one of the same name.
+    overlay: Vec<(Variable, OsString)>,
+    /// A program the process is started through.
+    launcher: Option<Launcher>,
 }
 
 impl<'a> ExecRequest<'a> {
@@ -1412,7 +1574,23 @@ impl<'a> ExecRequest<'a> {
             timeout: None,
             scratch: None,
             scratch_cwd: false,
+            overlay: Vec::new(),
+            launcher: None,
         }
+    }
+
+    /// Sets `overlay` over the environment the process would otherwise have, each variable replacing one of the same name.
+    #[must_use]
+    pub fn with_overlay(mut self, overlay: Vec<(Variable, OsString)>) -> Self {
+        self.overlay = overlay;
+        self
+    }
+
+    /// Starts the process through `launcher`, which replaces itself with it.
+    #[must_use]
+    pub const fn with_launcher(mut self, launcher: Option<Launcher>) -> Self {
+        self.launcher = launcher;
+        self
     }
 
     /// Runs exactly the named test.
@@ -1473,7 +1651,8 @@ impl<'a> ExecRequest<'a> {
     /// Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
-        let mut argv = vec![self.target.executable.clone().into_os_string()];
+        let mut argv = self.launcher.and_then(Launcher::argv).unwrap_or_default();
+        argv.push(self.target.executable.clone().into_os_string());
         if !self.target.through.is_empty() {
             argv.extend(self.target.through.iter().cloned());
             argv.push(OsString::from("--"));
@@ -1511,6 +1690,9 @@ pub struct Context<'a> {
     /// Where a coverage-instrumented process writes what it executed.
     /// `None` runs a process that measures nothing.
     pub profile: Option<&'a Path>,
+    /// Where the process leading this execution is recorded as it starts, so a child it leaves is never read as another execution's.
+    /// `None` runs one no other execution overlaps.
+    pub leaders: Option<&'a crate::orphan::Leaders>,
 }
 
 /// Where the guards of one process append what they reached, and the catalog the record is about.
@@ -1520,6 +1702,17 @@ pub struct Touching<'a> {
     pub log: &'a Path,
     /// The catalog every guard that may write to it was generated from.
     pub catalog: &'a str,
+    /// What the process records into it.
+    pub scope: TouchScope,
+}
+
+/// What a process asked to record its touches records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchScope {
+    /// Every site, body, infection and item, which is what a baseline's routing reads.
+    Everything,
+    /// Only the items it entered, which is all a mutant execution's union needs.
+    Items,
 }
 
 /// The one fact a mutant execution established.
@@ -1543,6 +1736,8 @@ pub enum MutantConclusion {
     Waited,
     /// The execution did not establish either side of the question.
     Inconclusive,
+    /// Every selected test passed while a process of the tree ran where the run could not see whether the mutant was active in it, so the survival is not one.
+    Unobserved,
     /// The execution apparatus failed.
     Errored,
 }
@@ -1557,7 +1752,7 @@ impl MutantConclusion {
             Self::Survived => Outcome::Survived,
             Self::StepLimitReached { .. } => Outcome::StepLimitReached,
             Self::Waited => Outcome::Waited,
-            Self::Inconclusive => Outcome::Inconclusive,
+            Self::Inconclusive | Self::Unobserved => Outcome::Inconclusive,
             Self::Errored => Outcome::Errored,
         }
     }
@@ -1572,17 +1767,18 @@ impl MutantConclusion {
             | Self::Survived
             | Self::Waited
             | Self::Inconclusive
+            | Self::Unobserved
             | Self::Errored => None,
         }
     }
 
-    fn of(observed: &Observation, summary: Option<Summary>, harness: bool) -> Self {
+    fn of(observed: &Observation, summary: Option<Summary>, heard: (bool, &[String])) -> Self {
         if let Stopped::StepLimitReached { notice } = &observed.stopped {
             return Self::StepLimitReached {
                 notice: notice.clone(),
             };
         }
-        match outcome_of(observed, summary, harness) {
+        match outcome_of(observed, summary, heard) {
             Outcome::NotRun => Self::NotRun,
             Outcome::Killed => Self::Killed,
             Outcome::Survived => Self::Survived,
@@ -1604,10 +1800,20 @@ impl MutantConclusion {
                 | Self::Survived
                 | Self::Waited
                 | Self::Inconclusive
+                | Self::Unobserved
                 | Self::Errored => Self::Errored,
             },
             Outcome::Waited => Self::Waited,
-            Outcome::Inconclusive => Self::Inconclusive,
+            Outcome::Inconclusive => match self {
+                Self::Unobserved => Self::Unobserved,
+                Self::NotRun
+                | Self::Killed
+                | Self::Survived
+                | Self::StepLimitReached { .. }
+                | Self::Waited
+                | Self::Inconclusive
+                | Self::Errored => Self::Inconclusive,
+            },
             Outcome::Errored => Self::Errored,
         }
     }
@@ -1639,6 +1845,14 @@ pub struct MutantResult {
     pub passed_tests: Vec<String>,
     /// Every test the harness was told to skip.
     pub ignored_tests: Vec<String>,
+    /// The items the whole process entered, when the execution was asked to record them and could.
+    pub entered: Option<crate::touch::Entered>,
+    /// The one way the process ended, which is what an account of it can claim to be whole on.
+    pub stopped: Stopped,
+    /// The id of the process the execution started, which is the parent of whatever it starts, or nothing where none started.
+    pub leader: Option<u32>,
+    /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's and the process outlived it.
+    pub lingered: bool,
 }
 
 /// The protocol a test process answered in.
@@ -1691,6 +1905,8 @@ impl MutantResult {
     /// An execution-shaped apparatus failure produced before a child can answer.
     pub(crate) fn apparatus_error(target: &str, message: String) -> Self {
         Self {
+            entered: None,
+            stopped: Stopped::NotStarted,
             conclusion: MutantConclusion::Errored,
             target: target.to_owned(),
             exit_code: EXIT_CODE_UNAVAILABLE,
@@ -1702,6 +1918,8 @@ impl MutantResult {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
+            lingered: false,
         }
     }
 
@@ -1744,6 +1962,24 @@ fn watched(timeout: Option<Duration>, step: Option<&ExpectedStep>) -> (Bound, Op
     }
 }
 
+/// What a process's output and the way it stopped establish: the conclusion, the harness's summary, and the tests it named.
+fn concluded(
+    target: &TestTarget,
+    observation: &Observation,
+    output: &[u8],
+) -> (MutantConclusion, Option<Summary>, Lines) {
+    let (summary, lines, protocol_exact) = match (target.harness, std::str::from_utf8(output)) {
+        (true, Ok(text)) => (parse_summary_text(text), parse_lines_text(text), true),
+        (true, Err(_not_utf8)) => (None, Lines::default(), false),
+        (false, _) => (None, Lines::default(), true),
+    };
+    let conclusion = if protocol_exact {
+        MutantConclusion::of(observation, summary, (target.harness, &lines.failed))
+    } else {
+        MutantConclusion::Errored
+    };
+    (conclusion, summary, lines)
+}
 /// Runs one test process and reads what it means.
 #[must_use]
 pub fn exec(
@@ -1753,6 +1989,13 @@ pub fn exec(
     trace: &Recorder,
 ) -> MutantResult {
     let target = request.target;
+    if let Some(launcher) = request.launcher
+        && launcher.argv().is_none()
+    {
+        let message = format!("{launcher:?} has no program to start through on this platform");
+        trace.note("execution-launcher", &message);
+        return MutantResult::apparatus_error(&target.id, message);
+    }
     let step = match ExpectedStep::new(context, request.scratch.as_deref()) {
         Ok(step) => step,
         Err(error) => {
@@ -1764,6 +2007,8 @@ pub fn exec(
     let (bound, progress) = watched(request.timeout, step.as_ref());
     let mut spec = Spec::new(request.argv(), bound);
     spec.progress = progress;
+    spec.leaders = context.leaders.cloned();
+    spec.stop_at_first_failure = answered_by_one_failure(target, context);
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),
@@ -1780,6 +2025,11 @@ pub fn exec(
         step.add_environment(&mut env);
         spec.stop_file = Some(step.path.clone());
     }
+    for (variable, value) in &request.overlay {
+        let name = OsStr::new(variable.name());
+        env.retain(|(held, _)| !crate::vars::same_name(held, name));
+        env.push((name.to_owned(), value.clone()));
+    }
     spec.env = Some(env);
     let result = run(&spec, cancel);
     let observation = Observation::of(&result, step.as_ref());
@@ -1788,19 +2038,15 @@ pub fn exec(
         record
     });
     trace.exec_result(record);
-    let (summary, lines, protocol_exact) =
-        match (target.harness, std::str::from_utf8(&result.output)) {
-            (true, Ok(text)) => (parse_summary_text(text), parse_lines_text(text), true),
-            (true, Err(_not_utf8)) => (None, Lines::default(), false),
-            (false, _) => (None, Lines::default(), true),
-        };
+    let (conclusion, summary, lines) = concluded(target, &observation, &result.output);
     let signal = result.signal();
+    let lingered = matches!(
+        observation.stopped,
+        Stopped::TimedOut { .. } | Stopped::Stalled { .. }
+    ) && conclusion.outcome() != Outcome::Waited;
     MutantResult {
-        conclusion: if protocol_exact {
-            MutantConclusion::of(&observation, summary, target.harness)
-        } else {
-            MutantConclusion::Errored
-        },
+        entered: None,
+        conclusion,
         target: target.id.clone(),
         exit_code: result.conventional_exit_code(),
         duration: result.duration,
@@ -1815,6 +2061,9 @@ pub fn exec(
         failed_tests: lines.failed,
         passed_tests: lines.passed,
         ignored_tests: lines.ignored,
+        leader: result.leader,
+        lingered,
+        stopped: observation.stopped,
     }
 }
 
@@ -2194,6 +2443,7 @@ mod tests {
             output: Vec::new(),
             stdout: Vec::new(),
             stdout_truncated: false,
+            leader: None,
         }
     }
 
@@ -2251,6 +2501,7 @@ mod tests {
             return;
         };
         let context = Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
@@ -2270,6 +2521,7 @@ mod tests {
     fn step_setup_creates_one_exact_private_state_and_clear_removes_it() {
         let scratch = returned!(tempfile::tempdir(), "scratch");
         let context = Context {
+            leaders: None,
             base_env: &[],
             cargo: None,
             sysroot: None,
@@ -2727,7 +2979,7 @@ mod tests {
                 exit: ProcessExit::Code(95)
             }
         );
-        assert_eq!(outcome_of(&observed, None, false), Outcome::Killed);
+        assert_eq!(outcome_of(&observed, None, (false, &[])), Outcome::Killed);
     }
 
     #[test]

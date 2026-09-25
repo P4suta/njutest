@@ -92,7 +92,10 @@ fn claim_scratch(
             continue;
         }
         match tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
-            Ok(owner) => return Ok((dir, owner)),
+            Ok(owner) => match owner.empty() {
+                Ok(()) => return Ok((dir, owner)),
+                Err(_left_by_a_dead_run_and_not_removable) => drop(owner),
+            },
             Err(_already_claimed_or_unusable) => {}
         }
     }
@@ -164,10 +167,17 @@ fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempown
     }
 }
 
+/// The name of the directory beside the copy a process that lost the run's environment says so in.
+const WATCHED_NAME: &str = "watched";
+
 /// A read-only source tree and the disposable copy of it this run works in.
 #[derive(Debug)]
 pub struct Workspace {
     pub(crate) snapshot: Snapshot,
+    /// The rules the snapshot was copied under, which a survey of the source must follow to say what a copy would hold.
+    pub(crate) rules: SnapshotOptions,
+    /// The directory a process of the instrumented tree that lost the run's environment says so in: beside the copy, which no other run shares.
+    pub(crate) watched: String,
     pub(crate) toolchain: Toolchain,
     pub(crate) metadata: Metadata,
     pub(crate) target_dir: PathBuf,
@@ -407,6 +417,12 @@ pub enum SessionError {
         error::SESSION_WRITE_FAILED.code
     )]
     RoutingStatePoisoned,
+    /// What the carry rule took of the tree was poisoned by a panic while holding it.
+    #[error(
+        "{}: the carry rule's record of which targets held their reach is poisoned, so it cannot be trusted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CarryStatePoisoned,
     /// A filtered-test establishment named more tests than the durable counter can represent.
     #[error(
         "{}: one filtered-test establishment named {count} tests, which exceeds the routing counter",
@@ -416,6 +432,15 @@ pub enum SessionError {
         /// The unrepresentable test count.
         count: usize,
     },
+    /// An item index of a dense catalog names no item, which says the catalog was not built the way its numbering assumes.
+    #[error(
+        "{}: item {index} of the item catalog names no item",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ItemCatalogGap {
+        /// The index that named nothing.
+        index: u32,
+    },
     /// One expectation resolved to more mutants than its durable counter can represent.
     #[error(
         "{}: one expectation resolved to {count} mutants, which exceeds its durable counter",
@@ -424,6 +449,19 @@ pub enum SessionError {
     ExpectationCoverageTooLarge {
         /// The unrepresentable number of resolved mutants.
         count: usize,
+    },
+    /// Two expectations name one mutation, which then has two reasons.
+    #[error(
+        "{}: the expectations {first:?} and {second:?} both name mutation {mutant}; a mutant has one reason",
+        error::CONFIG_INVALID.code
+    )]
+    ExpectationsOverlap {
+        /// The expectation that named it first.
+        first: String,
+        /// The one that named it again.
+        second: String,
+        /// The mutation both name, with its line.
+        mutant: String,
     },
     /// A run collection contains more rows than its durable counter can represent.
     #[error(
@@ -629,12 +667,15 @@ impl SessionError {
                 error::SESSION_UNKNOWN_TARGET
             }
             Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
+            Self::ExpectationsOverlap { .. } => error::CONFIG_INVALID,
             Self::WriteFailed { .. }
             | Self::TemporaryRootUnavailable { .. }
             | Self::ScratchStatePoisoned
             | Self::RoutingStatePoisoned
+            | Self::CarryStatePoisoned
             | Self::RoutingCountTooLarge { .. }
             | Self::ExpectationCoverageTooLarge { .. }
+            | Self::ItemCatalogGap { .. }
             | Self::RunCountTooLarge { .. }
             | Self::RunCountOverflow
             | Self::RoutingCountExhausted
@@ -782,7 +823,9 @@ impl Workspace {
         )?;
         let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
-        let snapshot = Self::copy(&root, (parent.path(), build_dir), &options, now)?;
+        let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
+        let snapshot = Self::copy(&root, &rules, &options, now)?;
+        let (watched, base_env) = Self::watching(&snapshot, &options.env)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
@@ -796,7 +839,6 @@ impl Workspace {
                 failures: trace_count("temporary cleanup failures", swept.failures.len())?,
             }),
         });
-        let base_env = options.env.clone();
         let metadata = Metadata::load(
             &Driver {
                 toolchain: &toolchain,
@@ -816,6 +858,8 @@ impl Workspace {
         phase.end();
         Ok(Self {
             snapshot,
+            rules,
+            watched,
             toolchain,
             metadata,
             target_dir,
@@ -831,24 +875,37 @@ impl Workspace {
         })
     }
 
+    /// The directory a process of the instrumented tree that lost the run's environment says so in, and the environment every process the run starts carries it in, whatever an outer run set.
+    fn watching(
+        snapshot: &Snapshot,
+        env: &[(OsString, OsString)],
+    ) -> Result<(String, Vec<(OsString, OsString)>), SessionError> {
+        let path = snapshot.dir().join(WATCHED_NAME);
+        let watched = path
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?
+            .to_owned();
+        let mut base_env: Vec<(OsString, OsString)> = env
+            .iter()
+            .filter(|(name, _)| name != crate::instrument::WATCHED_ENV)
+            .cloned()
+            .collect();
+        base_env.push((
+            OsString::from(crate::instrument::WATCHED_ENV),
+            OsString::from(&watched),
+        ));
+        Ok((watched, base_env))
+    }
+
     /// Copies the tree and records what that produced.
     fn copy(
         root: &Path,
-        (parent, build_dir): (&Path, Option<String>),
+        rules: &SnapshotOptions,
         options: &OpenOptions,
         now: jiff::Timestamp,
     ) -> Result<Snapshot, crate::EngineError> {
         let started = std::time::Instant::now();
-        let snapshot = snapshot::create(
-            &SnapshotOptions {
-                exclude: options.exclude.clone(),
-                layout: snapshot::Layout::plan(root, &options.allow_outside)?,
-                report_dir: options.report_directory.clone(),
-                build_dir,
-                dest_parent: parent.to_path_buf(),
-            },
-            now,
-        )?;
+        let snapshot = snapshot::create(rules, now)?;
         let files = trace_count("snapshot files", snapshot.manifest().len())?;
         let bytes = snapshot
             .manifest()
@@ -898,6 +955,69 @@ impl Workspace {
     #[must_use]
     pub fn workspace_digest(&self) -> &str {
         self.snapshot.workspace_digest()
+    }
+
+    /// The directory a process of the instrumented tree that lost the run's environment says so in.
+    #[must_use]
+    pub fn watched(&self) -> &str {
+        &self.watched
+    }
+
+    /// Every regular file the copy holds, as it was copied, sorted by path.
+    #[must_use]
+    pub fn copied(&self) -> &[snapshot::Entry] {
+        self.snapshot.manifest()
+    }
+
+    /// What the source tree holds now, read under the rules it was copied by.
+    ///
+    /// # Errors
+    /// A walk or read failure rather than a tree read partly.
+    pub fn survey(&self) -> Result<snapshot::Survey, snapshot::SnapshotError> {
+        snapshot::survey(&self.rules)
+    }
+
+    /// What the tree at `root` holds now, read under the rules a workspace opened with `options` would copy it by, without copying it.
+    ///
+    /// # Errors
+    /// What locating the toolchain and reading the workspace's metadata refuse, and a walk or read failure.
+    pub fn survey_at(
+        root: &Path,
+        options: &OpenOptions,
+        cancel: &Cancel,
+    ) -> Result<snapshot::Survey, crate::EngineError> {
+        let root = match crate::canonical::canonical(root) {
+            Ok(root) => root,
+            Err(_root_has_no_physical_spelling) => root.to_path_buf(),
+        };
+        let toolchain = Toolchain::locate(
+            &LocateOptions {
+                cargo: options.cargo.clone(),
+                search_path: options.search_path.clone(),
+                env: Some(options.env.clone()),
+            },
+            &root,
+            cancel,
+        )?;
+        let build_dir = Self::reachable(&root, &toolchain, options, cancel)?;
+        let rules = Self::rules_for(&root, build_dir, &options.temp_directory, options)?;
+        Ok(snapshot::survey(&rules)?)
+    }
+
+    /// The rules a workspace opened with `options` copies the tree at `root` by.
+    fn rules_for(
+        root: &Path,
+        build_dir: Option<String>,
+        parent: &Path,
+        options: &OpenOptions,
+    ) -> Result<SnapshotOptions, crate::EngineError> {
+        Ok(SnapshotOptions {
+            exclude: options.exclude.clone(),
+            layout: snapshot::Layout::plan(root, &options.allow_outside)?,
+            report_dir: options.report_directory.clone(),
+            build_dir,
+            dest_parent: parent.to_path_buf(),
+        })
     }
 
     /// Re-hashes the private source tree against the manifest captured while it was copied.
@@ -999,6 +1119,15 @@ impl Workspace {
             return Ok(vec![dir, self.target_dir, self.scratch_dir]);
         }
         if let Some(mut owner) = self.scratch_owner.take() {
+            match owner.empty() {
+                Ok(()) => {}
+                Err(source) => record_cleanup_failure(
+                    &mut failure,
+                    "empty execution scratch at",
+                    &self.scratch_dir,
+                    source,
+                ),
+            }
             match owner.release() {
                 Ok(()) => {}
                 Err(source) => record_cleanup_failure(
@@ -1009,7 +1138,7 @@ impl Workspace {
                 ),
             }
         }
-        match std::fs::remove_dir_all(&self.scratch_dir) {
+        match tempowner::remove_tree(&self.scratch_dir) {
             Ok(()) => {}
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => record_cleanup_failure(

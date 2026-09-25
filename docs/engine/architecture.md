@@ -96,6 +96,10 @@ A filtered `run` keeps that same catalog and digest but instruments, proves, and
 
 `--changed` and `--changed-from <REV>` mutate only the files that differ from a revision, committed and not.
 They narrow `--include` rather than widening it, and a change set that names no Rust file selects nothing rather than everything.
+A change that touches no Rust file the configuration includes is `git::Within::Nothing`, which carries the files that did change; the command says so, names them, and exits 0 before a snapshot is taken, so a pull-request gate can tell an empty change from a failure and a configuration that measures too little is visible rather than silently green.
+They narrow what is mutated and never what is instrumented:
+every file the configuration selects still carries its entry markers, so the items an execution entered are named the same way on a pull request as on the whole run whose answers it may carry (ADR 0041).
+A file the configuration itself excludes, or a package `--package` leaves out, carries none, so a run narrowed that way names what it entered differently from a whole run and carries nothing across from one.
 A tree git cannot be asked about, or a revision it does not know,
 ends the command with `RM0010`: a run that could not see what changed must never look like a run that saw nothing change.
 
@@ -215,6 +219,9 @@ A name is one to sixty-four of letters, digits, `.`, `_` and `-`, because it is 
 
 `--keep-temp` keeps the snapshot and the build cache a run would otherwise remove, and writes them into `kept-v1.json` under the report directory, with the run that kept them.
 `cache` lists what is there: the snapshots, the build caches, the outcome store with its size, and every kept directory with the run that kept it.
+Beside the outcome store, a run remembers which target killed each mutant, by the mutant's identity, in `rust-mutants/killers-v1`, and the next run asks that target first.
+It changes the order targets are asked in and never which are asked: a kill is still an execution of this tree, and a survivor still needs every target it reaches.
+`cache --clear-outcomes` clears both.
 `cache --gc` removes what is abandoned and leaves the build caches, so the next run is still fast — except the ones no run can look up again, which every run already sweeps on its way past: a cache is keyed to a source tree, and one whose tree is gone will never make anything fast.
 `--gc --all` takes the rest too; `--gc --kept` takes what was kept on purpose.
 `--clear-outcomes` empties the store and says how much was in it, and `--cache-dir` says where the store is.
@@ -242,6 +249,10 @@ The runtime is a private `mod __rm` appended after the last line of each instrum
 No lint attribute is put on user code.
 The private generated support module has one exact `#[allow(dead_code, unused_qualifications)]`: one shared runtime serves files that use different subsets of it, and its collision-proof standard-library paths are deliberately fully qualified.
 A crate that `forbid`s either lint (or its `unused`/`warnings` group) is refused before instrumentation because Rust does not permit the module to lower a `forbid`.
+Because no lint attribute is put on user code, every call planted into it — a guard, a body marker, a step checkpoint — has to be one that code passes on its own.
+Each names the runtime with the fewest `super::` segments that reach it: none where every inline module out to the file root does `use super::*`, since the name is then already in scope and a qualified call is one `unused_qualifications` calls unnecessary, and one per module out to the first that does not.
+The runtime's own code uses every value it computes, so a project that denies `unused_results` compiles it too.
+`fixtures/fixture-strict-lints` denies every lint this code could trip and is instrumented on every test run.
 
 ### What instrumentation writes
 
@@ -371,6 +382,11 @@ Removing it is not enough on its own, since an instrumented binary with no path 
 So a run puts a path of its own in its place, under the temporary directory that execution owns.
 The coverage pass puts its own path there instead, per target.
 
+Every child, a test process or any other, is also told `CARGO_TERM_COLOR=never`, `CARGO_TERM_QUIET=false`, and `CARGO_TERM_VERBOSE=false`, over whatever its environment says.
+The engine reads what its children write, and a cargo that paints its status lines, drops them, or adds its own `Running` lines for each compiler call would be read as a different run.
+A CI that exports `CARGO_TERM_COLOR=always` did exactly that to the Miri reading, which counted no test binary started because every `Running` line began with an escape sequence.
+The runner sets these on every command it builds (`runner::PRESENTATION`), so no caller can forget them.
+
 Only the first three are refused on the command line.
 An instrumented engine binary is the narrow exception: its composition root embeds the catalog digest Cargo supplied as `RUST_MUTANTS_COMPILED_CATALOG`, and accepts an inherited `ACTIVE+CATALOG` or `TOUCH+CATALOG` pair only when that digest matches and only one mode is present.
 This makes a child process part of the outer measurement without licensing a normal binary or a stale environment.
@@ -387,7 +403,7 @@ what the exit code says, which mutants a shard holds — lives above the engine 
 A caller hears about a run through an `Observer`, whose every method is called on the calling thread and has a default that does nothing, so an observer implements only what it draws.
 `Silent` draws nothing.
 
-A run measures `jobs` mutants at once — as many as the machine has, capped at four — and delivers each as it finishes rather than in catalog order: one mutant that runs for its whole budget would otherwise hold back every result behind it, and a progress line, a stream, and a stop-at-the-first-finding would all wait on it.
+A run measures `jobs` mutants at once — `auto`, as many as the machine has capped at four; `all`, every processor, for a runner doing nothing else; or a count — and delivers each as it finishes rather than in catalog order: one mutant that runs for its whole budget would otherwise hold back every result behind it, and a progress line, a stream, and a stop-at-the-first-finding would all wait on it.
 The report is put back into catalog order when it is written, because that is the order a reader compares two runs in.
 A run that is cancelled leaves every mutant it never claimed as not run, `interrupted`.
 

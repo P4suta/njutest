@@ -24,7 +24,7 @@ if command -v rustc >/dev/null 2>&1; then
 else
     bad "rustc not found"
 fi
-sysroot=$(rustc --print sysroot 2>/dev/null || true)
+sysroot=$(rustc --print sysroot 2>/dev/null) || sysroot=""
 host=$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')
 for tool in llvm-profdata llvm-cov; do
     if [ -n "$sysroot" ] && [ -x "$sysroot/lib/rustlib/$host/bin/$tool" ]; then

@@ -458,3 +458,53 @@ fn a_directory_with_nothing_in_it_and_one_that_is_not_there_are_both_nothing() {
          are counting, and neither may stop because the answer moved"
     );
 }
+
+#[cfg(unix)]
+fn read_only_leftovers(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let stuck = dir.join("16").join("state");
+    fs::create_dir_all(&stuck).expect("a test's directory");
+    fs::write(stuck.join("left"), b"written before the panic").expect("a file inside it");
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o500))
+        .expect("the test made it read-only and panicked before restoring it");
+    fs::create_dir_all(dir.join("1")).expect("a dead run's first execution");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_tree_a_panicking_test_left_read_only_is_still_removed() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let dir = make(parent.path(), "rm-scratch-0");
+    read_only_leftovers(&dir);
+    rust_mutants::tempowner::remove_tree(&dir).expect("removed, read-only directory and all");
+    assert!(
+        fs::symlink_metadata(&dir).is_err(),
+        "a mutation makes tests panic, and a panicking test is exactly the one that leaves a \
+         directory read-only; the run's own cleanup must not stop there"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_slot_taken_over_from_a_dead_run_is_emptied_under_the_lock() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let dir = make(parent.path(), "rm-scratch-0");
+    read_only_leftovers(&dir);
+    let owner = claim(&dir, now()).expect("the dead run holds no lock");
+    owner.empty().expect("emptied while held");
+    let mut left: Vec<std::ffi::OsString> = fs::read_dir(&dir)
+        .expect("listing")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    left.sort();
+    let mut expected = vec![
+        std::ffi::OsString::from(LOCK_NAME),
+        std::ffi::OsString::from(MARKER_NAME),
+    ];
+    expected.sort();
+    assert_eq!(
+        left, expected,
+        "what a dead run left is gone before this run reserves `1` again, and only the claim remains"
+    );
+}
