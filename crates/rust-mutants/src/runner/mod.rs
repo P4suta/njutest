@@ -628,8 +628,9 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         Ok(started) => started,
         Err(Failed { error, output }) => return not_started(started, error, output),
     };
+    let leader = running.child.handle().id();
     if let Some(leaders) = &spec.leaders {
-        leaders.started(running.child.handle().id());
+        leaders.started(leader, running.supervisor.membership());
     }
     let outcome = await_exit(
         &running.supervisor,
@@ -641,7 +642,11 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             progress: spec.progress.as_ref(),
         },
     );
-    complete(started, running, outcome)
+    let completed = complete(started, running, outcome);
+    if let Some(leaders) = &spec.leaders {
+        leaders.finished(leader);
+    }
+    completed
 }
 
 fn deadline_of(
@@ -1618,6 +1623,8 @@ fn terminal_process_ownership_failure() -> ! {
 use unix as sys;
 #[cfg(windows)]
 use windows as sys;
+
+pub use sys::Membership;
 
 /// How long a forceful end waits to see the child reaped before aborting the supervising process.
 pub const REAPING_GRACE: Duration = Duration::from_secs(10);
