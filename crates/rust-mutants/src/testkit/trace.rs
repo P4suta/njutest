@@ -79,6 +79,7 @@ pub const fn record_key(payload: &Payload) -> Option<&'static str> {
         Payload::Build { .. } => Some("build"),
         Payload::Verify { .. } => Some("verify"),
         Payload::Touch { .. } => Some("touch"),
+        Payload::PerturbedControl { .. } => Some("perturbed"),
         Payload::Witness { .. } => Some("witness"),
         Payload::SkipClaim { .. } => Some("claim"),
         Payload::Kept { .. } => Some("kept"),
@@ -220,6 +221,39 @@ pub fn every_payload() -> Vec<Payload> {
                 duration_ms: 6,
                 remembered: true,
                 retried: true,
+            },
+        },
+        Payload::PerturbedControl {
+            perturbed: crate::trace::PerturbedRecord {
+                target: "demo/lib/demo".to_owned(),
+                perturbation: crate::trace::PerturbationRecord {
+                    environment: vec![crate::trace::SetRecord {
+                        name: "TMPDIR".to_owned(),
+                        value: None,
+                    }],
+                    launcher: Some("umask 077".to_owned()),
+                    arguments: vec!["--test-threads=1".to_owned()],
+                },
+                outcome: "survived".to_owned(),
+                failed_tests: Vec::new(),
+                duration_ms: 3,
+                reach: crate::trace::ReachRecord::Recorded {
+                    touch: TouchRecord {
+                        target: "demo/lib/demo".to_owned(),
+                        measured: crate::trace::Measurement::Control,
+                        passed: vec!["tests::adds".to_owned()],
+                        summary: crate::trace::SummaryRecord::Libtest { tests_run: Some(1) },
+                        reached_sites: vec![0],
+                        entered_bodies: Vec::new(),
+                        infected_sites: Vec::new(),
+                        tests: 1,
+                        sites: 1,
+                        loose: 0,
+                        infected: 0,
+                        entered: 0,
+                        entered_items: Vec::new(),
+                    },
+                },
             },
         },
         Payload::Touch {

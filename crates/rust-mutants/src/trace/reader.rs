@@ -153,6 +153,7 @@ fn unbalanced_phases(events: &[Event]) -> Vec<Problem> {
             | Payload::Build { .. }
             | Payload::Verify { .. }
             | Payload::Touch { .. }
+            | Payload::PerturbedControl { .. }
             | Payload::Witness { .. }
             | Payload::SkipClaim { .. }
             | Payload::Kept { .. }

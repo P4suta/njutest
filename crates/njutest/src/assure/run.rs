@@ -191,6 +191,7 @@ pub fn run(
                     restore: restore.as_ref(),
                     journal: &mut journal,
                     session: &session,
+                    scratch: &scratch,
                 },
                 &mut model,
                 notes,
@@ -1259,6 +1260,8 @@ struct Mutating<'a> {
     unsafe_packages: &'a BTreeSet<String>,
     /// The prepared workspace: what built the trees, ran every target once, and decides which tests could notice a mutation.
     session: &'a rust_mutants::session::Session,
+    /// This run's own directory, which the knobs make the directories they start controls in under.
+    scratch: &'a Scratch,
 }
 
 /// The acceptance entries that one catalog can honour, and the entries it cannot match.
@@ -1327,6 +1330,12 @@ fn run_mutation(
     notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
+    mutating.report.knobs = repeated(
+        mutating.request,
+        (mutating.session, mutating.baseline, mutating.scratch),
+        mutating.environment,
+        (notes, watch),
+    )?;
     notes.phase("mutation")?;
     watch.trace.stage("mutation");
     let session = mutating.session;
@@ -1443,6 +1452,32 @@ fn prove_equivalence(
     equivalence::settle(&mut mutation.judged, &decided, watch)?;
     phase.end();
     Ok(())
+}
+
+/// What each knob the configuration asks for establishes about each target whose baseline passed, or nothing where it asks for none.
+fn repeated(
+    request: &Request,
+    (session, baseline, scratch): (
+        &rust_mutants::session::Session,
+        &baseline::Baseline,
+        &Scratch,
+    ),
+    environment: &Environment,
+    (notes, watch): (&mut Notes<'_>, Watch<'_>),
+) -> Result<Vec<crate::report::knobs::KnobRecord>, RunnerError> {
+    let asked = &request.config.repeatable.knobs;
+    if asked.is_empty() {
+        return Ok(Vec::new());
+    }
+    notes.phase("repeatable")?;
+    watch.trace.stage("repeatable");
+    let place = super::knobs::Place::probed(scratch.dir(), &environment.vars, watch.cancel)?;
+    super::knobs::measured(
+        session,
+        asked,
+        (&super::knobs::passing(baseline), &place),
+        watch,
+    )
 }
 
 /// The prepared workspace: the trees, the one run of every target with nothing active, and what its guards recorded.
@@ -1614,7 +1649,7 @@ pub fn record(
     report.drift.clone_from(&mutation.drift);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
-        let whole = crate::report::whole_catalog(&report.drift, &report.mutants);
+        let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
         report.findings.extend(whole.findings);
         report.limitations.extend(whole.limitations);
     }
