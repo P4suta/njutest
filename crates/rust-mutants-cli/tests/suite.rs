@@ -5,6 +5,8 @@
 
 #[path = "cache_sweep.rs"]
 mod cache_sweep;
+#[path = "ci_gate.rs"]
+mod ci_gate;
 #[path = "cli_contract.rs"]
 mod cli_contract;
 #[path = "commands_in_process.rs"]
@@ -19,6 +21,8 @@ mod docs_ledger;
 mod doctor;
 #[path = "doctor_checks.rs"]
 mod doctor_checks;
+#[path = "documented_commands.rs"]
+mod documented_commands;
 #[path = "estimate_lines.rs"]
 mod estimate_lines;
 #[path = "fuzz_seeds.rs"]

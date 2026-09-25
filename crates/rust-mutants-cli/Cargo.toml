@@ -170,6 +170,10 @@ name = "toolchain_run_stream"
 path = "tests/toolchain_run_stream.rs"
 
 [[test]]
+name = "toolchain_strict_lints"
+path = "tests/toolchain_strict_lints.rs"
+
+[[test]]
 name = "toolchain_targets"
 path = "tests/toolchain_targets.rs"
 
