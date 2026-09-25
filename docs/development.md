@@ -171,7 +171,7 @@ Before it, a report that called its survivor killed, and made its columns, findi
 Its planted defects are that kind of lie, told consistently, and a law in `xtask/tests/sentinel.rs` reads every outcome the report schema allows and requires a planted lie for each (`proofaudit::sentinel::lie`) that some layer refuses, so an outcome added to the schema is audited against its executions the day it arrives.
 
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's own runs.
-It reads that run's `run-report-v1.json` and re-decides it in nine layers, none of which calls the engine's code:
+It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, none of which calls the engine's code; among them:
 
 | Layer | Re-derives |
 | --- | --- |
@@ -185,6 +185,7 @@ It reads that run's `run-report-v1.json` and re-decides it in nine layers, none 
 | `proofs` | every discharge against the measurement and the catalog the run kept: a target that covered the body it was discharged from, a discharge whose premises are missing, a discharged pair that then ran, the `discharged` column, and a mutant that never ran and whose reason the recording does not give |
 | `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated and a step-limit stop carried the notice that established it, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
+| `entry` | every site a test reached and every mutation a test noticed as lying in an item that test entered, by the item catalog and `entered` of `touched-v1.json`; every mutation as sitting in a measurable item whose name is the row's `item` |
 
 Its output and exit codes are `proofaudit`'s: one line per remark, a summary line, and 0, 1, or 2.
 Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
@@ -259,6 +260,35 @@ $ mise run check:windows
 ```
 
 It is not part of `mise run check`, because a machine without that target installed would fail a gate for the want of a download rather than for anything about the change.
+
+Where the other machines are at hand, `cargo xtask remote-check --machines <file>` asks them rather than the pipeline.
+It puts this commit's whole suite to every machine the file names, all at once, and pushes nothing:
+each machine is asked which commits its clone already has, sent a bundle of only the rest, and runs the file's command in a worktree kept warm between runs.
+No machine reaches the network, and the script goes over `ssh` encoded, so no shell on either side reinterprets it.
+What failed comes back as the failing lines; each machine's whole output stays in `target/remote-check/<commit>/`.
+
+```toml
+command = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --retries 1"
+
+[[machine]]
+name = "linux"
+host = "linux"
+shell = "posix"
+repository = "~/projects/njutest"
+worktree = "~/projects/njutest-gate"
+
+[[machine]]
+name = "windows"
+host = "win"
+shell = "powershell"
+repository = 'C:\Users\someone\projects\njutest'
+worktree = 'C:\Users\someone\projects\njutest-gate'
+prelude = "$env:PATH = 'C:\\Program Files\\Git\\bin;' + $env:PATH"
+```
+
+`prelude` is what makes a machine's session look like the pipeline's: the pipeline's Windows runner has Git's `sh` on its path, and an `ssh` session does not.
+A machine's `target_dir` is for a disk that cannot hold another build; leaving it unset keeps every test's own builds in the worktree, which is where the pipeline has them.
+The file names machines and paths that are nobody else's, so it lives outside the repository, and the command is not part of any gate.
 
 ### Which half a rule goes in
 
