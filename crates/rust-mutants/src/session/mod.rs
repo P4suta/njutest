@@ -183,6 +183,9 @@ const ASIDE_NAME: &str = "aside";
 /// The file a control's guards append what they reached to, in the control's own scratch.
 const CONTROL_TOUCH_LOG: &str = "touch.log";
 
+/// The log a mutant execution asked to record what it entered writes to, in its own scratch.
+const ENTERED_LOG: &str = "entered.log";
+
 /// One control process's question: which target, asked how, for how long.
 struct Once<'a> {
     request: &'a Request,
@@ -317,7 +320,7 @@ impl Default for PrepareOptions {
 }
 
 /// One mutant execution to make.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Request {
     /// The mutant, by full identity or by any prefix of at least four hex characters that names exactly one.
@@ -334,6 +337,17 @@ pub struct Request {
     /// How long the process may take.
     /// `None` uses the session's default.
     pub timeout: Option<Duration>,
+    /// What each execution records of the items its process entered.
+    pub entered: Recording,
+}
+
+/// What a mutant execution records of what its process entered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recording {
+    /// Nothing, which costs nothing.
+    Off,
+    /// The union of items the whole process entered, which a carried answer rests on (ADR 0041).
+    Items,
 }
 
 impl Request {
@@ -342,8 +356,19 @@ impl Request {
     pub fn new(mutant: impl Into<String>) -> Self {
         Self {
             mutant: mutant.into(),
-            ..Self::default()
+            target: None,
+            test: None,
+            args: Vec::new(),
+            timeout: None,
+            entered: Recording::Off,
         }
+    }
+
+    /// Records the items each execution's process entered.
+    #[must_use]
+    pub const fn recording(mut self, entered: Recording) -> Self {
+        self.entered = entered;
+        self
     }
 
     /// Runs it against one target rather than against every one until something notices.
@@ -411,6 +436,8 @@ pub struct Session {
     packages: BTreeMap<u32, String>,
     /// The item each mutant sits in, by catalog index.
     items: BTreeMap<u32, String>,
+    /// Every cataloged item's portable name, by item index.
+    item_refs: Vec<crate::touch::ItemRef>,
     /// The branch proof of every mutant that has one, by catalog index.
     proofs: BTreeMap<u32, crate::syntax::branch::Proof>,
     reached: crate::reach::Reached,
@@ -757,7 +784,14 @@ impl Session {
     /// Which item bodies are sealed, each body's digest, and each unit's skeleton, as the pristine build left them.
     #[must_use]
     pub fn skeletons(&self) -> crate::skeleton::Skeletons {
-        crate::skeleton::evidence(&self.closure.units, &self.verified.touched.items)
+        let items: Vec<(&crate::touch::Item, &crate::touch::ItemRef)> = self
+            .verified
+            .touched
+            .items
+            .iter()
+            .zip(&self.item_refs)
+            .collect();
+        crate::skeleton::evidence(&self.closure.units, &items)
     }
 
     /// What the one run of every target with nothing active established, target by target.
@@ -1307,23 +1341,19 @@ impl Session {
                 routed
             }
         };
-        let context = Context {
-            leaders: Some(&self.leaders),
-            base_env: &self.workspace.base_env,
-            cargo: Some(self.workspace.toolchain.cargo()),
-            sysroot: self.workspace.toolchain.sysroot(),
-            active: Some((mutant.id.as_str(), self.catalog.digest())),
-            touch: None,
-            steps: self.mutant_steps,
-            profile: None,
-        };
         let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id)?;
+            let scratch = self.exec_scratch()?;
+            let log = match request.entered {
+                Recording::Off => None,
+                Recording::Items => Some(scratch.join(ENTERED_LOG)),
+            };
+            let context = self.mutant_context(mutant, log.as_deref());
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch()?)
+                .with_scratch(scratch)
                 .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
@@ -1333,6 +1363,7 @@ impl Session {
             let before = self.orphans();
             let started = std::time::SystemTime::now();
             let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            result.entered = self.entered_by(log.as_deref(), &result, cancel);
             let ended = std::time::SystemTime::now();
             if result.conclusion == MutantConclusion::Survived
                 && (self.uncontrolled(&target.id)
@@ -1364,6 +1395,90 @@ impl Session {
         Ok(Ran { taken, asked })
     }
 
+    /// What one execution of `mutant` runs with: the mutant active, and a log of what it entered where one was asked for.
+    fn mutant_context<'a>(
+        &'a self,
+        mutant: &'a Mutant,
+        log: Option<&'a std::path::Path>,
+    ) -> Context<'a> {
+        Context {
+            leaders: Some(&self.leaders),
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            touch: log.map(|log| execute::Touching {
+                log,
+                catalog: self.catalog.digest(),
+                scope: execute::TouchScope::Items,
+            }),
+            steps: self.mutant_steps,
+            profile: None,
+        }
+    }
+
+    /// The items one execution's whole process entered, read from the log it was asked to keep, or nothing where it kept none that can be read.
+    fn entered_by(
+        &self,
+        log: Option<&std::path::Path>,
+        result: &MutantResult,
+        cancel: &Cancel,
+    ) -> Option<crate::touch::Entered> {
+        let log = log?;
+        if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
+            return None;
+        }
+        let text = match std::fs::read_to_string(log) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_unreadable) => return None,
+        };
+        let (Ok(mutants), Ok(items)) = (
+            u32::try_from(self.catalog.mutants().len()),
+            u32::try_from(self.item_refs.len()),
+        ) else {
+            return None;
+        };
+        let bounds = crate::touch::Bounds { mutants, items };
+        let touches = match crate::touch::read(&text, self.catalog.digest(), bounds) {
+            Ok(touches) => touches,
+            Err(_malformed) => return None,
+        };
+        let items = touches
+            .entered
+            .union()
+            .into_iter()
+            .map(|index| match usize::try_from(index) {
+                Ok(at) => self.item_refs.get(at).cloned(),
+                Err(_beyond_this_target) => None,
+            })
+            .collect::<Option<BTreeSet<_>>>()?;
+        let completeness = match result.conclusion {
+            _ if cancel.is_cancelled() => crate::touch::Completeness::Cut,
+            MutantConclusion::Killed | MutantConclusion::Survived => {
+                crate::touch::Completeness::Whole
+            }
+            MutantConclusion::NotRun
+            | MutantConclusion::StepLimitReached { .. }
+            | MutantConclusion::Waited
+            | MutantConclusion::Inconclusive
+            | MutantConclusion::Unobserved
+            | MutantConclusion::Errored => crate::touch::Completeness::Cut,
+        };
+        let written = text
+            .lines()
+            .filter(|line| line.starts_with(crate::touch::ENTERED_RECORD))
+            .count();
+        let Ok(records) = u32::try_from(written) else {
+            return None;
+        };
+        Some(crate::touch::Entered {
+            items,
+            completeness,
+            records,
+        })
+    }
+
     fn record_mutant_exec(&self, executed: Executed<'_>) -> Result<(), EngineError> {
         let Executed {
             mutant,
@@ -1387,6 +1502,7 @@ impl Session {
             timeout_ms: duration_ms(timeout)?,
             timeout_source: source.name().to_owned(),
             alone,
+            entered_records: result.entered.as_ref().map(|entered| entered.records),
         });
         Ok(())
     }
@@ -1527,6 +1643,7 @@ impl Session {
                 result = self.control_once(&once, (&self.exec_scratch()?, None), cancel);
             }
             self.workspace.trace.mutant_exec(MutantExecRecord {
+                entered_records: None,
                 id: String::new(),
                 index: u32::MAX,
                 target: target.id.clone(),
@@ -1582,6 +1699,7 @@ impl Session {
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
             touch: log.map(|log| execute::Touching {
+                scope: execute::TouchScope::Everything,
                 log,
                 catalog: self.catalog.digest(),
             }),
@@ -1734,6 +1852,7 @@ impl Session {
             }
             let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
             self.workspace.trace.mutant_exec(MutantExecRecord {
+                entered_records: None,
                 id: String::new(),
                 index: u32::MAX,
                 target: target.id.clone(),
@@ -2336,17 +2455,9 @@ mod kani_laws {
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {
             conclusion,
-            target: String::new(),
-            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
-            protocol: crate::execute::Protocol::Unanswered,
-            summary: None,
-            signal: None,
-            failed_tests: Vec::new(),
-            passed_tests: Vec::new(),
-            ignored_tests: Vec::new(),
-            leader: None,
+            ..MutantResult::apparatus_error("", String::new())
         }
     }
 
@@ -2721,6 +2832,7 @@ const fn retry_outcome(
 
 const fn unreached() -> MutantResult {
     MutantResult {
+        entered: None,
         conclusion: MutantConclusion::NotRun,
         target: String::new(),
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
@@ -2753,6 +2865,7 @@ mod tests {
 
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {
+            entered: None,
             conclusion,
             target: "target".to_owned(),
             exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,

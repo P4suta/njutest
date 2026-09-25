@@ -924,9 +924,11 @@ pub fn prepare(
     })?;
     phase.end();
     let (packages, items) = attributed(&discovery);
+    let item_refs = item_refs(&item_catalog)?;
     let verified = narrowed(verified, narrowing, item_catalog.items);
     let sources = prepared_sources(sources)?;
     Ok(Session {
+        item_refs,
         catalog: discovery.catalog,
         files: discovery.files,
         skips: discovery.skips,
@@ -1013,6 +1015,24 @@ fn cataloged_items(
         })
         .collect();
     Ok(crate::instrument::catalog_items(&files)?)
+}
+
+/// Every cataloged item's portable name, by item index, which is what an entered union is written in.
+///
+/// # Errors
+/// An index the catalog numbers names no item it holds, which a dense catalog never does.
+fn item_refs(
+    catalog: &crate::instrument::ItemCatalog,
+) -> Result<Vec<crate::touch::ItemRef>, EngineError> {
+    catalog
+        .items
+        .iter()
+        .map(|item| {
+            catalog.item_ref(item.index).ok_or_else(|| {
+                EngineError::from(SessionError::ItemCatalogGap { index: item.index })
+            })
+        })
+        .collect()
 }
 
 /// How many items the catalog holds, which is what a record of an entered item is checked against.

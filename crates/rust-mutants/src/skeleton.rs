@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
-use crate::touch::Item;
+use crate::touch::{Item, ItemRef};
 
 /// The file a run keeps this evidence in, beside `touched-v1.json`.
 pub const FILE: &str = "skeletons-v1.json";
@@ -110,8 +110,8 @@ pub struct Skeletons {
 pub struct ItemEvidence {
     /// The item index `touched-v1.json` names it by.
     pub index: u32,
-    /// The workspace-relative path of its file.
-    pub path: String,
+    /// The item as every record that names one names it: its package, its file, and its position among the file's cataloged items.
+    pub item: ItemRef,
     /// The item as a reader writes it.
     pub name: String,
     /// The lowercase hex SHA-256 of its body's bytes, braces included.
@@ -202,13 +202,13 @@ pub struct UnitSource {
     pub emitted: BTreeMap<String, String>,
 }
 
-/// The evidence for `units` and the cataloged `items`.
+/// The evidence for `units` and the cataloged `items`, each with the reference the catalog gives it.
 #[must_use]
-pub fn evidence(units: &[UnitSource], items: &[Item]) -> Skeletons {
+pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons {
     let shadowing: Vec<Option<Unsealing>> = units.iter().map(unit_unsealing).collect();
     let mut verdicts: BTreeMap<&str, BTreeMap<(u32, u32), Option<Unsealing>>> = BTreeMap::new();
     let mut item_evidence = Vec::with_capacity(items.len());
-    for item in items {
+    for (item, reference) in items {
         let name = format!("$root/{}", item.path);
         let reading: Vec<usize> = units
             .iter()
@@ -253,7 +253,7 @@ pub fn evidence(units: &[UnitSource], items: &[Item]) -> Skeletons {
         };
         item_evidence.push(ItemEvidence {
             index: item.index,
-            path: item.path.clone(),
+            item: (*reference).clone(),
             name: item.name.clone(),
             body_digest: crate::id::digest(body.unwrap_or_default()),
             sealed: unsealed.is_none(),
@@ -310,26 +310,20 @@ fn parsed(bytes: &[u8]) -> Option<(u32, syn::File)> {
 /// What one unit's skeleton folds: its files with each sealed body replaced, its variables, and what its build scripts emitted.
 fn entries(
     unit: &UnitSource,
-    items: &[Item],
+    items: &[(&Item, &ItemRef)],
     evidence: &[ItemEvidence],
 ) -> BTreeMap<String, String> {
     let mut entries: BTreeMap<String, String> = BTreeMap::new();
     for (name, bytes) in &unit.files {
-        let sealed: Vec<(usize, &Item)> = name
+        let sealed: Vec<(u32, &Item)> = name
             .strip_prefix("$root/")
             .map(|path| {
-                let mut ordinal = 0_usize;
-                let mut found = Vec::new();
-                for (item, said) in items.iter().zip(evidence) {
-                    if item.path != path {
-                        continue;
-                    }
-                    if said.sealed {
-                        found.push((ordinal, item));
-                    }
-                    ordinal = ordinal.saturating_add(1);
-                }
-                found
+                items
+                    .iter()
+                    .zip(evidence)
+                    .filter(|((_, reference), said)| reference.path == path && said.sealed)
+                    .map(|((item, reference), _)| (reference.ordinal, *item))
+                    .collect()
             })
             .unwrap_or_default();
         entries.insert(
@@ -359,10 +353,10 @@ fn folded(entries: &BTreeMap<String, String>) -> String {
 }
 
 /// `bytes` with every sealed body replaced by `{sealed:<file>#<ordinal>}`.
-fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(usize, &Item)]) -> Vec<u8> {
+fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(u32, &Item)]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut from = 0_usize;
-    let mut ordered: Vec<&(usize, &Item)> = sealed.iter().collect();
+    let mut ordered: Vec<&(u32, &Item)> = sealed.iter().collect();
     ordered.sort_by_key(|(_, item)| item.body.start);
     for (ordinal, item) in ordered {
         let (Ok(start), Ok(end)) = (
