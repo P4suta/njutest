@@ -73,6 +73,8 @@ mod probe_form;
 mod prove;
 #[path = "reach.rs"]
 mod reach;
+#[path = "regroup.rs"]
+mod regroup;
 #[path = "replace.rs"]
 mod replace;
 #[path = "route.rs"]
