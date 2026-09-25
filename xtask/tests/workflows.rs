@@ -912,3 +912,32 @@ fn every_flag_a_workflow_or_a_page_passes_is_one_the_command_has() {
          teaches a reader to be refused; the help goldens are what the command has. {unknown:#?}"
     );
 }
+#[test]
+fn code_only_one_platform_compiles_is_linted_on_that_platform() {
+    let path = workflows()
+        .into_iter()
+        .find(|path| path.ends_with("ci.yml"))
+        .unwrap_or_else(|| panic!("ci.yml is one of the workflows"));
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let test = jobs(&source)
+        .into_iter()
+        .find_map(|(name, body)| (name == "test").then_some(body))
+        .unwrap_or_else(|| panic!("ci.yml has the test matrix"));
+    let linted = test.split("\n      - ").any(|step| {
+        step.contains("cargo clippy")
+            && step.contains("--all-targets")
+            && step.contains("--all-features")
+            && step.contains("-D warnings")
+            && step
+                .lines()
+                .find_map(|line| line.trim_start().strip_prefix("if:"))
+                .is_none_or(|condition| condition.trim() == "runner.os != 'Linux'")
+    });
+    assert!(
+        linted,
+        "clippy ran only on Linux, so every `cfg(windows)` and `cfg(target_os = \"macos\")` \
+         line in the tree was compiled on its own platform and linted nowhere; the matrix \
+         lints on every platform the lint job does not stand on"
+    );
+}
