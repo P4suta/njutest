@@ -675,6 +675,13 @@ fn a_toolchain_chosen_where_the_run_was_asked_is_the_one_every_later_command_run
     };
     let toolchain = Toolchain::locate(&options, &asked, &Cancel::new())
         .unwrap_or_else(|error| panic!("the shims answer where the run was asked: {error}"));
+    assert_eq!(
+        toolchain.selecting().path(),
+        shims.join("cargo"),
+        "a command that names another toolchain (`cargo +nightly`) asks the cargo the search path \
+         chose, which is rustup's proxy where rustup is installed; the pinned cargo knows no \
+         `+name`"
+    );
     let spec = toolchain.command(&elsewhere, ["-vV"]);
     let ran = rust_mutants::runner::run(&spec, &Cancel::new());
     let said = match std::str::from_utf8(&ran.output) {

@@ -444,7 +444,7 @@ fn deepened(
     let done = super::deep::interpret(
         &super::deep::Interpreting {
             root: &request.root,
-            cargo: toolchain.cargo(),
+            cargo: toolchain.selecting(),
             env: environment.vars.clone(),
             packages: &report.scope.resolved_packages,
             flags: &request.config.soundness.miri_flags,
@@ -466,7 +466,7 @@ fn deepened(
     let checked = super::sanitize::sanitize(
         &super::sanitize::Sanitizing {
             root: &request.root,
-            cargo: toolchain.cargo(),
+            cargo: toolchain.selecting(),
             host: toolchain.host(),
             env: environment.vars.clone(),
             packages: &report.scope.resolved_packages,
@@ -569,7 +569,7 @@ fn driven(
     let done = super::fuzz::fuzz(
         &super::fuzz::Fuzzing {
             root: &request.root,
-            cargo: toolchain.cargo(),
+            cargo: toolchain.selecting(),
             env: environment_of(toolchain),
             targets: &request.config.fuzz.targets,
             max_total_time: request.config.fuzz.max_total_time,
