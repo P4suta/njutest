@@ -87,7 +87,7 @@ pub fn facts<W: Watch>(asking: &Asking<'_, W>) -> Option<Facts> {
     })
 }
 
-/// Every file that differs from `base`, committed and not, leaving out anything under an excluded directory.
+/// Every file under the root that differs from `base`, committed and not, named relative to the root, leaving out anything under an excluded directory.
 #[must_use]
 pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
     let merge_base = ask(
@@ -112,6 +112,12 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
         Shape::Verbatim,
         &["status", "--porcelain"],
     )?;
+    let prefix = ask(
+        asking,
+        Empty::Accept,
+        Shape::Trimmed,
+        &["rev-parse", "--show-prefix"],
+    )?;
     let mut files: Vec<String> = committed
         .lines()
         .map(str::trim)
@@ -120,6 +126,11 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
         .collect();
     let uncommitted_paths: Option<Vec<String>> = uncommitted.lines().map(porcelain_path).collect();
     files.extend(uncommitted_paths?);
+    let mut files: Vec<String> = files
+        .iter()
+        .filter_map(|path| path.strip_prefix(prefix.as_str()))
+        .map(str::to_owned)
+        .collect();
     files.retain(|path| !is_under(path, asking.excluded));
     files.sort();
     files.dedup();

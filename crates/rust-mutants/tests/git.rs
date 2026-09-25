@@ -435,3 +435,43 @@ fn a_revision_git_does_not_know_names_no_lines_rather_than_none_changed() {
         "a diff that could not be taken is not a diff with nothing in it"
     );
 }
+
+#[test]
+fn a_workspace_below_the_checkout_sees_only_its_own_files_by_its_own_paths() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.write("ws/src/lib.rs", "pub fn f() {}\n");
+    asked.repo.write("ws/src/kept.rs", "pub fn k() {}\n");
+    asked.repo.write("other/src/lib.rs", "pub fn g() {}\n");
+    asked.repo.commit();
+    let base = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(asked.repo.root())
+        .output()
+        .expect("git names the first commit");
+    let base = String::from_utf8(base.stdout).expect("a commit id is text");
+    asked
+        .repo
+        .write("ws/src/kept.rs", "pub fn k() -> i32 { 3 }\n");
+    asked
+        .repo
+        .write("other/src/lib.rs", "pub fn g() -> i32 { 2 }\n");
+    asked.repo.commit();
+    asked
+        .repo
+        .write("ws/src/lib.rs", "pub fn f() -> i32 { 1 }\n");
+    asked.repo.write("other/src/extra.rs", "pub fn e() {}\n");
+    let root = asked.repo.root().join("ws");
+    let asking = Asking {
+        root: &root,
+        env: &asked.env,
+        excluded: &asked.excluded,
+        watch: &asked.watch,
+    };
+    let change = changed(&asking, base.trim());
+    assert_eq!(
+        change.map(|change| change.files),
+        Some(vec!["src/kept.rs".to_owned(), "src/lib.rs".to_owned()]),
+        "a change is read from the workspace's own root: a file outside it is none of its business, \
+         committed or not, and a file inside it is named the way the workspace names it"
+    );
+}
