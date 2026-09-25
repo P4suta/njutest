@@ -81,13 +81,31 @@ impl Toolchain {
         let cargo_version = banner(&cargo)?;
         let rustc_version = banner(&rustc)?;
         let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel)?;
+        let pinned_cargo = pinned(
+            (&cargo, "cargo"),
+            sysroot.as_deref(),
+            &cargo_version,
+            banner,
+        )?;
+        let pinned_rustc = pinned(
+            (&rustc, "rustc"),
+            sysroot.as_deref(),
+            &rustc_version,
+            banner,
+        )?;
+        let env = match options.env.clone() {
+            Some(env) if pinned_rustc != rustc => {
+                Some(with_toolchain(env, &pinned_rustc, sysroot.as_deref())?)
+            }
+            unpinned => unpinned,
+        };
         Ok(Self {
-            cargo,
-            rustc,
+            cargo: pinned_cargo,
+            rustc: pinned_rustc,
             sysroot,
             cargo_version,
             rustc_version,
-            env: options.env.clone(),
+            env,
         })
     }
 
@@ -218,6 +236,65 @@ fn diagnostic_os(value: &OsStr) -> String {
             hex::encode(value.as_encoded_bytes())
         ),
     }
+}
+
+/// The executable `name` in the toolchain directory `sysroot` where it says exactly what `located` said, which is the same program without whatever chose it, and otherwise `located`.
+///
+/// A shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is asked once, in the directory the run was asked in; every later command runs in a snapshot, which such a shim may refuse or answer differently.
+fn pinned(
+    (located, name): (&Path, &str),
+    sysroot: Option<&Path>,
+    said: &VersionInfo,
+    banner: impl Fn(&Path) -> Result<VersionInfo, CargoError>,
+) -> Result<PathBuf, CargoError> {
+    let Some(sysroot) = sysroot else {
+        return Ok(located.to_path_buf());
+    };
+    let Some(candidate) =
+        first_executable(executable_variants(&sysroot.join("bin"), Path::new(name)))?
+    else {
+        return Ok(located.to_path_buf());
+    };
+    if candidate == located {
+        return Ok(candidate);
+    }
+    match banner(&candidate) {
+        Ok(candidate_said) if candidate_said == *said => Ok(candidate),
+        Ok(_another_toolchain) => Ok(located.to_path_buf()),
+        Err(_unrunnable) => Ok(located.to_path_buf()),
+    }
+}
+
+/// `env` with `RUSTC` naming the pinned `rustc` and `RUSTDOC` the `rustdoc` beside it, unless the environment already names them, so cargo never asks a shim again.
+fn with_toolchain(
+    mut env: Vec<(OsString, OsString)>,
+    rustc: &Path,
+    sysroot: Option<&Path>,
+) -> Result<Vec<(OsString, OsString)>, CargoError> {
+    let named = |env: &[(OsString, OsString)], variable: &str| {
+        env.iter().any(|(name, _)| {
+            name.to_str().is_some_and(|name| {
+                if cfg!(windows) {
+                    name.eq_ignore_ascii_case(variable)
+                } else {
+                    name == variable
+                }
+            })
+        })
+    };
+    if !named(&env, "RUSTC") {
+        env.push(("RUSTC".into(), rustc.as_os_str().to_owned()));
+    }
+    if let Some(sysroot) = sysroot
+        && !named(&env, "RUSTDOC")
+        && let Some(rustdoc) = first_executable(executable_variants(
+            &sysroot.join("bin"),
+            Path::new("rustdoc"),
+        ))?
+    {
+        env.push(("RUSTDOC".into(), rustdoc.into_os_string()));
+    }
+    Ok(env)
 }
 
 /// The executable `name` beside `program`, if there is one.
