@@ -7,6 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 - [Architecture](architecture.md)
 - [The assurance contract](assurance-contract.md)
+- [Selecting the tests a change can reach](select.md)
 - [Configuration](configuration.md)
 - [Limitations](limitations.md)
 - [Error codes](errors.md)
@@ -67,3 +68,6 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0025 A reach that moves is not a measurement](adr/0025-a-reach-that-moves-is-not-a-measurement.md)
 - [0026 A bound measures quiet, not duration](adr/0026-a-bound-measures-quiet-not-duration.md)
 - [0027 An item is entered where its body starts](adr/0027-an-item-is-entered-where-its-body-starts.md)
+- [0028 A change is placed by reading both versions](adr/0028-a-change-is-placed-by-reading-both-versions.md)
+- [0029 A process that loses the environment says so](adr/0029-a-process-that-loses-the-environment-says-so.md)
+- [0031 A knob is one control started differently](adr/0031-a-knob-is-one-control-started-differently.md)

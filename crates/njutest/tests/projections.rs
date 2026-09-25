@@ -399,6 +399,7 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     };
     let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
     findings.extend(njutest::report::drift::found(&[moved], &[]));
@@ -439,5 +440,59 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
              earlier processes, and run again"
         ],
         "the sentence names what moved, what rests on it, and what to do"
+    );
+}
+
+#[test]
+fn a_knob_that_broke_a_target_is_told_as_a_suite_that_depends_on_its_machine() {
+    use njutest::report::knobs::{Knob, KnobRecord, Standing};
+    let broke = KnobRecord {
+        target: "environment/test/timezone".to_owned(),
+        knob: Knob::Timezone,
+        standing: Standing::Broke {
+            failed: vec!["the_zone_is_not_lord_howe".to_owned()],
+        },
+    };
+    let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
+    findings.extend(njutest::report::knobs::found(&[broke], &[]));
+    let report = report_with(findings);
+    let root = tempfile::tempdir().expect("a directory with no source in it");
+    let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
+    let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");
+    let said: Vec<&njutest::presentation::Diagnostic> = told
+        .diagnostics
+        .iter()
+        .filter(|one| one.code == "NJ-ENVIRONMENT")
+        .collect();
+    let [diagnostic] = said.as_slice() else {
+        panic!(
+            "one target a knob broke is one thing to be told: {:?}",
+            told.diagnostics
+        );
+    };
+    assert_eq!(
+        diagnostic.severity,
+        njutest::presentation::Severity::Refusal,
+        "a suite whose answer depends on the machine is a defect, and is told as one"
+    );
+    assert_eq!(
+        diagnostic.title,
+        "this test target passes here and fails where something a machine may set \
+         differently is set differently",
+    );
+    assert!(
+        diagnostic.at.is_none(),
+        "the finding is about a target, and no line of the source is where it is"
+    );
+    assert_eq!(
+        diagnostic.notes,
+        [
+            "environment/test/timezone passed on its baseline and failed with \
+             TZ=Australia/Lord_Howe: the_zone_is_not_lord_howe. What it answers depends on \
+             something that differs between machines; set it in the test, or make the code not \
+             read it, and run again"
+        ],
+        "the sentence names the knob, the value it was put to, the tests that failed, and what \
+         to do"
     );
 }

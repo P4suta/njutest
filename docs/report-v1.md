@@ -48,7 +48,7 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are thirteen kinds, and every report carries the stable name:
+There are fifteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -65,6 +65,8 @@ There are thirteen kinds, and every report carries the stable name:
 | `hollow-target` | a target was put to mutations and noticed none | no |
 | `wire-unnoticed` | a seam fault was put and nothing noticed | no |
 | `unstable-baseline` | a target reached something on an original-code control that it did not reach on its baseline, over the same passing tests | no |
+| `environment-dependent` | a target that passed on its baseline failed on a control started with a knob put | yes |
+| `environment-dependent-reach` | a target reached something else on a control started with a knob put, over the same passing tests | no |
 
 The last column is derived from the same closed `FindingKind` that decides the verdict.
 A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.
@@ -157,13 +159,30 @@ Evidence consultation records either the source run it reused or one closed refu
 Every part carries `drift`, one record per target whose baseline recorded what it reached, because every proof of the part is read off that record ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
 A record's `state` is `held` where an original-code control of the whole target that passed exactly the tests the baseline passed reached the same three unions — sites, bodies entered, sites infected —
 `moved` where it did not, with what only the control reported (`gained`) and what only the baseline reported (`lost`) for each union by catalog index,
-and `not-measured` with one closed `why`: `no-control` (nothing confirmed a kill on it), `unrecorded`, `unreadable`, `control-failed`, `other-tests`, `no-baseline`, `baseline-retried`, which a target whose baseline passed only when run again in the directory its failed first attempt left gets, because that run did not happen under the conditions a control's does, or `unparsed`, where the tests either run was read as passing do not come to the count its own summary gives, because then which tests passed is the parser's answer and not the harness's.
+and `not-measured` with one closed `why`: `no-control` (the run was cancelled before any control of it ran), `unrecorded`, `unreadable`, `control-failed`, `other-tests`, `no-baseline`, `baseline-retried`, which a target whose baseline passed only when run again in the directory its failed first attempt left gets, because that run did not happen under the conditions a control's does, or `unparsed`, where the tests either run was read as passing do not come to the count its own summary gives, because then which tests passed is the parser's answer and not the harness's.
 
 A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 The same holds for `hollow-target`, since which targets answered about a mutation and noticed none is only known over the whole catalog.
 What only the whole catalog decides is one function, `report::whole_catalog`, called by a run that measured the catalog whole and by a merge over the combined records, so a catalog concludes the same whether it was measured whole or in shards.
 Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
+
+## Knobs
+
+Every part carries `knobs`, one record per knob the configuration asked for and per target whose baseline passed, each `{ target, knob, standing }`: what one more control of that target, started with one thing the contract lets differ between machines set differently, established against the baseline.
+`knob` is one of `timezone`, `locale`, `temp-directory`, `home`, `umask`, `columns`, `threads`.
+`standing` is closed by its `state`:
+`stable` (it passed the tests its baseline passed and reached the same three unions drift compares),
+`passed` (it passed, and is a target that records no reach to compare, as a doctest run through cargo is),
+`broke` with the tests that `failed`,
+`moved` with the `reach` it gained and lost in each union,
+`uncompared` with drift's closed `why`,
+`unsettled` with `errored` or `waited`,
+and `not-put` with `why`: `platform`, `zone-missing`, `locale-missing`, `shell-missing`, `through-cargo`, or `not-libtest`.
+A part whose records repeat a knob for a target, or put two knobs on different targets, is refused, since every knob asked for is put once on every passing target.
+
+A part that measured the whole catalog raises `environment-dependent`, a defect, about each target a knob broke, `environment-dependent-reach` about each whose reach a knob moved, counting what rests on its baseline by the rule `unstable-baseline` counts with, and states `knob-not-put` and `knob-not-compared`.
+A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` rather than `PARTIAL` where a knob broke or moved a target; a merge raises them from the combined records of every part, keeping of two records of one knob and target the one that says more.
 
 ## Sources
 

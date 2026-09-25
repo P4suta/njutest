@@ -48,6 +48,12 @@ pub const STEP_PROTOCOL_EXIT: i32 = 94;
 /// Names the file the guards append to, saying which of the process's threads reached them.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
+/// The variable every process a run starts carries, holding the directory its instrumented tree was built to report to; a process of that tree that does not carry it was started by a test that cleared what the run gave it.
+pub const WATCHED_ENV: &str = "RUST_MUTANTS_WATCHED";
+
+/// The prefix of the file a process that lost the run's environment leaves in the watched directory, followed by its own id and its parent's.
+pub const ORPHAN_PREFIX: &str = "orphan-";
+
 /// The trait the runtime names the types a probe may compare a value of.
 pub(super) const OBSERVABLE: &str = "Observable";
 
@@ -265,6 +271,7 @@ mod {{MODULE}} {
     const TOUCH_SPAN: u32 = {{SPAN}};
     const ITEM_BASE: u32 = {{ITEM_BASE}};
     const ITEM_SPAN: u32 = {{ITEM_SPAN}};
+    const WATCHED: &str = {{WATCHED}};
     #[derive(Clone, Copy)]
     enum Selection {
         None,
@@ -357,6 +364,7 @@ mod {{MODULE}} {
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
     static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
+    static WATCH: __rm_std::sync::OnceLock<()> = __rm_std::sync::OnceLock::new();
     // The step state this runtime copy opened, and the process that opened
     // it: one open and one check per copy and process, where reopening the
     // name at every boundary paid an open and a close per function entry and
@@ -373,6 +381,7 @@ mod {{MODULE}} {
 {{VALUE_MACRO}}
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
+        watched();
         touch(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
@@ -1081,6 +1090,7 @@ mod {{MODULE}} {
 
     #[inline(always)]
     pub(crate) fn item(index: u32) {
+        watched();
         if touching() {
             entered_item(index);
         }
@@ -1111,6 +1121,35 @@ mod {{MODULE}} {
             return;
         }
         with_seen(|seen| seen.entered_body(index));
+    }
+
+    // A process of this tree that does not carry the variable naming where
+    // it reports was started by a test that cleared what the run gave it: no
+    // mutant can be active in it and nothing it enters is recorded. It says
+    // so where the run looks, once, and a process that cannot say so stops.
+    #[inline(always)]
+    fn watched() {
+        let () = *WATCH.get_or_init(noticed);
+    }
+
+    #[cold]
+    fn noticed() {
+        let carried = match __rm_std::env::var_os("{{WATCHED_ENV}}") {
+            __rm_std::option::Option::Some(value) => value.as_os_str() == __rm_std::ffi::OsStr::new(WATCHED),
+            __rm_std::option::Option::None => false,
+        };
+        if carried {
+            return;
+        }
+        #[cfg(unix)]
+        let parent = __rm_std::os::unix::process::parent_id();
+        #[cfg(not(unix))]
+        let parent = 0_u32;
+        let name = __rm_std::format!("{{ORPHAN_PREFIX}}{}-{}", __rm_std::process::id(), parent);
+        let path = __rm_std::path::Path::new(WATCHED).join(name);
+        if __rm_std::fs::create_dir_all(WATCHED).is_err() || __rm_std::fs::File::create(path).is_err() {
+            __rm_std::process::exit({{TOUCH_EXIT}});
+        }
     }
 
     fn touching() -> bool {
@@ -1220,6 +1259,7 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         first_item,
         item_count,
         newline,
+        watched,
     } = *rendering;
     let ids: BTreeSet<(&str, u32)> = placements
         .iter()
@@ -1283,7 +1323,10 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace(
             "{{PROBE_BOUND}}",
             &super::observable::bound(OBSERVABLE, "__rm_std"),
-        );
+        )
+        .replace("{{WATCHED_ENV}}", WATCHED_ENV)
+        .replace("{{ORPHAN_PREFIX}}", ORPHAN_PREFIX)
+        .replace("{{WATCHED}}", &format!("{watched:?}"));
     if newline == "\n" {
         Ok(text)
     } else {
@@ -1308,6 +1351,8 @@ pub struct Rendering<'a> {
     pub item_count: u32,
     /// The newline the file uses.
     pub newline: &'a str,
+    /// The absolute directory a process of the tree that lost the run's environment says so in.
+    pub watched: &'a str,
 }
 
 /// The window of catalog indices one file's guards can report, which is what sizes the per-thread record of what it already said.

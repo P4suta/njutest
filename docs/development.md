@@ -167,6 +167,12 @@ It reads the engine recording under `builds/*/engine/` beside the runner's, and 
 Each measured target is held to the report's drift record about it (`held`, `moved`, or `not-measured`), a moved one to an `unstable-baseline` finding and every such finding to a moved target, and a target no comparable control recorded to the `drift-not-measured` limitation.
 Its planted defect is a control that reached a site its baseline never did, recorded as `held`.
 
+The `knobs` layer is the same rule for what a run varies on purpose ([ADR 0031](adr/0031-a-knob-is-one-control-started-differently.md)).
+It reads the engine's `perturbed-control` records, which no other layer reads, and names the knob each control was started under by a table of its own of what each knob sets, so a control started in any other way is a violation.
+From the record and the target's baseline `touch` it re-derives what the control established — `stable` or `moved` over the same passing tests, with what moved in each union, `passed` where it was not asked to record, `broke` with the tests that failed, `uncompared` with every reason that holds, or `unsettled` — and holds it to the report's knob record about that target and knob.
+A knob the report says was not put is held to there being no control under it, a broken target to an `environment-dependent` finding and a moved one to `environment-dependent-reach`, and every target that compared nothing or was not put to the `knob-not-compared` or `knob-not-put` limitation that names it.
+Its planted defect is a control a knob broke, recorded as `stable`.
+
 The `executions` layer holds every mutation's reported outcome to the executions of it the recording holds: a `killed` or `unconfirmed` row needs a recorded execution that was killed, a `waited` or step-limited one a recorded execution that ended that way, a `survived` row no recorded execution that did anything but survive, an `unreached` or `compile-rejected` row no execution at all, an `equivalent` one the equivalence layer's `identical` answer, and none of the three that claim the programs agree a killed execution.
 Before it, a report that called its survivor killed, and made its columns, findings, and verdict agree, drew no violation from any layer.
 Its planted defects are that kind of lie, told consistently, and a law in `xtask/tests/sentinel.rs` reads every outcome the report schema allows and requires a planted lie for each (`proofaudit::sentinel::lie`) that some layer refuses, so an outcome added to the schema is audited against its executions the day it arrives.
@@ -196,7 +202,7 @@ Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-
 
 ```console
 $ mise run dogfood:audit
-proofaudit: 10 planted defects found first, each by the layer it was planted for, and the clean specimen drew none
+proofaudit: 11 planted defects found first, each by the layer it was planted for, and the clean specimen drew none
 proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 violations, 1 unaudited
 ```
 
@@ -204,7 +210,7 @@ Where the recording does not carry enough to decide something again — which su
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
 One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
-Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its ten layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
+Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its eleven layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed
 

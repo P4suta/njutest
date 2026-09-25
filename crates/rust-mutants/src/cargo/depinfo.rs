@@ -20,6 +20,10 @@ pub struct Unit {
     pub test: bool,
     /// Every source file the unit compiled, absolute, sorted, deduplicated.
     pub sources: Vec<PathBuf>,
+    /// Every file the compiler read for the unit, Rust or not, absolute, sorted, deduplicated: what `include_str!` and `#[doc = include_str!]` embed as well as what was compiled.
+    pub inputs: Vec<PathBuf>,
+    /// Every environment variable the compiler read for the unit through `env!` or `option_env!`, with the value it read, or nothing where it was unset.
+    pub env: std::collections::BTreeMap<String, Option<String>>,
 }
 
 /// The dep-info file rustc wrote beside `artifact`: the same stem without the `lib` prefix and with the `.d` extension.
@@ -80,6 +84,37 @@ pub fn parse_dep_info(text: &str) -> Result<Vec<String>, CargoError> {
     Ok(split_escaped(prerequisites))
 }
 
+/// The environment variables a dep-info file says the compiler read, each with the value it read or nothing where it was unset.
+#[must_use]
+pub fn env_deps(text: &str) -> std::collections::BTreeMap<String, Option<String>> {
+    text.lines()
+        .filter_map(|line| line.strip_prefix("# env-dep:"))
+        .map(|dependency| match dependency.split_once('=') {
+            Some((name, value)) => (name.to_owned(), Some(unescaped(value))),
+            None => (dependency.to_owned(), None),
+        })
+        .collect()
+}
+
+/// A value as rustc read it, before it escaped a backslash, a line feed, and a carriage return to keep it on one line.
+fn unescaped(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 /// Splits on unescaped whitespace, undoing `\ ` and `\\`.
 fn split_escaped(text: &str) -> Vec<String> {
     let mut items = Vec::new();
@@ -137,6 +172,31 @@ pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>
     Ok(units)
 }
 
+/// Every file the compiler read for a unit whose code runs while the build does rather than in a test: a procedural macro, and a build script, compiled for the build and not tested.
+///
+/// # Errors
+/// What [`units_of`] refuses about one such unit's dep-info.
+pub fn compile_time_inputs(
+    messages: &[Message],
+    workspace_root: &Path,
+) -> Result<Vec<PathBuf>, CargoError> {
+    let mut inputs = Vec::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        let runs_in_the_build = artifact.target.is_custom_build()
+            || (artifact.target.is_proc_macro() && !artifact.profile.test);
+        if !runs_in_the_build || is_uplift(artifact) {
+            continue;
+        }
+        inputs.extend(unit_of(artifact, workspace_root)?.inputs);
+    }
+    inputs.sort();
+    inputs.dedup();
+    Ok(inputs)
+}
+
 /// Whether this artifact is cargo's uplifted copy of a unit rather than the unit itself.
 fn is_uplift(artifact: &Artifact) -> bool {
     artifact.filenames.iter().all(|file| {
@@ -186,7 +246,7 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
         )
         .with_source(source)
     })?;
-    let mut sources: Vec<PathBuf> = parse_dep_info(&text)?
+    let mut inputs: Vec<PathBuf> = parse_dep_info(&text)?
         .into_iter()
         .map(|path| {
             let path = PathBuf::from(path);
@@ -196,15 +256,21 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
                 workspace_root.join(path)
             }
         })
-        .filter(|path| is_rust(path))
         .collect();
-    sources.sort();
-    sources.dedup();
+    inputs.sort();
+    inputs.dedup();
+    let sources = inputs
+        .iter()
+        .filter(|path| is_rust(path))
+        .cloned()
+        .collect();
     Ok(Unit {
         package_id: artifact.package_id.clone(),
         target: artifact.target.clone(),
         test: artifact.profile.test,
         sources,
+        inputs,
+        env: env_deps(&text),
     })
 }
 

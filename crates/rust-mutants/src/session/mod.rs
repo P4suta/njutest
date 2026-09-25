@@ -33,7 +33,7 @@ use crate::rule::Tier;
 use crate::runner::Cancel;
 use crate::snapshot::Drift;
 use crate::syntax::{LineIndex, Position, Skip};
-use crate::trace::MutantExecRecord;
+use crate::trace::{MutantExecRecord, ReachRecord};
 use crate::validate::{Rejection, Validated};
 use crate::workspace::{SessionError, Workspace};
 
@@ -123,6 +123,64 @@ pub enum Observing {
     Nothing,
 }
 
+/// What a control is started with beyond what the baseline was: variables set over its environment, a program it is started through, and harness arguments after the baseline's.
+///
+/// Held apart from [`Request`], which every execution takes, so that only a control can be perturbed and no mutant execution is ever run under conditions its baseline was not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Perturbation {
+    /// Variables set over the base environment, each replacing one of the same name, from the closed set a control may be perturbed in.
+    pub environment: Vec<(execute::Variable, std::ffi::OsString)>,
+    /// A program the test binary is started through, which replaces itself with it.
+    pub launcher: Option<execute::Launcher>,
+    /// How the harness schedules the tests.
+    pub schedule: execute::Schedule,
+}
+
+impl Perturbation {
+    /// Nothing beyond what the baseline was started with.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            environment: Vec::new(),
+            launcher: None,
+            schedule: execute::Schedule::AsConfigured,
+        }
+    }
+
+    /// What a recording says it was, so that an audit reads which control was put under what from the recording alone.
+    #[must_use]
+    pub fn record(&self) -> crate::trace::PerturbationRecord {
+        crate::trace::PerturbationRecord {
+            environment: self
+                .environment
+                .iter()
+                .map(|(variable, value)| crate::trace::SetRecord {
+                    name: variable.name().to_owned(),
+                    value: value.to_str().map(str::to_owned),
+                })
+                .collect(),
+            launcher: self.launcher.map(|launcher| match launcher {
+                execute::Launcher::Umask { mask } => format!("umask {mask:03o}"),
+            }),
+            arguments: self
+                .schedule
+                .arguments()
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect(),
+        }
+    }
+}
+
+/// How one control is run: whether it records what it reached, and what it is started with beyond what its baseline was.
+#[derive(Debug, Clone, Copy)]
+pub struct Conditions<'a> {
+    /// Whether it records, and compares with its baseline.
+    pub observing: Observing,
+    /// What it is started with beyond what the baseline was.
+    pub perturbation: &'a Perturbation,
+}
+
 /// What a control came to, and what it established about each whole target's baseline reach where it was asked to record.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -143,6 +201,9 @@ pub struct Observed {
     pub steadiness: crate::touch::Steadiness,
 }
 
+/// The directory beside the copy a run without some of the tree's files keeps them in until it puts them back.
+const ASIDE_NAME: &str = "aside";
+
 /// The file a control's guards append what they reached to, in the control's own scratch.
 const CONTROL_TOUCH_LOG: &str = "touch.log";
 
@@ -151,6 +212,7 @@ struct Once<'a> {
     request: &'a Request,
     target: &'a TestTarget,
     timeout: Duration,
+    perturbation: &'a Perturbation,
 }
 
 /// What preparing does about a target whose baseline does not pass with nothing active.
@@ -361,6 +423,8 @@ pub struct Session {
     scratch_working_directory: bool,
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::Mutex<u64>,
+    /// The process that leads each execution this session has started, recorded as it starts, whose children are that execution's rather than any other's.
+    leaders: crate::orphan::Leaders,
     mutant_timeout: Timeout,
     mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
@@ -383,6 +447,8 @@ pub struct Session {
     written_by_a_test: Vec<Drift>,
     /// The digest of the pristine sources every unit of this build compiled.
     closure: String,
+    /// What the build read that no survey of the tree sees.
+    inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
 }
@@ -444,10 +510,60 @@ impl Session {
         &self.targets
     }
 
+    /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
+    fn orphaned(
+        &self,
+        before: Option<&BTreeSet<crate::orphan::Orphan>>,
+        (started, ended): (std::time::SystemTime, std::time::SystemTime),
+        leader: Option<u32>,
+    ) -> Result<bool, EngineError> {
+        let others = self
+            .leaders
+            .every()
+            .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?;
+        Ok(
+            match (
+                before,
+                crate::orphan::left(std::path::Path::new(self.workspace.watched())),
+            ) {
+                (Some(before), Ok(orphans)) => orphans.iter().any(|orphan| {
+                    !before.contains(orphan)
+                        && orphan.during(started, ended)
+                        && crate::orphan::ours(orphan, leader, &others)
+                }),
+                (None, Ok(_)) | (_, Err(_)) => true,
+            },
+        )
+    }
+
+    /// Every process that has said so far that it lost the run's environment, or nothing where the directory cannot be read, which an execution compares against to find the ones left while it ran.
+    fn orphans(&self) -> Option<BTreeSet<crate::orphan::Orphan>> {
+        match crate::orphan::left(std::path::Path::new(self.workspace.watched())) {
+            Ok(orphans) => Some(orphans.into_iter().collect()),
+            Err(_unreadable) => None,
+        }
+    }
+
+    /// Whether a process of `target`'s tree ran without the environment the run gave it, so a survival it reports is not one.
+    #[must_use]
+    pub fn uncontrolled(&self, target: &str) -> bool {
+        self.verified
+            .touched
+            .limitations
+            .iter()
+            .any(|one| one.split_once(':') == Some((crate::limitation::UNCONTROLLED_CHILD, target)))
+    }
+
     /// The digest of the pristine sources every unit of this build compiled.
     #[must_use]
     pub fn closure(&self) -> &str {
         &self.closure
+    }
+
+    /// What the build read that no survey of the tree sees: files outside the copy, and the variables the compiler read.
+    #[must_use]
+    pub const fn inputs(&self) -> &crate::select::Inputs {
+        &self.inputs
     }
 
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
@@ -837,6 +953,7 @@ impl Session {
             return Ok(*answer);
         }
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1200,6 +1317,7 @@ impl Session {
             }
         };
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1221,7 +1339,16 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            let before = self.orphans();
+            let started = std::time::SystemTime::now();
+            let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            let ended = std::time::SystemTime::now();
+            if result.conclusion == MutantConclusion::Survived
+                && (self.uncontrolled(&target.id)
+                    || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
+            {
+                result.conclusion = MutantConclusion::Unobserved;
+            }
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
@@ -1273,6 +1400,62 @@ impl Session {
         Ok(())
     }
 
+    /// Records what a control run under the conditions its baseline was came to, which is what a comparison under equal conditions reads.
+    fn record_control_exec(
+        &self,
+        target: &TestTarget,
+        result: &MutantResult,
+        (timeout, source): (Duration, TimeoutSource),
+    ) -> Result<(), EngineError> {
+        self.workspace.trace.mutant_exec(MutantExecRecord {
+            id: String::new(),
+            index: u32::MAX,
+            target: target.id.clone(),
+            outcome: result.outcome().name().to_owned(),
+            step_notice: result.step_notice().cloned(),
+            exit_code: result.exit_code,
+            duration_ms: duration_ms(result.duration)?,
+            tests_run: result.tests_run(),
+            signal: result.signal,
+            failed_tests: result.failed_tests.clone(),
+            timeout_ms: duration_ms(timeout)?,
+            timeout_source: source.name().to_owned(),
+            alone: false,
+        });
+        Ok(())
+    }
+
+    /// Records what a control reached: beside the ordinary records when it ran as its baseline did, and in one record of its own, naming what it was started with, when `perturbed` says it did not.
+    fn record_reach(
+        &self,
+        (target, result): (&TestTarget, &MutantResult),
+        perturbed: Option<crate::trace::PerturbationRecord>,
+        reach: ReachRecord,
+    ) -> Result<(), EngineError> {
+        match perturbed {
+            Some(perturbation) => {
+                self.workspace
+                    .trace
+                    .perturbed(crate::trace::PerturbedRecord {
+                        target: target.id.clone(),
+                        perturbation,
+                        outcome: result.outcome().name().to_owned(),
+                        failed_tests: result.failed_tests.clone(),
+                        duration_ms: duration_ms(result.duration)?,
+                        reach,
+                    });
+            }
+            None => match reach {
+                ReachRecord::Recorded { touch } => self.workspace.trace.touch(touch),
+                ReachRecord::NotAsked
+                | ReachRecord::NotRead
+                | ReachRecord::Unrecorded
+                | ReachRecord::Unreadable => {}
+            },
+        }
+        Ok(())
+    }
+
     /// The arguments one execution's test binary is started with.
     fn arguments(&self, request: &Request) -> Vec<String> {
         if request.args.is_empty() {
@@ -1280,6 +1463,70 @@ impl Session {
         } else {
             request.args.clone()
         }
+    }
+
+    /// Runs one target whole with nothing active and the files `absent` taken out of the copy, then puts each back exactly as it was: what a test reads of the tree, as opposed to what it runs, is what such a run answers differently.
+    ///
+    /// It takes the session exclusively, since nothing else may run while the copy is missing files.
+    ///
+    /// # Errors
+    /// What [`Self::control`] refuses, and a file that could not be moved aside or put back.
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the copy is missing files while this runs, and taking the session exclusively is \
+                  what keeps any other execution from running against it"
+    )]
+    pub fn control_without(
+        &mut self,
+        request: &Request,
+        cancel: &Cancel,
+        absent: &[String],
+    ) -> Result<MutantResult, EngineError> {
+        let root = self.workspace.snapshot_root().to_path_buf();
+        let aside = self.workspace.snapshot.dir().join(ASIDE_NAME);
+        std::fs::create_dir_all(&aside).map_err(|source| SessionError::WriteFailed {
+            path: aside.display().to_string(),
+            source,
+        })?;
+        let mut moved = Vec::new();
+        let mut taken = Ok(());
+        for (index, path) in absent.iter().enumerate() {
+            let (from, to) = (root.join(path), aside.join(index.to_string()));
+            if let Err(source) = std::fs::rename(&from, &to) {
+                taken = Err(SessionError::WriteFailed {
+                    path: from.display().to_string(),
+                    source,
+                });
+                break;
+            }
+            moved.push((from, to));
+        }
+        let ran = match taken {
+            Ok(()) => self
+                .control(request, cancel, Observing::Nothing)
+                .map(|ran| ran.result),
+            Err(error) => Err(error.into()),
+        };
+        for (from, to) in moved.iter().rev() {
+            std::fs::rename(to, from).map_err(|source| SessionError::WriteFailed {
+                path: from.display().to_string(),
+                source,
+            })?;
+        }
+        ran
+    }
+
+    /// Runs one target with no mutant active under `conditions`: recording what it reached where they ask, and started with what they add to the baseline's start.
+    ///
+    /// # Errors
+    /// As [`Session::control`].
+    pub fn control_perturbed(
+        &self,
+        request: &Request,
+        conditions: Conditions<'_>,
+        cancel: &Cancel,
+    ) -> Result<Controlled, EngineError> {
+        self.controlled(request, conditions, cancel)
     }
 
     /// Runs one target with no mutant active: the original control, recording what it reached where `observing` asks.
@@ -1291,6 +1538,27 @@ impl Session {
         request: &Request,
         cancel: &Cancel,
         observing: Observing,
+    ) -> Result<Controlled, EngineError> {
+        let none = Perturbation::none();
+        self.controlled(
+            request,
+            Conditions {
+                observing,
+                perturbation: &none,
+            },
+            cancel,
+        )
+    }
+
+    /// A control of `request` under `perturbation`, which is what [`Session::control`] and [`Session::control_perturbed`] both are.
+    fn controlled(
+        &self,
+        request: &Request,
+        Conditions {
+            observing,
+            perturbation,
+        }: Conditions<'_>,
+        cancel: &Cancel,
     ) -> Result<Controlled, EngineError> {
         let targets = self.selected(request.target.as_deref())?;
         let mut asked = Vec::new();
@@ -1306,6 +1574,7 @@ impl Session {
                 request,
                 target,
                 timeout,
+                perturbation,
             };
             let mut result = self.control_once(&once, (&own, log.as_deref()), cancel);
             let unrecorded =
@@ -1322,32 +1591,30 @@ impl Session {
                 );
                 result = self.control_once(&once, (&self.exec_scratch()?, None), cancel);
             }
-            self.workspace.trace.mutant_exec(MutantExecRecord {
-                id: String::new(),
-                index: u32::MAX,
-                target: target.id.clone(),
-                outcome: result.outcome().name().to_owned(),
-                step_notice: result.step_notice().cloned(),
-                exit_code: result.exit_code,
-                duration_ms: duration_ms(result.duration)?,
-                tests_run: result.tests_run(),
-                signal: result.signal,
-                failed_tests: result.failed_tests.clone(),
-                timeout_ms: duration_ms(timeout)?,
-                timeout_source: source.name().to_owned(),
-                alone: false,
-            });
-            if let Some(log) = log.as_deref() {
-                let steadiness = if unrecorded {
-                    crate::touch::Steadiness::NotMeasured(crate::touch::Unmeasured::Unrecorded)
-                } else {
-                    self.steadiness(target, log, &result)?
-                };
+            let perturbed = (*perturbation != Perturbation::none()).then(|| perturbation.record());
+            if perturbed.is_none() {
+                self.record_control_exec(target, &result, (timeout, source))?;
+            }
+            let (steadiness, reach) = match log.as_deref() {
+                None => (None, ReachRecord::NotAsked),
+                Some(_) if unrecorded => (
+                    Some(crate::touch::Steadiness::NotMeasured(
+                        crate::touch::Unmeasured::Unrecorded,
+                    )),
+                    ReachRecord::Unrecorded,
+                ),
+                Some(log) => {
+                    let (steadiness, reach) = self.steadiness(target, log, &result)?;
+                    (Some(steadiness), reach)
+                }
+            };
+            if let Some(steadiness) = steadiness {
                 observed.push(Observed {
                     target: target.id.clone(),
                     steadiness,
                 });
             }
+            self.record_reach((target, &result), perturbed, reach)?;
             if cancel.is_cancelled()
                 || (result.outcome() != crate::outcome::Outcome::Survived && spoke(&result))
             {
@@ -1370,7 +1637,9 @@ impl Session {
         (own, log): (&std::path::Path, Option<&std::path::Path>),
         cancel: &Cancel,
     ) -> MutantResult {
+        let perturbation = once.perturbation;
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1382,11 +1651,30 @@ impl Session {
             steps: None,
             profile: None,
         };
+        if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
+            return MutantResult::apparatus_error(
+                &once.target.id,
+                format!(
+                    "{:?} is a libtest argument, and {} does not run under libtest",
+                    perturbation.schedule, once.target.id
+                ),
+            );
+        }
+        let mut arguments = self.arguments(once.request);
+        arguments.extend(
+            perturbation
+                .schedule
+                .arguments()
+                .iter()
+                .map(|argument| (*argument).to_owned()),
+        );
         let mut exec = ExecRequest::new(once.target)
-            .with_args(self.arguments(once.request))
+            .with_args(arguments)
             .with_timeout(Some(once.timeout))
             .with_scratch(own)
-            .in_scratch(self.scratch_working_directory);
+            .in_scratch(self.scratch_working_directory)
+            .with_overlay(perturbation.environment.clone())
+            .with_launcher(perturbation.launcher);
         if let Some(test) = &once.request.test {
             exec = exec.with_test(test.clone());
         }
@@ -1399,10 +1687,13 @@ impl Session {
         target: &TestTarget,
         log: &std::path::Path,
         result: &MutantResult,
-    ) -> Result<crate::touch::Steadiness, EngineError> {
+    ) -> Result<(crate::touch::Steadiness, ReachRecord), EngineError> {
         use crate::touch::{Steadiness, Unmeasured};
         if result.outcome() != crate::outcome::Outcome::Survived {
-            return Ok(Steadiness::NotMeasured(Unmeasured::ControlFailed));
+            return Ok((
+                Steadiness::NotMeasured(Unmeasured::ControlFailed),
+                ReachRecord::NotRead,
+            ));
         }
         let unreadable = |why: &dyn std::fmt::Display| {
             self.workspace.trace.note(
@@ -1413,7 +1704,7 @@ impl Session {
         };
         let text = match crate::limitation::appended(std::fs::read_to_string(log)) {
             Ok(text) => text,
-            Err(error) => return Ok(unreadable(&error)),
+            Err(error) => return Ok((unreadable(&error), ReachRecord::Unreadable)),
         };
         let mutants = self.catalog.mutants().len();
         let count =
@@ -1434,22 +1725,36 @@ impl Session {
         };
         let recorded = match crate::touch::read(&text, self.catalog.digest(), bounds) {
             Ok(recorded) => recorded,
-            Err(error) => return Ok(unreadable(&error)),
+            Err(error) => return Ok((unreadable(&error), ReachRecord::Unreadable)),
         };
         let control = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
-        self.workspace.trace.touch(verify::touch_record(
+        let touch = verify::touch_record(
             &target.id,
             crate::trace::Measurement::Control,
             &control,
             crate::trace::SummaryRecord::of(result),
-        )?);
+        )?;
+        Ok((
+            self.compared(target, &control, result),
+            ReachRecord::Recorded { touch },
+        ))
+    }
+
+    /// Whether `control` reached what the baseline of `target` did, over the same passing tests, where the two can be compared at all.
+    fn compared(
+        &self,
+        target: &TestTarget,
+        control: &crate::touch::TargetTouches,
+        result: &MutantResult,
+    ) -> crate::touch::Steadiness {
+        use crate::touch::{Steadiness, Unmeasured};
         let retried = format!(
             "{}:{}",
             crate::limitation::BASELINE_PASSED_ON_RETRY,
             target.id
         );
         if self.verified.touched.limitations.contains(&retried) {
-            return Ok(Steadiness::NotMeasured(Unmeasured::BaselineRetried));
+            return Steadiness::NotMeasured(Unmeasured::BaselineRetried);
         }
         let unparsed = format!(
             "{}:{}",
@@ -1459,19 +1764,19 @@ impl Session {
         if result.reading() == Reading::Short
             || self.verified.touched.limitations.contains(&unparsed)
         {
-            return Ok(Steadiness::NotMeasured(Unmeasured::Unparsed));
+            return Steadiness::NotMeasured(Unmeasured::Unparsed);
         }
         let Some(baseline) = self.verified.touched.targets.get(&target.id) else {
-            return Ok(Steadiness::NotMeasured(Unmeasured::NoBaseline));
+            return Steadiness::NotMeasured(Unmeasured::NoBaseline);
         };
         let passed = |ran: &[String]| ran.iter().cloned().collect::<BTreeSet<String>>();
         if passed(&baseline.ran) != passed(&control.ran) {
-            return Ok(Steadiness::NotMeasured(Unmeasured::OtherTests));
+            return Steadiness::NotMeasured(Unmeasured::OtherTests);
         }
-        Ok(match crate::touch::unions_differ(baseline, &control) {
+        match crate::touch::unions_differ(baseline, control) {
             Some(moved) => Steadiness::Moved(moved),
             None => Steadiness::Held,
-        })
+        }
     }
 
     /// Runs the targets that can observe anything with no mutant active,
@@ -1487,6 +1792,7 @@ impl Session {
     ) -> Result<MutantResult, EngineError> {
         let targets = self.selected(request.target.as_deref())?;
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1507,21 +1813,7 @@ impl Session {
                 exec = exec.with_test(test.clone());
             }
             let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
-            self.workspace.trace.mutant_exec(MutantExecRecord {
-                id: String::new(),
-                index: u32::MAX,
-                target: target.id.clone(),
-                outcome: result.outcome().name().to_owned(),
-                step_notice: result.step_notice().cloned(),
-                exit_code: result.exit_code,
-                duration_ms: duration_ms(result.duration)?,
-                tests_run: result.tests_run(),
-                signal: result.signal,
-                failed_tests: result.failed_tests.clone(),
-                timeout_ms: duration_ms(timeout)?,
-                timeout_source: source.name().to_owned(),
-                alone: false,
-            });
+            self.record_control_exec(target, &result, (timeout, source))?;
             if cancel.is_cancelled() {
                 return Ok(result);
             }
@@ -1774,6 +2066,16 @@ struct EstablishmentState {
     tests_started: u64,
 }
 
+impl EstablishmentState {
+    /// Nothing established and no test started yet.
+    const fn fresh() -> Self {
+        Self {
+            answers: BTreeMap::new(),
+            tests_started: 0,
+        }
+    }
+}
+
 /// A non-empty ledger of one mutant's executions.
 ///
 /// The first execution is structurally mandatory.
@@ -2011,7 +2313,15 @@ fn duration_ms(duration: Duration) -> Result<u64, SessionError> {
 
 /// Whether a target said anything at all.
 const fn spoke(result: &MutantResult) -> bool {
-    execute::answered(result.outcome())
+    match result.conclusion {
+        MutantConclusion::Inconclusive | MutantConclusion::StepLimitReached { .. } => false,
+        MutantConclusion::NotRun
+        | MutantConclusion::Killed
+        | MutantConclusion::Survived
+        | MutantConclusion::Waited
+        | MutantConclusion::Unobserved
+        | MutantConclusion::Errored => true,
+    }
 }
 
 /// The strongest fact all selected targets jointly establish.
@@ -2102,6 +2412,7 @@ mod kani_laws {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 
@@ -2487,6 +2798,7 @@ const fn unreached() -> MutantResult {
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
+        leader: None,
     }
 }
 
@@ -2518,6 +2830,7 @@ mod tests {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            leader: None,
         }
     }
 

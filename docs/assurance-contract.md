@@ -100,10 +100,17 @@ Nothing is measured twice because nothing is measured a second time at all: the 
 That makes one premise carry every route: what a target reaches is a function of the target, and not of the order, the clock, or what an earlier process of the run left behind.
 The run checks it where it already runs a target a second time.
 The original-code control that confirms a kill runs the whole target again under the conditions the baseline ran under — the same arguments, the same environment, a fresh temporary directory of its own — and its guards record too.
+A target no kill was confirmed on is run whole once more, alone and under the same conditions, after the mutation phase, so every target the baseline measured is compared whether or not it noticed anything.
 Where it passed exactly the tests the baseline passed and the target's union of sites reached, bodies entered, or sites infected differs, the baseline record is one sample rather than a measurement, and the report raises `unstable-baseline` about the target, counting the `unreached` claims and the discharged executions that rest on it.
 One such observation is enough; a counterexample does not wait for a second.
-A measured target no comparable control recorded is named by `drift-not-measured`, because a proof read off it rests on one run.
+A measured target whose control could not be compared — it failed, passed other tests, or could not record — is named by `drift-not-measured`, because a proof read off it rests on one run.
 This release reports a moved target and does not yet run again what rested on it ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+
+A second run under the same conditions cannot see a suite that depends on the conditions themselves: a clock read in the local zone, a string folded under the locale, a temporary path built into a command line without quotes, a file the home directory is expected to hold, the mode a new file gets, the width of a terminal, or a test that only passes while another runs beside it.
+Asked for with `[repeatable] knobs`, a run starts one more control of every target whose baseline passed per knob, with exactly that one thing set to a value chosen to differ, and compares it with the baseline as drift does ([ADR 0031](adr/0031-a-knob-is-one-control-started-differently.md)).
+A knob that broke a target is `environment-dependent`, a defect, because the suite's answer depends on something the contract lets differ between machines; a knob that moved only its reach is `environment-dependent-reach`, and every proof read off that baseline is unfounded where it differs.
+A knob this machine cannot put is never counted as held: the time zone database has to know the zone, the locale has to be installed, the mask needs a shell, and a target run through cargo is not given a temporary directory cargo reads itself, so each of those is `knob-not-put` with its reason.
+What a knob sets is a closed set in the engine (`execute::Variable`, `Launcher`, `Schedule`), so no knob can reach the variables that activate a mutant, record a process's reach, count its steps, or find its libraries, and only a control can be started under one.
 
 The decision widens whenever the evidence cannot carry it, and every widening runs more rather than less.
 The route names which one it was:

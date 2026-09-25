@@ -18,8 +18,9 @@ extern crate self as xtask;
 #[path = "../../../xtask/src/lib.rs"]
 mod product;
 pub(crate) use product::{
-    adrs, deps, devgates, drift, engineaudit, fixtures, lints, milestones, modelaudit, proofaudit,
-    release, reportdiff, route, run_from, sbom, sentinel, shapes, strictjson, surface, wire,
+    adrs, deps, devgates, drift, engineaudit, fixtures, knobs, lints, milestones, modelaudit,
+    proofaudit, release, reportdiff, route, run_from, sbom, sentinel, shapes, strictjson, surface,
+    wire,
 };
 
 #[path = "../../../xtask/src/main.rs"]
