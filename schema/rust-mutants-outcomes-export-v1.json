@@ -121,7 +121,8 @@
             "timeout",
             "steps",
             "build",
-            "engine"
+            "engine",
+            "runner"
           ],
           "properties": {
             "closure": {
@@ -155,6 +156,10 @@
             "engine": {
               "description": "The digest of the engine executable that decided the outcome, so an answer one build remembered is never read back by another.",
               "type": "string"
+            },
+            "runner": {
+              "description": "The digest of what the runner that asked decides the answer under beyond the engine, or null where the engine itself asked.",
+              "type": ["string", "null"]
             }
           }
         }

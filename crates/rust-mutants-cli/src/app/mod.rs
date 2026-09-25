@@ -1266,6 +1266,7 @@ fn keyed(session: &Session, whole: &Whole<'_>) -> crate::outcomes::Keyed {
         steps: settings.config.mutation.steps,
         build: settings.config.build.config().arguments(),
         engine,
+        runner: None,
     }
 }
 

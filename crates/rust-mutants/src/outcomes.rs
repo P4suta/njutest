@@ -28,7 +28,7 @@ pub const INSTRUMENTATION_ABI: u32 = 3;
 pub const STEP_POLICY_ABI: u32 = 1;
 
 /// Bumped when a record changes what it holds, or when the recipe changes what a key is computed from.
-pub const CACHE_ABI: u32 = 7;
+pub const CACHE_ABI: u32 = 8;
 
 /// An outcome strong enough to answer a later identical run.
 ///
@@ -105,6 +105,10 @@ pub struct Keyed {
     /// The digest of the engine that decided, because two builds of it may mean two different things by the same verdict.
     /// Empty where the engine could not be read, which remembers nothing.
     pub engine: String,
+    /// The digest of what the runner that asked for the answer decides it under, beyond the engine: its contract, environment, platform and versions.
+    /// `None` where the engine itself asked, as rust-mutants does, which is a different question from any runner's.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub runner: Option<String>,
 }
 
 impl Keyed {
@@ -112,6 +116,15 @@ impl Keyed {
     #[must_use]
     pub const fn usable(&self) -> bool {
         !self.closure.is_empty() && !self.engine.is_empty()
+    }
+
+    /// The runner as a key reads it: `none` where the engine asked, and `some:` before a runner's digest, so the two can never be spelled alike.
+    #[must_use]
+    pub fn runner_tag(&self) -> String {
+        match &self.runner {
+            None => "none".to_owned(),
+            Some(digest) => format!("some:{digest}"),
+        }
     }
 
     /// The key one mutant's record is filed under.
@@ -131,6 +144,7 @@ impl Keyed {
             &self.timeout,
             &self.steps.to_string(),
             &self.engine,
+            &self.runner_tag(),
         ] {
             hash_length(&mut hasher, field.len());
             hasher.update(field.as_bytes());
