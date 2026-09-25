@@ -57,11 +57,7 @@ impl Killers {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(error) => return Err(error),
         };
-        match std::fs::remove_dir_all(&self.root) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
+        crate::tempowner::remove_tree(&self.root)?;
         u32::try_from(held).map_err(|_overflow| {
             std::io::Error::other("more killer hints than a count of them can hold")
         })
