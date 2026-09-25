@@ -866,6 +866,13 @@ fn a_route_that_kept_nothing_and_ran_something_is_one_violation_and_not_two() {
                     "duration_ms": 5
                 }
             }),
+            serde_json::json!({
+                "seq": 3, "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2, "type": "mutant-exec",
+                "mutant": {
+                    "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "survived",
+                    "duration_ms": 5
+                }
+            }),
         ],
     );
 
@@ -1391,15 +1398,15 @@ fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
 
     assert_eq!(
         audit.unaudited(),
-        5,
+        6,
         "one column that is not there leaves the column itself, the two equations it is \
-         a side of, and the two layers this recording does not carry — the routing and \
-         the executions. A count of what could not be checked is what tells a reader how \
+         a side of, and the three layers this recording does not carry — the routing, \
+         the targets put to mutations, and the outcomes held to their executions. A count of what could not be checked is what tells a reader how \
          much of the report the audit is silent about, and one that is always zero says \
          it checked everything: {audit}"
     );
     assert!(
-        audit.to_string().contains("5 unaudited"),
+        audit.to_string().contains("6 unaudited"),
         "and the summary says it: {audit}"
     );
 }

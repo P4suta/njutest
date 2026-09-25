@@ -136,6 +136,8 @@ pub struct Routing {
     pub routes: Vec<Route>,
     /// Every mutant execution.
     pub execs: Vec<Exec>,
+    /// What the equivalence layer answered for each mutation it asked about, by display identity.
+    pub equivalences: Vec<(String, String)>,
 }
 
 impl Routing {
@@ -192,6 +194,18 @@ pub(crate) fn from_events(events: &[Value]) -> Routing {
             Some("mutant-exec") => {
                 if let Some(record) = event.get("mutant") {
                     routing.execs.push(exec(record));
+                }
+            }
+            Some("note") => {
+                let noted = event.get("note");
+                let kind = noted.and_then(|note| text(note, "kind"));
+                let detail = noted.and_then(|note| text(note, "detail"));
+                if let (Some("equivalence"), Some(detail)) = (kind.as_deref(), detail)
+                    && let Some((display_id, answer)) = detail.split_once(' ')
+                {
+                    routing
+                        .equivalences
+                        .push((display_id.to_owned(), answer.to_owned()));
                 }
             }
             _ => {}

@@ -161,6 +161,8 @@ and `not-measured` with one closed `why`: `no-control` (the run was cancelled be
 
 A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
+The same holds for `hollow-target`, since which targets answered about a mutation and noticed none is only known over the whole catalog.
+What only the whole catalog decides is one function, `report::whole_catalog`, called by a run that measured the catalog whole and by a merge over the combined records, so a catalog concludes the same whether it was measured whole or in shards.
 Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
 
 ## Sources
