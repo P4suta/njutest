@@ -736,7 +736,7 @@ fn read_by_the_compiler(path: &str, skeletons: &serde_json::Value) -> bool {
         })
 }
 
-/// Every Rust file read by any unit that read `path`, parsed, or `None` where one of them cannot be read: a `$target` entry, or a `$root` one --root does not hold.
+/// Every file read by any unit that read `path` that parses as a whole Rust file, whatever its extension, or `None` where one of them cannot be read: a `$target` entry, or a `$root` one --root does not hold.
 fn unit_files(
     path: &str,
     skeletons: &serde_json::Value,
@@ -757,10 +757,7 @@ fn unit_files(
             continue;
         }
         for entry in entries.keys() {
-            if std::path::Path::new(entry)
-                .extension()
-                .is_none_or(|kind| kind != "rs")
-            {
+            if !entry.starts_with("$root/") && !entry.starts_with("$target/") {
                 continue;
             }
             let file = entry.strip_prefix("$root/")?;
@@ -850,10 +847,18 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> String
             continue;
         }
         rendered.push_str(text.get(at..item.body.start).unwrap_or_default());
+        let body = text.get(item.body.clone()).unwrap_or_default();
+        let last = body.rsplit('\n').next().unwrap_or_default();
         rendered.push_str("{sealed:");
         rendered.push_str(entry);
         rendered.push('#');
         rendered.push_str(&ordinal.to_string());
+        rendered.push('/');
+        rendered.push_str(&body.matches('\n').count().to_string());
+        rendered.push(':');
+        rendered.push_str(&last.len().to_string());
+        rendered.push(':');
+        rendered.push_str(&last.chars().count().to_string());
         rendered.push('}');
         at = item.body.end;
     }
