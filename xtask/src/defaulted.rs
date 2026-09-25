@@ -53,6 +53,32 @@ pub fn defaulted_in(source: &str) -> Result<usize, syn::Error> {
     Ok(counted.0)
 }
 
+/// How many [`DEFAULTING`] calls a macro's tokens make: a name from the list right after a `.` or a `::`, at any depth.
+/// syn leaves a macro's arguments as tokens, and `json!` bodies are not even a list of expressions, so the count reads the tokens rather than a parse of them.
+fn defaulting_in_tokens(tokens: proc_macro2::TokenStream) -> usize {
+    let mut count: usize = 0;
+    let mut called = false;
+    for tree in tokens {
+        match tree {
+            proc_macro2::TokenTree::Group(group) => {
+                count = count.saturating_add(defaulting_in_tokens(group.stream()));
+                called = false;
+            }
+            proc_macro2::TokenTree::Punct(punct) => {
+                called = matches!(punct.as_char(), '.' | ':');
+            }
+            proc_macro2::TokenTree::Ident(ident) => {
+                if called && DEFAULTING.contains(&ident.to_string().as_str()) {
+                    count = count.saturating_add(1);
+                }
+                called = false;
+            }
+            proc_macro2::TokenTree::Literal(_) => called = false,
+        }
+    }
+    count
+}
+
 /// A running count of defaulting calls.
 struct Counted(usize);
 
@@ -74,6 +100,13 @@ impl Visit<'_> for Counted {
             self.0 = self.0.saturating_add(1);
         }
         syn::visit::visit_expr_path(self, path);
+    }
+
+    fn visit_macro(&mut self, macro_: &syn::Macro) {
+        self.0 = self
+            .0
+            .saturating_add(defaulting_in_tokens(macro_.tokens.clone()));
+        syn::visit::visit_macro(self, macro_);
     }
 
     fn visit_item_mod(&mut self, module: &syn::ItemMod) {

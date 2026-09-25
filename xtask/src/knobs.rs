@@ -116,7 +116,10 @@ impl Started {
         let mut words: Vec<String> = self
             .environment
             .iter()
-            .map(|(name, value)| format!("{name}={}", value.as_deref().unwrap_or("<not text>")))
+            .map(|(name, value)| match value.as_deref() {
+                Some(text) => format!("{name}={text}"),
+                None => format!("{name}=<not text>"),
+            })
             .collect();
         words.extend(self.launcher.iter().cloned());
         words.extend(self.arguments.iter().cloned());
