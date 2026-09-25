@@ -5,6 +5,8 @@
 
 #![recursion_limit = "256"]
 
+#[path = "adrs.rs"]
+mod adrs;
 #[path = "deps.rs"]
 mod deps;
 #[path = "devgates.rs"]
