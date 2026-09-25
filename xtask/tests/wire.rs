@@ -3,8 +3,19 @@
 
 //! The audit's own re-derivation of what a seam recording licenses.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+
 use njutest_devkit::result::{ResultState, result_state};
-use xtask::wire::{Exchange, identity, licensed, read};
+use xtask::wire::{Exchange, Watched, identity, licensed};
+
+/// What the seam reader makes of `recorded`, once it is held to the runner's published schema.
+fn read(recorded: &str) -> Result<Watched, xtask::route::ReadError> {
+    let checkers = checkers();
+    xtask::wire::read(&xtask::route::Checked::read(recorded, &checkers)?)
+}
 
 fn returned<T: std::fmt::Debug, E: std::fmt::Debug>(result: Result<T, E>) -> Option<T> {
     assert_eq!(
@@ -145,4 +156,9 @@ fn the_first_exchange_on_a_seam_licenses_no_question_about_what_came_before_it()
         rules.contains(&"stale-response".to_owned()),
         "and the second does: {rules:?}"
     );
+}
+
+/// Every published schema, compiled.
+fn checkers() -> xtask::schemas::Checkers {
+    xtask::schemas::Checkers::compiled().expect("the published schemas compile")
 }

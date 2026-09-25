@@ -533,6 +533,15 @@ struct Equation<'a> {
     because: &'a str,
 }
 
+/// The report an audit re-decides: where it was read from, and what it says.
+#[derive(Debug, Clone, Copy)]
+pub struct Reported<'a> {
+    /// Where it was read from, as a reader is told it.
+    pub path: &'a str,
+    /// What it says.
+    pub text: &'a str,
+}
+
 /// What a run recorded beside its report: the runner's recording and every engine recording under it, each as its path and its text.
 #[derive(Debug, Clone, Copy)]
 pub struct Recorded<'a> {
@@ -544,15 +553,20 @@ pub struct Recorded<'a> {
     pub outputs: &'a [(String, soundness::Kept)],
 }
 
+/// The runner's recording, where the run kept one, with the path it was read from.
+type RunnerRecording<'a> = (&'a str, crate::route::Checked<crate::schemas::RunnerLines>);
+
 /// What `read` makes of the runner's recording, where the run kept one.
 fn read_runner<T>(
-    runner: Option<(&str, &str)>,
-    read: impl Fn(&str) -> Result<T, crate::route::ReadError>,
+    runner: Option<&RunnerRecording<'_>>,
+    read: impl Fn(
+        &crate::route::Checked<crate::schemas::RunnerLines>,
+    ) -> Result<T, crate::route::ReadError>,
 ) -> Result<Option<T>, AuditError> {
     runner
-        .map(|(recording_path, text)| {
-            read(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
+        .map(|(recording_path, checked)| {
+            read(checked).map_err(|source| AuditError::MalformedRecording {
+                path: (*recording_path).to_owned(),
                 source,
             })
         })
@@ -565,26 +579,28 @@ fn read_runner<T>(
 /// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::OffSchema`] for a complete report off its published schema,
 /// [`AuditError::Unprojected`] for a report this audit does not re-decide as one build, [`AuditError::MalformedRecording`] for a recording with a corrupt line, and the corresponding retained-artifact error when `run` cannot be re-read.
 pub fn audit_with(
-    path: &str,
-    text: &str,
+    checkers: &crate::schemas::Checkers,
+    Reported { path, text }: Reported<'_>,
     recorded: Recorded<'_>,
     run: Option<&Path>,
 ) -> Result<Audit, AuditError> {
-    let document = read_report(path, text)?;
-    let recorded_runner = recorded.runner;
+    let document = read_report(checkers, path, text)?;
     let mut recording = Recording::of(&document).map_err(|cause| AuditError::UnreadReport {
         path: path.to_owned(),
         cause,
     })?;
-    recording.verdict = match recorded.runner {
-        Some((recording_path, text)) => {
-            concluded(text).map_err(|source| AuditError::MalformedRecording {
-                path: recording_path.to_owned(),
-                source,
-            })?
-        }
-        None => None,
-    };
+    let runner = recorded
+        .runner
+        .map(|(recording_path, text)| {
+            crate::route::Checked::read(text, checkers)
+                .map(|checked| (recording_path, checked))
+                .map_err(|source| AuditError::MalformedRecording {
+                    path: recording_path.to_owned(),
+                    source,
+                })
+        })
+        .transpose()?;
+    recording.verdict = runner.as_ref().and_then(|(_, checked)| concluded(checked));
     let RunnerEvidence {
         routing,
         watched,
@@ -592,8 +608,8 @@ pub fn audit_with(
         crashed,
         repairs,
         recorded_executions,
-    } = runner_evidence(recorded_runner)?;
-    let engines = engine_evidence(recorded.engines)?;
+    } = runner_evidence(runner.as_ref())?;
+    let engines = engine_evidence(checkers, recorded.engines)?;
     let mut audit = Audit {
         run_id: recording.run_id.clone(),
         mutants: recording.mutants.len(),
@@ -644,7 +660,10 @@ pub fn audit_with(
 }
 
 /// What each engine recording says of touch and perturbed controls, read from its stream alone.
-fn engine_evidence(recorded: &[(String, String)]) -> Result<Vec<Engine>, AuditError> {
+fn engine_evidence(
+    checkers: &crate::schemas::Checkers,
+    recorded: &[(String, String)],
+) -> Result<Vec<Engine>, AuditError> {
     recorded
         .iter()
         .map(|(recording_path, text)| {
@@ -652,25 +671,26 @@ fn engine_evidence(recorded: &[(String, String)]) -> Result<Vec<Engine>, AuditEr
                 path: recording_path.clone(),
                 source,
             };
+            let checked = crate::route::Checked::read(text, checkers).map_err(malformed)?;
             Ok(Engine {
-                touched: crate::drift::read(text).map_err(malformed)?,
-                perturbed: crate::knobs::read(text).map_err(malformed)?,
+                touched: crate::drift::read(&checked),
+                perturbed: crate::knobs::read(&checked),
             })
         })
         .collect()
 }
 
 /// What the runner's recording says of routing, seams, faults, crashes, repairs and executions, each read from the stream alone; nothing where the run kept none.
-fn runner_evidence(recorded_runner: Option<(&str, &str)>) -> Result<RunnerEvidence, AuditError> {
+fn runner_evidence(runner: Option<&RunnerRecording<'_>>) -> Result<RunnerEvidence, AuditError> {
     Ok(RunnerEvidence {
-        routing: read_runner(recorded_runner, |text| {
-            crate::route::read(text, crate::schemas::Producer::Runner)
-        })?,
-        watched: read_runner(recorded_runner, crate::wire::read)?,
-        faulted: read_runner(recorded_runner, crate::faults::read)?,
-        crashed: read_runner(recorded_runner, crate::crashes::read)?,
-        repairs: read_runner(recorded_runner, crate::repair::read)?.unwrap_or_default(),
-        recorded_executions: read_runner(recorded_runner, executions_of)?,
+        routing: read_runner(runner, crate::route::read)?,
+        watched: read_runner(runner, crate::wire::read)?,
+        faulted: runner.map(|(_, checked)| crate::faults::read(checked)),
+        crashed: runner.map(|(_, checked)| crate::crashes::read(checked)),
+        repairs: runner
+            .map(|(_, checked)| crate::repair::read(checked))
+            .unwrap_or_default(),
+        recorded_executions: runner.map(|(_, checked)| executions_of(checked)),
     })
 }
 
@@ -685,31 +705,34 @@ struct RunnerEvidence {
 }
 
 /// Every exec record a runner's recording holds, in the order it holds them.
-///
-/// # Errors
-/// The first line that does not read, as the recording's own reader says it.
-fn executions_of(text: &str) -> Result<Vec<serde_json::Value>, crate::route::ReadError> {
-    Ok(
-        crate::route::events(text, crate::schemas::Producer::Runner)?
-            .into_iter()
-            .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
-            .filter_map(|mut event| event.get_mut("exec").map(serde_json::Value::take))
-            .collect(),
-    )
+fn executions_of(
+    recorded: &crate::route::Checked<crate::schemas::RunnerLines>,
+) -> Vec<serde_json::Value> {
+    recorded
+        .events()
+        .iter()
+        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("exec"))
+        .filter_map(|event| event.get("exec").cloned())
+        .collect()
 }
 
 /// The flat view of the report at `path` holding `text`, once it is JSON, on its published schema, and one build measured whole.
 ///
 /// # Errors
 /// [`AuditError::Unparsable`], [`AuditError::OffSchema`], [`AuditError::Schema`] or [`AuditError::Unprojected`], in that order.
-fn read_report(path: &str, text: &str) -> Result<serde_json::Value, AuditError> {
+fn read_report(
+    checkers: &crate::schemas::Checkers,
+    path: &str,
+    text: &str,
+) -> Result<serde_json::Value, AuditError> {
     let read: serde_json::Value =
         crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
             path: path.to_owned(),
             source,
         })?;
     if read.get("document_type").is_some() {
-        crate::schemas::Checker::assurance_report()?
+        checkers
+            .assurance_report()
             .check(&read)
             .map_err(|source| AuditError::OffSchema {
                 path: path.to_owned(),
@@ -723,18 +746,14 @@ fn read_report(path: &str, text: &str) -> Result<serde_json::Value, AuditError> 
 }
 
 /// What the runner's recording says the run concluded, from its `run-end`; nothing where it holds none.
-///
-/// # Errors
-/// A line that is not JSON, or not on the runner's schema.
-fn concluded(text: &str) -> Result<Option<String>, crate::route::ReadError> {
-    Ok(
-        crate::route::events(text, crate::schemas::Producer::Runner)?
-            .iter()
-            .rev()
-            .find(|event| field(event, "type").as_deref() == Some("run-end"))
-            .and_then(|event| event.get("run"))
-            .and_then(|run| field(run, "verdict")),
-    )
+fn concluded(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Option<String> {
+    recorded
+        .events()
+        .iter()
+        .rev()
+        .find(|event| field(event, "type").as_deref() == Some("run-end"))
+        .and_then(|event| event.get("run"))
+        .and_then(|run| field(run, "verdict"))
 }
 
 /// The flat view of the one part of one configured build that every layer re-decides: a complete report's one build measured whole, or a shard's one build with the shard it is written into its scope.

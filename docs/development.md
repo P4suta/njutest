@@ -157,6 +157,8 @@ It reads the recording as lines of JSON rather than through the code that wrote 
 A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds with exit code 2 rather than reading one of them as the whole.
 A report states no verdict — the verdict is derived from its records — so the verdict is re-decided against the `run-end` the runner recorded, and is `unaudited` where the recording holds none.
 Every document is validated against its published schema before any layer reads it.
+Each published schema is compiled once per command, into `schemas::Checkers`, which the command passes to every audit it runs, planted defects included.
+A recording is read and held to its schema once, into a `route::Checked` whose type names the producer, and every reader takes that rather than the text, so no reader recompiles a schema, reads a recording again, or can be handed the other producer's lines.
 
 A sharded run is audited the way it was measured: each `verify --shard K/N` run is its own run directory and its own recording, and `cargo xtask proofaudit <shard-run-directory> --trace <its-recording>` re-decides that shard's one part, leaving to the merge what only the whole catalog decides.
 `cargo xtask proofaudit <merged-report> --shard <shard> … --traces <directory>` then re-decides each shard against its recording under `<directory>/<its run>` — the layout `.njutest/trace` already has — and holds the merged report to them, each violation named by the `MergeRule` it breaks:

@@ -101,23 +101,22 @@ impl crate::error::Coded for IdentityError {
 ///
 /// # Errors
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
-pub fn read(recorded: &str) -> Result<Watched, crate::route::ReadError> {
+pub fn read(
+    recorded: &crate::route::Checked<crate::schemas::RunnerLines>,
+) -> Result<Watched, crate::route::ReadError> {
     let mut watched = Watched::default();
-    for (at, event) in crate::route::events(recorded, crate::schemas::Producer::Runner)?
-        .into_iter()
-        .enumerate()
-    {
+    for (at, event) in recorded.events().iter().enumerate() {
         let placed = |cause| crate::route::ReadError {
             line: at.saturating_add(1),
             cause,
         };
-        match text(&event, "type").as_deref() {
+        match text(event, "type").as_deref() {
             Some("wire-exchange") => {
-                let record = crate::route::required(&event, "exchange", Some).map_err(placed)?;
+                let record = crate::route::required(event, "exchange", Some).map_err(placed)?;
                 watched.exchanges.push(exchange(record).map_err(placed)?);
             }
             Some("wire-exec") => {
-                let record = crate::route::required(&event, "wire", Some).map_err(placed)?;
+                let record = crate::route::required(event, "wire", Some).map_err(placed)?;
                 watched.execs.push(exec(record).map_err(placed)?);
             }
             _ => {}

@@ -300,9 +300,11 @@ fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
             "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddddddddddddddddddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"failed\":[]}}}}}}\n"
         )
     };
-    let read = |issued: &str| {
-        xtask::crashes::read(&line(issued)).expect("a recording this audit can read")
+    let checkers = xtask::schemas::Checkers::compiled().expect("the published schemas compile");
+    let recorded = |text: &str| {
+        xtask::route::Checked::read(text, &checkers).map(|checked| xtask::crashes::read(&checked))
     };
+    let read = |issued: &str| recorded(&line(issued)).expect("a recording this audit can read");
     assert!(
         matches!(
             read("null").steps.as_slice(),
@@ -311,7 +313,7 @@ fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
         "`null` is a run nothing was issued, which is every run but a crashed one"
     );
     assert!(
-        xtask::crashes::read(&line("{}")).is_err(),
+        recorded(&line("{}")).is_err(),
         "a record that is not whole is off the published schema, so the recording is refused \
          rather than read as holding nothing"
     );

@@ -2201,6 +2201,7 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
 /// # Errors
 /// A run directory whose report could not be read, is not JSON, or is not the assurance report.
 pub fn proofaudit(
+    checkers: &crate::schemas::Checkers,
     run: &Path,
     trace: Option<&Path>,
 ) -> Result<proofaudit::Audit, proofaudit::AuditError> {
@@ -2212,7 +2213,15 @@ pub fn proofaudit(
             source,
         })?;
     let kept = recordings(trace)?;
-    proofaudit::audit_with(&label, &text, kept.recorded(), Some(run))
+    proofaudit::audit_with(
+        checkers,
+        proofaudit::Reported {
+            path: &label,
+            text: &text,
+        },
+        kept.recorded(),
+        Some(run),
+    )
 }
 
 /// The runner's recording and every configured build's engine recording one run kept, each as its path and its text.
@@ -2270,6 +2279,7 @@ fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError
 /// # Errors
 /// A document that cannot be read, is not JSON or is off its schema, a report that is not a merge, a shard given twice, and a shard the report was not merged from.
 pub fn proofaudit_merged(
+    checkers: &crate::schemas::Checkers,
     merged: &Path,
     shards: &[PathBuf],
     traces: Option<&Path>,
@@ -2279,18 +2289,21 @@ pub fn proofaudit_merged(
         .iter()
         .map(|shard| {
             let document = assurance_document(shard)?;
-            let run_id = proofaudit::merge::shard_run(&document.label, &document.text)?;
+            let run_id = proofaudit::merge::shard_run(checkers, &document.label, &document.text)?;
             let trace = traces.map(|directory| directory.join(&run_id));
             let kept = recordings(trace.as_deref())?;
             proofaudit::merge::audited(
-                &document.label,
-                &document.text,
+                checkers,
+                proofaudit::Reported {
+                    path: &document.label,
+                    text: &document.text,
+                },
                 kept.recorded(),
                 document.run.as_deref(),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    proofaudit::merge::merged_with(&merged.label, &merged.text, &audited)
+    proofaudit::merge::merged_with(checkers, &merged.label, &merged.text, &audited)
 }
 
 /// An assurance document as the audit reads it: where it is, what it says, and the run directory holding it when one was named.
@@ -2420,7 +2433,7 @@ fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::
 ///
 /// # Errors
 /// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
-pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
+pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize, GateFailure> {
     let clean = proofaudit::sentinel::clean();
     let merged = proofaudit::sentinel::sharded_clean().map_err(|error| {
         GateFailure(format!(
@@ -2428,17 +2441,17 @@ pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
         ))
     })?;
     for specimen in [&clean, &merged] {
-        silent(specimen)?;
+        silent(checkers, specimen)?;
     }
     let mut found = 0_usize;
     for layer in proofaudit::Layer::ALL {
-        let planted = proofaudit_sighted(layer, &layer.planted())?;
+        let planted = proofaudit_sighted(checkers, layer, &layer.planted())?;
         found = found.checked_add(planted).ok_or_else(|| {
             GateFailure("proofaudit: more planted defects than a count can hold".to_owned())
         })?;
     }
     for rule in proofaudit::merge::MergeRule::ALL {
-        merge_rule_sighted(rule)?;
+        merge_rule_sighted(checkers, rule)?;
     }
     Ok(found)
 }
@@ -2447,14 +2460,17 @@ pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
 ///
 /// # Errors
 /// A plant that cannot be built or read, or one no violation of its rule names.
-fn merge_rule_sighted(rule: proofaudit::merge::MergeRule) -> Result<(), GateFailure> {
+fn merge_rule_sighted(
+    checkers: &crate::schemas::Checkers,
+    rule: proofaudit::merge::MergeRule,
+) -> Result<(), GateFailure> {
     let plant = proofaudit::sentinel::merge_plant(rule).map_err(|error| {
         GateFailure(format!(
             "proofaudit: the merge rule {} has no defect planted for it: {error}",
             rule.label()
         ))
     })?;
-    let audit = proofaudit_specimen(&plant)?;
+    let audit = proofaudit_specimen(checkers, &plant)?;
     let prefix = format!("{}: ", rule.label());
     if audit.remarks.iter().any(|remark| {
         remark.layer == proofaudit::Layer::Merge
@@ -2477,8 +2493,11 @@ fn merge_rule_sighted(rule: proofaudit::merge::MergeRule) -> Result<(), GateFail
 ///
 /// # Errors
 /// A violation in it, which means that layer fires on anything.
-fn silent(specimen: &proofaudit::sentinel::Perturbation) -> Result<(), GateFailure> {
-    let audit = proofaudit_specimen(specimen)?;
+fn silent(
+    checkers: &crate::schemas::Checkers,
+    specimen: &proofaudit::sentinel::Perturbation,
+) -> Result<(), GateFailure> {
+    let audit = proofaudit_specimen(checkers, specimen)?;
     if audit.violations() > 0 {
         return Err(GateFailure(format!(
             "proofaudit: the clean specimen `{}` draws {} violation(s), so a layer that fires on \
@@ -2496,6 +2515,7 @@ fn silent(specimen: &proofaudit::sentinel::Perturbation) -> Result<(), GateFailu
 /// # Errors
 /// The first perturbation `layer` found nothing in, an empty `planted`, or a specimen that could not be laid out or read.
 pub fn proofaudit_sighted(
+    checkers: &crate::schemas::Checkers,
     layer: proofaudit::Layer,
     planted: &[proofaudit::sentinel::Perturbation],
 ) -> Result<usize, GateFailure> {
@@ -2508,7 +2528,7 @@ pub fn proofaudit_sighted(
         )));
     }
     for perturbation in planted {
-        let audit = proofaudit_specimen(perturbation)?;
+        let audit = proofaudit_specimen(checkers, perturbation)?;
         if !audit.violated(layer) {
             return Err(GateFailure(format!(
                 "proofaudit: the {label} layer is blind. Its planted defect `{name}` \
@@ -2526,6 +2546,7 @@ pub fn proofaudit_sighted(
 
 /// The proof audit of one specimen, laid out on disk and read as the gate reads a run.
 fn proofaudit_specimen(
+    checkers: &crate::schemas::Checkers,
     specimen: &proofaudit::sentinel::Perturbation,
 ) -> Result<proofaudit::Audit, GateFailure> {
     let name = specimen.name;
@@ -2534,9 +2555,9 @@ fn proofaudit_specimen(
         .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))?;
     let shards: Vec<PathBuf> = laid.shards().into_iter().map(Path::to_path_buf).collect();
     if shards.is_empty() {
-        proofaudit(laid.run(), laid.trace())
+        proofaudit(checkers, laid.run(), laid.trace())
     } else {
-        proofaudit_merged(laid.run(), &shards, laid.traces())
+        proofaudit_merged(checkers, laid.run(), &shards, laid.traces())
     }
     .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
 }
@@ -2562,7 +2583,10 @@ pub struct EngineRun<'a> {
 ///
 /// # Errors
 /// The report that is not there, is not JSON, or is not a run report.
-pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, engineaudit::AuditError> {
+pub fn engine_audit(
+    checkers: &crate::schemas::Checkers,
+    asked: &EngineRun<'_>,
+) -> Result<engineaudit::Audit, engineaudit::AuditError> {
     let path = asked.run.join(engineaudit::REPORT_FILE);
     let label = path.display().to_string();
     let text =
@@ -2609,6 +2633,7 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
     let carried = read_optional_engine_document(&asked.run.join("carried-v1.json"))?;
     let probe_logs = read_probe_logs(&asked.run.join("probe"))?;
     engineaudit::audit(
+        checkers,
         &label,
         &text,
         &engineaudit::Evidence {
@@ -2648,9 +2673,9 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
 ///
 /// # Errors
 /// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
-pub fn engine_audit_sentinels() -> Result<usize, GateFailure> {
+pub fn engine_audit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize, GateFailure> {
     let clean = engineaudit::sentinel::clean();
-    let audit = engine_audit_specimen(&clean)?;
+    let audit = engine_audit_specimen(checkers, &clean)?;
     if audit.violations() > 0 {
         return Err(GateFailure(format!(
             "engine-audit: the clean specimen draws {} violation(s), so a layer that fires on it \
@@ -2661,7 +2686,7 @@ pub fn engine_audit_sentinels() -> Result<usize, GateFailure> {
     }
     let mut found = 0_usize;
     for layer in engineaudit::Layer::ALL {
-        let planted = engine_audit_sighted(layer, &layer.planted())?;
+        let planted = engine_audit_sighted(checkers, layer, &layer.planted())?;
         found = found.checked_add(planted).ok_or_else(|| {
             GateFailure("engine-audit: more planted defects than a count can hold".to_owned())
         })?;
@@ -2674,6 +2699,7 @@ pub fn engine_audit_sentinels() -> Result<usize, GateFailure> {
 /// # Errors
 /// The first perturbation `layer` found nothing in, an empty `planted`, or a specimen that could not be laid out or read.
 pub fn engine_audit_sighted(
+    checkers: &crate::schemas::Checkers,
     layer: engineaudit::Layer,
     planted: &[engineaudit::sentinel::Perturbation],
 ) -> Result<usize, GateFailure> {
@@ -2686,7 +2712,7 @@ pub fn engine_audit_sighted(
         )));
     }
     for perturbation in planted {
-        let audit = engine_audit_specimen(perturbation)?;
+        let audit = engine_audit_specimen(checkers, perturbation)?;
         if !audit.violated(layer) {
             return Err(GateFailure(format!(
                 "engine-audit: the {label} layer is blind. Its planted defect `{name}` \
@@ -2704,20 +2730,24 @@ pub fn engine_audit_sighted(
 
 /// The audit of one specimen, laid out on disk and read with every layer asked.
 fn engine_audit_specimen(
+    checkers: &crate::schemas::Checkers,
     specimen: &engineaudit::sentinel::Perturbation,
 ) -> Result<engineaudit::Audit, GateFailure> {
     let name = specimen.name;
     let laid = specimen
         .lay()
         .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))?;
-    engine_audit(&EngineRun {
-        run: laid.run(),
-        trace: Some(laid.trace()),
-        shards: laid.shards(),
-        ledger: laid.ledger(),
-        sites: true,
-        root: laid.root(),
-    })
+    engine_audit(
+        checkers,
+        &EngineRun {
+            run: laid.run(),
+            trace: Some(laid.trace()),
+            shards: laid.shards(),
+            ledger: laid.ledger(),
+            sites: true,
+            root: laid.root(),
+        },
+    )
     .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))
 }
 
