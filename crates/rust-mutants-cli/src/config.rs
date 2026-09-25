@@ -270,6 +270,9 @@ pub struct Skip {
     /// The item it speaks about, by a suffix of the item path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<String>,
+    /// Source text the lines it hides hold, which follows the code where a line number does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     /// Why its author wrote it.
     /// Required.
     pub reason: String,
@@ -299,6 +302,7 @@ impl Skip {
             path: Pattern::compile(&self.path)?,
             lines: self.range(),
             item: self.item.clone(),
+            text: self.text.clone(),
             reason: self.reason.clone(),
         })
     }
@@ -666,6 +670,15 @@ impl Config {
                     skip.path
                 )));
             }
+            if let Some(text) = &skip.text
+                && (text.trim().is_empty() || text.contains('\n'))
+            {
+                return Err(invalid(format!(
+                    "the skip for {:?} anchors to the text {text:?}; write some of one line of \
+                     the source it hides",
+                    skip.path
+                )));
+            }
             if skip.lines.is_some() && skip.item.is_some() {
                 return Err(invalid(format!(
                     "the skip for {:?} says where twice, by lines and by item; a skip says it once",
@@ -898,6 +911,7 @@ version = 1
 # path = \"src/scanner/**\"        # glob against the workspace-relative path
 # lines = \"40-58\"                # inclusive; only with a literal path
 # item = \"Scanner::skip_ws\"      # a suffix of the item path; not with lines
+# text = \"while let Some(c)\"     # source the hidden lines hold; follows the code
 # reason = \"\"                    # required
 
 [execution]

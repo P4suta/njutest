@@ -379,6 +379,27 @@ fn a_configured_skip_names_a_path_a_reason_and_at_most_one_of_lines_or_item() {
 }
 
 #[test]
+fn a_skip_anchors_to_some_of_one_line_of_source() {
+    let good = parse(
+        "version = 1\n[[mutation.skip]]\npath = \"src/lib.rs\"\nlines = \"40-40\"\ntext = \"while let Some(c)\"\nreason = \"why\"\n",
+    )
+    .expect("lines anchored to the text they hold");
+    assert_eq!(
+        good.mutation.skip[0].text.as_deref(),
+        Some("while let Some(c)")
+    );
+    for text in ["\"\"", "\"  \"", "\"\"\"\na\nb\"\"\""] {
+        assert_eq!(
+            kind(&format!(
+                "version = 1\n[[mutation.skip]]\npath = \"src/lib.rs\"\ntext = {text}\nreason = \"why\"\n"
+            )),
+            ConfigErrorKind::Invalid,
+            "an anchor that is blank matches every line, and one of two lines matches none: {text}"
+        );
+    }
+}
+
+#[test]
 fn lines_requires_a_literal_path() {
     assert_eq!(
         kind(

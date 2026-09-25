@@ -48,15 +48,23 @@ pub struct SkipRule {
     /// The item it speaks about, by a suffix of the item path.
     /// `None` is every item.
     pub item: Option<String>,
+    /// Source text every line it hides holds, which follows the code where a line number does not.
+    /// `None` is any text.
+    pub text: Option<String>,
     /// Why its author wrote it.
     pub reason: String,
 }
 
 impl SkipRule {
-    /// Whether this entry speaks about a place.
+    /// Whether this entry speaks about a place, whose line holds `held`.
     #[must_use]
-    pub fn covers(&self, path: &str, line: u32, item: &str) -> bool {
+    pub fn covers(&self, path: &str, (line, held): (u32, &str), item: &str) -> bool {
         if !self.path.matches(path) {
+            return false;
+        }
+        if let Some(text) = &self.text
+            && !held.contains(text.as_str())
+        {
             return false;
         }
         if let Some((from, to)) = self.lines
@@ -94,6 +102,9 @@ pub struct FileReport {
     pub whole_file: Option<SkipReason>,
 }
 
+/// Every place an entry's anchoring text is, by file and 1-based line.
+pub type Anchored = Vec<(String, u32)>;
+
 /// One `rust-mutants: skip` marker, where it sits and whether it hid anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkipClaim {
@@ -105,6 +116,10 @@ pub struct SkipClaim {
     pub reason: String,
     /// Whether a place a rule targets starts inside what it speaks about.
     pub matched: bool,
+    /// The source text a configured entry anchors to, when it names one.
+    pub text: Option<String>,
+    /// Every place that text is, by file and 1-based line, in the files the entry names.
+    pub text_at: Anchored,
 }
 
 /// One decision the walk took, and the file it took it in.
@@ -283,6 +298,7 @@ pub fn discover(
     let mut decisions: Vec<Decided> = Vec::new();
     let mut marked_only = BTreeSet::new();
     let mut configured = vec![false; options.skips.len()];
+    let mut anchored: Vec<Anchored> = vec![Vec::new(); options.skips.len()];
     let mut builder = Builder::new();
     for (path, package) in &assigner.generated {
         let report = whole_file(path, package, SkipReason::GeneratedOutsideWorkspace);
@@ -308,7 +324,12 @@ pub fn discover(
         };
         let role = skipped(path, assignment.role, options, &mut marked_only);
         if role.is_none() {
-            configure(&mut discovery, &options.skips, &mut configured)?;
+            configure(
+                root,
+                &mut discovery,
+                &options.skips,
+                (&mut configured, &mut anchored),
+            )?;
         }
         let report = report(&discovery, &assignment.package, role)?;
         trace.discover_file(record(&discovery, &report)?);
@@ -334,7 +355,7 @@ pub fn discover(
         files.push(report);
     }
     skips.sort();
-    configured_claims(&options.skips, &configured, trace, &mut claims);
+    configured_claims(&options.skips, (&configured, &anchored), trace, &mut claims);
     claims.sort_by(|one, other| (&one.path, one.line).cmp(&(&other.path, other.line)));
     let catalog = builder.build()?;
     Ok(Discovery {
@@ -377,14 +398,43 @@ fn assigned<'a>(
     Ok(assigner)
 }
 
+/// The text of the file at `path` when an entry that names it anchors to text, and nothing otherwise, since only such an entry reads a line.
+fn anchoring(root: &Path, path: &str, rules: &[SkipRule]) -> Result<String, DiscoverError> {
+    if !rules
+        .iter()
+        .any(|rule| rule.text.is_some() && rule.path.matches(path))
+    {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(root.join(path)).map_err(|source| DiscoverError::Unreadable {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+/// Every line of the file at `path` that holds `rule`'s anchoring text, when the rule names that file.
+fn anchored_in(rule: &SkipRule, path: &str, lines: &[&str]) -> Anchored {
+    let Some(wanted) = &rule.text else {
+        return Vec::new();
+    };
+    if !rule.path.matches(path) {
+        return Vec::new();
+    }
+    (1_u32..)
+        .zip(lines)
+        .filter(|(_, line)| line.contains(wanted.as_str()))
+        .map(|(number, _)| (path.to_owned(), number))
+        .collect()
+}
+
 /// The configured entries, recorded and kept beside the markers.
 fn configured_claims(
     rules: &[SkipRule],
-    matched: &[bool],
+    (matched, anchored): (&[bool], &[Anchored]),
     trace: &Recorder,
     into: &mut Vec<SkipClaim>,
 ) {
-    for (rule, matched) in rules.iter().zip(matched) {
+    for ((rule, matched), text_at) in rules.iter().zip(matched).zip(anchored) {
         let line = match rule.lines {
             Some((from, _to)) => from,
             None => 0,
@@ -394,6 +444,8 @@ fn configured_claims(
             line,
             reason: rule.reason.clone(),
             matched: *matched,
+            text: rule.text.clone(),
+            text_at: text_at.clone(),
         };
         trace.skip_claim(SkipClaimRecord {
             path: claim.path.clone(),
@@ -405,24 +457,42 @@ fn configured_claims(
     }
 }
 
-/// Takes out of one file's walk what a `[[mutation.skip]]` entry speaks about.
+/// Takes out of one file's walk what a `[[mutation.skip]]` entry speaks about, and notes every line of it that holds an entry's anchoring text.
 fn configure(
+    root: &Path,
     discovery: &mut FileDiscovery,
     rules: &[SkipRule],
-    matched: &mut [bool],
+    (matched, anchored): (&mut [bool], &mut [Anchored]),
 ) -> Result<(), DiscoverError> {
     if rules.is_empty() {
         return Ok(());
     }
+    let text = anchoring(root, &discovery.path, rules)?;
+    let lines: Vec<&str> = text.lines().collect();
+    for (rule, at) in rules.iter().zip(anchored.iter_mut()) {
+        at.extend(anchored_in(rule, &discovery.path, &lines));
+    }
+    let held = |line: u32| -> &str {
+        let index = match usize::try_from(line) {
+            Ok(line) => line.checked_sub(1),
+            Err(_beyond_this_platform) => None,
+        };
+        match index.and_then(|index| lines.get(index)) {
+            Some(held) => held,
+            None => "",
+        }
+    };
     let candidate_count = discovery.candidates.len();
     let mut hidden = Some(0u32);
     let path = discovery.path.clone();
     discovery.candidates.retain(|found| {
-        let Some((at, rule)) = rules
-            .iter()
-            .enumerate()
-            .find(|(_at, rule)| rule.covers(&path, found.position.line, &found.item))
-        else {
+        let Some((at, rule)) = rules.iter().enumerate().find(|(_at, rule)| {
+            rule.covers(
+                &path,
+                (found.position.line, held(found.position.line)),
+                &found.item,
+            )
+        }) else {
             return true;
         };
         if let Some(claimed) = matched.get_mut(at) {
@@ -475,6 +545,8 @@ fn claimed(
             line: claim.line,
             reason: claim.reason.clone(),
             matched: claim.matched,
+            text: None,
+            text_at: Vec::new(),
         });
     }
 }
