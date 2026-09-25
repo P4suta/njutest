@@ -321,13 +321,18 @@ fn a_file_the_compiler_read_is_scanned_wherever_it_lives() {
         .map(|(path, _found)| path.as_str())
         .collect();
     assert!(
-        files.contains(".gen/hidden.rs") && files.iter().any(|path| path.ends_with("out/gen.rs")),
+        files.contains(".gen/hidden.rs")
+            && files
+                .iter()
+                .any(|path| std::path::Path::new(path).ends_with("out/gen.rs")),
         "a file the compiler read is a source of the crate whatever directory it is in: a \
          hidden directory `#[path]` points into, or the OUT_DIR a build script wrote into and \
          `include!` pulled in. {files:?}"
     );
     assert!(
-        scan.unread.iter().any(|path| path.ends_with("out/gone.rs")),
+        scan.unread
+            .iter()
+            .any(|path| std::path::Path::new(path).ends_with("out/gone.rs")),
         "and a file the compiler read that is not there to scan is named as unread: {:?}",
         scan.unread
     );
