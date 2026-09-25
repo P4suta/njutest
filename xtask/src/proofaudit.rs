@@ -9,6 +9,7 @@ mod knobs;
 pub mod sentinel;
 pub mod soundness;
 
+use crate::error::Coded as _;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -769,7 +770,8 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
                 notes.violated(
                     &target,
                     format!(
-                        "the report gives {target} a standing the recording cannot rest: {why}"
+                        "the report gives {target} a standing the recording cannot rest: {}",
+                        why.coded()
                     ),
                 );
                 continue;
@@ -781,7 +783,7 @@ fn concurrency(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit)
                     proven.push(target.clone());
                 }
             }
-            Err(why) => notes.violated(&target, format!("{target}: {why}")),
+            Err(why) => notes.violated(&target, format!("{target}: {}", why.coded())),
         }
     }
     explorations(rows, engines, &mut notes);
@@ -852,13 +854,14 @@ fn explorations(rows: &[serde_json::Value], engines: &[Engine], notes: &mut Note
         match crate::concurrency::replayed(&runs) {
             Ok(derived) => {
                 if let Err(why) = crate::concurrency::agrees_explored(reported, &derived, context) {
-                    notes.violated(&target, format!("{target}: {why}"));
+                    notes.violated(&target, format!("{target}: {}", why.coded()));
                 }
             }
             Err(why) => notes.violated(
                 &target,
                 format!(
-                    "{target}: the controls the engine recorded for it are not an exploration: {why}"
+                    "{target}: the controls the engine recorded for it are not an exploration: {}",
+                    why.coded()
                 ),
             ),
         }
@@ -1319,7 +1322,7 @@ fn one_repair(
                 );
             }
         }
-        Err(why) => notes.violated(subject, why.to_string()),
+        Err(why) => notes.violated(subject, why.coded()),
     }
 }
 
@@ -2033,6 +2036,14 @@ enum MintMutantIdError {
     FieldTooLong { field: &'static str },
 }
 
+impl crate::error::Coded for MintMutantIdError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::FieldTooLong { .. } => crate::error::XtCode::IdentityField,
+        }
+    }
+}
+
 fn mint_mutant_id(input: &MutantIdentityInput<'_>) -> Result<String, MintMutantIdError> {
     let mut hasher = sha2::Sha256::new();
     let version = input.rule_version.to_string();
@@ -2546,7 +2557,7 @@ fn faults(recording: &Recording<'_>, faulted: Option<&crate::faults::Faulted>, a
             );
         }
         if let Err(why) = crate::faults::supports(site, &faulted.evidence(&site.fault)) {
-            notes.violated(&site.fault, why.to_string());
+            notes.violated(&site.fault, why.coded());
         }
     }
 }

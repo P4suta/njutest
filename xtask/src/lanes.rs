@@ -118,6 +118,19 @@ pub enum LaneError {
     },
 }
 
+impl crate::error::Coded for LaneError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::NotText { .. }
+            | Self::Nowhere
+            | Self::Io { .. }
+            | Self::Lock { .. }
+            | Self::Progress { .. } => crate::error::XtCode::LaneUnavailable,
+            Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
+        }
+    }
+}
+
 impl LaneError {
     /// The signal that ended the wait, when one did.
     #[must_use]

@@ -198,6 +198,32 @@ pub enum PrePushError {
     },
 }
 
+impl crate::error::Coded for PrePushError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Incomplete { .. }
+            | Self::NotHead { .. }
+            | Self::UnknownRemote { .. }
+            | Self::NotFastForward { .. }
+            | Self::NothingToCheck => crate::error::XtCode::PushUnverifiable,
+            Self::Moved { .. } | Self::Changed { .. } => crate::error::XtCode::PushTreeMoved,
+            Self::Budget { .. } | Self::Quiet { .. } | Self::Interrupted { .. } => {
+                crate::error::XtCode::PushCheckStopped
+            }
+            Self::Failed { .. } => crate::error::XtCode::PushCheckFailed,
+            Self::Work { .. }
+            | Self::Start { .. }
+            | Self::Git { .. }
+            | Self::Io { .. }
+            | Self::Setting { .. }
+            | Self::NotText { .. }
+            | Self::Nowhere
+            | Self::Lane { .. }
+            | Self::Progress { .. } => crate::error::XtCode::PushGateUnrun,
+        }
+    }
+}
+
 impl PrePushError {
     /// The exit status the hook reports this refusal with.
     #[must_use]

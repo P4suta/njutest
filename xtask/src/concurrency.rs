@@ -56,6 +56,16 @@ pub enum UnwitnessedError {
     ArgumentsUnrecorded,
 }
 
+impl crate::error::Coded for UnwitnessedError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::TargetUnbuilt | Self::ArgumentsUnrecorded => {
+                crate::error::XtCode::ThreadsUnwitnessed
+            }
+        }
+    }
+}
+
 /// What a reported standing contradicts.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ContradictionError {
@@ -101,6 +111,19 @@ pub enum ContradictionError {
         /// The state.
         state: String,
     },
+}
+
+impl crate::error::Coded for ContradictionError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Proven { .. }
+            | Self::Reasons { .. }
+            | Self::Concurrent { .. }
+            | Self::ProvenWithReasons { .. }
+            | Self::Reason { .. }
+            | Self::Unknown { .. } => crate::error::XtCode::ThreadsContradicted,
+        }
+    }
 }
 
 /// The libtest options that take the next word as their value.
@@ -374,6 +397,16 @@ pub enum ReplayError {
     },
 }
 
+impl crate::error::Coded for ReplayError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Stray { .. } | Self::Truncated | Self::AfterBroke { .. } => {
+                crate::error::XtCode::ScheduleUnreplayable
+            }
+        }
+    }
+}
+
 /// What the exploration of one binary comes to, replaying the procedure over `runs`.
 ///
 /// Each delayed site has its first control, and where that failed, rounds of a delayed control that must fail exactly the same tests and an undelayed one that must pass, stopping at the first that does not.
@@ -452,6 +485,14 @@ pub enum ExploreContradictionError {
         /// What the controls come to.
         derived: Explored,
     },
+}
+
+impl crate::error::Coded for ExploreContradictionError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Differs { .. } => crate::error::XtCode::ExplorationContradicted,
+        }
+    }
 }
 
 /// What else a reported exploration answers to beyond its own controls.

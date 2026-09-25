@@ -324,6 +324,23 @@ pub enum Contradiction {
     },
 }
 
+impl crate::error::Coded for Contradiction {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::NoticedWithoutFailure { .. }
+            | Self::NoticedUnconfirmed { .. }
+            | Self::NothingRan { .. }
+            | Self::NotAllPassed { .. }
+            | Self::UndecidedThoughPassed { .. }
+            | Self::RanThough { .. }
+            | Self::WaitedWithoutBound
+            | Self::UnreachedWithoutRoute
+            | Self::NotPutWithoutRefusal
+            | Self::Unknown { .. } => crate::error::XtCode::FaultContradicted,
+        }
+    }
+}
+
 /// Whether the executions of one fault support the decision the run gave it.
 ///
 /// # Errors
