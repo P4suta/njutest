@@ -5,11 +5,11 @@
 //! guards of the sites inside it, and no alternative does.
 
 pub fn nested(a: i32, b: i32, c: i32) -> bool {
-    __rm::checkpoint(); __rm::value!(if __rm::active(0) { true } else if __rm::active(3) { a + b * c <= a - b } else { __rm::value!(if __rm::active(1) { a - b * c } else { a + __rm::value!(if __rm::active(2) { b / c } else { b * c }) }) < __rm::value!(if __rm::active(4) { a + b } else { a - b }) })
+    __rm::item(0); __rm::checkpoint(); __rm::value!(if __rm::active(0) { true } else if __rm::active(3) { a + b * c <= a - b } else { __rm::value!(if __rm::active(1) { a - b * c } else { a + __rm::value!(if __rm::active(2) { b / c } else { b * c }) }) < __rm::value!(if __rm::active(4) { a + b } else { a - b }) })
 }
 
 pub fn multiline(a: i32, b: i32) -> bool {
-    __rm::checkpoint(); if __rm::value!(__rm::active(5) && __rm::value!(!(a < b && b > 0)) || __rm::active(6) && __rm::value!(true) || __rm::active(7) && __rm::value!(false) || __rm::active(9) && __rm::value!(a < b || b > 0) || !__rm::active(5) && !__rm::active(6) && !__rm::active(7) && !__rm::active(9) && __rm::differing(9, __rm::value!(__rm::value!(__rm::active(8) && __rm::value!(a <= b) || !__rm::active(8) && __rm::differing(8, __rm::value!(a < b), || __rm::value!(a <= b)))
+    __rm::item(1); __rm::checkpoint(); if __rm::value!(__rm::active(5) && __rm::value!(!(a < b && b > 0)) || __rm::active(6) && __rm::value!(true) || __rm::active(7) && __rm::value!(false) || __rm::active(9) && __rm::value!(a < b || b > 0) || !__rm::active(5) && !__rm::active(6) && !__rm::active(7) && !__rm::active(9) && __rm::differing(9, __rm::value!(__rm::value!(__rm::active(8) && __rm::value!(a <= b) || !__rm::active(8) && __rm::differing(8, __rm::value!(a < b), || __rm::value!(a <= b)))
         && __rm::value!(__rm::active(10) && __rm::value!(b >= 0) || !__rm::active(10) && __rm::differing(10, __rm::value!(b > __rm::value!(if __rm::active(11) { 1 } else { 0 })), || __rm::value!(b >= 0)))), || __rm::value!(a < b || b > 0)))
     {
         return __rm::value!(if __rm::active(12) { false } else { true });
@@ -40,7 +40,8 @@ mod __rm {
     ];
     const TOUCH_BASE: u32 = 0;
     const TOUCH_SPAN: u32 = 14;
-    const TOUCH_BATCH: usize = 64;
+    const ITEM_BASE: u32 = 0;
+    const ITEM_SPAN: u32 = 2;
     #[derive(Clone, Copy)]
     enum Selection {
         None,
@@ -686,15 +687,15 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         }
     }
 
-    fn touch_span() -> usize {
-        match <usize as __rm_std::convert::TryFrom<u32>>::try_from(TOUCH_SPAN) {
+    fn window(span: u32) -> usize {
+        match <usize as __rm_std::convert::TryFrom<u32>>::try_from(span) {
             __rm_std::result::Result::Ok(span) => span,
             __rm_std::result::Result::Err(_) => touch_failure(),
         }
     }
 
-    fn touch_offset(index: u32) -> usize {
-        let relative = match index.checked_sub(TOUCH_BASE) {
+    fn offset(index: u32, base: u32) -> usize {
+        let relative = match index.checked_sub(base) {
             __rm_std::option::Option::Some(relative) => relative,
             __rm_std::option::Option::None => touch_failure(),
         };
@@ -707,9 +708,10 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     fn mark(
         bits: &mut __rm_std::vec::Vec<bool>,
         indices: &mut __rm_std::vec::Vec<u32>,
+        at: usize,
         index: u32,
     ) -> bool {
-        let slot = match bits.get_mut(touch_offset(index)) {
+        let slot = match bits.get_mut(at) {
             __rm_std::option::Option::Some(slot) => slot,
             __rm_std::option::Option::None => touch_failure(),
         };
@@ -723,75 +725,81 @@ Result < (StepPhase, StepAdvance), StepMachineError >
 
     struct Seen {
         name: __rm_std::string::String,
-        eager: bool,
         bits: __rm_std::vec::Vec<bool>,
         touched: __rm_std::vec::Vec<u32>,
         entered_bits: __rm_std::vec::Vec<bool>,
         entered: __rm_std::vec::Vec<u32>,
         differed_bits: __rm_std::vec::Vec<bool>,
         differed: __rm_std::vec::Vec<u32>,
+        item_bits: __rm_std::vec::Vec<bool>,
+        items: __rm_std::vec::Vec<u32>,
     }
 
     impl Seen {
         fn new() -> Seen {
             let named = __rm_std::thread::current().name().map(__rm_std::string::ToString::to_string);
-            let eager = match &named {
-                __rm_std::option::Option::Some(name) => name == "main",
-                __rm_std::option::Option::None => true,
+            let attributed = match &named {
+                __rm_std::option::Option::Some(name) => name != "main",
+                __rm_std::option::Option::None => false,
             };
-            let span = touch_span();
+            let span = window(TOUCH_SPAN);
             let mut bits = __rm_std::vec::Vec::new();
             bits.resize(span, false);
             let mut entered_bits = __rm_std::vec::Vec::new();
             entered_bits.resize(span, false);
             let mut differed_bits = __rm_std::vec::Vec::new();
             differed_bits.resize(span, false);
+            let mut item_bits = __rm_std::vec::Vec::new();
+            item_bits.resize(window(ITEM_SPAN), false);
             Seen {
                 name: match named {
-                    __rm_std::option::Option::Some(name) if !eager => name,
+                    __rm_std::option::Option::Some(name) if attributed => name,
                     _ => __rm_std::string::String::from("-"),
                 },
-                eager,
                 bits,
                 touched: __rm_std::vec::Vec::new(),
                 entered_bits,
                 entered: __rm_std::vec::Vec::new(),
                 differed_bits,
                 differed: __rm_std::vec::Vec::new(),
+                item_bits,
+                items: __rm_std::vec::Vec::new(),
             }
         }
 
         fn saw(&mut self, index: u32) {
-            if !mark(&mut self.bits, &mut self.touched, index) {
+            if !mark(&mut self.bits, &mut self.touched, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.touched.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn entered_body(&mut self, index: u32) {
-            if !mark(&mut self.entered_bits, &mut self.entered, index) {
+            if !mark(&mut self.entered_bits, &mut self.entered, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.entered.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn saw_a_difference(&mut self, index: u32) {
-            if !mark(&mut self.differed_bits, &mut self.differed, index) {
+            if !mark(&mut self.differed_bits, &mut self.differed, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.differed.len() >= TOUCH_BATCH {
-                self.flush();
+            self.flush();
+        }
+
+        fn entered_item(&mut self, index: u32) {
+            if !mark(&mut self.item_bits, &mut self.items, offset(index, ITEM_BASE), index) {
+                return;
             }
+            self.flush();
         }
 
         fn flush(&mut self) {
             written("t", &self.name, &mut self.touched);
             written("b", &self.name, &mut self.entered);
             written("i", &self.name, &mut self.differed);
+            written("e", &self.name, &mut self.items);
         }
     }
 
@@ -911,6 +919,32 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     #[inline(never)]
     fn difference(index: u32) {
         with_seen(|seen| seen.saw_a_difference(index));
+    }
+
+    #[inline(always)]
+    pub(crate) fn item(index: u32) {
+        if touching() {
+            entered_item(index);
+        }
+    }
+
+    #[inline(never)]
+    fn entered_item(index: u32) {
+        let recorded = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => {
+                seen.entered_item(index);
+                TouchAccess::Applied
+            }
+            __rm_std::result::Result::Err(_) => TouchAccess::AlreadyBorrowed,
+        });
+        match recorded {
+            __rm_std::result::Result::Ok(TouchAccess::Applied) => {}
+            __rm_std::result::Result::Ok(TouchAccess::AlreadyBorrowed) => touch_failure(),
+            __rm_std::result::Result::Err(_) => {
+                let mut indices = __rm_std::vec![index];
+                written("e", "-", &mut indices);
+            }
+        }
     }
 
     #[inline(never)]

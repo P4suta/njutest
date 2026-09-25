@@ -145,6 +145,7 @@ fn benchmarks(criterion: &mut Criterion) {
                 comparable: &BTreeSet::default(),
                 probed: &BTreeMap::default(),
                 catalog_digest: catalog.digest(),
+                first_item: 0,
             })
         });
     });

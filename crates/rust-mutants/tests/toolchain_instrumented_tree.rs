@@ -138,6 +138,7 @@ fn prepare(fixture: &str) -> Tree {
             comparable: &BTreeSet::default(),
             probed: &BTreeMap::default(),
             catalog_digest: discovery.catalog.digest(),
+            first_item: 0,
         })
         .expect("instrument");
         assert!(file.instrumented, "{path}");
