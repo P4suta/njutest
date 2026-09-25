@@ -259,6 +259,11 @@ fn fixture_assured() {
 }
 
 #[test]
+fn fixture_balanced_fails_then_hangs() {
+    holds("fixture-balanced-fails-then-hangs");
+}
+
+#[test]
 fn fixture_baseline() {
     holds("fixture-baseline");
 }
@@ -356,6 +361,11 @@ fn fixture_hang() {
 #[test]
 fn fixture_hollow() {
     holds("fixture-hollow");
+}
+
+#[test]
+fn fixture_hollow_only() {
+    holds("fixture-hollow-only");
 }
 
 #[test]
