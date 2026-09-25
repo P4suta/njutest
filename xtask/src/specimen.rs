@@ -56,6 +56,7 @@ const NEUTRAL: [Neutral; 5] = [
         fields: &[
             ("alone", NeutralValue::False),
             ("duration_ms", NeutralValue::Zero),
+            ("entered_records", NeutralValue::Null),
             ("exit_code", NeutralValue::Zero),
             ("failed_tests", NeutralValue::Empty),
             ("signal", NeutralValue::Null),

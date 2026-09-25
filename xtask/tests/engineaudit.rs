@@ -195,7 +195,7 @@ fn a_step_limit_is_accounted_for_but_never_counted_as_detected() {
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
-            "outcome": "step_limit_reached", "expected": false,
+            "outcome": "step_limit_reached", "expected": false, "killed_by": [],
             "step_notice": {
                 "nonce": "00000000000000000000000000000000",
                 "catalog": "c".repeat(64), "mutant": KILLED, "limit": 10, "observed": 11
@@ -224,7 +224,7 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
-            "outcome": "step_limit_reached", "expected": false,
+            "outcome": "step_limit_reached", "expected": false, "killed_by": [],
             "step_notice": {
                 "nonce": "0".repeat(32), "catalog": "e".repeat(64),
                 "mutant": SURVIVED, "limit": 9, "observed": 9
@@ -252,7 +252,10 @@ fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
             "inconclusive": 0, "errored": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
-        "mutants": [{ "outcome": "waited", "retried": true, "lingered": false, "expected": false }, {}],
+        "mutants": [
+            { "outcome": "waited", "retried": true, "lingered": false, "expected": false, "killed_by": [] },
+            {}
+        ],
         "findings": [{
             "kind": "waited-mutant", "mutant": short(KILLED),
             "detail": "the wall-clock bound expired twice"
