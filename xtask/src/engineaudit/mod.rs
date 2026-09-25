@@ -103,7 +103,7 @@ pub enum AuditError {
         path: String,
         /// Where and how.
         #[source]
-        source: crate::schemas::OffSchema,
+        source: crate::schemas::OffSchemaError,
     },
     /// The published run-report schema itself does not compile.
     #[error(transparent)]

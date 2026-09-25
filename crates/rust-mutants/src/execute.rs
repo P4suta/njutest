@@ -949,12 +949,12 @@ impl Stopped {
 }
 
 impl StepProtocolFailure {
-    fn from_monitor(failure: &crate::runner::MonitorFailure) -> Self {
+    fn from_monitor(failure: &crate::runner::MonitorError) -> Self {
         match failure {
-            crate::runner::MonitorFailure::InvalidType { path } => Self::MonitorInvalid {
+            crate::runner::MonitorError::InvalidType { path } => Self::MonitorInvalid {
                 path: path.display().to_string(),
             },
-            crate::runner::MonitorFailure::Inspect { path, source } => Self::MonitorInspect {
+            crate::runner::MonitorError::Inspect { path, source } => Self::MonitorInspect {
                 path: path.display().to_string(),
                 detail: source.to_string(),
             },

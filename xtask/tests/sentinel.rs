@@ -12,7 +12,7 @@ use xtask::devgates::SeamKind;
 use xtask::engineaudit::Layer;
 use xtask::engineaudit::sentinel::{Perturbation, clean};
 use xtask::gates::{
-    GateFailure, engine_audit_sentinels, engine_audit_sighted, lint_sentinels, lint_sighted,
+    GateError, engine_audit_sentinels, engine_audit_sighted, lint_sentinels, lint_sighted,
     proofaudit_sentinels, proofaudit_sighted, seam_sentinels, seam_sighted,
 };
 use xtask::lints::Kind;
@@ -23,7 +23,7 @@ const INERT: &str = "=== inert source crates/app/src/lib.rs\n//! A file.\npub fn
 
 #[test]
 fn every_lint_kind_is_found_in_every_shape_planted_for_it() {
-    let found = lint_sentinels().unwrap_or_else(|GateFailure(said)| panic!("{said}"));
+    let found = lint_sentinels().unwrap_or_else(|GateError(said)| panic!("{said}"));
     assert!(
         found >= Kind::ALL.len(),
         "{found} shapes cannot cover {} kinds",
@@ -34,7 +34,7 @@ fn every_lint_kind_is_found_in_every_shape_planted_for_it() {
 #[test]
 fn a_kind_whose_planted_shape_is_not_found_makes_the_gate_refuse_rather_than_pass() {
     for kind in Kind::ALL {
-        let Err(GateFailure(said)) = lint_sighted(*kind, INERT) else {
+        let Err(GateError(said)) = lint_sighted(*kind, INERT) else {
             panic!(
                 "{} passed over a shape that carries none of it",
                 kind.label()
@@ -51,7 +51,7 @@ fn a_kind_whose_planted_shape_is_not_found_makes_the_gate_refuse_rather_than_pas
 #[test]
 fn a_shape_that_is_not_found_is_named_even_when_an_earlier_one_was() {
     let planted = format!("=== seen source crates/app/src/lib.rs\n#![allow(dead_code)]\n{INERT}");
-    let Err(GateFailure(said)) = lint_sighted(Kind::AllowAttribute, &planted) else {
+    let Err(GateError(said)) = lint_sighted(Kind::AllowAttribute, &planted) else {
         panic!("one shape found does not stand for another");
     };
     assert!(said.contains("`inert`"), "{said}");
@@ -131,7 +131,7 @@ fn planted_text_that_does_not_say_what_it_plants_is_refused() {
 
 #[test]
 fn every_seam_kind_is_found_in_every_shape_planted_for_it() {
-    let found = seam_sentinels().unwrap_or_else(|GateFailure(said)| panic!("{said}"));
+    let found = seam_sentinels().unwrap_or_else(|GateError(said)| panic!("{said}"));
     assert!(
         found >= SeamKind::ALL.len(),
         "{found} shapes cannot cover {} kinds",
@@ -142,7 +142,7 @@ fn every_seam_kind_is_found_in_every_shape_planted_for_it() {
 #[test]
 fn a_seam_kind_whose_planted_shape_is_not_found_makes_the_gate_refuse() {
     for kind in SeamKind::ALL {
-        let Err(GateFailure(said)) = seam_sighted(kind, INERT) else {
+        let Err(GateError(said)) = seam_sighted(kind, INERT) else {
             panic!("{kind} passed over a shape that carries none of it");
         };
         assert!(
@@ -164,7 +164,7 @@ fn a_seam_planted_outside_production_code_is_not_found() {
 #[test]
 fn every_engine_audit_layer_fires_on_what_was_planted_for_it() {
     let found =
-        engine_audit_sentinels(&checkers()).unwrap_or_else(|GateFailure(said)| panic!("{said}"));
+        engine_audit_sentinels(&checkers()).unwrap_or_else(|GateError(said)| panic!("{said}"));
     assert!(
         found >= Layer::ALL.len(),
         "{found} planted defects cannot cover {} layers",
@@ -179,7 +179,7 @@ fn an_engine_audit_layer_whose_planted_defect_changes_nothing_is_refused_as_blin
         ..clean()
     };
     for layer in Layer::ALL {
-        let Err(GateFailure(said)) =
+        let Err(GateError(said)) =
             engine_audit_sighted(&checkers(), layer, std::slice::from_ref(&inert))
         else {
             panic!(
@@ -198,7 +198,7 @@ fn an_engine_audit_layer_whose_planted_defect_changes_nothing_is_refused_as_blin
 #[test]
 fn an_engine_audit_layer_with_nothing_planted_for_it_is_refused_as_blind() {
     for layer in Layer::ALL {
-        let Err(GateFailure(said)) = engine_audit_sighted(&checkers(), layer, &[]) else {
+        let Err(GateError(said)) = engine_audit_sighted(&checkers(), layer, &[]) else {
             panic!("{} passed with nothing planted for it", layer.label());
         };
         assert!(
@@ -215,8 +215,7 @@ fn a_perturbation_found_does_not_stand_for_one_that_is_not() {
         name: "inert",
         ..clean()
     });
-    let Err(GateFailure(said)) = engine_audit_sighted(&checkers(), Layer::Identity, &planted)
-    else {
+    let Err(GateError(said)) = engine_audit_sighted(&checkers(), Layer::Identity, &planted) else {
         panic!("one defect found does not stand for another");
     };
     assert!(said.contains("`inert`"), "{said}");
@@ -225,7 +224,7 @@ fn a_perturbation_found_does_not_stand_for_one_that_is_not() {
 #[test]
 fn every_proofaudit_layer_fires_on_what_was_planted_for_it() {
     let found =
-        proofaudit_sentinels(&checkers()).unwrap_or_else(|GateFailure(said)| panic!("{said}"));
+        proofaudit_sentinels(&checkers()).unwrap_or_else(|GateError(said)| panic!("{said}"));
     assert!(
         found >= proofaudit::Layer::ALL.len(),
         "{found} planted defects cannot cover {} layers",
@@ -240,7 +239,7 @@ fn a_proofaudit_layer_whose_planted_defect_changes_nothing_is_refused_as_blind()
         ..proofaudit::sentinel::clean()
     };
     for layer in proofaudit::Layer::ALL {
-        let Err(GateFailure(said)) =
+        let Err(GateError(said)) =
             proofaudit_sighted(&checkers(), layer, std::slice::from_ref(&inert))
         else {
             panic!(
@@ -259,7 +258,7 @@ fn a_proofaudit_layer_whose_planted_defect_changes_nothing_is_refused_as_blind()
 #[test]
 fn a_proofaudit_layer_with_nothing_planted_for_it_is_refused_as_blind() {
     for layer in proofaudit::Layer::ALL {
-        let Err(GateFailure(said)) = proofaudit_sighted(&checkers(), layer, &[]) else {
+        let Err(GateError(said)) = proofaudit_sighted(&checkers(), layer, &[]) else {
             panic!("{} passed with nothing planted for it", layer.label());
         };
         assert!(
@@ -276,7 +275,7 @@ fn a_proofaudit_perturbation_found_does_not_stand_for_one_that_is_not() {
         name: "inert",
         ..proofaudit::sentinel::clean()
     });
-    let Err(GateFailure(said)) =
+    let Err(GateError(said)) =
         proofaudit_sighted(&checkers(), proofaudit::Layer::Killers, &planted)
     else {
         panic!("one defect found does not stand for another");

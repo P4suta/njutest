@@ -364,7 +364,7 @@ impl std::fmt::Display for TerminationPhase {
 
 /// Why an execution-specific monitor could not establish whether its stop request existed.
 #[derive(Debug, thiserror::Error)]
-pub enum MonitorFailure {
+pub enum MonitorError {
     /// The side-channel path existed but was not a regular file.
     #[error("the execution monitor path {path} is not a regular file")]
     InvalidType {
@@ -504,7 +504,7 @@ pub enum Termination {
     /// The execution-specific monitor could not establish whether a valid stop request existed.
     MonitorFailed {
         /// Why the monitor could not be trusted.
-        failure: MonitorFailure,
+        failure: MonitorError,
     },
     /// The caller asked the run to stop.
     Cancelled {
@@ -524,7 +524,7 @@ pub enum RunFailure<'a> {
     /// Launch, supervision, or exit-status collection failed.
     Runner(&'a RunnerError),
     /// The execution-specific monitor could not be inspected safely.
-    Monitor(&'a MonitorFailure),
+    Monitor(&'a MonitorError),
 }
 
 impl std::fmt::Display for RunFailure<'_> {
@@ -1423,7 +1423,7 @@ enum Exit {
     /// The harness said a test failed, and the declared process set was ended there.
     Answered,
     /// The execution-specific monitor could not be inspected safely.
-    MonitorFailed(MonitorFailure),
+    MonitorFailed(MonitorError),
     /// Stopping or reaping the child failed, so the triggering event cannot be reported as a trustworthy termination.
     SupervisionFailed(RunnerError),
 }
@@ -1619,7 +1619,7 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 }
                 MonitorState::InvalidType => {
                     return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorFailure::InvalidType {
+                        Ok(()) => Exit::MonitorFailed(MonitorError::InvalidType {
                             path: path.to_path_buf(),
                         }),
                         Err(error) => Exit::SupervisionFailed(error),
@@ -1627,7 +1627,7 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 }
                 MonitorState::InspectFailed(source) => {
                     return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorFailure::Inspect {
+                        Ok(()) => Exit::MonitorFailed(MonitorError::Inspect {
                             path: path.to_path_buf(),
                             source,
                         }),

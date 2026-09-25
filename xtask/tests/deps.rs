@@ -6,11 +6,11 @@
 use xtask::deps::{Edge, EdgeKind, check, prohibited_direct_dependencies};
 
 #[derive(Debug, thiserror::Error)]
-enum TestFailure {
+enum TestError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Gate(#[from] xtask::gates::GateFailure),
+    Gate(#[from] xtask::gates::GateError),
     #[error("the dependency gate did not report {expected}; report was: {report}")]
     Missing { expected: String, report: String },
 }
@@ -110,7 +110,7 @@ fn source_invariants_cannot_be_evaded_by_proc_macro_expansion() {
     );
 }
 
-fn write_package(root: &std::path::Path, path: &str, name: &str) -> Result<(), TestFailure> {
+fn write_package(root: &std::path::Path, path: &str, name: &str) -> Result<(), TestError> {
     let package = root.join(path);
     std::fs::create_dir_all(package.join("src"))?;
     std::fs::write(
@@ -122,8 +122,7 @@ fn write_package(root: &std::path::Path, path: &str, name: &str) -> Result<(), T
 }
 
 #[test]
-fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Result<(), TestFailure>
-{
+fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
     for (path, name) in [
         ("vendor/async-trait", "async-trait"),
@@ -178,7 +177,7 @@ fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Resu
 
     let failure = match xtask::gates::deps(root.path()) {
         Ok(report) => {
-            return Err(TestFailure::Missing {
+            return Err(TestError::Missing {
                 expected: "a prohibited dependency".to_owned(),
                 report,
             });
@@ -193,7 +192,7 @@ fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Resu
         "fuzz-user depends on typetag",
     ] {
         if !failure.contains(expected) {
-            return Err(TestFailure::Missing {
+            return Err(TestError::Missing {
                 expected: expected.to_owned(),
                 report: failure,
             });
