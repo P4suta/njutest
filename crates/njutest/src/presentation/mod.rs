@@ -146,6 +146,8 @@ pub struct Spot {
     pub blind_in: Vec<Across>,
     /// How a reader names it again after they have edited the file.
     pub locator: String,
+    /// The mutation's display identity, which is what a candidate the run checked names it by.
+    pub mutant: String,
 }
 
 impl Spot {

@@ -400,6 +400,12 @@ What the run **established nothing about** — a bound that expired, a harness t
 An acceptance says a reviewer looked at what a run found and decided it may stand; where nothing was found there is nothing to have looked at, and recording one would be a decision about a measurement that never happened.
 The loop asks a different question there, with an answer type that has no such arm, so the wrong acceptance is not a thing the program can express ([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
 
+`njutest next` offers the same gaps a behaviour at a time: the mutations of one item no test noticed, cheapest to close first.
+A gap a checked test closes comes before one nothing was offered for, the test that closes more before the one that closes fewer, and a gap with more in it before one with fewer.
+Only a test the run checked is offered, one that passed three times with nothing active and failed twice under each mutation it names, and what it is said to close is only what it was checked against.
+Taking it puts it to every one of those mutations again against the tree as it is now, and writes it only when all of them still hold; `--take` takes the cheapest without asking, which is how an agent asks for one.
+A mutation the run established nothing about is never offered, since no test closes a gap in the run.
+
 ## Parts of one catalog
 
 `njutest verify --shard K/N` divides the judging.

@@ -14,6 +14,7 @@ pub mod init;
 pub mod lsp;
 pub mod measure;
 pub mod merge;
+pub mod next;
 pub mod plan;
 pub mod replay;
 pub mod reports;
@@ -59,6 +60,7 @@ pub fn run(
         Command::Guard(arguments) => guard::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
         Command::Review(arguments) => review::run(arguments, environment, stdout, stderr),
+        Command::Next(arguments) => next::run(arguments, environment, stdout, stderr),
         Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),
         Command::Replay(arguments) => replay::run(arguments, environment, stdout, stderr),
         Command::Measure(arguments) => measure::run(*arguments, environment, stdout, stderr),
