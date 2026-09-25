@@ -624,3 +624,130 @@ fn a_search_that_passed_over_entries_and_found_nothing_names_them() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_toolchain_chosen_where_the_run_was_asked_is_the_one_every_later_command_runs() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let root = std::fs::canonicalize(temp.path())
+        .unwrap_or_else(|error| panic!("canonical tempdir: {error}"));
+    let asked = root.join("asked");
+    let elsewhere = root.join("elsewhere");
+    let bin = root.join("toolchain").join("bin");
+    let shims = root.join("shims");
+    for dir in [&asked, &elsewhere, &bin, &shims] {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", dir.display()));
+    }
+    let write = |path: &Path, script: &str| {
+        std::fs::write(path, script)
+            .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("chmod {}: {error}", path.display()));
+    };
+    write(
+        &bin.join("cargo"),
+        "#!/bin/sh\nprintf 'cargo 1.98.1 (797e8a9bc 2026-08-05)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+    );
+    write(
+        &bin.join("rustc"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = --print ]; then echo '{}'; exit 0; fi\nprintf 'rustc 1.98.1 (48a229cea 2026-09-01)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+            root.join("toolchain").display()
+        ),
+    );
+    for name in ["cargo", "rustc"] {
+        write(
+            &shims.join(name),
+            &format!(
+                "#!/bin/sh\nif [ \"$(pwd -P)\" != '{}' ]; then echo 'this directory is not trusted' >&2; exit 1; fi\nexec '{}' \"$@\"\n",
+                asked.display(),
+                bin.join(name).display()
+            ),
+        );
+    }
+    let path = std::ffi::OsString::from(&shims);
+    let options = LocateOptions {
+        cargo: None,
+        search_path: Some(path.clone()),
+        env: Some(vec![("PATH".into(), path)]),
+    };
+    let toolchain = Toolchain::locate(&options, &asked, &Cancel::new())
+        .unwrap_or_else(|error| panic!("the shims answer where the run was asked: {error}"));
+    let spec = toolchain.command(&elsewhere, ["-vV"]);
+    let ran = rust_mutants::runner::run(&spec, &Cancel::new());
+    let said = match std::str::from_utf8(&ran.output) {
+        Ok(said) => said,
+        Err(_not_utf8) => "output that is not UTF-8",
+    };
+    assert!(
+        ran.succeeded(),
+        "a shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is \
+         asked once, where the run was asked; the snapshot every later command runs in is \
+         another directory, which it may refuse: {:?} said {}",
+        spec.argv,
+        said
+    );
+    let rustc = spec
+        .env
+        .as_ref()
+        .and_then(|env| env.iter().find(|(name, _)| name == "RUSTC"))
+        .map(|(_, value)| PathBuf::from(value));
+    assert_eq!(
+        rustc,
+        Some(bin.join("rustc")),
+        "and cargo compiles with that toolchain's own rustc rather than asking the shim again"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cargo_named_by_its_path_is_the_one_every_command_runs() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let root = std::fs::canonicalize(temp.path())
+        .unwrap_or_else(|error| panic!("canonical tempdir: {error}"));
+    let bin = root.join("toolchain").join("bin");
+    let wrapper = root.join("wrapper");
+    for dir in [&bin, &wrapper] {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", dir.display()));
+    }
+    let write = |path: &Path, script: &str| {
+        std::fs::write(path, script)
+            .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("chmod {}: {error}", path.display()));
+    };
+    write(
+        &bin.join("cargo"),
+        "#!/bin/sh\nprintf 'cargo 1.98.1 (797e8a9bc 2026-08-05)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+    );
+    write(
+        &bin.join("rustc"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = --print ]; then echo '{}'; exit 0; fi\nprintf 'rustc 1.98.1 (48a229cea 2026-09-01)\\nrelease: 1.98.1\\nhost: fake-host\\n'\n",
+            root.join("toolchain").display()
+        ),
+    );
+    let named = wrapper.join("cargo");
+    write(
+        &named,
+        &format!("#!/bin/sh\nexec '{}' \"$@\"\n", bin.join("cargo").display()),
+    );
+    let path = std::ffi::OsString::from(&bin);
+    let options = LocateOptions {
+        cargo: Some(named.clone()),
+        search_path: Some(path.clone()),
+        env: Some(vec![("PATH".into(), path)]),
+    };
+    let toolchain = Toolchain::locate(&options, &root, &Cancel::new())
+        .unwrap_or_else(|error| panic!("the named cargo answers: {error}"));
+    assert_eq!(
+        toolchain.cargo(),
+        named.as_path(),
+        "a cargo somebody named by its path is a choice, a wrapper that records or rewrites what \
+         it runs perhaps, and running the toolchain's own cargo instead would silently undo it"
+    );
+}
