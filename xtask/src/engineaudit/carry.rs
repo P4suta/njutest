@@ -261,7 +261,7 @@ fn invoked_only_listed(tokens: &TokenStream, lists: Lists<'_>) -> bool {
                     continue;
                 };
                 let named = last.to_string();
-                if delimited && !keyword(&named) && !lists.macros.iter().any(|one| *one == named) {
+                if delimited && !keyword(&named) && !lists.macros.contains(&named) {
                     return false;
                 }
             }
@@ -283,8 +283,8 @@ fn allowed_path(path: &syn::Path, lists: Lists<'_>) -> bool {
         .first()
         .map(|segment| segment.ident.to_string());
     match (path.segments.len(), first) {
-        (1, Some(name)) => name != "cfg_attr" && lists.attributes.iter().any(|one| *one == name),
-        (_, Some(name)) => lists.tools.iter().any(|one| *one == name),
+        (1, Some(name)) => name != "cfg_attr" && lists.attributes.contains(&name),
+        (_, Some(name)) => lists.tools.contains(&name),
         (_, None) => false,
     }
 }
@@ -391,15 +391,30 @@ pub struct PageLists {
     pub tools: Vec<String>,
 }
 
+/// Why the page cannot give its lists.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PageError {
+    /// A fenced block the page must hold is absent or unclosed.
+    #[error("docs/engine/carry.md holds no closed `{name}` block")]
+    MissingBlock {
+        /// The block's info string.
+        name: &'static str,
+    },
+}
+
 impl PageLists {
-    /// The lists of the page `text`, or the name of the first block it lacks.
+    /// The lists of the page `text`.
     ///
     /// # Errors
-    /// The name of a fenced block the page does not hold.
-    pub fn read(text: &str) -> Result<Self, &'static str> {
-        let block = |name: &'static str| -> Result<Vec<String>, &'static str> {
-            let (_, after) = text.split_once(&format!("```{name}\n")).ok_or(name)?;
-            let (body, _) = after.split_once("```").ok_or(name)?;
+    /// A fenced block the page does not hold, or does not close.
+    pub fn read(text: &str) -> Result<Self, PageError> {
+        let block = |name: &'static str| -> Result<Vec<String>, PageError> {
+            let missing = PageError::MissingBlock { name };
+            let (_, after) = text
+                .split_once(&format!("```{name}\n"))
+                .ok_or_else(|| missing.clone())?;
+            let (body, _) = after.split_once("```").ok_or(missing)?;
             Ok(body
                 .lines()
                 .map(str::trim)
@@ -440,4 +455,355 @@ pub fn line_column(text: &str, offset: usize) -> Option<LineColumn> {
         .chars()
         .count();
     Some(LineColumn { line, column })
+}
+
+/// The page this audit reads its lists from, as this commit holds it.
+const PAGE: &str = include_str!("../../../docs/engine/carry.md");
+
+/// One cataloged item, as the guards' record and the carry evidence name it.
+struct Cataloged {
+    index: u64,
+    path: String,
+    name: String,
+    body: std::ops::Range<usize>,
+    digest: String,
+    sealed: bool,
+}
+
+/// Every item the carry evidence names, joined to the body span the guards' record gives it.
+fn cataloged(skeletons: &serde_json::Value, touched: &serde_json::Value) -> Vec<Cataloged> {
+    let spans: std::collections::BTreeMap<u64, (String, std::ops::Range<usize>)> = touched
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| {
+            let index = item.get("index")?.as_u64()?;
+            let path = item.get("path")?.as_str()?.to_owned();
+            let body = item.get("body")?;
+            let start = offset(body.get("start"))?;
+            let end = offset(body.get("end"))?;
+            Some((index, (path, start..end)))
+        })
+        .collect();
+    skeletons
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| {
+            let index = item.get("index")?.as_u64()?;
+            let (path, body) = spans.get(&index)?.clone();
+            Some(Cataloged {
+                index,
+                path,
+                name: item.get("name")?.as_str()?.to_owned(),
+                body,
+                digest: item.get("body_digest")?.as_str()?.to_owned(),
+                sealed: item.get("sealed")?.as_bool()?,
+            })
+        })
+        .collect()
+}
+
+/// A byte offset the evidence keeps, where it is one this platform can index by.
+fn offset(value: Option<&serde_json::Value>) -> Option<usize> {
+    match usize::try_from(value?.as_u64()?) {
+        Ok(offset) => Some(offset),
+        Err(_too_wide) => None,
+    }
+}
+
+/// The lowercase hex SHA-256 of `bytes`, as every digest the carry evidence keeps is spelled.
+#[must_use]
+pub fn digest_of(bytes: &[u8]) -> String {
+    sha256(bytes)
+}
+
+/// The lowercase hex SHA-256 of `bytes`.
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
+/// The carry evidence against the tree the run measured: every body digest, every body the run calls sealed, every `$root` entry's placeholder rendering, and every skeleton's fold.
+pub(super) fn layer(
+    report: &super::Report,
+    evidence: &super::CheckedEvidence<'_>,
+    audit: &mut super::Audit,
+) {
+    let mut notes = super::Notes::on(audit, super::Layer::Carry);
+    let Some(skeletons) = evidence.skeletons.as_ref() else {
+        return;
+    };
+    let Some(root) = evidence.root else {
+        notes.unaudited(
+            "root",
+            "no --root names the tree the run measured, so its carry evidence is not read again"
+                .to_owned(),
+        );
+        return;
+    };
+    let Some(touched) = evidence.touched.as_ref() else {
+        notes.unaudited(
+            "touched",
+            "the run kept no record of its items' body spans, so no body can be read again"
+                .to_owned(),
+        );
+        return;
+    };
+    let page = match PageLists::read(PAGE) {
+        Ok(page) => page,
+        Err(refusal) => {
+            notes.unaudited("page", format!("{refusal}, so no list is read"));
+            return;
+        }
+    };
+    let measured: std::collections::BTreeMap<&str, &str> = report
+        .mutants
+        .iter()
+        .map(|row| (row.path.as_str(), row.source_digest.as_str()))
+        .collect();
+    let items = cataloged(skeletons, touched);
+    let mut read = Tree::new(root, &measured);
+    for item in &items {
+        bodies(item, &mut read, (page.lists(), skeletons), &mut notes);
+    }
+    skeleton_folds(skeletons, &items, &mut read, &mut notes);
+}
+
+/// The files of the measured tree, each read once and proved to be the file the run measured where the report can say.
+struct Tree<'a> {
+    root: &'a std::path::Path,
+    measured: &'a std::collections::BTreeMap<&'a str, &'a str>,
+    files: std::collections::BTreeMap<String, Option<(String, bool)>>,
+}
+
+impl<'a> Tree<'a> {
+    const fn new(
+        root: &'a std::path::Path,
+        measured: &'a std::collections::BTreeMap<&'a str, &'a str>,
+    ) -> Self {
+        Self {
+            root,
+            measured,
+            files: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// The text of `path`, and whether the report's own digest of it proves it is the file measured; `None` where it cannot be read or a digest says it is another file.
+    fn text(&mut self, path: &str) -> Option<(String, bool)> {
+        if let Some(known) = self.files.get(path) {
+            return known.clone();
+        }
+        let read = match std::fs::read_to_string(self.root.join(path)) {
+            Err(_unreadable) => None,
+            Ok(text) => match self.measured.get(path) {
+                Some(digest) if sha256(text.as_bytes()) != *digest => None,
+                Some(_) => Some((text, true)),
+                None => Some((text, false)),
+            },
+        };
+        self.files.insert(path.to_owned(), read.clone());
+        read
+    }
+}
+
+/// One item's body digest and sealing, read again.
+fn bodies(
+    item: &Cataloged,
+    tree: &mut Tree<'_>,
+    (lists, skeletons): (Lists<'_>, &serde_json::Value),
+    notes: &mut super::Notes<'_>,
+) {
+    let subject = format!("{}#{}", item.path, item.index);
+    let Some((text, proven)) = tree.text(&item.path) else {
+        notes.unaudited(
+            &subject,
+            "the file cannot be read from --root, or is not the one the run measured".to_owned(),
+        );
+        return;
+    };
+    let Some(body) = text.as_bytes().get(item.body.clone()) else {
+        notes.violated(
+            &subject,
+            "the item's body span lies outside the file the run measured".to_owned(),
+        );
+        return;
+    };
+    if sha256(body) != item.digest {
+        let detail = format!(
+            "{} keeps a body digest its body's bytes do not hash to, so an edit inside it would \
+             not be told from none",
+            item.name
+        );
+        if proven {
+            notes.violated(&subject, detail);
+        } else {
+            notes.unaudited(&subject, detail);
+        }
+        return;
+    }
+    if !item.sealed {
+        return;
+    }
+    let (Ok(file), Some(start)) = (syn::parse_file(&text), line_column(&text, item.body.start))
+    else {
+        notes.violated(
+            &subject,
+            format!(
+                "{} is called sealed in a file the page's parser cannot read",
+                item.name
+            ),
+        );
+        return;
+    };
+    let Some(unit) = unit_files(&item.path, skeletons, tree) else {
+        notes.unaudited(
+            &subject,
+            format!(
+                "{} is called sealed, and a Rust file its unit read cannot be read from --root, \
+                 so whether that file shadows a listed macro is not known",
+                item.name
+            ),
+        );
+        return;
+    };
+    if let Err(why) = sealing(&file, start, &unit, lists) {
+        notes.violated(
+            &subject,
+            format!(
+                "the run calls {} sealed and the page says it is not: {}",
+                item.name,
+                why.name()
+            ),
+        );
+    }
+}
+
+/// Every Rust file read by any unit that read `path`, parsed, or `None` where one of them cannot be read: a `$target` entry, or a `$root` one --root does not hold.
+fn unit_files(
+    path: &str,
+    skeletons: &serde_json::Value,
+    tree: &mut Tree<'_>,
+) -> Option<Vec<syn::File>> {
+    let named = format!("$root/{path}");
+    let mut files = Vec::new();
+    for unit in skeletons
+        .get("units")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let Some(entries) = unit.get("entries").and_then(serde_json::Value::as_object) else {
+            continue;
+        };
+        if !entries.contains_key(&named) {
+            continue;
+        }
+        for entry in entries.keys() {
+            if std::path::Path::new(entry)
+                .extension()
+                .is_none_or(|kind| kind != "rs")
+            {
+                continue;
+            }
+            let file = entry.strip_prefix("$root/")?;
+            let (text, _) = tree.text(file)?;
+            let Ok(parsed) = syn::parse_file(&text) else {
+                continue;
+            };
+            files.push(parsed);
+        }
+    }
+    Some(files)
+}
+
+/// Every unit's skeleton against the fold of its entries, and every `$root` entry against this audit's own placeholder rendering of the file.
+fn skeleton_folds(
+    skeletons: &serde_json::Value,
+    items: &[Cataloged],
+    tree: &mut Tree<'_>,
+    notes: &mut super::Notes<'_>,
+) {
+    for unit in skeletons
+        .get("units")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let name = format!(
+            "{}/{}",
+            unit.get("package")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            unit.get("target")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+        );
+        let Some(entries) = unit.get("entries").and_then(serde_json::Value::as_object) else {
+            notes.unaudited(
+                &name,
+                "the unit keeps no entries, so its skeleton is not re-folded".to_owned(),
+            );
+            continue;
+        };
+        let mut folded = String::new();
+        for (entry, digest) in entries {
+            folded.push_str(entry);
+            folded.push('\0');
+            folded.push_str(digest.as_str().unwrap_or_default());
+            folded.push('\n');
+        }
+        if unit.get("skeleton").and_then(serde_json::Value::as_str)
+            != Some(sha256(folded.as_bytes()).as_str())
+        {
+            notes.violated(
+                &name,
+                "the unit's skeleton is not the fold of the entries it keeps".to_owned(),
+            );
+        }
+        for (entry, digest) in entries {
+            let Some(path) = entry.strip_prefix("$root/") else {
+                continue;
+            };
+            let Some((text, _)) = tree.text(path) else {
+                continue;
+            };
+            let rendered = rendering(entry, path, &text, items);
+            if digest.as_str() != Some(sha256(rendered.as_bytes()).as_str()) {
+                notes.violated(
+                    &name,
+                    format!(
+                        "{entry} is kept as a digest that the file with its sealed bodies set \
+                         aside does not hash to"
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// `text` with every sealed body of the file at `path` replaced by the placeholder naming it, as the page defines it.
+fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> String {
+    let mut ordered: Vec<&Cataloged> = items.iter().filter(|item| item.path == path).collect();
+    ordered.sort_by_key(|item| item.body.start);
+    let mut rendered = String::new();
+    let mut at = 0_usize;
+    for (ordinal, item) in ordered.iter().enumerate() {
+        if !item.sealed {
+            continue;
+        }
+        rendered.push_str(text.get(at..item.body.start).unwrap_or_default());
+        rendered.push_str("{sealed:");
+        rendered.push_str(entry);
+        rendered.push('#');
+        rendered.push_str(&ordinal.to_string());
+        rendered.push('}');
+        at = item.body.end;
+    }
+    rendered.push_str(text.get(at..).unwrap_or_default());
+    rendered
 }
