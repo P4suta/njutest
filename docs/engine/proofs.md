@@ -157,7 +157,7 @@ Beside its report a run writes:
 
 | File | What it holds |
 | --- | --- |
-| `touched-v1.json` | which of each target's tests reached which mutation, entered which proved body and saw which guard's two branches part; what was reached where nothing named a test; which targets said nothing this run can route by; and which mutants the tree could record anything about at all |
+| `touched-v1.json` | which of each target's tests reached which mutation, entered which proved body, entered which item, and saw which guard's two branches part; what was reached where nothing named a test; which targets said nothing this run can route by; which mutants the tree could record anything about at all; and the catalog of items an entry names |
 | `reached-v1.json` | every region each target's measured run covered, every region the build instrumented, and what the measurement could not establish |
 | `catalog-v1.json` | every mutant, with the body of the branch the compiler vouched for |
 | `probe/<target>.log` | what each probe process appended, when `--probe` built the tree |

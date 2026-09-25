@@ -1458,7 +1458,18 @@ impl Session {
                 subject: "catalog mutants in a touch record",
                 count: mutants,
             })?;
-        let recorded = match crate::touch::read(&text, self.catalog.digest(), count) {
+        let cataloged = self.verified.touched.items.len();
+        let items = u32::try_from(cataloged).map_err(|_outside_range| {
+            SessionError::TraceCountTooLarge {
+                subject: "cataloged items in a touch record",
+                count: cataloged,
+            }
+        })?;
+        let bounds = crate::touch::Bounds {
+            mutants: count,
+            items,
+        };
+        let recorded = match crate::touch::read(&text, self.catalog.digest(), bounds) {
             Ok(recorded) => recorded,
             Err(error) => return Ok(unreadable(&error)),
         };
