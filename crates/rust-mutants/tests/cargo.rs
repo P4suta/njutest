@@ -20,7 +20,7 @@ use njutest_devkit::result::{
 use rust_mutants::cargo::{
     BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
     LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, env_deps,
-    parse_dep_info, parse_messages, parse_version,
+    parse_dep_info, parse_messages, parse_version, resolve_executable,
 };
 use rust_mutants::runner::Cancel;
 
@@ -560,4 +560,53 @@ fn a_dep_info_names_the_environment_it_read_set_or_not() {
         ]),
         "an `env!` a compilation read is an input to what it computes, and an unset one as much as a set one"
     );
+}
+
+#[test]
+fn a_search_path_entry_the_shell_would_pass_over_does_not_stop_the_search() {
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let blocker = temp.path().join("not-a-directory");
+    std::fs::write(
+        &blocker,
+        "a file where a directory of programs was expected",
+    )
+    .unwrap_or_else(|error| panic!("write {}: {error}", blocker.display()));
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin)
+        .unwrap_or_else(|error| panic!("mkdir {}: {error}", bin.display()));
+    let cargo = bin.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+    std::fs::write(&cargo, "").unwrap_or_else(|error| panic!("write {}: {error}", cargo.display()));
+    let search = std::env::join_paths([&blocker, &bin])
+        .unwrap_or_else(|error| panic!("join paths: {error}"));
+    let found = resolve_executable(Path::new("cargo"), Some(&search));
+    assert!(
+        matches!(&found, Ok(path) if *path == cargo),
+        "a shell looking for `cargo` passes over an entry of PATH it cannot look inside and runs \
+         the next one, so the engine must find the same program: {found:?}"
+    );
+}
+
+#[test]
+fn a_search_that_passed_over_entries_and_found_nothing_names_them() {
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir: {error}"));
+    let blocker = temp.path().join("not-a-directory");
+    std::fs::write(
+        &blocker,
+        "a file where a directory of programs was expected",
+    )
+    .unwrap_or_else(|error| panic!("write {}: {error}", blocker.display()));
+    let search =
+        std::env::join_paths([&blocker]).unwrap_or_else(|error| panic!("join paths: {error}"));
+    let Err(error) = resolve_executable(Path::new("cargo"), Some(&search)) else {
+        panic!("nothing on this search path is cargo");
+    };
+    assert_eq!(error.kind(), CargoErrorKind::ToolchainNotFound, "{error}");
+    let said = error.to_string();
+    if !cfg!(windows) {
+        assert!(
+            said.contains(&blocker.join("cargo").display().to_string()),
+            "a miss that passed over an entry it could not read says which, so it is never \
+             mistaken for a clean miss: {said}"
+        );
+    }
 }

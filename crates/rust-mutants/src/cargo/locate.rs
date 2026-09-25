@@ -247,18 +247,54 @@ pub fn resolve_executable(name: &Path, search_path: Option<&OsStr>) -> Result<Pa
             name.display()
         )));
     };
+    let mut unreadable = Vec::new();
     for dir in std::env::split_paths(search_path) {
         if dir.as_os_str().is_empty() {
             continue;
         }
-        if let Some(found) = first_executable(executable_variants(&dir, name))? {
-            return Ok(found);
+        for candidate in executable_variants(&dir, name) {
+            match std::fs::metadata(&candidate) {
+                Ok(metadata) if metadata.file_type().is_file() => return Ok(candidate),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) if passed_over(&error) => {
+                    unreadable.push(format!("{}: {error}", candidate.display()));
+                }
+                Err(source) => {
+                    return Err(CargoError::new(
+                        CargoErrorKind::ToolchainNotFound,
+                        format!(
+                            "cannot inspect executable candidate {}",
+                            candidate.display()
+                        ),
+                    )
+                    .with_source(source));
+                }
+            }
         }
     }
+    if unreadable.is_empty() {
+        return Err(not_found(format!(
+            "{} was not found on the search path",
+            name.display()
+        )));
+    }
     Err(not_found(format!(
-        "{} was not found on the search path",
-        name.display()
+        "{} was not found on the search path, which holds candidates that could not be read: {}",
+        name.display(),
+        unreadable.join("; ")
     )))
+}
+
+/// Windows' refusal to traverse a mount point the process does not trust, such as a junction a user made.
+const ERROR_UNTRUSTED_MOUNT_POINT: i32 = 448;
+
+/// Whether a shell searching its path passes over a candidate whose metadata fails with `error`, as `execvp` does over an entry that is not a directory or that it may not enter, and Windows does over a path through a mount point it does not trust.
+fn passed_over(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotADirectory | std::io::ErrorKind::PermissionDenied
+    ) || (cfg!(windows) && error.raw_os_error() == Some(ERROR_UNTRUSTED_MOUNT_POINT))
 }
 
 fn first_executable(
@@ -342,5 +378,19 @@ fn sysroot_of(
         Ok(None)
     } else {
         Ok(Some(PathBuf::from(line)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_path_through_an_untrusted_mount_point_is_passed_over_where_windows_refuses_it() {
+        let untrusted = std::io::Error::from_raw_os_error(super::ERROR_UNTRUSTED_MOUNT_POINT);
+        assert_eq!(
+            super::passed_over(&untrusted),
+            cfg!(windows),
+            "Windows refuses to traverse a junction a user made, as scoop's `current` is, and \
+             its own command lookup moves past it: {untrusted}"
+        );
     }
 }
