@@ -155,6 +155,25 @@ pub enum AuditError {
     },
 }
 
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unreadable { .. } => crate::error::XtCode::EngineUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::EngineUnparsable,
+            Self::OffSchema { .. } => crate::error::XtCode::EngineOffSchema,
+            Self::Schema(_) => crate::error::XtCode::SchemaUncompilable,
+            Self::MalformedEvidence { .. } => crate::error::XtCode::EngineEvidence,
+            Self::MalformedRecording { .. } | Self::UnsupportedTrace { .. } => {
+                crate::error::XtCode::EngineRecording
+            }
+            Self::MalformedLedger { .. } => crate::error::XtCode::EngineLedger,
+            Self::Unrecognised { .. } | Self::UnsupportedVersion { .. } => {
+                crate::error::XtCode::EngineUnrecognised
+            }
+        }
+    }
+}
+
 /// What the re-decision was able to conclude about one thing it looked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Standing {

@@ -3,6 +3,7 @@
 
 //! The gates applied to this repository: each one reads the tree, hands it to the pure checker of its module, and renders the answer.
 
+use crate::error::Coded as _;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
@@ -26,6 +27,12 @@ pub fn workspace_root() -> PathBuf {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct GateFailure(pub String);
+
+impl crate::error::Coded for GateFailure {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::GateRefused
+    }
+}
 
 fn append(output: &mut String, arguments: Arguments<'_>) {
     output.push_str(&arguments.to_string());
@@ -1418,7 +1425,7 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
     let ledger_text = std::fs::read_to_string(&ledger_path)
         .map_err(|error| GateFailure(format!("{}: {error}", ledger_path.display())))?;
     let ledger =
-        devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.to_string()))?;
+        devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.coded()))?;
     devgates::compare(&found, &ledger)
         .map_err(|disagreement| GateFailure(disagreement.to_string()))?;
     let most = ceiling(root, "xtask/seam_ceiling.txt")?;
@@ -2558,7 +2565,7 @@ pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
     let stdout = std::str::from_utf8(&asked.stdout)
         .map_err(|error| GateFailure(format!("cargo metadata stdout is not UTF-8: {error}")))?;
     let bom = crate::sbom::of(stdout, ("njutest", &version))
-        .map_err(|error| GateFailure(error.to_string()))?;
+        .map_err(|error| GateFailure(error.coded()))?;
     let document = serde_json::to_string_pretty(&bom)
         .map_err(|error| GateFailure(format!("the bill of materials: {error}")))?;
     match output {
@@ -2590,7 +2597,7 @@ pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateFailure> {
         (&before.display().to_string(), &left),
         (&after.display().to_string(), &right),
     )
-    .map_err(|error| GateFailure(error.to_string()))?;
+    .map_err(|error| GateFailure(error.coded()))?;
 
     if changes.is_empty() {
         return Ok("reportdiff: the two reports claim the same thing".to_owned());
