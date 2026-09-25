@@ -3,6 +3,7 @@
 
 //! Rendering what the engine established, for a person and for a program.
 
+pub mod annotations;
 pub mod candidates;
 pub mod doctor;
 pub mod html;
