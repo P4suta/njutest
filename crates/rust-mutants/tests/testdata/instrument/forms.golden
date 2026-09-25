@@ -188,6 +188,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     enum TouchMode {
         Off,
         On,
+        ItemsOnly,
     }
     enum StepNoticeError {
         MissingPath,
@@ -1094,7 +1095,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     #[inline(always)]
     pub(crate) fn item(index: u32) {
         watched();
-        if touching() {
+        if touching_items() {
             entered_item(index);
         }
     }
@@ -1159,6 +1160,13 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         matches!(*TOUCHING.get_or_init(configured_touch), TouchMode::On)
     }
 
+    fn touching_items() -> bool {
+        matches!(
+            *TOUCHING.get_or_init(configured_touch),
+            TouchMode::On | TouchMode::ItemsOnly
+        )
+    }
+
     fn configured_touch() -> TouchMode {
         let asked = match __rm_std::env::var("RUST_MUTANTS_TOUCH") {
             __rm_std::result::Result::Ok(value) => !value.is_empty(),
@@ -1168,10 +1176,14 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             __rm_std::result::Result::Ok(value) => value == CATALOG,
             __rm_std::result::Result::Err(_) => false,
         };
-        if asked && ours {
-            TouchMode::On
-        } else {
-            TouchMode::Off
+        let items_only = match __rm_std::env::var("RUST_MUTANTS_TOUCH_ITEMS") {
+            __rm_std::result::Result::Ok(value) => value == "1",
+            __rm_std::result::Result::Err(_) => false,
+        };
+        match (asked && ours, items_only) {
+            (true, true) => TouchMode::ItemsOnly,
+            (true, false) => TouchMode::On,
+            (false, _) => TouchMode::Off,
         }
     }
 

@@ -1893,6 +1893,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "entered_records",
                 "alone",
                 "duration_ms",
                 "exit_code",
@@ -1964,6 +1965,18 @@
                   "enum": [
                     "configured",
                     "derived"
+                  ]
+                },
+                "entered_records": {
+                  "description": "How many records the process wrote naming the items it entered, when it was asked to record them.",
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    }
                   ]
                 },
                 "alone": {

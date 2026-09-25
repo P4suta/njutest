@@ -346,6 +346,7 @@ pub fn every_payload() -> Vec<Payload> {
         },
         Payload::MutantExec {
             mutant: MutantExecRecord {
+                entered_records: None,
                 id: "abcdef".to_owned(),
                 index: 1,
                 target: "demo/lib/demo".to_owned(),

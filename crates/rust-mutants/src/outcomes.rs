@@ -21,7 +21,7 @@ pub const LAYOUT: &str = "rust-mutants/outcomes-v2";
 pub const RULE_ABI: u32 = 1;
 
 /// Bumped when a guard changes shape, so a record about the old instrumentation stops answering.
-pub const INSTRUMENTATION_ABI: u32 = 2;
+pub const INSTRUMENTATION_ABI: u32 = 3;
 
 /// Bumped when the policy interpreting a finite step allowance changes.
 /// A step limit is an execution bound in this ABI, never a detected mutant.
