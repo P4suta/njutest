@@ -1107,6 +1107,7 @@ fn target_key(
             .join(format!("{}.log", slug(&target.id)))
     });
     let context = Context {
+        leaders: None,
         base_env: &building.workspace.base_env,
         cargo: Some(building.workspace.toolchain.cargo()),
         sysroot: building.workspace.toolchain.sysroot(),
@@ -1235,6 +1236,7 @@ fn ran(
         }
     }
     let context = Context {
+        leaders: None,
         base_env: &workspace.base_env,
         cargo: Some(workspace.toolchain.cargo()),
         sysroot: workspace.toolchain.sysroot(),

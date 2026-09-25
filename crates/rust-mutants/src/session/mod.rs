@@ -364,8 +364,8 @@ pub struct Session {
     scratch_working_directory: bool,
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::Mutex<u64>,
-    /// The process that led each execution this session has finished, whose children are that execution's rather than any other's.
-    leaders: std::sync::Mutex<BTreeSet<u32>>,
+    /// The process that leads each execution this session has started, recorded as it starts, whose children are that execution's rather than any other's.
+    leaders: crate::orphan::Leaders,
     mutant_timeout: Timeout,
     mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
@@ -460,9 +460,8 @@ impl Session {
     ) -> Result<bool, EngineError> {
         let others = self
             .leaders
-            .lock()
-            .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?
-            .clone();
+            .every()
+            .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?;
         Ok(
             match (
                 before,
@@ -476,17 +475,6 @@ impl Session {
                 (None, Ok(_)) | (_, Err(_)) => true,
             },
         )
-    }
-
-    /// Remembers that `leader` led an execution that has finished, so a child it left is never read as another's.
-    fn finished(&self, leader: Option<u32>) -> Result<(), EngineError> {
-        if let Some(leader) = leader {
-            self.leaders
-                .lock()
-                .map_err(|_poisoned| SessionError::ScratchStatePoisoned)?
-                .insert(leader);
-        }
-        Ok(())
     }
 
     /// Every process that has said so far that it lost the run's environment, or nothing where the directory cannot be read, which an execution compares against to find the ones left while it ran.
@@ -906,6 +894,7 @@ impl Session {
             return Ok(*answer);
         }
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1269,6 +1258,7 @@ impl Session {
             }
         };
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1294,12 +1284,11 @@ impl Session {
             let started = std::time::SystemTime::now();
             let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
             let ended = std::time::SystemTime::now();
-            self.finished(result.leader)?;
             if result.conclusion == MutantConclusion::Survived
                 && (self.uncontrolled(&target.id)
                     || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
             {
-                result.conclusion = MutantConclusion::Inconclusive;
+                result.conclusion = MutantConclusion::Unobserved;
             }
             self.record_mutant_exec(Executed {
                 mutant,
@@ -1501,6 +1490,7 @@ impl Session {
         cancel: &Cancel,
     ) -> MutantResult {
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -1617,6 +1607,7 @@ impl Session {
     ) -> Result<MutantResult, EngineError> {
         let targets = self.selected(request.target.as_deref())?;
         let context = Context {
+            leaders: Some(&self.leaders),
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
@@ -2151,7 +2142,15 @@ fn duration_ms(duration: Duration) -> Result<u64, SessionError> {
 
 /// Whether a target said anything at all.
 const fn spoke(result: &MutantResult) -> bool {
-    execute::answered(result.outcome())
+    match result.conclusion {
+        MutantConclusion::Inconclusive | MutantConclusion::StepLimitReached { .. } => false,
+        MutantConclusion::NotRun
+        | MutantConclusion::Killed
+        | MutantConclusion::Survived
+        | MutantConclusion::Waited
+        | MutantConclusion::Unobserved
+        | MutantConclusion::Errored => true,
+    }
 }
 
 /// The strongest fact all selected targets jointly establish.

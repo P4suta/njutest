@@ -789,7 +789,7 @@ pub fn prepare(
         inputs: read.inputs,
         manifests: read.manifests,
         executions: std::sync::Mutex::new(0),
-        leaders: std::sync::Mutex::new(BTreeSet::new()),
+        leaders: crate::orphan::Leaders::default(),
         mutant_timeout: options.mutant_timeout,
         mutant_steps: options.mutant_steps,
         harness_args: options.harness_args.clone(),

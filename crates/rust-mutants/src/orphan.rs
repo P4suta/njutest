@@ -19,6 +19,36 @@ pub struct Orphan {
     pub at: Option<std::time::SystemTime>,
 }
 
+/// The process that leads every execution a session has started, recorded as each one starts, so a child one of them leaves is never read as another's.
+#[derive(Debug, Clone, Default)]
+pub struct Leaders(std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<u32>>>);
+
+/// The record of execution leaders was left poisoned by a thread that panicked while holding it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the record of which process led each execution was left poisoned")]
+pub struct LeadersPoisoned;
+
+impl Leaders {
+    /// Records that `pid` leads an execution that has just started.
+    /// A record a panicking thread poisoned is not written to, and [`Leaders::every`] refuses it, so the run that reads it next fails rather than attributing a child by half a record.
+    pub fn started(&self, pid: u32) {
+        match self.0.lock() {
+            Ok(mut held) => {
+                held.insert(pid);
+            }
+            Err(_poisoned_for_every_reader) => {}
+        }
+    }
+
+    /// Every leader recorded so far.
+    ///
+    /// # Errors
+    /// [`LeadersPoisoned`] when a thread panicked while holding the record.
+    pub fn every(&self) -> Result<std::collections::BTreeSet<u32>, LeadersPoisoned> {
+        Ok(self.0.lock().map_err(|_poisoned| LeadersPoisoned)?.clone())
+    }
+}
+
 /// How far either side of an execution an orphan's time still counts as during it: a filesystem's clock is coarser than a process's.
 pub const SLACK: std::time::Duration = std::time::Duration::from_secs(2);
 

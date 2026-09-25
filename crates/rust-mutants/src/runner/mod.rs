@@ -146,6 +146,8 @@ pub struct Spec {
     pub(crate) stop_file: Option<PathBuf>,
     /// A private side-channel file the child rewrites as it makes progress, which turns [`Spec::timeout`] into a ceiling and ends the run early only when the file stays unchanged for a whole quiet window.
     pub(crate) progress: Option<Progress>,
+    /// Where the process that leads this run is recorded the moment it starts, so a child it leaves is known to be its own before anything else looks.
+    pub(crate) leaders: Option<crate::orphan::Leaders>,
     /// Test-only terminal ownership fault selected explicitly by the composition root.
     reaping: Reaping,
 }
@@ -167,6 +169,7 @@ impl Spec {
             structured_stdout: None,
             stop_file: None,
             progress: None,
+            leaders: None,
             reaping: Reaping::Normal,
         }
     }
@@ -625,6 +628,9 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         Ok(started) => started,
         Err(Failed { error, output }) => return not_started(started, error, output),
     };
+    if let Some(leaders) = &spec.leaders {
+        leaders.started(running.child.handle().id());
+    }
     let outcome = await_exit(
         &running.supervisor,
         &running.child,

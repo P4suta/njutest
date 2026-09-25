@@ -37,11 +37,14 @@ The select layer inherits the same hole: a target whose child entered an item it
 4. **Under a mutant, it is attributed by when and by whom.** Mutant executions run side by side, so an orphan left during the mutation phase cannot be told apart by directory; the directory is cleared when the baseline ends, and an execution records when it started and ended.
    An orphan written within that span, give or take two seconds of filesystem clock, and not already there when the execution started, is a candidate.
    What separates executions that overlap is the parent the orphan names: every execution is one process leading a group of its own, and a child it starts names that process as its parent.
+   The session records each leader the moment it starts, not when its execution ends, so an orphan of an execution whose leader has exited and whose ending has not yet been reported is never charged to another execution that overlapped it.
    A candidate whose parent led this execution is its; one whose parent led another execution, or is still running, is someone else's; and one whose parent the platform does not name, or that has gone without leading any execution the session knows, cannot be told apart and is attributed to this execution, so a survival is never read past a child that may have been its own.
 
 5. **A survival from it is not one.** An execution against an `uncontrolled-child` target that comes back `survived` is recorded `inconclusive`: every test of it passing says nothing about a mutant that may have lived only in a process it could not reach.
    The same holds for a survival of any execution an orphan was attributed to under point 4.
    A kill stays a kill, since the confirming control ran in the parent.
+   Such an execution is `unobserved` rather than silent: a harness that ran no test says nothing and gives way to the targets that did, but a target that passed while a process escaped it has answered that it cannot answer, so the mutant it reaches is `inconclusive` whatever the other targets said, unless one of them killed it.
+   A survival remembered from an earlier run is not believed while a target this run marks `uncontrolled-child` reaches the mutant, since that run could not have seen what this one cannot.
 
 ## Consequences
 

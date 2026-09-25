@@ -1335,16 +1335,17 @@ fn against(
             };
             Ok(TargetFact::StepLimitReached { on: name, boundary })
         }
-        MutantConclusion::Errored | MutantConclusion::Inconclusive | MutantConclusion::NotRun => {
-            Ok(TargetFact::Errored {
-                on: name,
-                detail: format!(
-                    "the harness answered {}: {}",
-                    result.outcome().name(),
-                    tail(&result.output)
-                ),
-            })
-        }
+        MutantConclusion::Errored
+        | MutantConclusion::Inconclusive
+        | MutantConclusion::Unobserved
+        | MutantConclusion::NotRun => Ok(TargetFact::Errored {
+            on: name,
+            detail: format!(
+                "the harness answered {}: {}",
+                result.outcome().name(),
+                tail(&result.output)
+            ),
+        }),
     }
 }
 
