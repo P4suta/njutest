@@ -2047,6 +2047,8 @@
                 "hit",
                 "key",
                 "mutant",
+                "refused",
+                "rule",
                 "source_run_id"
               ],
               "properties": {
@@ -2067,6 +2069,25 @@
                     "null"
                   ],
                   "minLength": 1
+                },
+                "rule": {
+                  "enum": [
+                    "exact",
+                    "carried"
+                  ]
+                },
+                "refused": {
+                  "enum": [
+                    "skeleton-changed",
+                    "item-changed",
+                    "unsealed",
+                    "entry-incomplete",
+                    "route-grew",
+                    "filter-differs",
+                    "reach-moved",
+                    "uncontrolled",
+                    null
+                  ]
                 }
               }
             }
@@ -2099,7 +2120,9 @@
                   "enum": [
                     "unreached",
                     "discharged",
-                    "interrupted"
+                    "interrupted",
+                    "unselected",
+                    "stopped-early"
                   ]
                 }
               }

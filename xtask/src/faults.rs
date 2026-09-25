@@ -119,7 +119,7 @@ pub fn derived(pairs: &[&Pair]) -> Option<(String, &'static str)> {
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
 pub fn read(recorded: &str) -> Result<Faulted, crate::route::ReadError> {
     let mut faulted = Faulted::default();
-    for event in crate::route::events(recorded)? {
+    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
         if let Some(record) = event.get("beside") {
             faulted.besides.push(beside(record));
         }

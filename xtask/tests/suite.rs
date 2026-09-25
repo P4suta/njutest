@@ -7,6 +7,8 @@
 
 #[path = "adrs.rs"]
 mod adrs;
+#[path = "carry.rs"]
+mod carry;
 #[path = "concurrency.rs"]
 mod concurrency;
 #[path = "crashes.rs"]
@@ -65,6 +67,8 @@ mod sentinel;
 mod shapes;
 #[path = "slot.rs"]
 mod slot;
+#[path = "specimen_reach.rs"]
+mod specimen_reach;
 #[path = "suites.rs"]
 mod suites;
 #[path = "surface.rs"]

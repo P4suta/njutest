@@ -80,4 +80,5 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0036 What rested on a moved reach is run again](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)
 - [0037 The report store has one capability directory](adr/0037-the-report-store-has-one-capability-directory.md)
 - [0038 A read-back row carries its answers](adr/0038-a-read-back-row-carries-its-answers.md)
+- [0039 A step is spent in memory](adr/0039-a-step-is-spent-in-memory.md)
 - [0041 An answer carries across an edit it never entered](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)

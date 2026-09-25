@@ -427,6 +427,12 @@ pub enum SessionError {
         error::SESSION_WRITE_FAILED.code
     )]
     RoutingStatePoisoned,
+    /// What the carry rule took of the tree was poisoned by a panic while holding it.
+    #[error(
+        "{}: the carry rule's record of which targets held their reach is poisoned, so it cannot be trusted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CarryStatePoisoned,
     /// A filtered-test establishment named more tests than the durable counter can represent.
     #[error(
         "{}: one filtered-test establishment named {count} tests, which exceeds the routing counter",
@@ -699,6 +705,7 @@ impl SessionError {
             | Self::TemporaryRootUnavailable { .. }
             | Self::ScratchStatePoisoned
             | Self::RoutingStatePoisoned
+            | Self::CarryStatePoisoned
             | Self::RoutingCountTooLarge { .. }
             | Self::ExpectationCoverageTooLarge { .. }
             | Self::ItemCatalogGap { .. }

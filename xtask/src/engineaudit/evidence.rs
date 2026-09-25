@@ -8,22 +8,28 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::{
-    Audit, BRANCH_NEVER_TAKEN, CheckedEvidence, DISCHARGED, Granularity, KILLED, Layer,
+    Audit, BRANCH_NEVER_TAKEN, CheckedEvidence, DISCHARGED, Decided, Granularity, KILLED, Layer,
     NEVER_INFECTED, NOT_RUN, Notes, Report, RouteDecision, Row, count, number, plural, string,
 };
 
 /// Every place a rule targets, against the decision the walk took about it.
-pub(super) fn sites(evidence: &CheckedEvidence<'_>, audit: &mut Audit) {
+pub(super) fn sites(evidence: &CheckedEvidence<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Sites);
     if !evidence.sites {
-        return;
+        notes.unaudited(
+            "census",
+            "the census of the walk's own decisions was not asked for, so the places it saw are \
+             not counted"
+                .to_owned(),
+        );
+        return notes.looked();
     }
     let Some(recorded) = &evidence.recorded else {
         notes.unaudited(
             "recording",
             "the run kept no recording, so the places the walk saw cannot be counted".to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let mut discovery = Discovery::Absent;
     for event in &recorded.events {
@@ -37,6 +43,7 @@ pub(super) fn sites(evidence: &CheckedEvidence<'_>, audit: &mut Audit) {
             "the recording names no file the walk went through".to_owned(),
         );
     }
+    notes.looked()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -144,7 +151,7 @@ fn skip_total(tallies: &[Value], path: &str, notes: &mut Notes<'_>) -> Option<u6
 }
 
 /// The parts of one catalog, against the whole they say they are.
-pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut Audit) {
+pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Merge);
     if evidence.shards.is_empty() {
         notes.unaudited(
@@ -153,7 +160,7 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
              cannot be re-derived"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     }
     let mut indices: BTreeSet<u64> = report.mutants.iter().map(|row| row.index).collect();
     let mut total = report.mutants.len();
@@ -194,7 +201,7 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
                 "shards",
                 "the number of rows does not fit in this platform's address space".to_owned(),
             );
-            return;
+            return notes.looked();
         };
         total = next_total;
         for row in &part.mutants {
@@ -219,6 +226,7 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
             ),
         );
     }
+    notes.looked()
 }
 
 /// Re-derives every discharge the run claimed from the evidence it kept.
@@ -273,7 +281,7 @@ fn measured_every_target(report: &Report, reached: Option<&Value>, notes: &mut N
 }
 
 /// Every route the guards decided, re-decided from what the guards recorded.
-pub(super) fn touch(report: &Report, touched: Option<&Value>, audit: &mut Audit) {
+pub(super) fn touch(report: &Report, touched: Option<&Value>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Touch);
     let routed = report
         .mutants
@@ -296,7 +304,12 @@ pub(super) fn touch(report: &Report, touched: Option<&Value>, audit: &mut Audit)
                 ),
             );
         }
-        return;
+        if routed == 0 {
+            return notes.absent(
+                "no mutation was put to some of a target's tests, and the run kept no record of what its guards reached",
+            );
+        }
+        return notes.looked();
     };
     let recorded = Recorded::of(record);
     if recorded.targets.is_empty() {
@@ -306,7 +319,12 @@ pub(super) fn touch(report: &Report, touched: Option<&Value>, audit: &mut Audit)
                 "the record names no target and the run narrowed by it anyway".to_owned(),
             );
         }
-        return;
+        if routed == 0 {
+            return notes.absent(
+                "the record of what the guards reached names no target, and nothing was narrowed by it",
+            );
+        }
+        return notes.looked();
     }
     accounted_for(report, &recorded, &mut notes);
     for row in &report.mutants {
@@ -322,6 +340,7 @@ pub(super) fn touch(report: &Report, touched: Option<&Value>, audit: &mut Audit)
         };
         re_decided(row, route, &recorded, &mut notes);
     }
+    notes.looked()
 }
 
 /// Whether the record accounts for every target the run built.
@@ -622,6 +641,25 @@ impl Touches {
     }
 }
 
+/// Every target whose tests could have noticed the mutation at `index`, re-derived from what the guards recorded: each with the tests it narrows to, or with nothing where every test of it could.
+pub(super) fn reaching_targets(
+    touched: &Value,
+    index: u64,
+) -> BTreeMap<String, Option<BTreeSet<String>>> {
+    let recorded = Recorded::of(touched);
+    recorded
+        .targets
+        .iter()
+        .filter_map(
+            |(target, touches)| match touches.reaching(index, &recorded.narrowing) {
+                Reaching::Nothing => None,
+                Reaching::Whole => Some((target.clone(), None)),
+                Reaching::Tests(tests) => Some((target.clone(), Some(tests))),
+            },
+        )
+        .collect()
+}
+
 /// Which of a target's tests could have noticed one mutation.
 #[derive(Debug)]
 enum Reaching {
@@ -633,7 +671,11 @@ enum Reaching {
     Whole,
 }
 
-pub(super) fn proofs(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut Audit) {
+pub(super) fn proofs(
+    report: &Report,
+    evidence: &CheckedEvidence<'_>,
+    audit: &mut Audit,
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let discharged = report
         .mutants
@@ -645,7 +687,7 @@ pub(super) fn proofs(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mu
             DISCHARGED,
             "the report carries no discharged accounting column".to_owned(),
         );
-        return;
+        return notes.looked();
     };
     if count(discharged) != counted {
         notes.violated(
@@ -666,7 +708,7 @@ pub(super) fn proofs(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mu
             "discharge",
             "the run discharged nothing, so there is no proof to re-derive".to_owned(),
         );
-        return;
+        return notes.looked();
     }
     let recorded = evidence.touched.as_ref().map(Recorded::of);
     branch_discharges(&claims, recorded.as_ref(), evidence, &mut notes);
@@ -674,6 +716,7 @@ pub(super) fn proofs(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mu
     if let Some(recorded) = &evidence.recorded {
         never_ran(&claims, &recorded.routing, &mut notes);
     }
+    notes.looked()
 }
 
 /// Every mutant that never ran says why, in the recording as well as in the report.
@@ -1033,7 +1076,7 @@ impl CatalogItem {
 }
 
 /// Every reached site and every kill, held to the items the entry markers say each test entered.
-pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit) {
+pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Entry);
     let Some(record) = touched else {
         notes.unaudited(
@@ -1041,7 +1084,7 @@ pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit)
             "the run kept no record of what its guards saw, so no entry can be re-derived"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let items = CatalogItem::all(record);
     if items.is_empty() {
@@ -1050,7 +1093,7 @@ pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit)
             "the record names no item, so what a test entered cannot be held to anything"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     }
     for (at, item) in items.iter().enumerate() {
         if item.index != count(at) {
@@ -1078,6 +1121,7 @@ pub(super) fn entry(report: &Report, touched: Option<&Value>, audit: &mut Audit)
     for row in rows.values().filter(|row| row.outcome == KILLED) {
         killed_entered(row, &recorded, &items, &mut notes);
     }
+    notes.looked()
 }
 
 /// Every index the record says a test entered is an item of the catalog.

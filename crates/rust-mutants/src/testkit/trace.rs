@@ -322,6 +322,8 @@ pub fn every_payload() -> Vec<Payload> {
                 key: "key".to_owned(),
                 hit: true,
                 source_run_id: Some("earlier-run".to_owned()),
+                rule: "exact".to_owned(),
+                refused: None,
             },
         },
         Payload::Select {

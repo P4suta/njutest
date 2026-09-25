@@ -8,6 +8,7 @@
 pub mod canonical;
 pub mod capdir;
 pub mod cargo;
+pub mod carry;
 pub mod catalog;
 pub mod count;
 pub mod coverage;

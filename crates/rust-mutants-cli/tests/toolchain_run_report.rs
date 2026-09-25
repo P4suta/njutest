@@ -1800,6 +1800,14 @@ fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
     }
 }
 
+/// The carried records the newest run of `fixture` believed.
+fn carried_of(fixture: &Fixture) -> serde_json::Value {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    document_at(&directory.join(rust_mutants::carry::FILE))
+}
+
 /// The skeletons the newest run of `fixture` kept.
 fn skeletons_of(fixture: &Fixture) -> serde_json::Value {
     let directory = njutest_devkit::fixture::newest_run(
@@ -1958,4 +1966,137 @@ fn an_edit_inside_a_sealed_body_moves_only_its_digest_and_one_outside_moves_the_
         now["units"], constant["units"],
         "a constant is outside every sealed body, so an edit to it moves the skeleton"
     );
+}
+
+/// Every row of a stored report by where and what it mutates, which an edit elsewhere in the file leaves unchanged where an identity does not.
+fn by_place(
+    report: &serde_json::Value,
+) -> std::collections::BTreeMap<(u64, String, String, String), serde_json::Value> {
+    report["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .map(|row| {
+            (
+                (
+                    row["line"].as_u64().unwrap_or_default(),
+                    row["rule"].as_str().unwrap_or_default().to_owned(),
+                    row["original"].as_str().unwrap_or_default().to_owned(),
+                    row["replacement"].as_str().unwrap_or_default().to_owned(),
+                ),
+                row.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    let asked = ["run", "--offline", "--locked", "--tier", "all"];
+    let first = against(&fixture, &asked);
+    assert!(
+        first.status.code() == Some(0) || first.status.code() == Some(1),
+        "{}",
+        stderr(&first)
+    );
+    let source = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let carried = against(&fixture, &asked);
+    assert!(
+        carried.status.code() == Some(0) || carried.status.code() == Some(1),
+        "{}",
+        stderr(&carried)
+    );
+    let with_carry = by_place(&stored(&fixture));
+    let believed = carried_of(&fixture);
+    let errors = against_schema("rust-mutants-carried-v1.json", &believed);
+    assert!(errors.is_empty(), "{errors:#?}");
+    assert!(
+        believed["records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty()),
+        "a run that carried answers keeps every record it believed: {believed:#}"
+    );
+    let fresh = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert!(
+        fresh.status.code() == Some(0) || fresh.status.code() == Some(1),
+        "{}",
+        stderr(&fresh)
+    );
+    let without = by_place(&stored(&fixture));
+    for (place, row) in &with_carry {
+        assert_eq!(
+            row["outcome"],
+            without
+                .get(place)
+                .map_or(serde_json::Value::Null, |fresh| fresh["outcome"].clone()),
+            "a carried answer must be the answer running it gives: {place:?}"
+        );
+    }
+    let over: Vec<&serde_json::Value> = with_carry
+        .iter()
+        .filter(|(place, _)| place.0 >= 12)
+        .map(|(_, row)| row)
+        .collect();
+    assert!(
+        !over.is_empty(),
+        "the fixture mutates `over`: {with_carry:#?}"
+    );
+    let ran: Vec<&&serde_json::Value> = over
+        .iter()
+        .filter(|row| row["source_run_id"].is_null())
+        .collect();
+    assert!(
+        ran.is_empty(),
+        "the edit was inside `total`, which no execution of a mutant of `over` entered, so \
+         every such answer carries rather than running again: {ran:#?}"
+    );
+}
+
+#[test]
+fn an_execution_a_silent_process_ran_inside_records_what_it_entered_as_cut() {
+    let fixture = Fixture::copy("fixture-silent-kill");
+    let ran = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        ran.status.code() == Some(0) || ran.status.code() == Some(1),
+        "{}",
+        stderr(&ran)
+    );
+    let carried = fixture.cache().join(rust_mutants::carry::LAYOUT);
+    let records: Vec<serde_json::Value> = std::fs::read_dir(&carried)
+        .expect("a run that keeps outcomes keeps carried records")
+        .map(|entry| {
+            let path = entry.expect("an entry").path();
+            njutest_devkit::strictjson::decode_str(
+                &std::fs::read_to_string(&path).expect("a record"),
+            )
+            .expect("a carried record")
+        })
+        .collect();
+    assert!(
+        !records.is_empty(),
+        "every mutant of `limit` is killed and kept"
+    );
+    for record in &records {
+        for execution in record["executions"].as_array().expect("its executions") {
+            assert_eq!(
+                execution["completeness"], "cut",
+                "a child with a cleared environment ran inside this execution and recorded \
+                 nothing it entered, so the union is not the whole of it: {record:#}"
+            );
+        }
+    }
 }

@@ -15,7 +15,9 @@ use xtask::proofaudit::sentinel::{
     self, ASKED, KILLED, RUN, SURVIVED, TARGET, base, merge, never_noticed, routes, was_put,
     went_past, with,
 };
-use xtask::proofaudit::{Audit, AuditError, EXIT_UNREADABLE, Layer, REPORT_FILE, Standing};
+use xtask::proofaudit::{
+    Audit, AuditError, Coverage, EXIT_UNREADABLE, Layer, REPORT_FILE, Standing,
+};
 
 const EARLIER: &str = "20260905T090000Z-1a2b3c";
 
@@ -62,7 +64,21 @@ fn without(document: &mut serde_json::Value, group: &str, column: &str) {
 
 fn audited(document: &serde_json::Value) -> Audit {
     let directory = run_directory(document);
-    gates::proofaudit(directory.path(), None).expect("a recording this audit can read")
+    let concluded = sentinel::concluding(document, &[]);
+    if concluded.is_empty() {
+        return gates::proofaudit(directory.path(), None).expect("a recording this audit can read");
+    }
+    let trace = recorded(&concluded);
+    gates::proofaudit(directory.path(), Some(trace.path()))
+        .expect("a recording this audit can read")
+}
+
+fn off_schema(document: &serde_json::Value) -> bool {
+    let directory = run_directory(document);
+    matches!(
+        gates::proofaudit(directory.path(), None),
+        Err(AuditError::OffSchema { .. })
+    )
 }
 
 fn audited_with_routes(document: &serde_json::Value) -> Audit {
@@ -71,7 +87,7 @@ fn audited_with_routes(document: &serde_json::Value) -> Audit {
 
 fn audited_with(document: &serde_json::Value, lines: &[serde_json::Value]) -> Audit {
     let run = run_directory(document);
-    let trace = recorded(lines);
+    let trace = recorded(&sentinel::concluding(document, lines));
     gates::proofaudit(run.path(), Some(trace.path())).expect("a recording this audit can read")
 }
 
@@ -129,7 +145,24 @@ fn a_recording_that_agrees_with_itself_violates_nothing_and_leaves_only_the_pack
 }
 
 #[test]
-fn an_affirmative_model_outcome_is_reparsed_from_retained_artifacts() {
+fn every_layer_says_how_far_it_got_even_with_nothing_to_look_at() {
+    let said = audited(&base()).to_string();
+    for layer in Layer::ALL {
+        let heads = said
+            .lines()
+            .filter(|line| line.starts_with(&format!("layer: {}: ", layer.label())))
+            .count();
+        assert_eq!(
+            heads,
+            1,
+            "{} says how far it got once:\n{said}",
+            layer.label()
+        );
+    }
+}
+
+#[test]
+fn an_affirmative_model_outcome_without_its_evidence_is_refused_before_any_layer_reads_it() {
     let mutant = "b".repeat(64);
     let document = with(serde_json::json!({
         "contract": "verified-v1",
@@ -149,16 +182,9 @@ fn an_affirmative_model_outcome_is_reparsed_from_retained_artifacts() {
             { "decision": { "outcome": "model-proved" } }
         ]
     }));
-    let audit = audited(&document);
     assert!(
-        audit.remarks.iter().any(|remark| {
-            remark.layer == Layer::Model
-                && remark.standing == Standing::Violated
-                && remark
-                    .detail
-                    .contains("exact closed shape for its decision")
-        }),
-        "{audit}"
+        off_schema(&document),
+        "an affirmative model answer without its evidence is not a report the schema allows"
     );
 }
 
@@ -204,7 +230,7 @@ fn verified_v1_requires_exactly_one_model_record_for_every_test_survivor() {
 }
 
 #[test]
-fn verified_v1_rejects_extra_and_open_shaped_model_records() {
+fn verified_v1_refuses_extra_and_open_shaped_model_records_before_any_layer_reads_them() {
     let killed = "a".repeat(64);
     let survivor = "b".repeat(64);
     let document = with(serde_json::json!({
@@ -224,14 +250,9 @@ fn verified_v1_rejects_extra_and_open_shaped_model_records() {
             }
         ]
     }));
-    let audit = audited(&document);
     assert!(
-        audit.remarks.iter().any(|remark| {
-            remark.layer == Layer::Model
-                && remark.standing == Standing::Violated
-                && remark.detail.contains("exact closed shape")
-        }),
-        "{audit}"
+        off_schema(&document),
+        "an open-shaped model record is not a report the schema allows"
     );
 }
 
@@ -359,13 +380,20 @@ fn more_acceptances_than_there_are_mutations_to_accept_is_a_violation() {
 }
 
 #[test]
-fn a_column_the_recording_omits_is_unaudited_rather_than_a_pass_or_a_failure() {
-    let mut document = base();
-    without(&mut document, "mutants", "killed");
-    assert_eq!(violations(&document), Vec::<String>::new());
+fn a_column_the_recording_omits_is_refused_before_any_layer_reads_it() {
+    let mut document = sentinel::complete_report(&base()).expect("the specimen completes");
+    let columns = document
+        .pointer_mut("/report/builds/0/parts/0/accounting/mutants")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the mutant accounting");
     assert!(
-        unaudited(&document).contains(&"accounting.mutants.killed".to_owned()),
-        "fail-closed is never turning what cannot be checked into what is fine, and never into what is broken"
+        columns.remove("killed").is_some(),
+        "the specimen has the column"
+    );
+    assert!(
+        off_schema(&document),
+        "a report missing a column the schema requires is refused, never read with the column \
+         taken as zero or as unknown"
     );
 }
 
@@ -424,13 +452,12 @@ fn a_defect_that_names_nothing_a_reader_can_act_on_is_a_violation() {
 }
 
 #[test]
-fn a_kill_that_names_no_target_at_all_is_a_violation() {
-    assert_eq!(
-        violations(&with(
+fn a_kill_that_names_no_target_at_all_is_refused_before_any_layer_reads_it() {
+    assert!(
+        off_schema(&with(
             serde_json::json!({ "mutants": [{ "decision": { "killed_by": null } }] })
         )),
-        [KILLED],
-        "a kill nobody can name is not a kill a reader can check"
+        "a kill nobody can name is not a report the published schema allows"
     );
 }
 
@@ -496,14 +523,13 @@ fn an_aggregate_acceptance_cannot_hide_a_row_the_report_did_not_accept() {
 }
 
 #[test]
-fn a_reused_disposition_that_names_no_source_run_is_a_violation() {
-    assert_eq!(
-        violations(&with(serde_json::json!({
+fn a_reused_disposition_that_names_no_source_run_is_refused_before_any_layer_reads_it() {
+    assert!(
+        off_schema(&with(serde_json::json!({
             "mutants": [{ "reuse": { "reused": true } }],
             "accounting": { "mutants": { "reused_killed": 1 } }
         }))),
-        [KILLED],
-        "a verdict read back from a run a reader cannot name is a verdict taken on trust"
+        "a verdict read back from a run a reader cannot name is not a report the schema allows"
     );
 }
 
@@ -520,13 +546,10 @@ fn a_reused_disposition_that_names_this_run_itself_is_a_violation() {
 }
 
 #[test]
-fn a_source_run_on_a_disposition_this_run_established_is_a_violation() {
-    assert_eq!(
-        violations(&with(serde_json::json!({
-            "mutants": [{ "reuse": { "reused": false, "source_run_id": EARLIER } }]
-        }))),
-        [KILLED]
-    );
+fn a_source_run_on_a_disposition_this_run_established_is_refused_before_any_layer_reads_it() {
+    assert!(off_schema(&with(serde_json::json!({
+        "mutants": [{ "reuse": { "reused": false, "source_run_id": EARLIER } }]
+    }))));
 }
 
 #[test]
@@ -638,7 +661,7 @@ fn a_document_of_another_schema_cannot_be_audited() {
     let document = with(serde_json::json!({ "schema": "njutest-trace-v1" }));
     let directory = run_directory(&document);
     let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
-    assert!(matches!(error, AuditError::Unrecognised { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -646,7 +669,7 @@ fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
     let rendered = audited_with_routes(&base()).to_string();
     assert!(
         rendered.ends_with(&format!(
-            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 1 unaudited"
+            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 2 unaudited"
         )),
         "{rendered}"
     );
@@ -659,7 +682,7 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
     let first = lines.next().unwrap_or_default();
     assert!(first.starts_with("violation: findings: "), "{rendered}");
     assert!(first.contains(SURVIVED), "{rendered}");
-    assert!(rendered.ends_with("1 violation, 1 unaudited"), "{rendered}");
+    assert!(rendered.ends_with("1 violation, 2 unaudited"), "{rendered}");
 }
 
 #[test]
@@ -972,7 +995,12 @@ fn at(seq: u64, mutant: &str, target: &str, outcome: &str) -> serde_json::Value 
     serde_json::json!({
         "seq": seq, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
         "mutant": { "mutant": mutant, "target": target, "args": [], "outcome": outcome,
-                    "duration_ms": 5 }
+                    "duration_ms": 5,
+                    "step_boundary": if outcome == "step_limit_reached" {
+                        serde_json::json!({ "limit": 10, "observed": 11 })
+                    } else {
+                        serde_json::Value::Null
+                    } }
     })
 }
 
@@ -993,7 +1021,7 @@ fn documents() -> Vec<(&'static str, Audit)> {
             "id": "c".repeat(64), "display_id": "cccccccccccccccccccc", "path": "src/lib.rs",
             "position": { "line": 1, "column": 1, "character_column": 1 },
             "rule": "r@1",
-            "decision": { "outcome": "killed", "killed_by": null, "step_boundary": null },
+            "decision": { "outcome": "killed", "killed_by": "pkg/test/nowhere", "step_boundary": null },
             "reuse": { "reused": false, "source_run_id": null }
         }]
     }));
@@ -1110,19 +1138,6 @@ fn concluding() -> Vec<(&'static str, Audit)> {
         (
             "a survivor no finding names",
             audited(&with(serde_json::json!({ "findings": [] }))),
-        ),
-        (
-            "a disposition read back from nowhere",
-            audited(&with(serde_json::json!({
-                "mutants": [{
-                    "id": "d".repeat(64), "display_id": "dddddddddddddddddddd",
-                    "path": "src/lib.rs",
-                    "position": { "line": 1, "column": 1, "character_column": 1 },
-                    "rule": "r@1",
-                    "decision": { "outcome": "killed", "killed_by": TARGET, "step_boundary": null },
-                    "reuse": { "reused": true, "source_run_id": null }
-                }]
-            }))),
         ),
         (
             "a disposition read back from this run",
@@ -1414,29 +1429,25 @@ fn what_a_run_looked_at_decides_which_assurance_it_may_reach() {
 }
 
 #[test]
-fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
-    let mut document = base();
-    without(&mut document, "mutants", "killed");
-    let audit = audited(&document);
-
+fn what_the_audit_could_not_check_is_counted_as_what_it_could_not_check() {
+    let audit = audited(&base());
     assert_eq!(
         audit.unaudited(),
-        7,
-        "one column that is not there leaves the column itself, the two equations it is \
-         a side of, and the four layers this recording does not carry — the routing, the \
-         targets put to mutations, the outcomes held to their executions, and the threads a \
-         single-threaded proof is held to. A count of what could not be checked is what \
-         tells a reader how much of the report the audit is silent about, and one that is \
-         always zero says it checked everything: {audit}"
+        5,
+        "a run that kept no routing, no execution and no engine recording leaves the proofs, the \
+         targets put to mutations, the outcomes held to what ran, the drift, and the threads a \
+         single-threaded proof is held to unchecked; a count of what could not be checked is what \
+         tells a reader how much of the report the audit is silent about, and one that is always \
+         zero says it checked everything: {audit}"
     );
     assert!(
-        audit.to_string().contains("7 unaudited"),
-        "and the summary says it: {audit}"
+        audit.to_string().contains("5 unaudited"),
+        "the summary says so as a number a script can compare: {audit}"
     );
 }
 
 #[test]
-fn a_field_the_recording_does_not_carry_is_absent_rather_than_fatal() {
+fn a_field_the_report_does_not_carry_is_a_typed_refusal_rather_than_a_default() {
     let mut document = base();
     if let Some(object) = document.as_object_mut() {
         assert!(
@@ -1444,13 +1455,10 @@ fn a_field_the_recording_does_not_carry_is_absent_rather_than_fatal() {
             "the fixture has a run identifier to remove"
         );
     }
-    let audit = audited(&document);
-
     assert!(
-        audit.run_id.is_empty(),
-        "a document missing a field it should have is a document the audit reads what it \
-         can of; reaching into it and unwrapping would end the audit at the first thing \
-         that was not there: {audit}"
+        off_schema(&document),
+        "a report missing a field the schema requires is refused, naming where, neither read with \
+         the field defaulted nor ending the audit in a panic"
     );
 }
 
@@ -1558,8 +1566,8 @@ fn an_execution_a_proof_answers_for_does_not_stop_the_search_for_one_nothing_ans
 fn two_kills_that_name_no_target_are_both_reported() {
     let document = with(serde_json::json!({
         "mutants": [
-            { "decision": { "outcome": "killed", "killed_by": null } },
-            { "decision": { "outcome": "killed", "killed_by": null } }
+            { "decision": { "outcome": "killed", "killed_by": "pkg/test/nowhere" } },
+            { "decision": { "outcome": "killed", "killed_by": "pkg/test/nowhere" } }
         ]
     }));
     let audit = audited(&document);
@@ -1959,8 +1967,11 @@ fn all_put(gap: &str) -> Vec<serde_json::Value> {
                 "capability": "api",
                 "seq": 0,
                 "rule": rule,
-                "decision": decision,
-                "noticed_by": if decision == "tests" { Some(TARGET) } else { None }
+                "answer": if decision == "tests" {
+                    serde_json::json!({ "decision": "tests", "noticed_by": TARGET })
+                } else {
+                    serde_json::json!({ "decision": decision })
+                }
             }
         }));
     }
@@ -2005,12 +2016,12 @@ fn a_question_no_exchange_licenses_is_a_violation_however_the_run_decided_it() {
 /// A recording where `blunt` was put to two mutations and answered `outcome` to both.
 fn answering(outcome: &str) -> Vec<serde_json::Value> {
     let mut lines = routes();
-    for (at, mutant) in [KILLED, SURVIVED].iter().enumerate() {
+    for (seq, mutant) in [(10_u64, KILLED), (11, SURVIVED)] {
         lines.push(serde_json::json!({
+            "seq": seq,
             "type": "mutant-exec",
             "mutant": {
-                "id": mutant,
-                "index": at,
+                "mutant": mutant,
                 "target": "blunt",
                 "outcome": outcome,
                 "duration_ms": 1
@@ -2022,7 +2033,7 @@ fn answering(outcome: &str) -> Vec<serde_json::Value> {
 
 #[test]
 fn a_target_whose_executions_nobody_decided_is_not_one_the_audit_demands_a_finding_about() {
-    for outcome in ["errored", "unconfirmed"] {
+    for outcome in ["errored", "inconclusive"] {
         let audit = audited_with(&base(), &answering(outcome));
         assert!(
             !audit
@@ -2049,10 +2060,20 @@ fn a_part_of_a_catalog_is_not_held_to_whether_a_target_noticed_anything() {
     );
     let audit = audited_with(&document, &never_noticed());
     assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Hollow
+                && remark.standing == Standing::Unaudited
+                && remark.detail.contains("when they are merged")),
+        "leaving it to the merge is said, not done in silence: {:?}",
+        audit.remarks
+    );
+    assert!(
         !audit
             .remarks
             .iter()
-            .any(|remark| remark.layer == Layer::Hollow),
+            .any(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Violated),
         "whether a target notices anything is a statement about the whole catalog, \
          and a part has seen a slice: demanding a finding here would demand one the \
          whole would contradict: {:?}",
@@ -2067,6 +2088,7 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         document,
         events: Some(routes()),
         engine: Some(engine),
+        shards: Vec::new(),
         outputs: Vec::new(),
     }
     .lay()
@@ -2172,41 +2194,14 @@ fn a_control_over_other_tests_is_no_comparison_and_the_report_must_say_drift_was
 
 #[test]
 fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
-    let flat = sentinel::clean().document;
-    let mut part = serde_json::Map::new();
-    for key in [
-        "run_id",
-        "toolchain",
-        "accounting",
-        "targets",
-        "mutants",
-        "findings",
-        "limitations",
-        "drift",
-        "knobs",
-        "concurrency",
-    ] {
-        if let Some(value) = flat.get(key) {
-            part.insert(key.to_owned(), value.clone());
-        }
-    }
-    let document = serde_json::json!({
-        "document_type": "complete",
-        "report": {
-            "schema": "njutest-assurance-report-v1",
-            "run_id": RUN,
-            "run_kind": "scoped",
-            "contract": "standard-v1",
-            "global_findings": [],
-            "model_completion": { "kind": "not-required" },
-            "builds": [{ "name": "default", "parts": [part] }]
-        }
-    });
+    let document =
+        sentinel::complete_report(&sentinel::clean().document).expect("the specimen completes");
     let laid = sentinel::Perturbation {
         name: "complete",
         document,
         events: Some(routes()),
         engine: sentinel::clean().engine,
+        shards: Vec::new(),
         outputs: Vec::new(),
     }
     .lay()
@@ -2219,19 +2214,19 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
             .remarks
             .iter()
             .any(|remark| remark.subject == "verdict" && remark.standing == Standing::Unaudited),
-        "a complete report states no verdict, and one this audit computed would agree with itself: {audit}"
+        "a complete report states no verdict and this recording ends in no run-end, and one this audit computed would agree with itself: {audit}"
     );
 }
 
 #[test]
 fn a_complete_report_of_two_builds_is_refused_rather_than_read_as_one() {
-    let document = serde_json::json!({
-        "document_type": "complete",
-        "report": {
-            "schema": "njutest-assurance-report-v1",
-            "builds": [{ "parts": [{}] }, { "parts": [{}] }]
-        }
-    });
+    let mut document = sentinel::complete_report(&base()).expect("the specimen completes");
+    let builds = document
+        .pointer_mut("/report/builds")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("a complete report holds its builds");
+    let second = builds.first().cloned().expect("one build");
+    builds.push(second);
     let directory = run_directory(&document);
     let error = gates::proofaudit(directory.path(), None).expect_err("two builds are not one");
     assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
@@ -2305,12 +2300,21 @@ fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
 
 #[test]
 fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_short_of() {
-    let custom =
-        serde_json::json!({ "touch": { "summary": { "protocol": "custom" }, "passed": [] } });
-    let mut baseline = sentinel::touch("baseline", &[0]);
-    merge(&mut baseline, custom.clone());
-    let mut control = sentinel::touch("control", &[0, 1]);
-    merge(&mut control, custom);
+    let custom = |mut touch: serde_json::Value| {
+        if let Some(record) = touch
+            .get_mut("touch")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            record.insert(
+                "summary".to_owned(),
+                serde_json::json!({ "protocol": "custom" }),
+            );
+            record.insert("passed".to_owned(), serde_json::json!([]));
+        }
+        touch
+    };
+    let baseline = custom(sentinel::touch("baseline", &[0]));
+    let control = custom(sentinel::touch("control", &[0, 1]));
     let said = drift_violations(&with_engine(
         with(sentinel::drifted("not-measured")),
         vec![baseline, control],
@@ -2724,10 +2728,16 @@ fn a_report_that_says_there_was_nothing_to_crash_is_unaudited_without_a_recordin
     let document = with(serde_json::json!({
         "limitations": [{ "name": "crash-no-site", "detail": "no measured file writes" }]
     }));
+    let directory = run_directory(&document);
+    let audit = gates::proofaudit(directory.path(), None).expect("a report this audit can read");
     assert!(
-        unaudited(&document).contains(&"crashes".to_owned()),
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Crashes
+                && remark.standing == Standing::Unaudited
+                && remark.subject == "crashes"
+        }),
         "a report that dropped every crash site and said there was none reads the same as one \
-         that had none, and only the recording tells them apart"
+         that had none, and only the recording tells them apart: {audit}"
     );
 }
 
@@ -2979,6 +2989,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
         document: with(sentinel::drifted("moved")),
         events: Some(events),
         engine: Some(engine),
+        shards: Vec::new(),
         outputs: Vec::new(),
     }
     .lay()
@@ -3092,11 +3103,12 @@ fn two_repairs(second_was: &str) -> Vec<String> {
     let laid = sentinel::Perturbation {
         name: "two repairs",
         document: with(serde_json::json!({ "drift": [
-            { "target": other, "state": "moved" },
-            { "target": TARGET, "state": "moved" }
+            sentinel::moved(other),
+            sentinel::moved(TARGET)
         ] })),
         events: Some(events),
         engine: Some(engine),
+        shards: Vec::new(),
         outputs: Vec::new(),
     }
     .lay()
@@ -3129,6 +3141,186 @@ fn a_second_repair_starts_from_what_the_first_one_made_it() {
     );
 }
 
+fn laid_sharded(perturbation: &sentinel::Perturbation) -> sentinel::Laid {
+    perturbation
+        .lay()
+        .expect("the sharded specimen is laid out")
+}
+
+fn merge_audit(perturbation: &sentinel::Perturbation) -> Result<Audit, AuditError> {
+    let laid = laid_sharded(perturbation);
+    let shards: Vec<std::path::PathBuf> =
+        laid.shards().into_iter().map(Path::to_path_buf).collect();
+    gates::proofaudit_merged(laid.run(), &shards, laid.traces())
+}
+
+fn merge_violations(perturbation: &sentinel::Perturbation) -> Vec<String> {
+    match merge_audit(perturbation) {
+        Ok(audit) => audit
+            .remarks
+            .iter()
+            .filter(|remark| remark.standing == Standing::Violated)
+            .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+            .collect(),
+        Err(error) => vec![format!("refused: {error}")],
+    }
+}
+
+fn sharded() -> sentinel::Perturbation {
+    sentinel::sharded_clean().expect("the specimen is measured in shards")
+}
+
+#[test]
+fn a_shard_document_is_re_decided_against_its_own_recording_as_the_one_part_it_measured() {
+    let laid = laid_sharded(&sharded());
+    let first = laid.shards().into_iter().next().expect("a first shard");
+    let trace = laid
+        .traces()
+        .expect("the shards' recordings")
+        .join(format!("{}-s1", sentinel::MERGED));
+    let audit = gates::proofaudit(first, Some(&trace)).expect("a shard is read as its part");
+    assert_eq!(audit.violations(), 0, "{audit}");
+    assert_eq!(audit.mutants, 1, "{audit}");
+    assert_eq!(audit.run_id, format!("{}-s1", sentinel::MERGED), "{audit}");
+}
+
+#[test]
+fn a_merged_report_is_held_to_every_shard_it_names_and_says_which_it_could_not_see() {
+    let clean = sharded();
+    let whole = merge_audit(&clean).expect("the merge is read with its shards");
+    assert_eq!(whole.violations(), 0, "{whole}");
+    assert_eq!(whole.mutants, 2, "{whole}");
+    let mut half = clean.clone();
+    half.shards.truncate(1);
+    let half = merge_audit(&half).expect("the merge is read with one shard");
+    assert!(
+        half.remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Merge
+                && remark.standing == Standing::Unaudited
+                && remark.subject == format!("{}-s2", sentinel::MERGED)),
+        "a shard the report names and nobody gave is unaudited, not agreed: {half}"
+    );
+    let alone = run_directory(&clean.document);
+    let error = gates::proofaudit(alone.path(), None).expect_err("two parts are not one");
+    assert!(matches!(error, AuditError::Unprojected { .. }), "{error}");
+}
+
+#[test]
+fn a_shard_the_report_was_not_merged_from_is_refused_rather_than_ignored() {
+    let mut stranger = sharded();
+    if let Some(shard) = stranger.shards.get_mut(1) {
+        merge(
+            &mut shard.document,
+            serde_json::json!({ "report": { "run_id": "20260906T101500Z-stranger" } }),
+        );
+    }
+    let error = merge_audit(&stranger).expect_err("a stranger is not a part");
+    assert!(
+        matches!(error, AuditError::ShardNotMerged { .. }),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_shard_given_twice_is_refused_rather_than_counted_once() {
+    let mut twice = sharded();
+    let first = twice.shards.first().cloned().expect("a first shard");
+    twice.shards.insert(0, first);
+    let error = merge_audit(&twice).expect_err("the same shard twice is an operator's mistake");
+    assert!(
+        matches!(error, AuditError::ShardGivenTwice { .. }),
+        "{error}"
+    );
+}
+
+#[test]
+fn only_a_merge_is_held_to_shards_and_only_a_shard_is_given_as_one() {
+    let clean = sharded();
+    let mut direct = clean.clone();
+    direct.document = sentinel::complete_report(&base()).expect("the specimen completes");
+    let error = merge_audit(&direct).expect_err("a report measured whole is no merge");
+    assert!(matches!(error, AuditError::NotMerged { .. }), "{error}");
+    let mut impostor = clean;
+    if let Some(shard) = impostor.shards.get_mut(1) {
+        shard.document = sentinel::complete_report(&base()).expect("the specimen completes");
+    }
+    let error = merge_audit(&impostor).expect_err("a complete report is not a shard");
+    assert!(matches!(error, AuditError::NotAShard { .. }), "{error}");
+}
+
+#[test]
+fn every_rule_of_a_merge_is_refused_by_name_where_its_plant_breaks_it() {
+    for rule in xtask::proofaudit::merge::MergeRule::ALL {
+        let plant = sentinel::merge_plant(rule).expect("a plant for every rule");
+        let said = merge_violations(&plant);
+        let prefix = format!("{}: ", rule.label());
+        assert!(
+            said.iter().any(|line| line.contains(&prefix)),
+            "`{}` must draw a {} violation: {said:?}",
+            plant.name,
+            rule.label()
+        );
+    }
+}
+
+#[test]
+fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_shard() {
+    let recorded = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/sharded-run");
+    let mut shards: Vec<std::path::PathBuf> = std::fs::read_dir(recorded.join("runs"))
+        .expect("the recorded shards")
+        .map(|entry| entry.expect("a readable shard").path())
+        .collect();
+    shards.sort();
+    let audit = gates::proofaudit_merged(
+        &recorded.join("merged.json"),
+        &shards,
+        Some(&recorded.join("traces")),
+    )
+    .expect("a real merge is read with its shards");
+    assert_eq!(audit.violations(), 0, "{audit}");
+    assert_eq!(audit.mutants, 4, "{audit}");
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Merge && remark.standing == Standing::Unaudited),
+        "every shard the merge names was given and re-decided: {audit}"
+    );
+}
+
+#[test]
+fn a_merge_says_how_far_each_layer_got_over_its_parts_and_no_further() {
+    let clean = sharded();
+    let whole = merge_audit(&clean).expect("the merge is read with its shards");
+    for layer in Layer::ALL {
+        assert!(
+            whole.coverage.contains_key(&layer),
+            "{} says how far it got: {whole}",
+            layer.label()
+        );
+    }
+    assert_eq!(
+        whole.coverage.get(&Layer::Merge),
+        Some(&Coverage::Rederived),
+        "{whole}"
+    );
+    let mut half = clean;
+    half.shards.truncate(1);
+    let half = merge_audit(&half).expect("the merge is read with one shard");
+    for layer in Layer::ALL
+        .into_iter()
+        .filter(|layer| *layer != Layer::Merge)
+    {
+        assert_eq!(
+            half.coverage.get(&layer),
+            Some(&Coverage::Partly),
+            "{} cannot have re-decided a part nobody gave: {half}",
+            layer.label()
+        );
+    }
+}
+
 #[test]
 fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
     let contract = xtask::strictjson::from_str(
@@ -3153,6 +3345,7 @@ fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
         );
     }
 }
+
 #[test]
 fn an_audit_that_left_something_unaudited_does_not_exit_as_one_that_checked_everything() {
     let unrecorded = audited(&base());

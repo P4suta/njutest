@@ -189,6 +189,21 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         mutant: __rm_std::option::Option<__rm_std::string::String>,
     }
     static ACTIVE: __rm_std::sync::OnceLock<Selection> = __rm_std::sync::OnceLock::new();
+    // Boundaries this copy has already been granted by the shared state and
+    // may spend in memory, and what it last learned of the shared phase. A
+    // dormant copy asks the file only every DORMANT_POLL boundaries: another
+    // copy's activation reaches it within that many, and until then it
+    // charges nothing, which a stated bound says rather than hides.
+    static LEASED: __rm_std::sync::atomic::AtomicUsize = __rm_std::sync::atomic::AtomicUsize::new(0);
+    static POLLED: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(0);
+    static KNOWN: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(KNOWN_UNASKED);
+    const KNOWN_UNASKED: u8 = 0;
+    const KNOWN_DORMANT: u8 = 1;
+    const KNOWN_ACTIVE: u8 = 2;
+    const KNOWN_OTHER: u8 = 3;
+    const DORMANT_POLL: u32 = 256;
+    const LEASE_SHARE: usize = 16;
+    const LEASE_MOST: usize = 4096;
     static BUDGET: __rm_std::sync::OnceLock<Budget> = __rm_std::sync::OnceLock::new();
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
@@ -325,13 +340,53 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     /// Activates the process-wide allowance exactly once. Re-evaluating the
     /// selected guard does not spend twice; the boundaries it reaches do.
     fn activate() {
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_ACTIVE {
+            return;
+        }
         advance(StepAction::Activate);
     }
 
     /// Charges a function or loop boundary only after the mutation is active.
     #[inline(always)]
     pub(crate) fn checkpoint() {
+        let spent_in_memory = LEASED.fetch_update(
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            |left| left.checked_sub(1),
+        );
+        if spent_in_memory.is_ok() {
+            return;
+        }
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_DORMANT
+            && POLLED.fetch_add(1, __rm_std::sync::atomic::Ordering::SeqCst) % DORMANT_POLL != 0
+        {
+            return;
+        }
         advance(StepAction::Checkpoint);
+    }
+
+    /// How many more boundaries one reservation grants when `remaining` are left: a share of them, at least one and at most a bound.
+    const fn lease_size(remaining: usize) -> usize {
+        let share = match remaining.checked_div(LEASE_SHARE) {
+            __rm_std::option::Option::Some(share) => share,
+            __rm_std::option::Option::None => 0,
+        };
+        if share > LEASE_MOST {
+            LEASE_MOST
+        } else if share == 0 && remaining > 0 {
+            1
+        } else {
+            share
+        }
+    }
+
+    /// What `phase` says this copy knows.
+    const fn known(phase: StepPhase) -> u8 {
+        match phase {
+            StepPhase::Dormant => KNOWN_DORMANT,
+            StepPhase::Active(_) => KNOWN_ACTIVE,
+            StepPhase::Counting(_) | StepPhase::Stopping(_) => KNOWN_OTHER,
+        }
     }
 
     fn advance(action: StepAction) {
@@ -424,8 +479,27 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         file.lock().map_err(|_| StepStateError::Lock)?;
         let transitioned = (|| {
             let phase = read_step_state(file, nonce, mutant, limit)?;
-            let (next, advanced) = step_transition(phase, action, limit.value())
+            let (mut next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
+            let mut granted = 0_usize;
+            if let (StepAction::Checkpoint, StepAdvance::Continue, StepPhase::Active(spent)) =
+                (action, advanced, next)
+            {
+                let wanted = lease_size(limit.value().saturating_sub(spent));
+                while granted < wanted {
+                    let (further, reserved) = step_transition(next, action, limit.value())
+                        .map_err(|_| StepStateError::InvalidCount)?;
+                    match (reserved, further) {
+                        (StepAdvance::Continue, StepPhase::Active(_)) => {
+                            next = further;
+                            granted = granted.saturating_add(1);
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            KNOWN.store(known(next), __rm_std::sync::atomic::Ordering::SeqCst);
+            LEASED.store(granted, __rm_std::sync::atomic::Ordering::SeqCst);
             if let StepAdvance::Reached { allowed, observed } = advanced {
                 // A persisted Stopping state is a proof that the final notice
                 // was published. Publication happens while the shared state

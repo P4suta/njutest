@@ -1039,6 +1039,8 @@ fn one_of_each_execution(recorder: &Recorder) {
         key: "d".repeat(64),
         hit: true,
         source_run_id: Some("20260907T000000000Z".to_owned()),
+        rule: "exact".to_owned(),
+        refused: None,
     });
     recorder.select(rust_mutants::trace::SelectRecord {
         mutant: "b".repeat(20),
@@ -1485,6 +1487,35 @@ fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
             .map(|one| one.name().to_owned())
             .collect::<BTreeSet<String>>(),
         "and so is every reason it can give for widening"
+    );
+}
+
+#[test]
+fn every_reason_a_select_record_can_carry_is_one_the_published_schema_allows() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../schema/rust-mutants-trace-v1.json"
+    ))
+    .expect("the schema is JSON");
+    let reasons = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("the payload alternatives")
+        .iter()
+        .find(|alternative| alternative["properties"]["type"]["const"] == "select")
+        .map(|select| select["properties"]["select"]["properties"]["reason"]["enum"].clone())
+        .expect("a select record");
+    let published: Vec<&str> = reasons
+        .as_array()
+        .expect("a closed list")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let written: Vec<&str> = rust_mutants::run::NotRunReason::ALL
+        .iter()
+        .map(|reason| reason.name())
+        .collect();
+    assert_eq!(
+        published, written,
+        "the engine writes the name of every reason a mutant did not run, so the schema lists each"
     );
 }
 

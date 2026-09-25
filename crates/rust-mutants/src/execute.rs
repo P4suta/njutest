@@ -1248,12 +1248,16 @@ fn remove_notice(path: &Path) -> Result<(), NoticeError> {
     }
 }
 
-/// Whether one failing test is the whole answer this process is run for: a libtest target with a mutant active and nothing being measured, so ending it at that failure loses no evidence.
+/// Whether one failing test is the whole answer this process is run for: a libtest target with a mutant active and nothing measured but the items it enters, which it writes as it enters them, so ending it at that failure loses no evidence.
 const fn answered_by_one_failure(target: &TestTarget, context: &Context<'_>) -> bool {
-    target.harness
-        && context.active.is_some()
-        && context.touch.is_none()
-        && context.profile.is_none()
+    let recording_allows = match &context.touch {
+        None => true,
+        Some(touching) => match touching.scope {
+            TouchScope::Items => true,
+            TouchScope::Everything => false,
+        },
+    };
+    target.harness && context.active.is_some() && recording_allows && context.profile.is_none()
 }
 
 fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {

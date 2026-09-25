@@ -138,3 +138,20 @@ Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte 
   A build script's own unit has no such entry.
 
 So an edit to anything outside a sealed body, a signature, a type, a constant, a trait `impl` header, a macro, an unsealed body, a file the build included, a variable, or what a build script emitted, moves the skeleton of every unit that read it, and an edit inside a sealed body moves only that item's digest.
+
+## The rule
+
+A run that keeps outcomes also keeps, for every mutant it decides, a carried record under `rust-mutants/carried-v1/` in the cache directory.
+The record is filed under the mutation's locus: the item whose body the edit is inside, named by package, path and ordinal, that body's digest, the edit's offsets from the body's start, its replacement, and its rule; and everything the exact key holds except the closure.
+A mutant whose edit is inside no item body has no locus and nothing carried.
+
+The record lists every execution the answer rests on, in the order the route made them: its target, the tests it named, the tree's skeleton, every item its process entered with that item's body digest, and how much of the process the list accounts for.
+The tree's skeleton is the fold of every unit's skeleton, one line `<package>\0<target>\0<kind>\0<test>\0<skeleton>\n` per unit in byte order, which is coarser than the units a target links and sound for it.
+
+After the exact key misses, a run reads the record under the mutation's locus and believes it only when every premise holds:
+
+- a kill: its killing execution named everything it entered up to the kill, its target is one the route runs with the same tests, its target held its reach under a control of this tree, the skeleton is unchanged, and every item it entered has the same, sealed, body;
+- a survival: every target the route runs has a recorded execution with the same tests that named everything it entered, and each meets the rest of what a kill's execution does; no target that reaches the mutant starts a process the run cannot see into.
+
+The trace's `cache` record says `rule: carried` for this lookup, and `refused` names the first premise that failed: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved` or `uncontrolled`.
+A believed record is reported like an exact one, with the run that established it as `source_run_id`.

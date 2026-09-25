@@ -26,7 +26,7 @@ pub struct Repair {
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
 pub fn read(recorded: &str) -> Result<Vec<Repair>, crate::route::ReadError> {
     let mut repairs = Vec::new();
-    for event in crate::route::events(recorded)? {
+    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
         if event.get("type").and_then(Value::as_str) != Some("repair") {
             continue;
         }
