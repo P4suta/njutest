@@ -90,7 +90,7 @@ pub fn base() -> Value {
         "workspace": {
             "root_name": "demo",
             "toolchain": "rustc 1.98.0",
-            "workspace_digest": "w".repeat(64),
+            "workspace_digest": "d".repeat(64),
             "catalog_digest": "c".repeat(64),
             "platform": { "os": "linux", "arch": "x86_64", "target": "x86_64-unknown-linux-gnu" }
         },
@@ -136,28 +136,31 @@ pub fn base() -> Value {
 pub fn recording() -> Vec<Value> {
     let mut events = vec![
         json!({"seq":1,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
-            "type":"run-start","schema":"rust-mutants-trace-v1","engine":"0.1.0"}),
+            "type":"run-start","schema":"rust-mutants-trace-v1","engine":"0.1.0",
+            "context":{"kind":"standalone","run_id":"engine-audit-specimen",
+            "build_selection":"c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"}}),
         json!({"seq":2,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":0,
-            "type":"phase-start","phase":{"name":"prepare"}}),
+            "type":"phase-start","phase":{"name":"prepare","duration_ms":null}}),
         json!({"seq":3,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":10,
             "type":"instrument","instrument":{"path":"src/lib.rs","guards":2,
-            "runtime":"__rm_deadbeef","lines_before":40,"lines_after":40}}),
+            "module":"__rm_deadbeef","lines_before":40,"lines_after":40}}),
         json!({"seq":4,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":20,
             "type":"validate-round","round":{"round":1,"condemned":0,"success":false,
             "attributed":[{"index":2,"code":"E0369","said":"cannot subtract"}],
-            "unattributed":0}}),
+            "written":1,"unattributed":[]}}),
         json!({"seq":5,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":30,
-            "type":"build","build":{"targets":[TARGET]}}),
+            "type":"build","build":{"targets":[TARGET],
+            "details":[{"id":TARGET,"kind":"lib","harness":true,"limitations":[]}]}}),
         json!({"seq":6,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":40,
-            "type":"verify","verify":{"target":TARGET,"outcome":"passed","tests_run":2,
-            "duration_ms":5}}),
+            "type":"verify","verify":{"target":TARGET,"outcome":"survived","tests_run":2,
+            "duration_ms":5,"remembered":false,"retried":false}}),
         json!({"seq":7,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":50,
             "type":"phase-end","phase":{"name":"prepare","duration_ms":50}}),
     ];
     events.extend(judged((8, 9), 0, KILLED, "killed"));
     events.extend(judged((10, 11), 1, SURVIVED, "survived"));
     events.push(json!({"seq":12,"timestamp":"2026-09-06T10:15:02Z",
-        "elapsed_ms":70,"type":"run-end","run":{"outcome":"detected",
+        "elapsed_ms":70,"type":"run-end","run":{"outcome":"detected","error":null,
         "events_emitted":12,"events_dropped":0}}));
     events
 }
@@ -305,6 +308,7 @@ pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
         let seq = taken("seq")?;
         let timestamp = taken("timestamp")?;
         let elapsed_ms = taken("elapsed_ms")?;
+        crate::specimen::completed(crate::schemas::Producer::Engine, &mut payload);
         let envelope = json!({
             "seq": seq,
             "timestamp": timestamp,
@@ -665,7 +669,7 @@ impl Layer {
                         "discover": {
                             "path": "src/lib.rs",
                             "candidates": 2,
-                            "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C" }],
+                            "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C", "skip": null, "note": null }],
                             "skips": []
                         }
                     }),

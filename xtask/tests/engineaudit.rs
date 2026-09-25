@@ -71,6 +71,23 @@ fn a_clean_run_is_silent_on_every_layer_it_can_re_decide() {
 }
 
 #[test]
+fn every_layer_says_how_far_it_got_even_with_nothing_to_look_at() {
+    let said = audited(&base()).to_string();
+    for layer in Layer::ALL {
+        let heads = said
+            .lines()
+            .filter(|line| line.starts_with(&format!("layer: {}: ", layer.label())))
+            .count();
+        assert_eq!(
+            heads,
+            1,
+            "{} says how far it got once:\n{said}",
+            layer.label()
+        );
+    }
+}
+
+#[test]
 fn an_id_that_does_not_re_mint_from_its_own_fields_is_a_violation() {
     let audit = audited(&with(serde_json::json!({
         "mutants": [{ "start_byte": 104 }]
@@ -93,7 +110,7 @@ fn a_row_without_byte_offsets_is_not_a_report() {
     let run = run_directory(&document);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("a report missing an identity input must fail at the boundary");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -209,7 +226,7 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         "mutants": [{
             "outcome": "step_limit_reached", "expected": false,
             "step_notice": {
-                "nonce": "not-a-nonce", "catalog": "another-catalog",
+                "nonce": "0".repeat(32), "catalog": "e".repeat(64),
                 "mutant": SURVIVED, "limit": 9, "observed": 9
             }
         }, {}],
@@ -218,7 +235,12 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         }]
     }));
     let audit = audited(&document);
-    assert_eq!(violations(&audit, Layer::Accounting).len(), 5, "{audit}");
+    assert_eq!(
+        violations(&audit, Layer::Accounting).len(),
+        4,
+        "another catalog, another mutant, another allowance, and a count not one past it; \
+         a nonce that is not hex is refused by the schema before any layer reads it: {audit}"
+    );
 }
 
 #[test]
@@ -423,7 +445,7 @@ fn a_target_the_build_records_as_configured_out_needs_no_verification() {
     let mut events = recording();
     events[4]["build"]["targets"] = serde_json::json!([TARGET, "demo/test/ui"]);
     events[4]["build"]["details"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true},
+        {"id": TARGET, "kind": "lib", "harness": true, "limitations": []},
         {
             "id": "demo/test/ui",
             "kind": "test",
@@ -683,14 +705,14 @@ fn the_report_boundary_rejects_unknown_fields_and_closed_state_values() {
     let run = run_directory(&unknown);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("an unknown field must not look like ignored evidence");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 
     let mut open_state = base();
     open_state["mutants"][0]["outcome"] = serde_json::json!("probably-killed");
     let run = run_directory(&open_state);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("an outcome outside the closed contract must not enter the audit");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -724,7 +746,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         &Evidence::default(),
     )
     .expect_err("a missing nullable key is different from an explicit null");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 
     let mut missing_route = base();
     assert!(
@@ -741,7 +763,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         &Evidence::default(),
     )
     .expect_err("a missing route cannot be silently read as no route");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -1066,7 +1088,7 @@ fn a_file_whose_walk_decided_less_than_it_saw_is_a_violation() {
             "discover": {
                 "path": "src/lib.rs",
                 "candidates": 2,
-                "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C" }],
+                "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C", "skip": null, "note": null }],
                 "skips": []
             }
         }),

@@ -151,8 +151,15 @@ whether the mutations nothing noticed and the `surviving-mutant` findings are th
 Given the run's recording as well, it holds the proof layers to what the run wrote down: no target a proof removed from what could notice a mutation may then be the target that killed it, a route that says no measured target reaches a mutation may not then run one against it, a route the measurement widened has to run something, and a route may not say both that it read an answer back and that it refused one.
 The reach layer is re-derived rather than confirmed, because a route names the targets it removed every execution from: each of those names is held to the targets the run reports, to the targets the same route kept, and to the proofs that route names — and a route that removed every execution while naming nobody is a violation, since nothing reaches a place only if somebody was in a position to notice and did not.
 It reads the recording as lines of JSON rather than through the code that wrote them, and a run recorded without `--trace` leaves the layers `unaudited` rather than passed.
-A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds or of shards with exit code 2 rather than reading one of them as the whole.
-Such a report states no verdict — the verdict is derived from its records — so the verdict is `unaudited` there, since one this audit derived would be a verdict it agreed with by construction.
+A complete report holds its facts per configured build and per catalog part; the audit re-decides the one part of a report that measured one build whole, and refuses a report of several builds with exit code 2 rather than reading one of them as the whole.
+A report states no verdict — the verdict is derived from its records — so the verdict is re-decided against the `run-end` the runner recorded, and is `unaudited` where the recording holds none.
+Every document is validated against its published schema before any layer reads it.
+
+A sharded run is audited the way it was measured: each `verify --shard K/N` run is its own run directory and its own recording, and `cargo xtask proofaudit <shard-run-directory> --trace <its-recording>` re-decides that shard's one part, leaving to the merge what only the whole catalog decides.
+`cargo xtask proofaudit <merged-report> --shard <shard> … --traces <directory>` then re-decides each shard against its recording under `<directory>/<its run>` — the layout `.njutest/trace` already has — and holds the merged report to them, each violation named by the `MergeRule` it breaks:
+the composition is one division of the catalog, every shard of one count once and in order (`division`); every build holds one part per shard (`parts`); each shard sits where its document says it measured (`placement`); the report is measured under what each shard was (`agreement`) and holds the builds each measured (`builds`); each part is byte for byte the part its shard measured (`bytes`); the merged run is none of its inputs (`identity`); a merge completes no model batch (`models`); and every shard, re-decided on its own, holds (`shards`), whose own remarks are carried under its run.
+Each rule has a defect planted for it that the gate must find by name before any run is read.
+A shard the composition names and nobody gave is `unaudited`, a shard given twice or one the report was not merged from is refused, and what only the whole catalog decides is `unaudited` in each shard, since a merged report stores none of it and its reader derives it.
 This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked whether it agrees with itself.
 
@@ -193,7 +200,7 @@ It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, n
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
 | `entry` | every site a test reached and every mutation a test noticed as lying in an item that test entered, by the item catalog and `entered` of `touched-v1.json`; every mutation as sitting in a measurable item whose name is the row's `item` |
 
-Its output and exit codes are `proofaudit`'s: one line per remark, a summary line, and 0, 1, or 2.
+Its output and exit codes are `proofaudit`'s: one line per remark, one `layer:` line per layer, a summary line, and 0, 1, or 2.
 Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails here rather than in a weekly job.
 
@@ -208,7 +215,11 @@ proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 vio
 Where the recording does not carry enough to decide something again — which survivors a reviewer accepted, what a reused disposition was routed under,
 which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
-One line per remark names its layer and its subject, a summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
+One line per remark names its layer and its subject.
+Then every layer says how far it got in one `layer:` line: `re-decided`, `partly re-decided` where an `unaudited` line says what was not, or `nothing to re-decide` and why, so a layer that had nothing to look at is never read as one that looked and agreed.
+A layer returns a `Decided` that only those three outcomes make, and the audit calls every layer through an exhaustive match over `Layer`, so a layer cannot end without saying which.
+A merge's layers are re-decided only where every shard was given and none fell short.
+A summary line closes the report, and the exit code is 0 with no violations, 1 with them, and 2 when the run directory could not be read at all.
 Before it reads the run, `proofaudit` re-decides a clean synthetic run (`xtask::proofaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each of its eleven layers, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
 
 ### A gate finds what was planted for it before it is believed

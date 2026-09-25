@@ -53,6 +53,8 @@ mod sbom;
 mod sentinel;
 #[path = "shapes.rs"]
 mod shapes;
+#[path = "specimen_reach.rs"]
+mod specimen_reach;
 #[path = "suites.rs"]
 mod suites;
 #[path = "surface.rs"]

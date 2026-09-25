@@ -116,7 +116,7 @@ pub struct Touched {
 /// A non-empty line that is not JSON rejects the whole recording.
 pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
     let mut touched = Touched::default();
-    for event in crate::route::events(recorded)? {
+    for event in crate::route::events(recorded, crate::schemas::Producer::Engine)? {
         if event.get("type").and_then(Value::as_str) == Some("verify")
             && let Some(verify) = event.get("verify")
             && verify.get("retried").and_then(Value::as_bool) == Some(true)

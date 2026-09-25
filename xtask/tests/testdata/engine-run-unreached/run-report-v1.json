@@ -1,20 +1,20 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 2,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260923t165252724z",
-    "started_at": "2026-09-23T16:52:52.724255Z",
-    "finished_at": "2026-09-23T16:52:53.87867Z",
-    "duration_ms": 109,
+    "id": "20260924t131147643z",
+    "started_at": "2026-09-24T13:11:47.643657Z",
+    "finished_at": "2026-09-24T13:11:52.269009Z",
+    "duration_ms": 107,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null, "jobs": {"asked": "auto", "used": 1}
+    "shard": null
   },
   "workspace": {
     "root_name": "fixture-unreached",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "aa56f4081d3e44155ddd28eb1e537c489a1270dbfb93fe2ee8d8f5bcac077e44",
+    "workspace_digest": "4fde05997ecc1b35a248234d07027c2aa04f409536107fd95c3c753697a3b9b8",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "darwin",
@@ -93,8 +93,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -109,15 +109,13 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t165054148z"
     },
     {
       "index": 1,
@@ -139,8 +137,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 28,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -155,15 +153,13 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t165054148z"
     },
     {
       "index": 2,
@@ -185,8 +181,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -201,15 +197,13 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t165054148z"
     },
     {
       "index": 3,
@@ -231,8 +225,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
-      "exit_code": 101,
-      "duration_ms": 27,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -247,15 +241,13 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t165054148z"
     },
     {
       "index": 4,

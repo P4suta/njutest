@@ -131,8 +131,13 @@ pub fn with(overrides: Value) -> Value {
 /// A route and an execution for each mutant of [`base`], with no proof removing anything.
 #[must_use]
 pub fn routes() -> Vec<Value> {
+    routes_for(&[(KILLED, "killed"), (SURVIVED, "survived")])
+}
+
+/// A route and an execution for each of `mutants`, each with the outcome it came to, with no proof removing anything.
+fn routes_for(mutants: &[(&str, &str)]) -> Vec<Value> {
     let mut events = Vec::new();
-    for (mutant, outcome) in [(KILLED, "killed"), (SURVIVED, "survived")] {
+    for &(mutant, outcome) in mutants {
         events.push(json!({
             "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
             "type": "route",
@@ -187,12 +192,22 @@ pub fn went_past() -> Value {
         "exchange": {
             "capability": "api",
             "seq": 0,
-            "wire": "http",
-            "method": "GET",
-            "path": "/orders",
-            "status": 200
+            "during": null,
+            "duration_ms": 1,
+            "read": { "wire": "http", "method": "GET", "path": "/orders", "status": 200 },
+            "request_bytes": 1,
+            "response_bytes": 1
         }
     })
+}
+
+/// A seam answer of `decision`, with the test that noticed it where that is what it says.
+fn answered(decision: &str) -> Value {
+    match decision {
+        "tests" => json!({ "decision": "tests", "noticed_by": TARGET }),
+        "proved" => json!({ "decision": "proved", "proof": "never-reached" }),
+        other => json!({ "decision": other }),
+    }
 }
 
 /// One fault put to the suite, decided as `decision` says.
@@ -205,8 +220,7 @@ pub fn was_put(fault: &str, decision: &str) -> Value {
             "capability": "api",
             "seq": 0,
             "rule": "status-server-error",
-            "decision": decision,
-            "noticed_by": null
+            "answer": answered(decision)
         }
     })
 }
@@ -273,7 +287,17 @@ pub fn knobbed(state: &str) -> Value {
 /// The report's drift record about [`TARGET`], in the standing `state` names.
 #[must_use]
 pub fn drifted(state: &str) -> Value {
-    json!({ "drift": [{ "target": TARGET, "state": state }] })
+    let record = match state {
+        "moved" => json!({
+            "target": TARGET, "state": state,
+            "reached": { "gained": [1], "lost": [] },
+            "bodies": { "gained": [], "lost": [] },
+            "infected": { "gained": [], "lost": [] }
+        }),
+        "not-measured" => json!({ "target": TARGET, "state": state, "why": "no-control" }),
+        other => json!({ "target": TARGET, "state": other }),
+    };
+    json!({ "drift": [record] })
 }
 
 /// A specimen could not be laid out on disk.
@@ -302,6 +326,9 @@ pub enum SpecimenError {
         /// Its position in the recording.
         at: usize,
     },
+    /// The flat report could not be completed into the document a run writes.
+    #[error(transparent)]
+    Incomplete(#[from] crate::specimen::CompletionError),
 }
 
 impl crate::error::Coded for SpecimenError {
@@ -311,6 +338,7 @@ impl crate::error::Coded for SpecimenError {
                 crate::error::XtCode::SpecimenUnwritable
             }
             Self::NotAnObject { .. } => crate::error::XtCode::SpecimenEvent,
+            Self::Incomplete(_) => crate::error::XtCode::SpecimenIncomplete,
         }
     }
 }
@@ -332,8 +360,106 @@ fn written(path: &Path, text: &str) -> Result<(), SpecimenError> {
 /// [`SpecimenError`] when the directory or the report cannot be written.
 pub fn run_directory(document: &Value) -> Result<TempDir, SpecimenError> {
     let run = directory()?;
-    written(&run.path().join(REPORT_FILE), &document.to_string())?;
+    let laid = if document.get("document_type").is_some() {
+        document.clone()
+    } else {
+        complete_report(document)?
+    };
+    written(&run.path().join(REPORT_FILE), &laid.to_string())?;
     Ok(run)
+}
+
+/// The complete document a run writes holding the flat specimen `flat`, as [`run_directory`] lays it.
+///
+/// # Errors
+/// [`SpecimenError::Incomplete`] where `flat` is not an object, or the committed report it is completed from is not that shape.
+pub fn complete_report(flat: &Value) -> Result<Value, SpecimenError> {
+    Ok(crate::specimen::complete(flat)?)
+}
+
+/// The run the clean specimen's merge is, whose shards are this run with `-s1` and `-s2` after it.
+pub const MERGED: &str = "20260906T101500Z-9f1c2e";
+
+/// The flat report of the run that measured only `mutant` of [`base`], at the catalog index shard `index` of two owns: its rows, accounting, findings and verdict are that shard's own.
+fn shard_flat(mutant: &str, index: u64) -> Value {
+    let mut flat = with(drifted("held"));
+    let owned = |row: &Value| row.get("display_id").and_then(Value::as_str) == Some(mutant);
+    let noticed = mutant == KILLED;
+    if let Some(Value::Array(rows)) = flat.get_mut("mutants") {
+        rows.retain(owned);
+        for row in rows.iter_mut() {
+            merge(row, json!({ "catalog_index": index.saturating_sub(1) }));
+        }
+    }
+    if let Some(Value::Array(rows)) = flat.get_mut("findings") {
+        rows.retain(|row| row.get("subject").and_then(Value::as_str) == Some(mutant));
+    }
+    merge(
+        &mut flat,
+        json!({
+            "verdict": if noticed { "PARTIAL" } else { "INSUFFICIENT" },
+            "accounting": { "mutants": {
+                "cataloged": 1,
+                "executed": 1,
+                "killed": u8::from(noticed),
+                "survived": u8::from(!noticed)
+            } }
+        }),
+    );
+    flat
+}
+
+/// One shard a merged report was merged from: its document, and the recordings its run kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shard {
+    /// The shard document.
+    pub document: Value,
+    /// The runner's recording, ending with the `run-end` that says what the shard concluded.
+    pub events: Option<Vec<Value>>,
+    /// The one configured build's engine recording.
+    pub engine: Option<Vec<Value>>,
+}
+
+/// Shard `index` of two of the clean specimen, the run that measured `mutant` alone with the outcome it came to.
+///
+/// # Errors
+/// [`SpecimenError::Incomplete`] where the shard's report cannot be completed.
+fn shard_of((mutant, outcome): (&str, &str), index: u64) -> Result<Shard, SpecimenError> {
+    let flat = shard_flat(mutant, index);
+    Ok(Shard {
+        document: crate::specimen::shard(&flat, (&format!("{MERGED}-s{index}"), index, 2))?,
+        events: Some(concluding(&flat, &routes_for(&[(mutant, outcome)]))),
+        engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
+    })
+}
+
+/// The clean specimen measured in two shards, each with its own recording, and merged: on which no layer may find anything.
+///
+/// # Errors
+/// [`SpecimenError::Incomplete`] where a shard cannot be completed or the shards cannot be merged.
+pub fn sharded_clean() -> Result<Perturbation, SpecimenError> {
+    let shards = vec![
+        shard_of((KILLED, "killed"), 1)?,
+        shard_of((SURVIVED, "survived"), 2)?,
+    ];
+    let documents: Vec<Value> = shards.iter().map(|shard| shard.document.clone()).collect();
+    Ok(Perturbation {
+        name: "the clean specimen, measured in two shards and merged",
+        document: crate::specimen::merged(&documents, MERGED)?,
+        events: None,
+        engine: None,
+        shards,
+    })
+}
+
+/// The runner recording `events` of a run whose flat report says it concluded something, ending with the `run-end` that says so, since a complete report stores no verdict.
+#[must_use]
+pub fn concluding(document: &Value, events: &[Value]) -> Vec<Value> {
+    let mut all = events.to_vec();
+    if let Some(verdict) = document.get("verdict").and_then(Value::as_str) {
+        all.push(crate::specimen::concluded(verdict, events.len()));
+    }
+    all
 }
 
 /// A recording directory holding `events` as its `trace.jsonl`, each wrapped in the envelope the runner writes, numbered by position where an event carries no envelope of its own.
@@ -341,6 +467,36 @@ pub fn run_directory(document: &Value) -> Result<TempDir, SpecimenError> {
 /// # Errors
 /// [`SpecimenError`] when an event is not an object, or the recording cannot be written.
 pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
+    recorded_by(events, crate::schemas::Producer::Runner)
+}
+
+/// As [`recorded`], for a recording `producer` writes, each payload completed with what its test leaves out.
+///
+/// # Errors
+/// [`SpecimenError`] when an event is not an object, or the recording cannot be written.
+pub fn recorded_by(
+    events: &[Value],
+    producer: crate::schemas::Producer,
+) -> Result<TempDir, SpecimenError> {
+    let trace = directory()?;
+    record_into(trace.path(), events, producer)?;
+    Ok(trace)
+}
+
+/// Writes `events` as the `trace.jsonl` `producer` writes into the directory `into`.
+fn record_into(
+    into: &Path,
+    events: &[Value],
+    producer: crate::schemas::Producer,
+) -> Result<(), SpecimenError> {
+    written(&into.join("trace.jsonl"), &stream_of(events, producer)?)
+}
+
+/// `events` as the lines `producer` writes, each payload completed with what its test leaves out.
+fn stream_of(
+    events: &[Value],
+    producer: crate::schemas::Producer,
+) -> Result<String, SpecimenError> {
     let mut stream = String::new();
     for ((at, event), position) in events.iter().enumerate().zip(1_u64..) {
         let mut payload = event
@@ -352,6 +508,7 @@ pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
             .remove("timestamp")
             .unwrap_or_else(|| json!("2026-09-06T00:00:00Z"));
         let elapsed_ms = payload.remove("elapsed_ms").unwrap_or_else(|| json!(at));
+        crate::specimen::completed(producer, &mut payload);
         let envelope = json!({
             "seq": seq,
             "timestamp": timestamp,
@@ -361,9 +518,7 @@ pub fn recorded(events: &[Value]) -> Result<TempDir, SpecimenError> {
         stream.push_str(&envelope.to_string());
         stream.push('\n');
     }
-    let trace = directory()?;
-    written(&trace.path().join("trace.jsonl"), &stream)?;
-    Ok(trace)
+    Ok(stream)
 }
 
 /// One run for the audit to re-decide: a report, and the recording beside it when the run kept one.
@@ -377,6 +532,8 @@ pub struct Perturbation {
     pub events: Option<Vec<Value>>,
     /// The one configured build's engine recording, as events before their envelope, or nothing where the run kept none.
     pub engine: Option<Vec<Value>>,
+    /// The shards a merged report was merged from, each laid in a run directory of its own with its recording under the run it names; none for a run measured whole.
+    pub shards: Vec<Shard>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -393,6 +550,7 @@ pub fn clean() -> Perturbation {
             touch("control", &[0, 1]),
             perturbed("survived", &[], &recorded_reach(&[0, 1])),
         ]),
+        shards: Vec::new(),
     }
 }
 
@@ -401,6 +559,8 @@ pub fn clean() -> Perturbation {
 pub struct Laid {
     run: TempDir,
     trace: Option<TempDir>,
+    shards: Vec<TempDir>,
+    traces: Option<TempDir>,
 }
 
 impl Laid {
@@ -415,6 +575,18 @@ impl Laid {
     pub fn trace(&self) -> Option<&Path> {
         self.trace.as_ref().map(TempDir::path)
     }
+
+    /// The run directory of each shard a merged report was merged from, in the order they were laid.
+    #[must_use]
+    pub fn shards(&self) -> Vec<&Path> {
+        self.shards.iter().map(TempDir::path).collect()
+    }
+
+    /// The directory holding each shard's recording under the run it names, when the shards were laid.
+    #[must_use]
+    pub fn traces(&self) -> Option<&Path> {
+        self.traces.as_ref().map(TempDir::path)
+    }
 }
 
 impl Perturbation {
@@ -424,22 +596,73 @@ impl Perturbation {
     /// [`SpecimenError`] when either cannot be written.
     pub fn lay(&self) -> Result<Laid, SpecimenError> {
         let run = run_directory(&self.document)?;
-        let trace = self.events.as_deref().map(recorded).transpose()?;
-        if let (Some(trace), Some(engine)) = (trace.as_ref(), self.engine.as_deref()) {
-            let laid = recorded(engine)?;
-            let namespace = trace.path().join("builds").join("0000000000");
-            std::fs::create_dir_all(&namespace).map_err(|source| SpecimenError::Unwritable {
-                path: namespace.display().to_string(),
-                source,
-            })?;
-            let into = namespace.join("engine");
-            std::fs::rename(laid.path(), &into).map_err(|source| SpecimenError::Unwritable {
-                path: into.display().to_string(),
-                source,
-            })?;
-        }
-        Ok(Laid { run, trace })
+        let trace = self
+            .events
+            .as_deref()
+            .map(|events| {
+                let trace = recorded(&concluding(&self.document, events))?;
+                lay_engine(trace.path(), self.engine.as_deref())?;
+                Ok::<_, SpecimenError>(trace)
+            })
+            .transpose()?;
+        let shards = self
+            .shards
+            .iter()
+            .map(|shard| run_directory(&shard.document))
+            .collect::<Result<Vec<_>, _>>()?;
+        let traces = if self.shards.is_empty() {
+            None
+        } else {
+            let traces = directory()?;
+            for shard in &self.shards {
+                let (Some(events), Some(run_id)) = (
+                    shard.events.as_deref(),
+                    shard
+                        .document
+                        .pointer("/report/run_id")
+                        .and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                let into = traces.path().join(run_id);
+                std::fs::create_dir_all(&into).map_err(|source| SpecimenError::Unwritable {
+                    path: into.display().to_string(),
+                    source,
+                })?;
+                lay_recording(&into, events, shard.engine.as_deref())?;
+            }
+            Some(traces)
+        };
+        Ok(Laid {
+            run,
+            trace,
+            shards,
+            traces,
+        })
     }
+}
+
+/// Writes the runner recording `events` into `into`, and the engine recording `engine` under its one configured build.
+fn lay_recording(
+    into: &Path,
+    events: &[Value],
+    engine: Option<&[Value]>,
+) -> Result<(), SpecimenError> {
+    record_into(into, events, crate::schemas::Producer::Runner)?;
+    lay_engine(into, engine)
+}
+
+/// Writes the engine recording `engine`, where there is one, under the one configured build of the recording directory `into`.
+fn lay_engine(into: &Path, engine: Option<&[Value]>) -> Result<(), SpecimenError> {
+    if let Some(engine) = engine {
+        let namespace = into.join("builds").join("0000000000").join("engine");
+        std::fs::create_dir_all(&namespace).map_err(|source| SpecimenError::Unwritable {
+            path: namespace.display().to_string(),
+            source,
+        })?;
+        record_into(&namespace, engine, crate::schemas::Producer::Engine)?;
+    }
+    Ok(())
 }
 
 /// The recording of a kill by a target the route's proof had discharged.
@@ -518,6 +741,7 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
             touch("control", &[0, 1]),
             repair,
         ]),
+        shards: Vec::new(),
     }
 }
 
@@ -531,6 +755,119 @@ const LIED_OUTCOMES: [&str; 6] = [
     "equivalent",
 ];
 
+/// The defect planted for `rule` of the merge layer, on the clean specimen measured in two shards and merged.
+///
+/// # Errors
+/// [`SpecimenError::Incomplete`] where the clean sharded specimen cannot be built.
+pub fn merge_plant(
+    rule: crate::proofaudit::merge::MergeRule,
+) -> Result<Perturbation, SpecimenError> {
+    use crate::proofaudit::merge::MergeRule;
+    let clean = sharded_clean()?;
+    let mut document = clean.document.clone();
+    let mut shards = clean.shards.clone();
+    let name = match rule {
+        MergeRule::Division => {
+            shards.truncate(1);
+            keep_first(&mut document, "/report/composition/sources");
+            keep_first(&mut document, "/report/builds/0/parts");
+            "half of a catalog merged alone, as though it were the whole"
+        }
+        MergeRule::Parts => {
+            keep_first(&mut document, "/report/builds/0/parts");
+            "a build holding one part of a catalog merged from two shards"
+        }
+        MergeRule::Placement => {
+            merge(
+                &mut document,
+                json!({ "report": { "composition": { "sources": [
+                    { "shard": { "index": 2 } },
+                    { "shard": { "index": 1 } }
+                ] } } }),
+            );
+            "a composition that places each shard where the other measured"
+        }
+        MergeRule::Agreement => {
+            merge(&mut document, json!({ "report": { "run_kind": "full" } }));
+            "a merge that says its shards measured the whole project when they measured a scope"
+        }
+        MergeRule::Builds => {
+            merge(
+                &mut document,
+                json!({ "report": { "builds": [{ "name": "renamed" }] } }),
+            );
+            "a merged build named other than the one its shards measured"
+        }
+        MergeRule::Bytes => {
+            merge(
+                &mut document,
+                json!({ "report": { "builds": [{ "parts": [{ "mutants": [{ "item": "another" }] }] }] } }),
+            );
+            "a merged part that is not the part its shard measured"
+        }
+        MergeRule::Identity => {
+            merge(
+                &mut document,
+                json!({ "report": { "run_id": format!("{MERGED}-s1") } }),
+            );
+            "a merged run that names itself as one of its shards"
+        }
+        MergeRule::Models => {
+            merge(
+                &mut document,
+                json!({ "report": { "model_completion": {
+                    "kind": "verified",
+                    "batch": { "owner": MERGED, "records": [] }
+                } } }),
+            );
+            "a merge that completes a model batch no merge can"
+        }
+        MergeRule::Shards => forged_alike(&mut document, &mut shards),
+    };
+    Ok(Perturbation {
+        name,
+        document,
+        shards,
+        ..clean
+    })
+}
+
+/// The defect planted for every rule of the merge layer; one that cannot be built is left out here and refused by name by the gate that holds each rule to its plant.
+fn merge_plants() -> Vec<Perturbation> {
+    crate::proofaudit::merge::MergeRule::ALL
+        .into_iter()
+        .filter_map(|rule| match merge_plant(rule) {
+            Ok(plant) => Some(plant),
+            Err(_unbuilt_is_refused_by_the_merge_gate) => None,
+        })
+        .collect()
+}
+
+/// A kill reported as a survivor in the first shard and in the merged part it became, alike, which only re-deciding the shard against its recording can see.
+fn forged_alike(document: &mut Value, shards: &mut [Shard]) -> &'static str {
+    let forged = json!({ "mutants": [{ "decision": {
+        "outcome": "survived", "killed_by": null, "step_boundary": null
+    } }] });
+    if let Some(shard) = shards.first_mut() {
+        merge(
+            &mut shard.document,
+            json!({ "report": { "builds": [{ "source": forged }] } }),
+        );
+    }
+    merge(
+        document,
+        json!({ "report": { "builds": [{ "parts": [forged] }] } }),
+    );
+    "a kill reported as a survivor in a shard and in its merge alike"
+}
+
+/// `document` with the array at `pointer` cut to its first element.
+fn keep_first(document: &mut Value, pointer: &str) {
+    if let Some(Value::Array(items)) = document.pointer_mut(pointer) {
+        items.truncate(1);
+    }
+}
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -543,8 +880,10 @@ impl Layer {
                 ..clean
             }],
             Self::Killers => vec![Perturbation {
-                name: "a kill that names no target at all",
-                document: with(json!({ "mutants": [{ "decision": { "killed_by": null } }] })),
+                name: "a kill by a target the run never recorded",
+                document: with(
+                    json!({ "mutants": [{ "decision": { "killed_by": "pkg/test/nowhere" } }] }),
+                ),
                 ..clean
             }],
             Self::Findings => vec![Perturbation {
@@ -565,9 +904,9 @@ impl Layer {
                 ..clean
             }],
             Self::Reuse => vec![Perturbation {
-                name: "a reused disposition that names no source run",
+                name: "a reused disposition that names this run as its source",
                 document: with(json!({
-                    "mutants": [{ "reuse": { "reused": true } }],
+                    "mutants": [{ "reuse": { "reused": true, "source_run_id": RUN } }],
                     "accounting": { "mutants": { "reused_killed": 1 } }
                 })),
                 ..clean
@@ -592,9 +931,11 @@ impl Layer {
                 document: with(json!({ "contract": "verified-v1" })),
                 ..clean
             }],
+            Self::Merge => merge_plants(),
             Self::Drift => vec![Perturbation {
                 name: "a control that reached a site its baseline never did, recorded as held",
                 engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
+                shards: Vec::new(),
                 ..clean
             }],
             Self::Repair => vec![
@@ -748,7 +1089,11 @@ pub fn lie(outcome: &str) -> Option<Perturbation> {
                 "decision": {
                     "outcome": outcome,
                     "killed_by": if noticed { json!(TARGET) } else { json!(null) },
-                    "step_boundary": null
+                    "step_boundary": if outcome == "step-limit-reached" {
+                        json!({ "limit": 1, "observed": 2 })
+                    } else {
+                        json!(null)
+                    }
                 }
             }],
             "findings": []

@@ -16,6 +16,8 @@ pub enum XtCode {
     FuzzPolicy,
     /// Cargo could not be started for the fuzz workspace.
     FuzzCargo,
+    /// A published schema does not compile.
+    SchemaUncompilable,
     /// A fixture tree could not be walked or read.
     FixtureUnreadable,
     /// A fixture tree holds a symbolic link.
@@ -34,8 +36,18 @@ pub enum XtCode {
     ProofRecording,
     /// A report is not one build measured whole.
     ProofUnprojected,
-    /// A document is not the assurance report.
-    ProofUnrecognised,
+    /// A complete report departs from its published schema.
+    ProofOffSchema,
+    /// A report given as a merge is not one.
+    ProofNotMerged,
+    /// A document given as a shard is not one.
+    ProofNotAShard,
+    /// A shard was given twice.
+    ProofShardTwice,
+    /// A shard the merge does not name was given.
+    ProofShardNotMerged,
+    /// A document on its schema is not one this audit can read.
+    ProofUnshaped,
     /// An engine run directory holds no report.
     EngineUnreadable,
     /// An engine report is not JSON.
@@ -48,6 +60,8 @@ pub enum XtCode {
     EngineLedger,
     /// An engine document is not the run report this release re-decides.
     EngineUnrecognised,
+    /// An engine run report departs from its published schema.
+    EngineOffSchema,
     /// A Kani export could not be read.
     KaniUnreadable,
     /// A Kani export is not the pinned release for this workspace.
@@ -68,6 +82,8 @@ pub enum XtCode {
     SpecimenUnwritable,
     /// A specimen's recording is malformed.
     SpecimenEvent,
+    /// A specimen report could not be completed.
+    SpecimenIncomplete,
     /// A planted text of the sentinels is malformed.
     SentinelPlanted,
     /// An identity field exceeds its length prefix.
@@ -132,6 +148,11 @@ impl XtCode {
                 "`cargo clippy` could not be started for the fuzz workspace.",
                 "check `cargo` is on the path and the pinned toolchain is installed",
             ),
+            Self::SchemaUncompilable => (
+                "XT0006",
+                "A published JSON schema under `schema/` does not compile, so nothing can be validated against it.",
+                "fix the schema the message names; `cargo xtask all` compiles every one",
+            ),
             Self::FixtureUnreadable => (
                 "XT1001",
                 "A fixture's tree could not be walked or one of its files read.",
@@ -177,10 +198,35 @@ impl XtCode {
                 "The report is not one configured build measured whole, which is what this audit re-decides.",
                 "audit each part against its own recording",
             ),
-            Self::ProofUnrecognised => (
+            Self::ProofOffSchema => (
                 "XT2005",
-                "The document calls itself something other than the assurance report.",
-                "point `proofaudit` at an assurance report",
+                "The report departs from the published assurance-report schema, so a reader could meet an absent required field.",
+                "re-run with this release; a report off its schema is not one to re-decide",
+            ),
+            Self::ProofNotMerged => (
+                "XT2006",
+                "A document given as a merged report is not a merge of shards.",
+                "give `proofaudit` the report `njutest merge` wrote, with `--shard` for each part",
+            ),
+            Self::ProofNotAShard => (
+                "XT2007",
+                "A document given with `--shard` is not a shard of a catalog.",
+                "give each shard's own report or run directory to `--shard`",
+            ),
+            Self::ProofShardTwice => (
+                "XT2008",
+                "The same shard was given twice with `--shard`.",
+                "give each shard once; counting one part twice is an operator's mistake, not a merge",
+            ),
+            Self::ProofShardNotMerged => (
+                "XT2009",
+                "A shard was given that the merged report does not name among its sources.",
+                "give only the shards the merged report names in its composition",
+            ),
+            Self::ProofUnshaped => (
+                "XT2010",
+                "The document is on its published schema and is not one this audit can read into a complete report or a shard.",
+                "report it; a document on its schema that this audit cannot read is a gap in the audit",
             ),
             Self::EngineUnreadable => (
                 "XT3001",
@@ -211,6 +257,11 @@ impl XtCode {
                 "XT3006",
                 "The document is not the engine run report, or is of another schema version.",
                 "point `engine-audit` at a run report this release wrote",
+            ),
+            Self::EngineOffSchema => (
+                "XT3007",
+                "The engine run report departs from the published run-report schema, so a reader could meet an absent required field or a value of another shape.",
+                "re-run with this release; a report off its schema is not one to re-decide",
             ),
             Self::KaniUnreadable => (
                 "XT4001",
@@ -260,6 +311,11 @@ impl XtCode {
             Self::SpecimenEvent => (
                 "XT5002",
                 "An event of an audit specimen's recording is not an object, or lacks its envelope.",
+                "fix the specimen in the sentinel module the gate names",
+            ),
+            Self::SpecimenIncomplete => (
+                "XT5003",
+                "A flat audit specimen could not be completed into the document a run writes.",
                 "fix the specimen in the sentinel module the gate names",
             ),
             Self::SentinelPlanted => (

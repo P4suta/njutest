@@ -1,0 +1,262 @@
+{
+  "document_type": "shard",
+  "report": {
+    "schema": "njutest-assurance-shard-report-v1",
+    "schema_version": 2,
+    "run_id": "20260924t154519939z-0163e3",
+    "run_kind": "full",
+    "contract": "standard-v1",
+    "tool": {
+      "njutest": "0.1.0",
+      "rust_mutants": "0.1.0"
+    },
+    "repository": {
+      "root_name": "shardfx",
+      "packages": [
+        "fixture-assured"
+      ],
+      "workspace_digest": "98d07f238cbc4c6c37dcea8164e4a2d80b09feff1cd9016ecebe63e274462b26",
+      "configuration_digest": "b133999f6d10e13b29c0ad8146ba147e9ccc7d31c5ddf28efa3348531ecd2b63",
+      "git": {
+        "available": false,
+        "commit": "unavailable",
+        "branch": "unavailable",
+        "dirty": false,
+        "merge_base": null,
+        "changed_files": []
+      }
+    },
+    "provenance": {
+      "identity": "7135194f322b6d800f9b2c5a3836a90851da787e08ee3026273a6b8977d5c2f5",
+      "cached": false,
+      "source_run_id": null
+    },
+    "scope": {
+      "requested_packages": [],
+      "resolved_packages": [],
+      "included": [],
+      "excluded": [],
+      "configuration": "",
+      "configured_builds": [
+        "default"
+      ],
+      "shard": null
+    },
+    "shard": {
+      "index": 1,
+      "of": 2
+    },
+    "builds": [
+      {
+        "name": "default",
+        "configuration": {
+          "features": [],
+          "all_features": false,
+          "no_default_features": false,
+          "target": null,
+          "profile": null,
+          "jobs": null,
+          "debug": false,
+          "digest": "c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"
+        },
+        "source": {
+          "run_id": "20260924t154519939z-0163e3-b0000000000",
+          "part": {
+            "kind": "shard",
+            "index": 1,
+            "of": 2
+          },
+          "toolchain": {
+            "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+            "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+            "target": "aarch64-apple-darwin",
+            "os": "macos",
+            "arch": "aarch64"
+          },
+          "timing": {
+            "started": "2026-09-24T15:45:19.939789Z",
+            "finished": "2026-09-24T15:45:23.459631Z",
+            "duration_ms": 3519
+          },
+          "accounting": {
+            "targets": {
+              "selected": 2,
+              "passed": 2,
+              "failed": 0,
+              "skipped": 0,
+              "missing": 0
+            },
+            "mutants": {
+              "cataloged": 2,
+              "rejected": 0,
+              "executed": 2,
+              "killed": 2,
+              "survived": 0,
+              "step_limit_reached": 0,
+              "waited": 0,
+              "unreached": 0,
+              "model_noticed": 0,
+              "model_proved": 0,
+              "equivalent": 0,
+              "accepted": 0,
+              "reused_killed": 0,
+              "reused_survived": 0,
+              "observers": {
+                "types": 0,
+                "tests": 2,
+                "model_noticed": 0,
+                "model_proved": 0,
+                "step_limit_reached": 0,
+                "proved": 0,
+                "unnoticed": 0,
+                "unreached": 0,
+                "waited": 0,
+                "errored": 0
+              }
+            },
+            "soundness": {
+              "unsafe_items": 0,
+              "packages_with_unsafe": 0,
+              "executed": false
+            }
+          },
+          "resources": [],
+          "candidates": [],
+          "seams": [],
+          "targets": [
+            {
+              "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
+              "name": "fixture-assured/test/doubling",
+              "package": "fixture-assured",
+              "status": "passed",
+              "duration_ms": 30,
+              "message": null
+            },
+            {
+              "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
+              "name": "fixture-assured/lib/fixture_assured",
+              "package": "fixture-assured",
+              "status": "passed",
+              "duration_ms": 28,
+              "message": null
+            }
+          ],
+          "sources": [
+            {
+              "path": "src/lib.rs",
+              "digest": "fc161b8023eb1db5cfc6063cdad98123ccde1d5c4f8ddb09303c465e27890600"
+            }
+          ],
+          "mutants": [
+            {
+              "catalog_index": 0,
+              "id": "754587d92aeadc857975a4cea72f9e04155efc7f1c81685185d0fa321ab3555d",
+              "display_id": "754587d92aeadc857975",
+              "path": "src/lib.rs",
+              "position": {
+                "line": 9,
+                "column": 5,
+                "character_column": 5
+              },
+              "rule": "return-true",
+              "item": "is_positive",
+              "original": "n > 0",
+              "replacement": "true",
+              "decision": {
+                "outcome": "killed",
+                "killed_by": "fixture-assured/lib/fixture_assured",
+                "step_boundary": null
+              },
+              "accepted": false,
+              "blind_in": [],
+              "routing": {
+                "granularity": "block",
+                "reaching": [
+                  "fixture-assured/lib/fixture_assured"
+                ],
+                "discharged": [],
+                "fallback": null,
+                "answered": [
+                  {
+                    "target": "fixture-assured/lib/fixture_assured",
+                    "outcome": "killed"
+                  }
+                ]
+              },
+              "reuse": {
+                "reused": false,
+                "source_run_id": null
+              }
+            },
+            {
+              "catalog_index": 2,
+              "id": "e1a8798fb39e6bd0105369d707d184b2160fd1f242f52cec8313b4c219034d1b",
+              "display_id": "e1a8798fb39e6bd01053",
+              "path": "src/lib.rs",
+              "position": {
+                "line": 15,
+                "column": 5,
+                "character_column": 5
+              },
+              "rule": "return-default",
+              "item": "double",
+              "original": "n * 2",
+              "replacement": "Default::default()",
+              "decision": {
+                "outcome": "killed",
+                "killed_by": "fixture-assured/test/doubling",
+                "step_boundary": null
+              },
+              "accepted": false,
+              "blind_in": [],
+              "routing": {
+                "granularity": "block",
+                "reaching": [
+                  "fixture-assured/test/doubling"
+                ],
+                "discharged": [],
+                "fallback": null,
+                "answered": [
+                  {
+                    "target": "fixture-assured/test/doubling",
+                    "outcome": "killed"
+                  }
+                ]
+              },
+              "reuse": {
+                "reused": false,
+                "source_run_id": null
+              }
+            }
+          ],
+          "findings": [],
+          "limitations": [
+            {
+              "name": "git-metadata-unavailable",
+              "detail": "git could not be asked, so the run cannot name the commit it verified"
+            },
+            {
+              "name": "touch-not-recorded",
+              "detail": "the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-assured/doc/fixture_assured)"
+            },
+            {
+              "name": "skipped-test-code",
+              "detail": "1 place was not mutated: test-code"
+            }
+          ],
+          "drift": [
+            {
+              "state": "held",
+              "target": "fixture-assured/lib/fixture_assured"
+            },
+            {
+              "state": "held",
+              "target": "fixture-assured/test/doubling"
+            }
+          ]
+        }
+      }
+    ],
+    "global_findings": []
+  }
+}

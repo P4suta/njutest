@@ -1,20 +1,20 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 2,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260923t165249579z",
-    "started_at": "2026-09-23T16:52:49.579955Z",
-    "finished_at": "2026-09-23T16:52:51.111057Z",
-    "duration_ms": 241,
+    "id": "20260924t131141799z",
+    "started_at": "2026-09-24T13:11:41.799422Z",
+    "finished_at": "2026-09-24T13:11:43.474119Z",
+    "duration_ms": 107,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null, "jobs": {"asked": "auto", "used": 1}
+    "shard": null
   },
   "workspace": {
     "root_name": "fixture-simple",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "bc41f29837754159474feb7d86dadd8c7c2a493b917cab5cf05c0f88e22d89f6",
+    "workspace_digest": "17ca8cfe1abbaca34016c5f29cc8a1ea7410c8107b7945a9b0f1962af229826f",
     "catalog_digest": "82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624",
     "platform": {
       "os": "darwin",
@@ -100,8 +100,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -116,15 +116,13 @@
           "fixture-simple/lib/fixture_simple"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/lib/fixture_simple"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 1,
@@ -146,8 +144,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -162,15 +160,13 @@
           "fixture-simple/lib/fixture_simple"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/lib/fixture_simple"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 2,
@@ -192,8 +188,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -208,15 +204,13 @@
           "fixture-simple/lib/fixture_simple"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/lib/fixture_simple"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 3,
@@ -238,8 +232,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
-      "exit_code": 101,
-      "duration_ms": 27,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -254,15 +248,13 @@
           "fixture-simple/lib/fixture_simple"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/lib/fixture_simple"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 4,
@@ -329,8 +321,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
-      "exit_code": 101,
-      "duration_ms": 27,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -345,15 +337,13 @@
           "fixture-simple/lib/fixture_simple"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/lib/fixture_simple"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 6,
@@ -375,8 +365,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/lib/fixture_simple",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "tests::max_picks_the_larger"
@@ -391,15 +381,13 @@
           "fixture-simple/lib/fixture_simple"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/lib/fixture_simple"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 7,
@@ -421,8 +409,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -437,15 +425,13 @@
           "fixture-simple/test/parity"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/test/parity"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 8,
@@ -467,8 +453,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -483,15 +469,13 @@
           "fixture-simple/test/parity"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/test/parity"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 9,
@@ -513,8 +497,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 29,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -529,15 +513,13 @@
           "fixture-simple/test/parity"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/test/parity"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 10,
@@ -559,8 +541,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 30,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -575,15 +557,13 @@
           "fixture-simple/test/parity"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/test/parity"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 11,
@@ -605,8 +585,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 26,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -621,15 +601,13 @@
           "fixture-simple/test/parity"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/test/parity"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     },
     {
       "index": 12,
@@ -651,8 +629,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-simple/test/parity",
-      "exit_code": 101,
-      "duration_ms": 26,
+      "exit_code": 0,
+      "duration_ms": 0,
       "tests_run": 1,
       "killed_by": [
         "even_numbers_are_even"
@@ -667,15 +645,13 @@
           "fixture-simple/test/parity"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-simple/test/parity"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": "20260923t164400343z"
     }
   ],
   "rejections": [],
