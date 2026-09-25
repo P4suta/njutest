@@ -20,6 +20,10 @@ concurrency:
   group: release-plz-${{ github.ref }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   release:
     name: cut the tag

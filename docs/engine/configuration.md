@@ -44,7 +44,7 @@ offline = false
 locked = false
 doctests = true                # run a library's documented examples as a target
 skip_targets = []              # target ids never to start, as pkg/kind/name; a name no target has is refused
-jobs = 0                       # mutants measured at once; 0 = the machine, capped at 4
+jobs = "auto"                  # mutants measured at once: a count, "auto" (the machine, capped at 4), or "all"
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
 scratch_working_directory = false # start each test process in a directory of its own
 
@@ -196,13 +196,15 @@ path = "src/lib.rs"
 item = "clamp"                 # a suffix of the item path is enough
 rule = "le-to-lt"
 original = "<="                # the bytes the edit replaces
-line = 42                      # a hint, when the rest names more than one
+line = 42                      # which of them, when the rest names more than one
 reason = "the bound is equivalent under the invariant the type carries"
 outcome = "survived"
 ```
 
 Never both: an identity and a locator are two ways of naming one mutant and two chances to name different ones.
 A locator whose line has moved still holds, and the report says where the mutation is now.
+`line` is part of the claim, so two claims on one item that differ only in their line are two claims, each with its own reason, and the report names each with its line.
+A mutation two claims both name — a claim on the whole item beside one on a line of it, say — has two reasons, and the run refuses it with `RM0004` naming the mutation, since a report cannot audit which reason holds.
 
 A locator names one mutation.
 Where the same reason is true of several of them at once — the same call written at three places in one function, say —
@@ -223,6 +225,7 @@ The count is what keeps that from being a licence.
 Without it, a locator that names more than one mutation is `unmatched`, because a reason written about one mutation says nothing about another that happens to share a path,
 an item, a rule and the bytes it replaces.
 With it, two things have to hold at once: the catalog holds exactly that many, so a mutation added or removed at the same place stops the claim instead of joining it, and **every one of them** came to the declared outcome, so a claim covering three stops holding the moment a test kills one of the three.
+With `line` as well, the count is of the mutations on that line: two `?` on one line are `line = 176` with `count = 2`.
 What covered that one is the test,
 and the claim would otherwise go on exempting the other two on its strength.
 

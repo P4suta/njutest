@@ -93,6 +93,12 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "answered" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "notice"],
           "properties": {
             "kind": { "const": "step-limit-reached" },
@@ -353,6 +359,26 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "repair"],
+          "properties": {
+            "type": { "const": "repair" },
+            "repair": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "target", "was", "now", "reached"],
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "was": { "enum": ["survived", "unreached"] },
+                "now": { "enum": ["killed", "survived", "unreached", "waited", "step-limit-reached", "unconfirmed", "errored"] },
+                "reached": { "enum": ["reached", "not-reached", "unrecorded"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "drift"],
           "properties": {
             "type": { "const": "drift" },
@@ -361,7 +387,7 @@
               "additionalProperties": false,
               "required": ["mutant", "observed"],
               "properties": {
-                "mutant": { "type": "string", "minLength": 1 },
+                "mutant": { "type": ["string", "null"], "minLength": 1 },
                 "observed": {
                   "oneOf": [
                     {
@@ -373,13 +399,14 @@
                     {
                       "type": "object",
                       "additionalProperties": false,
-                      "required": ["state", "target", "reached", "bodies", "infected"],
+                      "required": ["state", "target", "reached", "bodies", "infected", "entered"],
                       "properties": {
                         "state": { "const": "moved" },
                         "target": { "type": "string", "minLength": 1 },
                         "reached": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } },
                         "bodies": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } },
-                        "infected": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } }
+                        "infected": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } },
+                        "entered": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } }
                       }
                     },
                     {
@@ -392,6 +419,34 @@
                         "why": { "enum": ["no-control", "unrecorded", "unreadable", "control-failed", "other-tests", "no-baseline", "baseline-retried", "unparsed"] }
                       }
                     }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "knob"],
+          "properties": {
+            "type": { "const": "knob" },
+            "knob": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["target", "knob", "standing"],
+              "properties": {
+                "target": { "type": "string", "minLength": 1 },
+                "knob": { "enum": ["timezone", "locale", "temp-directory", "home", "umask", "columns", "threads"] },
+                "standing": {
+                  "oneOf": [
+                    { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "stable" } } },
+                    { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "passed" } } },
+                    { "type": "object", "additionalProperties": false, "required": ["state", "failed"], "properties": { "state": { "const": "broke" }, "failed": { "type": "array", "items": { "type": "string", "minLength": 1 } } } },
+                    { "type": "object", "additionalProperties": false, "required": ["state", "reach"], "properties": { "state": { "const": "moved" }, "reach": { "type": "object", "additionalProperties": false, "required": ["reached", "bodies", "infected"], "properties": { "reached": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } }, "bodies": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } }, "infected": { "type": "object", "additionalProperties": false, "required": ["gained", "lost"], "properties": { "gained": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }, "lost": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } } } } } } } },
+                    { "type": "object", "additionalProperties": false, "required": ["state", "why"], "properties": { "state": { "const": "uncompared" }, "why": { "enum": ["no-control", "unrecorded", "unreadable", "control-failed", "other-tests", "no-baseline", "baseline-retried", "unparsed"] } } },
+                    { "type": "object", "additionalProperties": false, "required": ["state", "why"], "properties": { "state": { "const": "unsettled" }, "why": { "enum": ["errored", "waited"] } } },
+                    { "type": "object", "additionalProperties": false, "required": ["state", "why"], "properties": { "state": { "const": "not-put" }, "why": { "enum": ["platform", "zone-missing", "locale-missing", "shell-missing", "through-cargo", "not-libtest"] } } }
                   ]
                 }
               }
@@ -476,9 +531,9 @@
               "additionalProperties": false,
               "required": ["layer", "mutant", "expected", "routed", "sighted"],
               "properties": {
-                "layer": { "enum": ["reach", "branch-never-taken", "never-infected:is-default", "never-infected:is-ok-default", "never-infected:is-some-default", "never-infected:is-true", "never-infected:inert-comparison"] },
+                "layer": { "enum": ["reach", "branch-never-taken", "never-infected:is-default", "never-infected:is-ok-default", "never-infected:is-some-default", "never-infected:is-true", "never-infected:inert-comparison", "coverage", "equivalence"] },
                 "mutant": { "type": "string", "minLength": 1 },
-                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept-for-library", "kept-for-tests"] },
+                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept-for-library", "kept-for-tests", "identical", "rendered"] },
                 "routed": { "type": "string", "minLength": 1 },
                 "sighted": { "type": "boolean" }
               }

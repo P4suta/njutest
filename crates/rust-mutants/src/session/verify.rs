@@ -59,7 +59,7 @@ pub(super) fn verify(
     };
     if !building.cancel.is_cancelled()
         && let Some(remembering) = remembering.as_ref()
-        && let Some(recalled) = remembering.read(targets, catalog)?
+        && let Some(recalled) = remembering.read(targets, catalog, building.items)?
     {
         workspace.trace.note(
             BASELINE_REMEMBERED,
@@ -76,6 +76,11 @@ pub(super) fn verify(
         return Ok(recalled.verified);
     }
     let measured = verify_targets(targets, scratch, building);
+    let watched = Path::new(workspace.watched());
+    crate::orphan::clear(watched).map_err(|source| SessionError::WriteFailed {
+        path: watched.display().to_string(),
+        source,
+    })?;
     phase.end();
     let (verified, tests_run) = measured?;
     refused(&verified, building.options.failing)?;
@@ -149,6 +154,11 @@ fn verify_target(
             .join(format!("{}.log", slug(&target.id)))
     });
     let own = baseline_scratch(scratch, index);
+    let watched = Path::new(building.workspace.watched());
+    crate::orphan::clear(watched).map_err(|source| SessionError::WriteFailed {
+        path: watched.display().to_string(),
+        source,
+    })?;
     let mut result = ran(target, &own, recording.as_deref(), building);
     let mut retried = false;
     let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
@@ -189,13 +199,16 @@ fn verify_target(
     if baseline.passed() && result.reading() == Reading::Short {
         touched.limited(crate::limitation::BASELINE_PASSED_UNPARSED, &target.id);
     }
-    if baseline.passed() {
+    if baseline.passed() && uncontrolled(watched, &target.id, building.trace) {
+        touched.limited(crate::limitation::UNCONTROLLED_CHILD, &target.id);
+    } else if baseline.passed() {
         gather(
             touched,
             &Recording {
                 target: &target.id,
                 log: recording.as_deref(),
                 catalog: building.catalog,
+                items: building.items,
                 ran: &result.passed_tests,
                 summarised: crate::trace::SummaryRecord::of(&result),
             },
@@ -205,6 +218,42 @@ fn verify_target(
         touched.limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
     }
     Ok((baseline, result.tests_run()))
+}
+
+/// Whether a process of `target`'s tree ran without the environment the run gave it, saying so in the recording where one did.
+fn uncontrolled(watched: &Path, target: &str, trace: &crate::trace::Recorder) -> bool {
+    let orphaned = match crate::orphan::left(watched) {
+        Ok(orphaned) => orphaned,
+        Err(error) => {
+            trace.note(
+                crate::limitation::UNCONTROLLED_CHILD,
+                &format!(
+                    "{target}: {} could not be read, so nothing says every process of the target \
+                     carried the run's environment: {error}",
+                    watched.display()
+                ),
+            );
+            return true;
+        }
+    };
+    if orphaned.is_empty() {
+        return false;
+    }
+    trace.note(
+        crate::limitation::UNCONTROLLED_CHILD,
+        &format!(
+            "{target}: {} process(es) of the tree ran without the environment the run gave the \
+             target, so no mutant could be active in them and nothing recorded what they \
+             entered: {}",
+            orphaned.len(),
+            orphaned
+                .iter()
+                .map(|one| format!("{} (parent {})", one.pid, one.parent))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    );
+    true
 }
 
 /// What one baseline process came to, keeping what it printed only where it did not pass.
@@ -269,7 +318,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 1;
+const BASELINE_ABI: u32 = 2;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -312,6 +361,7 @@ struct Recalled {
 struct RecallPremise<'a> {
     targets: &'a [TestTarget],
     catalog: &'a Catalog,
+    items: u32,
     path: &'a Path,
 }
 
@@ -570,6 +620,7 @@ impl Remembering {
         &self,
         targets: &[TestTarget],
         catalog: &Catalog,
+        items: u32,
     ) -> Result<Option<Recalled>, BaselineCacheError> {
         let path = self.path();
         let bytes = match std::fs::read(&path) {
@@ -590,6 +641,7 @@ impl Remembering {
             RecallPremise {
                 targets,
                 catalog,
+                items,
                 path: &path,
             },
         )? {
@@ -606,6 +658,7 @@ impl Remembering {
         let RecallPremise {
             targets,
             catalog,
+            items,
             path,
         } = premise;
         if remembered.abi != BASELINE_ABI || remembered.key != self.key {
@@ -637,7 +690,7 @@ impl Remembering {
                 .map(String::as_str)
                 .eq(ids.iter().copied())
             || self.artifacts != remembered.artifacts
-            || !valid_touches(&remembered.touched, &ids, catalog)
+            || !valid_touches(&remembered.touched, &ids, catalog, items)
         {
             return Ok(false);
         }
@@ -835,6 +888,7 @@ pub(super) fn touch_record(
     Ok(crate::trace::TouchRecord {
         target: target.to_owned(),
         measured,
+        mutant: None,
         passed: gathered.ran.clone(),
         summary,
         tests: trace_count("recorded baseline tests", gathered.reached.tests.len())?,
@@ -844,6 +898,8 @@ pub(super) fn touch_record(
             gathered.reached.loose.len(),
         )?,
         infected: trace_count("infected baseline sites", infected.len())?,
+        entered: trace_count("entered baseline items", gathered.entered_by_any().len())?,
+        entered_items: gathered.entered_by_any().into_iter().collect(),
         reached_sites: reached.into_iter().collect(),
         entered_bodies: gathered.bodies.union().into_iter().collect(),
         infected_sites: infected.into_iter().collect(),
@@ -916,6 +972,7 @@ fn valid_touches(
     touched: &crate::touch::Touched,
     targets: &BTreeSet<&str>,
     catalog: &Catalog,
+    items: u32,
 ) -> bool {
     if touched.narrowing != crate::touch::Narrowing::default() {
         return false;
@@ -960,11 +1017,25 @@ fn valid_touches(
             .keys()
             .chain(target.bodies.tests.keys())
             .chain(target.infected.tests.keys())
+            .chain(target.entered.tests.keys())
             .all(|test| ran.contains(test.as_str()))
             && seen(&target.reached)
             && seen(&target.bodies)
             && seen(&target.infected)
-    }) && touched.narrowing.compared.iter().all(valid)
+            && target
+                .entered
+                .loose
+                .iter()
+                .chain(
+                    target
+                        .entered
+                        .tests
+                        .values()
+                        .flat_map(|indices| indices.iter()),
+                )
+                .all(|index| *index < items)
+    }) && touched.items.is_empty()
+        && touched.narrowing.compared.iter().all(valid)
         && touched
             .narrowing
             .bodies
@@ -1037,6 +1108,7 @@ fn target_key(
             .join(format!("{}.log", slug(&target.id)))
     });
     let context = Context {
+        leaders: None,
         base_env: &building.workspace.base_env,
         cargo: Some(building.workspace.toolchain.cargo()),
         sysroot: building.workspace.toolchain.sysroot(),
@@ -1165,6 +1237,7 @@ fn ran(
         }
     }
     let context = Context {
+        leaders: None,
         base_env: &workspace.base_env,
         cargo: Some(workspace.toolchain.cargo()),
         sysroot: workspace.toolchain.sysroot(),
@@ -1311,6 +1384,8 @@ struct Recording<'a> {
     log: Option<&'a Path>,
     /// The catalog the record must be about.
     catalog: &'a Catalog,
+    /// How many items the tree's entry markers can name.
+    items: u32,
     /// Every test the run of it passed, which is what names a thread a touch can be attributed to.
     ran: &'a [String],
     /// What the run's own summary said, in the protocol it answered in.
@@ -1350,7 +1425,11 @@ fn gather(
         "catalog mutants in a touch record",
         recording.catalog.mutants().len(),
     )?;
-    let recorded = match crate::touch::read(&text, recording.catalog.digest(), count) {
+    let bounds = crate::touch::Bounds {
+        mutants: count,
+        items: recording.items,
+    };
+    let recorded = match crate::touch::read(&text, recording.catalog.digest(), bounds) {
         Ok(recorded) => recorded,
         Err(error) => {
             unreadable(touched, &error);

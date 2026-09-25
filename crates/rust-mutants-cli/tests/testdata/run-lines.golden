@@ -1,6 +1,7 @@
 run       20260905T120000000Z
 workspace aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 catalog   bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+jobs      1 (auto)
 
 surviving-mutant       no test noticed b1c483b9737229b06bad; 1 tests ran and passed
 
@@ -10,3 +11,4 @@ MUTANTS   3 mutants were cataloged: 3 executed, 0 refused by the compiler, 0 pla
 OUTCOMES  killed=1 survived=2 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=0
 OF THOSE  Those 7 add to the 3 cataloged. Within them, not run is 0 unreached, not run is 0 discharged, survived is 1 expected.
 SCORE     33.3%  (1 detected of 3 decided)
+LEFT      1 of 2 survivors is accounted for by no claim

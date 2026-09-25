@@ -140,6 +140,7 @@ fn phase_of(event: &Event) -> Option<Line> {
         | Payload::Build { .. }
         | Payload::Verify { .. }
         | Payload::Touch { .. }
+        | Payload::PerturbedControl { .. }
         | Payload::Witness { .. }
         | Payload::SkipClaim { .. }
         | Payload::Kept { .. }
@@ -219,6 +220,7 @@ impl<'a> Writer<'a> {
                 | Payload::Build { .. }
                 | Payload::Verify { .. }
                 | Payload::Touch { .. }
+                | Payload::PerturbedControl { .. }
                 | Payload::Witness { .. }
                 | Payload::SkipClaim { .. }
                 | Payload::Kept { .. }

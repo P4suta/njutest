@@ -7,13 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-/// Which of the two runs of a whole target one touch record was measured on.
+/// Which run of a whole target one touch record was measured on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
 pub enum Measured {
     /// The one run of every target with nothing active, which routing rests on.
     Baseline,
     /// An original-code control of the whole target, run to confirm a kill.
     Control,
+    /// A mutant run again against a target whose reach moved (ADR 0036).
+    Repair,
 }
 
 impl Measured {
@@ -23,6 +25,7 @@ impl Measured {
         match self {
             Self::Baseline => "baseline",
             Self::Control => "control",
+            Self::Repair => "repair",
         }
     }
 
@@ -38,6 +41,8 @@ pub struct Touch {
     pub target: String,
     /// Which run it was measured on.
     pub measured: Measured,
+    /// The full identity of the mutation a repair ran; nothing on a baseline or a control, which the reader holds.
+    pub mutant: Option<String>,
     /// The tests that run passed, which is what its reach is the reach of.
     pub passed: BTreeSet<String>,
     /// Whether the tests the record names are the harness's answer: under libtest, whether they come to its summary's count; in any other protocol, which names none, nothing to fall short of.
@@ -48,6 +53,8 @@ pub struct Touch {
     pub bodies: BTreeSet<u64>,
     /// Every mutation anything of it saw its guard's two branches differ over.
     pub infected: BTreeSet<u64>,
+    /// Every item anything of it entered the body of.
+    pub entered: BTreeSet<u64>,
 }
 
 impl Touch {
@@ -59,6 +66,7 @@ impl Touch {
         self.reached == other.reached
             && self.bodies == other.bodies
             && self.infected == other.infected
+            && self.entered == other.entered
     }
 }
 
@@ -127,7 +135,8 @@ pub fn read(recorded: &str) -> Result<Touched, crate::route::ReadError> {
     Ok(touched)
 }
 
-fn touch(record: &Value) -> Option<Touch> {
+/// One touch record, or nothing where it lacks what a re-derivation needs.
+pub(crate) fn touch(record: &Value) -> Option<Touch> {
     let named = record.get("passed")?.as_array()?.len();
     let summary = record.get("summary")?;
     let whole = match summary.get("protocol")?.as_str()? {
@@ -139,10 +148,17 @@ fn touch(record: &Value) -> Option<Touch> {
         "unanswered" => false,
         _ => return None,
     };
+    let measured = Measured::parse(record.get("measured")?.as_str()?)?;
+    let mutant = match (measured, record.get("mutant")?) {
+        (Measured::Repair, Value::String(mutant)) => Some(mutant.clone()),
+        (Measured::Baseline | Measured::Control, Value::Null) => None,
+        (Measured::Repair | Measured::Baseline | Measured::Control, _) => return None,
+    };
     Some(Touch {
         whole,
         target: record.get("target")?.as_str()?.to_owned(),
-        measured: Measured::parse(record.get("measured")?.as_str()?)?,
+        measured,
+        mutant,
         passed: record
             .get("passed")?
             .as_array()?
@@ -152,6 +168,7 @@ fn touch(record: &Value) -> Option<Touch> {
         reached: indices(record.get("reached_sites")?)?,
         bodies: indices(record.get("entered_bodies")?)?,
         infected: indices(record.get("infected_sites")?)?,
+        entered: indices(record.get("entered_items")?)?,
     })
 }
 

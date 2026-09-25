@@ -17,6 +17,12 @@ pub struct ReadError {
     pub source: serde_json::Error,
 }
 
+impl crate::error::Coded for ReadError {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::RecordingLine
+    }
+}
+
 /// Every granularity a route can be decided at.
 #[cfg(feature = "testkit")]
 pub const GRANULARITIES: [&str; 5] = ["all", "block", "test", "discharged", "unreached"];
@@ -98,6 +104,34 @@ pub struct Exec {
     pub duration_ms: Option<u64>,
     /// Whether the recording says the machine was given to this execution alone.
     pub alone: Isolation,
+    /// Whether the harness had answered before the clock ended the process, which only the engine records.
+    pub lingered: Linger,
+    /// The signal the process died of, where the producer recorded one.
+    pub signal: Option<i64>,
+    /// Every test the harness said failed, which only the engine records.
+    pub failed_tests: Vec<String>,
+}
+
+/// What a recording establishes about whether a process outlived its harness's answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Linger {
+    /// This producer did not record it.
+    Unrecorded,
+    /// The process ended with its harness's answer, or the harness never answered.
+    Ended,
+    /// The harness had answered and the clock ended the process after it.
+    Outlived,
+}
+
+impl Linger {
+    /// What `recorded` says, where the field is a boolean or absent.
+    fn recorded(recorded: Option<&Value>) -> Self {
+        match recorded.and_then(Value::as_bool) {
+            None => Self::Unrecorded,
+            Some(false) => Self::Ended,
+            Some(true) => Self::Outlived,
+        }
+    }
 }
 
 /// What a recording establishes about whether an execution had the machine to itself.
@@ -284,10 +318,16 @@ fn exec(record: &Value) -> Exec {
         index: number(record, "index"),
         target: text(record, "target").unwrap_or_default(),
         outcome: text(record, "outcome").unwrap_or_default(),
-        step_notice: record.get("step_notice").cloned(),
+        step_notice: record
+            .get("step_notice")
+            .filter(|notice| !notice.is_null())
+            .cloned(),
         tests_run: number(record, "tests_run"),
         duration_ms: number(record, "duration_ms"),
         alone: Isolation::recorded(record.get("alone")),
+        lingered: Linger::recorded(record.get("lingered")),
+        signal: record.get("signal").and_then(Value::as_i64),
+        failed_tests: strings(record, "failed_tests"),
     }
 }
 

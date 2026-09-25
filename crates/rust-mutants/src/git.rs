@@ -3,6 +3,7 @@
 
 //! What git says about the tree, and what it is never allowed to say by silence.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -15,6 +16,12 @@ pub const DEFAULT_BASE: &str = "HEAD";
 /// The pattern a run about an empty change set mutates within.
 /// No file is called this.
 pub const NOTHING_CHANGED: &str = ".rust-mutants-nothing-changed";
+
+/// The most a short answer, a revision or a list of names, is read to.
+const ANSWER_LIMIT: usize = 1 << 20;
+
+/// The most a diff is read to; one longer than this is refused rather than read in part.
+const DIFF_LIMIT: usize = 1 << 26;
 
 /// Where to ask git, with what environment, and under whose watch.
 #[derive(Debug)]
@@ -123,11 +130,186 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
     })
 }
 
-/// The Rust files a change set names, as the patterns a run mutates within, keeping only what `include` already admits when it admits anything.
+/// What a change set leaves to mutate within what a configuration includes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Within {
+    /// The changed Rust files the configuration includes, as the patterns a run mutates within.
+    Changed(Vec<Pattern>),
+    /// No changed file is a Rust file the configuration includes; these are the files that did change.
+    Nothing {
+        /// Every changed path, none of them one the configuration measures.
+        changed: Vec<String>,
+    },
+}
+
+impl Within {
+    /// The patterns a run mutates within, where a change that touched nothing measured is a pattern no file matches.
+    ///
+    /// # Errors
+    /// The sentinel pattern failing to compile, which it does not.
+    pub fn patterns(self) -> Result<Vec<Pattern>, GlobError> {
+        match self {
+            Self::Changed(patterns) => Ok(patterns),
+            Self::Nothing { .. } => Pattern::compile(NOTHING_CHANGED).map(|pattern| vec![pattern]),
+        }
+    }
+}
+
+/// The lines a change set left in the files under the root, as the new side of each file counts them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Lines {
+    /// Every file with a changed line, relative to the root, and which of its lines changed.
+    pub files: BTreeMap<String, Touched>,
+}
+
+/// Which lines of one file a change set left.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Touched {
+    /// Every line, because git does not track the file.
+    Whole,
+    /// These inclusive ranges of lines, in the order the diff gives them.
+    Ranges(Vec<(u32, u32)>),
+}
+
+impl Lines {
+    /// Whether the change left `line` of `path`, a path relative to the root.
+    #[must_use]
+    pub fn touches(&self, path: &str, line: u32) -> bool {
+        match self.files.get(path) {
+            None => false,
+            Some(Touched::Whole) => true,
+            Some(Touched::Ranges(ranges)) => ranges
+                .iter()
+                .any(|(first, last)| (*first..=*last).contains(&line)),
+        }
+    }
+}
+
+/// The lines that differ from `base`, committed and not, in the files under the root, or nothing when git could not say every one of them.
+#[must_use]
+pub fn lines<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Lines> {
+    let merge_base = ask(
+        asking,
+        Empty::Refuse,
+        Shape::Trimmed,
+        &["merge-base", base, "HEAD"],
+    );
+    let against = merge_base.as_deref().unwrap_or(base);
+    let diff = ask_up_to(
+        asking,
+        (Empty::Accept, Shape::Verbatim, DIFF_LIMIT),
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--relative",
+            "--unified=0",
+            "--no-color",
+            "--no-ext-diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            against,
+        ],
+    )?;
+    let untracked = ask(
+        asking,
+        Empty::Accept,
+        Shape::Verbatim,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?;
+    let mut files = hunks(&diff)?;
+    for path in untracked.split('\0').filter(|path| !path.is_empty()) {
+        files.insert(path.to_owned(), Touched::Whole);
+    }
+    files.retain(|path, _touched| !is_under(path, asking.excluded));
+    Some(Lines { files })
+}
+
+/// Where a `--unified=0` diff is: in a file's header, or in its hunks, where a line that looks like a header is content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    Header,
+    Hunks,
+}
+
+/// The new-side line ranges of a `--unified=0` diff, by file, or nothing when a header cannot be read exactly.
+fn hunks(diff: &str) -> Option<BTreeMap<String, Touched>> {
+    let mut files: BTreeMap<String, Touched> = BTreeMap::new();
+    let mut reading = Reading::Header;
+    let mut current: Option<String> = None;
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            reading = Reading::Header;
+            current = None;
+            continue;
+        }
+        if reading == Reading::Header
+            && let Some(target) = line.strip_prefix("+++ ")
+        {
+            current = if target == "/dev/null" {
+                None
+            } else {
+                Some(target.strip_prefix("b/")?.to_owned())
+            };
+            continue;
+        }
+        let Some(header) = line.strip_prefix("@@ ") else {
+            continue;
+        };
+        reading = Reading::Hunks;
+        let Some(path) = &current else {
+            continue;
+        };
+        let Added::Lines(first, last) = added(header)? else {
+            continue;
+        };
+        if let Touched::Ranges(ranges) = files
+            .entry(path.clone())
+            .or_insert_with(|| Touched::Ranges(Vec::new()))
+        {
+            ranges.push((first, last));
+        }
+    }
+    Some(files)
+}
+
+/// What one hunk left on the new side of its file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Added {
+    /// These inclusive lines.
+    Lines(u32, u32),
+    /// No line: the hunk only removed some.
+    Nothing,
+}
+
+/// What a hunk header says it left, or nothing when the header cannot be read.
+fn added(header: &str) -> Option<Added> {
+    let new_side = header.split(' ').find_map(|part| part.strip_prefix('+'))?;
+    let (first, count) = match new_side.split_once(',') {
+        Some((first, count)) => (number(first)?, number(count)?),
+        None => (number(new_side)?, 1),
+    };
+    let Some(extra) = count.checked_sub(1) else {
+        return Some(Added::Nothing);
+    };
+    first
+        .checked_add(extra)
+        .map(|last| Added::Lines(first, last))
+}
+
+/// A line number or a count as a hunk header writes it.
+fn number(text: &str) -> Option<u32> {
+    match text.parse::<u32>() {
+        Ok(number) => Some(number),
+        Err(_not_a_line_number) => None,
+    }
+}
+
+/// The Rust files a change set names, keeping only what `include` already admits when it admits anything, or that it names none.
 /// # Errors
 /// Refuses a changed path which cannot be represented by the mutation glob language.
 /// Silently omitting such a path would make a partial change set indistinguishable from the complete one the caller asked for.
-pub fn within(change: &Change, include: &[Pattern]) -> Result<Vec<Pattern>, GlobError> {
+pub fn within(change: &Change, include: &[Pattern]) -> Result<Within, GlobError> {
     let sources: Vec<&String> = change
         .files
         .iter()
@@ -135,12 +317,15 @@ pub fn within(change: &Change, include: &[Pattern]) -> Result<Vec<Pattern>, Glob
         .filter(|path| include.is_empty() || include.iter().any(|pattern| pattern.matches(path)))
         .collect();
     if sources.is_empty() {
-        return Pattern::compile(NOTHING_CHANGED).map(|pattern| vec![pattern]);
+        return Ok(Within::Nothing {
+            changed: change.files.clone(),
+        });
     }
     sources
         .into_iter()
         .map(|path| Pattern::compile(path))
-        .collect()
+        .collect::<Result<Vec<Pattern>, GlobError>>()
+        .map(Within::Changed)
 }
 
 /// Whether an empty answer is an answer.
@@ -215,12 +400,21 @@ fn ask<W: Watch>(
     shape: Shape,
     arguments: &[&str],
 ) -> Option<String> {
+    ask_up_to(asking, (empty, shape, ANSWER_LIMIT), arguments)
+}
+
+/// The same, reading at most `limit` bytes of the answer and refusing one longer than that rather than reading part of it.
+fn ask_up_to<W: Watch>(
+    asking: &Asking<'_, W>,
+    (empty, shape, limit): (Empty, Shape, usize),
+    arguments: &[&str],
+) -> Option<String> {
     let mut argv: Vec<OsString> = vec![OsString::from("git")];
     argv.extend(arguments.iter().map(OsString::from));
     let mut spec = Spec::new(argv, Bound::After(crate::runner::PROBE));
     spec.dir = Some(asking.root.to_path_buf());
     spec.env = Some(about_the_tree(asking.env));
-    spec.structured_stdout = Some(1 << 20);
+    spec.structured_stdout = Some(limit);
 
     let asked = run(&spec, asking.watch.cancel());
     asking.watch.exec(&spec, &asked);
@@ -231,9 +425,13 @@ fn ask<W: Watch>(
         | crate::runner::Termination::TimedOut
         | crate::runner::Termination::Stalled
         | crate::runner::Termination::StoppedByMonitor
+        | crate::runner::Termination::Answered
         | crate::runner::Termination::MonitorFailed { .. }
         | crate::runner::Termination::Cancelled { .. }
         | crate::runner::Termination::WaitFailed { .. } => return None,
+    }
+    if asked.stdout_truncated {
+        return None;
     }
     let raw = match std::str::from_utf8(&asked.stdout) {
         Ok(raw) => raw,

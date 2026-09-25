@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The name of the shape.
-pub const SCHEMA: &str = "rust-mutants-outcome-v1";
+pub const SCHEMA: &str = "rust-mutants-outcome-v2";
 
 /// The directory records live in, below the user's cache directory.
-pub const LAYOUT: &str = "rust-mutants/outcomes-v1";
+pub const LAYOUT: &str = "rust-mutants/outcomes-v2";
 
 /// Bumped when a rule changes what it writes, so a record about the old edit stops answering.
 pub const RULE_ABI: u32 = 1;
@@ -28,7 +28,7 @@ pub const INSTRUMENTATION_ABI: u32 = 2;
 pub const STEP_POLICY_ABI: u32 = 1;
 
 /// Bumped when a record changes what it holds, or when the recipe changes what a key is computed from.
-pub const CACHE_ABI: u32 = 6;
+pub const CACHE_ABI: u32 = 7;
 
 /// An outcome strong enough to answer a later identical run.
 ///
@@ -71,10 +71,21 @@ pub struct Record {
     pub failed_tests: Vec<String>,
     /// The run that established it.
     pub run_id: String,
+    /// Everything beyond the mutant the record is keyed on, so the name it is filed under can be recomputed wherever it is read.
+    pub keyed: Keyed,
+}
+
+impl Record {
+    /// The key this record is filed under, recomputed from what it says it was keyed on.
+    #[must_use]
+    pub fn key(&self) -> HexDigest {
+        self.keyed.key(&self.mutant)
+    }
 }
 
 /// Everything a key is computed from beyond the mutant's own identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Keyed {
     /// The digest of the pristine sources every unit of the build compiled.
     pub closure: String,
@@ -91,13 +102,16 @@ pub struct Keyed {
     pub steps: u64,
     /// The cargo arguments the tree was compiled with, because the same tree compiled two ways is two programs.
     pub build: Vec<String>,
+    /// The digest of the engine that decided, because two builds of it may mean two different things by the same verdict.
+    /// Empty where the engine could not be read, which remembers nothing.
+    pub engine: String,
 }
 
 impl Keyed {
     /// Whether this names enough to remember anything by.
     #[must_use]
     pub const fn usable(&self) -> bool {
-        !self.closure.is_empty()
+        !self.closure.is_empty() && !self.engine.is_empty()
     }
 
     /// The key one mutant's record is filed under.
@@ -116,6 +130,7 @@ impl Keyed {
             mutant.as_str(),
             &self.timeout,
             &self.steps.to_string(),
+            &self.engine,
         ] {
             hash_length(&mut hasher, field.len());
             hasher.update(field.as_bytes());
@@ -131,6 +146,67 @@ impl Keyed {
     }
 }
 
+/// The digest of the engine executable at `program`, which is what a remembered verdict was decided by.
+///
+/// # Errors
+/// The file could not be read.
+pub fn engine_of(program: &Path) -> io::Result<String> {
+    let mut file = std::fs::File::open(program)?;
+    let mut hasher = Sha256::new();
+    let mut chunk = vec![0_u8; 1 << 16];
+    loop {
+        let read = io::Read::read(&mut file, &mut chunk)?;
+        let Some(held) = chunk.get(..read).filter(|held| !held.is_empty()) else {
+            return Ok(HexDigest::finish(hasher).to_string());
+        };
+        hasher.update(held);
+    }
+}
+
+/// The document a store travels in between checkouts, machines and CI jobs.
+pub const EXPORT_DOCUMENT: &str = "rust-mutants/outcomes-export";
+
+/// The version of [`EXPORT_DOCUMENT`] this release writes and reads.
+pub const EXPORT_VERSION: u32 = 1;
+
+/// The versions of everything a key is recomputed under, so records from a release that computed keys another way are refused rather than filed under names this one would compute differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Abi {
+    /// [`RULE_ABI`].
+    pub rule: u32,
+    /// [`INSTRUMENTATION_ABI`].
+    pub instrumentation: u32,
+    /// [`STEP_POLICY_ABI`].
+    pub step_policy: u32,
+    /// [`CACHE_ABI`].
+    pub cache: u32,
+}
+
+impl Abi {
+    /// The versions this release keys under.
+    pub const CURRENT: Self = Self {
+        rule: RULE_ABI,
+        instrumentation: INSTRUMENTATION_ABI,
+        step_policy: STEP_POLICY_ABI,
+        cache: CACHE_ABI,
+    };
+}
+
+/// A whole store, as it travels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Exported {
+    /// [`EXPORT_DOCUMENT`].
+    pub document_type: String,
+    /// [`EXPORT_VERSION`].
+    pub schema_version: u32,
+    /// The versions the records were keyed under.
+    pub abi: Abi,
+    /// Every record, each carrying what it was keyed on, in key order.
+    pub records: Vec<Record>,
+}
+
 /// Why a durable outcome could not be read or written exactly.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -143,6 +219,12 @@ pub enum StoreError {
         /// The operating system's reason.
         #[source]
         source: io::Error,
+    },
+    /// A travelling store is not one this release can file.
+    #[error("{message}")]
+    Refused {
+        /// Why.
+        message: String,
     },
     /// The entry exists but is not the typed record its name promises.
     #[error("{}: {message}", path.display())]
@@ -195,6 +277,15 @@ impl Store {
                 path: path.clone(),
                 message: error.to_string(),
             })?;
+        if record.key() != *key {
+            return Err(StoreError::Corrupt {
+                path,
+                message: format!(
+                    "the record says it was keyed on inputs whose key is {}, not the {key} it is filed under",
+                    record.key()
+                ),
+            });
+        }
         if record.schema != SCHEMA || &record.mutant != mutant {
             return Err(StoreError::Corrupt {
                 path,
@@ -207,12 +298,12 @@ impl Store {
         Ok(Some((record.outcome.into(), record)))
     }
 
-    /// Records what this run established.
+    /// Records what a run established, under the key its own inputs name, so no record can be filed under a name it does not derive.
     ///
     /// # Errors
     /// Returns serialization and filesystem failures rather than silently turning a durable result into a cache miss on the next run.
-    pub fn put(&self, key: &HexDigest, record: &Record) -> Result<PathBuf, StoreError> {
-        let path = self.entry(key);
+    pub fn put(&self, record: &Record) -> Result<PathBuf, StoreError> {
+        let path = self.entry(&record.key());
         let text = serde_json::to_string(record).map_err(|error| StoreError::Corrupt {
             path: path.clone(),
             message: error.to_string(),
@@ -257,7 +348,7 @@ impl Store {
     /// Returns the operating-system error when the store cannot be enumerated or removed wholly.
     pub fn clear(&self) -> io::Result<(u32, u64)> {
         let (held, bytes) = self.size()?;
-        match std::fs::remove_dir_all(&self.root) {
+        match crate::tempowner::remove_tree(&self.root) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
@@ -270,6 +361,92 @@ impl Store {
             io::Error::other("outcome store gained bytes while its removal was being measured")
         })?;
         Ok((removed, removed_bytes))
+    }
+
+    /// Every record the store holds, each checked against the name it is filed under, in key order.
+    ///
+    /// # Errors
+    /// Returns the first entry that cannot be enumerated, read, decoded, or recomputed to its own name.
+    pub fn export(&self) -> Result<Exported, StoreError> {
+        let entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(exported(Vec::new()));
+            }
+            Err(source) => {
+                return Err(StoreError::Io {
+                    path: self.root.clone(),
+                    source,
+                });
+            }
+        };
+        let mut records = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| StoreError::Io {
+                path: self.root.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let stem = path.file_stem().and_then(std::ffi::OsStr::to_str);
+            let key = match stem.map(HexDigest::try_from) {
+                Some(Ok(key)) => key,
+                Some(Err(_)) | None => {
+                    return Err(StoreError::Corrupt {
+                        path,
+                        message: "an entry whose name is not a key".to_owned(),
+                    });
+                }
+            };
+            let text = std::fs::read_to_string(&path).map_err(|source| StoreError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            let record: Record =
+                crate::strictjson::decode_str(&text).map_err(|error| StoreError::Corrupt {
+                    path: path.clone(),
+                    message: error.to_string(),
+                })?;
+            if self.get(&key, &record.mutant)?.is_none() {
+                return Err(StoreError::Corrupt {
+                    path,
+                    message: "the entry went away while it was being exported".to_owned(),
+                });
+            }
+            records.push(record);
+        }
+        records.sort_by_key(Record::key);
+        Ok(exported(records))
+    }
+
+    /// Files every record of a travelling store under the key its own inputs name, and says how many.
+    ///
+    /// # Errors
+    /// Refuses a document of another type or version, or keyed under another release's versions, before writing anything; returns the first write that fails.
+    pub fn import(&self, exported: &Exported) -> Result<usize, StoreError> {
+        let refused = |message: String| Err(StoreError::Refused { message });
+        if exported.document_type != EXPORT_DOCUMENT || exported.schema_version != EXPORT_VERSION {
+            return refused(format!(
+                "a {:?} version {} document is not a {EXPORT_DOCUMENT:?} version {EXPORT_VERSION} store",
+                exported.document_type, exported.schema_version
+            ));
+        }
+        if exported.abi != Abi::CURRENT {
+            return refused(format!(
+                "these records were keyed under {:?}, and this release keys under {:?}, so a name recomputed here would not be the name they were answered under",
+                exported.abi,
+                Abi::CURRENT
+            ));
+        }
+        if let Some(record) = exported.records.iter().find(|one| one.schema != SCHEMA) {
+            return refused(format!(
+                "a record of schema {:?} is not a {SCHEMA:?} record",
+                record.schema
+            ));
+        }
+        for record in &exported.records {
+            self.put(record)?;
+        }
+        Ok(exported.records.len())
     }
 
     fn entry(&self, key: &HexDigest) -> PathBuf {
@@ -322,4 +499,14 @@ fn read_through_a_replacement(path: &Path) -> io::Result<Option<String>> {
 /// `ERROR_SHARING_VIOLATION` is 32 and has no `ErrorKind` of its own on every supported compiler, so it is read by number.
 fn in_flight(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::PermissionDenied || error.raw_os_error() == Some(32)
+}
+
+/// A travelling store holding `records`, as this release writes one.
+fn exported(records: Vec<Record>) -> Exported {
+    Exported {
+        document_type: EXPORT_DOCUMENT.to_owned(),
+        schema_version: EXPORT_VERSION,
+        abi: Abi::CURRENT,
+        records,
+    }
 }

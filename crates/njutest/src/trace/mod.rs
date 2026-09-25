@@ -21,8 +21,9 @@ use sha2::{Digest as _, Sha256};
 pub use event::SCHEMA;
 pub use event::{
     ArtifactRecord, AskedRecord, DischargeRecord, DriftRecord, Event, ExecRecord, MutantExecRecord,
-    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord,
-    RunAccounting, RunRecord, SentinelRecord, StartRecord, WireExchangeRecord, WireExecRecord,
+    NoteRecord, Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RepairRecord,
+    RouteRecord, RunAccounting, RunRecord, SentinelRecord, SiteReached, StartRecord,
+    WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{DirSink, FILE_NAME, OUTPUT_DIRECTORY_NAME, Sink};
@@ -37,7 +38,6 @@ use crate::report::ConclusionAccounting;
 pub enum Clock {
     /// The moment it actually is.
     Wall,
-    #[cfg(any(test, feature = "testkit"))]
     /// One that starts at `origin` and advances by `step` each reading, so a recording is the same bytes every time it is made.
     #[cfg(feature = "testkit")]
     Stepping {
@@ -198,9 +198,9 @@ enum EndDelivery {
     Delivered(Option<std::io::Error>),
 }
 
-struct EndInput<'a> {
+struct EndInput {
     moment: Timestamp,
-    verdict: &'a str,
+    verdict: crate::report::Verdict,
     accounting: Option<ConclusionAccounting>,
     error: Option<String>,
 }
@@ -406,6 +406,16 @@ impl Recorder {
         self.emit(Payload::Drift { drift: record });
     }
 
+    /// Records one disposition that rested on a moved target, run again against it.
+    pub fn repair(&self, record: RepairRecord) {
+        self.emit(Payload::Repair { repair: record });
+    }
+
+    /// Records what one control under one knob established about one target.
+    pub fn knob(&self, record: crate::report::knobs::KnobRecord) {
+        self.emit(Payload::Knob { knob: record });
+    }
+
     /// Records one closed model-checking question and its typed answer.
     pub fn model(&self, record: crate::report::ModelRecord) {
         self.emit(Payload::Model {
@@ -429,7 +439,7 @@ impl Recorder {
     /// The sink could not make the completed recording durable.
     pub fn run_end(
         &self,
-        verdict: &str,
+        verdict: crate::report::Verdict,
         accounting: Option<ConclusionAccounting>,
         error: Option<String>,
     ) -> std::io::Result<()> {
@@ -535,7 +545,7 @@ impl Recorder {
     }
 }
 
-fn deliver_end(inner: &Inner, input: EndInput<'_>) -> std::io::Result<EndDelivery> {
+fn deliver_end(inner: &Inner, input: EndInput) -> std::io::Result<EndDelivery> {
     let failure = {
         let mut state = inner.lock_state()?;
         if state.ended {
@@ -548,7 +558,7 @@ fn deliver_end(inner: &Inner, input: EndInput<'_>) -> std::io::Result<EndDeliver
             input.moment,
             Payload::RunEnd {
                 run: RunRecord {
-                    verdict: input.verdict.to_owned(),
+                    verdict: input.verdict,
                     accounting: input.accounting.map(RunAccounting::from),
                     error: input.error,
                     events_emitted,

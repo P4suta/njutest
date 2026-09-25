@@ -41,11 +41,11 @@ fn killed() -> Value {
         "original": ">", "replacement": ">=",
         "outcome": "killed", "target": TARGET, "exit_code": 101,
         "duration_ms": 7, "tests_run": 2, "killed_by": ["larger_works"],
-        "signal": null, "step_notice": null, "retried": false,
+        "signal": null, "step_notice": null, "retried": false, "lingered": false,
         "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-        "identical": null, "expected": false, "unreached": false,
+        "identical": "not-measured", "expected": false, "unreached": false,
         "source_run_id": null
     })
 }
@@ -62,10 +62,10 @@ fn survived() -> Value {
         "original": "if a > b { a } else { b }", "replacement": "Default::default()",
         "outcome": "survived", "target": TARGET, "exit_code": 0,
         "duration_ms": 5, "tests_run": 2, "killed_by": [], "signal": null,
-        "step_notice": null, "retried": false, "not_run_reason": null,
+        "step_notice": null, "retried": false, "lingered": false, "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
-        "identical": null, "expected": true, "unreached": false,
+        "identical": "not-measured", "expected": true, "unreached": false,
         "source_run_id": null
     })
 }
@@ -75,7 +75,7 @@ fn survived() -> Value {
 pub fn base() -> Value {
     json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
+        "schema_version": super::SCHEMA_VERSION,
         "tool_version": "0.1.0",
         "run": {
             "id": RUN,
@@ -84,7 +84,8 @@ pub fn base() -> Value {
             "duration_ms": 2000,
             "interrupted": false,
             "exit_code": 0,
-            "shard": null
+            "shard": null,
+            "jobs": {"asked": "auto", "used": 1}
         },
         "workspace": {
             "root_name": "demo",
@@ -172,7 +173,7 @@ fn judged(seq: (u64, u64), index: u64, id: &str, outcome: &str) -> [Value; 2] {
         json!({"seq":seq.1,"timestamp":"2026-09-06T10:15:02Z",
             "elapsed_ms":61,"type":"mutant-exec","mutant":{"id":short(id),
             "index":index,"target":TARGET,"outcome":outcome,
-            "exit_code":exit,"duration_ms":5,"tests_run":2}}),
+            "exit_code":exit,"duration_ms":5,"tests_run":2,"lingered":false}}),
     ]
 }
 
@@ -251,6 +252,17 @@ pub enum SpecimenError {
         /// The missing field.
         field: &'static str,
     },
+}
+
+impl crate::error::Coded for SpecimenError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Directory { .. } | Self::Unwritable { .. } => {
+                crate::error::XtCode::SpecimenUnwritable
+            }
+            Self::NotAnObject { .. } | Self::Envelope { .. } => crate::error::XtCode::SpecimenEvent,
+        }
+    }
 }
 
 fn directory() -> Result<TempDir, SpecimenError> {
@@ -521,6 +533,26 @@ pub fn touched() -> Value {
     })
 }
 
+/// The record the guards left for the clean run, with the item both of its mutants sit in and `entered` as given.
+#[must_use]
+pub fn entered(entered: &Value, measurable: bool) -> Value {
+    json!({
+        "targets": {
+            TARGET: {
+                "reached": { "tests": { "larger_works": [0, 1] } },
+                "entered": entered,
+                "ran": ["larger_works", "smaller_works"]
+            }
+        },
+        "limitations": [],
+        "items": [{
+            "index": 0, "package": "demo", "path": "src/lib.rs", "name": "larger",
+            "span": { "start": 50, "end": 300 }, "body": { "start": 60, "end": 290 },
+            "measurable": measurable
+        }]
+    })
+}
+
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
@@ -681,6 +713,24 @@ impl Layer {
                         document
                     },
                     beside: vec![("touched-v1.json", touched())],
+                    ..clean
+                },
+            ],
+            Self::Entry => vec![
+                Perturbation {
+                    name: "a test that noticed a mutation and never entered the item it is in",
+                    beside: vec![(
+                        "touched-v1.json",
+                        entered(&json!({ "tests": { "smaller_works": [0] } }), true),
+                    )],
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "a site reached inside an item nothing can record entering",
+                    beside: vec![(
+                        "touched-v1.json",
+                        entered(&json!({ "tests": { "larger_works": [0] } }), false),
+                    )],
                     ..clean
                 },
             ],

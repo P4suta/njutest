@@ -138,6 +138,69 @@ impl Specification {
     pub fn items(&self) -> &[Item] {
         &self.items
     }
+
+    /// The lines of the file at `path` the run changed, each with every change that starts on it, in the order the file has them.
+    ///
+    /// The path is the whole path from the project's root, so a line belongs to one file.
+    #[must_use]
+    pub fn lines(&self, path: &str) -> Vec<Line<'_>> {
+        let mut starting: BTreeMap<u32, Vec<&Change>> = BTreeMap::new();
+        for item in self.items.iter().filter(|item| item.path == path) {
+            for change in &item.changes {
+                starting.entry(change.line()).or_default().push(change);
+            }
+        }
+        starting
+            .into_iter()
+            .filter_map(|(number, changes)| {
+                let mut changes = changes.into_iter();
+                changes.next().map(|first| Line {
+                    number,
+                    first,
+                    rest: changes.collect(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// One line of the source and every change the run made that starts on it.
+///
+/// It holds its first change apart from the rest, so a line with nothing on it is not a value there is.
+#[derive(Debug, Clone)]
+pub struct Line<'a> {
+    number: u32,
+    first: &'a Change,
+    rest: Vec<&'a Change>,
+}
+
+impl<'a> Line<'a> {
+    /// Which line of the file it is.
+    #[must_use]
+    pub const fn number(&self) -> u32 {
+        self.number
+    }
+
+    /// Every change that starts on it, in the order the source has them.
+    pub fn changes(&self) -> impl Iterator<Item = &'a Change> + '_ {
+        std::iter::once(self.first).chain(self.rest.iter().copied())
+    }
+
+    /// How its weakest change was decided, which is what the line as a whole stands on.
+    #[must_use]
+    pub fn decision(&self) -> Decision {
+        self.rest
+            .iter()
+            .fold(self.first.decision(), |weakest, change| {
+                weakest.weaker(change.decision())
+            })
+    }
+
+    /// Where the line stands, which is where its weakest change stands.
+    #[must_use]
+    pub fn section(&self) -> Section {
+        Section::of(self.decision())
+    }
 }
 
 /// One item of the source and every change the run made inside it.
@@ -206,6 +269,12 @@ impl Change {
         Section::of(self.mutant.decision())
     }
 
+    /// How the builds together decided it, which is the weakest of what each established.
+    #[must_use]
+    pub const fn decision(&self) -> Decision {
+        self.mutant.decision()
+    }
+
     /// What each build established, in the order the builds were measured.
     pub fn answers(&self) -> impl Iterator<Item = Answer<'_>> {
         self.mutant.by_build().iter().map(|row| Answer {
@@ -220,8 +289,9 @@ impl Change {
         crate::naming::locator(&self.mutant)
     }
 
-    /// The line it is on.
-    const fn line(&self) -> u32 {
+    /// The line it starts on.
+    #[must_use]
+    pub const fn line(&self) -> u32 {
         self.mutant.position().line
     }
 }
@@ -453,6 +523,26 @@ impl SpecError {
             Self::Unsound { .. } => crate::error::REPORT_UNSOUND,
         }
     }
+}
+
+/// What `report` established about every change it made in the file at `typed`, which names one file by its whole path from the project's root however it is spelled.
+///
+/// # Errors
+/// [`SpecError::NamesNothing`] when the run changed nothing in exactly that file, and [`SpecError::Unsound`] as [`specified`] refuses.
+pub fn guarded(report: &Report, typed: &str) -> Result<(Specification, String), SpecError> {
+    let nothing = || SpecError::NamesNothing {
+        run: report.run_id().to_owned(),
+        kind: kind(report.run_kind()),
+        within: format!("in {typed}"),
+    };
+    let Ok(path) = rust_mutants::id::normalize_path(typed) else {
+        return Err(nothing());
+    };
+    let specification = specified(report, &Subject::File(path.clone()))?;
+    if specification.lines(&path).is_empty() {
+        return Err(nothing());
+    }
+    Ok((specification, path))
 }
 
 /// What `report` established about every change it made to the items `subject` names.

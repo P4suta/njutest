@@ -9,15 +9,20 @@ use std::os::windows::process::CommandExt as _;
 use std::process::{Child, Command, ExitStatus};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
+use windows_sys::Win32::System::IO::{
+    CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED,
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectAssociateCompletionPortInformation, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Pipes::{PIPE_NOWAIT, PeekNamedPipe, SetNamedPipeHandleState};
+use windows_sys::Win32::System::SystemServices::JOB_OBJECT_MSG_NEW_PROCESS;
 use windows_sys::Win32::System::Threading::{CREATE_SUSPENDED, WaitForSingleObject};
 
 use super::{LeaderObservation, ProcessExit, RunnerError, SupervisionBoundary};
@@ -87,6 +92,79 @@ const TERMINATED_JOB_EXIT_CODE: u32 = 1;
 #[derive(Debug)]
 pub(super) struct Supervisor {
     job: HANDLE,
+    membership: std::sync::Arc<Membership>,
+}
+
+/// The completion port a job posts to, from which every process that ever ran in it can be named.
+#[derive(Debug)]
+pub struct Membership {
+    port: HANDLE,
+}
+
+#[expect(
+    unsafe_code,
+    reason = "a completion port handle may be used from any thread, and the port serializes its own queue"
+)]
+unsafe impl Send for Membership {}
+
+#[expect(
+    unsafe_code,
+    reason = "a completion port handle may be used from any thread, and the port serializes its own queue"
+)]
+unsafe impl Sync for Membership {}
+
+impl Membership {
+    fn new() -> Result<Self, RunnerError> {
+        #[expect(unsafe_code, reason = "CreateIoCompletionPort has no safe binding")]
+        let port =
+            unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1) };
+        if port.is_null() {
+            return Err(unavailable(
+                "could not create the completion port a job names its processes on",
+            ));
+        }
+        Ok(Self { port })
+    }
+
+    /// Every process the job has said it took in since the last time it was asked, without waiting for more.
+    /// Windows does not promise to post every one, so a process missing here is unknown rather than absent.
+    #[must_use]
+    pub fn drain(&self) -> Vec<u32> {
+        let mut named = Vec::new();
+        loop {
+            let (mut message, mut key, mut detail) =
+                (0_u32, 0_usize, std::ptr::null_mut::<OVERLAPPED>());
+            #[expect(unsafe_code, reason = "GetQueuedCompletionStatus has no safe binding")]
+            let dequeued = unsafe {
+                GetQueuedCompletionStatus(
+                    self.port,
+                    std::ptr::addr_of_mut!(message),
+                    std::ptr::addr_of_mut!(key),
+                    std::ptr::addr_of_mut!(detail),
+                    0,
+                )
+            };
+            if dequeued == 0 {
+                return named;
+            }
+            if message == JOB_OBJECT_MSG_NEW_PROCESS {
+                match u32::try_from(detail.addr()) {
+                    Ok(pid) => named.push(pid),
+                    Err(_not_a_process_id_so_it_stays_unknown) => {}
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Membership {
+    fn drop(&mut self) {
+        #[expect(unsafe_code, reason = "CloseHandle has no safe binding")]
+        let closed = unsafe { CloseHandle(self.port) };
+        if closed == 0 {
+            std::process::abort();
+        }
+    }
 }
 
 type NtResumeProcess = unsafe extern "system" fn(HANDLE) -> i32;
@@ -108,7 +186,34 @@ impl Supervisor {
                 "could not create the job object that owns the child process tree",
             ));
         }
-        let supervisor = Self { job };
+        let supervisor = Self {
+            job,
+            membership: std::sync::Arc::new(Membership::new()?),
+        };
+        let association = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+            CompletionKey: supervisor.job,
+            CompletionPort: supervisor.membership.port,
+        };
+        let association_size = u32::try_from(size_of::<JOBOBJECT_ASSOCIATE_COMPLETION_PORT>())
+            .map_err(|source| RunnerError::SupervisionUnavailable {
+                message: "the Windows job association structure does not fit the platform API"
+                    .to_owned(),
+                source: Some(io::Error::new(io::ErrorKind::InvalidData, source)),
+            })?;
+        #[expect(unsafe_code, reason = "SetInformationJobObject has no safe binding")]
+        let associated = unsafe {
+            SetInformationJobObject(
+                supervisor.job,
+                JobObjectAssociateCompletionPortInformation,
+                std::ptr::addr_of!(association).cast(),
+                association_size,
+            )
+        };
+        if associated == 0 {
+            return Err(unavailable(
+                "could not have the job object name its processes on a completion port",
+            ));
+        }
         #[expect(
             unsafe_code,
             reason = "the Windows structure is initialized through its documented zero state"
@@ -170,6 +275,15 @@ impl Supervisor {
             });
         }
         Ok(())
+    }
+
+    /// Where this job names the processes it holds.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the same signature as the unix supervisor, whose group names nothing"
+    )]
+    pub(super) fn membership(&self) -> Option<std::sync::Arc<Membership>> {
+        Some(std::sync::Arc::clone(&self.membership))
     }
 
     /// Windows has no polite phase: termination is immediate by construction.

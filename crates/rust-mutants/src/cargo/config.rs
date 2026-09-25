@@ -70,6 +70,29 @@ pub fn configured(root: &Path, cargo_home: Option<&Path>) -> Configured {
     found
 }
 
+/// The digest of every configuration file a build in `root` would read, each with where it is, in cargo's precedence order: a file changing, appearing, or vanishing anywhere cargo looks changes it.
+#[must_use]
+pub fn fingerprint(root: &Path, cargo_home: Option<&Path>) -> crate::id::HexDigest {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"rust-mutants-cargo-configuration-v1\0");
+    for directory in root.ancestors().chain(cargo_home) {
+        for name in FILE_NAMES {
+            let path = directory.join(DIRECTORY).join(name);
+            let read = match std::fs::read(&path) {
+                Ok(bytes) => crate::id::HexDigest::of(&bytes).into_inner(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => format!("unreadable: {}", error.kind()),
+            };
+            hasher.update(path.as_os_str().as_encoded_bytes());
+            hasher.update(b"\0");
+            hasher.update(read.as_bytes());
+            hasher.update(b"\0");
+        }
+    }
+    crate::id::HexDigest::finish(hasher)
+}
+
 /// What one configuration file says about compiler flags.
 #[must_use]
 pub fn read(text: &str) -> Configured {

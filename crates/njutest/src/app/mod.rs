@@ -9,14 +9,18 @@ pub mod diagnostics;
 pub mod doctor;
 pub mod explain;
 pub mod fix;
+pub mod guard;
 pub mod init;
 pub mod lsp;
+pub mod measure;
 pub mod merge;
+pub mod next;
 pub mod plan;
 pub mod replay;
 pub mod reports;
 pub mod review;
 pub mod runs;
+pub mod select;
 pub mod show;
 pub mod spec;
 pub mod trace;
@@ -53,10 +57,14 @@ pub fn run(
         Command::Explain(arguments) => explain::run(arguments, environment, stdout, stderr),
         Command::Why(arguments) => why::run(arguments, environment, stdout, stderr),
         Command::Spec(arguments) => spec::run(arguments, environment, stdout, stderr),
+        Command::Guard(arguments) => guard::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
         Command::Review(arguments) => review::run(arguments, environment, stdout, stderr),
+        Command::Next(arguments) => next::run(arguments, environment, stdout, stderr),
         Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),
         Command::Replay(arguments) => replay::run(arguments, environment, stdout, stderr),
+        Command::Measure(arguments) => measure::run(*arguments, environment, stdout, stderr),
+        Command::Select(arguments) => select::run(*arguments, environment, stdout, stderr),
         Command::Trace { command } => trace::run(command, environment, stdout, stderr),
         Command::Diagnostics(arguments) => diagnostics::run(arguments, environment, stdout, stderr),
     }

@@ -603,6 +603,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
         let nothing = xtask::proofaudit::Recorded {
             runner: None,
             engines: &[],
+            outputs: &[],
         };
         let error = xtask::proofaudit::audit_with("duplicate.json", &document, nothing, None)
             .expect_err("duplicate keys never reach proof redecision");
@@ -645,7 +646,11 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
 
 #[test]
 fn a_clean_recording_exits_zero_and_one_with_a_violation_in_it() {
-    assert_eq!(exit_code(run_directory(&base()).path()), 0);
+    assert_eq!(
+        exit_code(run_directory(&base()).path()),
+        i32::from(xtask::proofaudit::EXIT_UNAUDITED),
+        "read without its recording, a clean run leaves layers unaudited"
+    );
     assert_eq!(
         exit_code(run_directory(&with(serde_json::json!({ "findings": [] }))).path()),
         1
@@ -2036,12 +2041,14 @@ fn a_part_of_a_catalog_is_not_held_to_whether_a_target_noticed_anything() {
     );
 }
 
-fn drift_audit(document: serde_json::Value, engine: Vec<serde_json::Value>) -> Audit {
+/// What the audit makes of `document` beside the routes of the clean run and `engine` as the one engine recording.
+fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> Audit {
     let laid = sentinel::Perturbation {
-        name: "drift",
+        name: "engine",
         document,
         events: Some(routes()),
         engine: Some(engine),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2063,7 +2070,7 @@ fn a_control_that_reached_a_site_its_baseline_never_did_is_owed_an_unstable_base
         sentinel::touch("baseline", &[0]),
         sentinel::touch("control", &[0, 1]),
     ];
-    let quiet = drift_audit(with(sentinel::drifted("held")), moved.clone());
+    let quiet = with_engine(with(sentinel::drifted("held")), moved.clone());
     let said = drift_violations(&quiet);
     assert!(
         said.iter().any(|line| line.contains("records it as held")),
@@ -2084,7 +2091,7 @@ fn a_control_that_reached_a_site_its_baseline_never_did_is_owed_an_unstable_base
             "position": null
         }] }),
     );
-    let answered = drift_audit(named, moved);
+    let answered = with_engine(named, moved);
     assert_eq!(
         drift_violations(&answered),
         Vec::<String>::new(),
@@ -2108,7 +2115,7 @@ fn a_finding_about_a_target_whose_reach_held_is_refused() {
         sentinel::touch("baseline", &[0, 1]),
         sentinel::touch("control", &[0, 1]),
     ];
-    let said = drift_violations(&drift_audit(named, held));
+    let said = drift_violations(&with_engine(named, held));
     assert!(
         said.iter()
             .any(|line| line.contains("do not show its reach moving")),
@@ -2124,7 +2131,7 @@ fn a_control_over_other_tests_is_no_comparison_and_the_report_must_say_drift_was
         serde_json::json!({ "touch": { "passed": ["lib::works", "lib::also"], "summary": { "protocol": "libtest", "tests_run": 2 } } }),
     );
     let engine = vec![sentinel::touch("baseline", &[0]), other];
-    let silent = drift_violations(&drift_audit(
+    let silent = drift_violations(&with_engine(
         with(sentinel::drifted("not-measured")),
         engine.clone(),
     ));
@@ -2140,7 +2147,7 @@ fn a_control_over_other_tests_is_no_comparison_and_the_report_must_say_drift_was
             "detail": format!("1 target was not measured ({TARGET})")
         }] }),
     );
-    let audit = drift_audit(stated, engine);
+    let audit = with_engine(stated, engine);
     assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
 }
 
@@ -2157,6 +2164,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         "findings",
         "limitations",
         "drift",
+        "knobs",
     ] {
         if let Some(value) = flat.get(key) {
             part.insert(key.to_owned(), value.clone());
@@ -2179,6 +2187,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         document,
         events: Some(routes()),
         engine: sentinel::clean().engine,
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2223,7 +2232,7 @@ fn a_baseline_that_passed_only_on_retry_is_owed_not_measured_rather_than_a_compa
         sentinel::touch("baseline", &[0]),
         sentinel::touch("control", &[0, 1]),
     ];
-    let said = drift_violations(&drift_audit(
+    let said = drift_violations(&with_engine(
         with(sentinel::drifted("moved")),
         engine.clone(),
     ));
@@ -2240,7 +2249,7 @@ fn a_baseline_that_passed_only_on_retry_is_owed_not_measured_rather_than_a_compa
             "detail": format!("1 target was not measured ({TARGET})")
         }] }),
     );
-    let audit = drift_audit(stated, engine);
+    let audit = with_engine(stated, engine);
     assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
 }
 
@@ -2252,7 +2261,7 @@ fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
         serde_json::json!({ "touch": { "summary": { "protocol": "libtest", "tests_run": 2 } } }),
     );
     let engine = vec![sentinel::touch("baseline", &[0]), short];
-    let silent = drift_violations(&drift_audit(
+    let silent = drift_violations(&with_engine(
         with(sentinel::drifted("not-measured")),
         engine.clone(),
     ));
@@ -2270,7 +2279,7 @@ fn a_control_whose_named_tests_fall_short_of_its_summary_is_no_comparison() {
             "detail": format!("1 target was not measured ({TARGET})")
         }] }),
     );
-    let audit = drift_audit(stated, engine);
+    let audit = with_engine(stated, engine);
     assert_eq!(drift_violations(&audit), Vec::<String>::new(), "{audit}");
 }
 
@@ -2282,7 +2291,7 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
     merge(&mut baseline, custom.clone());
     let mut control = sentinel::touch("control", &[0, 1]);
     merge(&mut control, custom);
-    let said = drift_violations(&drift_audit(
+    let said = drift_violations(&with_engine(
         with(sentinel::drifted("not-measured")),
         vec![baseline, control],
     ));
@@ -2292,4 +2301,567 @@ fn a_custom_harness_is_compared_on_its_reach_since_it_has_no_summary_to_fall_sho
          is still a counterexample, and a report that called it not measured is refused: \
          {said:?}"
     );
+}
+
+fn knob_violations(audit: &Audit) -> Vec<String> {
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Knobs && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+/// The clean engine recording, and one control of the target under the time zone that came to `outcome`, with `failed` failing and `reach` becoming of its reach.
+fn zoned(outcome: &str, failed: &[&str], reach: &serde_json::Value) -> Vec<serde_json::Value> {
+    vec![
+        sentinel::touch("baseline", &[0, 1]),
+        sentinel::touch("control", &[0, 1]),
+        sentinel::perturbed(outcome, failed, reach),
+    ]
+}
+
+/// The clean report, whose one knob record stands as `standing`, with `beside` laid over it.
+fn knob_report(standing: &serde_json::Value, beside: serde_json::Value) -> serde_json::Value {
+    let mut document = with(sentinel::drifted("held"));
+    merge(
+        &mut document,
+        serde_json::json!({
+            "knobs": [{ "target": TARGET, "knob": "timezone", "standing": standing }]
+        }),
+    );
+    merge(&mut document, beside);
+    document
+}
+
+/// A finding of `kind` about the target, after the clean report's own.
+fn raised(kind: &str) -> serde_json::Value {
+    serde_json::json!({ "findings": [{}, {
+        "kind": kind,
+        "subject": TARGET,
+        "detail": "said",
+        "position": null
+    }] })
+}
+
+/// One limitation named `name` whose closing list is the target.
+fn stating(name: &str) -> serde_json::Value {
+    serde_json::json!({ "limitations": [{
+        "name": name,
+        "detail": format!("timezone established nothing it could say ({TARGET})")
+    }] })
+}
+
+#[test]
+fn a_control_a_knob_broke_is_owed_a_broke_record_and_an_environment_dependent_finding() {
+    let broke = zoned(
+        "killed",
+        &["lib::works"],
+        &serde_json::json!({ "state": "not-read" }),
+    );
+    let quiet = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "stable" }),
+            serde_json::json!({}),
+        ),
+        broke.clone(),
+    ));
+    assert!(
+        quiet
+            .iter()
+            .any(|line| line.contains("failed lib::works, and the report records")),
+        "a record that calls a target a knob broke stable is refused: {quiet:?}"
+    );
+    assert!(
+        quiet
+            .iter()
+            .any(|line| line.contains("raises no environment-dependent finding")),
+        "a target a knob broke that the report raises nothing about is refused: {quiet:?}"
+    );
+    let other_test = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "broke", "failed": ["lib::other"] }),
+            raised("environment-dependent"),
+        ),
+        broke.clone(),
+    ));
+    assert!(
+        other_test
+            .iter()
+            .any(|line| line.contains("and the report records")),
+        "a broke record naming a test the control did not fail is refused: {other_test:?}"
+    );
+    let answered = with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "broke", "failed": ["lib::works"] }),
+            raised("environment-dependent"),
+        ),
+        broke,
+    );
+    assert_eq!(
+        knob_violations(&answered),
+        Vec::<String>::new(),
+        "{answered}"
+    );
+}
+
+#[test]
+fn a_knob_record_is_the_record_of_the_one_control_the_engine_ran_under_that_knob() {
+    let never = vec![
+        sentinel::touch("baseline", &[0, 1]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let invented = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "stable" }),
+            serde_json::json!({}),
+        ),
+        never,
+    ));
+    assert!(
+        invented
+            .iter()
+            .any(|line| line.contains("recorded no one control of it")),
+        "a knob the report says was put and the engine never ran is refused: {invented:?}"
+    );
+    let unrecorded = knob_violations(&with_engine(
+        with(sentinel::drifted("held")),
+        zoned("survived", &[], &sentinel::recorded_reach(&[0, 1])),
+    ));
+    assert!(
+        unrecorded
+            .iter()
+            .any(|line| line.contains("the report records nothing about it")),
+        "a control the engine ran under a knob that the report says nothing of is refused: \
+         {unrecorded:?}"
+    );
+    let mut twice = zoned("survived", &[], &sentinel::recorded_reach(&[0, 1]));
+    twice.push(sentinel::perturbed(
+        "survived",
+        &[],
+        &sentinel::recorded_reach(&[0, 1]),
+    ));
+    let repeated = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "stable" }),
+            serde_json::json!({}),
+        ),
+        twice,
+    ));
+    assert!(
+        repeated
+            .iter()
+            .any(|line| line.contains("started 2 controls")),
+        "a knob put twice on one target is refused, whatever the report says: {repeated:?}"
+    );
+}
+
+#[test]
+fn a_control_started_in_a_way_no_knob_puts_is_a_violation() {
+    let mut odd = sentinel::perturbed("survived", &[], &sentinel::recorded_reach(&[0, 1]));
+    merge(
+        &mut odd,
+        serde_json::json!({ "perturbed": { "perturbation": {
+            "environment": [{}, { "name": "LC_ALL", "value": "C" }]
+        } } }),
+    );
+    let said = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "stable" }),
+            serde_json::json!({}),
+        ),
+        vec![
+            sentinel::touch("baseline", &[0, 1]),
+            sentinel::touch("control", &[0, 1]),
+            odd,
+        ],
+    ));
+    assert!(
+        said.iter()
+            .any(|line| line.contains("which is not what any knob puts")),
+        "a control started with two things set is no knob, and nothing it established is \
+         about one: {said:?}"
+    );
+}
+
+#[test]
+fn a_moved_reach_is_held_to_what_moved_in_every_union() {
+    let moved = zoned("survived", &[], &sentinel::recorded_reach(&[0]));
+    let reach = |lost: u64| {
+        serde_json::json!({
+            "reached": { "gained": [], "lost": [lost] },
+            "bodies": { "gained": [], "lost": [] },
+            "infected": { "gained": [], "lost": [] }
+        })
+    };
+    let right = with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "moved", "reach": reach(1) }),
+            raised("environment-dependent-reach"),
+        ),
+        moved.clone(),
+    );
+    assert_eq!(knob_violations(&right), Vec::<String>::new(), "{right}");
+    let wrong = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "moved", "reach": reach(0) }),
+            raised("environment-dependent-reach"),
+        ),
+        moved.clone(),
+    ));
+    assert!(
+        wrong
+            .iter()
+            .any(|line| line.contains("reached something else, and the report")),
+        "a movement the unions do not show is refused: {wrong:?}"
+    );
+    let unraised = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "moved", "reach": reach(1) }),
+            serde_json::json!({}),
+        ),
+        moved,
+    ));
+    assert!(
+        unraised
+            .iter()
+            .any(|line| line.contains("raises no environment-dependent-reach finding")),
+        "{unraised:?}"
+    );
+}
+
+#[test]
+fn a_control_that_compared_nothing_names_a_reason_that_holds_and_its_limitation_names_it() {
+    let mut other = sentinel::recorded_reach(&[0, 1]);
+    merge(
+        &mut other,
+        serde_json::json!({ "touch": {
+            "passed": ["lib::works", "lib::also"],
+            "summary": { "protocol": "libtest", "tests_run": 2 }
+        } }),
+    );
+    let engine = zoned("survived", &[], &other);
+    let wrong_reason = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "uncompared", "why": "unrecorded" }),
+            stating("knob-not-compared"),
+        ),
+        engine.clone(),
+    ));
+    assert!(
+        wrong_reason
+            .iter()
+            .any(|line| line.contains("because of other-tests")),
+        "a reason that does not hold is refused, though the standing is right: {wrong_reason:?}"
+    );
+    let unstated = knob_violations(&with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "uncompared", "why": "other-tests" }),
+            serde_json::json!({}),
+        ),
+        engine.clone(),
+    ));
+    assert!(
+        unstated
+            .iter()
+            .any(|line| line.contains("no knob-not-compared limitation names")),
+        "{unstated:?}"
+    );
+    let stated = with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "uncompared", "why": "other-tests" }),
+            stating("knob-not-compared"),
+        ),
+        engine,
+    );
+    assert_eq!(knob_violations(&stated), Vec::<String>::new(), "{stated}");
+}
+
+#[test]
+fn a_knob_not_put_is_held_to_no_control_under_it_and_to_the_limitation_that_says_so() {
+    let never = vec![
+        sentinel::touch("baseline", &[0, 1]),
+        sentinel::touch("control", &[0, 1]),
+    ];
+    let not_put = || serde_json::json!({ "state": "not-put", "why": "zone-missing" });
+    let stated = with_engine(
+        knob_report(&not_put(), stating("knob-not-put")),
+        never.clone(),
+    );
+    assert_eq!(knob_violations(&stated), Vec::<String>::new(), "{stated}");
+    let unstated = knob_violations(&with_engine(
+        knob_report(&not_put(), serde_json::json!({})),
+        never,
+    ));
+    assert!(
+        unstated
+            .iter()
+            .any(|line| line.contains("no knob-not-put limitation names")),
+        "{unstated:?}"
+    );
+    let ran = knob_violations(&with_engine(
+        knob_report(&not_put(), stating("knob-not-put")),
+        zoned("survived", &[], &sentinel::recorded_reach(&[0, 1])),
+    ));
+    assert!(
+        ran.iter()
+            .any(|line| line.contains("was not put on") && line.contains("recorded a control")),
+        "a knob the report says was not put and the engine ran is refused: {ran:?}"
+    );
+}
+
+#[test]
+fn a_part_of_a_catalog_records_its_knobs_and_is_not_held_to_findings_it_does_not_raise() {
+    let broke = zoned(
+        "killed",
+        &["lib::works"],
+        &serde_json::json!({ "state": "not-read" }),
+    );
+    let shard = with_engine(
+        knob_report(
+            &serde_json::json!({ "state": "broke", "failed": ["lib::works"] }),
+            serde_json::json!({ "scope": { "shard": "1/2" } }),
+        ),
+        broke,
+    );
+    assert_eq!(
+        knob_violations(&shard),
+        Vec::<String>::new(),
+        "a part raises no finding a knob earns, because the merge raises it from every part: \
+         {shard}"
+    );
+}
+
+#[test]
+fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
+    let mut control = sentinel::touch("control", &[0]);
+    merge(
+        &mut control,
+        serde_json::json!({ "touch": { "entered_items": [4, 5] } }),
+    );
+    let mut baseline = sentinel::touch("baseline", &[0]);
+    merge(
+        &mut baseline,
+        serde_json::json!({ "touch": { "entered_items": [4] } }),
+    );
+    let said = drift_violations(&with_engine(
+        with(sentinel::drifted("held")),
+        vec![baseline, control],
+    ));
+    assert!(
+        !said.is_empty(),
+        "every site agrees and the control entered item 5 the baseline never did, which is the \
+         union `select` narrows by; a report that calls it held is refused: {said:?}"
+    );
+}
+fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String> {
+    let mut events = routes();
+    for mutant in repaired {
+        events.push(serde_json::json!({
+            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": TARGET, "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+        events.push(serde_json::json!({
+            "type": "repair",
+            "repair": {
+                "mutant": mutant, "target": TARGET,
+                "was": "survived", "now": "survived", "reached": "reached"
+            }
+        }));
+    }
+    let laid = sentinel::Perturbation {
+        name: "repair",
+        document: with(sentinel::drifted("moved")),
+        events: Some(events),
+        engine: Some(engine),
+        outputs: Vec::new(),
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit =
+        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+fn repair_touch(mutant: &str, reached: &[u32]) -> serde_json::Value {
+    let mut touch = sentinel::touch("repair", reached);
+    merge(
+        &mut touch,
+        serde_json::json!({ "touch": { "mutant": mutant } }),
+    );
+    touch
+}
+
+#[test]
+fn a_repair_touch_is_paired_with_the_repair_that_names_its_mutant_and_nothing_else() {
+    let moved = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+        ]
+    };
+    let mut named = moved();
+    named.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], named);
+    assert!(
+        !said.iter().any(|line| line.contains("repair touch")),
+        "the one repair touch names the one repaired mutant: {said:?}"
+    );
+    let mut stray = moved();
+    stray.push(repair_touch(&"a".repeat(64), &[1]));
+    stray.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], stray);
+    assert!(
+        said.iter()
+            .any(|line| line.contains(&"a".repeat(64)) && line.contains("no repair record")),
+        "a repair touch naming a mutant no repair record names is refused by name, not counted: \
+         {said:?}"
+    );
+}
+
+#[test]
+fn a_repair_touch_that_names_no_mutation_is_unread_rather_than_paired_by_position() {
+    let engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+        sentinel::touch("repair", &[1]),
+    ];
+    let audit = with_engine(with(sentinel::drifted("moved")), engine);
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Drift
+                && remark.standing == Standing::Unaudited
+                && remark.detail.contains("which mutation a repair ran")),
+        "{audit}"
+    );
+}
+
+fn on_target(mut touch: serde_json::Value, target: &str) -> serde_json::Value {
+    merge(
+        &mut touch,
+        serde_json::json!({ "touch": { "target": target } }),
+    );
+    touch
+}
+
+fn two_repairs(second_was: &str) -> Vec<String> {
+    let other = "pkg/test/other";
+    let mut events = vec![serde_json::json!({
+        "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+        "type": "route",
+        "route": {
+            "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
+            "reaching": [], "discharged": [], "considered": [], "reused": null
+        }
+    })];
+    for (target, was) in [(TARGET, "unreached"), (other, second_was)] {
+        events.push(serde_json::json!({
+            "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": SURVIVED, "target": target, "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+        events.push(serde_json::json!({
+            "type": "repair",
+            "repair": {
+                "mutant": SURVIVED, "target": target,
+                "was": was, "now": "survived", "reached": "reached"
+            }
+        }));
+    }
+    let mut engine = Vec::new();
+    for target in [TARGET, other] {
+        engine.push(on_target(sentinel::touch("baseline", &[0]), target));
+        engine.push(on_target(sentinel::touch("control", &[0, 1]), target));
+        engine.push(on_target(repair_touch(&"b".repeat(64), &[1]), target));
+    }
+    let laid = sentinel::Perturbation {
+        name: "two repairs",
+        document: with(serde_json::json!({ "drift": [
+            { "target": other, "state": "moved" },
+            { "target": TARGET, "state": "moved" }
+        ] })),
+        events: Some(events),
+        engine: Some(engine),
+        outputs: Vec::new(),
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit =
+        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+#[test]
+fn a_second_repair_starts_from_what_the_first_one_made_it() {
+    let said = two_repairs("survived");
+    assert!(
+        !said
+            .iter()
+            .any(|line| line.contains("the repair says it was")),
+        "the second repair was what the first one made it, not what its route did: {said:?}"
+    );
+    let said = two_repairs("unreached");
+    assert!(
+        said.iter()
+            .any(|line| line.contains("the repair of it before this one made it survived")),
+        "a second repair that starts from the route rather than the first repair is refused: \
+         {said:?}"
+    );
+}
+
+#[test]
+fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
+    let contract = xtask::strictjson::from_str(
+        &std::fs::read_to_string(gates::workspace_root().join("schema/miri-output.json"))
+            .expect("the published contract"),
+    )
+    .expect("the contract is JSON");
+    let cases = contract
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .expect("the contract's cases");
+    for case in cases {
+        let field = |key: &str| case.get(key).and_then(serde_json::Value::as_str);
+        let name = field("name").expect("a case is named");
+        assert_eq!(
+            Some(xtask::proofaudit::soundness::verdict(
+                field("output").expect("a case has output"),
+                case.get("status").and_then(serde_json::Value::as_i64),
+            )),
+            field("came"),
+            "{name}: the audit and the runner come to what the contract says of this case"
+        );
+    }
+}
+#[test]
+fn an_audit_that_left_something_unaudited_does_not_exit_as_one_that_checked_everything() {
+    let unrecorded = audited(&base());
+    assert_eq!(unrecorded.violations(), 0, "{unrecorded}");
+    assert!(unrecorded.unaudited() > 0, "{unrecorded}");
+    assert_eq!(
+        unrecorded.exit_code(),
+        xtask::proofaudit::EXIT_UNAUDITED,
+        "a run whose recording was not given leaves layers unaudited, and a step that reads only \
+         the exit code must not read that as an audit that checked everything"
+    );
+    assert_eq!(xtask::proofaudit::EXIT_UNAUDITED, 3);
 }

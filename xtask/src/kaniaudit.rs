@@ -70,7 +70,7 @@ pub(crate) enum Harness {
 }
 
 impl Harness {
-    const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::CountingCounts => "instrument::runtime::kani_laws::a_counting_checkpoint_counts",
             Self::CountingNeverStops => {
@@ -293,6 +293,27 @@ pub(crate) enum AuditError {
     CheckId(Harness),
     #[error("Kani result arithmetic exceeded its evidence type for {0}")]
     Arithmetic(Harness),
+}
+
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Read { .. } | Self::Json { .. } => crate::error::XtCode::KaniUnreadable,
+            Self::Metadata { .. } | Self::Project { .. } | Self::Toolchain { .. } => {
+                crate::error::XtCode::KaniContract
+            }
+            Self::Ledger { .. } | Self::Harness { .. } => crate::error::XtCode::KaniLedger,
+            Self::Execution { .. }
+            | Self::Properties { .. }
+            | Self::Backend { .. }
+            | Self::Summary { .. }
+            | Self::Result { .. }
+            | Self::Assertion { .. }
+            | Self::Cover { .. }
+            | Self::CheckId { .. } => crate::error::XtCode::KaniUnproven,
+            Self::Arithmetic { .. } => crate::error::XtCode::KaniArithmetic,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

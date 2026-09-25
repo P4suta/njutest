@@ -14,7 +14,7 @@ use crate::id::RunId;
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
-pub const EVERY_TYPE: [&str; 24] = [
+pub const EVERY_TYPE: [&str; 25] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -28,6 +28,7 @@ pub const EVERY_TYPE: [&str; 24] = [
     "build",
     "verify",
     "touch",
+    "perturbed-control",
     "witness",
     "skip-claim",
     "route",
@@ -132,6 +133,11 @@ pub enum Payload {
     Touch {
         /// The record.
         touch: TouchRecord,
+    },
+    /// One control started under a perturbation came to an end, kept apart from every other control so that nothing comparing a control with its baseline under equal conditions reads it.
+    PerturbedControl {
+        /// The record.
+        perturbed: PerturbedRecord,
     },
     /// One branch claim was put to the compiler.
     Witness {
@@ -392,6 +398,7 @@ impl Payload {
             Self::Build { .. } => "build",
             Self::Verify { .. } => "verify",
             Self::Touch { .. } => "touch",
+            Self::PerturbedControl { .. } => "perturbed-control",
             Self::SkipClaim { .. } => "skip-claim",
             Self::Kept { .. } => "kept",
             Self::Witness { .. } => "witness",
@@ -671,6 +678,69 @@ pub enum Measurement {
     Baseline,
     /// An original-code control of the whole target, run to confirm a kill.
     Control,
+    /// A run of one mutation against a target whose reach moved, whose record says whether it reached the mutation's site (ADR 0036).
+    Repair,
+}
+
+/// One variable a perturbed control was started with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetRecord {
+    /// The name a process reads it by.
+    pub name: String,
+    /// Its value, or nothing where the value is not text.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub value: Option<String>,
+}
+
+/// What a control was started with beyond what its baseline was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PerturbationRecord {
+    /// Each variable set over the environment.
+    pub environment: Vec<SetRecord>,
+    /// What the shell it was started through ran before it became the test binary, or nothing.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub launcher: Option<String>,
+    /// The harness arguments its schedule added after the baseline's.
+    pub arguments: Vec<String>,
+}
+
+/// What one control started under a perturbation came to, and what became of the reach it could have recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PerturbedRecord {
+    /// The target.
+    pub target: String,
+    /// What it was started with beyond what its baseline was.
+    pub perturbation: PerturbationRecord,
+    /// What it came to, by the outcome's name.
+    pub outcome: String,
+    /// The tests that failed, as the harness named them.
+    pub failed_tests: Vec<String>,
+    /// How long it ran.
+    pub duration_ms: u64,
+    /// What became of the reach it could have recorded.
+    pub reach: ReachRecord,
+}
+
+/// What became of the reach one perturbed control could have recorded, each case said where it was decided, so that a reader tells a control never asked from one whose record failed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ReachRecord {
+    /// It was not asked to record: it observed nothing, ran one test, or is a target whose guards cannot be asked, a doctest or one run through cargo.
+    NotAsked,
+    /// It did not pass, so what it reached is a failing run's and was not read.
+    NotRead,
+    /// Its process could not write what its guards reached.
+    Unrecorded,
+    /// What it wrote did not read back.
+    Unreadable,
+    /// What its guards recorded.
+    Recorded {
+        /// The record, whose `measured` is `control`.
+        touch: TouchRecord,
+    },
 }
 
 /// What one target's guards recorded on one whole run of it with nothing active.
@@ -681,6 +751,9 @@ pub struct TouchRecord {
     pub target: String,
     /// Which run it was measured on.
     pub measured: Measurement,
+    /// The mutation a repair ran, in full; nothing on a baseline or a control, which run with nothing active.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub mutant: Option<String>,
     /// The tests that run passed, which is what everything below is the reach of.
     pub passed: Vec<String>,
     /// What the run's own summary said, in the protocol it answered in; under libtest a comparison stands only where its count equals the length of `passed`.
@@ -699,6 +772,10 @@ pub struct TouchRecord {
     pub loose: u32,
     /// How many distinct mutations anything of it saw its guard's two branches differ over, which is what could have noticed them.
     pub infected: u32,
+    /// How many distinct items anything of it entered the body of, which is the union a change to one of them is routed by.
+    pub entered: u32,
+    /// Every item anything of it entered the body of, in index order, which is what a comparison of two runs holds against each other.
+    pub entered_items: Vec<u32>,
 }
 
 /// What a run's own summary said, in the protocol it answered in.
@@ -840,6 +917,8 @@ pub struct MutantExecRecord {
     pub timeout_source: String,
     /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
     pub alone: bool,
+    /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's.
+    pub lingered: bool,
 }
 
 /// What the outcome store was asked about one mutant.
@@ -902,12 +981,44 @@ pub struct NoteRecord {
     pub detail: String,
 }
 
+/// How a recorded run ended.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunOutcome {
+    /// Every mutation the run judged was noticed.
+    Detected,
+    /// The run reported a finding a person has to act on: a survivor, a stale claim, or something it could not decide.
+    Found,
+    /// The run was cancelled before it finished.
+    Interrupted,
+    /// The run stopped on an error.
+    Failed,
+    /// The run finished and left judging what it measured to the program that embedded it.
+    Completed,
+}
+
+impl RunOutcome {
+    /// The name a recording spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Detected => "detected",
+            Self::Found => "found",
+            Self::Interrupted => "interrupted",
+            Self::Failed => "failed",
+            Self::Completed => "completed",
+        }
+    }
+}
+
 /// The accounting that closes a recording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRecord {
-    /// How the run ended, in the caller's words.
-    pub outcome: String,
+    /// How the run ended.
+    pub outcome: RunOutcome,
     /// The error that ended it, rendered, if one did.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub error: Option<String>,

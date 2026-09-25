@@ -24,8 +24,15 @@ use crate::trace::{DiscoverFileRecord, SiteRecord, SkipCount};
 pub use position::{LineIndex, Position, PositionError};
 pub use rules::respell_int;
 
+/// The name a reader writes for an `impl` block, which is the segment its items are named under.
+pub(crate) fn implemented(block: &syn::ItemImpl) -> String {
+    shape::implemented(block)
+}
+
 /// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 pub enum Form {
     /// The boolean selector, for a syntactically boolean position.
     C,
