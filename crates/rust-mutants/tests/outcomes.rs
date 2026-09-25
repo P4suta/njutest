@@ -131,7 +131,7 @@ fn the_policy_break_has_a_new_schema_layout_and_cache_abi() {
     assert_eq!(rust_mutants::outcomes::SCHEMA, "rust-mutants-outcome-v1");
     assert_eq!(rust_mutants::outcomes::LAYOUT, "rust-mutants/outcomes-v1");
     assert_eq!(rust_mutants::outcomes::CACHE_ABI, 6);
-    assert_eq!(rust_mutants::outcomes::INSTRUMENTATION_ABI, 2);
+    assert_eq!(rust_mutants::outcomes::INSTRUMENTATION_ABI, 3);
     assert_eq!(rust_mutants::outcomes::STEP_POLICY_ABI, 1);
 }
 
