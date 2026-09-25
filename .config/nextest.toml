@@ -16,9 +16,17 @@
 # `njutest_devkit::paths::nested_build_jobs` gives each of their cargos its share of the cores.
 [test-groups]
 toolchain = { max-threads = 4 }
+durable = { max-threads = 1 }
 
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 10 }
+
+# A test that replaces an entry hundreds of times under a reader makes a thousand durable writes, and each waits on a disk other builds are using: it ran past the minute below at load 26 and passes alone in two seconds.
+# It keeps a progress watch of its own, which is the detector; this is the backstop, and one at a time keeps two such loops from waiting on each other.
+[[profile.default.overrides]]
+filter = 'test(/_while_a_run_replaces_it_is_one_whole_/)'
+test-group = "durable"
+slow-timeout = { period = "60s", terminate-after = 5 }
 
 # The inner loop starts no toolchain, so a test there taking a minute is
 # already a test that has stopped answering.
