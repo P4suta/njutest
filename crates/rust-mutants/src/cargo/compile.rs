@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use super::depinfo::{Unit, units_of};
+use super::depinfo::{Inputs, Unit, inputs_of, units_of};
 use super::locate::command_failed;
 use super::messages::{Message, parse_messages};
 use super::{CargoError, CargoErrorKind, Driver};
@@ -197,6 +197,8 @@ pub struct Compiled {
     /// The units that produced an artifact, with their sources.
     /// A failed unit produces none, so on a failed check this is partial.
     pub units: Vec<Unit>,
+    /// Everything the compilation read, which is what an answer about its program rests on.
+    pub inputs: Inputs,
 }
 
 /// Compiles the tree in the driver's directory and reads what it said.
@@ -265,9 +267,11 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         ));
     }
     let units = units_of(&messages, driver.dir)?;
+    let inputs = inputs_of(&messages, driver.dir)?;
     Ok(Compiled {
         success,
         messages,
         units,
+        inputs,
     })
 }
