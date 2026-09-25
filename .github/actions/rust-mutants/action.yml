@@ -1,0 +1,170 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: rust-mutants
+description: Mutation-test a Rust workspace in one job, answering from what earlier runs established wherever a proof carries it.
+
+inputs:
+  version:
+    description: 'The rust-mutants release to install, without the leading v. Defaults to the latest, or to the rust-mutants already on the path.'
+    required: false
+    default: ""
+  args:
+    description: 'Further arguments for `rust-mutants run`, e.g. "--offline --locked".'
+    required: false
+    default: ""
+  changed-from:
+    description: 'The revision a change is measured against. A pull request is measured against its base; anything else measures the whole catalog.'
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+  upload-sarif:
+    description: 'Upload the survivors to code scanning. Needs `security-events: write`.'
+    required: false
+    default: "true"
+  working-directory:
+    description: 'The workspace to measure. The checkout root by default.'
+    required: false
+    default: "."
+
+outputs:
+  verdict:
+    description: 'What the run concluded: detected, found, failed, or interrupted; untouched when the change touched no Rust file the configuration measures.'
+    value: ${{ steps.gate.outputs.verdict || steps.run.outputs.verdict }}
+  report:
+    description: 'The path of the report the run wrote.'
+    value: ${{ steps.gate.outputs.report }}
+  sarif:
+    description: 'The path of the SARIF projection of its survivors.'
+    value: ${{ steps.gate.outputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    # A workflow that already put rust-mutants on the path has said which one it wants, and installing over it would make this action untestable before its first release.
+    - name: Decide whether rust-mutants has to be installed
+      id: present
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ -z "${VERSION}" ] && command -v rust-mutants >/dev/null 2>&1; then
+          echo "install=false" >> "${GITHUB_OUTPUT}"
+          echo "using $(command -v rust-mutants)"
+        else
+          echo "install=true" >> "${GITHUB_OUTPUT}"
+        fi
+    - if: steps.present.outputs.install == 'true'
+      uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
+      with:
+        tool: cargo-binstall
+    - name: Install rust-mutants
+      if: steps.present.outputs.install == 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ -n "${VERSION}" ]; then
+          cargo binstall --no-confirm --locked "rust-mutants-cli@${VERSION}"
+        else
+          cargo binstall --no-confirm --locked rust-mutants-cli
+        fi
+    # A checkout of a pull request holds its merge commit and nothing older, so the base it is measured against is fetched by name.
+    - name: Fetch the revision the change is measured against
+      if: inputs.changed-from != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REVISION: ${{ inputs.changed-from }}
+      run: |
+        set -euo pipefail
+        if ! git cat-file -e "${REVISION}^{commit}" 2>/dev/null; then
+          git fetch --no-tags --depth=1 origin "${REVISION}"
+        fi
+    # The store is what makes a run cost what its change costs: a pull request reads what its base branch established, and main reads what it established before.
+    - name: Restore what earlier runs established
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/rust-mutants-cache/rust-mutants
+        key: rust-mutants-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+        restore-keys: |
+          rust-mutants-${{ runner.os }}-${{ github.ref_name }}-
+          rust-mutants-${{ runner.os }}-${{ github.base_ref }}-
+          rust-mutants-${{ runner.os }}-
+    # A verdict is not a failure of the step: survivors are what the run is for, and the status is raised again after they have been shown.
+    - name: Run
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ARGS: ${{ inputs.args }}
+        REVISION: ${{ inputs.changed-from }}
+        XDG_CACHE_HOME: ${{ runner.temp }}/rust-mutants-cache
+      run: |
+        set -uo pipefail
+        changed=()
+        if [ -n "${REVISION}" ]; then
+          changed=(--changed-from "${REVISION}")
+        fi
+        said=$(mktemp)
+        status=0
+        # shellcheck disable=SC2086
+        rust-mutants run --jobs all ${changed[@]+"${changed[@]}"} ${ARGS} | tee "${said}" || status=$?
+        # The run says where it wrote its report, and the gate reads exactly that one, so a run that wrote none is never judged by an older one.
+        report=$(sed -n 's/^REPORT[[:space:]]*//p' "${said}" | tail -n 1)
+        {
+          echo "status=${status}"
+          echo "report=${report}"
+        } >> "${GITHUB_OUTPUT}"
+        # A change that touched nothing measured is a complete answer with no report: it says so where the job shows it.
+        if [ -z "${report}" ] && [ "${status}" = 0 ] && grep -q '^NOTHING' "${said}"; then
+          echo "verdict=untouched" >> "${GITHUB_OUTPUT}"
+          {
+            echo "# Mutation"
+            echo
+            sed -n '/^NOTHING/,$p' "${said}" | sed 's/^NOTHING[[:space:]]*//; s/^[[:space:]]*//'
+          } >> "${GITHUB_STEP_SUMMARY}"
+        fi
+        rm -f "${said}"
+        exit 0
+    - name: Show the run where the job shows it
+      id: gate
+      if: steps.run.outputs.report != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPORT: ${{ steps.run.outputs.report }}
+        REVISION: ${{ inputs.changed-from }}
+      run: |
+        set -uo pipefail
+        changed=()
+        if [ -n "${REVISION}" ]; then
+          changed=(--changed-from "${REVISION}")
+        fi
+        status=0
+        rust-mutants ci gate --host github --report "${REPORT}" --sarif "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/rust-mutants.sarif" ${changed[@]+"${changed[@]}"} || status=$?
+        echo "status=${status}" >> "${GITHUB_OUTPUT}"
+        exit 0
+    - name: Upload the survivors to code scanning
+      if: inputs.upload-sarif == 'true' && steps.gate.outputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@4e94bd11f71e507f7f87df81788dff88d1dacbfb # v3
+      with:
+        sarif_file: ${{ steps.gate.outputs.sarif }}
+        category: rust-mutants
+    - name: Keep what this run established for the next one
+      if: always()
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/rust-mutants-cache/rust-mutants
+        key: rust-mutants-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+    - name: Exit with what the run concluded
+      shell: bash
+      env:
+        RAN: ${{ steps.run.outputs.status }}
+        GATED: ${{ steps.gate.outputs.status }}
+      run: |
+        if [ -n "${GATED}" ]; then
+          exit "${GATED}"
+        fi
+        echo "the run wrote no report, so there is nothing to gate on"
+        exit "${RAN:-1}"

@@ -687,10 +687,12 @@ fn selected(
             base: base.to_owned(),
         }
     })?;
-    Ok(
-        rust_mutants::git::within(&change, &settings.prepare_options()?.include)
-            .map_err(EngineError::from)?,
+    Ok(rust_mutants::git::within(
+        &settings.root,
+        &change,
+        &settings.prepare_options()?.include,
     )
+    .map_err(EngineError::from)?)
 }
 
 /// What a command that only needs discovery prints.

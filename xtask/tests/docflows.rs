@@ -58,3 +58,30 @@ fn a_workflow_that_names_its_trigger_keeps_it() {
         "a trigger the page wrote is the one linted: {workflow}"
     );
 }
+
+#[test]
+fn a_documented_action_this_repository_does_not_ship_is_refused_by_name() {
+    let root = tempfile::tempdir().expect("a scratch repository");
+    std::fs::create_dir_all(root.path().join("docs")).expect("docs");
+    std::fs::create_dir_all(root.path().join(".github/actions/shipped")).expect("an action");
+    std::fs::write(
+        root.path().join(".github/actions/shipped/action.yml"),
+        "name: shipped\ndescription: x\nruns:\n  using: composite\n  steps: []\n",
+    )
+    .expect("action.yml");
+    std::fs::write(root.path().join("README.md"), "").expect("readme");
+    std::fs::write(
+        root.path().join("docs/page.md"),
+        "# Page\n\n```yaml\n- uses: P4suta/njutest/.github/actions/shipped@main\n- uses: \
+         P4suta/njutest/.github/actions/missing@main\n```\n",
+    )
+    .expect("page");
+    let refused = xtask::docflows::check(root.path(), std::ffi::OsStr::new("actionlint"));
+    let Err(xtask::docflows::DocflowsError::Refused(said)) = refused else {
+        panic!("a page that names an action nobody ships passes: {refused:?}");
+    };
+    assert!(
+        said.contains("actions/missing") && !said.contains("actions/shipped"),
+        "the refusal names the missing action and only it: {said}"
+    );
+}
