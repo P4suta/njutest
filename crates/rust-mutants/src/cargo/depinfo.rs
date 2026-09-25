@@ -172,6 +172,24 @@ pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>
     Ok(units)
 }
 
+/// Every unit of a compilation as [`units_of`] reads them, and every build script's too, which is compiled under `build/` rather than `deps/` and so is never taken for an uplift.
+///
+/// # Errors
+/// What [`units_of`] refuses about any unit's dep-info.
+pub fn every_unit_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>, CargoError> {
+    let mut units = Vec::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        if !artifact.target.is_custom_build() && is_uplift(artifact) {
+            continue;
+        }
+        units.push(unit_of(artifact, workspace_root)?);
+    }
+    Ok(units)
+}
+
 /// Every file the compiler read for a unit whose code runs while the build does rather than in a test: a procedural macro, and a build script, compiled for the build and not tested.
 ///
 /// A build script is compiled under `build/` rather than `deps/`, so it is never taken for an uplift.

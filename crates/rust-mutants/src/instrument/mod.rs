@@ -34,7 +34,8 @@ pub use runtime::{
     ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, ModuleNameError, ORPHAN_PREFIX,
     RUNTIME_MARKER, Rendering, RuntimeRenderError, STALE_CATALOG_EXIT, STEP_NONCE_ENV,
     STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA,
-    STEPS_ENV, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
+    STEPS_ENV, TOUCH_ENV, TOUCH_ITEMS_ENV, TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name,
+    render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -118,6 +119,30 @@ pub struct ItemCatalog {
     pub items: Vec<crate::touch::Item>,
     /// The item index each file's first item takes, by workspace-relative path.
     pub first: BTreeMap<String, u32>,
+}
+
+impl ItemCatalog {
+    /// The position of `item` among every cataloged item of its file, in catalog order: the one definition an entered union, a sealed placeholder, and an audit all name an item by.
+    #[must_use]
+    pub fn ordinal(&self, item: &crate::touch::Item) -> Option<u32> {
+        let first = self.first.get(&item.path)?;
+        item.index.checked_sub(*first)
+    }
+
+    /// The portable name of the item at `index`, when the catalog holds one.
+    #[must_use]
+    pub fn item_ref(&self, index: u32) -> Option<crate::touch::ItemRef> {
+        let at = match usize::try_from(index) {
+            Ok(at) => at,
+            Err(_beyond_this_target) => return None,
+        };
+        let item = self.items.get(at)?;
+        Some(crate::touch::ItemRef {
+            package: item.package.clone(),
+            path: item.path.clone(),
+            ordinal: self.ordinal(item)?,
+        })
+    }
 }
 
 /// Numbers every item of `files` densely, in the order the files are given, so a marker's index names one item of the whole tree.

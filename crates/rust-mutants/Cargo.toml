@@ -92,6 +92,10 @@ name = "toolchain_drift"
 path = "tests/toolchain_drift.rs"
 
 [[test]]
+name = "toolchain_entered"
+path = "tests/toolchain_entered.rs"
+
+[[test]]
 name = "toolchain_equivalence"
 path = "tests/toolchain_equivalence.rs"
 

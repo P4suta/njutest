@@ -97,6 +97,9 @@ A filtered `run` keeps that same catalog and digest but instruments, proves, and
 `--changed` and `--changed-from <REV>` mutate only the files that differ from a revision, committed and not.
 They narrow `--include` rather than widening it, and a change set that names no Rust file selects nothing rather than everything.
 A change that touches no Rust file the configuration includes is `git::Within::Nothing`, which carries the files that did change; the command says so, names them, and exits 0 before a snapshot is taken, so a pull-request gate can tell an empty change from a failure and a configuration that measures too little is visible rather than silently green.
+They narrow what is mutated and never what is instrumented:
+every file the configuration selects still carries its entry markers, so the items an execution entered are named the same way on a pull request as on the whole run whose answers it may carry (ADR 0041).
+A file the configuration itself excludes, or a package `--package` leaves out, carries none, so a run narrowed that way names what it entered differently from a whole run and carries nothing across from one.
 A tree git cannot be asked about, or a revision it does not know,
 ends the command with `RM0010`: a run that could not see what changed must never look like a run that saw nothing change.
 

@@ -1799,3 +1799,163 @@ fn a_mutant_goes_first_to_the_target_that_killed_it_before() {
         );
     }
 }
+
+/// The skeletons the newest run of `fixture` kept.
+fn skeletons_of(fixture: &Fixture) -> serde_json::Value {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    document_at(&directory.join("skeletons-v1.json"))
+}
+
+/// The evidence of the item whose name ends in `name`.
+fn item_named<'a>(skeletons: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    skeletons["items"]
+        .as_array()
+        .expect("the items")
+        .iter()
+        .find(|item| {
+            item["name"]
+                .as_str()
+                .is_some_and(|named| named == name || named.ends_with(&format!("::{name}")))
+        })
+        .expect("the item is cataloged")
+}
+
+/// Runs fixture-carry as it stands and reads the skeletons the run kept.
+fn carried(fixture: &Fixture) -> serde_json::Value {
+    let ran = against(fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        ran.status.code().is_some_and(|code| code < 2),
+        "{}",
+        stderr(&ran)
+    );
+    skeletons_of(fixture)
+}
+
+/// Rewrites `from` as `to` in fixture-carry's library.
+fn edited(fixture: &Fixture, from: &str, to: &str) {
+    let lib = fixture.root().join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).expect("the library");
+    assert!(source.contains(from), "{from} is in the library");
+    std::fs::write(&lib, source.replace(from, to)).expect("the edit");
+}
+
+#[test]
+fn a_run_keeps_the_skeletons_an_answer_would_be_carried_by() {
+    let fixture = Fixture::copy("fixture-carry");
+    let kept = carried(&fixture);
+    let errors = against_schema("rust-mutants-skeletons-v1.json", &kept);
+    assert!(
+        errors.is_empty(),
+        "whoever carries an answer reads these, and the schema says how: {errors:#?}"
+    );
+    assert_eq!(
+        item_named(&kept, "over")["sealed"],
+        true,
+        "a body that only compares is sealed: {kept:#}"
+    );
+    assert_eq!(
+        (
+            &item_named(&kept, "recorded")["unsealed"]["why"],
+            &item_named(&kept, "recorded")["unsealed"]["name"]
+        ),
+        (
+            &serde_json::json!("macro"),
+            &serde_json::json!("include_str")
+        ),
+        "a body that reads a file is not: {kept:#}"
+    );
+    assert_eq!(
+        item_named(&kept, "WAIVED")["unsealed"]["why"],
+        "evaluated",
+        "and a constant is evaluated where nothing enters it: {kept:#}"
+    );
+    let units: Vec<(String, String, bool)> = kept["units"]
+        .as_array()
+        .expect("the units")
+        .iter()
+        .map(|unit| {
+            (
+                unit["target"].as_str().expect("a target").to_owned(),
+                unit["kind"].as_str().expect("a kind").to_owned(),
+                unit["test"].as_bool().expect("a flag"),
+            )
+        })
+        .collect();
+    for unit in [
+        ("build-script-build", "custom-build", false),
+        ("fixture_carry", "lib", false),
+        ("fixture_carry", "lib", true),
+    ] {
+        assert!(
+            units.contains(&(unit.0.to_owned(), unit.1.to_owned(), unit.2)),
+            "{unit:?} is a unit of the build: {units:?}"
+        );
+    }
+}
+
+#[test]
+fn a_unit_names_every_entry_its_skeleton_folds() {
+    let fixture = Fixture::copy("fixture-carry");
+    let kept = carried(&fixture);
+    let library = kept["units"]
+        .as_array()
+        .expect("the units")
+        .iter()
+        .find(|unit| unit["target"] == "fixture_carry" && unit["test"] == false)
+        .expect("the library unit");
+    let names: Vec<&str> = library["entries"]
+        .as_object()
+        .expect("the entries")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for wanted in ["$root/src/lib.rs", "$root/src/answer.txt", "$env/OUT_DIR"] {
+        assert!(
+            names.contains(&wanted),
+            "{wanted} is something the library compiled: {names:?}"
+        );
+    }
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("$target/") && name.ends_with("/limit.rs"))
+            && names
+                .iter()
+                .any(|name| name.starts_with("$emitted/$target/")),
+        "and so are the file its build script generated and what that script emitted, named \
+         from the target directory rather than from wherever this run put it: {names:?}"
+    );
+}
+
+#[test]
+fn an_edit_inside_a_sealed_body_moves_only_its_digest_and_one_outside_moves_the_skeleton() {
+    let fixture = Fixture::copy("fixture-carry");
+    let then = carried(&fixture);
+    edited(
+        &fixture,
+        "recorded() > LIMIT || WAIVED",
+        "WAIVED || recorded() > LIMIT",
+    );
+    let now = carried(&fixture);
+    assert_ne!(
+        item_named(&then, "over")["body_digest"],
+        item_named(&now, "over")["body_digest"],
+        "the edited body is another body"
+    );
+    assert_eq!(
+        then["units"], now["units"],
+        "and nothing outside a sealed body moved, so no unit's skeleton did"
+    );
+    edited(
+        &fixture,
+        "const WAIVED: bool = cfg!(waived);",
+        "const WAIVED: bool = cfg!(waived) && true;",
+    );
+    let constant = carried(&fixture);
+    assert_ne!(
+        now["units"], constant["units"],
+        "a constant is outside every sealed body, so an edit to it moves the skeleton"
+    );
+}

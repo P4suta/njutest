@@ -480,7 +480,7 @@ fn preparation_options(
     options.measurements = remembered_measurements(command, running.environment);
     harness(command, &mut options);
     if let Some(changed) = changed {
-        options.include = changed;
+        options.narrowing = changed;
     }
     let validation_filter = validation_filter(command, running.settings)?;
     options.validation_filter.clone_from(&validation_filter);

@@ -1114,6 +1114,7 @@ fn target_key(
         sysroot: building.workspace.toolchain.sysroot(),
         active: None,
         touch: recording.as_deref().map(|log| execute::Touching {
+            scope: execute::TouchScope::Everything,
             log,
             catalog: building.catalog.digest(),
         }),
@@ -1243,6 +1244,7 @@ fn ran(
         sysroot: workspace.toolchain.sysroot(),
         active: None,
         touch: log.map(|log| execute::Touching {
+            scope: execute::TouchScope::Everything,
             log,
             catalog: catalog.digest(),
         }),

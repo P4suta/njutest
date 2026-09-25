@@ -78,7 +78,7 @@ Tests serialize non-empty specimens and compare both directions, so adding, remo
 | `select` | `mutant`, `reason` | why one mutant was never executed |
 | `identical` | `index`, `identity`, `detail` | what the equivalence layer said about one mutation: `identical`, `differs`, or nothing at all |
 | `evidence` | `file`, `bytes`, `digest` | one file the run kept for an audit: its path, its size, and its digest |
-| `mutant-exec` | `id`, `index`, `target`, `outcome`, `step_notice`, `exit_code`, `duration_ms`, `tests_run`, `signal`, `failed_tests`, `timeout_ms`, `timeout_source`, `alone`, `lingered` | the mutation, target, outcome, any verified step-limit notice, status, duration, tests run, signal, failed tests, the budget it was given and where that came from, whether it had the machine to itself, and whether its harness had answered before the clock ended the process |
+| `mutant-exec` | `id`, `index`, `target`, `outcome`, `step_notice`, `exit_code`, `duration_ms`, `tests_run`, `signal`, `failed_tests`, `timeout_ms`, `timeout_source`, `alone`, `lingered`, `entered_records` | the mutation, target, outcome, any verified step-limit notice, status, duration, tests run, signal, failed tests, the budget it was given and where that came from, whether it had the machine to itself, whether its harness had answered before the clock ended the process, and how many records naming entered items it wrote when asked to (null when it was not), which is what recording that union cost (ADR 0041) |
 | `note` | `kind`, `detail` | a free-form note: progress, a decision, or a limitation |
 | `run-end` | `outcome`, `error`, `events_emitted`, `events_dropped` | the outcome, any failure, and the recording's kept and lost event counts |
 

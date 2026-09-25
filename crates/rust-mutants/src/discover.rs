@@ -26,6 +26,9 @@ pub struct DiscoverOptions<'r> {
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again; an exclude always wins.
     pub exclude: Vec<Pattern>,
+    /// The files a change set leaves to mutate among those `include` and `exclude` select, the rest carrying entry markers only.
+    /// Empty narrows nothing.
+    pub narrowing: Vec<Pattern>,
     /// The member packages to discover in, by name.
     /// Empty means every member.
     /// A package left out is not a skip: nothing was decided about it.
@@ -137,6 +140,8 @@ pub struct Discovery {
     pub decisions: Vec<Decided>,
     /// The catalog of the candidates.
     pub catalog: Catalog,
+    /// Every file the configuration selects and the change set left out, by path: nothing in it is mutated, and it is instrumented for entry like every other, so what an execution entered does not depend on the change set.
+    pub marked_only: BTreeSet<String>,
 }
 
 /// Why discovery failed.
@@ -276,6 +281,7 @@ pub fn discover(
     let mut skips = Vec::new();
     let mut claims: Vec<SkipClaim> = Vec::new();
     let mut decisions: Vec<Decided> = Vec::new();
+    let mut marked_only = BTreeSet::new();
     let mut configured = vec![false; options.skips.len()];
     let mut builder = Builder::new();
     for (path, package) in &assigner.generated {
@@ -300,13 +306,7 @@ pub fn discover(
             }
             Err(error) => return Err(error),
         };
-        let role = match assignment.role {
-            Role::Forbidden => Some(SkipReason::ForbiddenLints),
-            Role::Mutable if !selected_by_patterns(path, options) => Some(SkipReason::Excluded),
-            Role::Mutable => None,
-            Role::NoStd => Some(SkipReason::NoStdCrate),
-            Role::TestOnly => Some(SkipReason::TestOnlyFile),
-        };
+        let role = skipped(path, assignment.role, options, &mut marked_only);
         if role.is_none() {
             configure(&mut discovery, &options.skips, &mut configured)?;
         }
@@ -344,6 +344,7 @@ pub fn discover(
         claims,
         decisions,
         catalog,
+        marked_only,
     })
 }
 
@@ -786,9 +787,33 @@ fn walk(
     Ok(discover_file(path, &bytes, selection)?)
 }
 
-fn selected_by_patterns(path: &str, options: &DiscoverOptions<'_>) -> bool {
+/// Why a file is not mutated, or nothing where it is; a file only the change set left out is also noted as one to instrument for entry.
+fn skipped(
+    path: &str,
+    role: Role,
+    options: &DiscoverOptions<'_>,
+    marked_only: &mut BTreeSet<String>,
+) -> Option<SkipReason> {
+    match role {
+        Role::Forbidden => Some(SkipReason::ForbiddenLints),
+        Role::Mutable if !selected_by_configuration(path, options) => Some(SkipReason::Excluded),
+        Role::Mutable if !selected_by_change(path, options) => {
+            marked_only.insert(path.to_owned());
+            Some(SkipReason::Excluded)
+        }
+        Role::Mutable => None,
+        Role::NoStd => Some(SkipReason::NoStdCrate),
+        Role::TestOnly => Some(SkipReason::TestOnlyFile),
+    }
+}
+
+fn selected_by_configuration(path: &str, options: &DiscoverOptions<'_>) -> bool {
     let included = options.include.is_empty() || options.include.iter().any(|p| p.matches(path));
     included && !options.exclude.iter().any(|p| p.matches(path))
+}
+
+fn selected_by_change(path: &str, options: &DiscoverOptions<'_>) -> bool {
+    options.narrowing.is_empty() || options.narrowing.iter().any(|p| p.matches(path))
 }
 
 fn report(

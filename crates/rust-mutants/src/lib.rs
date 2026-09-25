@@ -40,6 +40,7 @@ pub mod runner;
 pub mod select;
 pub mod sentinel;
 pub mod session;
+pub mod skeleton;
 pub mod snapshot;
 pub mod span;
 pub mod splice;

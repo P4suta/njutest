@@ -247,7 +247,8 @@ A skip that quietly stops meaning anything when the code under it moves is worse
 ## Reserved environment
 
 A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
-`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process it starts.
+`RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, and `RUST_MUTANTS_STEP_STATE` for every test process it starts.
+`RUST_MUTANTS_TOUCH_ITEMS`, set to `1` beside `RUST_MUTANTS_TOUCH`, asks a mutant execution to record only the items it entered, which is what a run that keeps its answers in the store records about each one.
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
 
 `RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken.
