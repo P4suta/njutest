@@ -30,7 +30,13 @@ fn projected(
     let root = &environment.working_directory;
     let said = stored.said_document();
     if shape == Format::Lines {
-        return Ok(lines::kept(report, said)?);
+        return Ok(lines::kept(
+            report,
+            &[lines::Said {
+                record: crate::app::reports::Surface::Report.record(),
+                path: said.to_owned(),
+            }],
+        )?);
     }
     let sources = crate::presentation::Sources::read(root, report)?;
     let told = crate::presentation::Told::of(report, &sources, said)?;

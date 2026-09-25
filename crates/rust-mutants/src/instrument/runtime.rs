@@ -11,6 +11,9 @@ use super::Placement;
 /// Selects the active mutant by its full identity.
 pub const ACTIVE_ENV: &str = "RUST_MUTANTS_ACTIVE";
 
+/// Selects a fault to activate beside the active mutant, by its full identity.
+pub const FAULT_ENV: &str = "RUST_MUTANTS_FAULT";
+
 /// Names the catalog the activating run holds.
 pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 
@@ -50,6 +53,14 @@ pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
 /// Names the one guard each thread pauses at the first time it reaches it, as `<catalog index>@<milliseconds>`: one schedule of the program, told apart from the others by the site it delays.
 pub const DELAY_ENV: &str = "RUST_MUTANTS_DELAY";
+/// Set to `1` beside [`TOUCH_ENV`], asks a process to record only the items it entered, which is all a mutant execution's union needs and a fraction of what a baseline writes.
+pub const TOUCH_ITEMS_ENV: &str = "RUST_MUTANTS_TOUCH_ITEMS";
+
+/// The variable every process a run starts carries, holding the directory its instrumented tree was built to report to; a process of that tree that does not carry it was started by a test that cleared what the run gave it.
+pub const WATCHED_ENV: &str = "RUST_MUTANTS_WATCHED";
+
+/// The prefix of the file a process that lost the run's environment leaves in the watched directory, followed by its own id and its parent's.
+pub const ORPHAN_PREFIX: &str = "orphan-";
 
 /// The trait the runtime names the types a probe may compare a value of.
 pub(super) const OBSERVABLE: &str = "Observable";
@@ -59,6 +70,27 @@ pub const TOUCH_UNAVAILABLE_EXIT: i32 = 96;
 
 /// The name the generated module takes when the file does not already spell it; otherwise a digit is appended until one is free.
 pub const MODULE_STEM: &str = "__rm";
+
+/// What a fault replaces the call a `?` asks about with, naming the runtime's constructor the way a reader would; the instrumenter writes the path the site reaches the runtime by in its place.
+pub const INJECTED: &str = "::core::result::Result::Err(rust_mutants::injected())";
+
+/// The call [`INJECTED`] names, which the instrumenter replaces.
+pub const INJECTED_CALL: &str = "rust_mutants::injected";
+
+/// What a crash wraps the call that writes in, naming the runtime's function the way a reader would; the instrumenter writes the path the site reaches the runtime by in its place.
+pub const CRASHED_CALL: &str = "rust_mutants::crashed_after";
+
+/// The exit status of a test process a crash stopped just after a call that writes (ADR 0035).
+pub const CRASH_EXIT: i32 = 93;
+
+/// Names the fresh file through which the runtime says a crash stopped the process at the active call.
+pub const CRASH_NOTICE_ENV: &str = "RUST_MUTANTS_CRASH_NOTICE";
+
+/// Ties one crash notice to exactly one supervised execution.
+pub const CRASH_NONCE_ENV: &str = "RUST_MUTANTS_CRASH_NONCE";
+
+/// The first field of every crash notice.
+pub const CRASH_NOTICE_SCHEMA: &str = "rust-mutants-crash-notice-v1";
 
 /// Marks the generated module, for a person reading the snapshot and for the drift gate.
 pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v1";
@@ -266,11 +298,14 @@ mod {{MODULE}} {
 {{IDS}}    ];
     const TOUCH_BASE: u32 = {{BASE}};
     const TOUCH_SPAN: u32 = {{SPAN}};
-    const TOUCH_BATCH: usize = 64;
+    const ITEM_BASE: u32 = {{ITEM_BASE}};
+    const ITEM_SPAN: u32 = {{ITEM_SPAN}};
+    const WATCHED: &str = {{WATCHED}};
     #[derive(Clone, Copy)]
     enum Selection {
         None,
         Index(u32),
+        Beside(u32, u32),
     }
     #[derive(Clone, Copy)]
     struct StepLimit(usize);
@@ -292,12 +327,10 @@ mod {{MODULE}} {
             }
         }
     }
-    #[derive(Clone, Copy)]
-    enum Budget {
-        Unbounded,
-        Bounded(StepLimit),
-        Invalid(BudgetError),
-    }
+    // What the configured allowance is: none, a bound, or a refusal. A
+    // standard Result and Option rather than an enum of this module's own,
+    // whose unequal variants a project denying variant_size_differences refuses.
+    type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>;
     #[derive(Clone, Copy)]
     enum BudgetError {
         NonUnicode,
@@ -327,11 +360,13 @@ mod {{MODULE}} {
         Sync,
         Publish,
         Unlock,
+        Poisoned,
     }
     #[derive(Clone, Copy)]
     enum TouchMode {
         Off,
         On,
+        ItemsOnly,
     }
     enum StepNoticeError {
         MissingPath,
@@ -356,43 +391,202 @@ mod {{MODULE}} {
         mutant: __rm_std::option::Option<__rm_std::string::String>,
     }
     static ACTIVE: __rm_std::sync::OnceLock<Selection> = __rm_std::sync::OnceLock::new();
+    // Boundaries this copy has already been granted by the shared state and
+    // may spend in memory, and what it last learned of the shared phase. A
+    // dormant copy asks the file only every DORMANT_POLL boundaries: another
+    // copy's activation reaches it within that many, and until then it
+    // charges nothing, which a stated bound says rather than hides.
+    static LEASED: __rm_std::sync::atomic::AtomicUsize = __rm_std::sync::atomic::AtomicUsize::new(0);
+    static POLLED: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(0);
+    static KNOWN: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(KNOWN_UNASKED);
+    const KNOWN_UNASKED: u8 = 0;
+    const KNOWN_DORMANT: u8 = 1;
+    const KNOWN_ACTIVE: u8 = 2;
+    const KNOWN_OTHER: u8 = 3;
+    const DORMANT_POLL: u32 = 256;
+    const LEASE_SHARE: usize = 16;
+    const LEASE_MOST: usize = 4096;
     static BUDGET: __rm_std::sync::OnceLock<Budget> = __rm_std::sync::OnceLock::new();
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
     static STEP_IDENTITY: __rm_std::sync::OnceLock<StepIdentity> = __rm_std::sync::OnceLock::new();
+    static WATCH: __rm_std::sync::OnceLock<()> = __rm_std::sync::OnceLock::new();
+    // The step state this runtime copy opened, and the process that opened
+    // it: one open and one check per copy and process, where reopening the
+    // name at every boundary paid an open and a close per function entry and
+    // loop turn. A child made by fork without exec shares the parent's open
+    // file description and so its lock, which is why the process is recorded.
+    struct BoundStepState {
+        pid: u32,
+        file: __rm_std::fs::File,
+    }
+    static STEP_STATE: __rm_std::sync::OnceLock<
+        __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
+    > = __rm_std::sync::OnceLock::new();
 
 {{VALUE_MACRO}}
+    // The failures a fault can make without guessing: an error type the
+    // standard library defines and a caller already has to be ready for.
+    // A `?` whose error is anything else does not compile under a fault,
+    // and the compiler's refusal is what says the fault was not put.
+    pub(crate) trait Injectable {
+        fn injected() -> Self;
+    }
+    impl Injectable for __rm_std::io::Error {
+        fn injected() -> Self {
+            __rm_std::io::Error::other("a failure rust-mutants injected")
+        }
+    }
+    impl Injectable for __rm_std::str::Utf8Error {
+        fn injected() -> Self {
+            match __rm_std::str::from_utf8(__rm_std::hint::black_box(&[0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::string::FromUtf8Error {
+        fn injected() -> Self {
+            match __rm_std::string::String::from_utf8(__rm_std::hint::black_box(__rm_std::vec![0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseFloatError {
+        fn injected() -> Self {
+            match <f64 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::TryFromIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::convert::TryFrom<u16>>::try_from(__rm_std::hint::black_box(256_u16)) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    pub(crate) fn injected<E: Injectable>() -> E {
+        E::injected()
+    }
+    // A crash lets the call that writes finish and then stops the process
+    // with nothing after it: no destructor, flush or unwinding, so what the
+    // call wrote is on disk and nothing later is.
+    pub(crate) fn crashed_after<T>(_written: T) -> T {
+        let _published = publish_crash_notice();
+        __rm_std::process::exit({{CRASH_EXIT}})
+    }
+
+    // The notice is what tells the supervisor this status is a stop the
+    // runtime made rather than one a test chose. A notice that cannot be
+    // published still stops the process, so the state is torn all the
+    // same; the status alone then decides nothing, and the crash is left
+    // undecided rather than read as a stop nobody confirmed.
+    fn publish_crash_notice() -> __rm_std::option::Option<()> {
+        let path = __rm_std::env::var("{{CRASH_NOTICE_ENV}}").ok()?;
+        let nonce = __rm_std::env::var("{{CRASH_NONCE_ENV}}").ok()?;
+        let wanted = __rm_std::env::var("{{ACTIVE_ENV}}").ok()?;
+        let partial = __rm_std::format!("{}.partial", path);
+        {
+            let mut file = __rm_std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&partial)
+                .ok()?;
+            let notice = __rm_std::format!(
+                "{{CRASH_NOTICE_SCHEMA}}\t{}\t{}\t{}\n",
+                nonce, CATALOG, wanted
+            );
+            __rm_std::io::Write::write_all(&mut file, notice.as_bytes()).ok()?;
+            file.sync_data().ok()?;
+        }
+        __rm_std::fs::rename(partial, path).ok()
+    }
+
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
+        watched();
         touch(index);
         delay(index);
         match *ACTIVE.get_or_init(resolve) {
             Selection::None => false,
-            Selection::Index(selected) if selected == index => {
+            Selection::Index(selected) | Selection::Beside(selected, _) if selected == index => {
                 activate();
                 true
             }
-            Selection::Index(_) => false,
+            Selection::Beside(_, fault) if fault == index => true,
+            Selection::Index(_) | Selection::Beside(..) => false,
         }
     }
 
     /// Activates the process-wide allowance exactly once. Re-evaluating the
     /// selected guard does not spend twice; the boundaries it reaches do.
     fn activate() {
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_ACTIVE {
+            return;
+        }
         advance(StepAction::Activate);
     }
 
     /// Charges a function or loop boundary only after the mutation is active.
     #[inline(always)]
     pub(crate) fn checkpoint() {
+        let spent_in_memory = LEASED.fetch_update(
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            |left| left.checked_sub(1),
+        );
+        if spent_in_memory.is_ok() {
+            return;
+        }
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_DORMANT
+            && POLLED.fetch_add(1, __rm_std::sync::atomic::Ordering::SeqCst) % DORMANT_POLL != 0
+        {
+            return;
+        }
         advance(StepAction::Checkpoint);
+    }
+
+    /// How many more boundaries one reservation grants when `remaining` are left: a share of them, at least one and at most a bound.
+    const fn lease_size(remaining: usize) -> usize {
+        let share = match remaining.checked_div(LEASE_SHARE) {
+            __rm_std::option::Option::Some(share) => share,
+            __rm_std::option::Option::None => 0,
+        };
+        if share > LEASE_MOST {
+            LEASE_MOST
+        } else if share == 0 && remaining > 0 {
+            1
+        } else {
+            share
+        }
+    }
+
+    /// What `phase` says this copy knows.
+    const fn known(phase: StepPhase) -> u8 {
+        match phase {
+            StepPhase::Dormant => KNOWN_DORMANT,
+            StepPhase::Active(_) => KNOWN_ACTIVE,
+            StepPhase::Counting(_) | StepPhase::Stopping(_) => KNOWN_OTHER,
+        }
     }
 
     fn advance(action: StepAction) {
         let limit = match *BUDGET.get_or_init(configured_budget) {
-            Budget::Unbounded => return,
-            Budget::Bounded(limit) => limit,
-            Budget::Invalid(_) => protocol_failure(),
+            __rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,
+            __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)) => limit,
+            __rm_std::result::Result::Err(_) => protocol_failure(),
         };
         let advanced = match update_state(action, limit) {
             __rm_std::result::Result::Ok(advanced) => advanced,
@@ -407,27 +601,27 @@ mod {{MODULE}} {
 
     fn configured_budget() -> Budget {
         let raw = match __rm_std::env::var_os("{{STEPS_ENV}}") {
-            __rm_std::option::Option::None => return Budget::Unbounded,
+            __rm_std::option::Option::None => return __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::option::Option::Some(raw) => raw,
         };
         let text = match raw.to_str() {
             __rm_std::option::Option::Some(text) => text,
-            __rm_std::option::Option::None => return Budget::Invalid(BudgetError::NonUnicode),
+            __rm_std::option::Option::None => return __rm_std::result::Result::Err(BudgetError::NonUnicode),
         };
         match text.parse::<usize>() {
-            __rm_std::result::Result::Ok(0) => Budget::Unbounded,
+            __rm_std::result::Result::Ok(0) => __rm_std::result::Result::Ok(__rm_std::option::Option::None),
             __rm_std::result::Result::Ok(allowed) => {
                 if __rm_std::string::ToString::to_string(&allowed) != text {
-                    return Budget::Invalid(BudgetError::NonCanonical);
+                    return __rm_std::result::Result::Err(BudgetError::NonCanonical);
                 }
                 match StepLimit::new(allowed) {
-                    __rm_std::option::Option::Some(limit) => Budget::Bounded(limit),
+                    __rm_std::option::Option::Some(limit) => __rm_std::result::Result::Ok(__rm_std::option::Option::Some(limit)),
                     __rm_std::option::Option::None => {
-                        Budget::Invalid(BudgetError::UnrepresentableLimit)
+                        __rm_std::result::Result::Err(BudgetError::UnrepresentableLimit)
                     }
                 }
             }
-            __rm_std::result::Result::Err(_) => Budget::Invalid(BudgetError::NotANumber),
+            __rm_std::result::Result::Err(_) => __rm_std::result::Result::Err(BudgetError::NotANumber),
         }
     }
 
@@ -454,16 +648,51 @@ mod {{MODULE}} {
                 return __rm_std::result::Result::Err(StepStateError::MissingMutant);
             }
         };
-        let mut file = open_step_state(path)?;
-        file.lock().map_err(|_| StepStateError::Lock)?;
-        let transitioned = (|| {
-            let metadata = file.metadata().map_err(|_| StepStateError::Metadata)?;
+        let cell = STEP_STATE.get_or_init(|| __rm_std::sync::Mutex::new(__rm_std::option::Option::None));
+        let mut bound = cell.lock().map_err(|_| StepStateError::Poisoned)?;
+        let pid = __rm_std::process::id();
+        let reopen = match &*bound {
+            __rm_std::option::Option::Some(state) => state.pid != pid,
+            __rm_std::option::Option::None => true,
+        };
+        if reopen {
+            let opened = open_step_state(path)?;
+            let metadata = opened.metadata().map_err(|_| StepStateError::Metadata)?;
             if !metadata.file_type().is_file() {
                 return __rm_std::result::Result::Err(StepStateError::NotRegular);
             }
-            let phase = read_step_state(&mut file, nonce, mutant, limit)?;
-            let (next, advanced) = step_transition(phase, action, limit.value())
+            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
+        }
+        let file = match &mut *bound {
+            __rm_std::option::Option::Some(state) => &mut state.file,
+            __rm_std::option::Option::None => {
+                return __rm_std::result::Result::Err(StepStateError::Open);
+            }
+        };
+        file.lock().map_err(|_| StepStateError::Lock)?;
+        let transitioned = (|| {
+            let phase = read_step_state(file, nonce, mutant, limit)?;
+            let (mut next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
+            let mut granted = 0_usize;
+            if let (StepAction::Checkpoint, StepAdvance::Continue, StepPhase::Active(spent)) =
+                (action, advanced, next)
+            {
+                let wanted = lease_size(limit.value().saturating_sub(spent));
+                while granted < wanted {
+                    let (further, reserved) = step_transition(next, action, limit.value())
+                        .map_err(|_| StepStateError::InvalidCount)?;
+                    match (reserved, further) {
+                        (StepAdvance::Continue, StepPhase::Active(_)) => {
+                            next = further;
+                            granted = granted.saturating_add(1);
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            KNOWN.store(known(next), __rm_std::sync::atomic::Ordering::SeqCst);
+            LEASED.store(granted, __rm_std::sync::atomic::Ordering::SeqCst);
             if let StepAdvance::Reached { allowed, observed } = advanced {
                 // A persisted Stopping state is a proof that the final notice
                 // was published. Publication happens while the shared state
@@ -474,7 +703,7 @@ mod {{MODULE}} {
                 publish_step_notice(allowed, observed).map_err(|_| StepStateError::Publish)?;
             }
             if next != phase {
-                write_step_state(&mut file, nonce, mutant, limit, next)?;
+                write_step_state(file, nonce, mutant, limit, next)?;
             }
             __rm_std::result::Result::Ok(advanced)
         })();
@@ -498,9 +727,12 @@ mod {{MODULE}} {
     ) -> __rm_std::result::Result<__rm_std::fs::File, StepStateError> {
         use __rm_std::os::unix::fs::OpenOptionsExt as _;
 
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options.read(true).write(true).custom_flags(no_follow_flag());
-        options.open(path).map_err(|_| StepStateError::Open)
+        __rm_std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(no_follow_flag())
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(windows)]
@@ -513,12 +745,12 @@ mod {{MODULE}} {
         // opened object. The regular-file check below then rejects links and
         // junctions instead of following them.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        let mut options = __rm_std::fs::OpenOptions::new();
-        options
+        __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        options.open(path).map_err(|_| StepStateError::Open)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|_| StepStateError::Open)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -662,13 +894,17 @@ mod {{MODULE}} {
         expected_limit: StepLimit,
     ) -> __rm_std::result::Result<StepPhase, StepStateError> {
         const MAX_STATE_BYTES: u64 = 1024;
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         let mut bytes = __rm_std::vec::Vec::new();
         let mut capped = __rm_std::io::Read::take(&mut *file, MAX_STATE_BYTES + 1);
-        __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
+        let read = __rm_std::io::Read::read_to_end(&mut capped, &mut bytes)
             .map_err(|_| StepStateError::Read)?;
-        if bytes.len() > MAX_STATE_BYTES as usize {
+        if read > MAX_STATE_BYTES as usize {
             return __rm_std::result::Result::Err(StepStateError::TooLarge);
         }
         let text = __rm_std::str::from_utf8(&bytes).map_err(|_| StepStateError::NotUtf8)?;
@@ -759,8 +995,12 @@ mod {{MODULE}} {
             name,
             spent,
         );
-        __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
-            .map_err(|_| StepStateError::Seek)?;
+        if __rm_std::io::Seek::seek(file, __rm_std::io::SeekFrom::Start(0))
+            .map_err(|_| StepStateError::Seek)?
+            != 0
+        {
+            return __rm_std::result::Result::Err(StepStateError::Seek);
+        }
         file.set_len(0).map_err(|_| StepStateError::Truncate)?;
         __rm_std::io::Write::write_all(file, state.as_bytes())
             .map_err(|_| StepStateError::Write)?;
@@ -810,15 +1050,15 @@ mod {{MODULE}} {
         }
     }
 
-    fn touch_span() -> usize {
-        match <usize as __rm_std::convert::TryFrom<u32>>::try_from(TOUCH_SPAN) {
+    fn window(span: u32) -> usize {
+        match <usize as __rm_std::convert::TryFrom<u32>>::try_from(span) {
             __rm_std::result::Result::Ok(span) => span,
             __rm_std::result::Result::Err(_) => touch_failure(),
         }
     }
 
-    fn touch_offset(index: u32) -> usize {
-        let relative = match index.checked_sub(TOUCH_BASE) {
+    fn offset(index: u32, base: u32) -> usize {
+        let relative = match index.checked_sub(base) {
             __rm_std::option::Option::Some(relative) => relative,
             __rm_std::option::Option::None => touch_failure(),
         };
@@ -831,9 +1071,10 @@ mod {{MODULE}} {
     fn mark(
         bits: &mut __rm_std::vec::Vec<bool>,
         indices: &mut __rm_std::vec::Vec<u32>,
+        at: usize,
         index: u32,
     ) -> bool {
-        let slot = match bits.get_mut(touch_offset(index)) {
+        let slot = match bits.get_mut(at) {
             __rm_std::option::Option::Some(slot) => slot,
             __rm_std::option::Option::None => touch_failure(),
         };
@@ -847,75 +1088,81 @@ mod {{MODULE}} {
 
     struct Seen {
         name: __rm_std::string::String,
-        eager: bool,
         bits: __rm_std::vec::Vec<bool>,
         touched: __rm_std::vec::Vec<u32>,
         entered_bits: __rm_std::vec::Vec<bool>,
         entered: __rm_std::vec::Vec<u32>,
         differed_bits: __rm_std::vec::Vec<bool>,
         differed: __rm_std::vec::Vec<u32>,
+        item_bits: __rm_std::vec::Vec<bool>,
+        items: __rm_std::vec::Vec<u32>,
     }
 
     impl Seen {
         fn new() -> Seen {
             let named = __rm_std::thread::current().name().map(__rm_std::string::ToString::to_string);
-            let eager = match &named {
-                __rm_std::option::Option::Some(name) => name == "main",
-                __rm_std::option::Option::None => true,
+            let attributed = match &named {
+                __rm_std::option::Option::Some(name) => name != "main",
+                __rm_std::option::Option::None => false,
             };
-            let span = touch_span();
+            let span = window(TOUCH_SPAN);
             let mut bits = __rm_std::vec::Vec::new();
             bits.resize(span, false);
             let mut entered_bits = __rm_std::vec::Vec::new();
             entered_bits.resize(span, false);
             let mut differed_bits = __rm_std::vec::Vec::new();
             differed_bits.resize(span, false);
+            let mut item_bits = __rm_std::vec::Vec::new();
+            item_bits.resize(window(ITEM_SPAN), false);
             Seen {
                 name: match named {
-                    __rm_std::option::Option::Some(name) if !eager => name,
+                    __rm_std::option::Option::Some(name) if attributed => name,
                     _ => __rm_std::string::String::from("{{UNATTRIBUTED}}"),
                 },
-                eager,
                 bits,
                 touched: __rm_std::vec::Vec::new(),
                 entered_bits,
                 entered: __rm_std::vec::Vec::new(),
                 differed_bits,
                 differed: __rm_std::vec::Vec::new(),
+                item_bits,
+                items: __rm_std::vec::Vec::new(),
             }
         }
 
         fn saw(&mut self, index: u32) {
-            if !mark(&mut self.bits, &mut self.touched, index) {
+            if !mark(&mut self.bits, &mut self.touched, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.touched.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn entered_body(&mut self, index: u32) {
-            if !mark(&mut self.entered_bits, &mut self.entered, index) {
+            if !mark(&mut self.entered_bits, &mut self.entered, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.entered.len() >= TOUCH_BATCH {
-                self.flush();
-            }
+            self.flush();
         }
 
         fn saw_a_difference(&mut self, index: u32) {
-            if !mark(&mut self.differed_bits, &mut self.differed, index) {
+            if !mark(&mut self.differed_bits, &mut self.differed, offset(index, TOUCH_BASE), index) {
                 return;
             }
-            if self.eager || self.differed.len() >= TOUCH_BATCH {
-                self.flush();
+            self.flush();
+        }
+
+        fn entered_item(&mut self, index: u32) {
+            if !mark(&mut self.item_bits, &mut self.items, offset(index, ITEM_BASE), index) {
+                return;
             }
+            self.flush();
         }
 
         fn flush(&mut self) {
             written("{{SITES}}", &self.name, &mut self.touched);
             written("{{BODIES}}", &self.name, &mut self.entered);
             written("{{INFECTED}}", &self.name, &mut self.differed);
+            written("{{ENTERED}}", &self.name, &mut self.items);
         }
     }
 
@@ -1088,6 +1335,33 @@ mod {{MODULE}} {
         with_seen(|seen| seen.saw_a_difference(index));
     }
 
+    #[inline(always)]
+    pub(crate) fn item(index: u32) {
+        watched();
+        if touching_items() {
+            entered_item(index);
+        }
+    }
+
+    #[inline(never)]
+    fn entered_item(index: u32) {
+        let recorded = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => {
+                seen.entered_item(index);
+                TouchAccess::Applied
+            }
+            __rm_std::result::Result::Err(_) => TouchAccess::AlreadyBorrowed,
+        });
+        match recorded {
+            __rm_std::result::Result::Ok(TouchAccess::Applied) => {}
+            __rm_std::result::Result::Ok(TouchAccess::AlreadyBorrowed) => touch_failure(),
+            __rm_std::result::Result::Err(_) => {
+                let mut indices = __rm_std::vec![index];
+                written("{{ENTERED}}", "{{UNATTRIBUTED}}", &mut indices);
+            }
+        }
+    }
+
     #[inline(never)]
     fn entered(index: u32) {
         if !touching() {
@@ -1096,8 +1370,44 @@ mod {{MODULE}} {
         with_seen(|seen| seen.entered_body(index));
     }
 
+    // A process of this tree that does not carry the variable naming where
+    // it reports was started by a test that cleared what the run gave it: no
+    // mutant can be active in it and nothing it enters is recorded. It says
+    // so where the run looks, once, and a process that cannot say so stops.
+    #[inline(always)]
+    fn watched() {
+        let () = *WATCH.get_or_init(noticed);
+    }
+
+    #[cold]
+    fn noticed() {
+        let carried = match __rm_std::env::var_os("{{WATCHED_ENV}}") {
+            __rm_std::option::Option::Some(value) => value.as_os_str() == __rm_std::ffi::OsStr::new(WATCHED),
+            __rm_std::option::Option::None => false,
+        };
+        if carried {
+            return;
+        }
+        #[cfg(unix)]
+        let parent = __rm_std::os::unix::process::parent_id();
+        #[cfg(not(unix))]
+        let parent = 0_u32;
+        let name = __rm_std::format!("{{ORPHAN_PREFIX}}{}-{}", __rm_std::process::id(), parent);
+        let path = __rm_std::path::Path::new(WATCHED).join(name);
+        if __rm_std::fs::create_dir_all(WATCHED).is_err() || __rm_std::fs::File::create(path).is_err() {
+            __rm_std::process::exit({{TOUCH_EXIT}});
+        }
+    }
+
     fn touching() -> bool {
         matches!(*TOUCHING.get_or_init(configured_touch), TouchMode::On)
+    }
+
+    fn touching_items() -> bool {
+        matches!(
+            *TOUCHING.get_or_init(configured_touch),
+            TouchMode::On | TouchMode::ItemsOnly
+        )
     }
 
     fn configured_touch() -> TouchMode {
@@ -1109,10 +1419,14 @@ mod {{MODULE}} {
             __rm_std::result::Result::Ok(value) => value == CATALOG,
             __rm_std::result::Result::Err(_) => false,
         };
-        if asked && ours {
-            TouchMode::On
-        } else {
-            TouchMode::Off
+        let items_only = match __rm_std::env::var("{{TOUCH_ITEMS_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value == "1",
+            __rm_std::result::Result::Err(_) => false,
+        };
+        match (asked && ours, items_only) {
+            (true, true) => TouchMode::ItemsOnly,
+            (true, false) => TouchMode::On,
+            (false, _) => TouchMode::Off,
         }
     }
 
@@ -1166,12 +1480,28 @@ mod {{MODULE}} {
         if catalog != CATALOG {
             stale_catalog(&catalog);
         }
-        for &(id, index) in IDS {
-            if id == wanted {
-                return Selection::Index(index);
+        let selected = match indexed(&wanted) {
+            __rm_std::option::Option::Some(index) => index,
+            __rm_std::option::Option::None => return Selection::None,
+        };
+        match __rm_std::env::var("{{FAULT_ENV}}") {
+            __rm_std::result::Result::Ok(fault) if !fault.is_empty() => match indexed(&fault) {
+                __rm_std::option::Option::Some(beside) => Selection::Beside(selected, beside),
+                __rm_std::option::Option::None => protocol_failure(),
+            },
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => {
+                Selection::Index(selected)
             }
         }
-        Selection::None
+    }
+
+    fn indexed(wanted: &str) -> __rm_std::option::Option<u32> {
+        for &(id, index) in IDS {
+            if id == wanted {
+                return __rm_std::option::Option::Some(index);
+            }
+        }
+        __rm_std::option::Option::None
     }
 
     #[cold]
@@ -1189,6 +1519,37 @@ mod {{MODULE}} {
 }
 "#;
 
+/// `text` with every name the runtime and the engine agree on filled in: the variables it reads, the records it writes, and the codes it exits with.
+fn with_protocol(text: &str) -> String {
+    text.replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
+        .replace("{{CATALOG_ENV}}", CATALOG_ENV)
+        .replace("{{TOUCH_ENV}}", TOUCH_ENV)
+        .replace("{{TOUCH_ITEMS_ENV}}", TOUCH_ITEMS_ENV)
+        .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)
+        .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
+        .replace("{{SITES}}", crate::touch::SITES)
+        .replace("{{BODIES}}", crate::touch::BODIES)
+        .replace("{{INFECTED}}", crate::touch::INFECTED)
+        .replace("{{ENTERED}}", crate::touch::ENTERED)
+        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
+        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
+        .replace("{{STEPS_ENV}}", STEPS_ENV)
+        .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)
+        .replace("{{STEP_NONCE_ENV}}", STEP_NONCE_ENV)
+        .replace("{{STEP_STATE_ENV}}", STEP_STATE_ENV)
+        .replace("{{STEP_STATE_SCHEMA}}", STEP_STATE_SCHEMA)
+        .replace("{{STEP_NOTICE_SCHEMA}}", STEP_NOTICE_SCHEMA)
+        .replace("{{STEP_PROTOCOL_EXIT}}", &STEP_PROTOCOL_EXIT.to_string())
+        .replace("{{WATCHED_ENV}}", WATCHED_ENV)
+        .replace("{{ORPHAN_PREFIX}}", ORPHAN_PREFIX)
+        .replace("{{FAULT_ENV}}", FAULT_ENV)
+        .replace("{{CRASH_EXIT}}", &CRASH_EXIT.to_string())
+        .replace("{{CRASH_NOTICE_ENV}}", CRASH_NOTICE_ENV)
+        .replace("{{CRASH_NONCE_ENV}}", CRASH_NONCE_ENV)
+        .replace("{{CRASH_NOTICE_SCHEMA}}", CRASH_NOTICE_SCHEMA)
+        .replace("{{DELAY_ENV}}", DELAY_ENV)
+}
+
 /// Renders the runtime module for one file.
 ///
 /// # Errors
@@ -1200,7 +1561,10 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         catalog_digest,
         placements,
         markers,
+        first_item,
+        item_count,
         newline,
+        watched,
     } = *rendering;
     let ids: BTreeSet<(&str, u32)> = placements
         .iter()
@@ -1233,25 +1597,9 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{IDS}}", &table)
         .replace("{{BASE}}", &reach.base.to_string())
         .replace("{{SPAN}}", &reach.span.to_string())
+        .replace("{{ITEM_BASE}}", &first_item.to_string())
+        .replace("{{ITEM_SPAN}}", &item_count.to_string())
         .replace("{{STEP_MACHINE}}", STEP_MACHINE_SOURCE)
-        .replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
-        .replace("{{CATALOG_ENV}}", CATALOG_ENV)
-        .replace("{{TOUCH_ENV}}", TOUCH_ENV)
-        .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)
-        .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
-        .replace("{{SITES}}", crate::touch::SITES)
-        .replace("{{BODIES}}", crate::touch::BODIES)
-        .replace("{{INFECTED}}", crate::touch::INFECTED)
-        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
-        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
-        .replace("{{STEPS_ENV}}", STEPS_ENV)
-        .replace("{{DELAY_ENV}}", DELAY_ENV)
-        .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)
-        .replace("{{STEP_NONCE_ENV}}", STEP_NONCE_ENV)
-        .replace("{{STEP_STATE_ENV}}", STEP_STATE_ENV)
-        .replace("{{STEP_STATE_SCHEMA}}", STEP_STATE_SCHEMA)
-        .replace("{{STEP_NOTICE_SCHEMA}}", STEP_NOTICE_SCHEMA)
-        .replace("{{STEP_PROTOCOL_EXIT}}", &STEP_PROTOCOL_EXIT.to_string())
         .replace(
             "{{OBSERVABLE}}",
             &format!(
@@ -1262,7 +1610,9 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace(
             "{{PROBE_BOUND}}",
             &super::observable::bound(OBSERVABLE, "__rm_std"),
-        );
+        )
+        .replace("{{WATCHED}}", &format!("{watched:?}"));
+    let text = with_protocol(&text);
     if newline == "\n" {
         Ok(text)
     } else {
@@ -1281,8 +1631,14 @@ pub struct Rendering<'a> {
     pub placements: &'a [Placement],
     /// The markers the branch proofs put in it, whose indices the recording also carries.
     pub markers: &'a [crate::syntax::branch::Marker],
+    /// The item index of the file's first item, which is where its entry markers start counting.
+    pub first_item: u32,
+    /// How many items the file holds, which sizes the per-thread record of what it already said it entered.
+    pub item_count: u32,
     /// The newline the file uses.
     pub newline: &'a str,
+    /// The absolute directory a process of the tree that lost the run's environment says so in.
+    pub watched: &'a str,
 }
 
 /// The window of catalog indices one file's guards can report, which is what sizes the per-thread record of what it already said.

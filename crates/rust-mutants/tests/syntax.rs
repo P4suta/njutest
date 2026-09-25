@@ -27,6 +27,13 @@ fn discover(source: &str) -> FileDiscovery {
     discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover")
 }
 
+/// Discovery with every rule of the registry named, the ones no tier chooses included.
+fn discover_every_rule(source: &str) -> FileDiscovery {
+    let names: Vec<&str> = registry().rules().iter().map(|rule| rule.name).collect();
+    let selection = Selection::rules(registry(), &names).expect("every registered rule");
+    discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover")
+}
+
 /// `rule@line:byte_col "original"=>"replacement" FORM["site text"]`.
 fn render(discovery: &FileDiscovery) -> Vec<String> {
     discovery
@@ -524,7 +531,7 @@ fn the_families_input_exercises_every_rule_and_matches_the_golden() {
     let root =
         njutest_devkit::paths::workspace_root().join("crates/rust-mutants/tests/testdata/syntax");
     let src = std::fs::read_to_string(root.join("families.input")).expect("input");
-    let d = discover(&src);
+    let d = discover_every_rule(&src);
     assert_coherent(&src, &d);
     let mut seen: Vec<&str> = d.candidates.iter().map(|f| f.candidate.rule.name).collect();
     seen.sort_unstable();

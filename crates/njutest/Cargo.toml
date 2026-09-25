@@ -15,6 +15,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
+autotests = false
 
 [package.metadata.njutest]
 surface = "incidental"
@@ -85,3 +86,99 @@ required-features = ["benchmarks"]
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/suite.rs"
+
+[[test]]
+name = "toolchain_baseline"
+path = "tests/toolchain_baseline.rs"
+
+[[test]]
+name = "toolchain_build"
+path = "tests/toolchain_build.rs"
+
+[[test]]
+name = "toolchain_cli_contract"
+path = "tests/toolchain_cli_contract.rs"
+
+[[test]]
+name = "toolchain_commands"
+path = "tests/toolchain_commands.rs"
+
+[[test]]
+name = "toolchain_concurrency"
+path = "tests/toolchain_concurrency.rs"
+
+[[test]]
+name = "toolchain_crashes"
+path = "tests/toolchain_crashes.rs"
+
+[[test]]
+name = "toolchain_edits"
+path = "tests/toolchain_edits.rs"
+
+[[test]]
+name = "toolchain_faults"
+path = "tests/toolchain_faults.rs"
+
+[[test]]
+name = "toolchain_generation"
+path = "tests/toolchain_generation.rs"
+
+[[test]]
+name = "toolchain_interrupt"
+path = "tests/toolchain_interrupt.rs"
+
+[[test]]
+name = "toolchain_knobs"
+path = "tests/toolchain_knobs.rs"
+
+[[test]]
+name = "toolchain_lsp"
+path = "tests/toolchain_lsp.rs"
+
+[[test]]
+name = "toolchain_matrix"
+path = "tests/toolchain_matrix.rs"
+
+[[test]]
+name = "toolchain_mutation"
+path = "tests/toolchain_mutation.rs"
+
+[[test]]
+name = "toolchain_repeatable"
+path = "tests/toolchain_repeatable.rs"
+
+[[test]]
+name = "toolchain_replay"
+path = "tests/toolchain_replay.rs"
+
+[[test]]
+name = "toolchain_resource_run"
+path = "tests/toolchain_resource_run.rs"
+
+[[test]]
+name = "toolchain_run_documents"
+path = "tests/toolchain_run_documents.rs"
+
+[[test]]
+name = "toolchain_select"
+path = "tests/toolchain_select.rs"
+
+[[test]]
+name = "toolchain_targets"
+path = "tests/toolchain_targets.rs"
+
+[[test]]
+name = "toolchain_verify"
+path = "tests/toolchain_verify.rs"
+
+[[test]]
+name = "toolchain_watch"
+path = "tests/toolchain_watch.rs"
+
+[[test]]
+name = "toolchain_wire_fixture"
+path = "tests/toolchain_wire_fixture.rs"

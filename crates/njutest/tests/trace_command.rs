@@ -363,7 +363,7 @@ fn whole(run: &str) -> Vec<Event> {
             5,
             Payload::RunEnd {
                 run: njutest::trace::RunRecord {
-                    verdict: "ASSURED".to_owned(),
+                    verdict: njutest::report::Verdict::Assured,
                     accounting: None,
                     error: None,
                     events_emitted: 4,
@@ -382,7 +382,7 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
-        program: std::path::PathBuf::from("this test never runs it"),
+        program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars: Vec::new(),
         cancel: rust_mutants::runner::Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),

@@ -181,13 +181,18 @@ fn rows(report: &Path) -> Vec<Fate> {
     found
 }
 
-/// Rewrites the block of one README, keeping everything around it.
-fn rewrite(name: &str, found: &[Fate]) {
-    let path = njutest_devkit::paths::workspace_root()
+/// The README a fixture states its fates in.
+fn readme(name: &str) -> PathBuf {
+    njutest_devkit::paths::workspace_root()
         .join("fixtures")
         .join(name)
-        .join("README.md");
-    let text = std::fs::read_to_string(&path).expect("the README");
+        .join("README.md")
+}
+
+/// Rewrites the block of the README at `path`, keeping everything around it.
+fn rewrite(path: &Path, found: &[Fate]) {
+    let name = path.display();
+    let text = std::fs::read_to_string(path).expect("the README");
     let (before, rest) = text
         .split_once(njutest_devkit::fixture::FATES_FENCE)
         .expect("the block");
@@ -204,7 +209,7 @@ fn rewrite(name: &str, found: &[Fate]) {
         block.push('\n');
     }
     std::fs::write(
-        &path,
+        path,
         format!(
             "{before}{}{fence}\n{block}```{after}",
             njutest_devkit::fixture::FATES_FENCE
@@ -213,37 +218,433 @@ fn rewrite(name: &str, found: &[Fate]) {
     .expect("rewriting the README");
 }
 
-#[test]
-fn every_fixture_readme_fate_is_the_recorded_one() {
-    let updating = std::env::var_os(UPDATE).is_some();
-    let mut wrong = Vec::new();
-    for name in fixtures() {
-        let stated = njutest_devkit::fixture::stated_fates(&name);
-        assert!(
-            stated.stated,
-            "{name}: the README states no fates, which `cargo xtask fixtures` refuses"
-        );
-        let fixture = Fixture::copy_with_siblings(&name, &siblings(&stated.args));
-        let found = recorded(&fixture, &resolved(&fixture, &stated.args));
-        if updating {
-            rewrite(&name, &found);
-            continue;
-        }
-        if found != stated.rows {
-            let said: Vec<String> = stated.rows.iter().map(ToString::to_string).collect();
-            let is: Vec<String> = found.iter().map(ToString::to_string).collect();
-            wrong.push(format!(
-                "{name}\n  the README says:\n    {}\n  the run establishes:\n    {}",
-                said.join("\n    "),
-                is.join("\n    ")
-            ));
-        }
-    }
+/// A run of `name` establishes exactly the fates its README states, or, with [`UPDATE`] set, the README is made to state them.
+fn holds(name: &str) {
+    let stated = njutest_devkit::fixture::stated_fates(name);
     assert!(
-        wrong.is_empty(),
-        "a fixture's README and a run of it disagree; read the difference, then rewrite the \
-         blocks with {UPDATE}=1 if the run is right:\n{}",
-        wrong.join("\n")
+        stated.stated,
+        "{name}: the README states no fates, which `cargo xtask fixtures` refuses"
+    );
+    let fixture = Fixture::copy_with_siblings(name, &siblings(&stated.args));
+    let found = recorded(&fixture, &resolved(&fixture, &stated.args));
+    if std::env::var_os(UPDATE).is_some() {
+        rewrite(&readme(name), &found);
+        return;
+    }
+    let said: Vec<String> = stated.rows.iter().map(ToString::to_string).collect();
+    let is: Vec<String> = found.iter().map(ToString::to_string).collect();
+    assert!(
+        found == stated.rows,
+        "{name}: the README and a run of it disagree; read the difference, then rewrite this \
+         fixture's block with {UPDATE}=1 if the run is right\n  the README says:\n    {}\n  the run \
+         establishes:\n    {}",
+        said.join("\n    "),
+        is.join("\n    ")
+    );
+}
+
+#[test]
+fn fixture_2021() {
+    holds("fixture-2021");
+}
+
+#[test]
+fn fixture_annotated() {
+    holds("fixture-annotated");
+}
+
+#[test]
+fn fixture_apparatus() {
+    holds("fixture-apparatus");
+}
+
+#[test]
+fn fixture_assured() {
+    holds("fixture-assured");
+}
+
+#[test]
+fn fixture_balanced_fails_then_hangs() {
+    holds("fixture-balanced-fails-then-hangs");
+}
+
+#[test]
+fn fixture_baseline() {
+    holds("fixture-baseline");
+}
+
+#[test]
+fn fixture_build_script() {
+    holds("fixture-build-script");
+}
+
+#[test]
+fn fixture_carry() {
+    holds("fixture-carry");
+}
+
+#[test]
+fn fixture_child_refuses() {
+    holds("fixture-child-refuses");
+}
+
+#[test]
+fn fixture_cleared_child() {
+    holds("fixture-cleared-child");
+}
+
+#[test]
+fn fixture_cleared_under_mutant() {
+    holds("fixture-cleared-under-mutant");
+}
+
+#[test]
+fn fixture_climbs_dep_lib() {
+    holds("fixture-climbs-dep-lib");
+}
+
+#[test]
+fn fixture_coverage() {
+    holds("fixture-coverage");
+}
+
+#[test]
+fn fixture_custom_harness() {
+    holds("fixture-custom-harness");
+}
+
+#[test]
+fn fixture_doctest() {
+    holds("fixture-doctest");
+}
+
+#[test]
+fn fixture_drifts() {
+    holds("fixture-drifts");
+}
+
+#[test]
+fn fixture_durable() {
+    holds("fixture-durable");
+}
+
+#[test]
+fn fixture_edits() {
+    holds("fixture-edits");
+}
+
+#[test]
+fn fixture_entered() {
+    holds("fixture-entered");
+}
+
+#[test]
+fn fixture_environment() {
+    holds("fixture-environment");
+}
+
+#[test]
+fn fixture_equivalent() {
+    holds("fixture-equivalent");
+}
+
+#[test]
+fn fixture_fails_then_hangs() {
+    holds("fixture-fails-then-hangs");
+}
+
+#[test]
+fn fixture_families() {
+    holds("fixture-families");
+}
+
+#[test]
+fn fixture_faulted() {
+    holds("fixture-faulted");
+}
+
+#[test]
+fn fixture_faulted_failure_writes() {
+    holds("fixture-faulted-failure-writes");
+}
+
+#[test]
+fn fixture_faulted_writes() {
+    holds("fixture-faulted-writes");
+}
+
+#[test]
+fn fixture_features() {
+    holds("fixture-features");
+}
+
+#[test]
+fn fixture_forbid() {
+    holds("fixture-forbid");
+}
+
+#[test]
+fn fixture_guarded_or() {
+    holds("fixture-guarded-or");
+}
+
+#[test]
+fn fixture_hang() {
+    holds("fixture-hang");
+}
+
+#[test]
+fn fixture_hollow() {
+    holds("fixture-hollow");
+}
+
+#[test]
+fn fixture_hollow_only() {
+    holds("fixture-hollow-only");
+}
+
+#[test]
+fn fixture_ignored() {
+    holds("fixture-ignored");
+}
+
+#[test]
+fn fixture_include() {
+    holds("fixture-include");
+}
+
+#[test]
+fn fixture_item_reach() {
+    holds("fixture-item-reach");
+}
+
+#[test]
+fn fixture_killer_last() {
+    holds("fixture-killer-last");
+}
+
+#[test]
+fn fixture_links_nowhere() {
+    holds("fixture-links-nowhere");
+}
+
+#[test]
+fn fixture_macros() {
+    holds("fixture-macros");
+}
+
+#[test]
+fn fixture_modern() {
+    holds("fixture-modern");
+}
+
+#[test]
+fn fixture_no_std() {
+    holds("fixture-no-std");
+}
+
+#[test]
+fn fixture_no_std_freestanding() {
+    holds("fixture-no-std-freestanding");
+}
+
+#[test]
+fn fixture_order_dependent() {
+    holds("fixture-order-dependent");
+}
+
+#[test]
+fn fixture_outside() {
+    holds("fixture-outside");
+}
+
+#[test]
+fn fixture_outside_dep() {
+    holds("fixture-outside-dep");
+}
+
+#[test]
+fn fixture_outside_dep_lib() {
+    holds("fixture-outside-dep-lib");
+}
+
+#[test]
+fn fixture_panics() {
+    holds("fixture-panics");
+}
+
+#[test]
+fn fixture_probeable() {
+    holds("fixture-probeable");
+}
+
+#[test]
+fn fixture_reads_tree() {
+    holds("fixture-reads-tree");
+}
+
+#[test]
+fn fixture_rejectable() {
+    holds("fixture-rejectable");
+}
+
+#[test]
+fn fixture_scheduled() {
+    holds("fixture-scheduled");
+}
+
+#[test]
+fn fixture_scripted() {
+    holds("fixture-scripted");
+}
+
+#[test]
+fn fixture_shared_path() {
+    holds("fixture-shared-path");
+}
+
+#[test]
+fn fixture_silent_kill() {
+    holds("fixture-silent-kill");
+}
+
+#[test]
+fn fixture_simple() {
+    holds("fixture-simple");
+}
+
+#[test]
+fn fixture_stop_status() {
+    holds("fixture-stop-status");
+}
+
+#[test]
+fn fixture_strict_lints() {
+    holds("fixture-strict-lints");
+}
+
+#[test]
+fn fixture_subprocess() {
+    holds("fixture-subprocess");
+}
+
+#[test]
+fn fixture_targets() {
+    holds("fixture-targets");
+}
+
+#[test]
+fn fixture_threaded() {
+    holds("fixture-threaded");
+}
+
+#[test]
+fn fixture_two_bodies() {
+    holds("fixture-two-bodies");
+}
+
+#[test]
+fn fixture_unicode() {
+    holds("fixture-unicode");
+}
+
+#[test]
+fn fixture_unreached() {
+    holds("fixture-unreached");
+}
+
+#[test]
+fn fixture_verify_fails() {
+    holds("fixture-verify-fails");
+}
+
+#[test]
+fn fixture_wired() {
+    holds("fixture-wired");
+}
+
+#[test]
+fn fixture_workspace() {
+    holds("fixture-workspace");
+}
+
+#[test]
+fn fixture_writes_tree() {
+    holds("fixture-writes-tree");
+}
+
+#[test]
+fn nested_fixture_climbs_dep() {
+    holds("nested/fixture-climbs-dep");
+}
+
+#[test]
+fn every_fixture_has_a_fates_test_of_its_own() {
+    let path = njutest_devkit::paths::workspace_root().join(file!());
+    let source = std::fs::read_to_string(&path).expect("this suite's own source");
+    let tested: std::collections::BTreeSet<&str> = source
+        .match_indices("holds(\"")
+        .filter_map(|(at, opening)| source.get(at + opening.len()..))
+        .filter_map(|rest| rest.split_once('"').map(|(name, _rest)| name))
+        .collect();
+    let committed: Vec<String> = fixtures();
+    let committed: std::collections::BTreeSet<&str> =
+        committed.iter().map(String::as_str).collect();
+    let untested: Vec<&&str> = committed.difference(&tested).collect();
+    let gone: Vec<&&str> = tested.difference(&committed).collect();
+    assert!(
+        untested.is_empty() && gone.is_empty(),
+        "every fixture is one test here, so one fixture can be run and rewritten alone and a slow \
+         one delays nobody; add `#[test] fn <name>() {{ holds(\"<fixture>\"); }}` for each of \
+         {untested:?}, and remove the ones for fixtures that are gone: {gone:?}"
+    );
+}
+
+#[test]
+fn an_update_rewrites_the_block_of_the_fixture_it_ran_and_nothing_else() {
+    let scratch = tempfile::tempdir().expect("a directory for two READMEs");
+    let [ran, beside] = ["fixture-simple", "fixture-hang"].map(|name| {
+        let copy = scratch.path().join(format!("{name}.md"));
+        std::fs::copy(readme(name), &copy).expect("a copy of a real README");
+        copy
+    });
+    let untouched = std::fs::read(&beside).expect("the README beside it");
+    let before = std::fs::read_to_string(&ran).expect("the README that is rewritten");
+    let rows = njutest_devkit::fixture::stated_fates("fixture-simple").rows;
+    let kept = rows
+        .get(..1)
+        .expect("fixture-simple states at least one fate");
+    rewrite(&ran, kept);
+    let after = std::fs::read_to_string(&ran).expect("the rewritten README");
+    assert_eq!(
+        std::fs::read(&beside).expect("the README beside it"),
+        untouched,
+        "rewriting one fixture's block touched another fixture's README"
+    );
+    let outside = |text: &str| {
+        let (head, rest) = text
+            .split_once(njutest_devkit::fixture::FATES_FENCE)
+            .expect("the block");
+        let tail = rest
+            .split_once("```")
+            .map(|(_block, tail)| tail.to_owned())
+            .expect("the end of the block");
+        (head.to_owned(), tail)
+    };
+    assert_eq!(
+        outside(&after),
+        outside(&before),
+        "an update rewrote the page around the block, not only the block"
+    );
+    assert!(
+        after.contains(
+            &kept
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+        "the block does not state what the run found: {after}"
     );
 }
 
@@ -260,7 +661,10 @@ fn every_fixture_is_driven_by_a_test_that_names_it() {
     ] {
         for directory in ["tests", "src", "benches"] {
             let base = root.join("crates").join(crate_name).join(directory);
-            for entry in walk(&base) {
+            for entry in walk(&base)
+                .into_iter()
+                .filter(|entry| !entry.ends_with(file!()))
+            {
                 sources.push_str(
                     &std::fs::read_to_string(&entry)
                         .unwrap_or_else(|error| panic!("{}: {error}", entry.display())),
@@ -316,5 +720,6 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }

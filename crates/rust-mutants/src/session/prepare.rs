@@ -4,7 +4,7 @@
 //! Preparing a workspace: the gate it stands on, what the proof layers establish before anything is instrumented, and the one build every accepted mutant lives in.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{PrepareOptions, Session, Verified, verify};
@@ -71,36 +71,238 @@ pub(super) fn pristine(
     }
 }
 
-/// The digest of the pristine sources every unit of the build compiled.
-fn closure_of(
+/// What the build read that no survey of the tree sees: every file outside the copy and outside the build's own output, and every variable the compiler read.
+fn inputs_of(
     workspace: &Workspace,
     checked: &crate::cargo::Compiled,
-) -> Result<String, SessionError> {
-    let root = workspace.snapshot_root();
-    let units = &checked.units;
-    let mut files: BTreeMap<String, String> = BTreeMap::new();
-    for unit in units {
-        for path in &unit.sources {
-            let Ok(relative) = path.strip_prefix(root) else {
+) -> Result<crate::select::Inputs, EngineError> {
+    let mut inputs = crate::select::Inputs::default();
+    for unit in &checked.units {
+        for path in &unit.inputs {
+            if path.starts_with(workspace.snapshot.dir())
+                || path.starts_with(workspace.target_dir())
+            {
                 continue;
-            };
-            let relative_text = relative
+            }
+            let name = path
                 .to_str()
-                .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
-            let name = crate::id::normalize_path(relative_text).map_err(|source| {
-                SessionError::EvidencePathInvalid {
-                    path: path.clone(),
-                    source,
-                }
-            })?;
-            if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(name) {
+                .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?
+                .to_owned();
+            if let std::collections::btree_map::Entry::Vacant(entry) = inputs.outside.entry(name) {
                 let bytes =
                     std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
                         path: path.clone(),
                         source,
                     })?;
-                entry.insert(crate::id::digest(&bytes));
+                entry.insert(crate::id::HexDigest::of(&bytes));
             }
+        }
+        inputs.env.extend(
+            unit.env
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone())),
+        );
+    }
+    let root = workspace.snapshot_root();
+    for path in crate::cargo::compile_time_inputs(&checked.messages, root)? {
+        let Ok(relative) = path.strip_prefix(root) else {
+            if !path.starts_with(workspace.snapshot.dir())
+                && !path.starts_with(workspace.target_dir())
+            {
+                let name = path
+                    .to_str()
+                    .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?
+                    .to_owned();
+                let bytes =
+                    std::fs::read(&path).map_err(|source| SessionError::EvidenceReadFailed {
+                        path: path.clone(),
+                        source,
+                    })?;
+                inputs
+                    .outside
+                    .insert(name, crate::id::HexDigest::of(&bytes));
+            }
+            continue;
+        };
+        let text = relative
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
+        let name = crate::id::normalize_path(text).map_err(|source| {
+            SessionError::EvidencePathInvalid {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        inputs.compile_time.insert(name);
+    }
+    scripts_of(workspace, checked, &mut inputs)?;
+    Ok(inputs)
+}
+
+/// What every build script of the build set in the compiler's environment, and what each said, through `rerun-if-changed` and `rerun-if-env-changed`, its output depends on.
+fn scripts_of(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+    inputs: &mut crate::select::Inputs,
+) -> Result<(), SessionError> {
+    let root = workspace.snapshot_root();
+    for message in &checked.messages {
+        let crate::cargo::Message::BuildScriptExecuted(script) = message else {
+            continue;
+        };
+        inputs
+            .scripted
+            .extend(script.env.iter().map(|(name, _)| name.clone()));
+        let package = workspace
+            .metadata
+            .packages
+            .iter()
+            .find(|package| package.id == script.package_id);
+        let directory = package.map(|package| package.manifest_dir().to_path_buf());
+        let named = match directory
+            .as_deref()
+            .map(|directory| directory.strip_prefix(root))
+        {
+            Some(Ok(relative)) => relative
+                .to_str()
+                .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
+                    path: relative.to_path_buf(),
+                })?
+                .replace('\\', "/"),
+            Some(Err(_)) | None => format!("<outside>:{}", script.package_id),
+        };
+        let said = script
+            .out_dir
+            .as_deref()
+            .and_then(Path::parent)
+            .map(|build| std::fs::read_to_string(build.join("output")));
+        let text = match said {
+            Some(Ok(text)) => text,
+            Some(Err(_)) | None => String::new(),
+        };
+        let (changed, env) = said_by(&text, &workspace.base_env);
+        let watched = watched_of(changed, directory.as_deref(), root)?;
+        inputs
+            .scripts
+            .insert(named, crate::select::Script { watched, env });
+    }
+    Ok(())
+}
+
+/// The paths and the variables one build script's output named as what it depends on.
+fn said_by(
+    text: &str,
+    env: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> (Vec<String>, BTreeMap<String, Option<String>>) {
+    let mut changed = Vec::new();
+    let mut watched = BTreeMap::new();
+    for line in text.lines() {
+        let line = line
+            .strip_prefix("cargo::")
+            .or_else(|| line.strip_prefix("cargo:"))
+            .unwrap_or_default();
+        if let Some(path) = line.strip_prefix("rerun-if-changed=") {
+            changed.push(path.to_owned());
+        } else if let Some(name) = line.strip_prefix("rerun-if-env-changed=") {
+            let value = crate::vars::var(env, name)
+                .and_then(std::ffi::OsStr::to_str)
+                .map(ToOwned::to_owned);
+            watched.insert(name.to_owned(), value);
+        }
+    }
+    (changed, watched)
+}
+
+/// What one build script watches: its whole package where it named no path, and otherwise each path it named, inside the tree by place and outside it by what is there.
+fn watched_of(
+    changed: Vec<String>,
+    directory: Option<&Path>,
+    root: &Path,
+) -> Result<crate::select::Watched, SessionError> {
+    if changed.is_empty() {
+        return Ok(crate::select::Watched::Package);
+    }
+    let mut inside = BTreeSet::new();
+    let mut outside = BTreeMap::new();
+    for path in changed {
+        let full =
+            directory.map_or_else(|| PathBuf::from(&path), |directory| directory.join(&path));
+        let text = full
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: full.clone() })?;
+        match full.strip_prefix(root) {
+            Ok(relative) => {
+                let relative = relative
+                    .to_str()
+                    .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: full.clone() })?;
+                inside.insert(relative.replace('\\', "/"));
+            }
+            Err(_) => {
+                outside.insert(text.to_owned(), crate::select::fingerprint(&full));
+            }
+        }
+    }
+    Ok(crate::select::Watched::Paths { inside, outside })
+}
+
+/// The digest of everything the build read: every file any unit's dep-info names, build scripts and generated files included, and every environment variable rustc recorded reading.
+/// A file under the root is named relative to it and one the build generated relative to the target directory, so the digest travels with the tree; anything else outside is the lock file's to key.
+fn closure_of(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+) -> Result<String, EngineError> {
+    let root = workspace.snapshot_root();
+    let target = workspace.target_dir();
+    let mut read: BTreeSet<PathBuf> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.inputs.iter().cloned())
+        .collect();
+    read.extend(crate::cargo::compile_time_inputs(&checked.messages, root)?);
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    for path in &read {
+        let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
+            (Ok(relative), _) => (relative, ""),
+            (Err(_), Ok(relative)) => (relative, "$target/"),
+            (Err(_), Err(_)) => continue,
+        };
+        let relative_text = relative
+            .to_str()
+            .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: path.clone() })?;
+        let name = crate::id::normalize_path(relative_text).map_err(|source| {
+            SessionError::EvidencePathInvalid {
+                path: path.clone(),
+                source,
+            }
+        })?;
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            files.entry(format!("{class}{name}"))
+        {
+            let bytes = std::fs::read(path).map_err(|source| SessionError::EvidenceReadFailed {
+                path: path.clone(),
+                source,
+            })?;
+            entry.insert(crate::id::digest(&bytes));
+        }
+    }
+    let (root_text, target_text) = (text_of(root)?, text_of(target)?);
+    let portable = |text: &str| {
+        text.replace(target_text, "$target")
+            .replace(root_text, "$root")
+    };
+    let env: BTreeMap<&str, Option<&str>> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.env.iter())
+        .map(|(name, value)| (name.as_str(), value.as_deref()))
+        .collect();
+    for (name, value) in env {
+        files.insert(format!("$env/{name}"), env_value(value, portable));
+    }
+    for scripts in crate::cargo::emitted_of(&checked.messages).values() {
+        for told in scripts {
+            let (name, digest) = emitted_entry(told, (root, target), portable)?;
+            files.insert(name, digest);
         }
     }
     if files.is_empty() {
@@ -111,6 +313,56 @@ fn closure_of(
             .iter()
             .map(|(name, digest)| (name.as_str(), digest.as_str())),
     ))
+}
+
+/// What one build script emitted, as a closure entry: named by the directory it wrote into, and digested over every configuration, variable, and link request, with the run's own directories spelled portably.
+fn emitted_entry(
+    told: &crate::cargo::Emitted,
+    (root, target): (&Path, &Path),
+    portable: impl Fn(&str) -> String,
+) -> Result<(String, String), SessionError> {
+    let named = match told.out_dir.as_deref() {
+        None => "unnamed".to_owned(),
+        Some(directory) => match (directory.strip_prefix(root), directory.strip_prefix(target)) {
+            (Ok(relative), _) => format!("$root/{}", portable_path(directory, relative)?),
+            (Err(_), Ok(relative)) => format!("$target/{}", portable_path(directory, relative)?),
+            (Err(_), Err(_)) => portable(text_of(directory)?),
+        },
+    };
+    let mut said = String::new();
+    for (kind, values) in [
+        ("cfg", told.cfgs.clone()),
+        (
+            "env",
+            told.env
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect(),
+        ),
+        ("lib", told.linked_libs.clone()),
+        ("path", told.linked_paths.clone()),
+    ] {
+        for value in values {
+            said.push_str(kind);
+            said.push('\0');
+            said.push_str(&portable(&value));
+            said.push('\n');
+        }
+    }
+    Ok((
+        format!("$emitted/{named}"),
+        crate::id::digest(said.as_bytes()),
+    ))
+}
+
+/// `relative`, a part of `full`, with forward slashes, as a portable name spells it.
+fn portable_path(full: &Path, relative: &Path) -> Result<String, SessionError> {
+    crate::id::normalize_path(text_of(relative)?).map_err(|source| {
+        SessionError::EvidencePathInvalid {
+            path: full.to_path_buf(),
+            source,
+        }
+    })
 }
 
 /// The digest of every manifest, the lock file, and the cargo configuration the build read.
@@ -195,6 +447,8 @@ pub(super) struct Building<'a> {
     pub(super) accepted: &'a [u32],
     /// Which comparison and body markers the final build can record.
     pub(super) narrowing: &'a crate::touch::Narrowing,
+    /// How many items the tree's entry markers can name.
+    pub(super) items: u32,
     /// The digest of the pristine sources the build read.
     pub(super) closure: &'a str,
     /// The digest of the manifests and Cargo configuration the build read.
@@ -207,7 +461,19 @@ pub(super) struct Building<'a> {
     pub(super) options: &'a PrepareOptions,
 }
 
-fn built(building: &Building<'_>) -> Result<Built, EngineError> {
+fn built(building: &Building<'_>) -> Result<(Built, crate::apparatus::Apparatus), EngineError> {
+    let phase = building.trace.phase("build");
+    let built = built_untraced(building)?;
+    phase.end();
+    let apparatus = crate::apparatus::Apparatus::survey(
+        built.0.iter().map(|target| target.executable.as_path()),
+        building.workspace.target_dir(),
+    );
+    Ok((built, apparatus))
+}
+
+/// The test binaries the instrumented build produced, and what running them once established.
+fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
     let Building {
         workspace,
         trace,
@@ -447,7 +713,16 @@ fn gated(
 ) -> Result<Gated, EngineError> {
     let pristine_phase = trace.phase("pristine");
     let checked = gate(workspace, options, cancel)?;
-    let closure = closure_of(workspace, &checked)?;
+    let read = Digested {
+        closure: super::Closure {
+            digest: closure_of(workspace, &checked)?,
+            units: unit_sources(workspace, &checked)?,
+            carrying: super::Carrying::fresh(),
+        },
+        inputs: inputs_of(workspace, &checked)?,
+        manifests: manifests_of(workspace)?,
+        compilation: crate::cargo::Compilation::of(&checked),
+    };
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -460,25 +735,113 @@ fn gated(
             selection: selection(options)?,
             include: options.include.clone(),
             exclude: options.exclude.clone(),
+            narrowing: options.narrowing.clone(),
             packages: options.packages.clone(),
             skips: options.skips.clone(),
         },
         trace,
     )?;
     discover_phase.end();
-    let compilation = crate::cargo::Compilation::of(&checked);
-    Ok(Gated {
-        discovery,
-        closure,
-        compilation,
-    })
+    Ok(Gated { discovery, read })
 }
 
-/// What the gate established: what there is to mutate, the digest of everything the build read, and what the build compiled.
+/// What the gate established: what there is to mutate, and everything the build read.
 struct Gated {
     discovery: discover::Discovery,
-    closure: String,
+    read: Digested,
+}
+
+/// What the build read, as digests a later run or a selection compares against, what each unit read, and what it compiled.
+struct Digested {
+    closure: super::Closure,
+    inputs: crate::select::Inputs,
+    manifests: String,
     compilation: crate::cargo::Compilation,
+}
+
+/// Every unit the pristine build compiled, named without a package id, with each file it read under the root or the target directory spelled by its class.
+fn unit_sources(
+    workspace: &Workspace,
+    checked: &crate::cargo::Compiled,
+) -> Result<Vec<crate::skeleton::UnitSource>, EngineError> {
+    let root = workspace.snapshot_root();
+    let target = workspace.target_dir();
+    let (root_text, target_text) = (text_of(root)?, text_of(target)?);
+    let portable = |text: &str| {
+        text.replace(target_text, "$target")
+            .replace(root_text, "$root")
+    };
+    let names: BTreeMap<&str, &str> = workspace
+        .metadata
+        .packages
+        .iter()
+        .map(|package| (package.id.as_str(), package.name.as_str()))
+        .collect();
+    let emitted = crate::cargo::emitted_of(&checked.messages);
+    let mut read: BTreeMap<PathBuf, Vec<u8>> = BTreeMap::new();
+    let mut units = Vec::new();
+    for unit in crate::cargo::every_unit_of(&checked.messages, root)? {
+        let mut files = BTreeMap::new();
+        for path in &unit.inputs {
+            let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
+                (Ok(relative), _) => (relative, "$root/"),
+                (Err(_), Ok(relative)) => (relative, "$target/"),
+                (Err(_), Err(_)) => continue,
+            };
+            let name = portable_path(path, relative)?;
+            let bytes = match read.entry(path.clone()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
+                std::collections::btree_map::Entry::Vacant(entry) => entry
+                    .insert(std::fs::read(path).map_err(|source| {
+                        SessionError::EvidenceReadFailed {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?)
+                    .clone(),
+            };
+            files.insert(format!("{class}{name}"), bytes);
+        }
+        let told: &[crate::cargo::Emitted] = match emitted.get(&unit.package_id) {
+            Some(told) if !unit.target.is_custom_build() => told,
+            Some(_) | None => &[],
+        };
+        units.push(crate::skeleton::UnitSource {
+            package: names
+                .get(unit.package_id.as_str())
+                .map_or_else(|| unit.package_id.clone(), |name| (*name).to_owned()),
+            target: unit.target.name.clone(),
+            kind: unit.target.kind.join(","),
+            test: unit.test,
+            files,
+            env: unit
+                .env
+                .iter()
+                .map(|(name, value)| (name.clone(), env_value(value.as_deref(), portable)))
+                .collect(),
+            emitted: told
+                .iter()
+                .map(|told| emitted_entry(told, (root, target), portable))
+                .collect::<Result<_, _>>()?,
+        });
+    }
+    Ok(units)
+}
+
+/// A path as exact text, which every portable name is built from.
+fn text_of(path: &Path) -> Result<&str, SessionError> {
+    path.to_str()
+        .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
+            path: path.to_path_buf(),
+        })
+}
+
+/// A variable's value as a key holds it: unset, or the digest of what it was set to with the run's own directories spelled portably.
+fn env_value(value: Option<&str>, portable: impl Fn(&str) -> String) -> String {
+    value.map_or_else(
+        || "unset".to_owned(),
+        |value| format!("set:{}", crate::id::digest(portable(value).as_bytes())),
+    )
 }
 
 /// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
@@ -496,11 +859,7 @@ fn selection_plan(
 ) -> Result<SelectionPlan, EngineError> {
     let phase = trace.phase("plan");
     let (sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
-    let eligible = eligible(
-        &discovery.catalog,
-        &sources,
-        options.validation_filter.as_ref(),
-    )?;
+    let eligible = eligible(discovery, &sources, options.validation_filter.as_ref())?;
     let placements = selected_placements(placements, &eligible);
     phase.end();
     Ok((sources, placements, eligible))
@@ -529,27 +888,21 @@ pub fn prepare(
 ) -> Result<Session, EngineError> {
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
-    let gated = gated(&workspace, options, cancel, &trace)?;
-    let manifests = manifests_of(&workspace)?;
-    let (sources, placements, eligible) =
-        selection_plan(&workspace, &gated.discovery, options, &trace)?;
+    let Gated { discovery, read } = gated(&workspace, options, cancel, &trace)?;
+    let (sources, placements, eligible) = selection_plan(&workspace, &discovery, options, &trace)?;
     let asking = crate::prove::Asking {
         workspace: &workspace,
-        discovery: &gated.discovery,
+        discovery: &discovery,
         sources: &sources,
         options,
     };
-    let remembered = remembering(options, &gated.closure, &manifests, &workspace);
+    let remembered = remembering(options, &read.closure.digest, &read.manifests, &workspace);
     let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
-    let Instrumented {
-        validated,
-        last_build,
-        narrowing,
-    } = validated(
+    let instrumented = validated(
         &Establishing {
             workspace: &workspace,
-            discovery: &gated.discovery,
+            discovery: &discovery,
             sources: &sources,
             placements: &placements,
             established: &established,
@@ -562,46 +915,50 @@ pub fn prepare(
 
     let mut workspace = workspace;
     let written_by_a_test = resealed(&mut workspace, &sources)?;
-    let build_phase = trace.phase("build");
-    let (targets, scratch, verified) = built(&Building {
+    let ((targets, scratch, verified), apparatus) = built(&Building {
         workspace: &workspace,
         cancel,
         trace: &trace,
-        catalog: &gated.discovery.catalog,
-        accepted: &validated.accepted,
-        narrowing: &narrowing,
-        closure: &gated.closure,
-        manifests: &manifests,
+        catalog: &discovery.catalog,
+        accepted: &instrumented.validated.accepted,
+        narrowing: &instrumented.narrowing,
+        items: item_count(&instrumented.items)?,
+        closure: &read.closure.digest,
+        manifests: &read.manifests,
         asked: options.touch,
-        last_build: &last_build,
+        last_build: &instrumented.last_build,
         options,
     })?;
-    build_phase.end();
     phase.end();
-    let (packages, items) = attributed(&gated.discovery);
-    let verified = narrowed(verified, narrowing);
-    let sources = prepared_sources(sources)?;
+    let (packages, items) = attributed(&discovery);
+    let item_refs = item_refs(&instrumented.items)?;
+    let verified = narrowed(verified, instrumented.narrowing, instrumented.items.items);
     Ok(Session {
-        catalog: gated.discovery.catalog,
-        files: gated.discovery.files,
-        skips: gated.discovery.skips,
-        claims: gated.discovery.claims,
-        sources,
+        apparatus,
+        item_refs,
+        catalog: discovery.catalog,
+        files: discovery.files,
+        skips: discovery.skips,
+        claims: discovery.claims,
+        sources: prepared_sources(sources)?,
         packages,
         items,
         proofs: established.proofs,
         reached,
-        validated,
+        validated: instrumented.validated,
         eligible,
         targets,
         scratch,
         verified,
         established: std::sync::Mutex::new(super::EstablishmentState::fresh()),
         written_by_a_test,
-        closure: gated.closure,
-        compilation: gated.compilation,
-        manifests,
+        beside: instrumented.beside,
+        closure: read.closure,
+        compilation: read.compilation,
+        inputs: read.inputs,
+        manifests: read.manifests,
         executions: std::sync::Mutex::new(0),
+        leaders: crate::orphan::Leaders::default(),
         mutant_timeout: options.mutant_timeout,
         mutant_steps: options.mutant_steps,
         harness_args: options.harness_args.clone(),
@@ -632,15 +989,69 @@ fn prepared_sources(
         .collect()
 }
 
-/// The verification with what the instrumented tree can say about a mutant it never named folded in.
-fn narrowed(verified: Verified, narrowing: crate::touch::Narrowing) -> Verified {
+/// The verification with what the instrumented tree can say about a mutant it never named folded in, and the items its entry markers name.
+fn narrowed(
+    verified: Verified,
+    narrowing: crate::touch::Narrowing,
+    items: Vec<crate::touch::Item>,
+) -> Verified {
     Verified {
         touched: crate::touch::Touched {
             narrowing,
+            items,
             ..verified.touched
         },
         ..verified
     }
+}
+
+/// Every item of every mutable file, numbered in path order.
+fn cataloged_items(
+    discovery: &discover::Discovery,
+    sources: &BTreeMap<String, Vec<u8>>,
+) -> Result<crate::instrument::ItemCatalog, EngineError> {
+    let files: Vec<crate::instrument::ItemSource<'_>> = discovery
+        .files
+        .iter()
+        .filter_map(|file| {
+            sources
+                .get(&file.path)
+                .map(|source| crate::instrument::ItemSource {
+                    path: &file.path,
+                    package: &file.package,
+                    source,
+                })
+        })
+        .collect();
+    Ok(crate::instrument::catalog_items(&files)?)
+}
+
+/// Every cataloged item's portable name, by item index, which is what an entered union is written in.
+///
+/// # Errors
+/// An index the catalog numbers names no item it holds, which a dense catalog never does.
+fn item_refs(
+    catalog: &crate::instrument::ItemCatalog,
+) -> Result<Vec<crate::touch::ItemRef>, EngineError> {
+    catalog
+        .items
+        .iter()
+        .map(|item| {
+            catalog.item_ref(item.index).ok_or_else(|| {
+                EngineError::from(SessionError::ItemCatalogGap { index: item.index })
+            })
+        })
+        .collect()
+}
+
+/// How many items the catalog holds, which is what a record of an entered item is checked against.
+fn item_count(items: &crate::instrument::ItemCatalog) -> Result<u32, EngineError> {
+    u32::try_from(items.items.len()).map_err(|_outside_range| {
+        EngineError::from(SessionError::TraceCountTooLarge {
+            subject: "cataloged items",
+            count: items.items.len(),
+        })
+    })
 }
 
 /// What instrumenting and validating the tree established, which is everything a run needs about the tree it will start.
@@ -651,6 +1062,10 @@ struct Instrumented {
     last_build: Vec<crate::cargo::Message>,
     /// What the tree that was built can say about a mutant it never named, which is what narrowing by silence rests on.
     narrowing: crate::touch::Narrowing,
+    /// Every mutation whose branch in the tree that was built carries a fault's guard, with that fault.
+    beside: BTreeSet<(u32, u32)>,
+    /// Every item of the tree, numbered as its entry markers name them.
+    items: crate::instrument::ItemCatalog,
 }
 
 /// What instrumenting the tree is done from: the snapshot to write into, the mutants to place, and what the proof layers established about them.
@@ -687,7 +1102,9 @@ fn establish(
         eligible,
         options,
     } = *asking;
+    let items = cataloged_items(discovery, sources)?;
     let mut writer = TreeCompiler {
+        first_items: &items.first,
         workspace,
         sources,
         placements,
@@ -703,6 +1120,7 @@ fn establish(
         probed: &established.probed,
         compared: BTreeSet::new(),
         marked: BTreeSet::new(),
+        beside: BTreeSet::new(),
     };
     let validated = validate_selected(
         &discovery.catalog,
@@ -718,11 +1136,13 @@ fn establish(
     )?;
     Ok(Instrumented {
         validated,
+        beside: writer.beside,
         last_build: writer.last_build,
         narrowing: crate::touch::Narrowing {
             compared: writer.compared,
             bodies: resting(&established.proofs, &writer.marked),
         },
+        items,
     })
 }
 
@@ -759,10 +1179,7 @@ fn resealed(
 /// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
-fn plan_tree(
-    root: &std::path::Path,
-    discovery: &discover::Discovery,
-) -> Result<Planned, EngineError> {
+fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, EngineError> {
     let found: Vec<Found> = discovery
         .candidates
         .iter()
@@ -771,7 +1188,7 @@ fn plan_tree(
     let mut sources: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut placements: BTreeMap<String, Vec<Placement>> = BTreeMap::new();
     for file in &discovery.files {
-        if file.whole_file.is_some() {
+        if file.whole_file.is_some() && !discovery.marked_only.contains(&file.path) {
             continue;
         }
         let source =
@@ -790,10 +1207,11 @@ fn plan_tree(
 
 /// The catalog indices compiler validation has to decide for this preparation.
 fn eligible(
-    catalog: &Catalog,
+    discovery: &discover::Discovery,
     sources: &BTreeMap<String, Vec<u8>>,
     filter: Option<&crate::run::Filter>,
 ) -> Result<BTreeSet<u32>, EngineError> {
+    let catalog = &discovery.catalog;
     let Some(filter) = filter.filter(|filter| !filter.is_empty()) else {
         return Ok(catalog
             .mutants()
@@ -801,6 +1219,7 @@ fn eligible(
             .map(|mutant| mutant.index)
             .collect());
     };
+    let items = attributed(discovery).1;
     let mut selected = BTreeSet::new();
     for mutant in catalog.mutants() {
         let path = &mutant.candidate.path;
@@ -824,7 +1243,7 @@ fn eligible(
                 source,
             })?
             .line;
-        if filter.selects(mutant, line) {
+        if filter.selects(mutant, line, items.get(&mutant.index).map(String::as_str)) {
             selected.extend([mutant.index]);
         }
     }
@@ -927,6 +1346,10 @@ struct TreeCompiler<'a> {
     compared: BTreeSet<u32>,
     /// Every marker the tree that was last built actually holds the call for.
     marked: BTreeSet<u32>,
+    /// Every mutation whose branch in the tree that was last built carries a fault's guard, with that fault.
+    beside: BTreeSet<(u32, u32)>,
+    /// The item index each file's first item takes.
+    first_items: &'a BTreeMap<String, u32>,
 }
 
 impl TreeCompiler<'_> {
@@ -950,6 +1373,12 @@ impl TreeCompiler<'_> {
             comparable: self.comparable,
             probed: self.probed,
             catalog_digest: self.catalog.digest(),
+            watched: self.workspace.watched(),
+            first_item: self.first_items.get(path).copied().ok_or_else(|| {
+                ValidateError::AttemptFailed {
+                    message: format!("{path} was never given item indices"),
+                }
+            })?,
         })?;
         let guards =
             u32::try_from(file.guards.len()).map_err(|_overflow| ValidateError::AttemptFailed {
@@ -1040,6 +1469,10 @@ impl Compile for TreeCompiler<'_> {
             self.marked = files
                 .iter()
                 .flat_map(|file| file.marked.iter().copied())
+                .collect();
+            self.beside = files
+                .iter()
+                .flat_map(|file| file.beside.iter().copied())
                 .collect();
         }
         Ok(Attempt {

@@ -56,6 +56,12 @@ Pure computation that does not open or mutate a report store remains available.
   Three things a reader has to tell apart used to arrive as one refusal: a target that is broken, a target that lost a race with something outside the code, and a target that passed.
   The middle one is a finding about the run's footing, not a reason to throw away the work already done, and the run says which target it was so that a later reader knows a single result against it rests on a measurement that once came out differently.
 - A target whose guards recorded nothing this run can route by keeps every test of it in every route (`touch-not-recorded`), and one whose record did not read back is believed about nothing (`touch-log-unreadable`).
+- A target whose tree started a process without the environment the run gave it — a test that calls `env_clear()` on a child — is `uncontrolled-child`: no mutant can be active in that process and nothing records what it entered, so the target stays in every route and a survival it reports is inconclusive ([ADR 0029](adr/0029-a-process-that-loses-the-environment-says-so.md)).
+  A process that lost the environment under one mutant only is attributed to the execution whose process started it, by the parent it names, and a survival of that execution is inconclusive too; where the parent cannot be told apart, the survival is not read past it.
+  The escape is to pass the run's variables through to the child: a test that clears the environment and then adds back every `RUST_MUTANTS_*` variable it was given (`command.env_clear().envs(std::env::vars().filter(|(name, _)| name.starts_with("RUST_MUTANTS_")))`) starts a child the run can activate a mutant in and see, and the limitation goes.
+- **Which items a test entered is measured where a body starts, and not everywhere code runs.** A `const fn`, a `const`, and a `static` are cataloged as items nothing records entering.
+  A closure written inside a macro invocation takes no entry marker, and an `async` body resumed on another test's thread is recorded on the thread that first polled it.
+  A change to any of these has to be routed to every test; [item reach](engine/item-reach.md) says which is which.
 - **A subprocess is measured, but its main-thread touches have no libtest test name.** It inherits the outer touch log and catalog, so its guards are not lost.
   The engine records those touches as unattributed and widens the route to every test of the target.
   An in-process command test keeps test-level attribution and costs less work; a subprocess test remains sound, with the fallback costing precision rather than evidence.
@@ -232,6 +238,11 @@ They are what the run says about its own footing, and each is stated fail-closed
   A run that met any of these and said nothing recorded no seam, raised no finding and stated no limitation, so a reader read the wire dimension as covered when nothing about it had been measured.
 - The interpreter ran out of the time it was given (`miri-timed-out`).
   This is not a claim that it found nothing: a budget that expired is a question nobody answered, which is why it is a limitation and never a pass.
+- The toolchain has no interpreter and the contract is `whole-v1` (`miri-unavailable`).
+  `whole-v1` names each thing it could not establish rather than refusing the run, so the soundness nothing interpreted is a limitation beside a `not-measured` finding, and the run is not `ASSURED`.
+  `deep-v1` promises interpretation, and there the same toolchain ends the run with `NJ7001`.
+- The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
+  Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 
@@ -239,13 +250,28 @@ They are what the run says about its own footing, and each is stated fail-closed
 
 Every proof layer reads one baseline run of each target: what its tests reached, which bodies they entered, which sites they saw infected.
 That is sound only where what a target reaches is a function of the target, and a suite that reads a clock, a hash seed, the order its threads were scheduled in, or state an earlier process left behind can reach something different on the next run of the same tests.
-A run checks it the one time it already runs a target again: the original-code control that confirms a kill records what it reached too, and a union that moved over the same passing tests is a counterexample, raised as `unstable-baseline` about the target ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+A run checks it by running every target again: the original-code control that confirms a kill records what it reached too, a target no kill was confirmed on is run whole once more after the mutation phase for the comparison alone, and a union that moved over the same passing tests is a counterexample, raised as `unstable-baseline` about the target ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
 
 Three things follow and are not hidden.
-A target nothing was killed on is never confirmed, so it is never compared: `drift-not-measured` names it, and every proof read off its baseline rests on one run.
+A target whose second run cannot be compared — it failed, passed other tests than its baseline, or could not record — is `drift-not-measured`, and every proof read off its baseline rests on one run.
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
-And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
+And what rested on a moved target is run again against it with its reach recorded ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
+Where nothing rests on a moved target any more, `reach-moved` still names it: nothing the run concludes stands on the moved record, and the suite's reach is still not a function of the target.
 
+## What a run asks of a call that can fail
+
+Faults are opt-in, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+A run that is asked pays a second instrumented build and baseline of the tree, and one execution for every `?` a test reaches.
+
+Three things are not claimed, and each is stated.
+A `?` whose error type is not one of the six the engine makes — `std::io::Error`, `Utf8Error`, `FromUtf8Error`, `ParseIntError`, `ParseFloatError`, `TryFromIntError` — or that propagates an `Option` is refused by the compiler under the fault and named in `fault-not-put`, one entry per compiler error class; a user's own error type is never injected, because guessing its constructor would inject something the program never returns.
+A fault a bound expired on, or whose failure did not reproduce, is a `not-measured` finding, so the run is not `ASSURED`.
+And a caller that swallows the injected error reads as `unnoticed`, which is what the suite could tell: where the error went is not recorded yet.
+
+A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
+Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.
+A tree whose faulted build or baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and puts nothing.
+A tree with no `?` in any measured file states `fault-no-site`: there was no call to fail, which is a finding about the tree and not a hole in the run.
 ## What a run asks of a suite that depends on where it runs
 
 A suite can pass on one machine and fail on the next because of something the contract lets differ between them: the time zone, the locale, the temporary directory, the home directory, the umask, the terminal width, or how many tests the harness runs at once.
@@ -258,17 +284,25 @@ A knob whose controls established nothing to compare — a record that did not r
 And the working directory and the order of the tests are not knobs: cargo's contract fixes the first at the package root, and stable libtest cannot reorder the second.
 ## What a run asks of a suite that runs more than one thread
 
-A schedule is not something a run explores yet, so a suite whose tests race each other passes on the schedule it happened to get ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
-What a run does instead is prove, per test binary, where there is nothing to explore: its baseline reached no code off the threads its tests ran on, and no package in its dependency closure has a token that can start a thread, a task, a parallel iterator, a runtime, or a process, and none links native code or declares an `extern` block.
-Everything else is `schedule-not-explored`, naming the binaries in its closing list: `concurrent` where something says it can run more than one thread, and `not-proven` where something could not be looked at.
+A suite whose tests race each other passes on the schedule it happened to get, so a run first proves, per test binary, where there is nothing to explore ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)): its baseline reached no code off the threads its tests ran on, and no package in its dependency closure has a token that can start a thread, a task, a parallel iterator, a runtime, or a process, and none links native code or declares an `extern` block.
+Everything else that no schedule was explored of is `schedule-not-explored`, naming the binaries in its closing list: `concurrent` where something says it can run more than one thread, and `not-proven` where something could not be looked at.
 Asked for with `[schedules] explore`, a run delays up to that many guards of each such binary whose baseline passed, one schedule each; a binary that passed every one is `schedule-sampled`, because a sample of its schedules is not all of them, and one a delay broke in five rounds, failing the same tests with the delay and passing without it each time, is `schedule-dependent`.
 A binary no delay broke where the controls of some delayed guard ran past their bound, errored, or failed in a way no round confirmed is `schedule-undecided`: it passed no sample of that schedule and showed no failure of it.
+A delay changes when a thread runs as well as the order threads interleave in, so a test that asserts on how long something takes fails under it with no race at all; that is a schedule dependence too, since the same test on a busier machine fails the same way.
 A delay pauses each operating-system thread of the test process once, the first time it reaches the guard, so a thread a pool or the harness reuses across tests pauses only for the first test that reaches the guard on it.
 
 Three things follow and are not hidden.
 The scan reads tokens, not types, so a function of a user's own named `spawn`, or a word in a string, makes a binary concurrent that runs one thread; that is a hole the report states, never a proof it makes.
 A doctest's code is a doc string the scan does not read and its run records no reach, so a doctest binary is never proven.
 And a thread given exactly the name of a test that passed is read as that test's, which is why the source scan, and not the reach alone, is what the proof rests on.
+
+## What a run asks of a program that keeps state
+
+Crashes are opt-in, and a run not asked for them says nothing about a stop between two writes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+A crash stops the process just after a call that writes and runs the test that reached it again over what it left, so `restarted` says the next run passed over those files, not that it read them: a test that keeps its state under a name it picks afresh every run reads nothing its predecessor left.
+The stop is a process ending, so what it wrote is in the system's cache and on disk to every next run; a power failure that loses unflushed writes is not modelled.
+A call a target reaches without the run knowing which of its tests reaches it is `undecided`, because stopping every test of the target at once would tear what the others were writing.
+The compiler refusing a crash is stated in `crash-not-put`, and a tree with no call that writes in `crash-no-site`.
 
 ## What a run asks of a suite that talks about time
 
@@ -340,6 +374,11 @@ Nothing a caller can see reports this — not load, not free processors, not fre
 `rust-mutants doctor` therefore runs one newly written file twice and prints both numbers, because the pair is the evidence and neither number means anything alone.
 A first execution in the hundreds of seconds beside a second in hundredths says a run started now would measure the evaluation and not the tests.
 
+What removes the cost is outside the tree.
+An application listed and switched on under System Settings → Privacy & Security → Developer Tools may run what it builds without the evaluation, and so may everything it starts.
+Measured on the development machine on 2026-09-24, with the terminal and the multiplexer the sessions run in switched on there: a fresh copy of a program went from 25,100 ms on its first run to 44–69 ms, with no restart, and one suite went from 776 s to 110 s at a higher load.
+A multiplexer that is not signed by a developer is listed by its binary, so an upgrade has to be listed again.
+
 ## Where a count reaches, and where the clock is still the only bound
 
 A mutation whose active guard crosses the configured count is `step_limit_reached`.
@@ -358,7 +397,7 @@ while i < n { i += step; } // and this never ends — the loop body is a checkpo
 
 Run against a workspace of that shape, the mutation of the literal reports `step_limit_reached` at `N + 1` and never `waited`, and it does so with the loop in a second file the run is not mutating.
 This paragraph said the opposite until that was measured; what it described was the instrumenter before it placed checkpoints across a whole workspace.
-No fixture in this tree pins it yet, which is the next thing this claim wants.
+`fixtures/fixture-hang` pins it: `walked` hands its stride to a loop in `src/walk.rs`, a file a `rust-mutants: skip` marker keeps the run from mutating, and `crates/rust-mutants-cli/tests/toolchain_hang.rs` holds the stride's decrement to `step_limit_reached` at exactly `N + 1`, not retried, with no mutant of the loop's own file.
 
 How long the allowance takes to reach belongs to the platform, not to the count.
 The durable step protocol pays one locked state-file round trip per take, and that round trip is measured here at about 7.4ms on Windows: a hundred takes cost 789ms, where the machines this figure was first chosen on spend a fraction of that.

@@ -140,7 +140,7 @@ pub(crate) struct Plan {
 impl Preparation {
     /// Mints the only preparation state allowed by the selected contract.
     pub(crate) fn for_contract(contract: crate::config::Contract, target: &str) -> Self {
-        if contract == crate::config::Contract::VerifiedV1 {
+        if contract.proves_models() {
             Self::Verified(Seed {
                 target: target.to_owned(),
                 tree_written: false,

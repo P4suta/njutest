@@ -31,6 +31,7 @@ fn fixture(name: &str) -> Fixture {
         .expect("a temporary directory");
     let root = dir.path().join(name);
     copy_tree(&source, &root);
+    njutest_devkit::fixture::pin_contract(&root, "standard-v1");
     Fixture { root, _dir: dir }
 }
 

@@ -40,7 +40,7 @@ pub enum Outcome {
     Waited,
     /// The run could not decide: one timeout that did not reproduce, or a failure that also fails on the instrumented baseline.
     Inconclusive,
-    /// The harness itself failed for this mutant: the test binary could not start, the runtime said it was built from another catalog, or a process said it could not record what it saw.
+    /// The harness itself failed for this mutant: the test binary could not start, its own runtime refused it for carrying another catalog, or a process said it could not record what it saw.
     /// A death by signal is not one of these: a test that aborts is a test that failed, which is a kill.
     Errored,
 }

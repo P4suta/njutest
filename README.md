@@ -26,6 +26,7 @@ cargo install --path crates/rust-mutants-cli # rust-mutants, cargo-rust-mutants
 ```console
 njutest verify                     # the assurance run, and a verdict
 njutest review                     # go through the gaps, deciding as you read
+njutest next                       # the cheapest gap, and the checked test that closes it
 rust-mutants run                   # every mutant, and an exit code that says what happened
 rust-mutants explain <id>          # one mutation: where it is, what it did, how to reproduce it
 rust-mutants report --format html  # one page, fetching nothing

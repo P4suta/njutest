@@ -19,8 +19,8 @@ use njutest_devkit::result::{
 };
 use rust_mutants::cargo::{
     BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
-    LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, parse_dep_info,
-    parse_messages, parse_version,
+    LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, env_deps,
+    parse_dep_info, parse_messages, parse_version,
 };
 use rust_mutants::runner::Cancel;
 
@@ -246,6 +246,20 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     let Err(error) = error else { return };
     assert_eq!(error.kind(), CargoErrorKind::MessageUnparsable);
     assert!(error.to_string().contains("line 2"), "{error}");
+}
+
+#[test]
+fn dep_info_says_which_variables_the_compiler_read_and_what_it_read() {
+    let text = "/t/deps/demo-abc.d: src/lib.rs\n\nsrc/lib.rs:\n\n# env-dep:WHO=a\\\\b\\nc\n# env-dep:ABSENT\n";
+    assert_eq!(
+        env_deps(text),
+        std::collections::BTreeMap::from([
+            ("ABSENT".to_owned(), None),
+            ("WHO".to_owned(), Some("a\\b\nc".to_owned())),
+        ]),
+        "rustc escapes a backslash and a line feed to keep the value on its line, and an unset \
+         variable it read is written without a value"
+    );
 }
 
 #[test]
@@ -546,5 +560,18 @@ fn a_windows_path_in_dep_info_keeps_its_separators() {
         ["C:\\src\\lib.rs", "C:\\with space\\x.rs"],
         "only a space or another backslash follows an escaping backslash, so every other one is \
          a separator the path keeps"
+    );
+}
+
+#[test]
+fn a_dep_info_names_the_environment_it_read_set_or_not() {
+    let text = "target/debug/deps/lib.rmeta: src/lib.rs src/answer.txt\n\nsrc/lib.rs:\nsrc/answer.txt:\n\n# env-dep:OUT_DIR=/tmp/out\n# env-dep:NEVER_SET\n";
+    assert_eq!(
+        env_deps(text),
+        std::collections::BTreeMap::from([
+            ("NEVER_SET".to_owned(), None),
+            ("OUT_DIR".to_owned(), Some("/tmp/out".to_owned())),
+        ]),
+        "an `env!` a compilation read is an input to what it computes, and an unset one as much as a set one"
     );
 }

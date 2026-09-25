@@ -31,7 +31,8 @@ A `&&`/`||` with a `let` operand and an `if let`/`while let` condition are left 
 Type-directed splits are impossible without a type checker ([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)),
 so families split by syntax and the compiler rejects what does not type-check.
 Replacements derive from the token, never from a string.
-The table has seventeen families and seventy-four rules.
+The table has nineteen families and seventy-six rules.
+Two of them are not mutations, no tier chooses either, and a run asks for each by name: `fault` fails the call a `?` asks about (`--operator inject-error`, [ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)), and `durable` stops the process just after a call that writes (`--operator crash-after-write`, [ADR 0035](../adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 
 | Family | Rules | Tier |
 | --- | --- | --- |
@@ -52,6 +53,8 @@ The table has seventeen families and seventy-four rules.
 | `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment`, `delete-else-branch` | all |
 | `literal` | `int-increment`, `int-decrement`, `string-to-empty` | all |
 | `saturating-arithmetic` | `saturating-add-to-wrapping-add`, `saturating-sub-to-wrapping-sub`, `saturating-mul-to-wrapping-mul` | all |
+| `fault` | `inject-error` | named |
+| `durable` | `crash-after-write` | named |
 
 `balanced ⊂ strong ⊂ all`, which the table's order carries: it is non-decreasing in tier, so each profile's rules are a prefix of the next one's, and `tiers_never_decrease_down_the_table` is what holds it there.
 

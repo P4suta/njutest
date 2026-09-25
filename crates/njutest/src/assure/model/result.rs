@@ -1346,7 +1346,6 @@ mod tests {
     }
 
     /// Windows answers `NotFound` for a path under a file, so the distinction this is about is one only POSIX draws.
-    #[cfg(test)]
     #[cfg(unix)]
     #[test]
     fn a_path_under_a_file_is_an_error_rather_than_absence() {

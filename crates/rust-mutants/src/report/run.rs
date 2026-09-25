@@ -13,13 +13,15 @@ use crate::outcome::Outcome;
 use crate::report::catalog::{
     MutantDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument,
 };
-use crate::run::{Finding, FindingKind, NotRunReason, Run, Standing};
+use crate::run::{
+    Finding, FindingKind, NotRunReason, Run, Standing, stale_detail, unmatched_detail,
+};
 
 /// The name of the shape, so a reader can tell versions apart.
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The file one run writes under its own directory.
 pub const FILE_NAME: &str = "run-report-v1.json";
@@ -92,6 +94,18 @@ pub struct RunMeta {
     /// Which part of the catalog the run was about, absent for the whole of it.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub shard: Option<String>,
+    /// How wide the run measured.
+    pub jobs: JobsDocument,
+}
+
+/// How wide a run measured, as a report says it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobsDocument {
+    /// What was asked for, as a person writes it: a count, `auto`, or `all`.
+    pub asked: String,
+    /// How many mutants were measured at once.
+    pub used: u32,
 }
 
 /// What a run counted.
@@ -212,6 +226,10 @@ pub struct ScoreDocument {
 /// One non-refused candidate and what the run established about it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is an independent fact about one judged mutant that the published report states"
+)]
 pub struct RunMutantDocument {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -266,6 +284,8 @@ pub struct RunMutantDocument {
     pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
+    /// Whether the harness had already answered when the clock ended the process: a verdict the harness gave, from a process that would not end.
+    pub lingered: bool,
     /// Why it was never executed, when it was not: `unreached`, `discharged`, or `interrupted`.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub not_run_reason: Option<NotRunReason>,
@@ -366,7 +386,16 @@ pub struct FindingDocument {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum DocumentError {
-    /// The document names another shape or version.
+    /// The document was written to another version of this schema, which is a matter of when rather than a contradiction.
+    #[error(
+        "the run report was written as schema version {found}, and this release reads {}; run again to write one it reads",
+        SCHEMA_VERSION
+    )]
+    SchemaVersion {
+        /// The version the document says it was written to.
+        found: u32,
+    },
+    /// The document names another shape.
     #[error("the run report header has an invalid {field}")]
     Header {
         /// The invalid header field.
@@ -468,6 +497,14 @@ pub enum DocumentError {
         kind: FindingKind,
         /// The missing mutant identity, or `<none>`.
         mutant: String,
+    },
+    /// An expectation states a standing its other fields do not carry.
+    #[error("the expectation for {id:?} is {standing:?}, but its fields say otherwise")]
+    Claim {
+        /// The identity the expectation wrote.
+        id: String,
+        /// The standing it states.
+        standing: String,
     },
     /// A finding not derived from a verdict has no corresponding report fact.
     #[error("finding {kind} is not implied by the report")]
@@ -605,9 +642,18 @@ impl RunDocument {
     }
 
     fn validate_header(&self) -> Result<(), DocumentError> {
+        if self.schema_version != SCHEMA_VERSION {
+            return Err(DocumentError::SchemaVersion {
+                found: self.schema_version,
+            });
+        }
+        let width_is_one = match crate::run::Jobs::parse(&self.run.jobs.asked) {
+            Ok(_asked) => self.run.jobs.used > 0,
+            Err(_unknown) => false,
+        };
         for (valid, field) in [
+            (width_is_one, "jobs"),
             (self.document_type == DOCUMENT_TYPE, "document_type"),
-            (self.schema_version == SCHEMA_VERSION, "schema_version"),
             (!self.tool_version.is_empty(), "tool_version"),
             (
                 crate::id::is_digest(&self.workspace.workspace_digest),
@@ -708,48 +754,39 @@ impl RunDocument {
     }
 
     fn validate_nonverdict_findings(&self) -> Result<(), DocumentError> {
-        let stale = self
+        let mut earned: Vec<FindingDocument> = self
             .expectations
             .iter()
-            .filter(|expectation| expectation.standing == "stale")
-            .count();
-        let unmatched = self
-            .expectations
-            .iter()
-            .filter(|expectation| expectation.standing == "unmatched")
-            .count();
-        let stale_findings = self
+            .filter_map(|claim| claim.finding().transpose())
+            .collect::<Result<_, _>>()?;
+        let mut stated: Vec<FindingDocument> = self
             .findings
             .iter()
-            .filter(|finding| finding.kind == FindingKind::StaleExpectation)
-            .count();
-        let unmatched_findings = self
-            .findings
+            .filter(|finding| finding.kind.restates_a_claim())
+            .cloned()
+            .collect();
+        earned.sort_by(finding_order);
+        stated.sort_by(finding_order);
+        if let Some(kind) = earned
             .iter()
-            .filter(|finding| finding.kind == FindingKind::UnmatchedExpectation)
-            .count();
-        if stale != stale_findings {
-            return Err(DocumentError::FindingFact {
-                kind: FindingKind::StaleExpectation,
-            });
-        }
-        if unmatched != unmatched_findings {
-            return Err(DocumentError::FindingFact {
-                kind: FindingKind::UnmatchedExpectation,
-            });
+            .zip(&stated)
+            .find(|(earned, stated)| earned != stated)
+            .map(|(earned, _)| earned.kind)
+            .or_else(|| {
+                earned
+                    .get(stated.len())
+                    .or_else(|| stated.get(earned.len()))
+                    .map(|finding| finding.kind)
+            })
+        {
+            return Err(DocumentError::FindingFact { kind });
         }
         for finding in &self.findings {
             let valid_mutant = match finding.kind {
-                FindingKind::StaleExpectation => finding.mutant.as_ref().is_some_and(|mutant| {
-                    self.expectations.iter().any(|expectation| {
-                        expectation.standing == "stale"
-                            && expectation.mutant.as_ref() == Some(mutant)
-                    })
-                }),
-                FindingKind::UnmatchedExpectation | FindingKind::UnmatchedSkip => {
-                    finding.mutant.is_none()
-                }
-                FindingKind::SurvivingMutant
+                FindingKind::UnmatchedSkip => finding.mutant.is_none(),
+                FindingKind::StaleExpectation
+                | FindingKind::UnmatchedExpectation
+                | FindingKind::SurvivingMutant
                 | FindingKind::InconclusiveMutant
                 | FindingKind::StepLimitReachedMutant
                 | FindingKind::WaitedMutant
@@ -766,7 +803,47 @@ impl RunDocument {
     }
 }
 
+impl ExpectationDocument {
+    /// The finding this claim's standing earns, when it earns one.
+    ///
+    /// # Errors
+    /// Refuses a claim whose fields do not carry the standing it states.
+    pub fn finding(&self) -> Result<Option<FindingDocument>, DocumentError> {
+        match (self.standing.as_str(), self.actual, &self.why) {
+            ("met", None, _) | ("unjudged", None, None) => Ok(None),
+            ("stale", Some(actual), None) => Ok(Some(FindingDocument {
+                kind: FindingKind::StaleExpectation,
+                mutant: self.mutant.clone(),
+                detail: stale_detail(&self.id, self.outcome, actual, &self.reason),
+            })),
+            ("unmatched", None, Some(why)) => Ok(Some(FindingDocument {
+                kind: FindingKind::UnmatchedExpectation,
+                mutant: None,
+                detail: unmatched_detail(&self.id, why),
+            })),
+            _ => Err(DocumentError::Claim {
+                id: self.id.clone(),
+                standing: self.standing.clone(),
+            }),
+        }
+    }
+}
+
+/// The order a report writes its findings in: by kind, then mutant, then detail.
+fn finding_order(a: &FindingDocument, b: &FindingDocument) -> std::cmp::Ordering {
+    a.kind
+        .name()
+        .cmp(b.kind.name())
+        .then_with(|| a.mutant.cmp(&b.mutant))
+        .then_with(|| a.detail.cmp(&b.detail))
+}
+
 impl FindingKind {
+    /// Whether the finding restates an expectation's standing rather than a mutant's verdict.
+    const fn restates_a_claim(self) -> bool {
+        matches!(self, Self::StaleExpectation | Self::UnmatchedExpectation)
+    }
+
     const fn is_verdict(self) -> bool {
         matches!(
             self,
@@ -950,6 +1027,11 @@ pub fn document(
             interrupted: run.interrupted,
             exit_code: run.exit_code(),
             shard: run.shard.map(|shard| shard.to_string()),
+            jobs: JobsDocument {
+                asked: run.width.asked.name(),
+                used: u32::try_from(run.width.used)
+                    .map_err(|_too_wide| crate::workspace::SessionError::RunCountOverflow)?,
+            },
         },
         workspace: crate::report::catalog::workspace_document(session)?,
         selection,
@@ -990,32 +1072,36 @@ pub fn document(
             .collect::<Result<Vec<_>, _>>()?,
         rejections: crate::report::catalog::rejection_documents(session),
         skips: crate::report::catalog::skip_documents(session),
-        expectations: run
-            .expectations
-            .iter()
-            .map(|verified| ExpectationDocument {
-                id: verified.id.clone(),
-                locator: verified.locator.as_ref().map(LocatorDocument::from),
-                reason: verified.reason.clone(),
-                outcome: verified.outcome,
-                mutant: verified.mutant.clone(),
-                covered: (verified.covered > 1).then_some(verified.covered),
-                standing: standing_name(&verified.standing).to_owned(),
-                actual: match &verified.standing {
-                    Standing::Stale { actual } => Some(*actual),
-                    Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
-                },
-                why: match &verified.standing {
-                    Standing::Unmatched { why } => Some(why.clone()),
-                    Standing::Moved { from, to } => {
-                        Some(format!("the mutation moved from line {from} to line {to}"))
-                    }
-                    Standing::Met | Standing::Stale { .. } => None,
-                },
-            })
-            .collect(),
+        expectations: run.expectations.iter().map(expectation_document).collect(),
         findings: run.findings().iter().map(finding).collect(),
     })
+}
+
+/// The document a verified claim is written as, which is the shape [`ExpectationDocument::finding`] reads back.
+fn expectation_document(verified: &crate::run::Verified) -> ExpectationDocument {
+    ExpectationDocument {
+        id: verified.id.clone(),
+        locator: verified.locator.as_ref().map(LocatorDocument::from),
+        reason: verified.reason.clone(),
+        outcome: verified.outcome,
+        mutant: verified.mutant.clone(),
+        covered: (verified.covered > 1).then_some(verified.covered),
+        standing: standing_name(&verified.standing).to_owned(),
+        actual: match &verified.standing {
+            Standing::Stale { actual } => Some(*actual),
+            Standing::Met
+            | Standing::Moved { .. }
+            | Standing::Unmatched { .. }
+            | Standing::Unjudged => None,
+        },
+        why: match &verified.standing {
+            Standing::Unmatched { why } => Some(why.clone()),
+            Standing::Moved { from, to } => {
+                Some(format!("the mutation moved from line {from} to line {to}"))
+            }
+            Standing::Met | Standing::Stale { .. } | Standing::Unjudged => None,
+        },
+    }
 }
 
 const fn standing_name(standing: &Standing) -> &'static str {
@@ -1023,6 +1109,7 @@ const fn standing_name(standing: &Standing) -> &'static str {
         Standing::Met | Standing::Moved { .. } => "met",
         Standing::Stale { .. } => "stale",
         Standing::Unmatched { .. } => "unmatched",
+        Standing::Unjudged => "unjudged",
     }
 }
 
@@ -1080,9 +1167,18 @@ fn mutant(
         exit_code: one.exit_code,
         duration_ms: millis(one.duration)?,
         tests_run: one.tests_run,
-        killed_by: one.failed_tests.clone(),
+        killed_by: match one.outcome {
+            Outcome::Killed => one.failed_tests.clone(),
+            Outcome::NotRun
+            | Outcome::Survived
+            | Outcome::StepLimitReached
+            | Outcome::Waited
+            | Outcome::Inconclusive
+            | Outcome::Errored => Vec::new(),
+        },
         signal: one.signal,
         retried: one.retried,
+        lingered: one.lingered,
         not_run_reason: one.not_run_reason,
         route: one.route.clone(),
         identical: one.identical,
@@ -1193,6 +1289,16 @@ pub enum MergeError {
         /// The mutant two reports both claim.
         mutant: String,
     },
+    /// The reports are not every part of one catalog, each once.
+    #[error(transparent)]
+    Parts(#[from] crate::run::PartsError),
+    /// A part names a shard that is not one.
+    #[error("a report part names a shard that is not one: {error}")]
+    Shard {
+        /// Why the shard is not one.
+        #[source]
+        error: crate::run::ShardError,
+    },
     /// One part contradicts itself, so combining it would preserve a lie.
     #[error("a report part contradicts itself: {error}")]
     InvalidPart {
@@ -1208,11 +1314,65 @@ pub enum MergeError {
     Count(#[from] CountOverflow),
 }
 
+/// Every claim the parts state, one each, answered as the whole run answers it.
+///
+/// A claim is the same claim in every part, and each part judged the mutations it held in catalog order and named the first that contradicted the claim, or the first it held when none did.
+/// The whole run names the first in catalog order across all of them, so the merged claim is the part's answer that names the earliest contradicting mutation, or failing any, the earliest met one, and is unjudged only where no part decided any of them.
+fn claims_of(parts: &[RunDocument], rows: &[RunMutantDocument]) -> Vec<ExpectationDocument> {
+    let at = |one: &ExpectationDocument| {
+        let rank = match one.standing.as_str() {
+            "met" => 1,
+            "unjudged" => 2,
+            _ => 0,
+        };
+        let position = match &one.mutant {
+            Some(mutant) => match rows.iter().find(|row| row.id == *mutant) {
+                Some(row) => row.index,
+                None => u32::MAX,
+            },
+            None if rank == 0 => 0,
+            None => u32::MAX,
+        };
+        (rank, position)
+    };
+    let mut claims: Vec<ExpectationDocument> = Vec::new();
+    for one in parts.iter().flat_map(|part| part.expectations.iter()) {
+        let same = |held: &ExpectationDocument| {
+            held.id == one.id
+                && held.locator == one.locator
+                && held.reason == one.reason
+                && held.outcome == one.outcome
+                && held.covered == one.covered
+        };
+        match claims.iter_mut().find(|held| same(held)) {
+            Some(held) if at(one) < at(held) => *held = one.clone(),
+            Some(_) => {}
+            None => claims.push(one.clone()),
+        }
+    }
+    claims
+}
+
 /// The report the whole of a catalog would have written, from the reports of its parts.
 ///
 /// # Errors
 /// See [`MergeError`].
 pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
+    let whole = crate::run::Shard { index: 1, of: 1 };
+    let shards = parts
+        .iter()
+        .map(|part| match &part.run.shard {
+            Some(text) => crate::run::Shard::parse(text)
+                .map(|shard| (shard, part))
+                .map_err(|error| MergeError::Shard { error }),
+            None => Ok((whole, part)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let ordered: Vec<RunDocument> = crate::run::Shard::every_part(shards)?
+        .into_iter()
+        .cloned()
+        .collect();
+    let parts = ordered.as_slice();
     let first = parts.first().ok_or(MergeError::Nothing)?;
     for part in parts {
         part.validate()
@@ -1246,26 +1406,21 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
     merged.score = score_of(&accounting)?;
     merged.accounting = accounting;
     merged.mutants = mutants;
-    merged.expectations.clear();
-    for expectation in parts
+    merged.expectations = claims_of(parts, &merged.mutants);
+    let restated: Vec<FindingDocument> = merged
+        .expectations
         .iter()
-        .flat_map(|part| part.expectations.iter().cloned())
-    {
-        if !merged.expectations.contains(&expectation) {
-            merged.expectations.push(expectation);
-        }
-    }
+        .filter_map(|claim| claim.finding().transpose())
+        .collect::<Result<_, _>>()
+        .map_err(|error| MergeError::InvalidPart { error })?;
     merged.findings = parts
         .iter()
-        .flat_map(|part| part.findings.iter().cloned())
+        .flat_map(|part| part.findings.iter())
+        .filter(|finding| !finding.kind.restates_a_claim())
+        .cloned()
+        .chain(restated)
         .collect();
-    merged.findings.sort_by(|a, b| {
-        a.kind
-            .name()
-            .cmp(b.kind.name())
-            .then_with(|| a.mutant.cmp(&b.mutant))
-            .then_with(|| a.detail.cmp(&b.detail))
-    });
+    merged.findings.sort_by(finding_order);
     merged.findings.dedup();
     merged.run.exit_code = exit_code_of(&merged);
     merged
@@ -1331,19 +1486,61 @@ fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverf
 
 /// The exit code the whole earns, which is the code the whole would have earned rather than the worst of its parts.
 fn exit_code_of(merged: &RunDocument) -> u8 {
-    if merged.run.interrupted {
-        return crate::run::EXIT_INTERRUPTED;
+    crate::run::Exit::of(
+        merged.run.interrupted,
+        merged.findings.iter().map(|finding| finding.kind),
+    )
+    .code()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::outcome::Outcome;
+    use crate::run::{Standing, Verified};
+
+    use super::expectation_document;
+
+    fn every_standing() -> Vec<Standing> {
+        let every = vec![
+            Standing::Met,
+            Standing::Moved { from: 9, to: 11 },
+            Standing::Stale {
+                actual: Outcome::Killed,
+            },
+            Standing::Unmatched {
+                why: "the identity names nothing".to_owned(),
+            },
+            Standing::Unjudged,
+        ];
+        for standing in &every {
+            match standing {
+                Standing::Met
+                | Standing::Moved { .. }
+                | Standing::Stale { .. }
+                | Standing::Unmatched { .. }
+                | Standing::Unjudged => {}
+            }
+        }
+        every
     }
-    if merged
-        .findings
-        .iter()
-        .any(|finding| finding.kind.is_infrastructure())
-    {
-        return crate::run::EXIT_FAILED;
-    }
-    if merged.findings.is_empty() {
-        crate::run::EXIT_DETECTED
-    } else {
-        crate::run::EXIT_UNDETECTED
+
+    #[test]
+    fn every_standing_the_writer_can_write_reads_back() {
+        for standing in every_standing() {
+            let verified = Verified {
+                id: "a claim".to_owned(),
+                locator: None,
+                reason: "a reason".to_owned(),
+                outcome: Outcome::Survived,
+                mutant: Some("a mutant".to_owned()),
+                covered: 1,
+                standing: standing.clone(),
+            };
+            let written = expectation_document(&verified);
+            assert!(
+                written.finding().is_ok(),
+                "{standing:?} is written as {written:?}, which its reader refuses"
+            );
+        }
     }
 }

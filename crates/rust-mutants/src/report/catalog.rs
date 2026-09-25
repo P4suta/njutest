@@ -247,7 +247,7 @@ pub fn selection_document(options: &PrepareOptions) -> SelectionDocument {
     SelectionDocument {
         tier: options.tier.name().to_owned(),
         operators: options.operators.clone(),
-        include: spelled(&options.include),
+        include: spelled(options.mutable()),
         exclude: spelled(&options.exclude),
         packages: options.packages.clone(),
         build: options.build.arguments(),
@@ -354,4 +354,21 @@ pub fn mutant_document(
             end_column: proof.body_end.byte_column,
         }),
     })
+}
+
+impl MutantDocument {
+    /// Whether `asked` names this mutant: a prefix of its identity, or a locator as a reader writes it and as `explain` and a run print it.
+    #[must_use]
+    pub fn answers_to(&self, asked: &str) -> bool {
+        self.id.starts_with(asked)
+            || crate::session::Locator::parse(asked).is_some_and(|locator| {
+                locator.describes_place(&crate::session::Place {
+                    path: &self.path,
+                    rule: &self.rule,
+                    original: self.original.as_bytes(),
+                    item: Some(&self.item),
+                    line: self.line,
+                })
+            })
+    }
 }

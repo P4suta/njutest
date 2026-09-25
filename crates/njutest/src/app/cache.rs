@@ -173,7 +173,7 @@ fn temporary(
     stdout: &mut dyn Write,
 ) -> std::io::Result<()> {
     let nothing = |_dir: &Path| Ok(());
-    let remove = |dir: &Path| std::fs::remove_dir_all(dir);
+    let remove = |dir: &Path| rust_mutants::tempowner::remove_tree(dir);
     let swept = rust_mutants::tempowner::sweep_with(
         &environment.temp_directory,
         &[

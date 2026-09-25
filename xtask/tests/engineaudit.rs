@@ -8,7 +8,6 @@
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking and reads as a table"
 )]
-#![recursion_limit = "256"]
 
 use std::path::Path;
 
@@ -38,6 +37,7 @@ const fn asked<'a>(
         shards: &[],
         ledger,
         sites: true,
+        root: None,
     }
 }
 
@@ -68,7 +68,24 @@ fn a_clean_run_is_silent_on_every_layer_it_can_re_decide() {
     assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.mutants, 2, "{audit}");
     assert_eq!(audit.rejections, 1, "{audit}");
-    assert_eq!(audit.exit_code(), 0, "{audit}");
+    assert_eq!(audit.exit_code(), undecided(&audit), "{audit}");
+}
+
+#[test]
+fn every_layer_says_how_far_it_got_even_with_nothing_to_look_at() {
+    let said = audited(&base()).to_string();
+    for layer in Layer::ALL {
+        let heads = said
+            .lines()
+            .filter(|line| line.starts_with(&format!("layer: {}: ", layer.label())))
+            .count();
+        assert_eq!(
+            heads,
+            1,
+            "{} says how far it got once:\n{said}",
+            layer.label()
+        );
+    }
 }
 
 #[test]
@@ -94,7 +111,7 @@ fn a_row_without_byte_offsets_is_not_a_report() {
     let run = run_directory(&document);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("a report missing an identity input must fail at the boundary");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -179,7 +196,7 @@ fn a_step_limit_is_accounted_for_but_never_counted_as_detected() {
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
-            "outcome": "step_limit_reached", "expected": false,
+            "outcome": "step_limit_reached", "expected": false, "killed_by": [],
             "step_notice": {
                 "nonce": "00000000000000000000000000000000",
                 "catalog": "c".repeat(64), "mutant": KILLED, "limit": 10, "observed": 11
@@ -208,9 +225,9 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
-            "outcome": "step_limit_reached", "expected": false,
+            "outcome": "step_limit_reached", "expected": false, "killed_by": [],
             "step_notice": {
-                "nonce": "not-a-nonce", "catalog": "another-catalog",
+                "nonce": "0".repeat(32), "catalog": "e".repeat(64),
                 "mutant": SURVIVED, "limit": 9, "observed": 9
             }
         }, {}],
@@ -219,7 +236,12 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         }]
     }));
     let audit = audited(&document);
-    assert_eq!(violations(&audit, Layer::Accounting).len(), 5, "{audit}");
+    assert_eq!(
+        violations(&audit, Layer::Accounting).len(),
+        4,
+        "another catalog, another mutant, another allowance, and a count not one past it; \
+         a nonce that is not hex is refused by the schema before any layer reads it: {audit}"
+    );
 }
 
 #[test]
@@ -231,7 +253,10 @@ fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
             "inconclusive": 0, "errored": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
-        "mutants": [{ "outcome": "waited", "retried": true, "expected": false }, {}],
+        "mutants": [
+            { "outcome": "waited", "retried": true, "lingered": false, "expected": false, "killed_by": [] },
+            {}
+        ],
         "findings": [{
             "kind": "waited-mutant", "mutant": short(KILLED),
             "detail": "the wall-clock bound expired twice"
@@ -306,6 +331,7 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
         shards: &[path],
         ledger: None,
         sites: false,
+        root: None,
     })
     .expect("a report this audit can read");
     let found = violations(&audit, Layer::Merge);
@@ -326,6 +352,55 @@ fn a_mutant_exec_that_disagrees_with_its_row_is_a_violation() {
     assert!(
         found.iter().any(|remark| remark.contains("disagrees")),
         "{audit}"
+    );
+}
+
+#[test]
+fn a_row_says_it_lingered_exactly_when_its_recorded_execution_did() {
+    let mut claimed = base();
+    claimed["mutants"][0]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&claimed, &recording());
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "a row that says its process outlived its harness's answer, over an execution the \
+         recording says ended with it, rests on nothing: {audit}"
+    );
+    let mut events = recording();
+    events[8]["mutant"]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "and a row that hides an execution the recording says lingered hides it: {audit}"
+    );
+}
+
+#[test]
+fn a_kill_recorded_from_a_signal_sent_from_outside_is_a_violation() {
+    let mut events = recording();
+    events[8]["mutant"]["signal"] = serde_json::json!(9);
+    events[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 9")),
+        "a SIGKILL with no failing test named is what a cancelled job or an out-of-memory \
+         killer leaves, and a kill kept from it hides a survivor from every run that reads it \
+         back: {audit}"
+    );
+    let mut raised = recording();
+    raised[8]["mutant"]["signal"] = serde_json::json!(6);
+    raised[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &raised);
+    assert!(
+        !violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 6")),
+        "an abort the process raised itself is a kill a mutation can cause: {audit}"
     );
 }
 
@@ -424,7 +499,7 @@ fn a_target_the_build_records_as_configured_out_needs_no_verification() {
     let mut events = recording();
     events[4]["build"]["targets"] = serde_json::json!([TARGET, "demo/test/ui"]);
     events[4]["build"]["details"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true},
+        {"id": TARGET, "kind": "lib", "harness": true, "limitations": []},
         {
             "id": "demo/test/ui",
             "kind": "test",
@@ -546,7 +621,8 @@ fn a_ledger_that_explains_every_survivor_is_silent() {
 
 #[test]
 fn the_exit_code_follows_the_violations() {
-    assert_eq!(audited_with(&base(), &recording()).exit_code(), 0);
+    let clean = audited_with(&base(), &recording());
+    assert_eq!(clean.exit_code(), undecided(&clean), "{clean}");
     let broken = audited(&with(
         serde_json::json!({ "mutants": [{ "start_byte": 104 }] }),
     ));
@@ -578,6 +654,7 @@ fn every_explicit_evidence_path_must_be_readable() {
         shards: &shards,
         ledger: None,
         sites: false,
+        root: None,
     })
     .expect_err("an explicitly requested shard must exist");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
@@ -608,6 +685,7 @@ fn malformed_explicit_evidence_is_neither_absent_nor_unaudited() {
         shards: &shards,
         ledger: None,
         sites: false,
+        root: None,
     })
     .expect_err("a corrupt shard must fail closed");
     assert!(
@@ -684,23 +762,24 @@ fn the_report_boundary_rejects_unknown_fields_and_closed_state_values() {
     let run = run_directory(&unknown);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("an unknown field must not look like ignored evidence");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 
     let mut open_state = base();
     open_state["mutants"][0]["outcome"] = serde_json::json!("probably-killed");
     let run = run_directory(&open_state);
     let error = gates::engine_audit(&asked(run.path(), None, None))
         .expect_err("an outcome outside the closed contract must not enter the audit");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
 fn the_report_boundary_rejects_duplicate_keys() {
     let encoded = base().to_string();
-    let duplicated = encoded.replacen(
-        "\"schema_version\":2",
-        "\"schema_version\":2,\"schema_version\":2",
-        1,
+    let key = format!("\"schema_version\":{}", xtask::engineaudit::SCHEMA_VERSION);
+    let duplicated = encoded.replacen(&key, &format!("{key},{key}"), 1);
+    assert_ne!(
+        duplicated, encoded,
+        "the duplicate was planted, so the refusal below is about it"
     );
     let error = xtask::engineaudit::audit("duplicate.json", &duplicated, &Evidence::default())
         .expect_err("a duplicate key must not silently choose a winner");
@@ -724,7 +803,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         &Evidence::default(),
     )
     .expect_err("a missing nullable key is different from an explicit null");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 
     let mut missing_route = base();
     assert!(
@@ -741,7 +820,7 @@ fn nullable_report_fields_are_required_even_when_their_value_is_null() {
         &Evidence::default(),
     )
     .expect_err("a missing route cannot be silently read as no route");
-    assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
+    assert!(matches!(error, AuditError::OffSchema { .. }), "{error}");
 }
 
 #[test]
@@ -773,6 +852,9 @@ fn owned_evidence_is_exact_after_the_duplicate_key_boundary() {
             catalog: None,
             probe_logs: Vec::new(),
             touched: touched.map(|text| Source { path, text }),
+            skeletons: None,
+            carried: None,
+            root: None,
         };
         let error = xtask::engineaudit::audit("report.json", &report, &evidence)
             .expect_err("an owned evidence document must match its exact schema");
@@ -791,6 +873,17 @@ fn layers_of(name: &str) -> &'static [Layer] {
         "a row that ran a target its route never reached"
         | "a route narrowed by guards that kept no record"
         | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
+        "a route that says a target ran that no execution ran" => &[Layer::Work],
+        "a body digest its bytes do not hash to, in the file the run measured" => {
+            &[Layer::Identity]
+        }
+        "a kill carried across a body its killer entered that has changed since"
+        | "a survival carried though the route runs a target no recorded execution ran"
+        | "a kill carried across a skeleton that has changed since"
+        | "a kill carried by an execution whose record omits what it entered"
+        | "a kill carried through a target whose control reached other than its baseline" => {
+            &[Layer::Identity, Layer::Work, Layer::Entry]
+        }
         _ => &[],
     }
 }
@@ -809,6 +902,7 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
                 shards: laid.shards(),
                 ledger: laid.ledger(),
                 sites: true,
+                root: laid.root(),
             })
             .expect("a report this audit can read");
             let spoke: Vec<Layer> = Layer::ALL
@@ -863,7 +957,7 @@ fn every_committed_run_re_decides_with_nothing_the_audit_disagrees_with() {
         assert_eq!(audit.mutants, mutants, "{name}: {audit}");
         assert_eq!(audit.rejections, rejections, "{name}: {audit}");
         assert_eq!(audit.violations(), 0, "{name}: {audit}");
-        assert_eq!(audit.exit_code(), 0, "{name}");
+        assert_eq!(audit.exit_code(), undecided(&audit), "{name}");
     }
 }
 
@@ -915,8 +1009,8 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "original": ">", "replacement": ">=",
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
-            "step_notice": null, "retried": false, "not_run_reason": "interrupted",
-            "route": null, "identical": null,
+            "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted",
+            "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]
     }));
@@ -1066,7 +1160,7 @@ fn a_file_whose_walk_decided_less_than_it_saw_is_a_violation() {
             "discover": {
                 "path": "src/lib.rs",
                 "candidates": 2,
-                "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C" }],
+                "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C", "skip": null, "note": null }],
                 "skips": []
             }
         }),
@@ -1695,4 +1789,129 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
         violations(&audit, Layer::Proofs).is_empty(),
         "the select record agrees with the report: {audit}"
     );
+}
+
+#[test]
+fn the_audit_reads_the_version_and_the_standings_the_schema_file_names() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../schema/rust-mutants-run-report-v1.json"
+    ))
+    .expect("the committed run-report schema");
+    assert_eq!(
+        schema["properties"]["schema_version"]["const"].as_u64(),
+        Some(xtask::engineaudit::SCHEMA_VERSION),
+        "the audit re-decides the version of the report the schema file describes, and is kept \
+         apart from the engine's constant so that it stays a second reading"
+    );
+    let named: std::collections::BTreeSet<&str> = schema
+        .pointer("/properties/expectations/items/properties/standing/enum")
+        .and_then(serde_json::Value::as_array)
+        .expect("the standing enum")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let known: std::collections::BTreeSet<&str> =
+        xtask::engineaudit::CLAIM_STANDINGS.into_iter().collect();
+    assert_eq!(
+        known, named,
+        "every standing the schema allows is one the audit knows how to re-decide"
+    );
+}
+
+/// The committed simple run, with its touched record rewritten by `edit`, re-decided.
+fn simple_with_touched(edit: impl FnOnce(&mut serde_json::Value)) -> Audit {
+    let committed = sample("engine-run-simple");
+    let run = tempfile::tempdir().expect("a temporary directory");
+    for name in [
+        "run-report-v1.json",
+        "catalog-v1.json",
+        "reached-v1.json",
+        "touched-v1.json",
+    ] {
+        std::fs::copy(committed.join(name), run.path().join(name)).expect("a committed document");
+    }
+    let path = run.path().join("touched-v1.json");
+    let mut touched: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&path).expect("the touched record"),
+    )
+    .expect("a touched document");
+    edit(&mut touched);
+    std::fs::write(&path, touched.to_string()).expect("the edited record");
+    gates::engine_audit(&asked(run.path(), Some(&committed.join("trace")), None))
+        .expect("a report this audit can read")
+}
+
+#[test]
+fn a_committed_run_is_held_to_the_items_its_tests_entered() {
+    let whole = simple_with_touched(|_| {});
+    assert!(violations(&whole, Layer::Entry).is_empty(), "{whole}");
+    assert!(
+        whole.of(Layer::Entry).is_empty(),
+        "the committed run keeps its item catalog, so nothing about entry is left unaudited: \
+         {whole}"
+    );
+    let lost = simple_with_touched(|touched| {
+        let targets = touched["targets"]
+            .as_object_mut()
+            .expect("the record names targets");
+        for target in targets.values_mut() {
+            target["entered"] = serde_json::json!({});
+        }
+    });
+    let found = violations(&lost, Layer::Entry);
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("reached it, and the entry markers say")),
+        "a site the guards saw reached inside an item nobody entered: {lost}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("noticed it, and the entry markers say")),
+        "and a kill by a test that never entered the item: {lost}"
+    );
+}
+
+#[test]
+fn a_committed_run_whose_item_catalog_is_gone_leaves_entry_unaudited_rather_than_passed() {
+    let audit = simple_with_touched(|touched| {
+        touched["items"] = serde_json::json!([]);
+    });
+    assert!(violations(&audit, Layer::Entry).is_empty(), "{audit}");
+    assert!(
+        audit
+            .of(Layer::Entry)
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited),
+        "{audit}"
+    );
+}
+
+#[test]
+fn a_mutant_named_after_an_item_the_catalog_does_not_hold_it_in_is_a_violation() {
+    let audit = simple_with_touched(|touched| {
+        let items = touched["items"]
+            .as_array_mut()
+            .expect("the record keeps an item catalog");
+        for item in items {
+            if item["name"] == "max" {
+                item["name"] = serde_json::json!("min");
+            }
+        }
+    });
+    assert!(
+        violations(&audit, Layer::Entry)
+            .iter()
+            .any(|remark| remark.contains("the catalog names the item holding it min")),
+        "{audit}"
+    );
+}
+/// The exit code an audit with no violation earns: 3 where it left anything unaudited, 0 only where it decided everything.
+fn undecided(audit: &Audit) -> u8 {
+    if audit.unaudited() > 0 {
+        xtask::proofaudit::EXIT_UNAUDITED
+    } else {
+        0
+    }
 }

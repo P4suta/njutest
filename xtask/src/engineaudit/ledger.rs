@@ -5,9 +5,9 @@
 
 use std::collections::BTreeSet;
 
-use super::{Audit, Layer, MET, Notes, Report, SURVIVING_MUTANT, UNREACHED_MUTANT};
+use super::{Audit, Decided, Layer, MET, Notes, Report, SURVIVING_MUTANT, UNREACHED_MUTANT};
 
-pub(super) fn ledger(report: &Report, ledger: Option<&toml::Table>, audit: &mut Audit) {
+pub(super) fn ledger(report: &Report, ledger: Option<&toml::Table>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Ledger);
     let Some(ledger) = ledger else {
         notes.unaudited(
@@ -16,7 +16,7 @@ pub(super) fn ledger(report: &Report, ledger: Option<&toml::Table>, audit: &mut 
              re-decided"
                 .to_owned(),
         );
-        return;
+        return notes.looked();
     };
     let entries = accepted(ledger);
     for finding in &report.findings {
@@ -55,6 +55,7 @@ pub(super) fn ledger(report: &Report, ledger: Option<&toml::Table>, audit: &mut 
             );
         }
     }
+    notes.looked()
 }
 
 /// Every mutant the ledger accepts, by the identity it names.

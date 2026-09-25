@@ -643,7 +643,10 @@ fn the_runtime_every_measured_binary_carries_starts_nothing() {
         catalog_digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         placements: scripted.placements(),
         markers: &[],
+        first_item: 0,
+        item_count: 0,
         newline: "\n",
+        watched: "/watched",
     })
     .expect("a small catalog renders");
     let found = scanned("runtime.rs", &rendered).expect("the runtime is Rust's tokens");

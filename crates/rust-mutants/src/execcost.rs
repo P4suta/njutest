@@ -124,7 +124,7 @@ pub fn exec_twice(temp: &Path, program: &Path) -> Result<(Duration, Duration), E
         std::process::id()
     ));
     let measured = made(&dir, program);
-    let cleaned = std::fs::remove_dir_all(&dir);
+    let cleaned = crate::tempowner::remove_tree(&dir);
     match (measured, cleaned) {
         (answer, Ok(())) => answer,
         (answer, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => answer,
@@ -180,7 +180,9 @@ fn timed(path: &Path) -> Result<Duration, ExecCostError> {
                 seconds: PROBE_LIMIT.as_secs(),
             });
         }
-        crate::runner::Termination::StoppedByMonitor | crate::runner::Termination::Stalled => {
+        crate::runner::Termination::StoppedByMonitor
+        | crate::runner::Termination::Answered
+        | crate::runner::Termination::Stalled => {
             return Err(ExecCostError::StoppedByMonitor {
                 path: path.to_path_buf(),
             });

@@ -54,6 +54,8 @@ pub struct Common {
     pub versions: Vec<String>,
     /// The digest of the fuzz corpora.
     pub corpus: String,
+    /// The digest of the running njutest, because two builds of it may mean two different things by the same answer.
+    pub engine: String,
 }
 
 /// Binds a run-wide identity to one Cargo build selection.
@@ -121,6 +123,7 @@ fn key(domain: &str, linked: &Linked, common: &Common) -> String {
         )
         .field("toolchain", &common.toolchain)
         .field("platform", &common.platform)
+        .field("engine", &common.engine)
         .list(
             "environment",
             environment

@@ -29,7 +29,7 @@ Reach alone cannot prove a binary single-threaded.
    Libtest runs a binary's tests on every processor unless it is told otherwise, and two tests on two threads interleave over whatever they share, so a binary run without `--test-threads=1` is `concurrent` with `parallel-tests`, however quiet its closure.
    The runner and the audit each read the harness arguments as libtest does, and both are held by their tests to one contract, `schema/libtest-harness-options.json`, which lists every option and whether it takes a value, so the two readings cannot drift apart.
    Where anything says it can run more than one thread it is `concurrent`, with every reason; where anything could not be looked at it is `not-proven`, with every reason.
-   Both are named by `schedule-not-explored`, since nothing explores a schedule yet.
+   Both are holes until a schedule of them is explored: `schedule-not-explored` names them where none was.
 
 2. **The source half reads tokens of the whole closure and fails closed.** Every `.rs` file of every package the binary links is read, registry packages included, as tokens, so a macro body and an attribute are read exactly as code is.
    A call or method whose name starts with `spawn` on any receiver, a path call to `scope`, rayon, crossbeam, a thread pool or a parallel iterator, a runtime's `main` or `test` attribute and `new_multi_thread` each make it `concurrent`.

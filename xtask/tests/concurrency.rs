@@ -196,7 +196,7 @@ mod explored {
         Context {
             single_threaded: false,
             passing: true,
-            reached: 2,
+            reached: Some(2),
             asked_any: !runs.is_empty(),
         }
     }
@@ -330,7 +330,7 @@ mod explored {
             &unexplored("no-site"),
             &[],
             Context {
-                reached: 0,
+                reached: Some(0),
                 ..quiet
             }
         ));
@@ -354,7 +354,7 @@ mod explored {
                 &json!({ "state": "sampled", "asked": 5, "delayed": [1, 2] }),
                 &passed,
                 Context {
-                    reached: 10,
+                    reached: Some(10),
                     ..concurrent(&passed)
                 }
             ),

@@ -17,6 +17,10 @@ concurrency:
   group: mutation-${{ github.ref }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   cargo-mutants:
     name: cargo-mutants (${{ matrix.package }})

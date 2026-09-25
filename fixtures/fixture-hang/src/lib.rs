@@ -24,3 +24,14 @@ pub fn count_to(n: u32) -> u32 {
 pub fn clamp_positive(n: i64) -> i64 {
     if n > 0 { n } else { 0 }
 }
+
+/// How many strides of one it takes to walk from zero to `n`, walked by a loop in a file of its own.
+///
+/// The stride is the mutation's site and the loop is not: a stride of zero never ends a loop the run is not mutating, which only the checkpoints across the whole crate can count.
+#[must_use]
+pub fn walked(n: u32) -> u32 {
+    let stride = 1;
+    walk::strides(n, stride)
+}
+
+mod walk;

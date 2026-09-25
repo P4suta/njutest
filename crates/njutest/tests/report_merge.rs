@@ -137,22 +137,37 @@ fn part_stated(
     vary: &dyn Fn(&mut BuildReport),
     stated: &dyn Fn(&mut BuildReport),
 ) -> ShardReport {
-    let (envelope, measurements) = measured(run, shard, rows, vary, stated);
-    let latticed = njutest::report::across::configured(&envelope, &measurements)
-        .expect("one checked shard lattice");
+    let latticed = tried_part(run, shard, rows, vary, stated).expect("one checked shard lattice");
     let LatticedDocument::Shard(part) = latticed else {
         panic!("the sharded fixture cannot be a whole report");
     };
     part
 }
 
+/// What the checked lattice makes of one shard's measurement, or what it refused about it.
+fn tried_part(
+    run: &str,
+    shard: &str,
+    rows: Vec<MutantRecord>,
+    vary: &dyn Fn(&mut BuildReport),
+    stated: &dyn Fn(&mut BuildReport),
+) -> Result<LatticedDocument, njutest::report::across::ConfiguredError> {
+    njutest::report::across::configured(&envelope(run), &measured(run, shard, rows, vary, stated))
+}
+
+/// The namespace the report of `run` is written under.
+fn envelope(run: &str) -> RunId {
+    RunId::try_from(format!("{run}-report")).expect("a canonical envelope namespace")
+}
+
+/// One shard's measurement, as a run would hand it to the lattice.
 fn measured(
     run: &str,
     shard: &str,
     rows: Vec<MutantRecord>,
     vary: &dyn Fn(&mut BuildReport),
     stated: &dyn Fn(&mut BuildReport),
-) -> (RunId, njutest::report::across::BuildMeasurements) {
+) -> njutest::report::across::BuildMeasurements {
     let mut source = BuildReport::new(run, RunKind::Full, Contract::StandardV1);
     source.repository.workspace_digest = "a".repeat(64);
     source.repository.configuration_digest = "b".repeat(64);
@@ -192,15 +207,40 @@ fn measured(
     stated(&mut source);
     njutest::testkit::read_every_named_file(&mut source);
     source.verdict = source.concluded();
-    let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
+    njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),
         rust_mutants::cargo::BuildConfig::default().selection(),
         source,
     )])
-    .expect("one checked build measurement");
-    let envelope =
-        RunId::try_from(format!("{run}-report")).expect("a canonical envelope namespace");
-    (envelope, measurements)
+    .expect("one checked build measurement")
+}
+
+/// One fault site at `index`, decided `decision`.
+fn fault(
+    index: u32,
+    decision: njutest::report::faults::FaultDecision,
+) -> njutest::report::faults::FaultRecord {
+    njutest::report::faults::FaultRecord {
+        catalog_index: njutest::report::CatalogIndex::new(index),
+        id: format!("{index:0>64}"),
+        display_id: format!("{index:0>20}"),
+        path: "src/lib.rs".to_owned(),
+        item: "load".to_owned(),
+        position: None,
+        decision,
+    }
+}
+
+/// States `faults` in a part, with the counts and findings a run derives from them.
+fn faulted(faults: Vec<njutest::report::faults::FaultRecord>) -> impl Fn(&mut BuildReport) {
+    move |source: &mut BuildReport| {
+        source.faults = faults.clone();
+        source.accounting.faults =
+            njutest::report::faults::FaultAccounting::of(&source.faults).expect("a small count");
+        source
+            .findings
+            .extend(njutest::report::faults::found(&source.faults));
+    }
 }
 
 fn part_varying(
@@ -795,6 +835,7 @@ fn moved_at(target: &str) -> njutest::report::drift::Drift {
         },
         bodies: nothing(),
         infected: nothing(),
+        entered: nothing(),
     }
 }
 
@@ -858,6 +899,142 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
 }
 
 #[test]
+fn the_fault_sites_of_every_part_are_the_whole_s_and_are_counted_again() {
+    use njutest::report::faults::FaultDecision;
+    let one = part_stated(
+        "one",
+        "1/2",
+        Vec::new(),
+        &|_| {},
+        &faulted(vec![fault(0, FaultDecision::Unnoticed)]),
+    );
+    let two = part_stated(
+        "two",
+        "2/2",
+        Vec::new(),
+        &|_| {},
+        &faulted(vec![fault(
+            1,
+            FaultDecision::Noticed {
+                by: "pkg/lib/pkg".to_owned(),
+            },
+        )]),
+    );
+    let conclusion = whole("the-whole", &[one, two])
+        .conclusion()
+        .expect("a representable conclusion");
+    assert_eq!(conclusion.faults.len(), 2, "{:?}", conclusion.faults);
+    assert_eq!(
+        (
+            conclusion.accounting.faults.sites,
+            conclusion.accounting.faults.noticed
+        ),
+        (2, 1),
+        "the whole counts its faults again from the records it holds"
+    );
+}
+
+#[test]
+fn a_fault_site_is_in_the_one_part_its_index_belongs_to() {
+    use njutest::report::faults::FaultDecision;
+    let refused = tried_part(
+        "one",
+        "1/2",
+        Vec::new(),
+        &|_| {},
+        &faulted(vec![fault(1, FaultDecision::Unreached)]),
+    )
+    .expect_err("index 1 belongs to the second of two parts")
+    .to_string();
+    assert!(
+        refused.contains("puts catalog index 1 in shard 1/2"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_part_whose_fault_counts_are_not_its_records_is_refused() {
+    use njutest::report::faults::FaultDecision;
+    let refused = tried_part(
+        "one",
+        "1/2",
+        Vec::new(),
+        &|_| {},
+        &|source: &mut BuildReport| {
+            source.faults = vec![fault(0, FaultDecision::Unreached)];
+        },
+    )
+    .expect_err("one record and a count of none")
+    .to_string();
+    assert!(
+        refused.contains("has fault accounting that disagrees with its rows"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_shard_holds_evidence_about_its_survivor_beside_a_fault_another_shard_holds() {
+    let survivor = row(0, &"a".repeat(64), "survived", false);
+    let named = survivor.display_id.clone();
+    let part = tried_part(
+        "one",
+        "1/2",
+        vec![survivor],
+        &|_| {},
+        &move |source: &mut BuildReport| {
+            source.beside = vec![njutest::report::faults::BesideRecord {
+                mutant: named.clone(),
+                fault: "f".repeat(20),
+                target: "pkg/lib/pkg".to_owned(),
+                failed: njutest::report::faults::Failed::Beside,
+            }];
+        },
+    );
+    if let Err(refused) = part {
+        panic!(
+            "the fault beside a survivor is owned by whichever shard its index falls in: {refused}"
+        );
+    }
+}
+
+#[test]
+fn a_merge_of_whole_parts_names_each_dimension_they_left_a_hole_once() {
+    let whole = |source: &mut BuildReport| source.contract = Contract::WholeV1;
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &whole,
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &whole,
+    );
+    let conclusion = super_whole(&[one, two]);
+    let mut named: Vec<&str> = conclusion
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::DimensionNotMeasured)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    named.sort_unstable();
+    assert_eq!(
+        named,
+        vec!["durable", "fault", "repeatable", "schedule"],
+        "no part raises a dimension finding, and the merge raises each once over every part, the \
+         schedule among them since a binary passed in each part with no record of its threads"
+    );
+}
+
+fn super_whole(parts: &[ShardReport]) -> njutest::report::Conclusion {
+    whole("the-whole", parts)
+        .conclusion()
+        .expect("a representable conclusion")
+}
+
+#[test]
 fn parts_whose_baselines_disagree_about_a_binarys_threads_are_not_one_catalog() {
     use njutest::concurrency::proof::{Because, Standing};
     use njutest::report::concurrency::ConcurrencyRecord;
@@ -897,7 +1074,7 @@ fn parts_whose_baselines_disagree_about_a_binarys_threads_are_not_one_catalog() 
 fn a_part_whose_concurrency_records_leave_out_a_binary_it_measured_is_refused() {
     use njutest::concurrency::proof::Standing;
     use njutest::report::concurrency::ConcurrencyRecord;
-    let (envelope, measurements) = measured(
+    let refused = tried_part(
         "one",
         "1/2",
         vec![row(0, &"a".repeat(64), "killed", false)],
@@ -911,11 +1088,144 @@ fn a_part_whose_concurrency_records_leave_out_a_binary_it_measured_is_refused() 
             }];
         },
         &|_| {},
-    );
-    let refused = njutest::report::across::configured(&envelope, &measurements)
-        .expect_err("a binary it measured has no record");
+    )
+    .expect_err("a binary it measured has no record");
     assert!(
         refused.to_string().contains("pkg/lib/pkg"),
         "a measured binary with no record is neither proven nor named as a hole: {refused}"
     );
+}
+
+#[test]
+fn a_merge_refuses_an_acceptance_called_unmatched_that_its_catalog_resolves() {
+    let claimed = Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "bbbbbbbb",
+        "no mutant matches this acceptance",
+    );
+    let one = part_stated(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &|_| {},
+        &|source| source.findings.push(claimed.clone()),
+    );
+    let two = part_stated(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &|_| {},
+        &|source| source.findings.push(claimed.clone()),
+    );
+    let refused = refused_as(&[one, two]);
+    assert!(
+        refused.to_string().contains("bbbbbbbb"),
+        "the acceptance names exactly one mutant of the whole catalog, the one the second part \
+         holds, so a whole run would refuse to call it unmatched, and a merge of its parts \
+         does too: {refused}"
+    );
+}
+
+/// What a complete report concludes, as a multiset: its verdict, its findings by kind and subject, and its limitations by name.
+fn concluded(report: &Report) -> (Verdict, Vec<(String, String)>, Vec<String>) {
+    let conclusion = report
+        .conclusion()
+        .expect("the checked whole has a representable conclusion");
+    let mut findings: Vec<(String, String)> = conclusion
+        .findings
+        .iter()
+        .map(|finding| (finding.kind.name().to_owned(), finding.subject.clone()))
+        .collect();
+    findings.sort();
+    let mut limitations: Vec<String> = conclusion
+        .limitations
+        .iter()
+        .map(|limitation| limitation.name.clone())
+        .collect();
+    limitations.sort();
+    (conclusion.verdict, findings, limitations)
+}
+
+/// The targets a generated row may be answered by, in the name order a run asks them in.
+const ANSWERING_IN_NAME_ORDER: [&str; 3] = ["pkg/lib/pkg", "pkg/test/pins", "pkg/test/smoke"];
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(96))]
+
+    #[test]
+    fn how_a_catalog_is_divided_among_runs_is_not_an_input_to_what_it_concludes(
+        judged in proptest::collection::vec(
+            (0_usize..ANSWERING_IN_NAME_ORDER.len(), proptest::bool::ANY),
+            1..9,
+        ),
+        moved in proptest::option::of(0_usize..ANSWERING_IN_NAME_ORDER.len()),
+    ) {
+        let rows: Vec<MutantRecord> = judged
+            .iter()
+            .enumerate()
+            .map(|(at, (asked, noticed))| {
+                let index = u32::try_from(at).expect("a small catalog");
+                let order = ANSWERING_IN_NAME_ORDER.get(..=*asked).unwrap_or_default();
+                let last = order.last().copied().unwrap_or_default();
+                let outcome = if *noticed { "killed" } else { "survived" };
+                let mut record =
+                    row(index, &format!("{:02x}{}", at.saturating_add(1), "a".repeat(62)), outcome, false);
+                record.outcome = decided(outcome, Some(last));
+                record.routing = Some(njutest::report::Routing {
+                    granularity: rust_mutants::session::Granularity::Block,
+                    reaching: order.iter().map(|target| (*target).to_owned()).collect(),
+                    discharged: Vec::new(),
+                    fallback: None,
+                    answered: order
+                        .iter()
+                        .map(|target| njutest::report::Answered {
+                            target: (*target).to_owned(),
+                            outcome: if *noticed && *target == last {
+                                Outcome::Killed
+                            } else {
+                                Outcome::Survived
+                            },
+                        })
+                        .collect(),
+                });
+                record
+            })
+            .collect();
+        let drift: Vec<njutest::report::drift::Drift> =
+            moved
+                .and_then(|target| ANSWERING_IN_NAME_ORDER.get(target))
+                .map(|target| moved_at(target))
+                .into_iter()
+                .collect();
+        let mut conclusions = Vec::new();
+        for of in 1..=rows.len().min(4) {
+            let parts: Vec<ShardReport> = (1..=of)
+                .map(|index| {
+                    let owned: Vec<MutantRecord> = rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(at, _)| at % of == index - 1)
+                        .map(|(_, record)| record.clone())
+                        .collect();
+                    let drift = drift.clone();
+                    part_varying(
+                        &format!("part{index}of{of}"),
+                        &format!("{index}/{of}"),
+                        owned,
+                        &move |source| source.drift.clone_from(&drift),
+                    )
+                })
+                .collect();
+            conclusions.push((of, concluded(&whole(&format!("the-whole-of-{of}"), &parts))));
+        }
+        let (_, first) = conclusions.first().expect("at least one division");
+        for (of, conclusion) in &conclusions {
+            proptest::prop_assert_eq!(
+                conclusion,
+                first,
+                "divided into {} shard(s), the catalog concluded otherwise than in one",
+                of
+            );
+        }
+    }
 }

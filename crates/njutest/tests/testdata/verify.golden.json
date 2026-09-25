@@ -15,6 +15,24 @@
       "parts": [
         {
           "accounting": {
+            "crashes": {
+              "corrupt": 0,
+              "not_put": 0,
+              "restarted": 0,
+              "sites": 0,
+              "undecided": 0,
+              "unreached": 0,
+              "unshared": 0
+            },
+            "faults": {
+              "not_put": 0,
+              "noticed": 0,
+              "sites": 0,
+              "undecided": 0,
+              "unnoticed": 0,
+              "unreached": 0,
+              "waited": 0
+            },
             "mutants": {
               "accepted": 0,
               "cataloged": 14,
@@ -56,6 +74,7 @@
               "skipped": 0
             }
           },
+          "beside": [],
           "candidates": [],
           "concurrency": [
             {
@@ -107,6 +126,7 @@
               "target": "<volatile>"
             }
           ],
+          "crashes": [],
           "drift": [
             {
               "state": "held",
@@ -117,6 +137,7 @@
               "target": "<volatile>"
             }
           ],
+          "faults": [],
           "findings": [
             {
               "detail": "no test could have noticed gt-to-ge at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",
@@ -845,7 +866,7 @@
   "schema": "njutest-assurance-report-v1",
   "schema_version": 2,
   "scope": {
-    "configuration": "",
+    "configuration": ".njutest.toml",
     "configured_builds": [
       "default"
     ],

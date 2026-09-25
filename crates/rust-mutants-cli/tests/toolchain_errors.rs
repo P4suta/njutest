@@ -51,6 +51,7 @@ fn environment(fixture: &Fixture) -> Environment {
         no_color: true,
         stdout_is_terminal: false,
         paints: false,
+        ci: rust_mutants_cli::CiHost::None,
     }
 }
 
@@ -62,7 +63,7 @@ fn a_reserved_variable_names_itself_and_says_what_to_do() {
     let output = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["list", "--root", root])
         .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
         .env("XDG_CACHE_HOME", fixture.cache())
         .env_remove("RUST_MUTANTS_ACTIVE")
         .env_remove("RUST_MUTANTS_CATALOG")

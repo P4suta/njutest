@@ -6,6 +6,7 @@
 //! The value only.
 //! What a person reads is a separate job, and the line between them is that this knows nothing about how it is shown and a page invents nothing this does not carry.
 
+use crate::report::faults::FaultDecision;
 use crate::report::{Decided, SeamDecision};
 use crate::trace::{Event, Payload, Read};
 
@@ -19,6 +20,8 @@ pub enum Claim {
     Mutation(String),
     /// One question about one exchange on one seam.
     Seam(String),
+    /// One call a `?` asks about, failed by a fault.
+    Fault(String),
 }
 
 impl Claim {
@@ -26,7 +29,7 @@ impl Claim {
     #[must_use]
     pub fn named(&self) -> &str {
         match self {
-            Self::Mutation(id) | Self::Seam(id) => id,
+            Self::Mutation(id) | Self::Seam(id) | Self::Fault(id) => id,
         }
     }
 }
@@ -77,6 +80,15 @@ pub enum Chain {
         /// What the run finally established.
         came_to: SeamDecision,
     },
+    /// A call a `?` asks about, failed by a fault.
+    Fault {
+        /// Its identity.
+        id: String,
+        /// What each target did with the call failing.
+        steps: Vec<Step>,
+        /// What the run finally established.
+        came_to: FaultDecision,
+    },
 }
 
 impl Chain {
@@ -84,7 +96,9 @@ impl Chain {
     #[must_use]
     pub fn steps(&self) -> &[Step] {
         match self {
-            Self::Mutation { steps, .. } | Self::Seam { steps, .. } => steps,
+            Self::Mutation { steps, .. } | Self::Seam { steps, .. } | Self::Fault { steps, .. } => {
+                steps
+            }
         }
     }
 }
@@ -149,7 +163,69 @@ pub fn why(claim: &Claim, recording: Option<&[Event]>) -> Why {
     match claim {
         Claim::Mutation(id) => mutation(id, events),
         Claim::Seam(id) => seam(id, events),
+        Claim::Fault(id) => fault(id, events),
     }
+}
+
+/// The chain of one fault: every target it was put to, then what the run said it came to.
+fn fault(id: &str, events: &[Event]) -> Why {
+    let mut steps = Vec::new();
+    let mut came_to = None;
+    let mut recorded = std::collections::BTreeSet::new();
+    for event in events {
+        match &event.payload {
+            Payload::FaultExec { fault } if fault.fault == id => steps.push(Step::Asked {
+                target: fault.target.clone(),
+                outcome: fault.outcome.clone(),
+            }),
+            Payload::Fault { fault } => {
+                recorded.insert(fault.display_id.as_str());
+                if fault.display_id == id {
+                    came_to = Some(fault.decision.clone());
+                }
+            }
+            Payload::RunStart { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
+            | Payload::PhaseStart { .. }
+            | Payload::PhaseEnd { .. }
+            | Payload::Exec { .. }
+            | Payload::Progress { .. }
+            | Payload::Artifact { .. }
+            | Payload::Route { .. }
+            | Payload::MutantExec { .. }
+            | Payload::FaultExec { .. }
+            | Payload::Beside { .. }
+            | Payload::Knob { .. }
+            | Payload::BesideRun { .. }
+            | Payload::CrashExec { .. }
+            | Payload::CrashStep { .. }
+            | Payload::Crash { .. }
+            | Payload::ProbeExec { .. }
+            | Payload::WireExchange { .. }
+            | Payload::WireExec { .. }
+            | Payload::Sentinel { .. }
+            | Payload::Model { .. }
+            | Payload::Drift { .. }
+            | Payload::Repair { .. }
+            | Payload::Note { .. }
+            | Payload::RunEnd { .. } => {}
+        }
+    }
+    came_to.map_or_else(
+        || Why::Unknown {
+            recorded: recorded.len(),
+        },
+        |came_to| {
+            Why::Followed(Chain::Fault {
+                id: id.to_owned(),
+                steps,
+                came_to,
+            })
+        },
+    )
 }
 
 /// The chain of one mutation.
@@ -194,6 +270,10 @@ fn mutation(id: &str, events: &[Event]) -> Why {
                 };
             }
             Payload::RunStart { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
             | Payload::PhaseStart { .. }
             | Payload::PhaseEnd { .. }
             | Payload::Exec { .. }
@@ -204,9 +284,17 @@ fn mutation(id: &str, events: &[Event]) -> Why {
             | Payload::ProbeExec { .. }
             | Payload::WireExchange { .. }
             | Payload::WireExec { .. }
+            | Payload::FaultExec { .. }
+            | Payload::Fault { .. }
+            | Payload::Beside { .. }
+            | Payload::BesideRun { .. }
+            | Payload::CrashExec { .. }
+            | Payload::CrashStep { .. }
+            | Payload::Crash { .. }
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Repair { .. }
             | Payload::Knob { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
@@ -279,6 +367,10 @@ fn mutations(events: &[Event]) -> usize {
                 seen.extend(std::iter::once(mutant.mutant.as_str()));
             }
             Payload::RunStart { .. }
+            | Payload::FaultControl { .. }
+            | Payload::FaultAttribution { .. }
+            | Payload::FaultRoute { .. }
+            | Payload::FaultRejected { .. }
             | Payload::PhaseStart { .. }
             | Payload::PhaseEnd { .. }
             | Payload::Exec { .. }
@@ -287,9 +379,17 @@ fn mutations(events: &[Event]) -> usize {
             | Payload::ProbeExec { .. }
             | Payload::WireExchange { .. }
             | Payload::WireExec { .. }
+            | Payload::FaultExec { .. }
+            | Payload::Fault { .. }
+            | Payload::Beside { .. }
+            | Payload::BesideRun { .. }
+            | Payload::CrashExec { .. }
+            | Payload::CrashStep { .. }
+            | Payload::Crash { .. }
             | Payload::Sentinel { .. }
             | Payload::Model { .. }
             | Payload::Drift { .. }
+            | Payload::Repair { .. }
             | Payload::Knob { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}

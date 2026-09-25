@@ -3,6 +3,7 @@
 
 //! The gates applied to this repository: each one reads the tree, hands it to the pure checker of its module, and renders the answer.
 
+use crate::error::Coded as _;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
@@ -26,6 +27,12 @@ pub fn workspace_root() -> PathBuf {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct GateFailure(pub String);
+
+impl crate::error::Coded for GateFailure {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::GateRefused
+    }
+}
 
 fn append(output: &mut String, arguments: Arguments<'_>) {
     output.push_str(&arguments.to_string());
@@ -194,7 +201,8 @@ fn source_universe(
                     target: Some(target),
                     ..
                 } => {
-                    ALLOWED_PATH_REDIRECTS.contains(&(file.as_str(), target.as_str()))
+                    (ALLOWED_PATH_REDIRECTS.contains(&(file.as_str(), target.as_str()))
+                        || suite_member(file, &target))
                         && resolve_redirect(file, &target)
                             .is_some_and(|path| labels.contains(&path))
                 }
@@ -214,6 +222,17 @@ fn source_universe(
 
     validate_proc_macros(&proc_macros, &canonical_labels, sources, &mut found)?;
     Ok(found)
+}
+
+/// Whether `target` is a sibling test file a crate's one test suite, `file`, compiles as a module.
+fn suite_member(file: &str, target: &str) -> bool {
+    let path = Path::new(target);
+    file.ends_with("/tests/suite.rs")
+        && path.extension().is_some_and(|extension| extension == "rs")
+        && matches!(
+            path.components().collect::<Vec<_>>().as_slice(),
+            [Component::Normal(_)]
+        )
 }
 
 fn support_include(target: &str) -> bool {
@@ -1418,7 +1437,7 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
     let ledger_text = std::fs::read_to_string(&ledger_path)
         .map_err(|error| GateFailure(format!("{}: {error}", ledger_path.display())))?;
     let ledger =
-        devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.to_string()))?;
+        devgates::parse_ledger(&ledger_text).map_err(|error| GateFailure(error.coded()))?;
     devgates::compare(&found, &ledger)
         .map_err(|disagreement| GateFailure(disagreement.to_string()))?;
     let most = ceiling(root, "xtask/seam_ceiling.txt")?;
@@ -1551,9 +1570,11 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     ));
     prohibited.sort();
     prohibited.dedup();
+    built_as_tested(root, &metadata, &members)?;
     if violations.is_empty() && prohibited.is_empty() {
         return Ok(format!(
-            "deps: {} internal edges, all in the allowed direction; {census}",
+            "deps: {} internal edges, all in the allowed direction, and every shipped \
+             dependency is built as its tests build it; {census}",
             edges.len()
         ));
     }
@@ -1566,6 +1587,99 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
     }
     append(&mut message, format_args!("{}", deps::RULE));
     Err(GateFailure(message))
+}
+
+/// Nothing, where every direct dependency of a shipped crate is built with the features its tests build it with.
+///
+/// # Errors
+/// A feature only a development edge turns on, or a `cargo tree` that could not be run.
+fn built_as_tested(
+    root: &Path,
+    metadata: &cargo_metadata::Metadata,
+    members: &[String],
+) -> Result<(), GateFailure> {
+    let direct: BTreeSet<String> = metadata
+        .workspace_packages()
+        .iter()
+        .filter(|package| deps::SHIPPED.contains(&package.name.as_str()))
+        .flat_map(|package| package.dependencies.iter())
+        .filter(|dependency| {
+            dependency.kind != cargo_metadata::DependencyKind::Development
+                && !members.contains(&dependency.name)
+        })
+        .map(|dependency| dependency.name.clone())
+        .collect();
+    let ships = metadata
+        .workspace_packages()
+        .iter()
+        .any(|package| deps::SHIPPED.contains(&package.name.as_str()));
+    let tested_only = if ships {
+        features_only_tests_build_with(root, &direct)?
+    } else {
+        Vec::new()
+    };
+    if !tested_only.is_empty() {
+        let mut message = String::from(
+            "deps: a shipped dependency is built with a feature only a development edge turns on, \
+             so every test reads with it and no release does:\n",
+        );
+        for (package, features) in &tested_only {
+            line(
+                &mut message,
+                format_args!("  {package}: {}", features.join(", ")),
+            );
+        }
+        append(
+            &mut message,
+            format_args!("turn the feature on where the shipped crate depends on it"),
+        );
+        return Err(GateFailure(message));
+    }
+    Ok(())
+}
+
+/// Every feature a shipped dependency is built with only because a development edge asks for it, on any target a release builds.
+///
+/// # Errors
+/// A `cargo tree` that could not be run or read.
+fn features_only_tests_build_with(
+    root: &Path,
+    direct: &BTreeSet<String>,
+) -> Result<Vec<(String, Vec<String>)>, GateFailure> {
+    let tree = |target: &str, edges: &str| -> Result<String, GateFailure> {
+        let mut args = vec![
+            "tree", "--locked", "--color", "never", "--prefix", "none", "--format", "{p}|{f}",
+            "--target", target, "--edges", edges,
+        ];
+        for shipped in deps::SHIPPED {
+            args.extend(["--package", shipped]);
+        }
+        let asked = std::process::Command::new("cargo")
+            .args(&args)
+            .current_dir(root)
+            .output()
+            .map_err(|error| GateFailure(format!("cargo tree: {error}")))?;
+        if !asked.status.success() {
+            let stderr = std::str::from_utf8(&asked.stderr)
+                .map_err(|error| GateFailure(format!("cargo tree stderr is not UTF-8: {error}")))?;
+            return Err(GateFailure(format!("cargo tree: {}", stderr.trim())));
+        }
+        String::from_utf8(asked.stdout)
+            .map_err(|error| GateFailure(format!("cargo tree stdout is not UTF-8: {error}")))
+    };
+    let mut found = Vec::new();
+    for target in deps::SHIPPED_TARGETS {
+        for (package, features) in deps::features_only_tests_build_with(
+            (
+                &tree(target, "normal,build")?,
+                &tree(target, "normal,build,dev")?,
+            ),
+            direct,
+        ) {
+            found.push((format!("{package} on {target}"), features));
+        }
+    }
+    Ok(found)
 }
 
 /// Every cargo manifest in the tree, classified, so a fourth kind cannot appear unnoticed.
@@ -1861,6 +1975,79 @@ fn surface_harnesses(
         .collect()
 }
 
+/// The decision records against their numbers, their headings, the book's list, and every name of one in the tree.
+///
+/// # Errors
+/// The first record that does not hold together, or every name of a record that no record has.
+pub fn adrs(root: &Path) -> Result<String, GateFailure> {
+    let directory = root.join("docs/adr");
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&directory)
+        .min_depth(1)
+        .max_depth(1)
+        .sort_by_file_name()
+    {
+        let entry = walked(entry)?;
+        let name = relative_slash(&directory, entry.path())?;
+        if !entry.file_type().is_file() {
+            return Err(GateFailure(format!(
+                "adrs: docs/adr/{name} is not a file, and the directory holds decision records only"
+            )));
+        }
+        let text = std::fs::read_to_string(entry.path())
+            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
+        files.push((name, text));
+    }
+    let records = crate::adrs::records(&files)
+        .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
+    let book = root.join("docs/SUMMARY.md");
+    let listed = std::fs::read_to_string(&book)
+        .map_err(|error| GateFailure(format!("{}: {error}", book.display())))?;
+    crate::adrs::summary(&listed, &records)
+        .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
+    let mut dangling = Vec::new();
+    let mut pages = 0_usize;
+    for entry in WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || !(entry.file_name().as_encoded_bytes().first() == Some(&b'.')
+                    || entry.file_name() == "target")
+        })
+    {
+        let entry = walked(entry)?;
+        let read = entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "md" || extension == "rs");
+        if !read {
+            continue;
+        }
+        pages = pages.saturating_add(1);
+        let page = relative_slash(root, entry.path())?;
+        let text = std::fs::read_to_string(entry.path())
+            .map_err(|error| GateFailure(format!("{page}: {error}")))?;
+        dangling.extend(
+            crate::adrs::dangling(&page, &text, &records)
+                .iter()
+                .map(crate::error::Coded::coded),
+        );
+    }
+    if !dangling.is_empty() {
+        return Err(GateFailure(format!(
+            "adrs: these name a decision record that is not there:\n  {}",
+            dangling.join("\n  ")
+        )));
+    }
+    Ok(format!(
+        "adrs: {} decision records, one number each and each listed once in the book under it, and \
+         {pages} files name no other",
+        records.len()
+    ))
+}
+
 /// Every variable that points git at a repository other than the one it is standing in, which a hook or a wrapper may have set.
 pub const REDIRECTING_GIT: [&str; 10] = [
     "GIT_DIR",
@@ -1997,8 +2184,10 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         fixtures,
         release_check,
         milestones,
+        adrs,
         surfaces,
         reached,
+        defaulted,
         waivers,
         tracked,
     ] {
@@ -2022,7 +2211,34 @@ pub fn proofaudit(
             path: label.clone(),
             source,
         })?;
-    let recorded = trace
+    let kept = recordings(trace)?;
+    proofaudit::audit_with(&label, &text, kept.recorded(), Some(run))
+}
+
+/// The runner's recording and every configured build's engine recording one run kept, each as its path and its text.
+struct Recordings {
+    runner: Option<(String, String)>,
+    engines: Vec<(String, String)>,
+    outputs: Vec<(String, proofaudit::soundness::Kept)>,
+}
+
+impl Recordings {
+    /// What the audit reads of them.
+    fn recorded(&self) -> proofaudit::Recorded<'_> {
+        proofaudit::Recorded {
+            runner: self
+                .runner
+                .as_ref()
+                .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
+            engines: &self.engines,
+            outputs: &self.outputs,
+        }
+    }
+}
+
+/// The runner's recording and every configured build's engine recording under `trace`, each as its path and its text; nothing where no recording was given.
+fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError> {
+    let runner = trace
         .map(|directory| directory.join("trace.jsonl"))
         .map(|path| {
             let label = path.display().to_string();
@@ -2038,17 +2254,138 @@ pub fn proofaudit(
         .map(engine_recordings)
         .transpose()?
         .unwrap_or_default();
-    proofaudit::audit_with(
-        &label,
-        &text,
-        proofaudit::Recorded {
-            runner: recorded
-                .as_ref()
-                .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
-            engines: &engines,
-        },
-        Some(run),
-    )
+    let outputs = match (trace, runner.as_ref()) {
+        (Some(directory), Some((_path, text))) => kept_outputs(directory, text),
+        (None, _) | (_, None) => Vec::new(),
+    };
+    Ok(Recordings {
+        runner,
+        engines,
+        outputs,
+    })
+}
+
+/// Whether the merged report at `merged` is the merge of the shards `shards`, each re-decided against its recording under `traces`.
+///
+/// # Errors
+/// A document that cannot be read, is not JSON or is off its schema, a report that is not a merge, a shard given twice, and a shard the report was not merged from.
+pub fn proofaudit_merged(
+    merged: &Path,
+    shards: &[PathBuf],
+    traces: Option<&Path>,
+) -> Result<proofaudit::Audit, proofaudit::AuditError> {
+    let merged = assurance_document(merged)?;
+    let audited = shards
+        .iter()
+        .map(|shard| {
+            let document = assurance_document(shard)?;
+            let run_id = proofaudit::merge::shard_run(&document.label, &document.text)?;
+            let trace = traces.map(|directory| directory.join(&run_id));
+            let kept = recordings(trace.as_deref())?;
+            proofaudit::merge::audited(
+                &document.label,
+                &document.text,
+                kept.recorded(),
+                document.run.as_deref(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    proofaudit::merge::merged_with(&merged.label, &merged.text, &audited)
+}
+
+/// An assurance document as the audit reads it: where it is, what it says, and the run directory holding it when one was named.
+struct AssuranceDocument {
+    label: String,
+    text: String,
+    run: Option<PathBuf>,
+}
+
+/// The assurance document at `path`, or in the run directory `path` names; a symbolic link is refused rather than followed.
+fn assurance_document(path: &Path) -> Result<AssuranceDocument, proofaudit::AuditError> {
+    let unreadable = |at: &Path, source: std::io::Error| proofaudit::AuditError::Unreadable {
+        path: at.display().to_string(),
+        source,
+    };
+    let metadata = std::fs::symlink_metadata(path).map_err(|source| unreadable(path, source))?;
+    if metadata.file_type().is_symlink() {
+        return Err(unreadable(
+            path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "an assurance document path must not be a symbolic link",
+            ),
+        ));
+    }
+    let (document, run) = if metadata.is_dir() {
+        (path.join(proofaudit::REPORT_FILE), Some(path.to_path_buf()))
+    } else {
+        (path.to_path_buf(), None)
+    };
+    let text =
+        std::fs::read_to_string(&document).map_err(|source| unreadable(&document, source))?;
+    Ok(AssuranceDocument {
+        label: document.display().to_string(),
+        text,
+        run,
+    })
+}
+
+/// What the recording kept of each interpreter run in the runner's recording `text`, read from beside it in `directory` and held to the size and digest its exec record gives; a copy that is cut, missing, or unreadable is left out, which the audit says it could not re-derive.
+fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundness::Kept)> {
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let Ok(event) = crate::strictjson::from_str(line) else {
+            continue;
+        };
+        let Some(exec) = event.pointer("/payload/exec") else {
+            continue;
+        };
+        if !proofaudit::soundness::interprets(exec)
+            && !exec
+                .get("argv")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|argv| argv.iter().any(|word| word == "--version"))
+        {
+            continue;
+        }
+        if exec
+            .get("output_truncated")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
+            continue;
+        }
+        let Some(relative) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        match std::fs::read(directory.join(relative)) {
+            Ok(bytes) => kept.push((relative.to_owned(), held_to(exec, bytes))),
+            Err(_not_kept) => {}
+        }
+    }
+    kept
+}
+
+/// A kept output held to the size and digest `exec` gives it.
+fn held_to(exec: &serde_json::Value, bytes: Vec<u8>) -> proofaudit::soundness::Kept {
+    use sha2::Digest as _;
+    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+    let size = match u64::try_from(bytes.len()) {
+        Ok(size) => Some(size),
+        Err(_beyond_any_record) => None,
+    };
+    let described = exec
+        .get("output_sha256")
+        .and_then(serde_json::Value::as_str)
+        == Some(digest.as_str())
+        && exec.get("output_bytes").and_then(serde_json::Value::as_u64) == size;
+    if !described {
+        return proofaudit::soundness::Kept::Mismatched;
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => proofaudit::soundness::Kept::Whole(text),
+        Err(_not_text) => proofaudit::soundness::Kept::NotText,
+    }
 }
 
 /// Every configured build's engine recording under a runner recording, in namespace order, each as its path and its text.
@@ -2085,14 +2422,13 @@ fn engine_recordings(trace: &Path) -> Result<Vec<(String, String)>, proofaudit::
 /// A clean specimen some layer finds a violation in, which means that layer fires on anything, or the first layer that did not find a defect planted for it.
 pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
     let clean = proofaudit::sentinel::clean();
-    let audit = proofaudit_specimen(&clean)?;
-    if audit.violations() > 0 {
-        return Err(GateFailure(format!(
-            "proofaudit: the clean specimen draws {} violation(s), so a layer that fires on it \
-             fires on anything and its violations about a real run say nothing. Nothing this \
-             gate would have said is believed until the clean specimen is silent again.\n{audit}",
-            audit.violations()
-        )));
+    let merged = proofaudit::sentinel::sharded_clean().map_err(|error| {
+        GateFailure(format!(
+            "proofaudit: the clean specimen cannot be measured in shards: {error}"
+        ))
+    })?;
+    for specimen in [&clean, &merged] {
+        silent(specimen)?;
     }
     let mut found = 0_usize;
     for layer in proofaudit::Layer::ALL {
@@ -2101,7 +2437,58 @@ pub fn proofaudit_sentinels() -> Result<usize, GateFailure> {
             GateFailure("proofaudit: more planted defects than a count can hold".to_owned())
         })?;
     }
+    for rule in proofaudit::merge::MergeRule::ALL {
+        merge_rule_sighted(rule)?;
+    }
     Ok(found)
+}
+
+/// Nothing, where the defect planted for `rule` draws a merge violation of that rule by name.
+///
+/// # Errors
+/// A plant that cannot be built or read, or one no violation of its rule names.
+fn merge_rule_sighted(rule: proofaudit::merge::MergeRule) -> Result<(), GateFailure> {
+    let plant = proofaudit::sentinel::merge_plant(rule).map_err(|error| {
+        GateFailure(format!(
+            "proofaudit: the merge rule {} has no defect planted for it: {error}",
+            rule.label()
+        ))
+    })?;
+    let audit = proofaudit_specimen(&plant)?;
+    let prefix = format!("{}: ", rule.label());
+    if audit.remarks.iter().any(|remark| {
+        remark.layer == proofaudit::Layer::Merge
+            && remark.standing == proofaudit::Standing::Violated
+            && remark.detail.starts_with(&prefix)
+    }) {
+        Ok(())
+    } else {
+        Err(GateFailure(format!(
+            "proofaudit: the merge rule {label} is blind. Its planted defect `{name}` drew no \
+             violation of it, so a merge it is silent about says nothing. Nothing this gate would \
+             have said is believed until the planted defect is found again.\n{audit}",
+            label = rule.label(),
+            name = plant.name,
+        )))
+    }
+}
+
+/// Nothing, where no layer finds anything in the clean `specimen`.
+///
+/// # Errors
+/// A violation in it, which means that layer fires on anything.
+fn silent(specimen: &proofaudit::sentinel::Perturbation) -> Result<(), GateFailure> {
+    let audit = proofaudit_specimen(specimen)?;
+    if audit.violations() > 0 {
+        return Err(GateFailure(format!(
+            "proofaudit: the clean specimen `{}` draws {} violation(s), so a layer that fires on \
+             it fires on anything and its violations about a real run say nothing. Nothing this \
+             gate would have said is believed until the clean specimen is silent again.\n{audit}",
+            specimen.name,
+            audit.violations()
+        )));
+    }
+    Ok(())
 }
 
 /// How many of `planted` the proof audit found as a violation of `layer`, which is all of them or an error.
@@ -2145,8 +2532,13 @@ fn proofaudit_specimen(
     let laid = specimen
         .lay()
         .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))?;
-    proofaudit(laid.run(), laid.trace())
-        .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
+    let shards: Vec<PathBuf> = laid.shards().into_iter().map(Path::to_path_buf).collect();
+    if shards.is_empty() {
+        proofaudit(laid.run(), laid.trace())
+    } else {
+        proofaudit_merged(laid.run(), &shards, laid.traces())
+    }
+    .map_err(|error| GateFailure(format!("proofaudit: specimen `{name}`: {error}")))
 }
 
 /// What one engine run is audited against: its own directory, and everything a layer needs beyond it.
@@ -2162,6 +2554,8 @@ pub struct EngineRun<'a> {
     pub ledger: Option<&'a Path>,
     /// Whether the census of the walk's own decisions is re-derived.
     pub sites: bool,
+    /// The tree the run measured, which the carry evidence is read again from.
+    pub root: Option<&'a Path>,
 }
 
 /// Re-decides one completed engine run from its own report, recording, and ledger.
@@ -2211,6 +2605,8 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
     let reached = read_optional_engine_document(&asked.run.join("reached-v1.json"))?;
     let touched = read_optional_engine_document(&asked.run.join("touched-v1.json"))?;
     let catalog = read_optional_engine_document(&asked.run.join("catalog-v1.json"))?;
+    let skeletons = read_optional_engine_document(&asked.run.join("skeletons-v1.json"))?;
+    let carried = read_optional_engine_document(&asked.run.join("carried-v1.json"))?;
     let probe_logs = read_probe_logs(&asked.run.join("probe"))?;
     engineaudit::audit(
         &label,
@@ -2237,6 +2633,13 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
                 .as_ref()
                 .map(|(path, text)| engineaudit::Source { path, text }),
             probe_logs,
+            skeletons: skeletons
+                .as_ref()
+                .map(|(path, text)| engineaudit::Source { path, text }),
+            carried: carried
+                .as_ref()
+                .map(|(path, text)| engineaudit::Source { path, text }),
+            root: asked.root,
         },
     )
 }
@@ -2313,6 +2716,7 @@ fn engine_audit_specimen(
         shards: laid.shards(),
         ledger: laid.ledger(),
         sites: true,
+        root: laid.root(),
     })
     .map_err(|error| GateFailure(format!("engine-audit: specimen `{name}`: {error}")))
 }
@@ -2423,7 +2827,7 @@ pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
     let stdout = std::str::from_utf8(&asked.stdout)
         .map_err(|error| GateFailure(format!("cargo metadata stdout is not UTF-8: {error}")))?;
     let bom = crate::sbom::of(stdout, ("njutest", &version))
-        .map_err(|error| GateFailure(error.to_string()))?;
+        .map_err(|error| GateFailure(error.coded()))?;
     let document = serde_json::to_string_pretty(&bom)
         .map_err(|error| GateFailure(format!("the bill of materials: {error}")))?;
     match output {
@@ -2455,7 +2859,7 @@ pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateFailure> {
         (&before.display().to_string(), &left),
         (&after.display().to_string(), &right),
     )
-    .map_err(|error| GateFailure(error.to_string()))?;
+    .map_err(|error| GateFailure(error.coded()))?;
 
     if changes.is_empty() {
         return Ok("reportdiff: the two reports claim the same thing".to_owned());
@@ -2729,6 +3133,49 @@ pub fn reached(root: &Path) -> Result<String, GateFailure> {
          under the ceiling of {ceiling}",
         only_tests.len()
     ))
+}
+
+/// Every audit reader supplies no more values its input never gave than `xtask/defaulted_ceiling.txt` allows it, and exactly that many.
+///
+/// # Errors
+/// Every file above or below its ceiling, and a source or ceiling that does not read.
+pub fn defaulted(root: &Path) -> Result<String, GateFailure> {
+    let mut counted = BTreeMap::new();
+    for file in rust_files_under(&root.join("xtask/src"))? {
+        let relative = file
+            .strip_prefix(root)
+            .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?
+            .components()
+            .map(|part| {
+                part.as_os_str().to_str().ok_or_else(|| {
+                    GateFailure(format!("{}: a path that is not UTF-8", file.display()))
+                })
+            })
+            .collect::<Result<Vec<&str>, GateFailure>>()?
+            .join("/");
+        if !crate::defaulted::reads_for_an_audit(&relative) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .map_err(|error| GateFailure(format!("{}: {error}", file.display())))?;
+        let count = crate::defaulted::defaulted_in(&text)
+            .map_err(|error| GateFailure(format!("{relative}: {error}")))?;
+        counted.insert(relative, count);
+    }
+    let ceiling = root.join("xtask/defaulted_ceiling.txt");
+    let written = std::fs::read_to_string(&ceiling)
+        .map_err(|error| GateFailure(format!("{}: {error}", ceiling.display())))?;
+    match crate::defaulted::held(&counted, &written) {
+        Ok(total) => Ok(format!(
+            "defaulted: {total} value(s) supplied where an audit reader's input gave none, each \
+             file at its ceiling"
+        )),
+        Err(refused) => Err(GateFailure(format!(
+            "defaulted: an audit reader holds a record to a schema and then answers for an absent \
+             field anyway:\n  {}",
+            refused.join("\n  ")
+        ))),
+    }
 }
 
 /// Every `.rs` file under `directory`, skipping anything built.

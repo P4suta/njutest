@@ -35,8 +35,8 @@ fn fixture() -> Fixture {
 }
 
 /// The provider a run drives, as a program every platform can start.
-fn provider() -> PathBuf {
-    njutest_devkit::fake_cargo::example("fake_provider")
+fn provider(own: &Path) -> PathBuf {
+    njutest_devkit::fake_cargo::example_in("fake_provider", own)
 }
 
 /// What the provider says when it is ready.
@@ -86,7 +86,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -117,7 +117,7 @@ fn declaring(fixture: &Fixture) {
         format!(
             "version = 1\n\n[resources.postgres]\ncommand = [{:?}, \"resource\"]\n\
              timeout = \"10s\"\nenvironment = [\"FAKE_PROVIDER_READY\", \"FAKE_PROVIDER_STOPPED\"]\n",
-            provider().to_str().expect("test protocol paths are UTF-8")
+            provider(fixture.root.parent().expect("the fixture's own directory")).to_str().expect("test protocol paths are UTF-8")
         ),
     )
     .expect("write");

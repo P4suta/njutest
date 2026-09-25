@@ -28,6 +28,12 @@ outputs:
   report:
     description: 'The path of the report the run wrote.'
     value: ${{ steps.verify.outputs.report }}
+  sarif:
+    description: 'The path of the SARIF projection the run wrote.'
+    value: ${{ steps.verify.outputs.sarif }}
+  junit:
+    description: 'The path of the JUnit projection the run wrote.'
+    value: ${{ steps.verify.outputs.junit }}
 
 runs:
   using: composite
@@ -78,15 +84,10 @@ runs:
         njutest verify ${ARGS} | tee njutest-verify.out
         status=${PIPESTATUS[0]}
         verdict=$(awk -F'\t' '$1 == "VERDICT" { print $2 }' njutest-verify.out)
-        # The run says where it wrote, so this never has to know the layout:
-        # `[reports] directory` is the project's to choose.
-        report=$(awk -F'\t' '$1 == "REPORT" { print $2 }' njutest-verify.out)
-        if [ -n "${report}" ]; then
-          {
-            echo "report=${report}"
-            echo "sarif=${report%njutest-assurance-report-v2.json}njutest-assurance-report-v2.sarif"
-          } >> "${GITHUB_OUTPUT}"
-        fi
+        # The run says where it wrote each file it wrote, so this never has to know the layout or a file name:
+        # `[reports] directory` is the project's to choose, and a path rebuilt here is one the run never promised.
+        awk -F'\t' '$1 == "REPORT" { print "report=" $2 } $1 == "SARIF" { print "sarif=" $2 } $1 == "JUNIT" { print "junit=" $2 }' \
+          njutest-verify.out >> "${GITHUB_OUTPUT}"
         {
           echo "verdict=${verdict}"
           echo "status=${status}"

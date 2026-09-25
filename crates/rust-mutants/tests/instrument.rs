@@ -36,8 +36,19 @@ fn instrument(source: &str) -> String {
 }
 
 fn instrument_with_catalog(source: &str) -> (String, Catalog) {
-    let selection = Selection::tier(&REGISTRY, Tier::All);
-    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    instrument_selected(source, &Selection::tier(&REGISTRY, Tier::All))
+}
+
+fn instrument_selected(source: &str, selection: &Selection<'_>) -> (String, Catalog) {
+    let (file, catalog) = instrumented_file(source, selection);
+    (file.text, catalog)
+}
+
+fn instrumented_file(
+    source: &str,
+    selection: &Selection<'_>,
+) -> (rust_mutants::instrument::FileOutput, Catalog) {
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), selection).expect("discover");
     let mut builder = Builder::new();
     for found in &discovery.candidates {
         builder.add(found.candidate.clone()).expect("add");
@@ -52,9 +63,11 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
         comparable: &offered(&discovery, &catalog),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
-    (file.text, catalog)
+    (file, catalog)
 }
 
 /// Every mutant the syntax offers a comparison for, as a run has it once the compiler has vouched for the operands.
@@ -166,6 +179,8 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         comparable: &compared,
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert_eq!(
@@ -182,6 +197,8 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -215,6 +232,8 @@ fn a_site_whose_form_cannot_compare_reports_no_comparison_however_it_is_offered(
         comparable: &every,
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     let value_sites: Vec<u32> = file
@@ -257,6 +276,8 @@ fn instrumented_with_markers(
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument")
 }
@@ -381,11 +402,12 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
     let (_, runtime) = split_runtime(&text);
 
     for required in [
-        "enum Budget",
+        "type Budget = __rm_std::result::Result<__rm_std::option::Option<StepLimit>, BudgetError>",
         "enum StepNoticeError",
         "StepPhase {",
         "enum StepStateError",
-        "Budget::Invalid(_) => protocol_failure()",
+        "__rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,",
+        "__rm_std::result::Result::Err(_) => protocol_failure(),",
         "pub(crate) fn checkpoint()",
         "file.lock().map_err",
         "file.unlock().map_err",
@@ -435,6 +457,8 @@ fn a_file_without_a_mutant_still_carries_the_process_wide_checkpoint_runtime() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(file.text.starts_with(source), "{}", file.text);
@@ -455,11 +479,11 @@ fn a_checkpoint_inside_a_mutant_edit_stays_in_the_original_branch() {
     let text = instrument(source);
     syn::parse_file(&text).expect("the checkpointed mutant file parses");
     assert!(
-        text.contains("filter(|one| { __rm::checkpoint(); within(**one, bound) })"),
+        text.contains("filter(|one| { __rm::item(2); __rm::checkpoint(); within(**one, bound) })"),
         "the expression closure remains bounded in the original branch: {text}"
     );
     assert!(
-        text.contains("map(|one| { __rm::checkpoint();"),
+        text.contains("map(|one| { __rm::item(2); __rm::checkpoint();"),
         "every expression closure enclosed by the mutation stays bounded: {text}"
     );
 }
@@ -630,6 +654,8 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect_err("the source must be the one the candidates came from");
     assert_eq!(error.kind(), InstrumentErrorKind::SourceMismatch);
@@ -705,6 +731,8 @@ fn every_alternative_reports_where_its_own_text_landed() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
 
@@ -984,6 +1012,8 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     }) {
         Ok(file) => file,
         Err(_) => return None,
@@ -1032,6 +1062,8 @@ fn instrument_probing(source: &str) -> String {
         comparable: &offered(&discovery, &catalog),
         probed: &probeable(&discovery, &catalog),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -1104,6 +1136,8 @@ fn a_tree_holds_the_call_for_a_probe_only_where_the_compiler_vouched_for_one() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -1151,6 +1185,8 @@ fn a_form_that_cannot_hold_the_call_writes_no_probe_however_many_it_was_offered(
         comparable: &BTreeSet::default(),
         probed: &statements,
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     assert!(
@@ -1213,6 +1249,8 @@ fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() 
         comparable: &offered(&discovery, &catalog),
         probed: &probes,
         catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
     })
     .expect("instrument");
     let kept = file
@@ -1245,4 +1283,77 @@ fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() 
             file.text
         );
     }
+}
+
+#[test]
+fn a_fault_guard_is_carried_into_every_alternative_that_keeps_its_bytes() {
+    let source = "pub fn f(p: &str) -> Result<u8, std::num::ParseIntError> {\n    let n = p.parse::<u8>()?;\n    Ok(n)\n}\n";
+    let selection = Selection::rules(&REGISTRY, &["question-to-unwrap", "inject-error"])
+        .expect("both rules are known");
+    let (text, _) = instrument_selected(source, &selection);
+    let line = text
+        .lines()
+        .find(|line| line.contains(".unwrap()"))
+        .expect("the unwrap alternative");
+    let (unwrapped, original) = line
+        .split_once(".unwrap() } else {")
+        .expect("the unwrap alternative, then the original branch");
+    assert!(
+        unwrapped.contains("injected()"),
+        "the alternative keeps the call's bytes, so the fault at that call is guarded inside \
+         it and can be active beside the unwrap: {line}"
+    );
+    assert!(
+        original.contains("injected()"),
+        "and the original branch keeps it as every nested guard is kept: {line}"
+    );
+}
+
+#[test]
+fn the_instrumenter_records_exactly_the_pairs_whose_fault_it_carried() {
+    let selection = Selection::rules(
+        &REGISTRY,
+        &[
+            "question-to-unwrap",
+            "ignore-question-statement",
+            "inject-error",
+        ],
+    )
+    .expect("the rules are known");
+    let rules =
+        |file: &rust_mutants::instrument::FileOutput, catalog: &Catalog| -> Vec<(String, String)> {
+            let rule = |index: u32| {
+                catalog
+                    .mutants()
+                    .iter()
+                    .find(|mutant| mutant.index == index)
+                    .map(|mutant| mutant.candidate.rule.name.to_owned())
+                    .expect("a catalogued index")
+            };
+            file.beside
+                .iter()
+                .map(|(mutant, fault)| (rule(*mutant), rule(*fault)))
+                .collect()
+        };
+    let (bound, catalog) = instrumented_file(
+        "pub fn f(p: &str) -> Result<u8, std::num::ParseIntError> {\n    let n = p.parse::<u8>()?;\n    Ok(n)\n}\n",
+        &selection,
+    );
+    assert_eq!(
+        rules(&bound, &catalog),
+        vec![("question-to-unwrap".to_owned(), "inject-error".to_owned())],
+        "the unwrap keeps the call's bytes, so the fault at the call is carried into it"
+    );
+    let (statement, catalog) = instrumented_file(
+        "pub fn g(p: &str) -> Result<(), std::num::ParseIntError> {\n    p.parse::<u8>()?;\n    Ok(())\n}\n",
+        &selection,
+    );
+    assert!(
+        !rules(&statement, &catalog)
+            .iter()
+            .any(|(mutant, _)| mutant == "ignore-question-statement"),
+        "a statement's rewrite sits above the `?` node, so the call's fault is not its child and \
+         is not carried; no pair is recorded that the tree does not hold: {:?}",
+        rules(&statement, &catalog)
+    );
 }

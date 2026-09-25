@@ -1,0 +1,10 @@
+The cheapest gap in the tests, one at a time, with the checked test that closes it
+
+Usage: njutest next [OPTIONS]
+
+Options:
+      --run <RUN>  The run to read. The latest by default
+      --take       Take the cheapest checked test without asking, and nothing after it
+      --offline    Never touch the network when a taken test is checked again
+      --locked     Refuse to change `Cargo.lock` when a taken test is checked again
+  -h, --help       Print help

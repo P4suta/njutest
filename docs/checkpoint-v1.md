@@ -15,13 +15,15 @@ One exact input identity owns one file:
 ```
 
 Only a named kill can enter `mutants`.
-The Rust wire type is a closed `SavedDisposition::Killed { by }`; it has no step-limit, timeout, survival,
+The Rust wire type is a closed `SavedDisposition::Killed { by, before }`; it has no step-limit, timeout, survival,
 error, or un-attributed kill state.
+`before` is every target asked before `by`, in order, with what each answered, so a resumed row reports the answers the interrupted run was given ([ADR 0038](adr/0038-a-read-back-row-carries-its-answers.md)).
+A `before` that names `by`, or holds a kill, is not a checkpoint: no run asks the target that noticed before it notices, and a run stops at the first kill it confirms.
 A successor may therefore inherit only an existential fact a target established about the identical tree.
 Every other mutation is judged again.
 
 A checkpoint keeps no drift record ([report v1](report-v1.md#drift)).
-A comparison an interrupted run made was against the baseline that run measured, and a resumed run measures its own; an inherited kill runs no control, so a target whose every kill was inherited is `not-measured` in the resumed run rather than holding on a comparison nothing made this run.
+A comparison an interrupted run made was against the baseline that run measured, and a resumed run measures its own; an inherited kill runs no control, so a target whose every kill was inherited is run alone for the comparison in the resumed run rather than holding on a comparison nothing made this run.
 
 Historical `checkpoint-v1.json` files are outside this layout.
 In particular,

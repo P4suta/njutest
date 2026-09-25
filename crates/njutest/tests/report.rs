@@ -155,6 +155,8 @@ fn a_new_report_names_the_schema_the_run_and_what_it_ran_on() {
 fn completed(vary: impl FnOnce(&mut BuildReport)) -> Result<Report, FixtureError> {
     let mut source = sound_draft();
     vary(&mut source);
+    njutest::testkit::raise_what_the_records_decide(&mut source);
+    source.verdict = source.concluded();
     let measurements = njutest::report::across::BuildMeasurements::checked(vec![(
         njutest::config::DEFAULT_CONFIGURATION.to_owned(),
         rust_mutants::cargo::BuildConfig::default().selection(),

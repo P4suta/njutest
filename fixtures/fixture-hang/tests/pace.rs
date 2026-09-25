@@ -16,7 +16,7 @@ const PAUSE: &str = "FIXTURE_HANG_PAUSE_MS";
 const STRIDE: &str = "FIXTURE_HANG_STRIDE_MS";
 
 /// How many times a slow test passes through the mutated function.
-const STRIDES: u32 = 40;
+const STRIDES: u32 = 200;
 
 /// Sleeps once per activation, and never again.
 ///
@@ -75,4 +75,9 @@ fn clamping_keeps_a_positive_and_floors_everything_else() {
     assert_eq!(fixture_hang::clamp_positive(3), 3);
     assert_eq!(fixture_hang::clamp_positive(-3), 0);
     assert_eq!(fixture_hang::clamp_positive(0), 0);
+}
+
+#[test]
+fn walking_to_two_takes_two_strides() {
+    assert_eq!(fixture_hang::walked(2), 2);
 }
