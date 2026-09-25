@@ -93,6 +93,12 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "answered" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "notice"],
           "properties": {
             "kind": { "const": "step-limit-reached" },
@@ -353,6 +359,26 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "repair"],
+          "properties": {
+            "type": { "const": "repair" },
+            "repair": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mutant", "target", "was", "now", "reached"],
+              "properties": {
+                "mutant": { "type": "string", "minLength": 1 },
+                "target": { "type": "string", "minLength": 1 },
+                "was": { "enum": ["survived", "unreached"] },
+                "now": { "enum": ["killed", "survived", "unreached", "waited", "step-limit-reached", "unconfirmed", "errored"] },
+                "reached": { "enum": ["reached", "not-reached", "unrecorded"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "drift"],
           "properties": {
             "type": { "const": "drift" },
@@ -505,9 +531,9 @@
               "additionalProperties": false,
               "required": ["layer", "mutant", "expected", "routed", "sighted"],
               "properties": {
-                "layer": { "enum": ["reach", "branch-never-taken", "never-infected:is-default", "never-infected:is-ok-default", "never-infected:is-some-default", "never-infected:is-true", "never-infected:inert-comparison"] },
+                "layer": { "enum": ["reach", "branch-never-taken", "never-infected:is-default", "never-infected:is-ok-default", "never-infected:is-some-default", "never-infected:is-true", "never-infected:inert-comparison", "coverage", "equivalence"] },
                 "mutant": { "type": "string", "minLength": 1 },
-                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept-for-library", "kept-for-tests"] },
+                "expected": { "enum": ["unreached", "branch-never-taken", "never-infected", "kept-for-library", "kept-for-tests", "identical", "rendered"] },
                 "routed": { "type": "string", "minLength": 1 },
                 "sighted": { "type": "boolean" }
               }

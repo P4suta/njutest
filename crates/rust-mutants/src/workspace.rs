@@ -92,7 +92,10 @@ fn claim_scratch(
             continue;
         }
         match tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
-            Ok(owner) => return Ok((dir, owner)),
+            Ok(owner) => match owner.empty() {
+                Ok(()) => return Ok((dir, owner)),
+                Err(_left_by_a_dead_run_and_not_removable) => drop(owner),
+            },
             Err(_already_claimed_or_unusable) => {}
         }
     }
@@ -432,6 +435,19 @@ pub enum SessionError {
         /// The unrepresentable number of resolved mutants.
         count: usize,
     },
+    /// Two expectations name one mutation, which then has two reasons.
+    #[error(
+        "{}: the expectations {first:?} and {second:?} both name mutation {mutant}; a mutant has one reason",
+        error::CONFIG_INVALID.code
+    )]
+    ExpectationsOverlap {
+        /// The expectation that named it first.
+        first: String,
+        /// The one that named it again.
+        second: String,
+        /// The mutation both name, with its line.
+        mutant: String,
+    },
     /// A run collection contains more rows than its durable counter can represent.
     #[error(
         "{}: a run collection contains {count} rows, which exceeds its durable counter",
@@ -636,6 +652,7 @@ impl SessionError {
                 error::SESSION_UNKNOWN_TARGET
             }
             Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
+            Self::ExpectationsOverlap { .. } => error::CONFIG_INVALID,
             Self::WriteFailed { .. }
             | Self::TemporaryRootUnavailable { .. }
             | Self::ScratchStatePoisoned
@@ -1085,6 +1102,15 @@ impl Workspace {
             return Ok(vec![dir, self.target_dir, self.scratch_dir]);
         }
         if let Some(mut owner) = self.scratch_owner.take() {
+            match owner.empty() {
+                Ok(()) => {}
+                Err(source) => record_cleanup_failure(
+                    &mut failure,
+                    "empty execution scratch at",
+                    &self.scratch_dir,
+                    source,
+                ),
+            }
             match owner.release() {
                 Ok(()) => {}
                 Err(source) => record_cleanup_failure(
@@ -1095,7 +1121,7 @@ impl Workspace {
                 ),
             }
         }
-        match std::fs::remove_dir_all(&self.scratch_dir) {
+        match tempowner::remove_tree(&self.scratch_dir) {
             Ok(()) => {}
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => record_cleanup_failure(

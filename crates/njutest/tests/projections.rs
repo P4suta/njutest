@@ -31,7 +31,22 @@ fn found(subject: &str, detail: &str, line: u32) -> Finding {
 }
 
 fn report_with(findings: Vec<Finding>) -> Report {
+    report_measured(findings, Vec::new())
+}
+
+fn report_measured(findings: Vec<Finding>, drift: Vec<njutest::report::drift::Drift>) -> Report {
+    report_recorded(findings, drift, Vec::new())
+}
+
+/// The report of a whole run whose part holds `findings` and the `drift` and `knobs` records the catalog's conclusion is drawn from.
+fn report_recorded(
+    findings: Vec<Finding>,
+    drift: Vec<njutest::report::drift::Drift>,
+    knobs: Vec<njutest::report::knobs::KnobRecord>,
+) -> Report {
     let mut source = BuildReport::new("fixture-evidence", RunKind::Full, Contract::StandardV1);
+    source.drift = drift;
+    source.knobs = knobs;
     source.repository.root_name = "workspace".to_owned();
     source.repository.workspace_digest = "a".repeat(64);
     source.repository.configuration_digest = "b".repeat(64);
@@ -401,9 +416,10 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
         infected: nothing(),
         entered: nothing(),
     };
-    let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
-    findings.extend(njutest::report::drift::found(&[moved], &[]));
-    let report = report_with(findings);
+    let report = report_measured(
+        vec![found("cccccccccccccccccccc", "no test noticed it", 12)],
+        vec![moved],
+    );
     let root = tempfile::tempdir().expect("a directory with no source in it");
     let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
     let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");
@@ -435,7 +451,7 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
             "workspace/lib/workspace reached something on an original-code control that it \
              did not reach on its baseline, over the same passing tests, so what it reaches \
              is not a function of the target and every proof read off its baseline is \
-             unfounded: 0 mutations a proof removed its run of, and 0 mutations no test \
+             unfounded: 1 mutation a proof removed its run of, and 0 mutations no test \
              reached, rest on it. Make what the suite reaches independent of order, time and \
              earlier processes, and run again"
         ],
@@ -453,9 +469,11 @@ fn a_knob_that_broke_a_target_is_told_as_a_suite_that_depends_on_its_machine() {
             failed: vec!["the_zone_is_not_lord_howe".to_owned()],
         },
     };
-    let mut findings = vec![found("cccccccccccccccccccc", "no test noticed it", 12)];
-    findings.extend(njutest::report::knobs::found(&[broke], &[]));
-    let report = report_with(findings);
+    let report = report_recorded(
+        vec![found("cccccccccccccccccccc", "no test noticed it", 12)],
+        Vec::new(),
+        vec![broke],
+    );
     let root = tempfile::tempdir().expect("a directory with no source in it");
     let sources = njutest::presentation::Sources::read(root.path(), &report).expect("sources");
     let told = njutest::presentation::Told::of(&report, &sources, "kept").expect("told");

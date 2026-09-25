@@ -603,6 +603,7 @@ fn duplicate_report_keys_are_malformed_before_any_redecision() {
         let nothing = xtask::proofaudit::Recorded {
             runner: None,
             engines: &[],
+            outputs: &[],
         };
         let error = xtask::proofaudit::audit_with("duplicate.json", &document, nothing, None)
             .expect_err("duplicate keys never reach proof redecision");
@@ -2043,6 +2044,7 @@ fn with_engine(document: serde_json::Value, engine: Vec<serde_json::Value>) -> A
         document,
         events: Some(routes()),
         engine: Some(engine),
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2181,6 +2183,7 @@ fn a_complete_report_is_re_decided_as_the_one_build_it_measured_whole() {
         document,
         events: Some(routes()),
         engine: sentinel::clean().engine,
+        outputs: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2646,4 +2649,202 @@ fn a_control_that_entered_an_item_its_baseline_did_not_is_owed_the_finding() {
         "every site agrees and the control entered item 5 the baseline never did, which is the \
          union `select` narrows by; a report that calls it held is refused: {said:?}"
     );
+}
+fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String> {
+    let mut events = routes();
+    for mutant in repaired {
+        events.push(serde_json::json!({
+            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": TARGET, "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+        events.push(serde_json::json!({
+            "type": "repair",
+            "repair": {
+                "mutant": mutant, "target": TARGET,
+                "was": "survived", "now": "survived", "reached": "reached"
+            }
+        }));
+    }
+    let laid = sentinel::Perturbation {
+        name: "repair",
+        document: with(sentinel::drifted("moved")),
+        events: Some(events),
+        engine: Some(engine),
+        outputs: Vec::new(),
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit =
+        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+fn repair_touch(mutant: &str, reached: &[u32]) -> serde_json::Value {
+    let mut touch = sentinel::touch("repair", reached);
+    merge(
+        &mut touch,
+        serde_json::json!({ "touch": { "mutant": mutant } }),
+    );
+    touch
+}
+
+#[test]
+fn a_repair_touch_is_paired_with_the_repair_that_names_its_mutant_and_nothing_else() {
+    let moved = || {
+        vec![
+            sentinel::touch("baseline", &[0]),
+            sentinel::touch("control", &[0, 1]),
+        ]
+    };
+    let mut named = moved();
+    named.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], named);
+    assert!(
+        !said.iter().any(|line| line.contains("repair touch")),
+        "the one repair touch names the one repaired mutant: {said:?}"
+    );
+    let mut stray = moved();
+    stray.push(repair_touch(&"a".repeat(64), &[1]));
+    stray.push(repair_touch(&"b".repeat(64), &[1]));
+    let said = repair_audit(&[SURVIVED], stray);
+    assert!(
+        said.iter()
+            .any(|line| line.contains(&"a".repeat(64)) && line.contains("no repair record")),
+        "a repair touch naming a mutant no repair record names is refused by name, not counted: \
+         {said:?}"
+    );
+}
+
+#[test]
+fn a_repair_touch_that_names_no_mutation_is_unread_rather_than_paired_by_position() {
+    let engine = vec![
+        sentinel::touch("baseline", &[0]),
+        sentinel::touch("control", &[0, 1]),
+        sentinel::touch("repair", &[1]),
+    ];
+    let audit = with_engine(with(sentinel::drifted("moved")), engine);
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Drift
+                && remark.standing == Standing::Unaudited
+                && remark.detail.contains("which mutation a repair ran")),
+        "{audit}"
+    );
+}
+
+fn on_target(mut touch: serde_json::Value, target: &str) -> serde_json::Value {
+    merge(
+        &mut touch,
+        serde_json::json!({ "touch": { "target": target } }),
+    );
+    touch
+}
+
+fn two_repairs(second_was: &str) -> Vec<String> {
+    let other = "pkg/test/other";
+    let mut events = vec![serde_json::json!({
+        "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+        "type": "route",
+        "route": {
+            "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
+            "reaching": [], "discharged": [], "considered": [], "reused": null
+        }
+    })];
+    for (target, was) in [(TARGET, "unreached"), (other, second_was)] {
+        events.push(serde_json::json!({
+            "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": SURVIVED, "target": target, "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+        events.push(serde_json::json!({
+            "type": "repair",
+            "repair": {
+                "mutant": SURVIVED, "target": target,
+                "was": was, "now": "survived", "reached": "reached"
+            }
+        }));
+    }
+    let mut engine = Vec::new();
+    for target in [TARGET, other] {
+        engine.push(on_target(sentinel::touch("baseline", &[0]), target));
+        engine.push(on_target(sentinel::touch("control", &[0, 1]), target));
+        engine.push(on_target(repair_touch(&"b".repeat(64), &[1]), target));
+    }
+    let laid = sentinel::Perturbation {
+        name: "two repairs",
+        document: with(serde_json::json!({ "drift": [
+            { "target": other, "state": "moved" },
+            { "target": TARGET, "state": "moved" }
+        ] })),
+        events: Some(events),
+        engine: Some(engine),
+        outputs: Vec::new(),
+    }
+    .lay()
+    .expect("the specimen is laid out");
+    let audit =
+        gates::proofaudit(laid.run(), laid.trace()).expect("a recording this audit can read");
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Repair && remark.standing == Standing::Violated)
+        .map(|remark| format!("{}: {}", remark.subject, remark.detail))
+        .collect()
+}
+
+#[test]
+fn a_second_repair_starts_from_what_the_first_one_made_it() {
+    let said = two_repairs("survived");
+    assert!(
+        !said
+            .iter()
+            .any(|line| line.contains("the repair says it was")),
+        "the second repair was what the first one made it, not what its route did: {said:?}"
+    );
+    let said = two_repairs("unreached");
+    assert!(
+        said.iter()
+            .any(|line| line.contains("the repair of it before this one made it survived")),
+        "a second repair that starts from the route rather than the first repair is refused: \
+         {said:?}"
+    );
+}
+
+#[test]
+fn the_audit_comes_to_the_verdict_the_published_contract_gives_every_case() {
+    let contract = xtask::strictjson::from_str(
+        &std::fs::read_to_string(gates::workspace_root().join("schema/miri-output.json"))
+            .expect("the published contract"),
+    )
+    .expect("the contract is JSON");
+    let cases = contract
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .expect("the contract's cases");
+    for case in cases {
+        let field = |key: &str| case.get(key).and_then(serde_json::Value::as_str);
+        let name = field("name").expect("a case is named");
+        assert_eq!(
+            Some(xtask::proofaudit::soundness::verdict(
+                field("output").expect("a case has output"),
+                case.get("status").and_then(serde_json::Value::as_i64),
+            )),
+            field("came"),
+            "{name}: the audit and the runner come to what the contract says of this case"
+        );
+    }
 }

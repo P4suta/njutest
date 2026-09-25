@@ -14,6 +14,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
+autotests = false
 
 [package.metadata.njutest]
 surface = "public"
@@ -61,3 +62,95 @@ required-features = ["benchmarks"]
 
 [lints]
 workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/suite.rs"
+
+[[test]]
+name = "toolchain_2021"
+path = "tests/toolchain_2021.rs"
+
+[[test]]
+name = "toolchain_cargo"
+path = "tests/toolchain_cargo.rs"
+
+[[test]]
+name = "toolchain_compiled_catalog"
+path = "tests/toolchain_compiled_catalog.rs"
+
+[[test]]
+name = "toolchain_coverage"
+path = "tests/toolchain_coverage.rs"
+
+[[test]]
+name = "toolchain_discover"
+path = "tests/toolchain_discover.rs"
+
+[[test]]
+name = "toolchain_drift"
+path = "tests/toolchain_drift.rs"
+
+[[test]]
+name = "toolchain_equivalence"
+path = "tests/toolchain_equivalence.rs"
+
+[[test]]
+name = "toolchain_features"
+path = "tests/toolchain_features.rs"
+
+[[test]]
+name = "toolchain_instrumented_tree"
+path = "tests/toolchain_instrumented_tree.rs"
+
+[[test]]
+name = "toolchain_metadata_double"
+path = "tests/toolchain_metadata_double.rs"
+
+[[test]]
+name = "toolchain_modern"
+path = "tests/toolchain_modern.rs"
+
+[[test]]
+name = "toolchain_perturbed"
+path = "tests/toolchain_perturbed.rs"
+
+[[test]]
+name = "toolchain_pool"
+path = "tests/toolchain_pool.rs"
+
+[[test]]
+name = "toolchain_proofs"
+path = "tests/toolchain_proofs.rs"
+
+[[test]]
+name = "toolchain_reach"
+path = "tests/toolchain_reach.rs"
+
+[[test]]
+name = "toolchain_run"
+path = "tests/toolchain_run.rs"
+
+[[test]]
+name = "toolchain_sentinel"
+path = "tests/toolchain_sentinel.rs"
+
+[[test]]
+name = "toolchain_session"
+path = "tests/toolchain_session.rs"
+
+[[test]]
+name = "toolchain_shared_path"
+path = "tests/toolchain_shared_path.rs"
+
+[[test]]
+name = "toolchain_touch"
+path = "tests/toolchain_touch.rs"
+
+[[test]]
+name = "toolchain_validate"
+path = "tests/toolchain_validate.rs"
+
+[[test]]
+name = "toolchain_verify"
+path = "tests/toolchain_verify.rs"

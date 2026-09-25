@@ -328,6 +328,21 @@ pub(super) fn exit_observed(child: &Child) -> io::Result<bool> {
     .map_err(io::Error::from)
 }
 
+/// Whether `signal` is one a process raises by what it does (an abort, a bad access, a bad instruction, a trap) rather than one another process sends it.
+pub(super) fn raised_by_itself(signal: i32) -> bool {
+    [
+        Signal::ABORT,
+        Signal::SEGV,
+        Signal::BUS,
+        Signal::ILL,
+        Signal::FPE,
+        Signal::TRAP,
+        Signal::SYS,
+    ]
+    .iter()
+    .any(|raised| raised.as_raw() == signal)
+}
+
 /// The child's status, mapping a signal death to the shell's 128 + N convention: 137 for a SIGKILL is both distinguishable from "no status at all" and what every other tool on the machine prints.
 pub(super) fn process_exit(status: ExitStatus) -> ProcessExit {
     status.code().map_or_else(

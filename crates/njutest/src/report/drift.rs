@@ -225,13 +225,15 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
             Drift::Moved { target, .. } => Some(target.as_str()),
             Drift::Held { .. } | Drift::NotMeasured { .. } => None,
         })
-        .map(|target| {
+        .filter_map(|target| {
             let (discharged, unreached) = resting(records, target);
-            Finding::new(
-                FindingKind::UnstableBaseline,
-                target,
-                &unstable(target, discharged, unreached),
-            )
+            (discharged > 0 || unreached > 0).then(|| {
+                Finding::new(
+                    FindingKind::UnstableBaseline,
+                    target,
+                    &unstable(target, discharged, unreached),
+                )
+            })
         })
         .collect()
 }
@@ -249,6 +251,41 @@ pub fn resting(records: &[MutantRecord], target: &str) -> (usize, usize) {
         .filter(|record| record.outcome.outcome() == Outcome::Unreached)
         .count();
     (discharged, unreached)
+}
+
+/// The `reach-moved` limitation for every moved target nothing rests on any more, each with how many dispositions were decided again against it (ADR 0036).
+#[must_use]
+pub fn repaired(
+    drift: &[Drift],
+    records: &[MutantRecord],
+    counted: &BTreeMap<String, usize>,
+) -> Vec<Limitation> {
+    drift
+        .iter()
+        .filter_map(|one| match one {
+            Drift::Moved { target, .. } => Some(target.as_str()),
+            Drift::Held { .. } | Drift::NotMeasured { .. } => None,
+        })
+        .filter(|target| resting(records, target) == (0, 0))
+        .map(|target| {
+            let again = counted.get(target).copied().unwrap_or_default();
+            Limitation::new(
+                crate::limitation::REACH_MOVED,
+                &format!(
+                    "a target reached something on an original-code control that it did not \
+                     reach on its baseline, so what it reaches is not a function of the target; \
+                     {again} {} that rested on its baseline {} decided again by running against \
+                     it, and nothing this run concludes stands on the moved record ({target})",
+                    if again == 1 {
+                        "disposition"
+                    } else {
+                        "dispositions"
+                    },
+                    if again == 1 { "was" } else { "were" }
+                ),
+            )
+        })
+        .collect()
 }
 
 /// How many mutations, in the words a finding counts them in.

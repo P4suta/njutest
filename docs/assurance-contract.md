@@ -104,7 +104,7 @@ A target no kill was confirmed on is run whole once more, alone and under the sa
 Where it passed exactly the tests the baseline passed and the target's union of sites reached, bodies entered, or sites infected differs, the baseline record is one sample rather than a measurement, and the report raises `unstable-baseline` about the target, counting the `unreached` claims and the discharged executions that rest on it.
 One such observation is enough; a counterexample does not wait for a second.
 A measured target whose control could not be compared — it failed, passed other tests, or could not record — is named by `drift-not-measured`, because a proof read off it rests on one run.
-This release reports a moved target and does not yet run again what rested on it ([ADR 0025](adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+What rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); `unstable-baseline` counts only what could not be, and a moved target nothing rests on any more is named in `reach-moved`.
 
 A second run under the same conditions cannot see a suite that depends on the conditions themselves: a clock read in the local zone, a string folded under the locale, a temporary path built into a command line without quotes, a file the home directory is expected to hold, the mode a new file gets, the width of a terminal, or a test that only passes while another runs beside it.
 Asked for with `[repeatable] knobs`, a run starts one more control of every target whose baseline passed per knob, with exactly that one thing set to a value chosen to differ, and compares it with the baseline as drift does ([ADR 0031](adr/0031-a-knob-is-one-control-started-differently.md)).
@@ -248,6 +248,8 @@ A pair is planted for every form of evidence a proof reads, derived from the clo
 | `never-infected:is-some-default` | `return-some-default` over `Some` of the default | the same rule over `Some` of anything else |
 | `never-infected:is-true` | `return-true` where the value is already `true` | the same rule where it is `false` |
 | `never-infected:inert-comparison` | `le-to-lt` where the two sides are never equal | the same rule where the test makes them equal |
+| `coverage` | the `reach` pair's function no test calls, as `unreached` by the coverage measurement alone | the `reach` pair's function the unit test calls, to `lib` |
+| `equivalence` | `add-to-sub` over `n + 0`, which the compiler renders identically, called `identical` | the same rule over `n + 1`, which it renders, never called `identical` |
 
 The planted crate is built by the compiler the tree under test resolves to, named by path: the run's located toolchain is handed to the sentinels, and its sysroot's own `cargo`, `rustc` (as `RUSTC`) and `rustdoc` (as `RUSTDOC`) build the planted crate, so no toolchain file, rustup override or version-manager shim in the scratch directory decides which compiler answers.
 That holds by construction where the run's `rustc` names its sysroot, which rustup's and a system toolchain's both do; where it names none, the planted crate is built by the `cargo` and `rustc` the run located on `PATH`, which a directory-sensitive shim could answer for differently.
@@ -260,9 +262,10 @@ No setting skips the sentinels.
 A run answered whole from the store runs nothing and removes nothing, so it plants nothing either.
 They cost one more prepared session per configured build — a copy, a build, the instrumented build, and one run of a three-test suite — and no mutant execution.
 
-They do not yet cover everything that removes work.
-`[mutation] equivalence` is not sentineled: its premise is two builds per mutation, and planting for it would add those builds to every run rather than to the runs that asked for the layer.
-Neither is routing by coverage alone, which a run uses only when the guards recorded nothing; the sentinels prepare with the run's own switches, and a run whose guards measure routes by them.
+Every layer that removes work is sentineled in the runs that could use it.
+Routing by coverage alone is what a run falls back to where the guards recorded nothing, so wherever the planted session's coverage measurement placed anything, the `coverage` pair is also routed by that measurement alone, in the same session and at no further cost; a run whose coverage measured nothing never routes by it, and plants nothing for it.
+`[mutation] equivalence` costs builds of a tree of its own, so its pair is planted only in a run that asked for the layer: a second small crate, built at `opt-level = 2` in its test profile, where the layer must call `n + 0` made `n - 0` identical and must not call `n + 1` made `n - 1` so.
+A layer a control withdrew calls nothing identical and so removes nothing, which neither half counts against; a layer still in service that renders the first, or calls the second identical, ends the run with `NJ5009` like any other.
 
 ## Mutation confirmation
 
@@ -317,6 +320,9 @@ A run that kept no store of earlier answers records neither, which is what parts
 #### A kill
 
 Reused when: the mutant has the same content-addressed identity; the recorded killer is a target this run's own coverage still routes to the mutant, after every discharge; that target has the same behaviour key; and this run's own baseline ran that target on the original tree and saw it pass.
+Every behaviour key, and the identity of the run itself, carries the digest of the njutest executable that decided, so an answer one build kept is never believed by another that may mean something else by it; a njutest that cannot read its own executable runs as `--no-cache`.
+The record also carries every target asked before the killer, with its key and what it answered, and is reused only when those are exactly the targets this run would ask before the killer, each with the same key and seen to pass.
+A reused row then carries the answers the recording run was given, so what the whole catalog decides from answers — `hollow-target` among them — is the same whether a run asked again or read back ([ADR 0038](adr/0038-a-read-back-row-carries-its-answers.md)).
 
 #### A survival
 

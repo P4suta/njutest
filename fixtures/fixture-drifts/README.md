@@ -18,7 +18,9 @@ Both paths pass, and both assert on `sum`, so its mutations are killed and each 
 That control reaches `return_visit` and not `first_visit`, over the same passing test the baseline passed.
 The baseline's record says the reverse, and every proof read off it is read off a run that could not recur:
 the mutations of `return_visit` are `unreached` on its word, and those of `first_visit` are put to a test that no longer calls it and survive.
-`njutest verify` raises `unstable-baseline` about `fixture-drifts/lib/fixture_drifts`, counting the two `unreached` claims resting on it ([ADR 0025](../../docs/adr/0025-a-reach-that-moves-is-not-a-measurement.md)).
+`njutest verify` records the target as moved ([ADR 0025](../../docs/adr/0025-a-reach-that-moves-is-not-a-measurement.md)) and runs the two `unreached` claims resting on it again against it, with its reach recorded ([ADR 0036](../../docs/adr/0036-what-rested-on-a-moved-reach-is-run-again.md)).
+That run reaches `return_visit`, whose value the test does not assert on, so both survive by an execution rather than being unreached on the word of a baseline the control contradicted.
+Nothing rests on the moved record any more, so the run raises no `unstable-baseline` and names the target in `reach-moved` instead.
 The engine alone raises nothing, because it never asks a control what it reached; its fates below are what that one baseline record decides.
 
 | Function | Baseline reaches it | Control reaches it | What a run says |

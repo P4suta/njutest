@@ -117,10 +117,7 @@ impl Orphan {
 /// # Errors
 /// What the filesystem said, less the one answer that means nothing was ever left.
 pub fn clear(watched: &Path) -> std::io::Result<()> {
-    match std::fs::remove_dir_all(watched) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-        Ok(()) | Err(_) => Ok(()),
-    }
+    crate::tempowner::remove_tree(watched)
 }
 
 /// Every orphan `watched` holds; a name that is not one an orphan leaves is counted as one, since something wrote it where only orphans do.

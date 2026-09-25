@@ -19,6 +19,7 @@ fn inputs() -> Inputs {
         dependencies: "c".repeat(64),
         toolchain: "rustc 1.98.0 (abc 2026-01-01)".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
+        engine: "e".repeat(64),
         environment: vec![
             ("CC".to_owned(), "clang".to_owned()),
             ("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned()),
@@ -275,4 +276,47 @@ fn the_identity_of_a_known_run_is_the_one_it_has_always_been() {
 
     njutest_devkit::golden::golden(&golden, identity(&inputs()).as_bytes())
         .expect("the recorded identity");
+}
+
+#[test]
+fn another_build_of_njutest_is_another_run() {
+    assert_ne!(
+        identity(&Inputs {
+            engine: "f".repeat(64),
+            ..inputs()
+        }),
+        identity(&inputs()),
+        "a build of njutest may mean something else by an answer than the build that kept it, so \
+         two builds never share a stored run"
+    );
+}
+
+#[test]
+fn the_engine_is_named_by_its_bytes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (one, same, other) = (
+        dir.path().join("one"),
+        dir.path().join("same"),
+        dir.path().join("other"),
+    );
+    std::fs::write(&one, b"njutest").expect("write");
+    std::fs::write(&same, b"njutest").expect("write");
+    std::fs::write(&other, b"njutest, rebuilt").expect("write");
+    let digest = |path: &std::path::Path| {
+        njutest::evidence::digest::engine_of(path).expect("a readable engine")
+    };
+    assert_eq!(
+        digest(&one),
+        digest(&same),
+        "one build in two places is one build"
+    );
+    assert_ne!(
+        digest(&one),
+        digest(&other),
+        "a rebuilt njutest is another one"
+    );
+    assert!(
+        njutest::evidence::digest::engine_of(&dir.path().join("missing")).is_err(),
+        "and one that cannot be read names nothing"
+    );
 }

@@ -719,9 +719,10 @@ fn every_task_a_page_or_a_workflow_names_is_one_mise_declares() {
 }
 
 /// The commands a workflow runs that are the pipeline's own plumbing rather than a gate.
-const PLUMBING: [&str; 4] = [
+const PLUMBING: [&str; 5] = [
     "cargo fetch --locked",
     "rustup toolchain install",
+    "cargo +nightly miri setup",
     "cargo llvm-cov report",
     "cargo xtask sbom",
 ];

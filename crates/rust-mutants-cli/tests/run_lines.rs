@@ -97,6 +97,7 @@ fn mutant(index: u32, outcome: Outcome, expected: bool) -> RunMutantDocument {
         route: None,
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
+        lingered: false,
         expected,
         unreached: false,
         source_run_id: None,
@@ -128,7 +129,7 @@ fn document() -> RunDocument {
     let mutants = vec![killed, expected, survivor];
     RunDocument {
         document_type: "rust-mutants/run-report".to_owned(),
-        schema_version: 2,
+        schema_version: 3,
         tool_version: "0.1.0".to_owned(),
         run: RunMeta {
             id: "20260905T120000000Z".to_owned(),
@@ -138,6 +139,10 @@ fn document() -> RunDocument {
             interrupted: false,
             exit_code: 1,
             shard: None,
+            jobs: rust_mutants_cli::report::run::JobsDocument {
+                asked: "auto".to_owned(),
+                used: 1,
+            },
         },
         workspace: WorkspaceDocument {
             root_name: "demo".to_owned(),
@@ -415,8 +420,18 @@ fn every_report_summary_is_rederived_before_it_is_trusted() {
     let control = document();
     assert!(control.validate().is_ok(), "the control report is coherent");
 
+    let mut older = control.clone();
+    older.schema_version = 2;
+    assert!(
+        matches!(
+            older.validate(),
+            Err(rust_mutants_cli::report::run::DocumentError::SchemaVersion { found: 2 })
+        ),
+        "a report written to an earlier version is named as one, not called a contradiction"
+    );
+
     let mut header = control.clone();
-    header.schema_version = header.schema_version.saturating_add(1);
+    header.document_type = "rust-mutants/something-else".to_owned();
     assert!(matches!(
         header.validate(),
         Err(rust_mutants_cli::report::run::DocumentError::Header { .. })
@@ -675,34 +690,22 @@ fn a_run_that_built_no_targets_says_nothing_about_work_rather_than_dividing_by_i
 #[test]
 fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
     let stale_mutant = mutant(0, Outcome::Killed, false);
-    let stale_id = stale_mutant.id.clone();
-    let finding = |kind: FindingKind, detail: &str| FindingDocument {
-        kind,
-        mutant: (kind == FindingKind::StaleExpectation).then(|| stale_id.clone()),
-        detail: detail.to_owned(),
+    let stale = claim("a proof removed it", Some(&stale_mutant));
+    let shared = claim("the claim verifies nothing", None);
+    let parts = [
+        findings_part(
+            &stale_mutant,
+            std::slice::from_ref(&shared),
+            &["b noticed nothing", "a noticed nothing"],
+            "2/2",
+        ),
+        findings_part(&stale_mutant, &[shared, stale], &[], "1/2"),
+    ];
+    let parts: Vec<RunDocument> = match parts.into_iter().collect() {
+        Ok(parts) => parts,
+        Err(error) => panic!("every claim here earns a finding: {error:?}"),
     };
-    let shared = finding(
-        FindingKind::UnmatchedExpectation,
-        "the claim verifies nothing",
-    );
-    let merged = rust_mutants_cli::report::run::merge(&[
-        findings_part(
-            &stale_mutant,
-            vec![
-                finding(FindingKind::UnmatchedSkip, "b noticed nothing"),
-                shared.clone(),
-                finding(FindingKind::UnmatchedSkip, "a noticed nothing"),
-            ],
-        ),
-        findings_part(
-            &stale_mutant,
-            vec![
-                shared,
-                finding(FindingKind::StaleExpectation, "a proof removed it"),
-            ],
-        ),
-    ]);
-    let merged = match merged {
+    let merged = match rust_mutants_cli::report::run::merge(&parts) {
         Ok(merged) => merged,
         Err(error) => panic!("coherent parts must merge: {error:?}"),
     };
@@ -715,8 +718,16 @@ fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
     assert_eq!(
         read,
         [
-            ("stale-expectation", "a proof removed it"),
-            ("unmatched-expectation", "the claim verifies nothing"),
+            (
+                "stale-expectation",
+                "\"a proof removed it\" was expected to be survived, and the run says killed; \
+                 the claim \"a proof removed it\" no longer holds"
+            ),
+            (
+                "unmatched-expectation",
+                "the expectation for \"the claim verifies nothing\" verifies nothing: \
+                 the claim names nothing"
+            ),
             ("unmatched-skip", "a noticed nothing"),
             ("unmatched-skip", "b noticed nothing"),
         ],
@@ -725,55 +736,55 @@ fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
     );
 }
 
-fn findings_part(stale_mutant: &RunMutantDocument, findings: Vec<FindingDocument>) -> RunDocument {
+fn findings_part(
+    stale_mutant: &RunMutantDocument,
+    claims: &[ExpectationDocument],
+    skips: &[&str],
+    shard: &str,
+) -> Result<RunDocument, rust_mutants_cli::report::run::DocumentError> {
     let mut document = document();
-    document.mutants = if findings
-        .iter()
-        .any(|finding| finding.kind == FindingKind::StaleExpectation)
-    {
+    document.run.shard = Some(shard.to_owned());
+    document.mutants = if claims.iter().any(|claim| claim.standing == "stale") {
         vec![stale_mutant.clone()]
     } else {
         Vec::new()
     };
-    document.expectations = findings.iter().filter_map(expectation_of).collect();
-    document.findings = findings;
+    document.expectations = claims.to_vec();
+    let earned: Vec<FindingDocument> = claims
+        .iter()
+        .filter_map(|claim| claim.finding().transpose())
+        .collect::<Result<_, _>>()?;
+    document.findings = skips
+        .iter()
+        .map(|detail| FindingDocument {
+            kind: FindingKind::UnmatchedSkip,
+            mutant: None,
+            detail: (*detail).to_owned(),
+        })
+        .chain(earned)
+        .collect();
     cohere(&mut document);
-    document
+    Ok(document)
 }
 
-fn expectation_of(finding: &FindingDocument) -> Option<ExpectationDocument> {
-    match finding.kind {
-        FindingKind::StaleExpectation => Some(ExpectationDocument {
-            id: finding.detail.clone(),
-            locator: None,
-            reason: finding.detail.clone(),
-            outcome: Outcome::Survived,
-            mutant: finding.mutant.clone(),
-            covered: None,
-            standing: "stale".to_owned(),
-            actual: Some(Outcome::Killed),
-            why: None,
-        }),
-        FindingKind::UnmatchedExpectation => Some(ExpectationDocument {
-            id: finding.detail.clone(),
-            locator: None,
-            reason: finding.detail.clone(),
-            outcome: Outcome::Survived,
-            mutant: None,
-            covered: None,
-            standing: "unmatched".to_owned(),
-            actual: None,
-            why: Some("the claim names nothing".to_owned()),
-        }),
-        FindingKind::SurvivingMutant
-        | FindingKind::InconclusiveMutant
-        | FindingKind::StepLimitReachedMutant
-        | FindingKind::WaitedMutant
-        | FindingKind::ErroredMutant
-        | FindingKind::NotRunMutant
-        | FindingKind::UnreachedMutant
-        | FindingKind::DischargedMutant
-        | FindingKind::UnmatchedSkip => None,
+fn claim(id: &str, stale: Option<&RunMutantDocument>) -> ExpectationDocument {
+    ExpectationDocument {
+        id: id.to_owned(),
+        locator: None,
+        reason: id.to_owned(),
+        outcome: Outcome::Survived,
+        mutant: stale.map(|mutant| mutant.id.clone()),
+        covered: None,
+        standing: if stale.is_some() {
+            "stale"
+        } else {
+            "unmatched"
+        }
+        .to_owned(),
+        actual: stale.map(|_| Outcome::Killed),
+        why: stale
+            .is_none()
+            .then(|| "the claim names nothing".to_owned()),
     }
 }
 
@@ -829,6 +840,124 @@ fn not_run(index: u32, reason: NotRunReason) -> RunMutantDocument {
     one.unreached = reason == NotRunReason::Unreached;
     one.not_run_reason = Some(reason);
     one
+}
+
+#[test]
+fn a_merge_is_the_same_document_in_whatever_order_its_parts_are_offered() {
+    let claimed = |row: &RunMutantDocument| {
+        let mut one = claim("one claim over three mutations", Some(row));
+        one.covered = Some(3);
+        one
+    };
+    let shard = |rows: Vec<RunMutantDocument>, claimed_row: usize, of: &str| {
+        let mut document = part(rows, 1, of);
+        let one = match document.mutants.get(claimed_row) {
+            Some(row) => claimed(row),
+            None => panic!("the claimed row is one of the part's rows"),
+        };
+        match one.finding() {
+            Ok(Some(finding)) => document.findings.push(finding),
+            other => panic!("a stale claim earns a finding: {other:?}"),
+        }
+        document.expectations = vec![one];
+        cohere(&mut document);
+        document
+    };
+    let parts = [
+        shard(
+            vec![
+                mutant(0, Outcome::Killed, true),
+                mutant(3, Outcome::Killed, false),
+            ],
+            1,
+            "1/3",
+        ),
+        shard(vec![mutant(1, Outcome::Killed, false)], 0, "2/3"),
+        shard(vec![mutant(2, Outcome::Killed, false)], 0, "3/3"),
+    ];
+    let orders: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let merged: Vec<String> = orders
+        .iter()
+        .map(|order| {
+            let offered: Vec<RunDocument> = order
+                .iter()
+                .filter_map(|&at| parts.get(at).cloned())
+                .collect();
+            let whole = rust_mutants_cli::report::run::merge(&offered)
+                .unwrap_or_else(|error| panic!("{order:?} must merge: {error:?}"));
+            serde_json::to_string(&whole).expect("renders")
+        })
+        .collect();
+    let Some(first) = merged.first() else {
+        panic!("six orders merged");
+    };
+    assert!(
+        merged.iter().all(|one| one == first),
+        "the merge is a function of the set of its parts, not of the order they arrive in"
+    );
+    assert!(
+        first.contains(&format!(
+            "\"mutant\":\"{}\",\"covered\"",
+            mutant(1, Outcome::Killed, false).id
+        )),
+        "and names what the whole run names, the first contradicting mutation in catalog \
+         order, though a later part holds it: {first}"
+    );
+}
+
+#[test]
+fn a_claim_met_where_its_mutation_has_moved_is_a_report_that_reads_back() {
+    let row = mutant(0, Outcome::Survived, true);
+    let mut moved = claimed("the reviewer's reason", &row);
+    moved.why = Some("the mutation moved from line 9 to line 11".to_owned());
+    let mut document = part(vec![row], 1, "1/1");
+    document.expectations = vec![moved];
+    cohere(&mut document);
+    assert!(
+        document.validate().is_ok(),
+        "a claim the run met at a new line is met, and saying where it went is not a contradiction: \
+         {:?}",
+        document.validate()
+    );
+}
+
+#[test]
+fn a_merge_names_the_part_it_is_missing_rather_than_a_row_it_cannot_explain() {
+    use rust_mutants::run::PartsError;
+    use rust_mutants_cli::report::run::MergeError;
+    let first = || part(vec![mutant(0, Outcome::Killed, true)], 1, "1/2");
+    let second = || part(vec![mutant(1, Outcome::Killed, true)], 1, "2/2");
+    let third = || part(vec![mutant(1, Outcome::Killed, true)], 1, "2/3");
+    let refused = |parts: &[RunDocument]| match rust_mutants_cli::report::run::merge(parts) {
+        Ok(merged) => panic!("an incomplete set of parts merged: {:?}", merged.run),
+        Err(error) => error,
+    };
+    assert_eq!(
+        refused(&[first()]),
+        MergeError::Parts(PartsError::Missing { index: 2, of: 2 }),
+        "one part alone is a whole with a part missing"
+    );
+    assert_eq!(
+        refused(&[first(), first(), second()]),
+        MergeError::Parts(PartsError::Duplicate { index: 1, of: 2 }),
+        "a part offered twice is said as such"
+    );
+    assert_eq!(
+        refused(&[first(), third()]),
+        MergeError::Parts(PartsError::Denominator {
+            index: 2,
+            expected: 2,
+            actual: 3
+        }),
+        "parts that divide the catalog differently are not parts of one whole"
+    );
 }
 
 #[test]
@@ -947,5 +1076,37 @@ fn survivors_of_one_unexercised_path_are_counted_as_one_and_the_rest_are_not() {
         line.contains("2 each its own finding"),
         "two comparisons are two boundaries, and saying they are one would hide one of \
          them: {said}"
+    );
+}
+
+#[test]
+fn the_score_is_followed_by_how_many_survivors_no_claim_accounts_for() {
+    let accounted = mutant(0, Outcome::Survived, true);
+    let left = mutant(1, Outcome::Survived, false);
+    let killed = mutant(2, Outcome::Killed, false);
+    let mut claimed_run = part(vec![accounted.clone(), left, killed], 1, "1/1");
+    claimed_run.run.shard = None;
+    claimed_run.expectations = vec![claimed("an equivalent mutant", &accounted)];
+    cohere(&mut claimed_run);
+    let text = rust_mutants_cli::report::lines(&claimed_run).expect("valid work ledger");
+    assert!(
+        text.contains("LEFT      1 of 2 survivors is accounted for by no claim\n"),
+        "a reader sees at a glance what is left to do once the claims are counted: {text}"
+    );
+
+    let mut unclaimed_run = part(
+        vec![
+            mutant(0, Outcome::Survived, false),
+            mutant(1, Outcome::Killed, false),
+        ],
+        1,
+        "1/1",
+    );
+    unclaimed_run.run.shard = None;
+    cohere(&mut unclaimed_run);
+    let text = rust_mutants_cli::report::lines(&unclaimed_run).expect("valid work ledger");
+    assert!(
+        !text.contains("LEFT"),
+        "a run with no claims has nothing a claim accounts for: {text}"
     );
 }

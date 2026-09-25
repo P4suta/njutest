@@ -238,6 +238,8 @@ They are what the run says about its own footing, and each is stated fail-closed
   A run that met any of these and said nothing recorded no seam, raised no finding and stated no limitation, so a reader read the wire dimension as covered when nothing about it had been measured.
 - The interpreter ran out of the time it was given (`miri-timed-out`).
   This is not a claim that it found nothing: a budget that expired is a question nobody answered, which is why it is a limitation and never a pass.
+- The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
+  Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 
@@ -250,7 +252,8 @@ A run checks it by running every target again: the original-code control that co
 Three things follow and are not hidden.
 A target whose second run cannot be compared — it failed, passed other tests than its baseline, or could not record — is `drift-not-measured`, and every proof read off its baseline rests on one run.
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
-And this release reports a moved target without running again what rested on it: the `unreached` claims and the executions a proof removed are counted in the finding, and re-executing them without those proofs is the next change.
+And what rested on a moved target is run again against it with its reach recorded ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
+Where nothing rests on a moved target any more, `reach-moved` still names it: nothing the run concludes stands on the moved record, and the suite's reach is still not a function of the target.
 
 ## What a run asks of a suite that depends on where it runs
 
@@ -356,7 +359,7 @@ while i < n { i += step; } // and this never ends — the loop body is a checkpo
 
 Run against a workspace of that shape, the mutation of the literal reports `step_limit_reached` at `N + 1` and never `waited`, and it does so with the loop in a second file the run is not mutating.
 This paragraph said the opposite until that was measured; what it described was the instrumenter before it placed checkpoints across a whole workspace.
-No fixture in this tree pins it yet, which is the next thing this claim wants.
+`fixtures/fixture-hang` pins it: `walked` hands its stride to a loop in `src/walk.rs`, a file a `rust-mutants: skip` marker keeps the run from mutating, and `crates/rust-mutants-cli/tests/toolchain_hang.rs` holds the stride's decrement to `step_limit_reached` at exactly `N + 1`, not retried, with no mutant of the loop's own file.
 
 How long the allowance takes to reach belongs to the platform, not to the count.
 The durable step protocol pays one locked state-file round trip per take, and that round trip is measured here at about 7.4ms on Windows: a hundred takes cost 789ms, where the machines this figure was first chosen on spend a fraction of that.

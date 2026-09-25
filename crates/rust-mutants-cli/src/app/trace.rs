@@ -114,7 +114,8 @@ const fn named(command: &cli::Command) -> &'static str {
         | cli::Command::Report { .. }
         | cli::Command::Merge { .. }
         | cli::Command::Trace { .. }
-        | cli::Command::Cache { .. } => "command",
+        | cli::Command::Cache { .. }
+        | cli::Command::Ci { .. } => "command",
     }
 }
 

@@ -942,7 +942,6 @@ fn a_check_that_goes_quiet_is_stopped_and_one_that_talks_is_not() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_hook_whose_stderr_takes_no_more_still_answers_for_the_check() {
     let repository = Repository::new(SAYS_A_GREAT_DEAL);

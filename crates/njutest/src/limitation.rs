@@ -36,6 +36,9 @@ pub const MIRI_UNSUPPORTED: &str = "miri-unsupported";
 /// The interpreter ran out of the time it was given, which is not a claim that it found nothing.
 pub const MIRI_TIMED_OUT: &str = "miri-timed-out";
 
+/// The interpreter ended without a test result, so what its status says is about the interpreter and not the suite.
+pub const MIRI_RAN_NO_TEST: &str = "miri-ran-no-test";
+
 /// A sanitizer the run was asked for could not be run, so nothing it would have found is claimed.
 pub const SANITIZER_UNAVAILABLE: &str = "sanitizer-unavailable";
 
@@ -64,6 +67,9 @@ pub const SEAM_NOT_WATCHED: &str = "seam-not-watched";
 /// A target's baseline was measured and no original-code control over the same passing tests recorded what it reached, so whether its reach is a function of the target is not known.
 pub const DRIFT_NOT_MEASURED: &str = "drift-not-measured";
 
+/// A target's reach moved and every disposition that rested on it was decided again against it, so nothing the run concludes stands on the moved record, but the suite's reach is still not a function of the target (ADR 0036).
+pub const REACH_MOVED: &str = "reach-moved";
+
 /// A knob was asked for and not put on a target, so nothing is claimed about whether the target depends on what it sets.
 pub const KNOB_NOT_PUT: &str = "knob-not-put";
 
@@ -72,7 +78,7 @@ pub const KNOB_NOT_COMPARED: &str = "knob-not-compared";
 
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 22] = [
+pub const ALL: [&str; 24] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -84,6 +90,7 @@ pub const ALL: [&str; 22] = [
     SOUNDNESS_SOURCE_UNREADABLE,
     MIRI_UNSUPPORTED,
     MIRI_TIMED_OUT,
+    MIRI_RAN_NO_TEST,
     SANITIZER_UNAVAILABLE,
     SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED,
     FUZZ_NOT_EXECUTED,
@@ -93,6 +100,7 @@ pub const ALL: [&str; 22] = [
     RESOURCE_NOT_STOPPED,
     SEAM_NOT_WATCHED,
     DRIFT_NOT_MEASURED,
+    REACH_MOVED,
     KNOB_NOT_PUT,
     KNOB_NOT_COMPARED,
 ];
