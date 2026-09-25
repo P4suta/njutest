@@ -689,6 +689,19 @@ fn discharged_then_killed() -> Vec<Value> {
     ]
 }
 
+/// The defect planted for the knobs layer: a control a knob broke, recorded as stable.
+fn broken_by_a_knob_called_stable(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a control a knob broke, recorded as stable",
+        engine: Some(vec![
+            touch("baseline", &[0, 1]),
+            touch("control", &[0, 1]),
+            perturbed("killed", &["lib::works"], &json!({ "state": "not-read" })),
+        ]),
+        ..clean
+    }
+}
+
 /// The defect planted for the repair layer: a disposition said to be run again against a target whose reach never moved.
 fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
     let mut events = routes();
@@ -942,15 +955,7 @@ impl Layer {
                 unobserved_repair_called_a_survival(),
                 repaired_where_nothing_moved(clean),
             ],
-            Self::Knobs => vec![Perturbation {
-                name: "a control a knob broke, recorded as stable",
-                engine: Some(vec![
-                    touch("baseline", &[0, 1]),
-                    touch("control", &[0, 1]),
-                    perturbed("killed", &["lib::works"], &json!({ "state": "not-read" })),
-                ]),
-                ..clean
-            }],
+            Self::Knobs => vec![broken_by_a_knob_called_stable(clean)],
             Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
         }
     }

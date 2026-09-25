@@ -2676,6 +2676,7 @@ fn repair_audit(repaired: &[&str], engine: Vec<serde_json::Value>) -> Vec<String
         document: with(sentinel::drifted("moved")),
         events: Some(events),
         engine: Some(engine),
+        shards: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");
@@ -2793,6 +2794,7 @@ fn two_repairs(second_was: &str) -> Vec<String> {
         ] })),
         events: Some(events),
         engine: Some(engine),
+        shards: Vec::new(),
     }
     .lay()
     .expect("the specimen is laid out");

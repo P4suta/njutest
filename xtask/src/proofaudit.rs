@@ -749,17 +749,9 @@ struct Engine {
     perturbed: crate::knobs::Perturbations,
 }
 
-fn drift(
-    recording: &Recording<'_>,
-    (engines, repairs, routing): (
-        &[Engine],
-        &[crate::repair::Repair],
-        Option<&crate::route::Routing>,
-    ),
-    audit: &mut Audit,
-) -> Decided {
-    let mut notes = Notes::on(audit, Layer::Drift);
-    let recorded = recording.document.get("drift").map(|rows| {
+/// Each target and state the report's drift records name; nothing where the report records no drift.
+fn recorded_drift(recording: &Recording<'_>) -> Option<Vec<(String, String)>> {
+    recording.document.get("drift").map(|rows| {
         rows.as_array()
             .map(Vec::as_slice)
             .unwrap_or_default()
@@ -770,8 +762,21 @@ fn drift(
                     field(row, "state").unwrap_or_default(),
                 )
             })
-            .collect::<Vec<(String, String)>>()
-    });
+            .collect()
+    })
+}
+
+fn drift(
+    recording: &Recording<'_>,
+    (engines, repairs, routing): (
+        &[Engine],
+        &[crate::repair::Repair],
+        Option<&crate::route::Routing>,
+    ),
+    audit: &mut Audit,
+) -> Decided {
+    let mut notes = Notes::on(audit, Layer::Drift);
+    let recorded = recorded_drift(recording);
     let touched = match (engines, recorded.as_ref()) {
         ([], None) => {
             return notes.absent(
@@ -969,10 +974,10 @@ fn repaired(
         Option<&crate::route::Routing>,
     ),
     audit: &mut Audit,
-) {
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Repair);
     if repairs.is_empty() {
-        return;
+        return notes.absent("the run ran no disposition again against a target whose reach moved");
     }
     let (Some(routing), [Engine { touched, .. }]) = (routing, engines) else {
         notes.unaudited(
@@ -983,7 +988,7 @@ fn repaired(
                 repairs.len()
             ),
         );
-        return;
+        return notes.looked();
     };
     let moved = crate::drift::standings(touched);
     let paired = paired(recording, repairs, (routing, touched), &mut notes);
@@ -1015,6 +1020,7 @@ fn repaired(
             );
         }
     }
+    notes.looked()
 }
 
 /// Each repair's last execution against its moved target, paired with the one engine repair touch record naming that mutation and target; a repair touch no repair names, or a repair two of them name, is a violation.
