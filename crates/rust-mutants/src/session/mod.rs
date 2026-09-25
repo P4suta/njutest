@@ -2433,17 +2433,9 @@ mod kani_laws {
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {
             conclusion,
-            target: String::new(),
-            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
-            protocol: crate::execute::Protocol::Unanswered,
-            summary: None,
-            signal: None,
-            failed_tests: Vec::new(),
-            passed_tests: Vec::new(),
-            ignored_tests: Vec::new(),
-            leader: None,
+            ..MutantResult::apparatus_error("", String::new())
         }
     }
 
