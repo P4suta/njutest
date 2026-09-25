@@ -201,3 +201,43 @@ fn real_manifests_cannot_hide_generators_by_rename_kind_target_or_fuzz() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn a_feature_only_a_development_edge_turns_on_is_named_for_a_direct_dependency_alone() {
+    let shipped = "serde_json v1.0.151|default,std\nparking_lot v0.12.5|\nnjutest v0.1.0 (/x)|\n";
+    let developed = "serde_json v1.0.151|default,float_roundtrip,std (*)\nparking_lot v0.12.5|default\nnjutest v0.1.0 (/x)|testkit\njsonschema v0.56.0|default\n";
+    let direct: std::collections::BTreeSet<String> = ["serde_json".to_owned()].into();
+    assert_eq!(
+        xtask::deps::features_only_tests_build_with((shipped, developed), &direct),
+        vec![(
+            "serde_json v1.0.151".to_owned(),
+            vec!["float_roundtrip".to_owned()]
+        )],
+        "the shipped crates' own dependency built with a feature only tests ask for is named; a \
+         transitive package, a member's own test seam and a development-only package are not \
+         held"
+    );
+    assert_eq!(
+        xtask::deps::features_only_tests_build_with((developed, developed), &direct),
+        Vec::new(),
+        "and a graph built alike with and without development edges draws nothing"
+    );
+}
+
+#[test]
+fn the_targets_the_feature_gate_reads_are_the_ones_a_release_builds() {
+    let workflow = std::fs::read_to_string(
+        njutest_devkit::paths::workspace_root().join(".github/workflows/release.yml"),
+    )
+    .unwrap_or_else(|error| panic!("the release workflow: {error}"));
+    let built: std::collections::BTreeSet<&str> = workflow
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("target: "))
+        .map(str::trim)
+        .collect();
+    let read: std::collections::BTreeSet<&str> = xtask::deps::SHIPPED_TARGETS.into_iter().collect();
+    assert_eq!(
+        read, built,
+        "a target a release builds unifies features over its own graph, and a gate that does not read it passes what that release ships without"
+    );
+}

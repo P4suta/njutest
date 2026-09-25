@@ -1,6 +1,6 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 2,
+  "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
     "id": "20260923t165252724z",
@@ -9,7 +9,7 @@
     "duration_ms": 109,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null
+    "shard": null, "jobs": {"asked": "auto", "used": 1}
   },
   "workspace": {
     "root_name": "fixture-unreached",
@@ -101,6 +101,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -147,6 +148,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -193,6 +195,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -239,6 +242,7 @@
       ],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": null,
       "route": {
         "granularity": "block",
@@ -283,6 +287,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -323,6 +328,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -363,6 +369,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
@@ -403,6 +410,7 @@
       "killed_by": [],
       "signal": null,
       "retried": false,
+      "lingered": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",

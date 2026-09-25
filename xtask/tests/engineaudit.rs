@@ -8,7 +8,6 @@
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking and reads as a table"
 )]
-#![recursion_limit = "256"]
 
 use std::path::Path;
 
@@ -231,7 +230,7 @@ fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
             "inconclusive": 0, "errored": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
-        "mutants": [{ "outcome": "waited", "retried": true, "expected": false }, {}],
+        "mutants": [{ "outcome": "waited", "retried": true, "lingered": false, "expected": false }, {}],
         "findings": [{
             "kind": "waited-mutant", "mutant": short(KILLED),
             "detail": "the wall-clock bound expired twice"
@@ -326,6 +325,55 @@ fn a_mutant_exec_that_disagrees_with_its_row_is_a_violation() {
     assert!(
         found.iter().any(|remark| remark.contains("disagrees")),
         "{audit}"
+    );
+}
+
+#[test]
+fn a_row_says_it_lingered_exactly_when_its_recorded_execution_did() {
+    let mut claimed = base();
+    claimed["mutants"][0]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&claimed, &recording());
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "a row that says its process outlived its harness's answer, over an execution the \
+         recording says ended with it, rests on nothing: {audit}"
+    );
+    let mut events = recording();
+    events[8]["mutant"]["lingered"] = serde_json::json!(true);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("lingered")),
+        "and a row that hides an execution the recording says lingered hides it: {audit}"
+    );
+}
+
+#[test]
+fn a_kill_recorded_from_a_signal_sent_from_outside_is_a_violation() {
+    let mut events = recording();
+    events[8]["mutant"]["signal"] = serde_json::json!(9);
+    events[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 9")),
+        "a SIGKILL with no failing test named is what a cancelled job or an out-of-memory \
+         killer leaves, and a kill kept from it hides a survivor from every run that reads it \
+         back: {audit}"
+    );
+    let mut raised = recording();
+    raised[8]["mutant"]["signal"] = serde_json::json!(6);
+    raised[8]["mutant"]["failed_tests"] = serde_json::json!([]);
+    let audit = audited_with(&base(), &raised);
+    assert!(
+        !violations(&audit, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("signal 6")),
+        "an abort the process raised itself is a kill a mutation can cause: {audit}"
     );
 }
 
@@ -697,10 +745,11 @@ fn the_report_boundary_rejects_unknown_fields_and_closed_state_values() {
 #[test]
 fn the_report_boundary_rejects_duplicate_keys() {
     let encoded = base().to_string();
-    let duplicated = encoded.replacen(
-        "\"schema_version\":2",
-        "\"schema_version\":2,\"schema_version\":2",
-        1,
+    let key = format!("\"schema_version\":{}", xtask::engineaudit::SCHEMA_VERSION);
+    let duplicated = encoded.replacen(&key, &format!("{key},{key}"), 1);
+    assert_ne!(
+        duplicated, encoded,
+        "the duplicate was planted, so the refusal below is about it"
     );
     let error = xtask::engineaudit::audit("duplicate.json", &duplicated, &Evidence::default())
         .expect_err("a duplicate key must not silently choose a winner");
@@ -915,7 +964,7 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "original": ">", "replacement": ">=",
             "outcome": "not_run", "target": "", "exit_code": 0,
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
-            "step_notice": null, "retried": false, "not_run_reason": "interrupted",
+            "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted",
             "route": null, "identical": "not-measured",
             "expected": false, "unreached": false, "source_run_id": null
         }]
@@ -1694,6 +1743,33 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
     assert!(
         violations(&audit, Layer::Proofs).is_empty(),
         "the select record agrees with the report: {audit}"
+    );
+}
+
+#[test]
+fn the_audit_reads_the_version_and_the_standings_the_schema_file_names() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../schema/rust-mutants-run-report-v1.json"
+    ))
+    .expect("the committed run-report schema");
+    assert_eq!(
+        schema["properties"]["schema_version"]["const"].as_u64(),
+        Some(xtask::engineaudit::SCHEMA_VERSION),
+        "the audit re-decides the version of the report the schema file describes, and is kept \
+         apart from the engine's constant so that it stays a second reading"
+    );
+    let named: std::collections::BTreeSet<&str> = schema
+        .pointer("/properties/expectations/items/properties/standing/enum")
+        .and_then(serde_json::Value::as_array)
+        .expect("the standing enum")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let known: std::collections::BTreeSet<&str> =
+        xtask::engineaudit::CLAIM_STANDINGS.into_iter().collect();
+    assert_eq!(
+        known, named,
+        "every standing the schema allows is one the audit knows how to re-decide"
     );
 }
 

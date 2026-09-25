@@ -414,7 +414,6 @@ mod unix {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_symlink_cannot_stand_in_for_a_run_directory_or_index() {
         use std::os::unix::fs::symlink;

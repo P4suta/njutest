@@ -55,6 +55,7 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Build { .. }
         | Payload::Verify { .. }
         | Payload::Touch { .. }
+        | Payload::PerturbedControl { .. }
         | Payload::Witness { .. }
         | Payload::SkipClaim { .. }
         | Payload::Kept { .. }
@@ -124,6 +125,7 @@ fn options<'r>() -> DiscoverOptions<'r> {
         selection: Selection::tier(&REGISTRY, Tier::All),
         include: Vec::new(),
         exclude: Vec::new(),
+        narrowing: Vec::new(),
         packages: Vec::new(),
         skips: Vec::new(),
     }

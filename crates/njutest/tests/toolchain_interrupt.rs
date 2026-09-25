@@ -178,7 +178,8 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
                 "id": "0f7b4d7472329894e9b3",
                 "disposition": {
                     "kind": "killed",
-                    "by": "fixture-assured/lib/fixture_assured"
+                    "by": "fixture-assured/lib/fixture_assured",
+                    "before": []
                 },
                 "duration_ms": 1,
             }],

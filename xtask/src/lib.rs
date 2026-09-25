@@ -11,16 +11,19 @@ pub mod devgates;
 pub mod docflows;
 pub mod drift;
 pub mod engineaudit;
+pub mod error;
 pub mod fixtures;
 pub mod fuzzclippy;
 pub mod gates;
 pub mod kaniaudit;
+pub mod knobs;
 pub mod lints;
 pub mod milestones;
 pub mod modelaudit;
 pub mod proofaudit;
 pub mod release;
 pub mod remote;
+pub mod repair;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
@@ -30,6 +33,7 @@ pub mod strictjson;
 pub mod surface;
 pub mod wire;
 
+use crate::error::Coded as _;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::ExitCode;
@@ -167,14 +171,14 @@ where
         Gate::Fixtures => gates::fixtures(&root),
         Gate::Tracked => gates::tracked(&root),
         Gate::FuzzClippy { alternate: _ } => {
-            fuzzclippy::check(&root, cargo).map_err(|error| gates::GateFailure(error.to_string()))
+            fuzzclippy::check(&root, cargo).map_err(|error| gates::GateFailure(error.coded()))
         }
         Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
             .map_err(|error| gates::GateFailure(error.to_string())),
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
             .map(|()| "kani-laws: 15 production harnesses, every assertion reachable and every cover satisfiable".to_owned())
-            .map_err(|error| gates::GateFailure(error.to_string())),
+            .map_err(|error| gates::GateFailure(error.coded())),
         Gate::Milestones => gates::milestones(&root),
         Gate::Reached => gates::reached(&root),
         Gate::Surfaces => gates::surfaces(&root),
@@ -209,7 +213,7 @@ where
     };
     match outcome {
         Ok(report) => after_output(writeln!(stdout, "{report}"), ExitCode::SUCCESS),
-        Err(failure) => after_output(writeln!(stderr, "{failure}"), ExitCode::FAILURE),
+        Err(failure) => after_output(writeln!(stderr, "{}", failure.coded()), ExitCode::FAILURE),
     }
 }
 
@@ -223,7 +227,7 @@ fn audit_engine(
         Ok(planted) => planted,
         Err(blind) => {
             return after_output(
-                writeln!(stderr, "{blind}"),
+                writeln!(stderr, "{}", blind.coded()),
                 ExitCode::from(engineaudit::EXIT_UNREADABLE),
             );
         }
@@ -241,7 +245,7 @@ fn audit_engine(
             )
         }
         Err(failure) => after_output(
-            writeln!(stderr, "{failure}"),
+            writeln!(stderr, "{}", failure.coded()),
             ExitCode::from(engineaudit::EXIT_UNREADABLE),
         ),
     }
@@ -258,7 +262,7 @@ fn audit_run(
         Ok(planted) => planted,
         Err(blind) => {
             return after_output(
-                writeln!(stderr, "{blind}"),
+                writeln!(stderr, "{}", blind.coded()),
                 ExitCode::from(proofaudit::EXIT_UNREADABLE),
             );
         }
@@ -276,7 +280,7 @@ fn audit_run(
             )
         }
         Err(failure) => after_output(
-            writeln!(stderr, "{failure}"),
+            writeln!(stderr, "{}", failure.coded()),
             ExitCode::from(proofaudit::EXIT_UNREADABLE),
         ),
     }

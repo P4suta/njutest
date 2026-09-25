@@ -23,7 +23,7 @@ jobs:
       - run: cargo install njutest --locked
       - name: Pull-request scope
         if: github.event_name == 'pull_request'
-        run: njutest verify --changed-from origin/${{ github.base_ref }} --ui=plain
+        run: njutest verify --changed-from=origin/${{ github.base_ref }} --ui=plain
       - name: Full main scope
         if: github.event_name != 'pull_request'
         run: njutest verify --ui=plain
@@ -50,19 +50,23 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 | `dependency-review.yml` | what a pull request adds to the dependency graph, refused at moderate severity in any scope | on a pull request |
 | `scorecard.yml` | the OpenSSF Scorecard of this repository, published | every push to `main`, and weekly |
 
-The `book` job builds `docs/` with mdbook, which refuses a summary that names a page the repository does not hold; `cargo test -p xtask --test docs` refuses the other direction, a page the summary does not name.
+The `book` job builds `docs/` with mdbook, which refuses a summary that names a page the repository does not hold; `cargo test -p xtask --test suite docs::` refuses the other direction, a page the summary does not name.
 A page that neither side notices is one a reader of the book cannot reach.
 
 `codeql.yml`, `dependency-review.yml`, and `scorecard.yml` answer about the supply chain rather than about this code: what a query finds in it, what a change adds to the graph below it, and what the posture of the repository looks like from outside.
 `cargo deny` and `cargo audit` in `ci.yml` ask the same question of the graph that is already here, on every push; dependency review asks it of the difference, and says so on the pull request.
 Secret scanning, push protection, Dependabot security updates, and private vulnerability reporting are repository settings rather than workflows, and are on.
 
+Every workflow declares `shell: bash` as its default, which GitHub runs as `bash -e -o pipefail` on each of the three platforms, and no step or composite action names another shell (`cargo test -p xtask --test workflows`).
+Without that default a Linux or macOS step runs in `bash -e`, where `njutest verify | tee out` has the status of `tee`, and a Windows step runs in PowerShell, which goes on past a native command that failed.
+The first let the `soundness` job read on after an exit code nobody had looked at; the second once reported a failing test as a cancelled job forty-five minutes later.
+
 The required checks are the ones `ci-success` gathers.
 `mutation.yml` and `dogfood.yml` are the two independent measurements of how strong this suite is, and neither gates a pull request: a survivor is a test to write or an acceptance to record with a reason, which is work to schedule rather than a push to block.
 
 ## Dogfooding the engine
 
-`dogfood.yml` runs `rust-mutants` over its own engine with `--probe --jobs 4 --trace`, cut into four parts by `--shard K/4` so no part runs into the 120-minute limit and reports every remaining mutant as interrupted.
+`dogfood.yml` runs `rust-mutants` over its own engine with `--jobs 4 --trace`, cut into four parts by `--shard K/4` so no part runs into the 120-minute limit and reports every remaining mutant as interrupted.
 Coverage is measured because it is the default.
 The `audit` job then:
 
@@ -109,8 +113,8 @@ jobs:
           rust-mutants run --locked --jobs 4 \
             --shard ${{ matrix.shard }}/4 \
             --run-id "${{ github.run_id }}-${{ matrix.shard }}of4" \
-            --json > "mutants-${{ matrix.shard }}.jsonl"
-        continue-on-error: true # the merged report is the gate, not one part
+            --json > "mutants-${{ matrix.shard }}.jsonl" \
+            || case "$?" in 1) ;; *) exit 1 ;; esac # a finding is the merged report's to judge; a failure is not
       - uses: actions/upload-artifact@v4
         with:
           name: mutants-${{ matrix.shard }}
@@ -177,13 +181,13 @@ Both say how many moved, so a job that carried nothing says so rather than succe
     path: answers.jsonl
     key: njutest-answers-${{ github.sha }}
     restore-keys: njutest-answers-
-- run: njutest cache --import answers.jsonl || true
+- run: if [ -f answers.jsonl ]; then njutest cache --import answers.jsonl; fi
 - run: njutest verify --locked
-  continue-on-error: true
 - run: njutest cache --export answers.jsonl
+  if: always()
 ```
 
-The import is allowed to fail on the first run of a repository, when there is no file yet; nothing else here is.
+The import is skipped only when there is no file yet, on the first run of a repository, and the export runs whatever the verdict; nothing here fails quietly.
 An answer arriving from another machine is held to exactly what a run of this one would keep it to — the identity it is filed under, and the audit every durable report must satisfy — because that rule lives in one place and a second copy of it would be a second chance to write it more loosely.
 A line that is not an answer refuses the import and names the line (`NJ8004`); an entry this machine cannot read back refuses the export and names the entry, since copying an answer nobody can check makes one broken answer into two.
 
