@@ -1395,3 +1395,71 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
+$ rust-mutants ci --help
+Carry what a run established into a continuous integration job
+
+Usage: rust-mutants ci [OPTIONS] <COMMAND>
+
+Commands:
+  gate  Write a run where the job shows it, and exit with its verdict. On GitHub Actions that is the
+        step summary, the step outputs, and one annotation per survivor
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ rust-mutants ci gate --help
+Write a run where the job shows it, and exit with its verdict. On GitHub Actions that is the step
+summary, the step outputs, and one annotation per survivor
+
+Usage: rust-mutants ci gate [OPTIONS]
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root. Defaults to the working directory
+
+      --run <ID>
+          The stored run to gate on, by its identity. Defaults to the newest
+
+      --report <FILE>
+          Gate on this report instead of a stored run, such as the one `merge --output` wrote
+
+      --sarif <FILE>
+          Also write the findings here as SARIF 2.1.0, for a code scanning upload
+
+      --host <HOST>
+          Write for this host rather than the one the environment names
+
+          Possible values:
+          - github: GitHub Actions: the step summary, the step outputs, and error annotations
+          - gitlab: GitLab CI: the lines, and the verdict as the exit code
+          - plain:  The lines, and the verdict as the exit code
+
+      --changed-from <REV>
+          Annotate only the survivors on lines that differ from this revision; the summary still
+          counts every one
+
+  -h, --help
+          Print help (see a summary with '-h')
+

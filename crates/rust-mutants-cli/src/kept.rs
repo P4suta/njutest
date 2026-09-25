@@ -110,7 +110,9 @@ impl Ledger {
     /// # Errors
     /// The ledger that could not be written.
     pub fn clear(directory: &Path) -> Result<(usize, Self), std::io::Error> {
-        Self::clear_with(directory, &|path: &Path| std::fs::remove_dir_all(path))
+        Self::clear_with(directory, &|path: &Path| {
+            rust_mutants::tempowner::remove_tree(path)
+        })
     }
 
     /// [`Ledger::clear`] with its removal as an argument, so the directory that refuses to go can be tested without a filesystem persuaded into refusing.

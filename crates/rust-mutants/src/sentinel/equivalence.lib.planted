@@ -1,0 +1,16 @@
+pub fn unchanged(n: i32) -> i32 {
+    n + 0
+}
+
+pub fn raised(n: i32) -> i32 {
+    n + 1
+}
+
+#[cfg(test)]
+mod equivalence_tests {
+    #[test]
+    fn what_the_tests_call() {
+        assert_eq!(super::unchanged(3), 3);
+        assert_eq!(super::raised(3), 4);
+    }
+}

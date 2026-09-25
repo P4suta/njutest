@@ -48,7 +48,7 @@ Answered builds cannot be represented in that field.
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
-There are thirteen kinds, and every report carries the stable name:
+There are fifteen kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -65,6 +65,8 @@ There are thirteen kinds, and every report carries the stable name:
 | `hollow-target` | a target was put to mutations and noticed none | no |
 | `wire-unnoticed` | a seam fault was put and nothing noticed | no |
 | `unstable-baseline` | a target reached something on an original-code control that it did not reach on its baseline, over the same passing tests | no |
+| `environment-dependent` | a target that passed on its baseline failed on a control started with a knob put | yes |
+| `environment-dependent-reach` | a target reached something else on a control started with a knob put, over the same passing tests | no |
 
 The last column is derived from the same closed `FindingKind` that decides the verdict.
 A report with a defect concludes `DEFECT`; a report with only gaps concludes `INSUFFICIENT`; an assurance carries no findings.
@@ -141,7 +143,7 @@ duplicates and missing counterparts are rejected.
 | `reaching` | targets that could notice the mutation |
 | `discharged` | targets removed by `branch-never-taken` or `never-infected` |
 | `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete` |
-| `answered` | targets actually asked, in order, with their outcomes |
+| `answered` | targets actually asked, in order, with their outcomes: by this run, or by the run a read-back or resumed row came from |
 
 A row this run decided by a route it asked is held to that route's own answers, and a report that contradicts them is refused.
 A `killed` row's answers end with the target it names noticing, and hold no other kill: the mutation phase stops at the first target that notices.
@@ -165,6 +167,23 @@ The same holds for `hollow-target`, since which targets answered about a mutatio
 What only the whole catalog decides is one function, `report::whole_catalog`, called by a run that measured the catalog whole and by a merge over the combined records, so a catalog concludes the same whether it was measured whole or in shards.
 Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
 
+## Knobs
+
+Every part carries `knobs`, one record per knob the configuration asked for and per target whose baseline passed, each `{ target, knob, standing }`: what one more control of that target, started with one thing the contract lets differ between machines set differently, established against the baseline.
+`knob` is one of `timezone`, `locale`, `temp-directory`, `home`, `umask`, `columns`, `threads`.
+`standing` is closed by its `state`:
+`stable` (it passed the tests its baseline passed and reached the same three unions drift compares),
+`passed` (it passed, and is a target that records no reach to compare, as a doctest run through cargo is),
+`broke` with the tests that `failed`,
+`moved` with the `reach` it gained and lost in each union,
+`uncompared` with drift's closed `why`,
+`unsettled` with `errored` or `waited`,
+and `not-put` with `why`: `platform`, `zone-missing`, `locale-missing`, `shell-missing`, `through-cargo`, or `not-libtest`.
+A part whose records repeat a knob for a target, or put two knobs on different targets, is refused, since every knob asked for is put once on every passing target.
+
+A part that measured the whole catalog raises `environment-dependent`, a defect, about each target a knob broke, `environment-dependent-reach` about each whose reach a knob moved, counting what rests on its baseline by the rule `unstable-baseline` counts with, and states `knob-not-put` and `knob-not-compared`.
+A shard records its knobs and raises none of them, and concludes `INSUFFICIENT` rather than `PARTIAL` where a knob broke or moved a target; a merge raises them from the combined records of every part, keeping of two records of one knob and target the one that says more.
+
 ## Sources
 
 Every part carries `sources`, one `{ path, digest }` per file its mutants were read from, in path order: the SHA-256 of the file's bytes as the run read them, taken from the catalog, which already refuses two digests for one file.
@@ -177,12 +196,26 @@ A carriage return a Windows checkout left is the checkout's and not the line's, 
 A row or finding naming a file with no entry is refused, and so are two parts or builds of one run that recorded different digests for one file, since then they did not read one tree.
 A document that writes a path twice, or out of path order, is not read: a file has one digest, and a document has one spelling of it.
 
+## How wide a run measured
+
+`run.jobs` says how wide the run measured: `asked`, as a person writes it — a count, `auto` (the machine, capped at four), or `all` (every processor) — and `used`, how many mutants were measured at once.
+The engine resolves the width once, runs at it, and writes that value, so the report and the run cannot disagree; the report's lines print it as `jobs      <used> (<asked>)`, so a CI log says how wide the run was without anybody opening the report.
+
 ## Shards and projections
 
 A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.
 A part concludes `PARTIAL`; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
 The merge re-derives accounting,
 findings and verdict from the union instead of adding claims from the parts.
+A run judges an expectation only on the mutations it decided: not those another part holds, a selection such as `--file` left out, or a stop came before.
+A change set (`--changed`, `--changed-from`) builds the catalog from the files it names alone, so a claim on another file resolves to nothing there; it too is `unjudged`, while a claim on a file the change set kept that names nothing is still `unmatched`.
+One that decided none of them says `unjudged`, which is neither met nor contradicted and earns no finding, so a run over one file is not failed by claims about another.
+A `count` spread across parts is therefore checked by the parts together;
+each resolves the claim against the whole catalog, so `covered` is the whole claim's count in every part, and a claim that resolves to nothing is `unmatched` alike in every part.
+Every standing is a statement about each of the claim's mutations — every one of them has the claimed outcome — and the whole run names the first mutation in catalog order that contradicts it, or the first when none does.
+So the merged expectation is the part's answer naming the earliest contradicting mutation, or failing any, the earliest met one, and is `unjudged` only where no part decided any of them; a form that counted or asked for "at least one" would need its own merge, and is not one of these.
+The merge first puts its reports in shard order and refuses a set that is not every part of one catalog, each once, naming the part that is missing or repeated, so the merged document does not depend on the order the reports were offered in.
+A `stale-expectation` or `unmatched-expectation` finding is derived from its expectation, in a part and in a merge alike, and a document whose findings of those kinds are not exactly the ones its expectations earn is not read.
 
 JSON is canonical.
 Terminal output is tab-separated with the record kind first and verdict last; untrusted text is escaped.

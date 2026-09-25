@@ -101,6 +101,16 @@ pub enum Failure {
     Decision(&'static str),
 }
 
+impl crate::error::Coded for Failure {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Report { .. } | Self::Evidence { .. } => crate::error::XtCode::ModelReport,
+            Self::Path { .. } | Self::Artifact { .. } => crate::error::XtCode::ModelArtifact,
+            Self::Export { .. } | Self::Decision { .. } => crate::error::XtCode::ModelExport,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Evidence {

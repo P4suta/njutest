@@ -10,7 +10,7 @@ use rust_mutants::session::{Discharge, Fallback, PrepareOptions, Proof, Reaches,
 #[test]
 fn every_layer_plants_its_items_and_names_two_different_mutants_in_them() {
     let library = rust_mutants::sentinel::library();
-    for planted in Planted::every() {
+    for planted in Planted::routing() {
         let [removed, kept] = planted.expectations();
         assert_ne!(
             removed.mutant, kept.mutant,
@@ -178,4 +178,63 @@ fn every_rule_a_pair_or_a_question_names_is_one_the_engine_catalogs() {
             question.rule()
         );
     }
+}
+
+#[test]
+fn the_coverage_route_and_the_equivalence_layer_each_have_a_pair_planted() {
+    for planted in [Planted::Coverage, Planted::Equivalence] {
+        assert!(
+            Planted::every().contains(&planted),
+            "{planted} removes work, so a pair is planted for it"
+        );
+        assert!(
+            !Planted::routing().contains(&planted),
+            "{planted} is asked only of a run that could use it, never of every run's session"
+        );
+    }
+    let [unreached, kept] = Planted::Coverage.expectations();
+    assert_eq!(unreached.expected, Expected::Unreached);
+    assert_eq!(kept.expected, Expected::Kept(KeptFor::Library));
+    let [identical, rendered] = Planted::Equivalence.expectations();
+    assert_eq!(identical.expected, Expected::Identical);
+    assert_eq!(rendered.expected, Expected::Rendered);
+    assert_eq!(
+        identical.mutant.rule, rendered.mutant.rule,
+        "one rule makes both, so only what the compiler does with each can tell them apart"
+    );
+    let library = rust_mutants::sentinel::equivalent_library();
+    for one in [identical, rendered] {
+        assert!(
+            library.contains(&format!("pub fn {}(", one.mutant.item)),
+            "the equivalence crate holds {}",
+            one.mutant
+        );
+    }
+}
+
+#[test]
+fn an_identity_bears_out_only_the_expectation_it_is() {
+    use rust_mutants::equivalence::Identity;
+    use rust_mutants::sentinel::Compared;
+    let answer = |identity, withdrawn| Compared {
+        identity,
+        withdrawn,
+    };
+    assert!(Expected::Identical.compares(&answer(Identity::Identical, false)));
+    assert!(!Expected::Rendered.compares(&answer(Identity::Identical, false)));
+    assert!(Expected::Rendered.compares(&answer(Identity::Differs, false)));
+    assert!(
+        !Expected::Identical.compares(&answer(Identity::Differs, false)),
+        "a layer that renders an equivalent mutation differently removes nothing it could"
+    );
+    assert!(
+        !Expected::Identical.compares(&answer(Identity::NotEstablished("x"), false)),
+        "and one still in service that establishes nothing about it has stopped telling"
+    );
+    let drifted = Identity::NotEstablished(rust_mutants::equivalence::CONTROL_DRIFTED);
+    assert!(
+        Expected::Identical.compares(&answer(drifted, true))
+            && Expected::Rendered.compares(&answer(drifted, true)),
+        "a layer a control withdrew calls nothing identical, so it removes nothing either way"
+    );
 }

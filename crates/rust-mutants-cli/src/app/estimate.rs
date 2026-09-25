@@ -35,7 +35,7 @@ pub fn estimate(session: &Session, filter: &run::Filter) -> Result<String, crate
         );
         let at = session.position(mutant);
         let line = at.map_or(0, |one| one.line);
-        if !filter.is_empty() && !filter.selects(mutant, line) {
+        if !filter.is_empty() && !filter.selects(mutant, line, session.item_of(mutant.index)) {
             add(&mut counted.unselected, 1, "the unselected-mutant count")?;
             continue;
         }

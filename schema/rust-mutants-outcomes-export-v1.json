@@ -117,11 +117,11 @@
             "closure",
             "manifests",
             "toolchain",
-            "engine",
             "args",
             "timeout",
             "steps",
-            "build"
+            "build",
+            "engine"
           ],
           "properties": {
             "closure": {
@@ -131,9 +131,6 @@
               "type": "string"
             },
             "toolchain": {
-              "type": "string"
-            },
-            "engine": {
               "type": "string"
             },
             "args": {
@@ -154,6 +151,10 @@
               "items": {
                 "type": "string"
               }
+            },
+            "engine": {
+              "description": "The digest of the engine executable that decided the outcome, so an answer one build remembered is never read back by another.",
+              "type": "string"
             }
           }
         }

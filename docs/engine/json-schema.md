@@ -67,7 +67,7 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
 ```jsonc
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 2,
+  "schema_version": 3,
   "tool_version": "0.1.0",
   "run": { "id": "20260905T132650666Z", "started_at": "…", "finished_at": "…",
            "duration_ms": 812, "interrupted": false, "exit_code": 1 },

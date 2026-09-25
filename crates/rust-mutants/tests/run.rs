@@ -29,6 +29,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         not_run_reason: None,
         route: None,
         retried: false,
+        lingered: false,
         expected: false,
         measured: true,
         identical: CodegenIdentity::NotMeasured,
@@ -47,6 +48,10 @@ const fn of(judged: Vec<Judged>) -> Run {
         interrupted: false,
         shard: None,
         duration: Duration::from_secs(1),
+        width: rust_mutants::run::Width {
+            asked: rust_mutants::run::Jobs::Auto,
+            used: 1,
+        },
     }
 }
 
@@ -214,6 +219,10 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
         interrupted: false,
         shard: None,
         duration: Duration::from_secs(1),
+        width: rust_mutants::run::Width {
+            asked: rust_mutants::run::Jobs::Auto,
+            used: 1,
+        },
     };
     let kinds: Vec<FindingKind> = run.findings().iter().map(|f| f.kind).collect();
     assert_eq!(
@@ -589,4 +598,28 @@ fn a_mutation_this_machine_stopped_waiting_for_is_a_finding_that_says_so() {
         "it is a gap in what the run established rather than a fault in the code, and the \
          two are counted in different columns"
     );
+}
+
+#[test]
+fn a_run_ends_on_the_gravest_thing_it_holds_and_an_interruption_outranks_all_of_it() {
+    use rust_mutants::run::Exit;
+    assert_eq!(Exit::of(false, []), Exit::Detected);
+    assert_eq!(
+        Exit::of(false, [FindingKind::SurvivingMutant]),
+        Exit::Undetected
+    );
+    assert_eq!(
+        Exit::of(
+            false,
+            [FindingKind::SurvivingMutant, FindingKind::WaitedMutant]
+        ),
+        Exit::Unestablished,
+        "a run that could not measure something it ran says so before what it found"
+    );
+    assert_eq!(
+        Exit::of(true, [FindingKind::WaitedMutant]),
+        Exit::Interrupted
+    );
+    let codes: Vec<u8> = Exit::ALL.iter().map(|exit| exit.code()).collect();
+    assert_eq!(codes, vec![0, 1, 2, 130, 143]);
 }

@@ -103,6 +103,16 @@ pub enum Payload {
         /// The record.
         drift: DriftRecord,
     },
+    /// One disposition that rested on a moved target, run again against it (ADR 0036).
+    Repair {
+        /// The record.
+        repair: RepairRecord,
+    },
+    /// What one control under one knob established about one target, as the report keeps it.
+    Knob {
+        /// The record.
+        knob: crate::report::knobs::KnobRecord,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -134,6 +144,8 @@ impl Payload {
             Self::Sentinel { .. } => "sentinel",
             Self::Model { .. } => "model",
             Self::Drift { .. } => "drift",
+            Self::Repair { .. } => "repair",
+            Self::Knob { .. } => "knob",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -419,6 +431,34 @@ pub struct DriftRecord {
     pub observed: crate::report::drift::Drift,
 }
 
+/// One disposition that rested on a target whose reach moved, run again against that target with its reach recorded, and what it was before and is now (ADR 0036).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairRecord {
+    /// The mutation, as a person types it.
+    pub mutant: String,
+    /// The target whose reach moved, which the mutation was run against.
+    pub target: String,
+    /// The outcome it had, which rested on that target's baseline.
+    pub was: String,
+    /// The outcome it has now: what the run decided, or what it had where the run did not reach the site.
+    pub now: String,
+    /// Whether the run's own record shows the mutation's site reached.
+    pub reached: SiteReached,
+}
+
+/// Whether a run's own record shows the site of the mutation it ran reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SiteReached {
+    /// The record shows it.
+    Reached,
+    /// The record is whole and does not show it.
+    NotReached,
+    /// There is no record to read.
+    Unrecorded,
+}
+
 /// How much of one exchange the wire said to read, and what that reading found.
 ///
 /// Was a string whose legal values a doc comment listed, beside three fields each free to be absent when it said `http` and present when it said `raw`.
@@ -589,8 +629,8 @@ pub struct NoteRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRecord {
-    /// The verdict, or what stopped the run from reaching one.
-    pub verdict: String,
+    /// The verdict, which is `ERROR` where something stopped the run from reaching one.
+    pub verdict: crate::report::Verdict,
     /// What the run counted, when it got far enough to count.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub accounting: Option<RunAccounting>,

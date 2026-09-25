@@ -21,6 +21,7 @@ const fn machine() -> Machine<'static> {
     Machine {
         toolchain: "rustc 1.98.0",
         platform: "x86_64-unknown-linux-gnu",
+        engine: "engine",
     }
 }
 
@@ -48,6 +49,7 @@ fn common() -> Common {
     Common {
         toolchain: "rustc 1.98.0".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
+        engine: "engine".to_owned(),
         environment: Vec::new(),
         contract: "standard-v1".to_owned(),
         test_args: Vec::new(),

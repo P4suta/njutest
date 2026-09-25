@@ -127,7 +127,7 @@ code!(
     RUN_NOT_FOUND,
     "NJ6005",
     "there is no such run to answer about",
-    "`njutest report --list` names the runs that are stored under this root"
+    "every run is a directory under `runs/` in the configured reports directory (`reports/runs` by default); `njutest report` with no run reads the newest"
 );
 code!(
     SUBJECT_NOT_CATALOGED,

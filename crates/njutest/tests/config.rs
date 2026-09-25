@@ -604,7 +604,7 @@ fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it
         vars: Vec::new(),
         working_directory: PathBuf::from("/somewhere/a/caller/named"),
         temp_directory: PathBuf::from("/tmp"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         cache_directory: PathBuf::from("/tmp/cache"),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -655,4 +655,27 @@ fn an_exclude_pattern_that_is_not_a_pattern_is_refused() {
             "a refusal names the key it is about: {error}"
         );
     }
+}
+
+#[test]
+fn a_knob_is_named_from_the_closed_set_and_a_name_outside_it_is_refused_by_that_name() {
+    let asked = Config::parse(
+        "[repeatable]\nknobs = [\"timezone\", \"threads\"]\n",
+        std::path::Path::new("njutest.toml"),
+    )
+    .expect("two knobs by their names");
+    assert_eq!(
+        asked.repeatable.knobs,
+        [
+            njutest::report::knobs::Knob::Timezone,
+            njutest::report::knobs::Knob::Threads
+        ]
+    );
+    let refused = expect_error("[repeatable]\nknobs = [\"weather\"]\n");
+    assert_eq!(refused.kind(), ConfigErrorKind::Unparsable);
+    assert!(
+        refused.to_string().contains("weather") && refused.to_string().contains("NJ1002"),
+        "a knob this release cannot put is a mistake in the file, not a knob quietly left off: \
+         {refused}"
+    );
 }

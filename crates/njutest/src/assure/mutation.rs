@@ -236,6 +236,8 @@ pub struct Mutation {
     pub drift: Vec<Drift>,
     /// The SHA-256 of each file the catalog's mutants were read from, as the catalog read it.
     pub sources: BTreeMap<String, rust_mutants::id::HexDigest>,
+    /// How many dispositions resting on each moved target were decided again against it (ADR 0036).
+    pub repaired: BTreeMap<String, usize>,
 }
 
 impl Mutation {
@@ -594,8 +596,68 @@ pub fn run_resuming(
         session.touched().targets.keys().map(String::as_str),
         confirmed.into_iter().chain(compared),
     );
+    repaired(&judging, &mut mutation)?;
     phase.end();
     Ok(mutation)
+}
+
+/// Every disposition that rests on a target whose reach moved, run again against that target with its reach recorded, and replaced by what that run decides where it reached the site (ADR 0036).
+///
+/// # Errors
+/// The engine's refusals, and an interruption.
+fn repaired(
+    judging: &Judging<'_>,
+    mutation: &mut Mutation,
+) -> Result<(), crate::error::RunnerError> {
+    let session = judging.subject.session;
+    let moved: Vec<String> = mutation
+        .drift
+        .iter()
+        .filter_map(|one| match one {
+            Drift::Moved { target, .. } => Some(target.clone()),
+            Drift::Held { .. } | Drift::NotMeasured { .. } => None,
+        })
+        .collect();
+    for target in &moved {
+        let Some(measured) = judging
+            .subject
+            .baseline
+            .iter()
+            .find(|measured| measured.target.name() == *target)
+        else {
+            continue;
+        };
+        for judged in &mut mutation.judged {
+            let resting = matches!(
+                judged.disposition,
+                Disposition::Survived { .. } | Disposition::Unreached
+            ) && crate::report::drift::rests_on(judged.routing.as_ref(), target);
+            if !resting {
+                continue;
+            }
+            let Some(mutant) = session
+                .catalog()
+                .mutants()
+                .iter()
+                .find(|mutant| mutant.index == judged.catalog_index)
+            else {
+                continue;
+            };
+            if judging.watch.cancel.is_cancelled() {
+                return Err(crate::error::RunnerError::Interrupted);
+            }
+            if !repair(judging, (judged, mutant), target, measured)? {
+                continue;
+            }
+            let count = mutation.repaired.entry(target.clone()).or_insert(0);
+            *count = count
+                .checked_add(1)
+                .ok_or(crate::report::CountError::Overflow {
+                    field: "repaired dispositions",
+                })?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs, once and whole, every target no control confirming a kill compared, so that every target's reach is compared with a second run of it whether or not it noticed anything.
@@ -639,36 +701,38 @@ fn establish(
     });
     let mut source: Option<String> = None;
     let mut routing: Option<crate::report::Routing> = None;
-    let disposition = if let Some(saved) = state
-        .and_then(|state| state.mutant(mutant.id.as_str()))
-        .map(inherited)
+    let disposition = if let Some(saved) = state.and_then(|state| state.mutant(mutant.id.as_str()))
     {
-        saved
+        let crate::checkpoint::SavedDisposition::Killed { by, before } = &saved.disposition;
+        routing = Some(crate::report::Routing::of(
+            &session.route(mutant),
+            through(before.iter().cloned(), by),
+        ));
+        inherited(saved)
     } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
         Disposition::Rejected {
             diagnostic: (*diagnostic).to_owned(),
         }
     } else {
         let route = session.route(mutant);
-        routing = Some(crate::report::Routing::of(&route));
         let consulted = reuse(options, &route, mutant.id.as_str());
         record_route(watch, mutant, &route, &consulted);
         if let Consulted::Believed {
             disposition,
+            answered,
             run_id,
         } = consulted
         {
             source = Some(run_id);
+            routing = Some(crate::report::Routing::of(&route, answered));
             disposition
         } else {
             let (established, asked) = judge(judging, mutant, route.clone())?;
-            if let Some(routed) = routing.as_mut() {
-                routed.answered = asked;
-            }
-            match keep(options, mutant.id.as_str(), &route, &established)? {
+            match keep(options, mutant.id.as_str(), (&route, &asked), &established)? {
                 Kept::Written => {}
                 Kept::NotKept(_costs_the_next_run_its_time_and_this_one_no_verdict) => {}
             }
+            routing = Some(crate::report::Routing::of(&route, asked));
             established
         }
     };
@@ -784,6 +848,8 @@ pub enum Consulted {
     Believed {
         /// What that run established about the mutant.
         disposition: Disposition,
+        /// The targets that run asked, in order, with what each answered.
+        answered: Vec<crate::report::Answered>,
         /// The run that established it.
         run_id: String,
     },
@@ -814,29 +880,71 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
             });
         }
     };
-    let reaching: BTreeSet<String> = match answered(route, evidence) {
-        Ok(named) => named.into_iter().collect(),
+    let asking = match asking(route, evidence) {
+        Ok(named) => named,
         Err(refusal) => return Consulted::Refused(refusal),
     };
-    if let Err(refusal) = record.believable(&reaching, &evidence.standing) {
+    if let Err(refusal) = record.believable(&asking, &evidence.standing) {
         return Consulted::Refused(refusal);
     }
-    let disposition = match &record.outcome {
-        store::Outcome::Killed { target, .. } => Disposition::Killed {
-            by: evidence
-                .names
-                .get(target)
-                .cloned()
-                .unwrap_or_else(|| target.clone()),
-        },
-        store::Outcome::Survived { .. } => Disposition::Survived {
-            route: route.clone(),
-        },
+    let named = |target: &String| {
+        evidence
+            .names
+            .get(target)
+            .cloned()
+            .unwrap_or_else(|| target.clone())
+    };
+    let (disposition, answered) = match &record.outcome {
+        store::Outcome::Killed { target, before, .. } => (
+            Disposition::Killed { by: named(target) },
+            through(
+                before.iter().map(|answer| crate::report::Answered {
+                    target: named(&answer.target),
+                    outcome: answer.outcome,
+                }),
+                &named(target),
+            ),
+        ),
+        store::Outcome::Survived { .. } => (
+            Disposition::Survived {
+                route: route.clone(),
+            },
+            asking
+                .iter()
+                .map(|target| crate::report::Answered {
+                    target: named(target),
+                    outcome: Recorded::Survived,
+                })
+                .collect(),
+        ),
     };
     Consulted::Believed {
         disposition,
+        answered,
         run_id: record.run_id,
     }
+}
+
+/// The answers a run gave up to and including the kill by `by`, from the ones it gave `before`.
+fn through(
+    before: impl Iterator<Item = crate::report::Answered>,
+    by: &str,
+) -> Vec<crate::report::Answered> {
+    before
+        .chain(std::iter::once(crate::report::Answered {
+            target: by.to_owned(),
+            outcome: Recorded::Killed,
+        }))
+        .collect()
+}
+
+/// The identities of the targets a route names, in the order a run asks them.
+///
+/// # Errors
+/// Names the first target this run's baseline has no identity for.
+fn asking(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store::Refusal> {
+    let names: BTreeSet<&str> = route.reaching().into_iter().collect();
+    evidence.identities(&names.into_iter().collect::<Vec<_>>())
 }
 
 /// What became of one run's attempt to record what it established for the next one.
@@ -891,7 +999,7 @@ pub enum NotKept {
 pub fn keep(
     options: &MutationOptions,
     mutant: &str,
-    route: &Route,
+    (route, asked): (&Route, &[crate::report::Answered]),
     disposition: &Disposition,
 ) -> Result<Kept, store::StoreError> {
     let Some(evidence) = options.evidence.as_ref() else {
@@ -913,9 +1021,28 @@ pub fn keep(
                     target: target.to_owned(),
                 }));
             };
+            let mut before = Vec::new();
+            for answer in asked.iter().take_while(|answer| answer.target != *by) {
+                let Some(identity) = evidence.identity(&answer.target) else {
+                    return Ok(Kept::NotKept(NotKept::TargetUnknown {
+                        target: answer.target.clone(),
+                    }));
+                };
+                let Some(key) = evidence.standing.passing.get(identity) else {
+                    return Ok(Kept::NotKept(NotKept::NotPassing {
+                        target: identity.to_owned(),
+                    }));
+                };
+                before.push(store::Answer {
+                    target: identity.to_owned(),
+                    key: key.clone(),
+                    outcome: answer.outcome,
+                });
+            }
             store::Outcome::Killed {
                 target: target.to_owned(),
                 key: key.clone(),
+                before,
             }
         }
         Disposition::Survived { .. } => {
@@ -968,7 +1095,7 @@ pub fn answered(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store
 #[must_use]
 pub fn inherited(saved: &crate::checkpoint::SavedMutant) -> Disposition {
     match &saved.disposition {
-        crate::checkpoint::SavedDisposition::Killed { by } => {
+        crate::checkpoint::SavedDisposition::Killed { by, .. } => {
             Disposition::Killed { by: by.clone() }
         }
     }
@@ -1303,6 +1430,90 @@ fn against(
             },
         )?;
     }
+    Ok(fact_of(request, measured, &result))
+}
+
+/// Runs `judged` again against the moved `target`, records what it came to, and replaces its disposition where the run decided one; whether it did.
+fn repair(
+    judging: &Judging<'_>,
+    (judged, mutant): (&mut Judged, &Mutant),
+    target: &str,
+    measured: &Measured,
+) -> Result<bool, crate::error::RunnerError> {
+    let was = judged.disposition.name();
+    let (fact, reach) = against_reaching(judging, mutant, measured)?;
+    let mut aggregation = Aggregation::new();
+    let (now, answered) = match aggregation.observe(judging, target, fact)? {
+        Some(decided) => (decided, aggregation.answered),
+        None => aggregation.finish(judging, judging.subject.session.route(mutant))?,
+    };
+    let reached = match reach {
+        rust_mutants::session::SiteReach::Reached => crate::trace::SiteReached::Reached,
+        rust_mutants::session::SiteReach::NotReached => crate::trace::SiteReached::NotReached,
+        rust_mutants::session::SiteReach::Unrecorded => crate::trace::SiteReached::Unrecorded,
+    };
+    let replaced = reached == crate::trace::SiteReached::Reached
+        || !matches!(now, Disposition::Survived { .. });
+    judging.watch.trace.repair(crate::trace::RepairRecord {
+        mutant: judged.display_id.clone(),
+        target: target.to_owned(),
+        was: was.to_owned(),
+        now: if replaced { now.name() } else { was }.to_owned(),
+        reached,
+    });
+    if replaced {
+        judged.disposition = now;
+        if let Some(routing) = judged.routing.as_mut() {
+            routing.reaching.push(target.to_owned());
+            routing.answered.extend(answered);
+        }
+    }
+    Ok(replaced)
+}
+
+/// What one mutation comes to against one target whose reach moved, run with its guards recording, and whether that run reached the mutation's site (ADR 0036).
+fn against_reaching(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    measured: &Measured,
+) -> Result<(TargetFact, rust_mutants::session::SiteReach), crate::error::RunnerError> {
+    let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
+    let request = request_for(mutant.id.as_str(), Some(measured), &options.test_args);
+    let mut alone = false;
+    let (mut result, mut reach) = judging
+        .quiet
+        .shared(|| session.exec_reaching(&request, watch.cancel))??;
+    record_exec(
+        watch,
+        &Ran {
+            mutant,
+            measured: Some(measured),
+            request: &request,
+            result: &result,
+            alone,
+        },
+    )?;
+    if quiet_measurement_due(result.outcome(), watch.cancel.is_cancelled()) {
+        alone = true;
+        (result, reach) = judging
+            .quiet
+            .alone(|| session.exec_reaching(&request, watch.cancel))??;
+        record_exec(
+            watch,
+            &Ran {
+                mutant,
+                measured: Some(measured),
+                request: &request,
+                result: &result,
+                alone,
+            },
+        )?;
+    }
+    Ok((fact_of(request, Some(measured), &result), reach))
+}
+
+/// What one execution of a mutation against one target says, before the route aggregates every target.
+fn fact_of(request: Request, measured: Option<&Measured>, result: &MutantResult) -> TargetFact {
     let name = measured.map_or_else(
         || {
             if result.target.is_empty() {
@@ -1314,37 +1525,37 @@ fn against(
         |one| one.target.name(),
     );
     match &result.conclusion {
-        MutantConclusion::Survived => Ok(TargetFact::Survived),
-        MutantConclusion::Killed => Ok(TargetFact::Killed {
+        MutantConclusion::Survived => TargetFact::Survived,
+        MutantConclusion::Killed => TargetFact::Killed {
             on: name,
             retry: narrowed(request, measured, &result.target),
-        }),
-        MutantConclusion::Waited => Ok(TargetFact::Waited {
+        },
+        MutantConclusion::Waited => TargetFact::Waited {
             on: name,
             retry: narrowed(request, measured, &result.target),
-        }),
+        },
         MutantConclusion::StepLimitReached { notice } => {
             let Some(boundary) =
                 crate::report::StepBoundary::new(notice.limit(), notice.observed())
             else {
-                return Ok(TargetFact::Errored {
+                return TargetFact::Errored {
                     on: name,
                     detail: "the engine supplied an invalid step boundary".to_owned(),
-                });
+                };
             };
-            Ok(TargetFact::StepLimitReached { on: name, boundary })
+            TargetFact::StepLimitReached { on: name, boundary }
         }
         MutantConclusion::Errored
         | MutantConclusion::Inconclusive
         | MutantConclusion::Unobserved
-        | MutantConclusion::NotRun => Ok(TargetFact::Errored {
+        | MutantConclusion::NotRun => TargetFact::Errored {
             on: name,
             detail: format!(
                 "the harness answered {}: {}",
                 result.outcome().name(),
                 tail(&result.output)
             ),
-        }),
+        },
     }
 }
 

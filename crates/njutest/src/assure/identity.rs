@@ -153,6 +153,8 @@ pub struct Machine<'a> {
     pub toolchain: &'a str,
     /// The target triple.
     pub platform: &'a str,
+    /// The digest of the running njutest, because two builds of it may mean two different things by the same answer.
+    pub engine: &'a str,
 }
 
 /// Everything the identity is computed from, read from the tree and the process.
@@ -187,6 +189,7 @@ pub fn inputs(
         dependencies: dependencies_of(root)?,
         toolchain: machine.toolchain.to_owned(),
         platform: machine.platform.to_owned(),
+        engine: machine.engine.to_owned(),
         environment: selected(vars, &config.execution.environment)?,
         contract: config.contract,
         configuration: config.digest()?,
@@ -223,6 +226,7 @@ pub fn of(
         dependencies: dependencies.clone(),
         toolchain: asked.machine.toolchain.to_owned(),
         platform: asked.machine.platform.to_owned(),
+        engine: asked.machine.engine.to_owned(),
         environment: selected(asked.vars, &asked.config.execution.environment)?,
         contract: asked.config.contract,
         configuration: asked.config.digest()?,

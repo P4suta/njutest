@@ -844,11 +844,7 @@ fn selection_plan(
 ) -> Result<SelectionPlan, EngineError> {
     let phase = trace.phase("plan");
     let (sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
-    let eligible = eligible(
-        &discovery.catalog,
-        &sources,
-        options.validation_filter.as_ref(),
-    )?;
+    let eligible = eligible(discovery, &sources, options.validation_filter.as_ref())?;
     let placements = selected_placements(placements, &eligible);
     phase.end();
     Ok((sources, placements, eligible))
@@ -1195,10 +1191,11 @@ fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, En
 
 /// The catalog indices compiler validation has to decide for this preparation.
 fn eligible(
-    catalog: &Catalog,
+    discovery: &discover::Discovery,
     sources: &BTreeMap<String, Vec<u8>>,
     filter: Option<&crate::run::Filter>,
 ) -> Result<BTreeSet<u32>, EngineError> {
+    let catalog = &discovery.catalog;
     let Some(filter) = filter.filter(|filter| !filter.is_empty()) else {
         return Ok(catalog
             .mutants()
@@ -1206,6 +1203,7 @@ fn eligible(
             .map(|mutant| mutant.index)
             .collect());
     };
+    let items = attributed(discovery).1;
     let mut selected = BTreeSet::new();
     for mutant in catalog.mutants() {
         let path = &mutant.candidate.path;
@@ -1229,7 +1227,7 @@ fn eligible(
                 source,
             })?
             .line;
-        if filter.selects(mutant, line) {
+        if filter.selects(mutant, line, items.get(&mutant.index).map(String::as_str)) {
             selected.extend([mutant.index]);
         }
     }

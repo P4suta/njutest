@@ -41,7 +41,7 @@ fn killed() -> Value {
         "original": ">", "replacement": ">=",
         "outcome": "killed", "target": TARGET, "exit_code": 101,
         "duration_ms": 7, "tests_run": 2, "killed_by": ["larger_works"],
-        "signal": null, "step_notice": null, "retried": false,
+        "signal": null, "step_notice": null, "retried": false, "lingered": false,
         "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
@@ -62,7 +62,7 @@ fn survived() -> Value {
         "original": "if a > b { a } else { b }", "replacement": "Default::default()",
         "outcome": "survived", "target": TARGET, "exit_code": 0,
         "duration_ms": 5, "tests_run": 2, "killed_by": [], "signal": null,
-        "step_notice": null, "retried": false, "not_run_reason": null,
+        "step_notice": null, "retried": false, "lingered": false, "not_run_reason": null,
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": true, "unreached": false,
@@ -75,7 +75,7 @@ fn survived() -> Value {
 pub fn base() -> Value {
     json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 2,
+        "schema_version": super::SCHEMA_VERSION,
         "tool_version": "0.1.0",
         "run": {
             "id": RUN,
@@ -84,7 +84,8 @@ pub fn base() -> Value {
             "duration_ms": 2000,
             "interrupted": false,
             "exit_code": 0,
-            "shard": null
+            "shard": null,
+            "jobs": {"asked": "auto", "used": 1}
         },
         "workspace": {
             "root_name": "demo",
@@ -172,7 +173,7 @@ fn judged(seq: (u64, u64), index: u64, id: &str, outcome: &str) -> [Value; 2] {
         json!({"seq":seq.1,"timestamp":"2026-09-06T10:15:02Z",
             "elapsed_ms":61,"type":"mutant-exec","mutant":{"id":short(id),
             "index":index,"target":TARGET,"outcome":outcome,
-            "exit_code":exit,"duration_ms":5,"tests_run":2}}),
+            "exit_code":exit,"duration_ms":5,"tests_run":2,"lingered":false}}),
     ]
 }
 
@@ -251,6 +252,17 @@ pub enum SpecimenError {
         /// The missing field.
         field: &'static str,
     },
+}
+
+impl crate::error::Coded for SpecimenError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Directory { .. } | Self::Unwritable { .. } => {
+                crate::error::XtCode::SpecimenUnwritable
+            }
+            Self::NotAnObject { .. } | Self::Envelope { .. } => crate::error::XtCode::SpecimenEvent,
+        }
+    }
 }
 
 fn directory() -> Result<TempDir, SpecimenError> {

@@ -331,6 +331,52 @@ pub enum Command {
         #[arg(long, value_name = "FILE", conflicts_with_all = ["gc", "clear_outcomes"])]
         import: Option<PathBuf>,
     },
+    /// Carry what a run established into a continuous integration job.
+    Ci {
+        /// What the job asks.
+        #[command(subcommand)]
+        command: CiCommand,
+    },
+}
+
+/// What a continuous integration job asks of a run.
+#[derive(Debug, Clone, Subcommand)]
+pub enum CiCommand {
+    /// Write a run where the job shows it, and exit with its verdict.
+    /// On GitHub Actions that is the step summary, the step outputs, and one annotation per survivor.
+    Gate {
+        /// The workspace root.
+        /// Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// The stored run to gate on, by its identity.
+        /// Defaults to the newest.
+        #[arg(long, value_name = "ID", conflicts_with = "report")]
+        run: Option<String>,
+        /// Gate on this report instead of a stored run, such as the one `merge --output` wrote.
+        #[arg(long, value_name = "FILE")]
+        report: Option<PathBuf>,
+        /// Also write the findings here as SARIF 2.1.0, for a code scanning upload.
+        #[arg(long, value_name = "FILE")]
+        sarif: Option<PathBuf>,
+        /// Write for this host rather than the one the environment names.
+        #[arg(long, value_enum, value_name = "HOST")]
+        host: Option<HostArg>,
+        /// Annotate only the survivors on lines that differ from this revision; the summary still counts every one.
+        #[arg(long, value_name = "REV")]
+        changed_from: Option<String>,
+    },
+}
+
+/// The hosts `ci gate` writes for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum HostArg {
+    /// GitHub Actions: the step summary, the step outputs, and error annotations.
+    Github,
+    /// GitLab CI: the lines, and the verdict as the exit code.
+    Gitlab,
+    /// The lines, and the verdict as the exit code.
+    Plain,
 }
 
 /// How a stored run is written back.
@@ -525,7 +571,8 @@ impl Command {
             | Self::Trace { .. }
             | Self::Diagnostics { .. }
             | Self::Rules { .. }
-            | Self::Cache { .. } => None,
+            | Self::Cache { .. }
+            | Self::Ci { .. } => None,
         }
     }
 }

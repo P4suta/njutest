@@ -42,6 +42,12 @@ fn saying(said: &str, code: i32) -> Vec<(std::ffi::OsString, std::ffi::OsString)
     env
 }
 
+/// What Miri prints for a suite of one binary whose one test passed.
+const PASSED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+/// What Miri prints for a suite of one binary whose one test failed.
+const FAILED_RUN: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nboom\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
 fn recording() -> Recorder {
     Recorder::new(
         njutest::trace::Sink::Memory(njutest::trace::MemorySink::unbounded()),
@@ -79,7 +85,7 @@ fn interpreted(said: &str, code: i32, dir: &Path) -> Result<Interpreted, RunnerE
 #[test]
 fn a_suite_the_interpreter_passes_is_one_the_run_says_was_interpreted() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let said = "   Compiling demo v0.1.0\ntest result: ok. 3 passed; 0 failed; 0 ignored";
+    let said = PASSED;
     let done = interpreted(said, 0, dir.path()).expect("ran");
     assert_eq!(
         done,
@@ -124,7 +130,7 @@ fn what_the_interpreter_will_not_interpret_is_stated_and_never_read_as_a_pass() 
 #[test]
 fn a_test_that_fails_under_the_interpreter_is_a_failing_test() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let said = "test result: FAILED. 2 passed; 1 failed; 0 ignored";
+    let said = FAILED_RUN;
     let done = interpreted(said, 101, dir.path()).expect("ran");
     assert_eq!(
         done.findings.first().map(|one| one.kind),
@@ -191,7 +197,7 @@ fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
-            env: saying("no undefined behaviour", 0),
+            env: saying(PASSED, 0),
             packages: &[],
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
@@ -248,7 +254,7 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
         &Interpreting {
             root: dir.path(),
             cargo: &cargo,
-            env: saying("no undefined behaviour", 0),
+            env: saying(PASSED, 0),
             packages: &packages,
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
@@ -294,7 +300,7 @@ fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
-    let mut env = saying("no undefined behaviour", 0);
+    let mut env = saying(PASSED, 0);
     env.push((
         std::ffi::OsString::from("MIRIFLAGS"),
         std::ffi::OsString::from("-Zmiri-from-the-outside"),
@@ -346,7 +352,7 @@ fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given(
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
-    let mut env = saying("no undefined behaviour", 0);
+    let mut env = saying(PASSED, 0);
     env.push((
         std::ffi::OsString::from("MIRIFLAGS"),
         std::ffi::OsString::from("-Zmiri-from-the-outside"),
@@ -387,7 +393,7 @@ fn an_interpreter_that_runs_out_of_time_has_interpreted_nothing() {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
-    let mut env = saying("no undefined behaviour", 0);
+    let mut env = saying(PASSED, 0);
     env.push((
         std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
         std::ffi::OsString::from("5"),
@@ -465,8 +471,7 @@ fn what_the_interpreter_established_is_said_in_words_a_person_can_act_on() {
          difference between a gap and a pass: {refused:?}"
     );
 
-    let failing = interpreted("test result: FAILED. 1 failed", 101, dir.path())
-        .expect("an interpreter that ran");
+    let failing = interpreted(FAILED_RUN, 101, dir.path()).expect("an interpreter that ran");
     assert!(
         failing.findings.iter().any(|one| one.subject == "soundness"
             && one.detail == "a test fails under the interpreter that passes without it"),
@@ -491,7 +496,7 @@ fn a_toolchain_without_an_interpreter_says_what_it_was_told_rather_than_what_it_
     );
 
     let quiet = interpreted(
-        "cargo-miri is not installed for the toolchain",
+        "error: 'cargo-miri' is not installed for the toolchain 'nightly'",
         1,
         dir.path(),
     )
@@ -509,7 +514,7 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
     let cargo = cargo();
-    let mut env = saying("test result: ok. 1 passed; 0 failed; 0 ignored", 0);
+    let mut env = saying(PASSED, 0);
     env.push((
         std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
         std::ffi::OsString::from("5"),
@@ -549,4 +554,98 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
         "a suite the interpreter never finished says nothing about the program, and a \
          finding here would be one nobody can act on: {done:?}"
     );
+}
+
+#[test]
+fn an_interpreter_that_ran_no_test_found_nothing_to_fail_and_interpreted_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let setup_failed = "WARNING: Ignoring `RUSTC_WRAPPER` environment variable\n\
+                        thread 'main' panicked at src/tools/miri/cargo-miri/src/util.rs:132:9:\n\
+                        failed to run `cd \"/gone\" && env ...`";
+    let done = interpreted(setup_failed, 101, dir.path()).expect("ran");
+    assert!(!done.executed, "{done:?}");
+    assert!(
+        !done
+            .findings
+            .iter()
+            .any(|finding| finding.kind == FindingKind::FailingTest),
+        "no test ran, so no test failed: an exit status with no test result under it is the \
+         interpreter's own trouble, and a verdict of DEFECT on it blames the suite: {done:?}"
+    );
+    assert_eq!(
+        done.findings.first().map(|one| one.kind),
+        Some(FindingKind::NotMeasured),
+        "{done:?}"
+    );
+    assert_eq!(
+        done.limitations.first().map(|one| one.name.clone()),
+        Some("miri-ran-no-test".to_owned()),
+        "{done:?}"
+    );
+    assert!(
+        done.limitations
+            .first()
+            .is_some_and(|one| one.detail.contains("failed to run `cd")),
+        "a hole says what the interpreter said last, so a reader can see why no test ran: \
+         {done:?}"
+    );
+    let said_nothing = interpreted("   Compiling demo v0.1.0\n", 0, dir.path()).expect("ran");
+    assert!(
+        !said_nothing.executed,
+        "a run that says it passed and ran no test interpreted nothing: {said_nothing:?}"
+    );
+    assert_eq!(
+        said_nothing.findings.first().map(|one| one.kind),
+        Some(FindingKind::NotMeasured),
+        "{said_nothing:?}"
+    );
+}
+
+#[test]
+fn the_phase_comes_to_the_verdict_the_published_contract_gives_every_case() {
+    let contract: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(
+            njutest_devkit::paths::workspace_root().join("schema/miri-output.json"),
+        )
+        .expect("the published contract"),
+    )
+    .expect("the contract is JSON");
+    let cases = contract
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .expect("the contract's cases");
+    assert!(cases.len() >= 10, "the corpus is read: {}", cases.len());
+    let dir = tempfile::tempdir().expect("tempdir");
+    for case in cases {
+        let field = |key: &str| case.get(key).and_then(serde_json::Value::as_str);
+        let name = field("name").expect("a case is named");
+        let output = field("output").expect("a case has output");
+        let status = i32::try_from(
+            case.get("status")
+                .and_then(serde_json::Value::as_i64)
+                .expect("a case has a status"),
+        )
+        .expect("a status an exit code can be");
+        let done = interpreted(output, status, dir.path()).expect("the interpreter is there");
+        let kinds: Vec<FindingKind> = done.findings.iter().map(|one| one.kind).collect();
+        let limitations: Vec<&str> = done
+            .limitations
+            .iter()
+            .map(|one| one.name.as_str())
+            .collect();
+        let came = match (done.executed, kinds.as_slice(), limitations.as_slice()) {
+            (true, [], []) => "passed",
+            (true, [FindingKind::FailingTest], []) => "failed",
+            (true, [FindingKind::UndefinedBehaviour], []) => "undefined",
+            (true, [FindingKind::NotMeasured], ["miri-unsupported"]) => "unsupported",
+            (false, [FindingKind::NotMeasured], ["miri-ran-no-test"]) => "ran-no-test",
+            other => panic!("{name}: an outcome the contract has no name for: {other:?}"),
+        };
+        assert_eq!(
+            Some(came),
+            field("came"),
+            "{name}: the runner and the audit read one published contract of what Miri writes, \
+             and this case says what it comes to"
+        );
+    }
 }

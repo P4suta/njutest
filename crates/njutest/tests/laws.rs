@@ -85,6 +85,7 @@ fn decisions() -> impl Strategy<Value = Vec<Decision>> {
 /// A run that judged these mutations, each under an identity of its own.
 fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
     Mutation {
+        repaired: BTreeMap::new(),
         judged: dispositions
             .into_iter()
             .zip(0u32..)
@@ -306,6 +307,7 @@ fn inputs() -> Inputs {
         dependencies: "c".repeat(64),
         toolchain: "rustc 1.98.0".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
+        engine: "e".repeat(64),
         environment: vec![("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned())],
         contract: Contract::StandardV1,
         configuration: "d".repeat(64),
