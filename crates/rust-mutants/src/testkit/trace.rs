@@ -401,7 +401,7 @@ pub fn every_payload() -> Vec<Payload> {
 
 /// Every way a process can stop, named so extending the enum extends the specimen ledger at compile time.
 #[must_use]
-pub fn every_stopped() -> [crate::execute::Stopped; 10] {
+pub fn every_stopped() -> [crate::execute::Stopped; 11] {
     use crate::execute::Stopped;
 
     let exits = every_process_exit();
@@ -421,6 +421,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 10] {
         Stopped::StepProtocolFailed {
             reason: protocol[0].clone(),
         },
+        Stopped::Answered,
     ];
     for one in &stopped {
         match one {
@@ -431,7 +432,8 @@ pub fn every_stopped() -> [crate::execute::Stopped; 10] {
             | Stopped::Cancelled { .. }
             | Stopped::WaitFailed
             | Stopped::StepLimitReached { .. }
-            | Stopped::StepProtocolFailed { .. } => {}
+            | Stopped::StepProtocolFailed { .. }
+            | Stopped::Answered => {}
         }
     }
     stopped

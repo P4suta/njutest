@@ -460,8 +460,7 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
 ///
 /// Four booleans and an exit code could say a process was both unstarted and killed by a clock, and the precedence that made that impossible lived in the order of a chain of `if`s.
 /// A process ends exactly one way, so the type says so and the policy reading it is a total match rather than a sequence somebody has to keep in the right order (ADR 0023).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stopped {
     /// The process could not be started at all.
     NotStarted,
@@ -491,6 +490,8 @@ pub enum Stopped {
     },
     /// The operating system did not yield a trustworthy final status.
     WaitFailed,
+    /// The harness said a test failed, which is the whole answer about the mutant, and the run ended the process there.
+    Answered,
     /// The execution monitor stopped the tree and its notice was verified.
     StepLimitReached {
         /// The verified notice that caused the stop.
@@ -584,7 +585,8 @@ pub enum StepProtocolFailure {
     },
 }
 
-#[derive(serde::Deserialize)]
+/// How a stop is spelled in a recording, in both directions, so a stop the engine can reach is one a reader can read.
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum StoppedWire {
     NotStarted {},
@@ -593,8 +595,29 @@ enum StoppedWire {
     Stalled { raised: Option<u64> },
     Cancelled { started: bool },
     WaitFailed {},
+    Answered {},
     StepLimitReached { notice: StepLimitNotice },
     StepProtocolFailed { reason: StepProtocolFailure },
+}
+
+impl serde::Serialize for Stopped {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self.clone() {
+            Self::NotStarted => StoppedWire::NotStarted {},
+            Self::Exited { exit } => StoppedWire::Exited { exit },
+            Self::TimedOut { raised } => StoppedWire::TimedOut { raised },
+            Self::Stalled { raised } => StoppedWire::Stalled { raised },
+            Self::Cancelled { started } => StoppedWire::Cancelled { started },
+            Self::WaitFailed => StoppedWire::WaitFailed {},
+            Self::Answered => StoppedWire::Answered {},
+            Self::StepLimitReached { notice } => StoppedWire::StepLimitReached { notice },
+            Self::StepProtocolFailed { reason } => StoppedWire::StepProtocolFailed { reason },
+        }
+        .serialize(serializer)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Stopped {
@@ -610,6 +633,7 @@ impl<'de> serde::Deserialize<'de> for Stopped {
                 StoppedWire::Stalled { raised } => Self::Stalled { raised },
                 StoppedWire::Cancelled { started } => Self::Cancelled { started },
                 StoppedWire::WaitFailed {} => Self::WaitFailed,
+                StoppedWire::Answered {} => Self::Answered,
                 StoppedWire::StepLimitReached { notice } => Self::StepLimitReached { notice },
                 StoppedWire::StepProtocolFailed { reason } => Self::StepProtocolFailed { reason },
             },
@@ -784,6 +808,7 @@ impl Stopped {
             },
             Termination::Cancelled { started } => Self::Cancelled { started: *started },
             Termination::WaitFailed { .. } => Self::WaitFailed,
+            Termination::Answered => Self::Answered,
         }
     }
 }
@@ -1214,6 +1239,14 @@ fn remove_notice(path: &Path) -> Result<(), NoticeError> {
     }
 }
 
+/// Whether one failing test is the whole answer this process is run for: a libtest target with a mutant active and nothing being measured, so ending it at that failure loses no evidence.
+const fn answered_by_one_failure(target: &TestTarget, context: &Context<'_>) -> bool {
+    target.harness
+        && context.active.is_some()
+        && context.touch.is_none()
+        && context.profile.is_none()
+}
+
 fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     if matches!(
         result.termination,
@@ -1290,6 +1323,8 @@ pub fn outcome_of(
         }
         Stopped::TimedOut { .. } | Stopped::Stalled { .. } => return Outcome::Waited,
         Stopped::Cancelled { .. } => return Outcome::NotRun,
+        Stopped::Answered if harness && !failed.is_empty() => return Outcome::Killed,
+        Stopped::Answered => return Outcome::Inconclusive,
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
     };
@@ -1941,6 +1976,7 @@ pub fn exec(
     let mut spec = Spec::new(request.argv(), bound);
     spec.progress = progress;
     spec.leaders = context.leaders.cloned();
+    spec.stop_at_first_failure = answered_by_one_failure(target, context);
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),

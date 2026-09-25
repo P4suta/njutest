@@ -93,6 +93,12 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "answered" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "notice"],
           "properties": {
             "kind": { "const": "step-limit-reached" },

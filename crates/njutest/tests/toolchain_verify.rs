@@ -1375,6 +1375,56 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
 
 #[cfg(unix)]
 #[test]
+fn a_kill_njutest_measures_ends_at_the_first_failing_test_rather_than_at_the_clock() {
+    let fixture = fixture("fixture-balanced-fails-then-hangs");
+    let output = verify(&fixture, &["--trace"]);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    assert!(
+        matches!(output.status.code(), Some(0..=2)),
+        "the run concludes: {said}"
+    );
+    let recording = std::fs::read_dir(fixture.root.join(".njutest/trace"))
+        .expect("the trace root")
+        .next()
+        .expect("one outer namespace")
+        .expect("the namespace is readable")
+        .path();
+    let events = engine_trace(&recording, 0);
+    let answered = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.payload,
+                rust_mutants::trace::Payload::Exec { exec }
+                    if matches!(exec.stopped, rust_mutants::execute::Stopped::Answered)
+            )
+        })
+        .count();
+    let clocked: Vec<&rust_mutants::trace::Event> = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.payload,
+                rust_mutants::trace::Payload::Exec { exec }
+                    if matches!(
+                        exec.stopped,
+                        rust_mutants::execute::Stopped::TimedOut { .. }
+                            | rust_mutants::execute::Stopped::Stalled { .. }
+                    )
+            )
+        })
+        .collect();
+    assert!(
+        answered > 0 && clocked.is_empty(),
+        "a mutation `a_says_nothing_is_not_ready` notices is answered by that failure, so njutest's \
+         mutation phase ends the process there rather than waiting for the clock to end the test \
+         that hangs after it: {answered} executions ended at a failing test, and these ended at \
+         the clock: {clocked:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_mutation_only_a_documented_example_can_notice_is_noticed_by_it() {
     let fixture = fixture("fixture-doctest");
     verify(&fixture, &[]);

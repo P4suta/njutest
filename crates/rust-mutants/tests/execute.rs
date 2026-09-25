@@ -1066,3 +1066,34 @@ fn a_signal_sent_from_outside_is_no_detection_and_one_the_process_raised_is() {
          process afterwards"
     );
 }
+
+#[test]
+fn every_way_a_process_stops_reads_back_as_itself() {
+    use rust_mutants::execute::Stopped;
+    use rust_mutants::runner::ProcessExit;
+    for stopped in [
+        Stopped::NotStarted,
+        Stopped::Exited {
+            exit: ProcessExit::Code(3),
+        },
+        Stopped::Exited {
+            exit: ProcessExit::Signal(9),
+        },
+        Stopped::Exited {
+            exit: ProcessExit::Unknown,
+        },
+        Stopped::TimedOut { raised: Some(4) },
+        Stopped::Stalled { raised: None },
+        Stopped::Cancelled { started: true },
+        Stopped::WaitFailed,
+        Stopped::Answered,
+    ] {
+        let written = serde_json::to_string(&stopped).expect("a stop serializes");
+        let read: Stopped = njutest_devkit::strictjson::decode_str(&written)
+            .unwrap_or_else(|error| panic!("{written} does not read back: {error}"));
+        assert_eq!(
+            read, stopped,
+            "a stop the engine can reach is one a recording can hold and a reader can read: {written}"
+        );
+    }
+}

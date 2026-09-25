@@ -1663,12 +1663,31 @@ fn a_mutant_a_test_noticed_before_another_hung_is_killed_and_names_that_test() {
         .filter(|row| row["lingered"] == true)
         .filter_map(|row| row["index"].as_u64())
         .collect();
-    assert!(
-        !claimed.is_empty(),
-        "the fixture exists to make a process outlive its harness's answer: {rows:#?}"
-    );
     assert_eq!(
         claimed, outlived,
         "a row says it lingered exactly where the recording says an execution of it did"
+    );
+}
+
+#[test]
+fn a_kill_is_taken_at_the_first_failing_test_rather_than_after_the_rest_hang() {
+    let fixture = Fixture::copy("fixture-fails-then-hangs");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(1),
+        "{}",
+        stderr(&output)
+    );
+    let report = stored(&fixture);
+    let rows = report["mutants"].as_array().expect("the rows");
+    let waited_out: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| row["outcome"] == "killed" && row["lingered"] == true)
+        .collect();
+    assert!(
+        waited_out.is_empty(),
+        "one failing test is the whole answer to whether the tests noticed a mutation, so the \
+         process is stopped there rather than kept running until the clock ends a test that \
+         hangs: {waited_out:#?}"
     );
 }
