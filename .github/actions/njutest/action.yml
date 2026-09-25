@@ -80,6 +80,8 @@ runs:
         ARGS: ${{ inputs.args }}
       run: |
         set -uo pipefail
+        # The runner starts this shell with -e, and the status below is what this step exists to read.
+        set +e
         # shellcheck disable=SC2086
         njutest verify ${ARGS} | tee njutest-verify.out
         status=${PIPESTATUS[0]}

@@ -476,3 +476,94 @@ fn a_workflow_that_reads_a_report_names_paths_the_schema_declares() {
          accounting is per build and per part: {unresolved:?}"
     );
 }
+
+/// Every file under `.github` a runner reads, by path, with its text.
+fn github_files() -> Vec<(PathBuf, String)> {
+    let mut found = Vec::new();
+    let mut pending = vec![
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(".github"),
+    ];
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("{}: {error}", directory.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|error| panic!("entry under {}: {error}", directory.display()))
+                .path();
+            if std::fs::metadata(&path).is_ok_and(|one| one.is_dir()) {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_some_and(|kind| kind == "yml") {
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                found.push((path, text));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// How far a line is indented, in spaces.
+fn indent(line: &str) -> usize {
+    line.chars().take_while(|one| *one == ' ').count()
+}
+
+/// Every line of a `run: |` script that reads a command's exit status while the shell still stops on the first failure, by file and line.
+fn unprotected_statuses(path: &Path, text: &str) -> Vec<String> {
+    let mut lines = (1_usize..).zip(text.lines()).peekable();
+    let mut found = Vec::new();
+    while let Some((_, line)) = lines.next() {
+        if !line
+            .trim_start()
+            .trim_start_matches("- ")
+            .starts_with("run: |")
+        {
+            continue;
+        }
+        let depth = indent(line);
+        let mut stopped_stopping = false;
+        while let Some((number, script)) =
+            lines.next_if(|(_, script)| script.trim().is_empty() || indent(script) > depth)
+        {
+            let said = script.trim();
+            if said.starts_with("set +e") {
+                stopped_stopping = true;
+            }
+            if (said.contains("$?") || said.contains("PIPESTATUS"))
+                && !stopped_stopping
+                && !said.contains("||")
+            {
+                found.push(format!("{}:{number}: {said}", path.display()));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_step_that_reads_an_exit_status_first_stops_the_shell_stopping_at_it() {
+    let unprotected: Vec<String> = github_files()
+        .iter()
+        .flat_map(|(path, text)| unprotected_statuses(path, text))
+        .collect();
+    assert!(
+        unprotected.is_empty(),
+        "the runner starts `bash` with -e, so a command that exits non-zero ends the step \
+         before the next line reads its status: a verdict the step exists to report is lost \
+         with every output after it; say `set +e` first, or read it with `||`: \
+         {unprotected:#?}"
+    );
+}
+
+#[test]
+fn the_status_law_sees_a_status_read_after_a_command_that_stops_the_shell() {
+    let said = unprotected_statuses(
+        Path::new("action.yml"),
+        "    - run: |\n        set -uo pipefail\n        verify | tee out\n        status=${PIPESTATUS[0]}\n    - run: |\n        set +e\n        verify\n        echo \"$?\"\n    - run: |\n        verify || status=$?\n",
+    );
+    assert_eq!(said, ["action.yml:4: status=${PIPESTATUS[0]}"], "{said:#?}");
+}
