@@ -137,6 +137,41 @@ impl Predicate {
     }
 }
 
+impl std::fmt::Display for Predicate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let list = |f: &mut std::fmt::Formatter<'_>, name: &str, every: &[Self]| {
+            write!(f, "{name}(")?;
+            for (at, one) in every.iter().enumerate() {
+                if at > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{one}")?;
+            }
+            write!(f, ")")
+        };
+        match self {
+            Self::All(every) => list(f, "all", every),
+            Self::Any(some) => list(f, "any", some),
+            Self::Not(inner) => write!(f, "not({inner})"),
+            Self::Name(name) => write!(f, "{name}"),
+            Self::Pair(name, value) => write!(f, "{name} = \"{value}\""),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Predicate {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+impl serde::Serialize for Predicate {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
 /// A predicate being read: the whole text, and what is left of it.
 struct Reading<'a> {
     text: &'a str,

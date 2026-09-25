@@ -1142,6 +1142,44 @@ fn addressed<'s>(
     Ok((mutants, moved))
 }
 
+/// What a claim that applies here and names `mutants` stands as, marking the rows it accounts for: how many it was resolved against, the one that decided it, and its standing.
+fn decided(
+    judged: &mut [Judged],
+    expectation: &Expectation,
+    shard: Option<Shard>,
+    (mutants, moved): (Vec<&Mutant>, Option<Standing>),
+) -> Result<(u32, Option<String>, Standing), SessionError> {
+    let every: Vec<String> = mutants.iter().map(|mutant| mutant.id.to_string()).collect();
+    let ids: Vec<String> = mutants
+        .iter()
+        .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
+        .map(|mutant| mutant.id.to_string())
+        .filter(|id| decided_here(judged, id))
+        .collect();
+    let (named, standing) = if ids.is_empty() {
+        (None, Standing::Unjudged)
+    } else {
+        standing_of(judged, expectation.outcome, &ids)
+    };
+    let standing = match standing {
+        Standing::Met => moved.unwrap_or(Standing::Met),
+        held @ (Standing::Moved { .. }
+        | Standing::Stale { .. }
+        | Standing::Unmatched { .. }
+        | Standing::Unjudged
+        | Standing::Inapplicable { .. }) => held,
+    };
+    if matches!(standing, Standing::Met | Standing::Moved { .. }) {
+        for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
+            one.expected = true;
+        }
+    }
+    let covered = u32::try_from(every.len()).map_err(|_outside_range| {
+        SessionError::ExpectationCoverageTooLarge { count: every.len() }
+    })?;
+    Ok((covered, named, standing))
+}
+
 /// What a claim the catalog does not answer for stands as: not judged here where it names something in a file no unit read, unjudged where a narrowed run left its file out, and otherwise unmatched.
 fn unresolved(
     session: &Session,
@@ -2273,9 +2311,10 @@ pub fn verify(
     let mut reasons: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     for expectation in expectations {
         let resolved = addressed(session, expectation);
-        let named: &[&Mutant] = match &resolved {
-            Ok((mutants, _moved)) => mutants,
-            Err(_unresolved) => &[],
+        let applies = session.holds(&expectation.under);
+        let named: &[&Mutant] = match (&resolved, &applies) {
+            (Ok((mutants, _moved)), Ok(())) => mutants,
+            (Err(_), _) | (Ok(_), Err(_)) => &[],
         };
         for mutant in named {
             if let Some(first) = reasons.insert(mutant.index, expectation.name()) {
@@ -2289,40 +2328,10 @@ pub fn verify(
                 });
             }
         }
-        let (covered, mutant, standing) = match resolved {
-            Err(why) => (0, None, unresolved(session, expectation, narrowed, &why)),
-            Ok((mutants, moved)) => {
-                let every: Vec<String> =
-                    mutants.iter().map(|mutant| mutant.id.to_string()).collect();
-                let ids: Vec<String> = mutants
-                    .iter()
-                    .filter(|mutant| shard.is_none_or(|part| part.holds(mutant.index)))
-                    .map(|mutant| mutant.id.to_string())
-                    .filter(|id| decided_here(judged, id))
-                    .collect();
-                let (named, standing) = if ids.is_empty() {
-                    (None, Standing::Unjudged)
-                } else {
-                    standing_of(judged, expectation.outcome, &ids)
-                };
-                let standing = match standing {
-                    Standing::Met => moved.unwrap_or(Standing::Met),
-                    held @ (Standing::Moved { .. }
-                    | Standing::Stale { .. }
-                    | Standing::Unmatched { .. }
-                    | Standing::Unjudged
-                    | Standing::Inapplicable { .. }) => held,
-                };
-                if matches!(standing, Standing::Met | Standing::Moved { .. }) {
-                    for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
-                        one.expected = true;
-                    }
-                }
-                let covered = u32::try_from(every.len()).map_err(|_outside_range| {
-                    SessionError::ExpectationCoverageTooLarge { count: every.len() }
-                })?;
-                (covered, named, standing)
-            }
+        let (covered, mutant, standing) = match (resolved, applies) {
+            (Err(why), _) => (0, None, unresolved(session, expectation, narrowed, &why)),
+            (Ok(_), Err(because)) => (0, None, Standing::Inapplicable { because }),
+            (Ok(named), Ok(())) => decided(judged, expectation, shard, named)?,
         };
         verified.push(Verified {
             id: expectation.name(),

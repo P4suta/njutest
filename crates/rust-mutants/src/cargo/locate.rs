@@ -91,6 +91,42 @@ impl Toolchain {
         })
     }
 
+    /// What `rustc --print cfg` says of `target`, or of the host where there is none, kept to the names a target alone decides (ADR 0042).
+    ///
+    /// # Errors
+    /// [`CargoErrorKind::CommandFailed`] when rustc could not say, and [`CargoErrorKind::VersionUnreadable`] when what it said is not text.
+    pub fn target_facts(
+        &self,
+        dir: &Path,
+        target: Option<&str>,
+        cancel: &Cancel,
+    ) -> Result<crate::facts::Facts, CargoError> {
+        let mut args = vec![
+            self.rustc.as_os_str().to_owned(),
+            OsString::from("--print"),
+            OsString::from("cfg"),
+        ];
+        if let Some(target) = target {
+            args.push(OsString::from("--target"));
+            args.push(OsString::from(target));
+        }
+        let mut spec = Spec::new(args, Bound::After(PROBE));
+        spec.dir = Some(dir.to_path_buf());
+        spec.env.clone_from(&self.env);
+        spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
+        let result = run(&spec, cancel);
+        if !result.succeeded() {
+            return Err(command_failed(&spec, &result));
+        }
+        let said = std::str::from_utf8(&result.stdout).map_err(|source| {
+            CargoError::new(
+                CargoErrorKind::VersionUnreadable,
+                format!("{} printed a non-UTF-8 cfg", self.rustc.display()),
+            )
+            .with_source(source)
+        })?;
+        Ok(crate::facts::Facts::printed(said))
+    }
     /// The cargo executable.
     #[must_use]
     pub fn cargo(&self) -> &Path {

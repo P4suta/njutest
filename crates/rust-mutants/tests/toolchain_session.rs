@@ -1494,3 +1494,75 @@ fn a_claim_on_a_file_no_unit_compiled_is_inapplicable_and_one_that_names_nothing
     }
     session.close().expect("the session closes");
 }
+
+#[test]
+fn a_claim_is_judged_only_where_the_facts_it_names_hold() {
+    let fixture = Fixture::copy("fixture-uncompiled");
+    let session = prepare(&fixture);
+    let here = if cfg!(unix) { "unix" } else { "windows" };
+    let elsewhere = if cfg!(unix) { "windows" } else { "unix" };
+    let claim = |under: rust_mutants::run::Where| rust_mutants::run::Expectation {
+        id: None,
+        locator: Some(rust_mutants::session::Locator {
+            path: "src/lib.rs".to_owned(),
+            item: "max".to_owned(),
+            rule: "condition-to-true".to_owned(),
+            original: "a > b".to_owned(),
+            line: None,
+            count: None,
+        }),
+        reason: "a claim about one platform's behaviour".to_owned(),
+        outcome: Outcome::Survived,
+        under,
+    };
+    let cfg = |text: &str| rust_mutants::run::Where {
+        cfg: Some(rust_mutants::facts::Predicate::parse(text).expect("a predicate")),
+        env: std::collections::BTreeMap::new(),
+    };
+    let absent = rust_mutants::run::Where {
+        cfg: None,
+        env: std::collections::BTreeMap::from([(
+            "RUST_MUTANTS_ADR_0042_NEVER_SET".to_owned(),
+            "1".to_owned(),
+        )]),
+    };
+    let verified = rust_mutants::run::verify(
+        &session,
+        &[claim(cfg(here)), claim(cfg(elsewhere)), claim(absent)],
+        &mut [],
+        rust_mutants::run::Scope {
+            shard: None,
+            narrowed: false,
+        },
+    )
+    .expect("three claims are representable");
+    assert!(
+        !matches!(
+            verified[0].standing,
+            rust_mutants::run::Standing::Inapplicable { .. }
+        ),
+        "cfg({here}) holds of this host's target, so the claim is judged: {:?}",
+        verified[0].standing
+    );
+    assert!(
+        matches!(
+            &verified[1].standing,
+            rust_mutants::run::Standing::Inapplicable {
+                because: rust_mutants::run::Unheld::Cfg { predicate }
+            } if predicate == elsewhere
+        ),
+        "cfg({elsewhere}) does not hold here, so the claim is not judged here: {:?}",
+        verified[1].standing
+    );
+    assert!(
+        matches!(
+            &verified[2].standing,
+            rust_mutants::run::Standing::Inapplicable {
+                because: rust_mutants::run::Unheld::Env { name, found: None, .. }
+            } if name == "RUST_MUTANTS_ADR_0042_NEVER_SET"
+        ),
+        "a claim that holds under a variable the tests are not given is not judged: {:?}",
+        verified[2].standing
+    );
+    session.close().expect("the session closes");
+}

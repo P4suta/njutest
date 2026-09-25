@@ -687,6 +687,8 @@ pub enum Unread {
 pub struct Session {
     /// The rules discovery applied, which a claim on a file no unit read is walked with.
     selection: crate::syntax::Selection<'static>,
+    /// What the toolchain says the build's target is, which a claim's `where` is judged against.
+    facts: crate::facts::Facts,
     workspace: Workspace,
     /// The test executables the run starts, as the build left them, which every execution is checked against.
     apparatus: crate::apparatus::Apparatus,
@@ -1104,6 +1106,46 @@ impl Session {
                 display_ids: named(several),
             }),
         }
+    }
+
+    /// What the toolchain says the build's target is, kept to the names a target alone decides.
+    #[must_use]
+    pub const fn facts(&self) -> &crate::facts::Facts {
+        &self.facts
+    }
+
+    /// Nothing where every fact `under` names holds of this run's target and of the environment its tests are given, and otherwise the first that does not.
+    ///
+    /// # Errors
+    /// The fact that does not hold.
+    pub fn holds(&self, under: &crate::run::Where) -> Result<(), crate::run::Unheld> {
+        if let Some(predicate) = &under.cfg
+            && !predicate.holds(&self.facts)
+        {
+            return Err(crate::run::Unheld::Cfg {
+                predicate: predicate.to_string(),
+            });
+        }
+        for (name, wanted) in &under.env {
+            let found = self
+                .workspace
+                .base_env
+                .iter()
+                .find(|(held, _)| held == std::ffi::OsStr::new(name))
+                .map(|(_, value)| {
+                    value
+                        .to_str()
+                        .map_or_else(|| "a value that is not UTF-8".to_owned(), ToOwned::to_owned)
+                });
+            if found.as_deref() != Some(wanted.as_str()) {
+                return Err(crate::run::Unheld::Env {
+                    name: name.clone(),
+                    wanted: wanted.clone(),
+                    found,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// What this build made of the file `locator` names: one a unit read, or one none did, walked with the rules discovery applied to say whether the locator names something in it.

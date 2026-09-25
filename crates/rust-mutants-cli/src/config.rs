@@ -210,6 +210,21 @@ pub struct Expect {
     /// The outcome the run must confirm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<String>,
+    /// Where the claim is judged, when it holds only under some facts (ADR 0042).
+    #[serde(default, rename = "where", skip_serializing_if = "Option::is_none")]
+    pub holds: Option<Holds>,
+}
+
+/// The `where` of one expectation: a `cfg` over the target and exact values of the tests' environment.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Holds {
+    /// The predicate over the target, read as Cargo reads a `cfg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfg: Option<rust_mutants::facts::Predicate>,
+    /// Each name of the environment the tests are given, with the value it must have.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 impl Expect {
@@ -253,7 +268,14 @@ impl Expect {
             }),
             reason: self.reason.clone(),
             outcome: self.outcome().unwrap_or(Outcome::Survived),
-            under: rust_mutants::run::Where::default(),
+            under: self
+                .holds
+                .as_ref()
+                .map(|holds| rust_mutants::run::Where {
+                    cfg: holds.cfg.clone(),
+                    env: holds.env.clone(),
+                })
+                .unwrap_or_default(),
         }
     }
 }

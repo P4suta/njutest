@@ -102,3 +102,20 @@ fn the_facts_a_run_records_are_the_target_s_alone_and_sorted() {
         "what a report records reads back as the facts it was judged against"
     );
 }
+
+#[test]
+fn a_predicate_reads_back_as_itself_from_what_it_writes() {
+    for text in [
+        "unix",
+        "target_os = \"linux\"",
+        "all(unix, not(target_os = \"macos\"))",
+        "any()",
+    ] {
+        let predicate = Predicate::parse(text).expect("a predicate");
+        assert_eq!(
+            Predicate::parse(&predicate.to_string()),
+            Ok(predicate),
+            "{text}: a report names the predicate that did not hold, and an audit reads it back"
+        );
+    }
+}

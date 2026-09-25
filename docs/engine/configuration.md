@@ -212,6 +212,24 @@ A locator whose line has moved still holds, and the report says where the mutati
 `line` is part of the claim, so two claims on one item that differ only in their line are two claims, each with its own reason, and the report names each with its line.
 A mutation two claims both name — a claim on the whole item beside one on a line of it, say — has two reasons, and the run refuses it with `RM0004` naming the mutation, since a report cannot audit which reason holds.
 
+A claim that holds only where some facts do says so with `where`:
+
+```toml
+[[mutation.expect]]
+path = "src/watch.rs"
+item = "Session::refresh"
+rule = "condition-to-false"
+original = "self.watcher.recursive()"
+outcome = "survived"
+where = { cfg = 'target_os = "linux"', env = { REQUIRE_SHARING = "1" } }
+reason = "inotify never watches a subtree, so recursive() is false on every Linux run"
+```
+
+`cfg` is a Cargo `cfg` predicate over the names a target alone decides — `target_*`, `unix`, `windows`, `panic` — as `rustc --print cfg` prints them for the build's target;
+any other name, such as `debug_assertions`, `test` or `feature`, is refused when the file is read, since no probe of the target can say whether it holds.
+`env` names exact values in the environment the tests are given.
+Where a fact does not hold the claim is `inapplicable`, and two claims may name one mutation as long as no run makes both apply.
+
 A locator names one mutation.
 Where the same reason is true of several of them at once — the same call written at three places in one function, say —
 `count` says how many it was written for:
