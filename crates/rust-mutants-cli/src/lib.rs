@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use rust_mutants::runner::Cancel;
 
 /// The exit code of a usage error or an infrastructure failure.
-pub const EXIT_USAGE: u8 = 2;
+pub const EXIT_USAGE: u8 = run::Exit::Unestablished.code();
 
 /// Everything the command line needs from the process it runs in.
 #[derive(Debug, Clone)]
@@ -89,32 +89,14 @@ impl<'a> Composition<'a> {
 }
 
 /// The exit code of a run that was interrupted.
-pub const EXIT_INTERRUPTED: u8 = 130;
-
-/// The exit code of a run that was terminated, which is `SIGTERM` by the convention every shell reports.
-pub const EXIT_TERMINATED: u8 = 143;
+pub const EXIT_INTERRUPTED: u8 = run::Exit::Interrupted.code();
 
 /// What every exit code of this program means, as the lines `--help` ends with.
 #[must_use]
 pub fn exit_codes() -> String {
     let mut said = String::from("Exit codes:");
-    for (code, meaning) in [
-        (
-            run::EXIT_DETECTED,
-            "every mutant the run decided, the tests noticed",
-        ),
-        (
-            run::EXIT_UNDETECTED,
-            "there is a finding: a survivor, a stale claim, something the run could not decide",
-        ),
-        (
-            EXIT_USAGE,
-            "the run itself failed, or the command was used wrongly",
-        ),
-        (EXIT_INTERRUPTED, "interrupted"),
-        (EXIT_TERMINATED, "terminated"),
-    ] {
-        let written = write!(said, "\n  {code:<4} {meaning}");
+    for exit in run::Exit::ALL {
+        let written = write!(said, "\n  {:<4} {}", exit.code(), exit.meaning());
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     said
