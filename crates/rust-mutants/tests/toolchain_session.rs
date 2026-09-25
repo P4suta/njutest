@@ -1103,7 +1103,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         &session,
         std::slice::from_ref(&expectation),
         &mut every,
-        None,
+        rust_mutants::run::Scope::WHOLE,
     )
     .expect("the small expectation set is representable");
     assert!(
@@ -1136,7 +1136,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         &session,
         std::slice::from_ref(&expectation),
         &mut one_killed,
-        None,
+        rust_mutants::run::Scope::WHOLE,
     )
     .expect("the small expectation set is representable");
     assert!(
@@ -1169,9 +1169,16 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
     for one in &mut again {
         one.expected = false;
     }
-    let unnamed =
-        rust_mutants::run::verify(&session, std::slice::from_ref(&uncounted), &mut again, None)
-            .expect("the small expectation set is representable");
+    let unnamed = rust_mutants::run::verify(
+        &session,
+        std::slice::from_ref(&uncounted),
+        &mut again,
+        rust_mutants::run::Scope {
+            shard: None,
+            narrowed: false,
+        },
+    )
+    .expect("the small expectation set is representable");
     assert!(
         matches!(
             unnamed[0].standing,

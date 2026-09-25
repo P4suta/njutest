@@ -177,3 +177,61 @@ fn routing_loses_no_kill_and_names_the_code_no_test_runs() {
         "code the tests never execute is a finding about the tests, not a broken run: {routed:?}"
     );
 }
+
+#[test]
+fn a_claim_on_a_file_the_change_set_left_out_is_unjudged_and_one_in_it_is_still_held() {
+    let fixture = Fixture::copy("fixture-workspace");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[[mutation.expect]]\npath = \"crates/core/src/lib.rs\"\nitem = \
+         \"clamp\"\nrule = \"condition-to-false\"\noriginal = \"n < lo\"\noutcome = \
+         \"killed\"\nreason = \"clamp_bounds holds the lower bound\"\n\n[[mutation.expect]]\npath \
+         = \"crates/core/src/util.rs\"\nitem = \"no_such_function\"\nrule = \
+         \"condition-to-false\"\noriginal = \"x\"\noutcome = \"killed\"\nreason = \"a claim on a changed file that \
+         names nothing\"\n",
+    )
+    .expect("write the configuration");
+    njutest_devkit::repo::commit_tree(fixture.root());
+    let util = fixture.root().join("crates/core/src/util.rs");
+    let mut widened = std::fs::read_to_string(&util).expect("read");
+    widened.push_str("\npub fn extra(a: i32) -> i32 { a + 1 }\n");
+    std::fs::write(&util, widened).expect("write");
+
+    let output = against(&fixture, &["run", "--changed", "--offline", "--locked"]);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}{}",
+        stdout(&output),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let stored = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
+    let report: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(
+            njutest_devkit::fixture::newest_run(&stored).join("run-report-v1.json"),
+        )
+        .expect("the stored report"),
+    )
+    .expect("one document");
+    let text = |one: &serde_json::Value, pointer: &str| {
+        one.pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let standings: Vec<(String, String)> = report
+        .get("expectations")
+        .and_then(serde_json::Value::as_array)
+        .expect("expectations")
+        .iter()
+        .map(|one| (text(one, "/locator/path"), text(one, "/standing")))
+        .collect();
+    assert_eq!(
+        standings,
+        [
+            ("crates/core/src/lib.rs".to_owned(), "unjudged".to_owned()),
+            ("crates/core/src/util.rs".to_owned(), "unmatched".to_owned()),
+        ],
+        "a claim on a file the change set left out was not asked about, while one on a file it \
+         kept that names nothing is still a claim that names nothing"
+    );
+}

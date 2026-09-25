@@ -718,6 +718,29 @@ pub struct Reusing<'a> {
     pub run_id: &'a str,
 }
 
+/// The part of a catalog one run answers for: the part a shard holds, and whether the run's own selection narrowed the catalog to some of the project's files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scope {
+    /// The part of the catalog this run holds, when it holds only one.
+    pub shard: Option<Shard>,
+    /// Whether the catalog was built from only the files this run selected, such as a change set, so a claim on another file was never asked about.
+    pub narrowed: bool,
+}
+
+impl Scope {
+    /// The part a run answers for: the part `shard` holds, of a catalog its own selection did or did not narrow.
+    #[must_use]
+    pub const fn of(shard: Option<Shard>, narrowed: bool) -> Self {
+        Self { shard, narrowed }
+    }
+
+    /// A run that answers for the whole catalog it was built from.
+    pub const WHOLE: Self = Self {
+        shard: None,
+        narrowed: false,
+    };
+}
+
 /// One part of a catalog, for a run that shares the work with others.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shard {
@@ -948,6 +971,16 @@ fn addressed<'s>(
         (to != from).then_some(Standing::Moved { from, to })
     });
     Ok((mutants, moved))
+}
+
+/// Whether the file a claim names is one this run's catalog was built from rather than one its selection left out; a claim by identity names no file, so a narrowed run cannot say.
+fn scanned(session: &Session, expectation: &Expectation) -> bool {
+    expectation.locator.as_ref().is_some_and(|locator| {
+        session.files().iter().any(|file| {
+            file.path == locator.path
+                && file.whole_file != Some(crate::syntax::SkipReason::Excluded)
+        })
+    })
 }
 
 /// Whether this run decided the mutation `id`: a row it did not leave out, stop short of, or never get to.
@@ -1725,8 +1758,9 @@ pub fn verify(
     session: &Session,
     expectations: &[Expectation],
     judged: &mut [Judged],
-    shard: Option<Shard>,
+    scope: Scope,
 ) -> Result<Vec<Verified>, SessionError> {
+    let Scope { shard, narrowed } = scope;
     let mut verified = Vec::with_capacity(expectations.len());
     let mut reasons: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     for expectation in expectations {
@@ -1748,6 +1782,9 @@ pub fn verify(
             }
         }
         let (covered, mutant, standing) = match resolved {
+            Err(_beyond) if narrowed && !scanned(session, expectation) => {
+                (0, None, Standing::Unjudged)
+            }
             Err(why) => (
                 0,
                 None,

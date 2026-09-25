@@ -908,6 +908,7 @@ fn prepared(
             fail_fast,
             dry_run,
             args,
+            scope,
             ..
         } => match mutant {
             Some(prefix) => one(
@@ -924,6 +925,7 @@ fn prepared(
                     open: prepared.open,
                     args,
                     shard: shard.as_deref(),
+                    narrowed: base_of(scope).is_some(),
                     asked: Switches {
                         no_report: *no_report,
                         no_cache: *no_cache,
@@ -983,6 +985,8 @@ struct Whole<'a> {
     open: &'a workspace::OpenOptions,
     args: &'a [String],
     shard: Option<&'a str>,
+    /// Whether the catalog was built from only the files this run's own selection, a change set, named.
+    narrowed: bool,
     /// The switches the command line set, which say what the run does rather than what it measures.
     asked: Switches,
     /// Which of the catalog's mutants this run is about.
@@ -1016,6 +1020,18 @@ struct Switches {
     dry_run: bool,
 }
 
+/// What a dry run says: the phases so far and what a run would cost, with nothing executed.
+fn estimated(
+    session: &Session,
+    filter: &run::Filter,
+    phases: &std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+    stdout: &mut dyn Write,
+) -> Result<PreparedOutcome, CliError> {
+    write(stdout, &crate::ui::phases(phases))?;
+    write(stdout, &estimate::estimate(session, filter)?)?;
+    Ok(PreparedOutcome::complete(0))
+}
+
 fn whole(
     session: &Session,
     whole: &Whole<'_>,
@@ -1027,6 +1043,7 @@ fn whole(
         open,
         args,
         shard,
+        narrowed,
         asked:
             Switches {
                 no_report,
@@ -1063,9 +1080,7 @@ fn whole(
         fail_fast,
     };
     if dry_run {
-        write(stdout, &crate::ui::phases(phases))?;
-        write(stdout, &estimate::estimate(session, filter)?)?;
-        return Ok(PreparedOutcome::complete(0));
+        return estimated(session, filter, phases, stdout);
     }
     let mut result = measured_run(
         session,
@@ -1080,7 +1095,8 @@ fn whole(
         cancel,
         stdout,
     )?;
-    result.expectations = run::verify(session, &expectations, &mut result.judged, options.shard)
+    let scope = run::Scope::of(options.shard, narrowed);
+    result.expectations = run::verify(session, &expectations, &mut result.judged, scope)
         .map_err(EngineError::from)?;
     let document = run_report::document(
         session,
@@ -1092,11 +1108,9 @@ fn whole(
             finished_at: Timestamp::now(),
         },
     )?;
-    let written = if no_report {
-        None
-    } else {
-        Some(stored_with_evidence(session, settings, id, &document)?)
-    };
+    let written = (!no_report)
+        .then(|| stored_with_evidence(session, settings, id, &document))
+        .transpose()?;
     Ok(PreparedOutcome::RunPending(Box::new(PendingRun {
         document,
         written,
