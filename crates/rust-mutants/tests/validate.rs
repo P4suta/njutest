@@ -66,6 +66,7 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
     });
     assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
     let Ok(file) = file else { return };
@@ -105,6 +106,7 @@ fn a_warning_is_not_a_rejection() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
     });
     assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
     let Ok(file) = file else { return };
@@ -372,6 +374,7 @@ fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_second
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
     });
     assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
     let Ok(file) = file else { return };
@@ -405,6 +408,7 @@ fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_i
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
     });
     assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
     let Ok(file) = file else { return };
@@ -433,6 +437,7 @@ fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
     });
     assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
     let Ok(file) = file else { return };
@@ -523,6 +528,7 @@ fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
     });
     assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
     let Ok(file) = file else { return };

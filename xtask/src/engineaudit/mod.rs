@@ -14,7 +14,7 @@ pub mod sentinel;
 mod wire;
 
 use arithmetic::{accounting, exit, expectations, findings, identity, score};
-use evidence::{merge, proofs, sites, touch};
+use evidence::{entry, merge, proofs, sites, touch};
 use ledger::ledger;
 use recording::{trace, work};
 
@@ -192,6 +192,8 @@ pub enum Layer {
     Work,
     /// Every route the guards decided, re-decided from what the guards recorded.
     Touch,
+    /// Every reached site and every kill, against the items the entry markers say each test entered.
+    Entry,
 }
 
 impl Layer {
@@ -212,6 +214,7 @@ impl Layer {
             Self::Ledger => "ledger",
             Self::Work => "work",
             Self::Touch => "touch",
+            Self::Entry => "entry",
         }
     }
 }
@@ -540,6 +543,7 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
     ledger(&report, evidence.ledger.as_ref(), &mut audit);
     work(&report, evidence.recorded.as_ref(), &mut audit);
     touch(&report, evidence.touched.as_ref(), &mut audit);
+    entry(&report, evidence.touched.as_ref(), &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -564,6 +568,8 @@ struct Row {
     step_notice: Option<StepNotice>,
     target: String,
     tests_run: Option<u64>,
+    killed_by: Vec<String>,
+    item: String,
     retried: bool,
     expected: bool,
     unreached: bool,

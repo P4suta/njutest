@@ -585,3 +585,115 @@ fn a_harness_with_no_summary_is_not_said_to_have_fallen_short_of_one() {
          {limitations:?}"
     );
 }
+
+const ITEM_REACH: &str = "fixture-item-reach/lib/fixture_item_reach";
+
+/// The item of `fixture-item-reach` a reader names `name`.
+fn item_named<'a>(session: &'a Session, name: &str) -> &'a rust_mutants::touch::Item {
+    session
+        .touched()
+        .items
+        .iter()
+        .find(|item| item.name == name)
+        .unwrap_or_else(|| panic!("the catalog names {name}: {:?}", session.touched().items))
+}
+
+#[test]
+fn a_test_that_leaves_a_function_before_its_first_site_entered_it_and_reached_none_of_it() {
+    let fixture = Fixture::copy("fixture-item-reach");
+    let session = prepared(&fixture);
+    let touches = session
+        .touched()
+        .targets
+        .get(ITEM_REACH)
+        .unwrap_or_else(|| panic!("{ITEM_REACH} was measured"));
+    let halve = item_named(&session, "halve");
+    let refused = "tests::a_word_is_refused";
+    let sites: Vec<u32> = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter(|one| one.candidate.path == halve.path && halve.body.contains(one.candidate.span))
+        .map(|one| one.index)
+        .collect();
+    assert!(!sites.is_empty(), "halve holds mutation sites");
+    for site in &sites {
+        assert!(
+            !touches.reached.by(refused, *site),
+            "{refused} panics before any site of halve, and the guards say it reached {site}"
+        );
+    }
+    assert!(
+        touches.entered_by(refused).contains(&halve.index),
+        "{refused} entered halve before it panicked, and the entry markers do not say so: {:?}",
+        touches.entered
+    );
+    assert_eq!(
+        touches.entering(halve.index),
+        rust_mutants::touch::Reaching::Tests(vec![
+            refused.to_owned(),
+            "tests::half_of_four_is_two".to_owned()
+        ]),
+        "the two tests that call halve entered it, and no other test did: {touches:?}"
+    );
+}
+
+#[test]
+fn every_shape_of_body_records_the_test_that_entered_it() {
+    let fixture = Fixture::copy("fixture-item-reach");
+    let session = prepared(&fixture);
+    let touches = session
+        .touched()
+        .targets
+        .get(ITEM_REACH)
+        .unwrap_or_else(|| panic!("{ITEM_REACH} was measured"));
+    for (name, test) in [
+        ("stop", "tests::stopping_stops"),
+        ("nothing", "tests::nothing_does_nothing"),
+        ("next", "tests::the_next_of_one_is_two"),
+        ("next_unchecked", "tests::the_next_of_one_is_two"),
+        ("later", "tests::later_is_twice_once_polled"),
+    ] {
+        let item = item_named(&session, name);
+        assert!(
+            item.measurable,
+            "{name} is a body a marker can be written into"
+        );
+        assert_eq!(
+            touches.entering(item.index),
+            rust_mutants::touch::Reaching::Tests(vec![test.to_owned()]),
+            "{name} was entered by {test} alone"
+        );
+    }
+}
+
+#[test]
+fn a_worker_alive_when_the_process_ends_has_still_said_what_it_entered_and_reached() {
+    let fixture = Fixture::copy("fixture-item-reach");
+    let session = prepared(&fixture);
+    let touches = session
+        .touched()
+        .targets
+        .get(ITEM_REACH)
+        .unwrap_or_else(|| panic!("{ITEM_REACH} was measured"));
+    let thrice = item_named(&session, "thrice");
+    assert!(
+        touches.entered_by_any().contains(&thrice.index),
+        "a named worker still parked when the test binary exits never drops its thread-local, \
+         so a record held back for a batch is never written, and `thrice` reads as entered by \
+         nothing: a change to it would be selected for no test at all: {:?}",
+        touches.entered
+    );
+    let site = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|one| one.candidate.path == thrice.path && thrice.body.contains(one.candidate.span))
+        .unwrap_or_else(|| panic!("thrice holds a mutation site"));
+    assert!(
+        touches.reached.any(site.index),
+        "and the site it reached is lost the same way, which routes a mutation of it to no \
+         target: {:?}",
+        touches.reached
+    );
+}
