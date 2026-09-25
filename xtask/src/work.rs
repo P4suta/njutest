@@ -306,6 +306,11 @@ fn exited(child: &Child) -> Result<bool, WorkError> {
 }
 
 #[cfg(not(unix))]
+#[expect(
+    clippy::missing_const_for_fn,
+    clippy::unnecessary_wraps,
+    reason = "only unix can watch a leader exit without reaping it, so elsewhere the answer is no, in the signature the unix watch needs"
+)]
 fn exited(_child: &Child) -> Result<bool, WorkError> {
     Ok(false)
 }

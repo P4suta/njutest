@@ -5,8 +5,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # fixture-assured
 
-The workspace a run can honestly call `ASSURED`: every mutation the compiler
-accepts is noticed by a test.
+The workspace a run can honestly call `ASSURED`: every mutation the compiler accepts is noticed by a test.
+Its `.njutest.toml` names the `standard-v1` contract, which is what that claim is made under.
+The default, `whole-v1`, also asks for a locale, schedules, faults and crashes a CI runner cannot give this tree,
+and under it the same run is `INSUFFICIENT`, which is the honest answer there and not the one this fixture exists to show.
 
 | Mutant | Rule | Killed by | Why it dies |
 | --- | --- | --- | --- |
