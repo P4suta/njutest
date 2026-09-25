@@ -250,11 +250,17 @@ fn watched_of(
 fn closure_of(
     workspace: &Workspace,
     checked: &crate::cargo::Compiled,
-) -> Result<String, SessionError> {
+) -> Result<String, EngineError> {
     let root = workspace.snapshot_root();
     let target = workspace.target_dir();
+    let mut read: BTreeSet<PathBuf> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.inputs.iter().cloned())
+        .collect();
+    read.extend(crate::cargo::compile_time_inputs(&checked.messages, root)?);
     let mut files: BTreeMap<String, String> = BTreeMap::new();
-    for path in &checked.inputs.files {
+    for path in &read {
         let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
             (Ok(relative), _) => (relative, ""),
             (Err(_), Ok(relative)) => (relative, "$target/"),
@@ -284,13 +290,19 @@ fn closure_of(
         text.replace(target_text, "$target")
             .replace(root_text, "$root")
     };
-    for read in &checked.inputs.env {
-        files.insert(
-            format!("$env/{}", read.name),
-            env_value(read.value.as_deref(), portable),
-        );
+    let env: BTreeMap<&str, Option<&str>> = checked
+        .units
+        .iter()
+        .flat_map(|unit| unit.env.iter())
+        .map(|(name, value)| (name.as_str(), value.as_deref()))
+        .collect();
+    for (name, value) in env {
+        files.insert(format!("$env/{name}"), env_value(value, portable));
     }
-    for told in &checked.inputs.emitted {
+    for told in crate::cargo::emitted_of(&checked.messages)
+        .values()
+        .flatten()
+    {
         let (name, digest) = emitted_entry(told, (root, target), portable)?;
         files.insert(name, digest);
     }
@@ -759,11 +771,12 @@ fn unit_sources(
         .iter()
         .map(|package| (package.id.as_str(), package.name.as_str()))
         .collect();
+    let emitted = crate::cargo::emitted_of(&checked.messages);
     let mut read: BTreeMap<PathBuf, Vec<u8>> = BTreeMap::new();
     let mut units = Vec::new();
-    for unit in crate::cargo::unit_inputs_of(&checked.messages, root)? {
+    for unit in crate::cargo::every_unit_of(&checked.messages, root)? {
         let mut files = BTreeMap::new();
-        for path in &unit.inputs.files {
+        for path in &unit.inputs {
             let (relative, class) = match (path.strip_prefix(root), path.strip_prefix(target)) {
                 (Ok(relative), _) => (relative, "$root/"),
                 (Err(_), Ok(relative)) => (relative, "$target/"),
@@ -792,20 +805,15 @@ fn unit_sources(
             test: unit.test,
             files,
             env: unit
-                .inputs
                 .env
                 .iter()
-                .map(|read| {
-                    (
-                        read.name.clone(),
-                        env_value(read.value.as_deref(), portable),
-                    )
-                })
+                .map(|(name, value)| (name.clone(), env_value(value.as_deref(), portable)))
                 .collect(),
-            emitted: unit
-                .inputs
-                .emitted
-                .iter()
+            emitted: emitted
+                .get(&unit.package_id)
+                .filter(|_| !unit.target.is_custom_build())
+                .into_iter()
+                .flatten()
                 .map(|told| emitted_entry(told, (root, target), portable))
                 .collect::<Result<_, _>>()?,
         });
