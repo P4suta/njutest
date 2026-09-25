@@ -215,6 +215,23 @@ impl std::fmt::Debug for Streams<'_> {
     }
 }
 
+/// The command line `args` spell, or the exit code of the message clap already wrote about it.
+fn parsed<I>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<Cli, ExitCode>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    Cli::try_parse_from(args).map_err(|error| {
+        let stream: &mut dyn Write = if error.use_stderr() { stderr } else { stdout };
+        let rendered = error.render().to_string();
+        let intended = if error.use_stderr() {
+            ExitCode::from(2)
+        } else {
+            ExitCode::SUCCESS
+        };
+        after_output(stream.write_all(rendered.as_bytes()), intended)
+    })
+}
+
 /// Runs the gate named by `args` against the workspace and reports.
 pub fn run_from<I>(args: I, process: &Process<'_>, streams: &mut Streams<'_>) -> ExitCode
 where
@@ -222,18 +239,9 @@ where
 {
     let stdout = &mut *streams.output;
     let stderr = &mut *streams.errors;
-    let cli = match Cli::try_parse_from(args) {
+    let cli = match parsed(args, stdout, stderr) {
         Ok(cli) => cli,
-        Err(error) => {
-            let stream: &mut dyn Write = if error.use_stderr() { stderr } else { stdout };
-            let rendered = error.render().to_string();
-            let intended = if error.use_stderr() {
-                ExitCode::from(2)
-            } else {
-                ExitCode::SUCCESS
-            };
-            return after_output(stream.write_all(rendered.as_bytes()), intended);
-        }
+        Err(answered) => return answered,
     };
     let gate = match cli.task {
         Task::Gate(gate) => gate,

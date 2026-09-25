@@ -123,7 +123,12 @@ fn exit_code(directory: &Path) -> i32 {
 fn a_recording_that_agrees_with_itself_has_nothing_to_report() {
     let audit = audited_with_routes(&base());
     assert_eq!(audit.violations(), 0, "{audit}");
-    assert_eq!(audit.exit_code(), 0, "{audit}");
+    assert_eq!(
+        audit.exit_code(),
+        xtask::proofaudit::EXIT_UNAUDITED,
+        "read without its engine recording, a run that agrees with itself still leaves its drift \
+         unaudited, and says so rather than passing: {audit}"
+    );
 }
 
 #[test]
