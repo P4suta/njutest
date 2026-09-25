@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-shard-report-v1",
     "schema_version": 2,
-    "run_id": "20260925t144418782z-0a6536",
+    "run_id": "20260925t150228878z-1271cc",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "5515c167837e0ad7a4b09aa562b7cb8607893c57d75e7692adbd2a6d76cace6e",
+      "identity": "6162e19d4ba13ab11ac293af488efabf2aafe3ef1ad6aa70d1098ec6d33ab5cf",
       "cached": false,
       "source_run_id": null
     },
@@ -60,7 +60,7 @@
           "digest": "c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"
         },
         "source": {
-          "run_id": "20260925t144418782z-0a6536-b0000000000",
+          "run_id": "20260925t150228878z-1271cc-b0000000000",
           "part": {
             "kind": "shard",
             "index": 2,
@@ -74,9 +74,9 @@
             "arch": "x86_64"
           },
           "timing": {
-            "started": "2026-09-25T14:44:18.782592885Z",
-            "finished": "2026-09-25T14:44:23.201170822Z",
-            "duration_ms": 4418
+            "started": "2026-09-25T15:02:28.878007032Z",
+            "finished": "2026-09-25T15:02:33.630607751Z",
+            "duration_ms": 4752
           },
           "accounting": {
             "targets": {
