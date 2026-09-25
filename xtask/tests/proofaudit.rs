@@ -104,10 +104,6 @@ fn violations(document: &serde_json::Value) -> Vec<String> {
     subjects(document, Standing::Violated)
 }
 
-fn unaudited(document: &serde_json::Value) -> Vec<String> {
-    subjects(document, Standing::Unaudited)
-}
-
 fn exit_code(directory: &Path) -> i32 {
     std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("proofaudit")
@@ -552,16 +548,110 @@ fn a_source_run_on_a_disposition_this_run_established_is_refused_before_any_laye
     }))));
 }
 
-#[test]
-fn what_a_reused_disposition_rests_on_is_unaudited() {
-    let document = with(serde_json::json!({
+/// A run that read the kill back from [`EARLIER`] under a route reaching `reaching` that names `reused` as its source, and ran the survivor; it ran the kill too where `ran`.
+fn read_back_kill(reaching: &[&str], reused: Option<&str>, ran: bool) -> Vec<serde_json::Value> {
+    let route = |mutant: &str, reaching: &[&str], reused: Option<&str>| {
+        serde_json::json!({
+            "type": "route",
+            "route": {
+                "mutant": mutant, "granularity": "block", "fallback": null,
+                "reaching": reaching, "tests": [], "discharged": [], "considered": [],
+                "reused": reused, "refused": null,
+                "rule": reused.map(|_| "exact"), "carry_refused": null
+            }
+        })
+    };
+    let exec = |mutant: &str, target: &str, outcome: &str| {
+        serde_json::json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": target, "args": [], "outcome": outcome,
+                "duration_ms": 5
+            }
+        })
+    };
+    let mut events = vec![route(KILLED, reaching, reused)];
+    if ran {
+        events.push(exec(KILLED, TARGET, "killed"));
+    }
+    events.push(route(SURVIVED, &["t1"], None));
+    events.push(exec(SURVIVED, "t1", "survived"));
+    events
+}
+
+/// A report that says its kill was read back from [`EARLIER`].
+fn reads_the_kill_back() -> serde_json::Value {
+    with(serde_json::json!({
         "mutants": [{ "reuse": { "reused": true, "source_run_id": EARLIER } }],
         "accounting": { "mutants": { "reused_killed": 1 } }
-    }));
-    assert_eq!(violations(&document), Vec::<String>::new());
+    }))
+}
+
+/// The reuse layer's remarks about `document` read against `events`, by standing and subject.
+fn reuse_remarks(
+    document: &serde_json::Value,
+    events: &[serde_json::Value],
+) -> Vec<(Standing, String)> {
+    audited_with(document, events)
+        .remarks
+        .into_iter()
+        .filter(|remark| remark.layer == Layer::Reuse)
+        .map(|remark| (remark.standing, remark.subject))
+        .collect()
+}
+
+#[test]
+fn what_a_reused_disposition_rests_on_is_unaudited() {
+    let remarks = reuse_remarks(
+        &reads_the_kill_back(),
+        &read_back_kill(&[TARGET], Some(EARLIER), false),
+    );
     assert!(
-        unaudited(&document).contains(&"provenance".to_owned()),
-        "whether the recorded killer is still routed under the same behaviour key is not in the report"
+        !remarks
+            .iter()
+            .any(|(standing, _)| *standing == Standing::Violated),
+        "a kill read back from the run its route names, by a target the route still reaches, \
+         with nothing of it run here, is what reading an answer back is: {remarks:?}"
+    );
+    assert!(
+        remarks.contains(&(Standing::Unaudited, "provenance".to_owned())),
+        "whether the killer's behaviour key is the one it had is not in the report: {remarks:?}"
+    );
+}
+
+#[test]
+fn a_disposition_whose_route_does_not_say_it_was_read_back_is_a_violation() {
+    assert!(
+        reuse_remarks(
+            &reads_the_kill_back(),
+            &read_back_kill(&[TARGET], None, false)
+        )
+        .contains(&(Standing::Violated, KILLED.to_owned())),
+        "the report says the kill was read back and the run's own route says it was not"
+    );
+}
+
+#[test]
+fn a_kill_read_back_by_a_target_the_route_no_longer_reaches_is_a_violation() {
+    assert!(
+        reuse_remarks(
+            &reads_the_kill_back(),
+            &read_back_kill(&["t1"], Some(EARLIER), false)
+        )
+        .contains(&(Standing::Violated, KILLED.to_owned())),
+        "a kill is believed only where this run's route still reaches its killer"
+    );
+}
+
+#[test]
+fn a_disposition_read_back_that_also_ran_is_a_violation() {
+    assert!(
+        reuse_remarks(
+            &reads_the_kill_back(),
+            &read_back_kill(&[TARGET], Some(EARLIER), true)
+        )
+        .contains(&(Standing::Violated, KILLED.to_owned())),
+        "an answer read back is an execution that did not happen, and the recording holds one"
     );
 }
 

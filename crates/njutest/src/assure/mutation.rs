@@ -983,7 +983,8 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
             });
         }
     };
-    let asking = match asking(route, evidence) {
+    let first = killer_of(evidence, &record);
+    let asking = match asking(route, evidence, first.as_deref()) {
         Ok(named) => named,
         Err(refusal) => return Consulted::Refused(refusal),
     };
@@ -1165,13 +1166,48 @@ fn through(
         .collect()
 }
 
-/// The identities of the targets a route names, in the order a run asks them.
+/// The identities of the targets a route names, in the order a run asks them: `first` before the rest where the route names it.
 ///
 /// # Errors
 /// Names the first target this run's baseline has no identity for.
-fn asking(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store::Refusal> {
+fn asking(
+    route: &Route,
+    evidence: &Evidence,
+    first: Option<&str>,
+) -> Result<Vec<String>, store::Refusal> {
+    evidence.identities(&ordered(route, first))
+}
+
+/// The targets a route names, in the order a run asks them: the one that killed the mutation last time first, where the route still names it, and the rest in name order.
+/// A kill is the first failure any target gives, so asking the likeliest first ends the most executions soonest, and which target that is changes no answer.
+fn ordered<'a>(route: &'a Route, first: Option<&str>) -> Vec<&'a str> {
     let names: BTreeSet<&str> = route.reaching().into_iter().collect();
-    evidence.identities(&names.into_iter().collect::<Vec<_>>())
+    let first = first.and_then(|first| names.iter().copied().find(|name| *name == first));
+    first
+        .into_iter()
+        .chain(names.iter().copied().filter(|name| Some(*name) != first))
+        .collect()
+}
+
+/// The name of the target an earlier run's record says killed the mutation, whatever else of it this run may not believe.
+fn killer_of(evidence: &Evidence, record: &store::Record) -> Option<String> {
+    match &record.outcome {
+        store::Outcome::Killed { target, .. } => evidence.names.get(target).cloned(),
+        store::Outcome::Survived { .. } => None,
+    }
+}
+
+/// The target an earlier run's record says killed `mutant`, where this run keeps a store that holds one, to be asked first.
+fn remembered_killer(options: &MutationOptions, mutant: &str) -> Option<String> {
+    let evidence = options.evidence.as_ref()?;
+    let Ok(mutant) = rust_mutants::id::HexDigest::try_from(mutant) else {
+        return None;
+    };
+    match store::read(&evidence.root, &mutant) {
+        Ok(Some(record)) => killer_of(evidence, &record),
+        Ok(None) => None,
+        Err(_unreadable_so_nothing_is_asked_first) => None,
+    }
 }
 
 /// What became of one run's attempt to record what it established for the next one.
@@ -1604,8 +1640,8 @@ fn judge(
     }
     let mut ran = Vec::new();
     let mut aggregation = Aggregation::new();
-    let targets: BTreeSet<&str> = route.reaching().into_iter().collect();
-    for target in targets {
+    let first = remembered_killer(judging.options, mutant.id.as_str());
+    for target in ordered(&route, first.as_deref()) {
         let Some(measured) = baseline
             .iter()
             .find(|measured| measured.target.name() == target)

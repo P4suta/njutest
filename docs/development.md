@@ -222,9 +222,8 @@ proofaudit: 11 planted defects found first, each by the layer it was planted for
 proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 violations, 1 unaudited
 ```
 
-Where the recording does not carry enough to decide something again — which survivors a reviewer accepted, what a reused disposition was routed under,
-which regions a route was decided from —
-the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
+Where the recording does not carry enough to decide something again — which survivors a reviewer accepted, whether the targets a reused disposition rests on keep the behaviour keys they had, which regions a route was decided from — the gate says `unaudited` and counts it apart from the violations, because fail-closed is never turning "I cannot check this" into "this is fine", and equally never into "this is broken".
+What a reused disposition was routed under is re-decided: its route names the run the report says it was read back from, nothing of it ran, and a kill's target is one the route still reaches (`not-routed`, or `filter-differs` for an answer carried across an edit).
 One line per remark names its layer and its subject.
 Then every layer says how far it got in one `layer:` line: `re-decided`, `partly re-decided` where an `unaudited` line says what was not, or `nothing to re-decide` and why, so a layer that had nothing to look at is never read as one that looked and agreed.
 A layer returns a `Decided` that only those three outcomes make, and the audit calls every layer through an exhaustive match over `Layer`, so a layer cannot end without saying which.

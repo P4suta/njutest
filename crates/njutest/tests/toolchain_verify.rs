@@ -2315,11 +2315,13 @@ fn a_run_that_reads_its_answers_back_finds_the_hollow_targets_a_run_that_asked_f
     );
 }
 
-/// Every row of the latest run's first part, by where and what it mutates, which an edit elsewhere in the file leaves unchanged where an identity does not.
+/// Where and what a row mutates: its position, rule, original and replacement, which an edit elsewhere in the file leaves unchanged where an identity does not.
 #[cfg(unix)]
-fn rows_by_place(
-    report: &serde_json::Value,
-) -> BTreeMap<(String, String, String, String), serde_json::Value> {
+type Place = (String, String, String, String);
+
+/// Every row of the latest run's first part, by its place.
+#[cfg(unix)]
+fn rows_by_place(report: &serde_json::Value) -> BTreeMap<Place, serde_json::Value> {
     report["builds"][0]["parts"][0]["mutants"]
         .as_array()
         .expect("the rows")
@@ -2377,6 +2379,88 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
                 fresh["decision"]["outcome"].clone()
             }),
             "a carried answer is the answer running it gives: {place:?}"
+        );
+    }
+}
+
+/// The answers every row of the latest run's first part was given, by where and what it mutates.
+#[cfg(unix)]
+fn answers_by_place(report: &serde_json::Value) -> BTreeMap<Place, Vec<(String, String)>> {
+    rows_by_place(report)
+        .into_iter()
+        .map(|(place, row)| {
+            let answered = row["routing"]["answered"]
+                .as_array()
+                .map(|answers| {
+                    answers
+                        .iter()
+                        .map(|answer| {
+                            (
+                                answer["target"].as_str().expect("a target").to_owned(),
+                                answer["outcome"].as_str().expect("an outcome").to_owned(),
+                            )
+                        })
+                        .collect()
+                })
+                .expect("a row asked of its route names what it was answered");
+            (place, answered)
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_run_asks_first_the_target_that_killed_the_mutant_last_time() {
+    let fixture = fixture("fixture-killer-last");
+    let first = verify(&fixture, &[]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let then = answers_by_place(&document(&fixture));
+    let killed_last: Vec<_> = then
+        .iter()
+        .filter(|(_, answered)| {
+            answered.len() == 2
+                && answered.last().is_some_and(|(target, outcome)| {
+                    target.ends_with("/test/notices") && outcome == "killed"
+                })
+        })
+        .map(|(place, _)| place.clone())
+        .collect();
+    assert!(
+        !killed_last.is_empty(),
+        "asked in name order, the library's own test comes first and survives some mutations \
+         of `double`, which the integration test then kills: {then:#?}"
+    );
+    let unrelated = fixture.root.join("src/unrelated.rs");
+    let text = std::fs::read_to_string(&unrelated).expect("the unrelated module");
+    std::fs::write(
+        &unrelated,
+        format!("{text}\n/// One more item.\npub const MORE: u32 = 1;\n"),
+    )
+    .expect("an edit no mutant of `double` is in");
+    let second = verify(&fixture, &[]);
+    assert!(
+        second.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&second.stderr)
+    );
+    let now = answers_by_place(&document(&fixture));
+    for place in &killed_last {
+        let answered = now
+            .get(place)
+            .expect("the mutation is still in the catalog");
+        assert!(
+            answered.len() == 1
+                && answered
+                    .first()
+                    .is_some_and(|(target, outcome)| target.ends_with("/test/notices")
+                        && outcome == "killed"),
+            "the store no longer answers, but it still says which target killed the mutation, so \
+             this run asks that one first and the library's test is never run for it: \
+             {place:?} {answered:?}"
         );
     }
 }
