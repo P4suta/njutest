@@ -44,7 +44,7 @@ offline = false
 locked = false
 doctests = true                # run a library's documented examples as a target
 skip_targets = []              # target ids never to start, as pkg/kind/name; a name no target has is refused
-jobs = "auto"                  # mutants measured at once: a count, "auto" (the machine, capped at 4), or "all"
+jobs = "auto"                  # mutants measured at once: a count, "auto" (the machine, capped at 4), or "all"; unset is "all" under CI
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
 scratch_working_directory = false # start each test process in a directory of its own
 
@@ -148,8 +148,10 @@ They are the same run either way, so the arguments a person gives take the place
 A baseline taken one way and mutations measured another compares two suites: a mutation could be noticed by a test the baseline never ran, which is a kill nothing vouched for, and a mutation's budget is a multiple of a duration measured under other flags.
 
 `[execution] jobs` is how many mutants a run measures at once, and `--jobs` or `-j` says the same on the command line.
-Zero is as many as the machine has,
-capped at four: each test binary already runs its own tests on as many threads as the machine has, so a run that started one process per core would have every process contending with every other and would measure the contention.
+`auto` is as many as the machine has, capped at four: each test binary already runs its own tests on as many threads as the machine has, so on a workstation a run that started one process per core would have every process contending with every other and with whatever else is running there, and would measure the contention.
+`all` is every processor, for a runner doing nothing else.
+Left unset, a run under continuous integration (GitHub Actions or GitLab CI) measures on every processor, because the runner is the job's alone, and a run anywhere else is `auto`; the report's `run.jobs` says what was asked and how many were used.
+Zero is refused, since `auto` says it.
 A suite that sets `test_binary_args = ["--test-threads=1"]` has already given that up, and can afford more.
 
 An expired bound buys one more measurement, put again with nothing else the run started running beside it: a duration measured while three other test processes were running is a fact about the load rather than about the mutation.
