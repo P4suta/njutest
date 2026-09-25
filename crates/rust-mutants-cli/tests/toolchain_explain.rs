@@ -566,3 +566,52 @@ fn a_stored_run_this_release_cannot_read_does_not_stop_an_answer_about_another()
          another release that was never needed to answer it: {said}"
     );
 }
+
+#[test]
+fn every_command_a_run_prints_for_a_person_is_one_the_tool_accepts() {
+    let fixture = Fixture::copy("fixture-families");
+    let ran = against(&fixture, &["run", "--include", "src/lib.rs"]);
+    let printed_by = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|line| line.starts_with("NEXT ") || line.starts_with("REPRODUCE "))
+            .filter_map(|line| {
+                line.split_once("rust-mutants ")
+                    .map(|(_, rest)| rest.to_owned())
+            })
+            .collect()
+    };
+    let mut pending = printed_by(&njutest_devkit::process::strict_utf8(&ran.stdout));
+    assert!(
+        pending.iter().any(|one| one.starts_with("explain ")),
+        "a run that leaves a survivor points a person at explain: {}{}",
+        njutest_devkit::process::strict_utf8(&ran.stdout),
+        njutest_devkit::process::strict_utf8(&ran.stderr)
+    );
+    let mut tried = Vec::new();
+    let mut refused = Vec::new();
+    while let Some(command) = pending.pop() {
+        if tried.contains(&command) {
+            continue;
+        }
+        let arguments: Vec<&str> = command.split_whitespace().collect();
+        let output = against(&fixture, &arguments);
+        if output.status.code().is_some_and(|code| code < 2) {
+            pending.extend(printed_by(&njutest_devkit::process::strict_utf8(
+                &output.stdout,
+            )));
+        } else {
+            refused.push(format!(
+                "`rust-mutants {command}` exited {:?}: {}",
+                output.status.code(),
+                njutest_devkit::process::strict_utf8(&output.stderr)
+            ));
+        }
+        tried.push(command);
+    }
+    assert!(
+        refused.is_empty(),
+        "a command the tool prints for a person to run is one the tool accepts, and so is every \
+         one that command prints in turn:\n{}",
+        refused.join("\n")
+    );
+}

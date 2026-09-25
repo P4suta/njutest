@@ -1517,12 +1517,11 @@ fn fresh_explain(
     let session = prepared.session;
     let catalog =
         rust_mutants::report::catalog::document(session, &prepared.settings.prepare_options()?)?;
-    let source = session
-        .catalog()
-        .mutants()
+    let source = catalog
+        .mutants
         .iter()
-        .find(|one| one.id.as_str().starts_with(prefix))
-        .map(|one| read_source(session, &one.candidate.path))
+        .find(|one| one.answers_to(prefix))
+        .map(|one| read_source(session, &one.path))
         .transpose()?;
     said(
         &explain::Asked {
@@ -1550,7 +1549,7 @@ fn stored_explain(
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
     if named.is_none()
-        && !catalog.mutants.iter().any(|one| one.id.starts_with(prefix))
+        && !catalog.mutants.iter().any(|one| one.answers_to(prefix))
         && let Some(message) = runs_holding(&directory, prefix)?.refusal(prefix)
     {
         return Err(CliError::ReportMissing { message });
@@ -1559,7 +1558,7 @@ fn stored_explain(
     let source = catalog
         .mutants
         .iter()
-        .find(|one| one.id.starts_with(prefix))
+        .find(|one| one.answers_to(prefix))
         .map(|one| read_source_at(&settings.root, &one.path))
         .transpose()?;
     said(
@@ -1623,7 +1622,7 @@ fn runs_holding(directory: &Path, prefix: &str) -> Result<Holding, CliError> {
             read_document(&run.join(rust_mutants::report::evidence::CATALOG));
         match read {
             Ok(catalog) => {
-                if catalog.mutants.iter().any(|one| one.id.starts_with(prefix)) {
+                if catalog.mutants.iter().any(|one| one.answers_to(prefix)) {
                     holding.push(name.to_owned());
                 }
             }
