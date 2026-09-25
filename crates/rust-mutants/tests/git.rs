@@ -190,7 +190,9 @@ fn a_change_set_mutates_within_the_rust_files_it_names() {
     };
     let within = rust_mutants::git::within(&change, &[]);
     assert_eq!(result_state(&within), Returned, "changed paths: {within:?}");
-    let Ok(within) = within else { return };
+    let Ok(rust_mutants::git::Within::Changed(within)) = within else {
+        panic!("two Rust files changed: {within:?}")
+    };
     assert_eq!(within.len(), 2, "{within:?}");
     assert!(within.iter().any(|pattern| pattern.matches("src/lib.rs")));
     assert!(
@@ -209,10 +211,13 @@ fn a_change_set_that_names_no_rust_file_mutates_nothing_rather_than_everything()
         files: vec!["README.md".to_owned()],
     };
     let within = rust_mutants::git::within(&change, &[]);
-    assert_eq!(result_state(&within), Returned, "sentinel: {within:?}");
-    let Ok(within) = within else { return };
-    assert_eq!(within.len(), 1, "{within:?}");
-    assert!(!within.iter().any(|pattern| pattern.matches("src/lib.rs")));
+    assert_eq!(
+        within,
+        Ok(rust_mutants::git::Within::Nothing {
+            changed: vec!["README.md".to_owned()],
+        }),
+        "a change that names no Rust file says so, with what did change"
+    );
 }
 
 #[test]
@@ -228,7 +233,9 @@ fn a_change_set_narrows_what_the_caller_already_selected_rather_than_widening_it
     let include = vec![pattern];
     let within = rust_mutants::git::within(&change, &include);
     assert_eq!(result_state(&within), Returned, "changed paths: {within:?}");
-    let Ok(within) = within else { return };
+    let Ok(rust_mutants::git::Within::Changed(within)) = within else {
+        panic!("one included Rust file changed: {within:?}")
+    };
     assert_eq!(within.len(), 1, "{within:?}");
     assert!(within.iter().any(|pattern| pattern.matches("src/lib.rs")));
     assert!(!within.iter().any(|pattern| pattern.matches("other/lib.rs")));

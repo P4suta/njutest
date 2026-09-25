@@ -463,13 +463,13 @@ struct Running<'a> {
 fn preparation_options(
     command: &cli::Command,
     running: &Running<'_>,
-    cancel: &Cancel,
+    changed: Option<Vec<rust_mutants::glob::Pattern>>,
 ) -> Result<(session::PrepareOptions, Option<run::Filter>), CliError> {
     let mut options = running.settings.prepare_options()?;
     options.measurements = remembered_measurements(command, running.environment);
     harness(command, &mut options);
-    if let Some(base) = base_of(running.scope) {
-        options.include = selected(running, base, cancel)?;
+    if let Some(changed) = changed {
+        options.include = changed;
     }
     let validation_filter = validation_filter(command, running.settings)?;
     options.validation_filter.clone_from(&validation_filter);
@@ -497,9 +497,18 @@ fn measured(
         recorder,
         phases,
     } = *running;
+    let changed = match base_of(scope) {
+        None => None,
+        Some(base) => match selected(running, base, cancel)? {
+            rust_mutants::git::Within::Changed(patterns) => Some(patterns),
+            rust_mutants::git::Within::Nothing { changed } => {
+                return nothing_changed(base, &changed, stdout);
+            }
+        },
+    };
     let open = settings.open_options(scope, environment, recorder.clone())?;
     let workspace = Workspace::open(&settings.root, open.clone(), cancel)?;
-    let (options, validation_filter) = preparation_options(command, running, cancel)?;
+    let (options, validation_filter) = preparation_options(command, running, changed)?;
     match command {
         cli::Command::Equivalence { limit, .. } => {
             let discovery = session::preview(&workspace, &options, cancel)?;
@@ -620,12 +629,28 @@ fn base_of(scope: &cli::Scope) -> Option<&str> {
         .or_else(|| scope.changed.then_some(rust_mutants::git::DEFAULT_BASE))
 }
 
-/// The patterns a change set selects, narrowing what the configuration already selected.
+/// What a command answers when the change from `base` touches no file the configuration measures: that, and what did change, with nothing opened or built.
+fn nothing_changed(base: &str, changed: &[String], stdout: &mut dyn Write) -> Result<u8, CliError> {
+    let mut said = format!(
+        "NOTHING   the change from {base} touches no Rust file this configuration measures\n"
+    );
+    if changed.is_empty() {
+        said.push_str("          nothing changed at all\n");
+    } else {
+        said.push_str("          changed instead: ");
+        said.push_str(&changed.join(", "));
+        said.push('\n');
+    }
+    write(stdout, &said)?;
+    Ok(run::EXIT_DETECTED)
+}
+
+/// What a change set selects, narrowing what the configuration already selected, or that it selects nothing.
 fn selected(
     running: &Running<'_>,
     base: &str,
     cancel: &Cancel,
-) -> Result<Vec<rust_mutants::glob::Pattern>, CliError> {
+) -> Result<rust_mutants::git::Within, CliError> {
     let Running {
         settings,
         environment,
