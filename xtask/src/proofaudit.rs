@@ -76,6 +76,15 @@ pub enum AuditError {
         #[source]
         source: crate::route::ReadError,
     },
+    /// The report passed its schema and still lacks a field a layer reads, which the schema and the reader disagree about.
+    #[error("{path}: the report has no field a layer reads: {cause}")]
+    UnreadReport {
+        /// The report.
+        path: String,
+        /// Which field.
+        #[source]
+        cause: crate::route::ReadCause,
+    },
     /// A report given with its shards is not the merge of any.
     #[error("{path}: not a report merged from shards, so there are no shards to hold it to")]
     NotMerged {
@@ -147,6 +156,7 @@ impl crate::error::Coded for AuditError {
             Self::ShardGivenTwice { .. } => crate::error::XtCode::ProofShardTwice,
             Self::ShardNotMerged { .. } => crate::error::XtCode::ProofShardNotMerged,
             Self::Unshaped { .. } => crate::error::XtCode::ProofUnshaped,
+            Self::UnreadReport { .. } => crate::error::XtCode::ProofUnreadReport,
         }
     }
 }
@@ -519,7 +529,10 @@ pub fn audit_with(
 ) -> Result<Audit, AuditError> {
     let document = read_report(path, text)?;
     let recorded_runner = recorded.runner;
-    let mut recording = Recording::of(&document);
+    let mut recording = Recording::of(&document).map_err(|cause| AuditError::UnreadReport {
+        path: path.to_owned(),
+        cause,
+    })?;
     recording.verdict = match recorded.runner {
         Some((recording_path, text)) => {
             concluded(text).map_err(|source| AuditError::MalformedRecording {
@@ -2854,72 +2867,74 @@ struct Recording<'a> {
 }
 
 impl<'a> Recording<'a> {
-    fn of(document: &'a serde_json::Value) -> Self {
-        Self {
+    /// The rows every layer reads, each field its schema requires demanded rather than supplied.
+    fn of(document: &'a serde_json::Value) -> Result<Self, crate::route::ReadCause> {
+        use crate::route::required;
+        let text = |value: &serde_json::Value| value.as_str().map(str::to_owned);
+        let targets = rows(document, "targets")
+            .iter()
+            .map(|row| {
+                Ok(TargetRow {
+                    id: required(row, "id", text)?,
+                    name: required(row, "name", text)?,
+                    status: required(row, "status", text)?,
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        let mutants = rows(document, "mutants")
+            .iter()
+            .map(|row| {
+                let decision = required(row, "decision", Some)?;
+                Ok(MutantRow {
+                    id: required(row, "id", text)?,
+                    display_id: required(row, "display_id", text)?,
+                    catalog_index: row.get("catalog_index").and_then(serde_json::Value::as_u64),
+                    outcome: required(decision, "outcome", text)?,
+                    acceptance: AcceptanceFact::from_json(row.get("accepted")),
+                    killed_by: field(decision, "killed_by"),
+                    read_back_from: row
+                        .get("reuse")
+                        .and_then(|reuse| field(reuse, "source_run_id")),
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        let findings = rows(document, "findings")
+            .iter()
+            .map(|row| {
+                Ok(FindingRow {
+                    kind: required(row, "kind", text)?,
+                    subject: required(row, "subject", text)?,
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        let models = rows(document, "models")
+            .iter()
+            .map(|row| {
+                let answer = required(row, "answer", Some)?.clone();
+                Ok(ModelRow {
+                    mutant: required(row, "mutant", text)?,
+                    decision: required(&answer, "decision", text)?,
+                    evidence: answer.get("evidence").cloned(),
+                    attempt: answer.get("attempt").cloned(),
+                    answer,
+                    raw: row.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, crate::route::ReadCause>>()?;
+        Ok(Self {
             document,
-            run_id: field(document, "run_id").unwrap_or_default(),
-            contract: field(document, "contract").unwrap_or_default(),
-            targets: rows(document, "targets")
-                .iter()
-                .map(|row| TargetRow {
-                    id: field(row, "id").unwrap_or_default(),
-                    name: field(row, "name").unwrap_or_default(),
-                    status: field(row, "status").unwrap_or_default(),
-                })
-                .collect(),
-            mutants: rows(document, "mutants")
-                .iter()
-                .map(|row| {
-                    let decision = row
-                        .get("decision")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    MutantRow {
-                        id: field(row, "id").unwrap_or_default(),
-                        display_id: field(row, "display_id").unwrap_or_default(),
-                        catalog_index: row.get("catalog_index").and_then(serde_json::Value::as_u64),
-                        outcome: field(&decision, "outcome").unwrap_or_default(),
-                        acceptance: AcceptanceFact::from_json(row.get("accepted")),
-                        killed_by: field(&decision, "killed_by"),
-                        read_back_from: row
-                            .get("reuse")
-                            .and_then(|reuse| field(reuse, "source_run_id")),
-                    }
-                })
-                .collect(),
-            findings: rows(document, "findings")
-                .iter()
-                .map(|row| FindingRow {
-                    kind: field(row, "kind").unwrap_or_default(),
-                    subject: field(row, "subject").unwrap_or_default(),
-                })
-                .collect(),
+            run_id: required(document, "run_id", text)?,
+            contract: required(document, "contract", text)?,
+            targets,
+            mutants,
+            findings,
             shard: document
                 .get("scope")
                 .and_then(|scope| field(scope, "shard")),
-            target: document
-                .get("toolchain")
-                .and_then(|toolchain| field(toolchain, "target"))
-                .unwrap_or_default(),
-            models: rows(document, "models")
-                .iter()
-                .map(|row| {
-                    let answer = row
-                        .get("answer")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    ModelRow {
-                        mutant: field(row, "mutant").unwrap_or_default(),
-                        decision: field(&answer, "decision").unwrap_or_default(),
-                        evidence: answer.get("evidence").cloned(),
-                        attempt: answer.get("attempt").cloned(),
-                        answer,
-                        raw: row.clone(),
-                    }
-                })
-                .collect(),
+            target: required(required(document, "toolchain", Some)?, "target", text)?,
+            models,
             verdict: None,
-        }
+        })
     }
 
     fn dispositions(&self, outcome: &str) -> usize {

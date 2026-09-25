@@ -450,7 +450,12 @@ impl<'a> Evidence<'a> {
                         schema,
                     });
                 }
-                let routing = crate::route::from_events(&events);
+                let routing = crate::route::from_events(&events).map_err(|error| {
+                    AuditError::MalformedRecording {
+                        path: source.path.to_owned(),
+                        source: error,
+                    }
+                })?;
                 Ok(CheckedRecording { events, routing })
             })
             .transpose()?;

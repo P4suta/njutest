@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adrs;
+pub mod defaulted;
 pub mod deps;
 pub mod devgates;
 pub mod docflows;
@@ -122,6 +123,8 @@ enum Gate {
     Adrs,
     /// Every public function of an incidental surface is reached by something that ships.
     Reached,
+    /// No audit reader supplies more values its input never gave than its ceiling allows.
+    Defaulted,
     /// Every crate declares what its visibility means; incidental APIs are compiled privately.
     Surfaces,
     /// Whether a completed run's verdicts are the ones its own recording supports (ADR 0004).
@@ -271,6 +274,7 @@ where
         Gate::Milestones => gates::milestones(&root),
         Gate::Adrs => gates::adrs(&root),
         Gate::Reached => gates::reached(&root),
+        Gate::Defaulted => gates::defaulted(&root),
         Gate::Surfaces => gates::surfaces(&root),
         Gate::Proofaudit {
             run,

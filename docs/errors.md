@@ -176,6 +176,7 @@ The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `pro
 | `XT2008` | The same shard was given twice with `--shard`. | give each shard once; counting one part twice is an operator's mistake, not a merge |
 | `XT2009` | A shard was given that the merged report does not name among its sources. | give only the shards the merged report names in its composition |
 | `XT2010` | The document is on its published schema and is not one this audit can read into a complete report or a shard. | report it; a document on its schema that this audit cannot read is a gap in the audit |
+| `XT2011` | The report passed its schema and still lacks a field a layer of this audit reads, so the schema and the reader disagree. | report it; either the schema should require the field or the reader should not demand it |
 | `XT3001` | The run directory holds no engine run report, or it or a document beside it could not be read. | point `engine-audit` at the directory a completed engine run wrote |
 | `XT3002` | The engine run report is not JSON this audit can read. | re-run the run that wrote it |
 | `XT3003` | An evidence document beside the engine run report is not one this audit can read. | re-run the run that wrote it |
