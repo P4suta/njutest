@@ -71,7 +71,7 @@ impl Settings {
             config.build.jobs = jobs;
         }
         if let Some(jobs) = scope.jobs {
-            config.execution.jobs = jobs;
+            config.execution.jobs = Some(jobs);
         }
         config.execution.offline |= offline;
         config.execution.locked |= locked;

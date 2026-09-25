@@ -48,7 +48,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `--build-target TRIPLE`, `--profile NAME`, `--build-jobs N` | how cargo compiles it |
 | `--allow-outside DIR` | let the build read a directory outside the root, copied into the snapshot where the tree reaches it |
 | `--offline`, `--locked` | what cargo may reach for and change |
-| `--jobs N\|auto\|all`, `-j` | mutants measured at once: a count, `auto` (the machine, capped at 4; the default), or `all` (every processor, for a runner doing nothing else); `0` is refused, since `auto` says it |
+| `--jobs N\|auto\|all`, `-j` | mutants measured at once: a count, `auto` (the machine, capped at 4; the default off CI), or `all` (every processor, for a runner doing nothing else; the default under CI); `0` is refused, since `auto` says it |
 | `--timeout DURATION` | a mutant's own bound; five times the target's baseline when absent |
 | `--no-verify` | do not run the instrumented baseline first |
 | `--no-doctests` | leave a library's documented examples out |

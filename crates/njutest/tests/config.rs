@@ -544,7 +544,14 @@ fn a_missing_file_is_the_defaults_and_a_present_one_is_read() {
     let dir = tempfile::tempdir().expect("tempdir");
     assert_eq!(
         Config::load(dir.path()).expect("a missing file is legal"),
-        Config::default()
+        Config::unwritten(),
+        "a tree with no configuration asks what the default contract asks, as an empty file does, \
+         on every platform and through every command"
+    );
+    assert_eq!(
+        Config::load(dir.path()).expect("a missing file is legal"),
+        load("").expect("empty is legal"),
+        "a missing file and an empty one are the same document"
     );
     std::fs::write(dir.path().join(FILE_NAME), "[reports]\nkeep = 3\n").expect("write");
     assert_eq!(Config::load(dir.path()).expect("read").reports.keep, 3);

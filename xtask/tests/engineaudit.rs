@@ -880,6 +880,7 @@ fn layers_of(name: &str) -> &'static [Layer] {
         "a kill carried across a body its killer entered that has changed since"
         | "a survival carried though the route runs a target no recorded execution ran"
         | "a kill carried across a skeleton that has changed since"
+        | "a kill carried by an execution whose record omits what it entered"
         | "a kill carried through a target whose control reached other than its baseline" => {
             &[Layer::Identity, Layer::Work, Layer::Entry]
         }

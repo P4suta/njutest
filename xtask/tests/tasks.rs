@@ -1132,3 +1132,32 @@ fn a_gate_step_that_fails_says_which_it_was_and_how() {
          it could not refresh: {audit}"
     );
 }
+
+#[test]
+fn a_loop_of_durable_writes_answers_to_its_own_watch_and_not_the_cpu_clock() {
+    let config = repository(".config/nextest.toml");
+    let filter = "filter = 'test(/_while_a_run_replaces_it_is_one_whole_/)'";
+    let durable = config.find(filter);
+    let in_process = config.find("filter = 'not binary(/^toolchain_/)'");
+    assert!(
+        config.contains("durable = { max-threads = 1 }")
+            && durable.is_some_and(|at| in_process.is_some_and(|then| at < then))
+            && config.contains("test-group = \"durable\""),
+        "a test that replaces an entry hundreds of times under a reader makes a thousand durable \
+         writes, and on a machine busy with other builds each one waits on the disk: it ran past \
+         the in-process minute at load 26 and passed alone in under two seconds. Such tests run \
+         one at a time, ahead of the in-process override, under a clock their own progress \
+         watch is the detector for: {config}"
+    );
+    let named = ["njutest", "rust-mutants"]
+        .iter()
+        .filter(|crate_| {
+            repository(&format!("crates/{crate_}/tests/replace.rs"))
+                .contains("_while_a_run_replaces_it_is_one_whole_")
+        })
+        .count();
+    assert_eq!(
+        named, 2,
+        "and the filter names the tests that are that loop, in both crates that keep entries"
+    );
+}

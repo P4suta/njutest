@@ -1827,6 +1827,42 @@ fn a_removal_in_a_loop_is_refused_and_one_of_a_named_directory_is_not() {
     );
 }
 
+/// A child given its temporary directory in one variable is refused, and one given it in all of them is not.
+#[test]
+fn a_temporary_directory_named_in_one_variable_is_refused() {
+    for name in ["TMPDIR", "TMP", "TEMP"] {
+        let lone = format!(
+            r#"
+            fn run(command: &mut std::process::Command, dir: &std::path::Path) {{
+                command.env("NO_COLOR", "1").env("{name}", dir);
+            }}
+            "#
+        );
+        let found = scan_source("crates/demo/tests/run.rs", &lone).expect("it parses");
+        assert!(
+            found
+                .iter()
+                .any(|one| one.kind == Kind::LoneTemporaryVariable),
+            "std::env::temp_dir reads TMP and TEMP on Windows and TMPDIR elsewhere, so {name} \
+             alone leaves the child writing into the parent's directory on some platform: \
+             {found:?}"
+        );
+    }
+    let every = r#"
+        fn run(command: &mut std::process::Command, dir: &std::path::Path) {
+            command
+                .env("NO_COLOR", "1")
+                .envs(njutest_devkit::paths::temporary_directory(dir));
+        }
+    "#;
+    let found = scan_source("crates/demo/tests/run.rs", every).expect("it parses");
+    assert!(
+        found.is_empty(),
+        "a directory named in every variable a platform reads is the one the child uses: \
+         {found:?}"
+    );
+}
+
 /// A command handed to a reader with an identity in it is refused.
 #[test]
 fn a_command_built_from_an_identity_is_refused() {
