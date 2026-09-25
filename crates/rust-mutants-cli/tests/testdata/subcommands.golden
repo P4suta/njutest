@@ -76,8 +76,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -274,8 +275,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -406,8 +408,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -542,8 +545,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -677,8 +681,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -809,8 +814,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -945,8 +951,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -1074,8 +1081,9 @@ Options:
       --build-jobs <N>
           How many compilation jobs cargo may run at once
 
-  -j, --jobs <N>
-          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+  -j, --jobs <N|auto|all>
+          How many mutants to measure at once: a count, `auto` for as many as the machine has capped
+          at four, or `all` for every one
 
       --skip-target <PKG/KIND/NAME>
           Never start this target, by the id a report names it with. Repeatable
@@ -1375,6 +1383,14 @@ Options:
 
       --cache-dir <DIR>
           Read and write the store under this directory rather than the user's cache directory
+
+      --export <FILE>
+          Write every record of the store to this file, each carrying what it was keyed on, for
+          another checkout or a CI job to import
+
+      --import <FILE>
+          File every record of an exported store under the key its own inputs name, refusing one
+          keyed under another release's versions
 
   -h, --help
           Print help (see a summary with '-h')

@@ -438,8 +438,7 @@ pub struct MutationOptions {
     /// `None` for a run that establishes everything itself.
     pub evidence: Option<Evidence>,
     /// How many mutations to measure at once.
-    /// Zero takes the processors the machine offers, capped.
-    pub jobs: u32,
+    pub jobs: rust_mutants::run::Jobs,
     /// Whether a resource only one test may hold at a time forces the run to measure one mutation at a time.
     pub exclusive: bool,
     /// Which part of the catalog to judge.
@@ -558,7 +557,7 @@ pub fn run_resuming(
     };
 
     let available = schedule::available()?;
-    let worker_count = schedule::workers(options.jobs, available, options.exclusive)?;
+    let worker_count = schedule::workers(options.jobs, available, options.exclusive);
     let measured = schedule::measure(&mutants, worker_count, |_at, mutant| {
         establish(mutant, &judging, resume.state, &rejected)
     })?;

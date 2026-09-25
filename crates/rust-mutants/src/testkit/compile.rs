@@ -143,6 +143,7 @@ impl Compile for ScriptedCompile {
             comparable: &BTreeSet::default(),
             probed: &BTreeMap::default(),
             catalog_digest: self.catalog.digest(),
+            first_item: 0,
         })?;
         let live: BTreeSet<u32> = kept.iter().map(|placement| placement.index).collect();
         let mut messages = Vec::new();

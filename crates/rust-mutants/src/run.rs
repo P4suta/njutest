@@ -620,8 +620,7 @@ pub struct Options<'a> {
     /// `None` asks nothing.
     pub equivalence: Option<&'a Equivalence<'a>>,
     /// How many mutants to measure at once.
-    /// Zero is [`jobs`]'s own answer.
-    pub jobs: usize,
+    pub jobs: Jobs,
     /// Further arguments for the harness.
     pub args: &'a [String],
     /// Which part of the catalog this run is about.
@@ -910,7 +909,7 @@ pub fn run<O: Observer>(
         unselected.push(unexecuted(mutant, NotRunReason::Unselected));
     }
     observer.starting(count(places.len())?);
-    let judged = if jobs(options.jobs) == 1 {
+    let judged = if options.jobs.resolve() == 1 {
         serially(session, &places, options, (cancel, observer))?
     } else {
         pool::judge(session, &places, options, (cancel, observer))?
@@ -1086,16 +1085,133 @@ pub struct Equivalence<'a> {
     pub options: crate::equivalence::ProveOptions,
 }
 
-/// How many mutants a run measures at once.
-/// Zero is the default: as many as the machine has, capped at four.
-#[must_use]
-pub fn jobs(configured: usize) -> usize {
-    if configured > 0 {
-        return configured;
+/// How many mutants a run measures at once, as a person asked for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Jobs {
+    /// Exactly this many.
+    Count(std::num::NonZeroUsize),
+    /// As many as the machine has, capped at [`DEFAULT_JOBS`], which is what a machine a person is also using wants.
+    Auto,
+    /// As many as the machine has, which is what a CI runner doing nothing else wants.
+    All,
+}
+
+/// Why a text is not a number of jobs.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum JobsError {
+    /// Zero jobs would measure nothing, and `auto` says what a zero used to mean.
+    #[error(
+        "0 jobs would measure nothing; write `auto` for as many as the machine has, capped at {DEFAULT_JOBS}, or `all` for every one"
+    )]
+    Zero,
+    /// The text is neither a count nor a word this release knows.
+    #[error("{text:?} is not a number of jobs; write a count, `auto`, or `all`")]
+    Unknown {
+        /// What was written.
+        text: String,
+    },
+}
+
+impl JobsError {
+    /// The stable code of this failure.
+    #[must_use]
+    pub const fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::Zero | Self::Unknown { .. } => crate::error::CONFIG_INVALID,
+        }
     }
-    match std::thread::available_parallelism() {
-        Ok(cores) => cores.get().min(DEFAULT_JOBS),
-        Err(_unavailable) => 1,
+}
+
+impl Jobs {
+    /// The number of jobs `text` names: a count, `auto`, or `all`.
+    ///
+    /// # Errors
+    /// See [`JobsError`].
+    pub fn parse(text: &str) -> Result<Self, JobsError> {
+        match text {
+            "auto" => Ok(Self::Auto),
+            "all" => Ok(Self::All),
+            _ => match text.parse::<usize>() {
+                Ok(count) => Self::count(count),
+                Err(_not_a_count) => Err(JobsError::Unknown {
+                    text: text.to_owned(),
+                }),
+            },
+        }
+    }
+
+    /// Exactly `count` jobs.
+    ///
+    /// # Errors
+    /// [`JobsError::Zero`] for zero.
+    pub fn count(count: usize) -> Result<Self, JobsError> {
+        std::num::NonZeroUsize::new(count)
+            .map(Self::Count)
+            .ok_or(JobsError::Zero)
+    }
+
+    /// How many mutants are measured at once on a machine that offers `available` processors.
+    #[must_use]
+    pub fn resolve_on(self, available: usize) -> usize {
+        match self {
+            Self::Count(count) => count.get(),
+            Self::Auto => available.clamp(1, DEFAULT_JOBS),
+            Self::All => available.max(1),
+        }
+    }
+
+    /// How many mutants are measured at once on this machine; one where it cannot say how many processors it has.
+    #[must_use]
+    pub fn resolve(self) -> usize {
+        match std::thread::available_parallelism() {
+            Ok(cores) => self.resolve_on(cores.get()),
+            Err(_unavailable) => self.resolve_on(1),
+        }
+    }
+
+    /// How a person writes it.
+    #[must_use]
+    pub fn name(self) -> String {
+        match self {
+            Self::Count(count) => count.to_string(),
+            Self::Auto => "auto".to_owned(),
+            Self::All => "all".to_owned(),
+        }
+    }
+}
+
+impl serde::Serialize for Jobs {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Count(count) => serializer
+                .serialize_u64(u64::try_from(count.get()).map_err(serde::ser::Error::custom)?),
+            Self::Auto | Self::All => serializer.serialize_str(&self.name()),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Jobs {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Written;
+        impl serde::de::Visitor<'_> for Written {
+            type Value = Jobs;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a count of jobs, `auto`, or `all`")
+            }
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Jobs, E> {
+                let count = usize::try_from(value).map_err(E::custom)?;
+                Jobs::count(count).map_err(E::custom)
+            }
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Jobs, E> {
+                let count = usize::try_from(value).map_err(E::custom)?;
+                Jobs::count(count).map_err(E::custom)
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Jobs, E> {
+                Jobs::parse(value).map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(Written)
     }
 }
 
@@ -1374,7 +1490,7 @@ mod pool {
         if places.is_empty() {
             return Ok(Vec::new());
         }
-        let worker_count = super::jobs(options.jobs).min(places.len());
+        let worker_count = options.jobs.resolve().min(places.len());
         let capacity = worker_count
             .checked_mul(2)
             .ok_or(SessionError::WorkerQueueTooLarge {
@@ -1710,18 +1826,16 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) -> Result<(), E
         return Ok(());
     }
     let mutant_id = crate::id::HexDigest::try_from(mutant.id.as_str())?;
-    reusing.store.put(
-        &reusing.keyed.key(&mutant_id),
-        &crate::outcomes::Record {
-            schema: crate::outcomes::SCHEMA.to_owned(),
-            mutant: mutant_id,
-            outcome,
-            target: judged.target.clone(),
-            tests_run: judged.tests_run,
-            failed_tests: judged.failed_tests.clone(),
-            run_id: reusing.run_id.to_owned(),
-        },
-    )?;
+    reusing.store.put(&crate::outcomes::Record {
+        schema: crate::outcomes::SCHEMA.to_owned(),
+        mutant: mutant_id,
+        outcome,
+        target: judged.target.clone(),
+        tests_run: judged.tests_run,
+        failed_tests: judged.failed_tests.clone(),
+        run_id: reusing.run_id.to_owned(),
+        keyed: reusing.keyed.clone(),
+    })?;
     Ok(())
 }
 

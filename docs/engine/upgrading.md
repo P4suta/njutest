@@ -10,6 +10,15 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**`touched-v1.json` gained `items` and each target's `entered`.** Every function, method, closure and `async` block of a mutated file records, on the baseline run, the item it is written in,
+so the record says which tests entered which item as well as which reached which site.
+`items` is the catalog those indices name; a `const fn`, `const` or `static` is in it with `measurable: false`.
+The touch log gains an `e` record and the `touch` trace event an `entered` count; the versions stayed 1.
+A generated file carries one more call per body, on the line that already held the step checkpoint, so no line moves.
+See [item reach](item-reach.md).
+
+**A `#[should_panic]` test is named by its name.** libtest prints ` - should panic` after it, and that suffix is no longer part of the name a report, a route, or `killed_by` carries.
+
 **A finite step allowance is no longer a detection.** The former `runaway` outcome inferred nontermination from one execution crossing a finite count.
 That inference was stronger than the observation: a long finite computation can cross the same count.
 The new `step_limit_reached` outcome carries only the verified execution fact and contributes to neither side of the score.
@@ -277,7 +286,8 @@ discharges included, because a discharge is a proof a caller may not share.
 Both now come from `Route::narrowing`.
 Runs on trees where every profile was readable are unaffected.
 
-**A run measures four mutants at once.** `[execution] jobs` and `--jobs`/`-j` say how many; zero, the default, is as many as the machine has capped at four.
+**A run measures four mutants at once.** `[execution] jobs` and `--jobs`/`-j` say how many: `auto`, the default, is as many as the machine has capped at four, and `all` is every processor.
+A `jobs = 0` from an earlier release is refused with the word that now says it: write `auto`.
 Results are delivered as they finish rather than in catalog order, so the progress lines of a run are no longer in index order; the report still is.
 
 **The driver is the engine's.** `run`, the outcome store, the run and catalog documents, and everything a run's policy decides now live in `rust_mutants::{run, outcomes, report}`; `rust-mutants-cli` re-exports them at the paths it used before, so a consumer of the library sees them move and a consumer of the command line sees nothing.

@@ -195,6 +195,8 @@ pub(super) struct Building<'a> {
     pub(super) accepted: &'a [u32],
     /// Which comparison and body markers the final build can record.
     pub(super) narrowing: &'a crate::touch::Narrowing,
+    /// How many items the tree's entry markers can name.
+    pub(super) items: u32,
     /// The digest of the pristine sources the build read.
     pub(super) closure: &'a str,
     /// The digest of the manifests and Cargo configuration the build read.
@@ -208,6 +210,14 @@ pub(super) struct Building<'a> {
 }
 
 fn built(building: &Building<'_>) -> Result<Built, EngineError> {
+    let phase = building.trace.phase("build");
+    let built = built_untraced(building)?;
+    phase.end();
+    Ok(built)
+}
+
+/// The test binaries the instrumented build produced, and what running them once established.
+fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
     let Building {
         workspace,
         trace,
@@ -535,6 +545,7 @@ pub fn prepare(
         validated,
         last_build,
         narrowing,
+        items: item_catalog,
     } = validated(
         &Establishing {
             workspace: &workspace,
@@ -551,7 +562,6 @@ pub fn prepare(
 
     let mut workspace = workspace;
     let written_by_a_test = resealed(&mut workspace, &sources)?;
-    let build_phase = trace.phase("build");
     let (targets, scratch, verified) = built(&Building {
         workspace: &workspace,
         cancel,
@@ -559,16 +569,16 @@ pub fn prepare(
         catalog: &discovery.catalog,
         accepted: &validated.accepted,
         narrowing: &narrowing,
+        items: item_count(&item_catalog)?,
         closure: &closure,
         manifests: &manifests,
         asked: options.touch,
         last_build: &last_build,
         options,
     })?;
-    build_phase.end();
     phase.end();
     let (packages, items) = attributed(&discovery);
-    let verified = narrowed(verified, narrowing);
+    let verified = narrowed(verified, narrowing, item_catalog.items);
     let sources = prepared_sources(sources)?;
     Ok(Session {
         catalog: discovery.catalog,
@@ -623,15 +633,51 @@ fn prepared_sources(
         .collect()
 }
 
-/// The verification with what the instrumented tree can say about a mutant it never named folded in.
-fn narrowed(verified: Verified, narrowing: crate::touch::Narrowing) -> Verified {
+/// The verification with what the instrumented tree can say about a mutant it never named folded in, and the items its entry markers name.
+fn narrowed(
+    verified: Verified,
+    narrowing: crate::touch::Narrowing,
+    items: Vec<crate::touch::Item>,
+) -> Verified {
     Verified {
         touched: crate::touch::Touched {
             narrowing,
+            items,
             ..verified.touched
         },
         ..verified
     }
+}
+
+/// Every item of every mutable file, numbered in path order.
+fn cataloged_items(
+    discovery: &discover::Discovery,
+    sources: &BTreeMap<String, Vec<u8>>,
+) -> Result<crate::instrument::ItemCatalog, EngineError> {
+    let files: Vec<crate::instrument::ItemSource<'_>> = discovery
+        .files
+        .iter()
+        .filter_map(|file| {
+            sources
+                .get(&file.path)
+                .map(|source| crate::instrument::ItemSource {
+                    path: &file.path,
+                    package: &file.package,
+                    source,
+                })
+        })
+        .collect();
+    Ok(crate::instrument::catalog_items(&files)?)
+}
+
+/// How many items the catalog holds, which is what a record of an entered item is checked against.
+fn item_count(items: &crate::instrument::ItemCatalog) -> Result<u32, EngineError> {
+    u32::try_from(items.items.len()).map_err(|_outside_range| {
+        EngineError::from(SessionError::TraceCountTooLarge {
+            subject: "cataloged items",
+            count: items.items.len(),
+        })
+    })
 }
 
 /// What instrumenting and validating the tree established, which is everything a run needs about the tree it will start.
@@ -642,6 +688,8 @@ struct Instrumented {
     last_build: Vec<crate::cargo::Message>,
     /// What the tree that was built can say about a mutant it never named, which is what narrowing by silence rests on.
     narrowing: crate::touch::Narrowing,
+    /// Every item of the tree, numbered as its entry markers name them.
+    items: crate::instrument::ItemCatalog,
 }
 
 /// What instrumenting the tree is done from: the snapshot to write into, the mutants to place, and what the proof layers established about them.
@@ -678,7 +726,9 @@ fn establish(
         eligible,
         options,
     } = *asking;
+    let items = cataloged_items(discovery, sources)?;
     let mut writer = TreeCompiler {
+        first_items: &items.first,
         workspace,
         sources,
         placements,
@@ -714,6 +764,7 @@ fn establish(
             compared: writer.compared,
             bodies: resting(&established.proofs, &writer.marked),
         },
+        items,
     })
 }
 
@@ -920,6 +971,8 @@ struct TreeCompiler<'a> {
     compared: BTreeSet<u32>,
     /// Every marker the tree that was last built actually holds the call for.
     marked: BTreeSet<u32>,
+    /// The item index each file's first item takes.
+    first_items: &'a BTreeMap<String, u32>,
 }
 
 impl TreeCompiler<'_> {
@@ -943,6 +996,11 @@ impl TreeCompiler<'_> {
             comparable: self.comparable,
             probed: self.probed,
             catalog_digest: self.catalog.digest(),
+            first_item: self.first_items.get(path).copied().ok_or_else(|| {
+                ValidateError::AttemptFailed {
+                    message: format!("{path} was never given item indices"),
+                }
+            })?,
         })?;
         let guards =
             u32::try_from(file.guards.len()).map_err(|_overflow| ValidateError::AttemptFailed {

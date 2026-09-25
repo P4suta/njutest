@@ -242,7 +242,7 @@ fn one_job_and_several_judge_a_catalog_the_same_way() {
                 expectations: &[],
                 quiet: &quiet,
                 equivalence: None,
-                jobs,
+                jobs: rust_mutants::run::Jobs::count(jobs).expect("a positive count"),
                 args: &[],
                 shard: None,
                 outcomes: None,

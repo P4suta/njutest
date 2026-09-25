@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "current-v1",
-    "started_at": "2026-09-19T17:36:14.59619Z",
-    "finished_at": "2026-09-19T17:36:15.936722Z",
-    "duration_ms": 68,
+    "id": "20260923t165252724z",
+    "started_at": "2026-09-23T16:52:52.724255Z",
+    "finished_at": "2026-09-23T16:52:53.87867Z",
+    "duration_ms": 109,
     "interrupted": false,
     "exit_code": 1,
     "shard": null
@@ -14,7 +14,7 @@
   "workspace": {
     "root_name": "fixture-unreached",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "ca16188e0b2e57f23a8f4fe253ef8780d7ee8342eecbe2aecbc7b8bc96819827",
+    "workspace_digest": "aa56f4081d3e44155ddd28eb1e537c489a1270dbfb93fe2ee8d8f5bcac077e44",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "darwin",
@@ -91,33 +91,33 @@
       "original": "n * 2",
       "replacement": "Default::default()",
       "outcome": "killed",
+      "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 2,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
+      "signal": null,
       "retried": false,
+      "not_run_reason": null,
       "route": {
         "granularity": "block",
+        "fallback": null,
         "reaching": [
           "fixture-unreached/lib/fixture_unreached"
         ],
+        "discharged": [],
         "executed": [
           "fixture-unreached/lib/fixture_unreached"
         ],
-        "fallback": null,
-        "discharged": [],
         "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "not_run_reason": null,
-      "identical": null
+      "source_run_id": null
     },
     {
       "index": 1,
@@ -137,33 +137,33 @@
       "original": "*",
       "replacement": "/",
       "outcome": "killed",
+      "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 2,
+      "duration_ms": 28,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
+      "signal": null,
       "retried": false,
+      "not_run_reason": null,
       "route": {
         "granularity": "block",
+        "fallback": null,
         "reaching": [
           "fixture-unreached/lib/fixture_unreached"
         ],
+        "discharged": [],
         "executed": [
           "fixture-unreached/lib/fixture_unreached"
         ],
-        "fallback": null,
-        "discharged": [],
         "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "not_run_reason": null,
-      "identical": null
+      "source_run_id": null
     },
     {
       "index": 2,
@@ -183,33 +183,33 @@
       "original": "2",
       "replacement": "3",
       "outcome": "killed",
+      "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 2,
+      "duration_ms": 30,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
+      "signal": null,
       "retried": false,
+      "not_run_reason": null,
       "route": {
         "granularity": "block",
+        "fallback": null,
         "reaching": [
           "fixture-unreached/lib/fixture_unreached"
         ],
+        "discharged": [],
         "executed": [
           "fixture-unreached/lib/fixture_unreached"
         ],
-        "fallback": null,
-        "discharged": [],
         "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "not_run_reason": null,
-      "identical": null
+      "source_run_id": null
     },
     {
       "index": 3,
@@ -229,33 +229,33 @@
       "original": "2",
       "replacement": "1",
       "outcome": "killed",
+      "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 2,
+      "duration_ms": 27,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
       ],
+      "signal": null,
       "retried": false,
+      "not_run_reason": null,
       "route": {
         "granularity": "block",
+        "fallback": null,
         "reaching": [
           "fixture-unreached/lib/fixture_unreached"
         ],
+        "discharged": [],
         "executed": [
           "fixture-unreached/lib/fixture_unreached"
         ],
-        "fallback": null,
-        "discharged": [],
         "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "not_run_reason": null,
-      "identical": null
+      "source_run_id": null
     },
     {
       "index": 4,
@@ -275,27 +275,27 @@
       "original": "n / 2",
       "replacement": "Default::default()",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 5,
@@ -315,27 +315,27 @@
       "original": "/",
       "replacement": "*",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 6,
@@ -355,27 +355,27 @@
       "original": "2",
       "replacement": "3",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     },
     {
       "index": 7,
@@ -395,27 +395,27 @@
       "original": "2",
       "replacement": "1",
       "outcome": "not_run",
+      "step_notice": null,
       "target": "",
       "exit_code": -1,
       "duration_ms": 0,
       "tests_run": null,
+      "killed_by": [],
+      "signal": null,
       "retried": false,
       "not_run_reason": "unreached",
       "route": {
         "granularity": "unreached",
-        "reaching": [],
         "fallback": null,
+        "reaching": [],
         "discharged": [],
-        "tests": {},
-        "executed": []
+        "executed": [],
+        "tests": {}
       },
+      "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null,
-      "step_notice": null,
-      "signal": null,
-      "identical": null,
-      "killed_by": []
+      "source_run_id": null
     }
   ],
   "rejections": [],
