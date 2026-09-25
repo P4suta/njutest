@@ -427,6 +427,12 @@ pub enum SessionError {
         error::SESSION_WRITE_FAILED.code
     )]
     RoutingStatePoisoned,
+    /// What the carry rule took of the tree was poisoned by a panic while holding it.
+    #[error(
+        "{}: the carry rule's record of which targets held their reach is poisoned, so it cannot be trusted",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    CarryStatePoisoned,
     /// A filtered-test establishment named more tests than the durable counter can represent.
     #[error(
         "{}: one filtered-test establishment named {count} tests, which exceeds the routing counter",
@@ -435,6 +441,15 @@ pub enum SessionError {
     RoutingCountTooLarge {
         /// The unrepresentable test count.
         count: usize,
+    },
+    /// An item index of a dense catalog names no item, which says the catalog was not built the way its numbering assumes.
+    #[error(
+        "{}: item {index} of the item catalog names no item",
+        error::SESSION_WRITE_FAILED.code
+    )]
+    ItemCatalogGap {
+        /// The index that named nothing.
+        index: u32,
     },
     /// One expectation resolved to more mutants than its durable counter can represent.
     #[error(
@@ -690,8 +705,10 @@ impl SessionError {
             | Self::TemporaryRootUnavailable { .. }
             | Self::ScratchStatePoisoned
             | Self::RoutingStatePoisoned
+            | Self::CarryStatePoisoned
             | Self::RoutingCountTooLarge { .. }
             | Self::ExpectationCoverageTooLarge { .. }
+            | Self::ItemCatalogGap { .. }
             | Self::RunCountTooLarge { .. }
             | Self::RunCountOverflow
             | Self::RoutingCountExhausted

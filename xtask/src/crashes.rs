@@ -137,7 +137,7 @@ pub const RULE: &str = "crash-after-write";
 /// A corrupt non-empty line is rejected rather than disappearing from the evidence.
 pub fn read(recorded: &str) -> Result<Crashed, crate::route::ReadError> {
     let mut crashed = Crashed::default();
-    for event in crate::route::events(recorded)? {
+    for event in crate::route::events(recorded, crate::schemas::Producer::Runner)? {
         match event.get("type").and_then(Value::as_str) {
             Some("crash-exec") => {
                 let Some(record) = event.get("crash") else {

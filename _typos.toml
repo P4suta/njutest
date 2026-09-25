@@ -21,6 +21,7 @@ extend-exclude = [
   "*.golden",                           # instrumentation output compared byte for byte
   "*.input",
   "fixtures/",                          # deliberately weak, odd, or non-ASCII code under test
-  "xtask/tests/testdata/engine-run-*/", # runs the engine recorded, compiler diagnostics truncated mid-word included
+  "xtask/tests/testdata/engine-run-*/", # recorded runs over fixtures, quoting their code
+  "xtask/tests/testdata/sharded-run/",  # a recorded run over a fixture in two shards, quoting its code
   "CHANGELOG.md",
 ]

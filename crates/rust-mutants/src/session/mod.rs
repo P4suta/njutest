@@ -3,10 +3,12 @@
 
 //! A prepared workspace: every accepted mutant instrumented into one build, and the test binaries that build produced.
 
+mod carry;
 pub(crate) mod prepare;
 mod route;
 mod verify;
 
+pub use carry::Tree as CarriedTree;
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
 use verify::verify;
@@ -283,6 +285,9 @@ const ASIDE_NAME: &str = "aside";
 /// The file a control's guards append what they reached to, in the control's own scratch.
 const CONTROL_TOUCH_LOG: &str = "touch.log";
 
+/// The log a mutant execution asked to record what it entered writes to, in its own scratch.
+const ENTERED_LOG: &str = "entered.log";
+
 /// One control process's question: which target, asked how, for how long.
 /// A scratch directory a run left, kept so a next run can start over what it holds.
 #[derive(Debug)]
@@ -471,6 +476,9 @@ pub struct PrepareOptions {
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again.
     pub exclude: Vec<Pattern>,
+    /// The files a change set leaves this run to mutate, among those `include` and `exclude` select.
+    /// Empty narrows nothing.
+    pub narrowing: Vec<Pattern>,
     /// The member packages to mutate.
     /// Empty means every member.
     pub packages: Vec<String>,
@@ -514,6 +522,18 @@ pub struct PrepareOptions {
     pub validation_filter: Option<crate::run::Filter>,
 }
 
+impl PrepareOptions {
+    /// The patterns a file must match to be mutated: the change set's where there is one, the configuration's otherwise.
+    #[must_use]
+    pub fn mutable(&self) -> &[Pattern] {
+        if self.narrowing.is_empty() {
+            &self.include
+        } else {
+            &self.narrowing
+        }
+    }
+}
+
 impl Default for PrepareOptions {
     fn default() -> Self {
         Self {
@@ -522,6 +542,7 @@ impl Default for PrepareOptions {
             scratch_working_directory: false,
             include: Vec::new(),
             exclude: Vec::new(),
+            narrowing: Vec::new(),
             packages: Vec::new(),
             skips: Vec::new(),
             measurements: None,
@@ -544,7 +565,7 @@ impl Default for PrepareOptions {
 }
 
 /// One mutant execution to make.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Request {
     /// The mutant, by full identity or by any prefix of at least four hex characters that names exactly one.
@@ -564,8 +585,19 @@ pub struct Request {
     /// A fault to activate beside the mutant, by identity or prefix, so the mutant is asked with the call at its own site failing.
     /// `None` activates the mutant alone.
     pub fault: Option<String>,
+    /// What each execution records of the items its process entered.
+    pub entered: Recording,
     /// A target to ask before the others, where one is known to have killed this mutant before; every target is still asked until one notices.
     pub first: Option<String>,
+}
+
+/// What a mutant execution records of what its process entered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recording {
+    /// Nothing, which costs nothing.
+    Off,
+    /// The union of items the whole process entered, which a carried answer rests on (ADR 0041).
+    Items,
 }
 
 impl Request {
@@ -574,8 +606,21 @@ impl Request {
     pub fn new(mutant: impl Into<String>) -> Self {
         Self {
             mutant: mutant.into(),
-            ..Self::default()
+            target: None,
+            test: None,
+            args: Vec::new(),
+            timeout: None,
+            fault: None,
+            first: None,
+            entered: Recording::Off,
         }
+    }
+
+    /// Records the items each execution's process entered.
+    #[must_use]
+    pub const fn recording(mut self, entered: Recording) -> Self {
+        self.entered = entered;
+        self
     }
 
     /// Runs it against one target rather than against every one until something notices.
@@ -657,6 +702,8 @@ pub struct Session {
     packages: BTreeMap<u32, String>,
     /// The item each mutant sits in, by catalog index.
     items: BTreeMap<u32, String>,
+    /// Every cataloged item's portable name, by item index.
+    item_refs: Vec<crate::touch::ItemRef>,
     /// The branch proof of every mutant that has one, by catalog index.
     proofs: BTreeMap<u32, crate::syntax::branch::Proof>,
     reached: crate::reach::Reached,
@@ -669,12 +716,46 @@ pub struct Session {
     written_by_a_test: Vec<Drift>,
     /// Every mutation whose branch in the instrumented tree carries a fault's guard, with that fault: the only pairs a fault can be active beside, as the instrumenter wrote them.
     beside: BTreeSet<(u32, u32)>,
-    /// The digest of the pristine sources every unit of this build compiled.
-    closure: String,
+    /// Everything the pristine build read: the digest that keys the outcome store, and what each unit read.
+    closure: Closure,
     /// What the build read that no survey of the tree sees.
     inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
+}
+
+/// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
+#[derive(Debug)]
+pub(crate) struct Carrying {
+    pub(crate) tree: std::sync::OnceLock<carry::Tree>,
+    pub(crate) held: std::sync::Mutex<BTreeMap<String, bool>>,
+    pub(crate) believed: std::sync::Mutex<BelievedRecords>,
+}
+
+impl Carrying {
+    /// Nothing taken yet.
+    pub(crate) const fn fresh() -> Self {
+        Self {
+            tree: std::sync::OnceLock::new(),
+            held: std::sync::Mutex::new(BTreeMap::new()),
+            believed: std::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+/// Every carried record a run believed, with the plan it was held to, by the full identity of its mutant.
+pub(crate) type BelievedRecords =
+    BTreeMap<String, (crate::carry::Carried, Vec<crate::carry::Planned>)>;
+
+/// Everything the pristine build read, as the outcome store keys it and as each unit's skeleton is taken over.
+#[derive(Debug)]
+pub(crate) struct Closure {
+    /// The digest of every file, variable, and build script output any unit read.
+    pub(crate) digest: String,
+    /// Each unit and what it read, spelled by class.
+    pub(crate) units: Vec<crate::skeleton::UnitSource>,
+    /// What the carry rule has taken of it so far.
+    pub(crate) carrying: Carrying,
 }
 
 /// What narrowing a target's tests left: the ones that could still notice the mutation, or the proof that took the last of them away.
@@ -761,17 +842,22 @@ impl Session {
         &self,
         exec: &ExecRequest<'_>,
         context: &Context<'_>,
-        cancel: &Cancel,
+        (cancel, log): (&Cancel, Option<&std::path::Path>),
     ) -> Result<MutantResult, EngineError> {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
+        result.entered = self.entered_by(log, &result, cancel);
         let ended = std::time::SystemTime::now();
-        if result.conclusion == MutantConclusion::Survived
-            && (self.uncontrolled(&exec.target().id)
-                || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
-        {
-            result.conclusion = MutantConclusion::Unobserved;
+        let unseen = self.uncontrolled(&exec.target().id)
+            || self.orphaned(before.as_ref(), (started, ended), result.leader)?;
+        if unseen {
+            if result.conclusion == MutantConclusion::Survived {
+                result.conclusion = MutantConclusion::Unobserved;
+            }
+            if let Some(entered) = result.entered.as_mut() {
+                entered.completeness = crate::touch::Completeness::Cut;
+            }
         }
         Ok(result)
     }
@@ -823,7 +909,7 @@ impl Session {
     /// The digest of the pristine sources every unit of this build compiled.
     #[must_use]
     pub fn closure(&self) -> &str {
-        &self.closure
+        &self.closure.digest
     }
 
     /// What the build read that no survey of the tree sees: files outside the copy, and the variables the compiler read.
@@ -1039,6 +1125,19 @@ impl Session {
     #[must_use]
     pub const fn touched(&self) -> &crate::touch::Touched {
         &self.verified.touched
+    }
+
+    /// Which item bodies are sealed, each body's digest, and each unit's skeleton, as the pristine build left them.
+    #[must_use]
+    pub fn skeletons(&self) -> crate::skeleton::Skeletons {
+        let items: Vec<(&crate::touch::Item, &crate::touch::ItemRef)> = self
+            .verified
+            .touched
+            .items
+            .iter()
+            .zip(&self.item_refs)
+            .collect();
+        crate::skeleton::evidence(&self.closure.units, &items)
     }
 
     /// What the one run of every target with nothing active established, target by target.
@@ -1734,6 +1833,7 @@ impl Session {
             touch: Some(execute::Touching {
                 log: &log,
                 catalog: self.catalog.digest(),
+                scope: execute::TouchScope::Everything,
             }),
             steps: self.mutant_steps,
             profile: None,
@@ -1748,7 +1848,7 @@ impl Session {
         if let Some(test) = &request.test {
             exec = exec.with_test(test.clone());
         }
-        let result = self.observed(&exec, &context, cancel)?;
+        let result = self.observed(&exec, &context, (cancel, None))?;
         self.record_mutant_exec(Executed {
             mutant,
             target,
@@ -1878,32 +1978,26 @@ impl Session {
                 routed
             }
         };
-        let context = Context {
-            leaders: Some(&self.leaders),
-            base_env: &self.workspace.base_env,
-            cargo: Some(self.workspace.toolchain.cargo()),
-            sysroot: self.workspace.toolchain.sysroot(),
-            active: Some((mutant.id.as_str(), self.catalog.digest())),
-            beside: beside.map(|fault| fault.id.as_str()),
-            touch: None,
-            steps: self.mutant_steps,
-            profile: None,
-            crash: None,
-        };
         let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id)?;
+            let scratch = self.exec_scratch()?;
+            let log = match request.entered {
+                Recording::Off => None,
+                Recording::Items => Some(scratch.join(ENTERED_LOG)),
+            };
+            let context = self.mutant_context((mutant, beside), log.as_deref());
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch()?)
+                .with_scratch(scratch)
                 .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let result = self.observed(&exec, &context, cancel)?;
+            let result = self.observed(&exec, &context, (cancel, log.as_deref()))?;
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
@@ -1926,6 +2020,85 @@ impl Session {
             })
         })?;
         Ok(Ran { taken, asked })
+    }
+
+    /// What one execution of `mutant` runs with: the mutant active with the fault `beside` it, and a log of what it entered where one was asked for.
+    fn mutant_context<'a>(
+        &'a self,
+        (mutant, beside): (&'a Mutant, Option<&'a Mutant>),
+        log: Option<&'a std::path::Path>,
+    ) -> Context<'a> {
+        Context {
+            leaders: Some(&self.leaders),
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: beside.map(|fault| fault.id.as_str()),
+            touch: log.map(|log| execute::Touching {
+                log,
+                catalog: self.catalog.digest(),
+                scope: execute::TouchScope::Items,
+            }),
+            steps: self.mutant_steps,
+            profile: None,
+            crash: None,
+        }
+    }
+
+    /// The items one execution's whole process entered, read from the log it was asked to keep, or nothing where it kept none that can be read.
+    fn entered_by(
+        &self,
+        log: Option<&std::path::Path>,
+        result: &MutantResult,
+        cancel: &Cancel,
+    ) -> Option<crate::touch::Entered> {
+        let log = log?;
+        if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
+            return None;
+        }
+        let text = match std::fs::read_to_string(log) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_unreadable) => return None,
+        };
+        let (Ok(mutants), Ok(items)) = (
+            u32::try_from(self.catalog.mutants().len()),
+            u32::try_from(self.item_refs.len()),
+        ) else {
+            return None;
+        };
+        let bounds = crate::touch::Bounds { mutants, items };
+        let touches = match crate::touch::read(&text, self.catalog.digest(), bounds) {
+            Ok(touches) => touches,
+            Err(_malformed) => return None,
+        };
+        let items = touches
+            .entered
+            .union()
+            .into_iter()
+            .map(|index| match usize::try_from(index) {
+                Ok(at) => self.item_refs.get(at).cloned(),
+                Err(_beyond_this_target) => None,
+            })
+            .collect::<Option<BTreeSet<_>>>()?;
+        let completeness = if cancel.is_cancelled() {
+            crate::touch::Completeness::Cut
+        } else {
+            completeness_of(&result.stopped, &result.conclusion)
+        };
+        let written = text
+            .lines()
+            .filter(|line| line.starts_with(crate::touch::ENTERED_RECORD))
+            .count();
+        let Ok(records) = u32::try_from(written) else {
+            return None;
+        };
+        Some(crate::touch::Entered {
+            items,
+            completeness,
+            records,
+        })
     }
 
     fn record_mutant_exec(&self, executed: Executed<'_>) -> Result<(), EngineError> {
@@ -1951,6 +2124,7 @@ impl Session {
             timeout_ms: duration_ms(timeout)?,
             timeout_source: source.name().to_owned(),
             alone,
+            entered_records: result.entered.as_ref().map(|entered| entered.records),
             lingered: result.lingered,
         });
         Ok(())
@@ -1964,6 +2138,7 @@ impl Session {
         (timeout, source): (Duration, TimeoutSource),
     ) -> Result<(), EngineError> {
         self.workspace.trace.mutant_exec(MutantExecRecord {
+            entered_records: None,
             id: String::new(),
             index: u32::MAX,
             target: target.id.clone(),
@@ -2207,6 +2382,7 @@ impl Session {
             active: None,
             beside: None,
             touch: log.map(|log| execute::Touching {
+                scope: execute::TouchScope::Everything,
                 log,
                 catalog: self.catalog.digest(),
             }),
@@ -2475,6 +2651,7 @@ pub fn preview(
             selection: selection(options)?,
             include: options.include.clone(),
             exclude: options.exclude.clone(),
+            narrowing: options.narrowing.clone(),
             packages: options.packages.clone(),
             skips: options.skips.clone(),
         },
@@ -2951,6 +3128,44 @@ impl TargetAggregate {
     }
 }
 
+/// How much of a process its union of entered items accounts for, read from the one way it ended and then from what it concluded.
+const fn completeness_of(
+    stopped: &execute::Stopped,
+    conclusion: &MutantConclusion,
+) -> crate::touch::Completeness {
+    use crate::touch::Completeness;
+    use execute::Stopped;
+    match stopped {
+        Stopped::Exited { .. } => match conclusion {
+            MutantConclusion::Survived => Completeness::Whole,
+            MutantConclusion::Killed => Completeness::UpToFirstFailure,
+            MutantConclusion::NotRun
+            | MutantConclusion::StepLimitReached { .. }
+            | MutantConclusion::Waited
+            | MutantConclusion::Inconclusive
+            | MutantConclusion::Unobserved
+            | MutantConclusion::Errored => Completeness::Cut,
+        },
+        Stopped::Answered => match conclusion {
+            MutantConclusion::Killed => Completeness::UpToFirstFailure,
+            MutantConclusion::Survived
+            | MutantConclusion::NotRun
+            | MutantConclusion::StepLimitReached { .. }
+            | MutantConclusion::Waited
+            | MutantConclusion::Inconclusive
+            | MutantConclusion::Unobserved
+            | MutantConclusion::Errored => Completeness::Cut,
+        },
+        Stopped::NotStarted
+        | Stopped::TimedOut { .. }
+        | Stopped::Stalled { .. }
+        | Stopped::Cancelled { .. }
+        | Stopped::WaitFailed
+        | Stopped::StepLimitReached { .. }
+        | Stopped::StepProtocolFailed { .. } => Completeness::Cut,
+    }
+}
+
 #[cfg(kani)]
 mod kani_laws {
     use super::{AttemptLedger, TargetAggregate, WaitedAttempt, aggregate_outcomes, retry_outcome};
@@ -2961,18 +3176,9 @@ mod kani_laws {
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {
             conclusion,
-            target: String::new(),
-            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
-            protocol: crate::execute::Protocol::Unanswered,
-            summary: None,
-            signal: None,
-            failed_tests: Vec::new(),
-            passed_tests: Vec::new(),
-            ignored_tests: Vec::new(),
-            leader: None,
-            lingered: false,
+            ..MutantResult::apparatus_error("", String::new())
         }
     }
 
@@ -3347,6 +3553,7 @@ const fn retry_outcome(
 
 const fn unreached() -> MutantResult {
     MutantResult {
+        entered: None,
         conclusion: MutantConclusion::NotRun,
         target: String::new(),
         exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
@@ -3359,6 +3566,7 @@ const fn unreached() -> MutantResult {
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
         leader: None,
+        stopped: execute::Stopped::NotStarted,
         lingered: false,
     }
 }
@@ -3381,18 +3589,9 @@ mod tests {
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {
             conclusion,
-            target: "target".to_owned(),
-            exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
             duration,
             output: Vec::new(),
-            protocol: crate::execute::Protocol::Unanswered,
-            summary: None,
-            signal: None,
-            failed_tests: Vec::new(),
-            passed_tests: Vec::new(),
-            ignored_tests: Vec::new(),
-            leader: None,
-            lingered: false,
+            ..MutantResult::apparatus_error("target", String::new())
         }
     }
 

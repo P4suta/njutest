@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use super::{Audit, Layer, Notes, Recording, field, rows};
+use super::{Audit, Decided, Layer, Notes, Recording, field, rows};
 
 /// What Miri's diagnostic says next when it has found unsoundness.
 pub const UNDEFINED: &str = "Undefined Behavior:";
@@ -359,18 +359,20 @@ pub(super) fn audited(
     execs: Option<&[Value]>,
     outputs: &[(String, Kept)],
     audit: &mut Audit,
-) {
+) -> Decided {
     let mut notes = Notes::on(audit, Layer::Soundness);
     let reported = Reported::of(recording);
     let Some(execs) = execs else {
-        if reported.executed == Interpreted::Said || !reported.claimed.is_empty() {
-            notes.unaudited(
-                "soundness",
-                "the run kept no recording, so what the interpreter came to cannot be re-derived"
-                    .to_owned(),
-            );
+        if reported.executed != Interpreted::Said && reported.claimed.is_empty() {
+            return notes
+                .absent("the run kept no recording and its report says nothing was interpreted");
         }
-        return;
+        notes.unaudited(
+            "soundness",
+            "the run kept no recording, so what the interpreter came to cannot be re-derived"
+                .to_owned(),
+        );
+        return notes.looked();
     };
     let said = |exec: &Value| -> Option<&Kept> {
         let kept = field(exec, "output_path")?;
@@ -392,7 +394,7 @@ pub(super) fn audited(
                      exec record gives the size and digest of"
                         .to_owned(),
                 );
-                return;
+                return notes.looked();
             }
             match came(Said { exec: one, output }, probe) {
                 Some(derived) => compared(&reported, derived, &mut notes),
@@ -413,6 +415,7 @@ pub(super) fn audited(
             ),
         ),
     }
+    notes.looked()
 }
 
 /// What a report says about whether the suite was interpreted.

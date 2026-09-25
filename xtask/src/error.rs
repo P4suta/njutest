@@ -16,6 +16,8 @@ pub enum XtCode {
     FuzzPolicy,
     /// Cargo could not be started for the fuzz workspace.
     FuzzCargo,
+    /// A published schema does not compile.
+    SchemaUncompilable,
     /// A decision record is misnamed, shares a number, carries another heading, is listed wrongly, or is named by a dangling link.
     AdrRecord,
     /// The documented workflows could not be checked.
@@ -60,8 +62,18 @@ pub enum XtCode {
     ProofRecording,
     /// A report is not one build measured whole.
     ProofUnprojected,
-    /// A document is not the assurance report.
-    ProofUnrecognised,
+    /// A complete report departs from its published schema.
+    ProofOffSchema,
+    /// A report given as a merge is not one.
+    ProofNotMerged,
+    /// A document given as a shard is not one.
+    ProofNotAShard,
+    /// A shard was given twice.
+    ProofShardTwice,
+    /// A shard the merge does not name was given.
+    ProofShardNotMerged,
+    /// A document on its schema is not one this audit can read.
+    ProofUnshaped,
     /// A thread standing contradicts the recording.
     ThreadsContradicted,
     /// An exploration contradicts its recorded controls.
@@ -86,6 +98,10 @@ pub enum XtCode {
     EngineLedger,
     /// An engine document is not the run report this release re-decides.
     EngineUnrecognised,
+    /// An engine run report departs from its published schema.
+    EngineOffSchema,
+    /// The carry page lacks a block the carry audit reads.
+    CarryPage,
     /// A Kani export could not be read.
     KaniUnreadable,
     /// A Kani export is not the pinned release for this workspace.
@@ -106,12 +122,16 @@ pub enum XtCode {
     SpecimenUnwritable,
     /// A specimen's recording is malformed.
     SpecimenEvent,
+    /// A specimen report could not be completed.
+    SpecimenIncomplete,
     /// A planted text of the sentinels is malformed.
     SentinelPlanted,
     /// An identity field exceeds its length prefix.
     IdentityField,
     /// A recording line is not JSON.
     RecordingLine,
+    /// A recording line departs from its producer's schema.
+    RecordingOffSchema,
     /// A report of `report-diff` could not be read.
     DiffUnreadable,
     /// The bill of materials could not be made.
@@ -170,18 +190,23 @@ impl XtCode {
                 "`cargo clippy` could not be started for the fuzz workspace.",
                 "check `cargo` is on the path and the pinned toolchain is installed",
             ),
-            Self::AdrRecord => (
+            Self::SchemaUncompilable => (
                 "XT0006",
+                "A published JSON schema under `schema/` does not compile, so nothing can be validated against it.",
+                "fix the schema the message names; `cargo xtask all` compiles every one",
+            ),
+            Self::AdrRecord => (
+                "XT0007",
                 "A decision record under the ADR directory is misnamed, shares its number, carries another's heading, is listed wrongly in the book, or is named by a link to no record.",
                 "fix the record, the book, or the link the message names",
             ),
             Self::DocflowsUnchecked => (
-                "XT0007",
+                "XT0008",
                 "`docflows` could not check the workflows the documentation shows: a page could not be read, or actionlint could not be run or said something other than which workflows it refused.",
                 "check `actionlint` is installed, or name it with `--actionlint`, and read what it said",
             ),
             Self::DocflowsRefused => (
-                "XT0008",
+                "XT0009",
                 "actionlint refused a workflow the documentation shows.",
                 "fix the snippet the message names, so a reader who copies it has a workflow that runs",
             ),
@@ -280,10 +305,35 @@ impl XtCode {
                 "The report is not one configured build measured whole, which is what this audit re-decides.",
                 "audit each part against its own recording",
             ),
-            Self::ProofUnrecognised => (
+            Self::ProofOffSchema => (
                 "XT2005",
-                "The document calls itself something other than the assurance report.",
-                "point `proofaudit` at an assurance report",
+                "The report departs from the published assurance-report schema, so a reader could meet an absent required field.",
+                "re-run with this release; a report off its schema is not one to re-decide",
+            ),
+            Self::ProofNotMerged => (
+                "XT2006",
+                "A document given as a merged report is not a merge of shards.",
+                "give `proofaudit` the report `njutest merge` wrote, with `--shard` for each part",
+            ),
+            Self::ProofNotAShard => (
+                "XT2007",
+                "A document given with `--shard` is not a shard of a catalog.",
+                "give each shard's own report or run directory to `--shard`",
+            ),
+            Self::ProofShardTwice => (
+                "XT2008",
+                "The same shard was given twice with `--shard`.",
+                "give each shard once; counting one part twice is an operator's mistake, not a merge",
+            ),
+            Self::ProofShardNotMerged => (
+                "XT2009",
+                "A shard was given that the merged report does not name among its sources.",
+                "give only the shards the merged report names in its composition",
+            ),
+            Self::ProofUnshaped => (
+                "XT2010",
+                "The document is on its published schema and is not one this audit can read into a complete report or a shard.",
+                "report it; a document on its schema that this audit cannot read is a gap in the audit",
             ),
             Self::ThreadsContradicted => (
                 "XT2101",
@@ -345,6 +395,16 @@ impl XtCode {
                 "The document is not the engine run report, or is of another schema version.",
                 "point `engine-audit` at a run report this release wrote",
             ),
+            Self::EngineOffSchema => (
+                "XT3007",
+                "The engine run report departs from the published run-report schema, so a reader could meet an absent required field or a value of another shape.",
+                "re-run with this release; a report off its schema is not one to re-decide",
+            ),
+            Self::CarryPage => (
+                "XT3008",
+                "The carry page, `docs/engine/carry.md`, lacks a closed block the carry audit reads its lists from.",
+                "restore the fenced block the message names on the page",
+            ),
             Self::KaniUnreadable => (
                 "XT4001",
                 "The Kani export could not be read, or is not the closed JSON schema of the pinned release.",
@@ -395,6 +455,11 @@ impl XtCode {
                 "An event of an audit specimen's recording is not an object, or lacks its envelope.",
                 "fix the specimen in the sentinel module the gate names",
             ),
+            Self::SpecimenIncomplete => (
+                "XT5003",
+                "A flat audit specimen could not be completed into the document a run writes.",
+                "fix the specimen in the sentinel module the gate names",
+            ),
             Self::SentinelPlanted => (
                 "XT5101",
                 "A planted text of the lint sentinels is not the header-and-files shape they are read in.",
@@ -409,6 +474,11 @@ impl XtCode {
                 "XT6002",
                 "A line of a recording is not JSON.",
                 "re-run with `--trace`",
+            ),
+            Self::RecordingOffSchema => (
+                "XT6003",
+                "A line of a recording departs from its producer's published schema, so a reader could meet an absent required field.",
+                "re-run with `--trace` using this release; a recording off its schema is not one to re-decide",
             ),
             Self::DiffUnreadable => (
                 "XT7001",

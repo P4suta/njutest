@@ -1,0 +1,848 @@
+{
+  "document_type": "complete",
+  "report": {
+    "schema": "njutest-assurance-report-v1",
+    "schema_version": 2,
+    "run_id": "20260925t164422237z-03c67a",
+    "run_kind": "full",
+    "contract": "whole-v1",
+    "tool": {
+      "njutest": "0.1.0",
+      "rust_mutants": "0.1.0"
+    },
+    "repository": {
+      "root_name": "fixture-assured",
+      "packages": [
+        "fixture-assured"
+      ],
+      "workspace_digest": "98d07f238cbc4c6c37dcea8164e4a2d80b09feff1cd9016ecebe63e274462b26",
+      "configuration_digest": "870c4d96f55c41d2b770d8cf71378f84be1f5b2c3de8efd8a52adb1faf783ced",
+      "git": {
+        "available": false,
+        "commit": "unavailable",
+        "branch": "unavailable",
+        "dirty": false,
+        "merge_base": null,
+        "changed_files": []
+      }
+    },
+    "provenance": {
+      "identity": "06a8163810920a80b15d35e3078002004bab1036ff69dc8062be59011bd75290",
+      "cached": false,
+      "source_run_id": null
+    },
+    "scope": {
+      "requested_packages": [],
+      "resolved_packages": [],
+      "included": [],
+      "excluded": [],
+      "configuration": "",
+      "configured_builds": [
+        "default"
+      ],
+      "shard": null
+    },
+    "composition": {
+      "kind": "merged",
+      "sources": [
+        {
+          "run_id": "20260925t164354304z-03ae7a",
+          "shard": {
+            "index": 1,
+            "of": 2
+          }
+        },
+        {
+          "run_id": "20260925t164408721z-03ba9a",
+          "shard": {
+            "index": 2,
+            "of": 2
+          }
+        }
+      ]
+    },
+    "builds": [
+      {
+        "name": "default",
+        "configuration": {
+          "features": [],
+          "all_features": false,
+          "no_default_features": false,
+          "target": null,
+          "profile": null,
+          "jobs": null,
+          "debug": false,
+          "digest": "c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"
+        },
+        "parts": [
+          {
+            "run_id": "20260925t164354304z-03ae7a-b0000000000",
+            "part": {
+              "kind": "shard",
+              "index": 1,
+              "of": 2
+            },
+            "toolchain": {
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+              "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+              "target": "x86_64-unknown-linux-gnu",
+              "os": "linux",
+              "arch": "x86_64"
+            },
+            "timing": {
+              "started": "2026-09-25T16:43:54.304790538Z",
+              "finished": "2026-09-25T16:44:08.662040002Z",
+              "duration_ms": 14357
+            },
+            "accounting": {
+              "targets": {
+                "selected": 2,
+                "passed": 2,
+                "failed": 0,
+                "skipped": 0,
+                "missing": 0
+              },
+              "mutants": {
+                "cataloged": 2,
+                "rejected": 0,
+                "executed": 2,
+                "killed": 2,
+                "survived": 0,
+                "step_limit_reached": 0,
+                "waited": 0,
+                "unreached": 0,
+                "model_noticed": 0,
+                "model_proved": 0,
+                "equivalent": 0,
+                "accepted": 0,
+                "reused_killed": 0,
+                "reused_survived": 0,
+                "observers": {
+                  "types": 0,
+                  "tests": 2,
+                  "model_noticed": 0,
+                  "model_proved": 0,
+                  "step_limit_reached": 0,
+                  "proved": 0,
+                  "unnoticed": 0,
+                  "unreached": 0,
+                  "waited": 0,
+                  "errored": 0
+                }
+              },
+              "soundness": {
+                "unsafe_items": 0,
+                "packages_with_unsafe": 0,
+                "executed": true
+              },
+              "faults": {
+                "sites": 0,
+                "noticed": 0,
+                "unnoticed": 0,
+                "unreached": 0,
+                "waited": 0,
+                "undecided": 0,
+                "not_put": 0
+              },
+              "crashes": {
+                "sites": 0,
+                "restarted": 0,
+                "corrupt": 0,
+                "unshared": 0,
+                "unreached": 0,
+                "undecided": 0,
+                "not_put": 0
+              }
+            },
+            "resources": [],
+            "candidates": [],
+            "seams": [],
+            "faults": [],
+            "beside": [],
+            "crashes": [],
+            "targets": [
+              {
+                "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
+                "name": "fixture-assured/test/doubling",
+                "package": "fixture-assured",
+                "status": "passed",
+                "duration_ms": 29,
+                "message": null
+              },
+              {
+                "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
+                "name": "fixture-assured/lib/fixture_assured",
+                "package": "fixture-assured",
+                "status": "passed",
+                "duration_ms": 26,
+                "message": null
+              }
+            ],
+            "sources": [
+              {
+                "path": "src/lib.rs",
+                "digest": "fc161b8023eb1db5cfc6063cdad98123ccde1d5c4f8ddb09303c465e27890600"
+              }
+            ],
+            "mutants": [
+              {
+                "catalog_index": 0,
+                "id": "754587d92aeadc857975a4cea72f9e04155efc7f1c81685185d0fa321ab3555d",
+                "display_id": "754587d92aeadc857975",
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 9,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "rule": "return-true",
+                "item": "is_positive",
+                "original": "n > 0",
+                "replacement": "true",
+                "decision": {
+                  "outcome": "killed",
+                  "killed_by": "fixture-assured/lib/fixture_assured",
+                  "step_boundary": null
+                },
+                "accepted": false,
+                "blind_in": [],
+                "routing": {
+                  "granularity": "block",
+                  "reaching": [
+                    "fixture-assured/lib/fixture_assured"
+                  ],
+                  "discharged": [],
+                  "fallback": null,
+                  "answered": [
+                    {
+                      "target": "fixture-assured/lib/fixture_assured",
+                      "outcome": "killed"
+                    }
+                  ]
+                },
+                "reuse": {
+                  "reused": false,
+                  "source_run_id": null
+                }
+              },
+              {
+                "catalog_index": 2,
+                "id": "e1a8798fb39e6bd0105369d707d184b2160fd1f242f52cec8313b4c219034d1b",
+                "display_id": "e1a8798fb39e6bd01053",
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 15,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "rule": "return-default",
+                "item": "double",
+                "original": "n * 2",
+                "replacement": "Default::default()",
+                "decision": {
+                  "outcome": "killed",
+                  "killed_by": "fixture-assured/test/doubling",
+                  "step_boundary": null
+                },
+                "accepted": false,
+                "blind_in": [],
+                "routing": {
+                  "granularity": "block",
+                  "reaching": [
+                    "fixture-assured/test/doubling"
+                  ],
+                  "discharged": [],
+                  "fallback": null,
+                  "answered": [
+                    {
+                      "target": "fixture-assured/test/doubling",
+                      "outcome": "killed"
+                    }
+                  ]
+                },
+                "reuse": {
+                  "reused": false,
+                  "source_run_id": null
+                }
+              }
+            ],
+            "findings": [],
+            "limitations": [
+              {
+                "name": "git-metadata-unavailable",
+                "detail": "git could not be asked, so the run cannot name the commit it verified"
+              },
+              {
+                "name": "touch-not-recorded",
+                "detail": "the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-assured/doc/fixture_assured)"
+              },
+              {
+                "name": "skipped-test-code",
+                "detail": "1 place was not mutated: test-code"
+              },
+              {
+                "name": "schedule-not-explored",
+                "detail": "3 test binaries are not proven to run one thread and no schedule of them was explored, so what they do when their threads interleave otherwise is not known (fixture-assured/doc/fixture_assured, fixture-assured/lib/fixture_assured, fixture-assured/test/doubling)"
+              },
+              {
+                "name": "fault-no-site",
+                "detail": "no measured file has a `?`, so there was no call a fault could fail"
+              },
+              {
+                "name": "crash-no-site",
+                "detail": "no measured file calls anything that writes, so there was nothing to stop after"
+              }
+            ],
+            "drift": [
+              {
+                "state": "held",
+                "target": "fixture-assured/lib/fixture_assured"
+              },
+              {
+                "state": "held",
+                "target": "fixture-assured/test/doubling"
+              }
+            ],
+            "knobs": [
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              }
+            ],
+            "concurrency": [
+              {
+                "target": "fixture-assured/doc/fixture_assured",
+                "standing": {
+                  "state": "not-proven",
+                  "why": [
+                    {
+                      "kind": "no-touch"
+                    },
+                    {
+                      "kind": "doctest"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-passing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              }
+            ]
+          },
+          {
+            "run_id": "20260925t164408721z-03ba9a-b0000000000",
+            "part": {
+              "kind": "shard",
+              "index": 2,
+              "of": 2
+            },
+            "toolchain": {
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+              "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+              "target": "x86_64-unknown-linux-gnu",
+              "os": "linux",
+              "arch": "x86_64"
+            },
+            "timing": {
+              "started": "2026-09-25T16:44:08.721632505Z",
+              "finished": "2026-09-25T16:44:22.149662063Z",
+              "duration_ms": 13428
+            },
+            "accounting": {
+              "targets": {
+                "selected": 2,
+                "passed": 2,
+                "failed": 0,
+                "skipped": 0,
+                "missing": 0
+              },
+              "mutants": {
+                "cataloged": 2,
+                "rejected": 0,
+                "executed": 2,
+                "killed": 2,
+                "survived": 0,
+                "step_limit_reached": 0,
+                "waited": 0,
+                "unreached": 0,
+                "model_noticed": 0,
+                "model_proved": 0,
+                "equivalent": 0,
+                "accepted": 0,
+                "reused_killed": 0,
+                "reused_survived": 0,
+                "observers": {
+                  "types": 0,
+                  "tests": 2,
+                  "model_noticed": 0,
+                  "model_proved": 0,
+                  "step_limit_reached": 0,
+                  "proved": 0,
+                  "unnoticed": 0,
+                  "unreached": 0,
+                  "waited": 0,
+                  "errored": 0
+                }
+              },
+              "soundness": {
+                "unsafe_items": 0,
+                "packages_with_unsafe": 0,
+                "executed": true
+              },
+              "faults": {
+                "sites": 0,
+                "noticed": 0,
+                "unnoticed": 0,
+                "unreached": 0,
+                "waited": 0,
+                "undecided": 0,
+                "not_put": 0
+              },
+              "crashes": {
+                "sites": 0,
+                "restarted": 0,
+                "corrupt": 0,
+                "unshared": 0,
+                "unreached": 0,
+                "undecided": 0,
+                "not_put": 0
+              }
+            },
+            "resources": [],
+            "candidates": [],
+            "seams": [],
+            "faults": [],
+            "beside": [],
+            "crashes": [],
+            "targets": [
+              {
+                "id": "0b5ea454999460c0a53634e86a9e7309570b188029bb88b3f0d443f4b0c8a293",
+                "name": "fixture-assured/test/doubling",
+                "package": "fixture-assured",
+                "status": "passed",
+                "duration_ms": 26,
+                "message": null
+              },
+              {
+                "id": "f491db7e81bc24114916f323f607ff0e5f356316ed1934a798ed3d01579ab131",
+                "name": "fixture-assured/lib/fixture_assured",
+                "package": "fixture-assured",
+                "status": "passed",
+                "duration_ms": 25,
+                "message": null
+              }
+            ],
+            "sources": [
+              {
+                "path": "src/lib.rs",
+                "digest": "fc161b8023eb1db5cfc6063cdad98123ccde1d5c4f8ddb09303c465e27890600"
+              }
+            ],
+            "mutants": [
+              {
+                "catalog_index": 1,
+                "id": "aaa2ce24eee3548cd2837b2fda40be1b2b38b148719d7edc67cab93899bf6c4a",
+                "display_id": "aaa2ce24eee3548cd283",
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 9,
+                  "column": 7,
+                  "character_column": 7
+                },
+                "rule": "gt-to-ge",
+                "item": "is_positive",
+                "original": ">",
+                "replacement": ">=",
+                "decision": {
+                  "outcome": "killed",
+                  "killed_by": "fixture-assured/lib/fixture_assured",
+                  "step_boundary": null
+                },
+                "accepted": false,
+                "blind_in": [],
+                "routing": {
+                  "granularity": "block",
+                  "reaching": [
+                    "fixture-assured/lib/fixture_assured"
+                  ],
+                  "discharged": [],
+                  "fallback": null,
+                  "answered": [
+                    {
+                      "target": "fixture-assured/lib/fixture_assured",
+                      "outcome": "killed"
+                    }
+                  ]
+                },
+                "reuse": {
+                  "reused": false,
+                  "source_run_id": null
+                }
+              },
+              {
+                "catalog_index": 3,
+                "id": "9e156499bc852ea65db35d70f2cdc891f74c74f83175460e433affe6b6bb2340",
+                "display_id": "9e156499bc852ea65db3",
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 15,
+                  "column": 7,
+                  "character_column": 7
+                },
+                "rule": "mul-to-div",
+                "item": "double",
+                "original": "*",
+                "replacement": "/",
+                "decision": {
+                  "outcome": "killed",
+                  "killed_by": "fixture-assured/test/doubling",
+                  "step_boundary": null
+                },
+                "accepted": false,
+                "blind_in": [],
+                "routing": {
+                  "granularity": "block",
+                  "reaching": [
+                    "fixture-assured/test/doubling"
+                  ],
+                  "discharged": [],
+                  "fallback": null,
+                  "answered": [
+                    {
+                      "target": "fixture-assured/test/doubling",
+                      "outcome": "killed"
+                    }
+                  ]
+                },
+                "reuse": {
+                  "reused": false,
+                  "source_run_id": null
+                }
+              }
+            ],
+            "findings": [],
+            "limitations": [
+              {
+                "name": "git-metadata-unavailable",
+                "detail": "git could not be asked, so the run cannot name the commit it verified"
+              },
+              {
+                "name": "touch-not-recorded",
+                "detail": "the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-assured/doc/fixture_assured)"
+              },
+              {
+                "name": "skipped-test-code",
+                "detail": "1 place was not mutated: test-code"
+              },
+              {
+                "name": "schedule-not-explored",
+                "detail": "3 test binaries are not proven to run one thread and no schedule of them was explored, so what they do when their threads interleave otherwise is not known (fixture-assured/doc/fixture_assured, fixture-assured/lib/fixture_assured, fixture-assured/test/doubling)"
+              },
+              {
+                "name": "fault-no-site",
+                "detail": "no measured file has a `?`, so there was no call a fault could fail"
+              },
+              {
+                "name": "crash-no-site",
+                "detail": "no measured file calls anything that writes, so there was nothing to stop after"
+              }
+            ],
+            "drift": [
+              {
+                "state": "held",
+                "target": "fixture-assured/lib/fixture_assured"
+              },
+              {
+                "state": "held",
+                "target": "fixture-assured/test/doubling"
+              }
+            ],
+            "knobs": [
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "timezone",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "locale",
+                "standing": {
+                  "state": "not-put",
+                  "why": "locale-missing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "temp-directory",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "home",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "umask",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "columns",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "knob": "threads",
+                "standing": {
+                  "state": "stable"
+                }
+              }
+            ],
+            "concurrency": [
+              {
+                "target": "fixture-assured/doc/fixture_assured",
+                "standing": {
+                  "state": "not-proven",
+                  "why": [
+                    {
+                      "kind": "no-touch"
+                    },
+                    {
+                      "kind": "doctest"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-passing"
+                }
+              },
+              {
+                "target": "fixture-assured/lib/fixture_assured",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              },
+              {
+                "target": "fixture-assured/test/doubling",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "global_findings": [],
+    "model_completion": {
+      "kind": "not-required"
+    }
+  }
+}

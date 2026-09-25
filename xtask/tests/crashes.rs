@@ -297,7 +297,7 @@ fn once_a_stop_wrote_into_the_tree_every_later_crash_is_left_alone() {
 fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
     let line = |issued: &str| {
         format!(
-            "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"failed\":[]}}}}}}\n"
+            "{{\"seq\":1,\"timestamp\":\"2026-09-06T00:00:00Z\",\"elapsed_ms\":0,\"payload\":{{\"type\":\"crash-exec\",\"crash\":{{\"crash\":\"dddddddddddddddddddd\",\"target\":\"pkg/test/it\",\"test\":\"t\",\"stage\":\"next\",\"exit_code\":0,\"outcome\":\"survived\",\"noticed\":false,\"issued\":{issued},\"left\":[],\"failed\":[]}}}}}}\n"
         )
     };
     let read = |issued: &str| {
@@ -311,7 +311,8 @@ fn a_recorded_run_that_carries_no_issue_is_read_as_one_that_was_not_crashed() {
         "`null` is a run nothing was issued, which is every run but a crashed one"
     );
     assert!(
-        matches!(read("{}").steps.as_slice(), [(_, Step::Unread(_))]),
-        "a record that is not whole is read as nothing it can be held to"
+        xtask::crashes::read(&line("{}")).is_err(),
+        "a record that is not whole is off the published schema, so the recording is refused \
+         rather than read as holding nothing"
     );
 }

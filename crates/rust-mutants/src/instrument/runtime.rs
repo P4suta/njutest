@@ -53,6 +53,8 @@ pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
 /// Names the one guard each thread pauses at the first time it reaches it, as `<catalog index>@<milliseconds>`: one schedule of the program, told apart from the others by the site it delays.
 pub const DELAY_ENV: &str = "RUST_MUTANTS_DELAY";
+/// Set to `1` beside [`TOUCH_ENV`], asks a process to record only the items it entered, which is all a mutant execution's union needs and a fraction of what a baseline writes.
+pub const TOUCH_ITEMS_ENV: &str = "RUST_MUTANTS_TOUCH_ITEMS";
 
 /// The variable every process a run starts carries, holding the directory its instrumented tree was built to report to; a process of that tree that does not carry it was started by a test that cleared what the run gave it.
 pub const WATCHED_ENV: &str = "RUST_MUTANTS_WATCHED";
@@ -364,6 +366,7 @@ mod {{MODULE}} {
     enum TouchMode {
         Off,
         On,
+        ItemsOnly,
     }
     enum StepNoticeError {
         MissingPath,
@@ -388,6 +391,21 @@ mod {{MODULE}} {
         mutant: __rm_std::option::Option<__rm_std::string::String>,
     }
     static ACTIVE: __rm_std::sync::OnceLock<Selection> = __rm_std::sync::OnceLock::new();
+    // Boundaries this copy has already been granted by the shared state and
+    // may spend in memory, and what it last learned of the shared phase. A
+    // dormant copy asks the file only every DORMANT_POLL boundaries: another
+    // copy's activation reaches it within that many, and until then it
+    // charges nothing, which a stated bound says rather than hides.
+    static LEASED: __rm_std::sync::atomic::AtomicUsize = __rm_std::sync::atomic::AtomicUsize::new(0);
+    static POLLED: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(0);
+    static KNOWN: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(KNOWN_UNASKED);
+    const KNOWN_UNASKED: u8 = 0;
+    const KNOWN_DORMANT: u8 = 1;
+    const KNOWN_ACTIVE: u8 = 2;
+    const KNOWN_OTHER: u8 = 3;
+    const DORMANT_POLL: u32 = 256;
+    const LEASE_SHARE: usize = 16;
+    const LEASE_MOST: usize = 4096;
     static BUDGET: __rm_std::sync::OnceLock<Budget> = __rm_std::sync::OnceLock::new();
     static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
@@ -515,13 +533,53 @@ mod {{MODULE}} {
     /// Activates the process-wide allowance exactly once. Re-evaluating the
     /// selected guard does not spend twice; the boundaries it reaches do.
     fn activate() {
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_ACTIVE {
+            return;
+        }
         advance(StepAction::Activate);
     }
 
     /// Charges a function or loop boundary only after the mutation is active.
     #[inline(always)]
     pub(crate) fn checkpoint() {
+        let spent_in_memory = LEASED.fetch_update(
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            __rm_std::sync::atomic::Ordering::SeqCst,
+            |left| left.checked_sub(1),
+        );
+        if spent_in_memory.is_ok() {
+            return;
+        }
+        if KNOWN.load(__rm_std::sync::atomic::Ordering::SeqCst) == KNOWN_DORMANT
+            && POLLED.fetch_add(1, __rm_std::sync::atomic::Ordering::SeqCst) % DORMANT_POLL != 0
+        {
+            return;
+        }
         advance(StepAction::Checkpoint);
+    }
+
+    /// How many more boundaries one reservation grants when `remaining` are left: a share of them, at least one and at most a bound.
+    const fn lease_size(remaining: usize) -> usize {
+        let share = match remaining.checked_div(LEASE_SHARE) {
+            __rm_std::option::Option::Some(share) => share,
+            __rm_std::option::Option::None => 0,
+        };
+        if share > LEASE_MOST {
+            LEASE_MOST
+        } else if share == 0 && remaining > 0 {
+            1
+        } else {
+            share
+        }
+    }
+
+    /// What `phase` says this copy knows.
+    const fn known(phase: StepPhase) -> u8 {
+        match phase {
+            StepPhase::Dormant => KNOWN_DORMANT,
+            StepPhase::Active(_) => KNOWN_ACTIVE,
+            StepPhase::Counting(_) | StepPhase::Stopping(_) => KNOWN_OTHER,
+        }
     }
 
     fn advance(action: StepAction) {
@@ -614,8 +672,27 @@ mod {{MODULE}} {
         file.lock().map_err(|_| StepStateError::Lock)?;
         let transitioned = (|| {
             let phase = read_step_state(file, nonce, mutant, limit)?;
-            let (next, advanced) = step_transition(phase, action, limit.value())
+            let (mut next, advanced) = step_transition(phase, action, limit.value())
                 .map_err(|_| StepStateError::InvalidCount)?;
+            let mut granted = 0_usize;
+            if let (StepAction::Checkpoint, StepAdvance::Continue, StepPhase::Active(spent)) =
+                (action, advanced, next)
+            {
+                let wanted = lease_size(limit.value().saturating_sub(spent));
+                while granted < wanted {
+                    let (further, reserved) = step_transition(next, action, limit.value())
+                        .map_err(|_| StepStateError::InvalidCount)?;
+                    match (reserved, further) {
+                        (StepAdvance::Continue, StepPhase::Active(_)) => {
+                            next = further;
+                            granted = granted.saturating_add(1);
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            KNOWN.store(known(next), __rm_std::sync::atomic::Ordering::SeqCst);
+            LEASED.store(granted, __rm_std::sync::atomic::Ordering::SeqCst);
             if let StepAdvance::Reached { allowed, observed } = advanced {
                 // A persisted Stopping state is a proof that the final notice
                 // was published. Publication happens while the shared state
@@ -1261,7 +1338,7 @@ mod {{MODULE}} {
     #[inline(always)]
     pub(crate) fn item(index: u32) {
         watched();
-        if touching() {
+        if touching_items() {
             entered_item(index);
         }
     }
@@ -1326,6 +1403,13 @@ mod {{MODULE}} {
         matches!(*TOUCHING.get_or_init(configured_touch), TouchMode::On)
     }
 
+    fn touching_items() -> bool {
+        matches!(
+            *TOUCHING.get_or_init(configured_touch),
+            TouchMode::On | TouchMode::ItemsOnly
+        )
+    }
+
     fn configured_touch() -> TouchMode {
         let asked = match __rm_std::env::var("{{TOUCH_ENV}}") {
             __rm_std::result::Result::Ok(value) => !value.is_empty(),
@@ -1335,10 +1419,14 @@ mod {{MODULE}} {
             __rm_std::result::Result::Ok(value) => value == CATALOG,
             __rm_std::result::Result::Err(_) => false,
         };
-        if asked && ours {
-            TouchMode::On
-        } else {
-            TouchMode::Off
+        let items_only = match __rm_std::env::var("{{TOUCH_ITEMS_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value == "1",
+            __rm_std::result::Result::Err(_) => false,
+        };
+        match (asked && ours, items_only) {
+            (true, true) => TouchMode::ItemsOnly,
+            (true, false) => TouchMode::On,
+            (false, _) => TouchMode::Off,
         }
     }
 
@@ -1431,6 +1519,37 @@ mod {{MODULE}} {
 }
 "#;
 
+/// `text` with every name the runtime and the engine agree on filled in: the variables it reads, the records it writes, and the codes it exits with.
+fn with_protocol(text: &str) -> String {
+    text.replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
+        .replace("{{CATALOG_ENV}}", CATALOG_ENV)
+        .replace("{{TOUCH_ENV}}", TOUCH_ENV)
+        .replace("{{TOUCH_ITEMS_ENV}}", TOUCH_ITEMS_ENV)
+        .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)
+        .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
+        .replace("{{SITES}}", crate::touch::SITES)
+        .replace("{{BODIES}}", crate::touch::BODIES)
+        .replace("{{INFECTED}}", crate::touch::INFECTED)
+        .replace("{{ENTERED}}", crate::touch::ENTERED)
+        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
+        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
+        .replace("{{STEPS_ENV}}", STEPS_ENV)
+        .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)
+        .replace("{{STEP_NONCE_ENV}}", STEP_NONCE_ENV)
+        .replace("{{STEP_STATE_ENV}}", STEP_STATE_ENV)
+        .replace("{{STEP_STATE_SCHEMA}}", STEP_STATE_SCHEMA)
+        .replace("{{STEP_NOTICE_SCHEMA}}", STEP_NOTICE_SCHEMA)
+        .replace("{{STEP_PROTOCOL_EXIT}}", &STEP_PROTOCOL_EXIT.to_string())
+        .replace("{{WATCHED_ENV}}", WATCHED_ENV)
+        .replace("{{ORPHAN_PREFIX}}", ORPHAN_PREFIX)
+        .replace("{{FAULT_ENV}}", FAULT_ENV)
+        .replace("{{CRASH_EXIT}}", &CRASH_EXIT.to_string())
+        .replace("{{CRASH_NOTICE_ENV}}", CRASH_NOTICE_ENV)
+        .replace("{{CRASH_NONCE_ENV}}", CRASH_NONCE_ENV)
+        .replace("{{CRASH_NOTICE_SCHEMA}}", CRASH_NOTICE_SCHEMA)
+        .replace("{{DELAY_ENV}}", DELAY_ENV)
+}
+
 /// Renders the runtime module for one file.
 ///
 /// # Errors
@@ -1480,6 +1599,7 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         .replace("{{SPAN}}", &reach.span.to_string())
         .replace("{{ITEM_BASE}}", &first_item.to_string())
         .replace("{{ITEM_SPAN}}", &item_count.to_string())
+        .replace("{{STEP_MACHINE}}", STEP_MACHINE_SOURCE)
         .replace(
             "{{OBSERVABLE}}",
             &format!(
@@ -1492,43 +1612,12 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
             &super::observable::bound(OBSERVABLE, "__rm_std"),
         )
         .replace("{{WATCHED}}", &format!("{watched:?}"));
-    let text = protocol(&text);
+    let text = with_protocol(&text);
     if newline == "\n" {
         Ok(text)
     } else {
         Ok(text.replace('\n', newline))
     }
-}
-
-/// `text` with every name, schema, and exit status of the runtime's protocol with the engine written in, which is the same for every file.
-fn protocol(text: &str) -> String {
-    text.replace("{{STEP_MACHINE}}", STEP_MACHINE_SOURCE)
-        .replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
-        .replace("{{FAULT_ENV}}", FAULT_ENV)
-        .replace("{{CATALOG_ENV}}", CATALOG_ENV)
-        .replace("{{TOUCH_ENV}}", TOUCH_ENV)
-        .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)
-        .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
-        .replace("{{SITES}}", crate::touch::SITES)
-        .replace("{{BODIES}}", crate::touch::BODIES)
-        .replace("{{INFECTED}}", crate::touch::INFECTED)
-        .replace("{{ENTERED}}", crate::touch::ENTERED)
-        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
-        .replace("{{CRASH_EXIT}}", &CRASH_EXIT.to_string())
-        .replace("{{CRASH_NOTICE_ENV}}", CRASH_NOTICE_ENV)
-        .replace("{{CRASH_NONCE_ENV}}", CRASH_NONCE_ENV)
-        .replace("{{CRASH_NOTICE_SCHEMA}}", CRASH_NOTICE_SCHEMA)
-        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
-        .replace("{{STEPS_ENV}}", STEPS_ENV)
-        .replace("{{DELAY_ENV}}", DELAY_ENV)
-        .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)
-        .replace("{{STEP_NONCE_ENV}}", STEP_NONCE_ENV)
-        .replace("{{STEP_STATE_ENV}}", STEP_STATE_ENV)
-        .replace("{{STEP_STATE_SCHEMA}}", STEP_STATE_SCHEMA)
-        .replace("{{STEP_NOTICE_SCHEMA}}", STEP_NOTICE_SCHEMA)
-        .replace("{{STEP_PROTOCOL_EXIT}}", &STEP_PROTOCOL_EXIT.to_string())
-        .replace("{{WATCHED_ENV}}", WATCHED_ENV)
-        .replace("{{ORPHAN_PREFIX}}", ORPHAN_PREFIX)
 }
 
 /// What one file's runtime module is generated from.

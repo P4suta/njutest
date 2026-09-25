@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::drift::Touched;
 use crate::knobs::{Derived, Knob, Perturbations, Perturbed};
 
-use super::{Audit, Engine, Layer, Notes, Recording, field, named, rows};
+use super::{Audit, Decided, Engine, Layer, Notes, Recording, field, named, rows};
 
 /// The finding a report raises about a target a knob broke.
 const ENVIRONMENT_DEPENDENT: &str = "environment-dependent";
@@ -38,7 +38,7 @@ struct Put {
 }
 
 /// What each control under a knob established, re-derived from the engine's perturbed-control records against its baseline touch record, and held to what the report says of each.
-pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) {
+pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Knobs);
     if recording.contract == "whole-v1" {
         owed_every_knob(recording, &mut notes);
@@ -57,15 +57,17 @@ pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut
         .collect();
     let (touched, perturbations) = match engines {
         [] => {
-            if !recorded.is_empty() {
-                notes.unaudited(
-                    "knobs",
-                    "the run kept no engine recording, so what each control under a knob \
-                     established cannot be re-derived"
-                        .to_owned(),
-                );
+            if recorded.is_empty() {
+                return notes
+                    .absent("the run kept no engine recording and its report names no knob");
             }
-            return;
+            notes.unaudited(
+                "knobs",
+                "the run kept no engine recording, so what each control under a knob \
+                 established cannot be re-derived"
+                    .to_owned(),
+            );
+            return notes.looked();
         }
         [Engine { touched, perturbed }] => (touched, perturbed),
         several => {
@@ -77,7 +79,7 @@ pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut
                     several.len()
                 ),
             );
-            return;
+            return notes.looked();
         }
     };
     if perturbations.unreadable > 0 {
@@ -94,10 +96,11 @@ pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut
     let derived = established(perturbations, touched, &mut notes);
     let not_put = held_to_records(&recorded, &derived, &mut notes);
     if recording.shard.is_some() {
-        return;
+        return notes.looked();
     }
     held_to_findings(recording, &derived, &mut notes);
     held_to_limitations(recording, &derived, &not_put, &mut notes);
+    notes.looked()
 }
 
 /// What each target put under each knob established, from the one control the engine started it with; a control no knob puts, and a knob put twice on one target, are violations of their own.

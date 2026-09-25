@@ -935,6 +935,9 @@ pub struct MutantExecRecord {
     pub timeout_source: String,
     /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
     pub alone: bool,
+    /// How many records the process wrote naming the items it entered, when it was asked to record them (ADR 0027 measures what recording costs by this).
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub entered_records: Option<u32>,
     /// Whether the harness had already answered when the clock ended the process, so the verdict is the harness's.
     pub lingered: bool,
 }
@@ -952,6 +955,11 @@ pub struct CacheRecord {
     /// The run that established it, when one did.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub source_run_id: Option<String>,
+    /// How the key was taken: `exact`, under the whole compiled closure, or `carried`, under the mutation's locus (ADR 0041).
+    pub rule: String,
+    /// The premise a carried record failed, in the closed words of ADR 0041, where one did.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub refused: Option<String>,
 }
 
 /// Why one mutant was never executed.
@@ -960,7 +968,7 @@ pub struct CacheRecord {
 pub struct SelectRecord {
     /// The mutant's display identity.
     pub mutant: String,
-    /// `unreached`, `discharged`, or `interrupted`.
+    /// Why it did not run: the name of one [`crate::run::NotRunReason`].
     pub reason: String,
 }
 

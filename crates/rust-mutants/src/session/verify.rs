@@ -1117,6 +1117,7 @@ fn target_key(
         active: None,
         beside: None,
         touch: recording.as_deref().map(|log| execute::Touching {
+            scope: execute::TouchScope::Everything,
             log,
             catalog: building.catalog.digest(),
         }),
@@ -1249,6 +1250,7 @@ fn ran(
         active: None,
         beside: None,
         touch: log.map(|log| execute::Touching {
+            scope: execute::TouchScope::Everything,
             log,
             catalog: catalog.digest(),
         }),

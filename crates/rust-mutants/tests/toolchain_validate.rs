@@ -172,6 +172,7 @@ fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> C
             selection: Selection::tier(&REGISTRY, Tier::All),
             include: Vec::new(),
             exclude: Vec::new(),
+            narrowing: Vec::new(),
             packages: Vec::new(),
             skips: Vec::new(),
         },

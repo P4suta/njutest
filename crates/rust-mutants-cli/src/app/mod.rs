@@ -480,7 +480,7 @@ fn preparation_options(
     options.measurements = remembered_measurements(command, running.environment);
     harness(command, &mut options);
     if let Some(changed) = changed {
-        options.include = changed;
+        options.narrowing = changed;
     }
     let validation_filter = validation_filter(command, running.settings)?;
     options.validation_filter.clone_from(&validation_filter);
@@ -1059,6 +1059,21 @@ struct Switches {
     dry_run: bool,
 }
 
+/// Where a run reads and writes what it established: the exact store, the carried one and the killers, under this run's keys.
+fn reusing<'a>(
+    (store, carried, killers): &'a (crate::outcomes::Store, rust_mutants::carry::Store, Killers),
+    keyed: &'a rust_mutants::outcomes::Keyed,
+    id: &'a RunId,
+) -> run::Reusing<'a> {
+    run::Reusing {
+        store,
+        keyed,
+        run_id: id.as_str(),
+        carried,
+        killers,
+    }
+}
+
 /// What a dry run says: the phases so far and what a run would cost, with nothing executed.
 fn estimated(
     session: &Session,
@@ -1100,8 +1115,11 @@ fn whole(
     } = *whole;
     let shard = shard.map(run::Shard::parse).transpose()?;
     let asking = asking_equivalence(settings, open);
-    let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
-    let killers = Killers::new(&environment.cache_directory);
+    let stores = (
+        crate::outcomes::Store::new(&environment.cache_directory),
+        rust_mutants::carry::Store::new(&environment.cache_directory),
+        Killers::new(&environment.cache_directory),
+    );
     let (keyed, expectations) = (keyed(session, whole), expectations(settings));
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
@@ -1111,12 +1129,7 @@ fn whole(
         expectations: &expectations,
         args,
         shard,
-        outcomes: (!no_cache).then_some(run::Reusing {
-            store: &outcomes,
-            keyed: &keyed,
-            run_id: id.as_str(),
-            killers: &killers,
-        }),
+        outcomes: (!no_cache).then(|| reusing(&stores, &keyed, id)),
         filter: Some(filter),
         fail_fast,
     };
