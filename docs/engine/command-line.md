@@ -48,7 +48,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `--build-target TRIPLE`, `--profile NAME`, `--build-jobs N` | how cargo compiles it |
 | `--allow-outside DIR` | let the build read a directory outside the root, copied into the snapshot where the tree reaches it |
 | `--offline`, `--locked` | what cargo may reach for and change |
-| `--jobs N`, `-j N` | mutants measured at once; the machine capped at 4 when 0 |
+| `--jobs N\|auto\|all`, `-j` | mutants measured at once: a count, `auto` (the machine, capped at 4; the default), or `all` (every processor, for a runner doing nothing else); `0` is refused, since `auto` says it |
 | `--timeout DURATION` | a mutant's own bound; five times the target's baseline when absent |
 | `--no-verify` | do not run the instrumented baseline first |
 | `--no-doctests` | leave a library's documented examples out |
@@ -84,7 +84,7 @@ These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument` read t
 | `rules` | `--tier TIER`, `--json` |
 | `doctor` | `--json` |
 | `init` | `--force` |
-| `cache` | `--gc`, `--all`, `--kept`, `--clear-outcomes`, `--cache-dir DIR` |
+| `cache` | `--gc`, `--all`, `--kept`, `--clear-outcomes`, `--cache-dir DIR`, `--export FILE` (the outcome store as one document, each record carrying what it was keyed on), `--import FILE` (file an exported store under the keys its records derive, refusing another release's) |
 | `ci gate` | `--run ID`, `--report FILE`, `--sarif FILE`, `--host github\|gitlab\|plain`, `--changed-from REV` |
 
 `--run` names a stored run, and the newest is read when nothing is named.

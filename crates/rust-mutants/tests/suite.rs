@@ -59,6 +59,8 @@ mod metadata;
 mod outcome;
 #[path = "outcomes.rs"]
 mod outcomes;
+#[path = "outcomes_export.rs"]
+mod outcomes_export;
 #[path = "outside.rs"]
 mod outside;
 #[path = "probe_form.rs"]

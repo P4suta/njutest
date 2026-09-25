@@ -115,7 +115,7 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
         .catalog
         .mutants
         .iter()
-        .filter(|one| one.id.starts_with(asked.prefix))
+        .filter(|one| one.answers_to(asked.prefix))
         .collect();
     let mutant = match matching.as_slice() {
         [] => {

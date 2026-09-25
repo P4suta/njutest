@@ -241,6 +241,7 @@ pub fn every_payload() -> Vec<Payload> {
                     touch: TouchRecord {
                         target: "demo/lib/demo".to_owned(),
                         measured: crate::trace::Measurement::Control,
+                        mutant: None,
                         passed: vec!["tests::adds".to_owned()],
                         summary: crate::trace::SummaryRecord::Libtest { tests_run: Some(1) },
                         reached_sites: vec![0],
@@ -260,6 +261,7 @@ pub fn every_payload() -> Vec<Payload> {
             touch: TouchRecord {
                 target: "demo/lib/demo".to_owned(),
                 measured: crate::trace::Measurement::Control,
+                mutant: None,
                 passed: vec!["tests::adds".to_owned(), "tests::subtracts".to_owned()],
                 summary: crate::trace::SummaryRecord::Libtest { tests_run: Some(2) },
                 reached_sites: vec![0, 1, 2],

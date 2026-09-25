@@ -19,7 +19,7 @@ use crate::cache::store::Store;
 use crate::cli::{EXIT_ERROR, Environment, Format, Verify};
 use crate::config::Config;
 use crate::evidence::digest::Mode;
-use crate::report::lines;
+use crate::report::{Verdict, lines};
 use crate::run_id;
 use crate::trace::{DirSink, Recorder, Sink, StartRecord};
 use crate::ui;
@@ -195,10 +195,7 @@ struct Reconciled {
     directory: reports::RunDirectory,
 }
 
-type ReportAnswer = (
-    crate::report::Verdict,
-    Option<crate::report::ConclusionAccounting>,
-);
+type ReportAnswer = (Verdict, Option<crate::report::ConclusionAccounting>);
 
 /// Where scheduling state for interrupted runs lives, beside the answers finished runs left.
 pub const CHECKPOINTS: &str = "checkpoints";
@@ -485,7 +482,7 @@ fn finish_established(
         ControlFlow::Break(code) => return Ok(code),
     };
 
-    if let Err(error) = trace.run_end(&lines::escape(&format!("{verdict:?}")), accounting, None) {
+    if let Err(error) = trace.run_end(verdict, accounting, None) {
         super::diagnose(
             stderr,
             &format!("the trace could not be finalized: {error}"),
@@ -524,7 +521,7 @@ fn persist_or_report(
                 PersistError::Output { .. } => super::diagnose(stderr, &error.to_string())?,
             }
             if let Err(trace_error) = trace.run_end(
-                "ERROR",
+                Verdict::Error,
                 None,
                 Some("the completed report could not be persisted".to_owned()),
             ) {
@@ -570,7 +567,7 @@ fn reconciled(
             if let Err(trace_error) =
                 establishing
                     .trace
-                    .run_end("ERROR", None, Some(error.to_string()))
+                    .run_end(Verdict::Error, None, Some(error.to_string()))
             {
                 super::diagnose(
                     stderr,
@@ -819,7 +816,7 @@ fn every_build(
     let configured = match configured_builds(request, establishing) {
         Ok(configured) => configured,
         Err(error) => {
-            if let Err(trace_error) = trace.run_end("ERROR", None, Some(error.to_string())) {
+            if let Err(trace_error) = trace.run_end(Verdict::Error, None, Some(error.to_string())) {
                 super::diagnose(
                     stderr,
                     &format!("the trace could not be finalized: {trace_error}"),
@@ -861,7 +858,7 @@ fn every_build(
         };
         if let Err(source) = ended {
             let error = TraceSetupError::Finalize { ordinal, source };
-            if let Err(trace_error) = trace.run_end("ERROR", None, Some(error.to_string())) {
+            if let Err(trace_error) = trace.run_end(Verdict::Error, None, Some(error.to_string())) {
                 super::diagnose(
                     stderr,
                     &format!("the trace could not be finalized: {trace_error}"),
@@ -873,7 +870,9 @@ fn every_build(
         match result {
             Ok(outcome) => measured.push((name, selection, outcome)),
             Err(error) => {
-                if let Err(trace_error) = trace.run_end("ERROR", None, Some(error.to_string())) {
+                if let Err(trace_error) =
+                    trace.run_end(Verdict::Error, None, Some(error.to_string()))
+                {
                     super::diagnose(
                         stderr,
                         &format!("the trace could not be finalized: {trace_error}"),

@@ -30,7 +30,9 @@ pub(crate) fn implemented(block: &syn::ItemImpl) -> String {
 }
 
 /// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, njutest_macros::AllVariants,
+)]
 pub enum Form {
     /// The boolean selector, for a syntactically boolean position.
     C,

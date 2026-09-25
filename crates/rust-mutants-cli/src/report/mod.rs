@@ -514,8 +514,12 @@ pub fn lines(document: &run::RunDocument) -> Result<String, rust_mutants::work::
     let mut text = String::new();
     let written = write!(
         text,
-        "run       {}\nworkspace {}\ncatalog   {}\n",
-        document.run.id, document.workspace.workspace_digest, document.workspace.catalog_digest,
+        "run       {}\nworkspace {}\ncatalog   {}\njobs      {} ({})\n",
+        document.run.id,
+        document.workspace.workspace_digest,
+        document.workspace.catalog_digest,
+        document.run.jobs.used,
+        document.run.jobs.asked,
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     if !document.findings.is_empty() {

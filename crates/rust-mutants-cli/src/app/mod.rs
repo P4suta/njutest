@@ -140,6 +140,8 @@ fn kept_command(
             kept,
             clear_outcomes,
             cache_dir,
+            export,
+            import,
         } => sweep::cache(
             &sweep::Sweeping {
                 root: root.as_deref(),
@@ -148,6 +150,11 @@ fn kept_command(
                 kept: *kept,
                 clear_outcomes: *clear_outcomes,
                 cache_dir: cache_dir.as_deref(),
+                transport: match (export.as_deref(), import.as_deref()) {
+                    (Some(file), _) => sweep::StoreTransport::Export(file),
+                    (None, Some(file)) => sweep::StoreTransport::Import(file),
+                    (None, None) => sweep::StoreTransport::Stay,
+                },
             },
             environment,
             stdout,
@@ -938,6 +945,7 @@ fn prepared(
             fail_fast,
             dry_run,
             args,
+            scope,
             ..
         } => match mutant {
             Some(prefix) => one(
@@ -954,6 +962,7 @@ fn prepared(
                     open: prepared.open,
                     args,
                     shard: shard.as_deref(),
+                    narrowed: base_of(scope).is_some(),
                     asked: Switches {
                         no_report: *no_report,
                         no_cache: *no_cache,
@@ -1014,6 +1023,8 @@ struct Whole<'a> {
     open: &'a workspace::OpenOptions,
     args: &'a [String],
     shard: Option<&'a str>,
+    /// Whether the catalog was built from only the files this run's own selection, a change set, named.
+    narrowed: bool,
     /// The switches the command line set, which say what the run does rather than what it measures.
     asked: Switches,
     /// Which of the catalog's mutants this run is about.
@@ -1047,6 +1058,18 @@ struct Switches {
     dry_run: bool,
 }
 
+/// What a dry run says: the phases so far and what a run would cost, with nothing executed.
+fn estimated(
+    session: &Session,
+    filter: &run::Filter,
+    phases: &std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+    stdout: &mut dyn Write,
+) -> Result<PreparedOutcome, CliError> {
+    write(stdout, &crate::ui::phases(phases))?;
+    write(stdout, &estimate::estimate(session, filter)?)?;
+    Ok(PreparedOutcome::complete(0))
+}
+
 fn whole(
     session: &Session,
     whole: &Whole<'_>,
@@ -1058,6 +1081,7 @@ fn whole(
         open,
         args,
         shard,
+        narrowed,
         asked:
             Switches {
                 no_report,
@@ -1094,15 +1118,12 @@ fn whole(
         fail_fast,
     };
     if dry_run {
-        write(stdout, &crate::ui::phases(phases))?;
-        write(stdout, &estimate::estimate(session, filter)?)?;
-        return Ok(PreparedOutcome::complete(0));
+        return estimated(session, filter, phases, stdout);
     }
     let mut result = measured_run(
         session,
         &Watched {
             options: &options,
-            settings,
             phases,
             json,
             ui,
@@ -1111,8 +1132,9 @@ fn whole(
         cancel,
         stdout,
     )?;
-    result.expectations =
-        run::verify(session, &expectations, &mut result.judged).map_err(EngineError::from)?;
+    let scope = run::Scope::of(options.shard, narrowed);
+    result.expectations = run::verify(session, &expectations, &mut result.judged, scope)
+        .map_err(EngineError::from)?;
     let document = run_report::document(
         session,
         &result,
@@ -1123,11 +1145,9 @@ fn whole(
             finished_at: Timestamp::now(),
         },
     )?;
-    let written = if no_report {
-        None
-    } else {
-        Some(stored_with_evidence(session, settings, id, &document)?)
-    };
+    let written = (!no_report)
+        .then(|| stored_with_evidence(session, settings, id, &document))
+        .transpose()?;
     Ok(PreparedOutcome::RunPending(Box::new(PendingRun {
         document,
         written,
@@ -1182,7 +1202,6 @@ fn onward(document: &run_report::RunDocument) -> String {
 /// Everything the run itself needs beyond the session, so a caller chooses one display and hands it over.
 struct Watched<'a> {
     options: &'a run::Options<'a>,
-    settings: &'a Settings,
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     json: bool,
     ui: crate::ui::Ui,
@@ -1204,12 +1223,7 @@ fn measured_run(
         return Ok(result?);
     }
     write(stdout, &crate::ui::phases(watched.phases))?;
-    let mut display = crate::ui::Display::new(
-        stdout,
-        resolved(watched.ui),
-        watched.paints,
-        run::jobs(watched.settings.config.execution.jobs),
-    );
+    let mut display = crate::ui::Display::new(stdout, resolved(watched.ui), watched.paints);
     let result = run::run(session, watched.options, cancel, &mut display);
     display.finish()?;
     Ok(result?)
@@ -1555,12 +1569,11 @@ fn fresh_explain(
     let session = prepared.session;
     let catalog =
         rust_mutants::report::catalog::document(session, &prepared.settings.prepare_options()?)?;
-    let source = session
-        .catalog()
-        .mutants()
+    let source = catalog
+        .mutants
         .iter()
-        .find(|one| one.id.as_str().starts_with(prefix))
-        .map(|one| read_source(session, &one.candidate.path))
+        .find(|one| one.answers_to(prefix))
+        .map(|one| read_source(session, &one.path))
         .transpose()?;
     said(
         &explain::Asked {
@@ -1580,18 +1593,24 @@ fn stored_explain(
     environment: &Environment,
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
-    let (scope, prefix, run, json) = asked;
+    let (scope, prefix, named, json) = asked;
     let settings = Settings::resolve(scope, environment)?;
     let directory = settings.report_directory();
-    let report = stored::report_of(&directory, run)?;
+    let report = stored::report_of(&directory, named)?;
     let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
+    if named.is_none()
+        && !catalog.mutants.iter().any(|one| one.answers_to(prefix))
+        && let Some(message) = runs_holding(&directory, prefix)?.refusal(prefix)
+    {
+        return Err(CliError::ReportMissing { message });
+    }
     let stored = read_run_document(&report)?;
     let source = catalog
         .mutants
         .iter()
-        .find(|one| one.id.starts_with(prefix))
+        .find(|one| one.answers_to(prefix))
         .map(|one| read_source_at(&settings.root, &one.path))
         .transpose()?;
     said(
@@ -1604,6 +1623,70 @@ fn stored_explain(
         json,
         stdout,
     )
+}
+
+/// What the stored runs say about a mutant: the runs whose catalog holds it, and the runs this release could not read, which neither do nor do not.
+///
+/// The fields are private and the one way to turn this into words names both, so a caller cannot report the first and drop the second.
+struct Holding {
+    holding: Vec<String>,
+    unreadable: Vec<(String, String)>,
+}
+
+impl Holding {
+    /// Why the newest run cannot answer while an earlier one can, or nothing when no readable run holds it.
+    fn refusal(&self, prefix: &str) -> Option<String> {
+        let latest = self.holding.last()?;
+        let mut said = format!(
+            "the newest run does not catalog {prefix:?}; {} stored run(s) do: {}. \
+             Ask one of them: `rust-mutants explain {prefix} --run {latest}`",
+            self.holding.len(),
+            self.holding.join(", ")
+        );
+        if !self.unreadable.is_empty() {
+            let named: Vec<String> = self
+                .unreadable
+                .iter()
+                .map(|(run, why)| format!("{run} ({why})"))
+                .collect();
+            let written = write!(
+                said,
+                ". Whether {} more hold it is not known, since this release cannot read them: {}",
+                self.unreadable.len(),
+                named.join("; ")
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        Some(said)
+    }
+}
+
+/// Every stored run, oldest first, whose catalog holds a mutant `prefix` names, and every one whose catalog this release cannot read.
+fn runs_holding(directory: &Path, prefix: &str) -> Result<Holding, CliError> {
+    let runs = stored::kept(directory)?.0;
+    let mut holding = Vec::new();
+    let mut unreadable = Vec::new();
+    for run in runs {
+        let Some(name) = run.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+        let read: Result<rust_mutants::report::catalog::CatalogDocument, CliError> =
+            read_document(&run.join(rust_mutants::report::evidence::CATALOG));
+        match read {
+            Ok(catalog) => {
+                if catalog.mutants.iter().any(|one| one.answers_to(prefix)) {
+                    holding.push(name.to_owned());
+                }
+            }
+            Err(error) => unreadable.push((name.to_owned(), error.to_string())),
+        }
+    }
+    holding.sort();
+    unreadable.sort();
+    Ok(Holding {
+        holding,
+        unreadable,
+    })
 }
 
 /// One stored document, or the reason it is not one this release reads.
@@ -1625,7 +1708,12 @@ fn read_run_document(path: &Path) -> Result<run_report::RunDocument, CliError> {
     document
         .validate()
         .map_err(|error| CliError::ReportMissing {
-            message: format!("{} is a contradictory run report: {error}", path.display()),
+            message: match error {
+                run_report::DocumentError::SchemaVersion { .. } => {
+                    format!("{}: {error}", path.display())
+                }
+                other => format!("{} is a contradictory run report: {other}", path.display()),
+            },
         })?;
     Ok(document)
 }

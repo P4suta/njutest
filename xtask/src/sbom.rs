@@ -122,6 +122,12 @@ pub struct SbomError {
     source: serde_json::Error,
 }
 
+impl crate::error::Coded for SbomError {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::SbomMetadata
+    }
+}
+
 /// The bill of materials of the tree `metadata` describes, for the release named `about`.
 ///
 /// # Errors
