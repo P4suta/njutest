@@ -247,7 +247,7 @@ pub(crate) enum CandidateError {
     Rejected { path: String, reason: String },
     /// The fresh assurance run itself could not complete.
     #[error(transparent)]
-    Check(#[from] crate::error::RunnerError),
+    Check(Box<crate::error::RunnerError>),
     /// The checked content could not be installed.
     #[error("cannot write {}: {source}", path.display())]
     Write {
@@ -310,7 +310,7 @@ pub(crate) fn one(
             path: proposal.path,
             reason: verdict.why.unwrap_or_else(|| "no reason given".to_owned()),
         }),
-        Err(error) => Err(CandidateError::Check(error)),
+        Err(error) => Err(CandidateError::Check(Box::new(error))),
     }
 }
 
