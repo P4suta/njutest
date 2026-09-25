@@ -620,3 +620,22 @@ fn a_run_ends_on_the_gravest_thing_it_holds_and_an_interruption_outranks_all_of_
     let codes: Vec<u8> = Exit::ALL.iter().map(|exit| exit.code()).collect();
     assert_eq!(codes, vec![0, 1, 2, 130, 143]);
 }
+
+#[test]
+fn every_exit_a_caller_reads_back_is_one_of_the_table_and_no_other_code_is() {
+    use rust_mutants::run::Exit;
+    for exit in Exit::ALL {
+        assert_eq!(
+            Exit::read(i32::from(exit.code())),
+            Some(exit),
+            "a caller holding the code a run ended with reads back the exit it meant"
+        );
+    }
+    for code in [-1, 3, 101, 129, 255] {
+        assert_eq!(
+            Exit::read(code),
+            None,
+            "and a code the table does not hold is no verdict at all, not the nearest one: {code}"
+        );
+    }
+}

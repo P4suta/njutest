@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use njutest_devkit::fixture::Fixture;
+use rust_mutants::run::Exit;
 
 /// The variable that records the committed runs again rather than refusing a difference, as `UPDATE_GOLDEN` does for a golden.
 const UPDATE: &str = "UPDATE_ENGINE_RUNS";
@@ -65,9 +66,15 @@ fn recorded(fixture: &Fixture) -> PathBuf {
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
     command.args(["--tier", "all", "--offline", "--locked", "--trace"]);
     let output = command.output().expect("rust-mutants runs");
+    let answered = match output.status.code().and_then(Exit::read) {
+        Some(Exit::Detected | Exit::Found | Exit::Unestablished) => true,
+        Some(Exit::Interrupted | Exit::Terminated) | None => false,
+    };
     assert!(
-        matches!(output.status.code(), Some(0..=2)),
-        "{}",
+        answered,
+        "a recording is kept from a run that answered, whatever its verdict, and never from one \
+         that was stopped or ended outside the exit table: {:?}\n{}",
+        output.status,
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     njutest_devkit::fixture::newest_run(

@@ -318,6 +318,14 @@ pub enum Exit {
 }
 
 impl Exit {
+    /// The exit a process that ended with `code` meant, or nothing where the table holds no such code, which is a failure rather than any verdict.
+    #[must_use]
+    pub fn read(code: i32) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|exit| i32::from(exit.code()) == code)
+    }
+
     /// The code the process ends with.
     #[must_use]
     pub const fn code(self) -> u8 {
