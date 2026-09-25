@@ -428,8 +428,11 @@ fn every_suite_that_starts_a_toolchain_says_so_in_its_name() {
             let scripted = source.contains("fake_cargo::");
             let against_a_fixture = source.contains("Fixture::copy")
                 && (source.contains("cargo_binary()") || source.contains("CARGO_BIN_EXE"));
-            let starts_cargo =
-                !scripted && (source.contains("Workspace::open") || against_a_fixture);
+            let verified_in_process = (source.contains("Fixture::copy")
+                || source.contains("copy_tree("))
+                && source.contains("\"verify\"");
+            let starts_cargo = !scripted
+                && (source.contains("Workspace::open") || against_a_fixture || verified_in_process);
             if starts_cargo && !name.starts_with("toolchain_") {
                 wrong.push(format!("{crate_name}/{name}"));
             }
@@ -1001,6 +1004,41 @@ fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
     );
 }
 
+#[test]
+fn a_nested_toolchain_run_shares_the_machine_with_the_ones_beside_it() {
+    let config = repository(".config/nextest.toml");
+    let grouped = format!(
+        "max-threads = {}",
+        njutest_devkit::paths::TOOLCHAIN_TESTS_AT_ONCE
+    );
+    assert!(
+        config.contains("[test-groups]")
+            && config.contains(&grouped)
+            && config.contains("test-group = \"toolchain\""),
+        "a toolchain suite run by any nextest invocation, not only `mise run test:slow`, runs at \
+         most {} of its tests at once, each starting its own cargo: {config}",
+        njutest_devkit::paths::TOOLCHAIN_TESTS_AT_ONCE
+    );
+    for environment in [
+        njutest_devkit::paths::environment_for_a_run(),
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[]),
+    ] {
+        let jobs: Vec<_> = environment
+            .iter()
+            .filter(|(name, _value)| name == "CARGO_BUILD_JOBS")
+            .map(|(_name, value)| value.clone())
+            .collect();
+        assert_eq!(
+            jobs,
+            [std::ffi::OsString::from(
+                njutest_devkit::paths::nested_build_jobs().to_string()
+            )],
+            "a cargo a test starts takes every core as its own, so the tests running beside it \
+             multiply the machine by their number"
+        );
+    }
+}
+
 /// Every command in `place` that compiles the workspace in the dev profile for a build or a test.
 fn dev_builds(place: &str) -> Vec<String> {
     repository(place)
@@ -1049,5 +1087,60 @@ fn every_dev_build_compiles_the_one_feature_set_the_suite_does() {
          push builds them once per variant rather than once, and a person's own run warms \
          nothing the gate reads; an examples build takes `--profile test` so its library is the \
          one the suite links: {divergent:#?}"
+    );
+}
+
+#[test]
+fn an_advisory_check_reads_a_database_fetched_by_a_step_that_tries_again() {
+    let workflow = repository(".github/workflows/ci.yml");
+    for (check, offline, fetch) in [
+        ("cargo deny", "check --disable-fetch", "fetch db"),
+        (
+            "cargo audit",
+            "--no-fetch",
+            "git clone --depth 1 https://github.com/RustSec/advisory-db.git",
+        ),
+    ] {
+        let runs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .filter(|line| line.contains(check) && !line.contains(fetch))
+            .filter(|line| !line.contains("tools:"))
+            .collect();
+        assert!(
+            !runs.is_empty() && runs.iter().all(|line| line.contains(offline)),
+            "{check} fetched the advisory database itself, once, so a network error on that one \
+             fetch failed the job, twice on 2026-09-24; it reads a database a step of its own \
+             fetched and tried again for ({offline}): {runs:?}"
+        );
+        assert!(
+            workflow.contains(fetch) && workflow.contains("for attempt in 1 2 3 4 5"),
+            "and that step is there, and tries again: {fetch}"
+        );
+    }
+}
+
+#[test]
+fn a_gate_step_that_fails_says_which_it_was_and_how() {
+    let check = task("check");
+    let steps: Vec<&str> = check
+        .lines()
+        .filter(|line| line.contains("mise run"))
+        .collect();
+    assert!(
+        !steps.is_empty() && steps.iter().all(|line| line.starts_with("step mise run")),
+        "a push gate failed on 2026-09-25 with a bare `exit status 1` after the licence check, \
+         and nobody could tell which step had failed; every step of `check` goes through `step`, \
+         which names it and its exit status: {steps:?}"
+    );
+    let audit = task("audit");
+    assert!(
+        audit.contains("exited ${status}")
+            && audit.contains("--db \"${db}\"")
+            && audit.contains("not a fresh one"),
+        "`audit` says how each attempt ended, reads a database kept under its own target \
+         directory, since gates of several sessions fetching into the one shared checkout at \
+         once is a failure nobody's change caused, and says so when it checks against a copy \
+         it could not refresh: {audit}"
     );
 }
