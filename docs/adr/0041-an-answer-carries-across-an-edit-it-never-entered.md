@@ -38,6 +38,9 @@ An edit to the body of an item the execution never entered cannot change what th
    - no file of the unit declares or imports a macro with a listed name, and no glob import from a non-standard path reaches the file;
    - the item and every attribute inside it are in an allow-list (`inline`, `cold`, `must_use`, `doc`, `cfg`, lint attributes, `track_caller`, tool attributes);
    - it is not a `const fn`, a `const` or a `static`, whose bodies can be evaluated where nothing enters them.
+   - it declares no item (a `fn`, type, `impl`, `trait`, `use`, `mod`, macro, `const` or `static` inside it changes the program where nothing enters the body), and holds no inline `const { … }` block;
+   - the arguments of every listed macro are read as tokens, and any macro invoked inside them is held to the same rule;
+   - no external glob import and no `#[macro_use] extern crate` appears anywhere in the unit, which would let a macro reach the body under a listed name.
      The exact lists are in `docs/engine/carry.md`, which is what the audit implements, not the engine's code.
 3. **Skeleton.** A unit (package name, target name, kind, test flag; never a package id, which carries an absolute path) has a skeleton digest.
    It covers every file the unit's dep-info names, with each sealed body replaced by a placeholder naming its item, and the environment variables rustc recorded reading, and the generated files, and the output of the build scripts it depends on.
