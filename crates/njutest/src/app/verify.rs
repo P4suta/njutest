@@ -848,13 +848,13 @@ fn every_build(
             run::run(&asked, environment, &mut notes, watch)
         };
         let ended = match &result {
-            Ok(outcome) => asked.engine_trace.run_end(
-                &format!("{:?}", outcome.report.verdict).to_lowercase(),
-                None,
-            ),
-            Err(error) => asked
+            Ok(_measured) => asked
                 .engine_trace
-                .run_end("failed", Some(error.to_string())),
+                .run_end(rust_mutants::trace::RunOutcome::Completed, None),
+            Err(error) => asked.engine_trace.run_end(
+                rust_mutants::trace::RunOutcome::Failed,
+                Some(error.to_string()),
+            ),
         };
         if let Err(source) = ended {
             let error = TraceSetupError::Finalize { ordinal, source };

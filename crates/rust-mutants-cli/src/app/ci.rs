@@ -42,7 +42,7 @@ impl Verdict {
     pub const fn code(self) -> u8 {
         match self {
             Self::Detected => run::EXIT_DETECTED,
-            Self::Found => run::EXIT_UNDETECTED,
+            Self::Found => run::EXIT_FOUND,
             Self::Failed => run::EXIT_FAILED,
             Self::Interrupted => run::EXIT_INTERRUPTED,
         }

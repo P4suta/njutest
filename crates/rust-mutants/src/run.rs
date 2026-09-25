@@ -77,8 +77,8 @@ impl Expectation {
 /// The exit code of a run that established detection for everything it executed.
 pub const EXIT_DETECTED: u8 = Exit::Detected.code();
 
-/// The exit code of a run that left something the tests did not notice.
-pub const EXIT_UNDETECTED: u8 = Exit::Undetected.code();
+/// The exit code of a run that reported a finding about the tests.
+pub const EXIT_FOUND: u8 = Exit::Found.code();
 
 /// The exit code of a run that was interrupted.
 pub const EXIT_INTERRUPTED: u8 = Exit::Interrupted.code();
@@ -280,7 +280,7 @@ impl FindingKind {
             | Self::DischargedMutant
             | Self::StaleExpectation
             | Self::UnmatchedExpectation
-            | Self::UnmatchedSkip => Exit::Undetected,
+            | Self::UnmatchedSkip => Exit::Found,
             Self::StepLimitReachedMutant
             | Self::WaitedMutant
             | Self::ErroredMutant
@@ -301,7 +301,7 @@ pub enum Exit {
     /// Every mutant the run decided, the tests noticed.
     Detected,
     /// There is a finding about the tests.
-    Undetected,
+    Found,
     /// The run could not measure something it ran, or failed, or was used wrongly.
     Unestablished,
     /// The run was interrupted.
@@ -316,7 +316,7 @@ impl Exit {
     pub const fn code(self) -> u8 {
         match self {
             Self::Detected => 0,
-            Self::Undetected => 1,
+            Self::Found => 1,
             Self::Unestablished => 2,
             Self::Interrupted => 130,
             Self::Terminated => 143,
@@ -328,7 +328,7 @@ impl Exit {
     pub const fn meaning(self) -> &'static str {
         match self {
             Self::Detected => "every mutant the run decided, the tests noticed",
-            Self::Undetected => {
+            Self::Found => {
                 "there is a finding about the tests: a survivor, a mutation no test reached or a \
                  proof removed, a mutation the run could not decide either way, or a stale or \
                  unmatched claim"
