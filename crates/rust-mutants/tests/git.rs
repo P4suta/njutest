@@ -76,6 +76,15 @@ impl Asked {
     }
 }
 
+/// A scratch tree holding every one of `files`, so a change naming them names files that are there.
+fn laid(files: &[String]) -> Repo {
+    let repo = Repo::new();
+    for file in files {
+        repo.write(file, "");
+    }
+    repo
+}
+
 /// Twenty lines, each saying which it is, with the ones in `edited` rewritten and the ones in `removed` gone.
 fn twenty(edited: &[u32], removed: &[u32]) -> String {
     (1..=20_u32)
@@ -208,7 +217,8 @@ fn a_change_set_mutates_within_the_rust_files_it_names() {
             "src/app/run.rs".to_owned(),
         ],
     };
-    let within = rust_mutants::git::within(&change, &[]);
+    let laid = laid(&change.files);
+    let within = rust_mutants::git::within(laid.root(), &change, &[]);
     assert_eq!(result_state(&within), Returned, "changed paths: {within:?}");
     let Ok(rust_mutants::git::Within::Changed(within)) = within else {
         panic!("two Rust files changed: {within:?}")
@@ -230,7 +240,8 @@ fn a_change_set_that_names_no_rust_file_mutates_nothing_rather_than_everything()
         merge_base: None,
         files: vec!["README.md".to_owned()],
     };
-    let within = rust_mutants::git::within(&change, &[]);
+    let laid = laid(&change.files);
+    let within = rust_mutants::git::within(laid.root(), &change, &[]);
     assert_eq!(
         within,
         Ok(rust_mutants::git::Within::Nothing {
@@ -251,7 +262,8 @@ fn a_change_set_narrows_what_the_caller_already_selected_rather_than_widening_it
     assert_eq!(result_state(&pattern), Returned, "include: {pattern:?}");
     let Ok(pattern) = pattern else { return };
     let include = vec![pattern];
-    let within = rust_mutants::git::within(&change, &include);
+    let laid = laid(&change.files);
+    let within = rust_mutants::git::within(laid.root(), &change, &include);
     assert_eq!(result_state(&within), Returned, "changed paths: {within:?}");
     let Ok(rust_mutants::git::Within::Changed(within)) = within else {
         panic!("one included Rust file changed: {within:?}")
@@ -268,7 +280,8 @@ fn an_unrepresentable_changed_path_is_not_silently_omitted() {
         merge_base: None,
         files: vec!["src//lib.rs".to_owned()],
     };
-    let error = rust_mutants::git::within(&change, &[]);
+    let laid = laid(&change.files);
+    let error = rust_mutants::git::within(laid.root(), &change, &[]);
     assert_eq!(
         result_state(&error),
         Refused,
@@ -443,12 +456,16 @@ fn a_workspace_below_the_checkout_sees_only_its_own_files_by_its_own_paths() {
     asked.repo.write("ws/src/kept.rs", "pub fn k() {}\n");
     asked.repo.write("other/src/lib.rs", "pub fn g() {}\n");
     asked.repo.commit();
-    let base = std::process::Command::new("git")
+    let Ok(base) = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(asked.repo.root())
         .output()
-        .expect("git names the first commit");
-    let base = String::from_utf8(base.stdout).expect("a commit id is text");
+    else {
+        panic!("git names the first commit");
+    };
+    let Ok(base) = String::from_utf8(base.stdout) else {
+        panic!("a commit id is text");
+    };
     asked
         .repo
         .write("ws/src/kept.rs", "pub fn k() -> i32 { 3 }\n");
@@ -473,5 +490,26 @@ fn a_workspace_below_the_checkout_sees_only_its_own_files_by_its_own_paths() {
         Some(vec!["src/kept.rs".to_owned(), "src/lib.rs".to_owned()]),
         "a change is read from the workspace's own root: a file outside it is none of its business, \
          committed or not, and a file inside it is named the way the workspace names it"
+    );
+}
+
+#[test]
+fn a_change_that_only_deletes_rust_files_touches_nothing_to_mutate() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.write("src/lib.rs", "pub fn f() {}\n");
+    asked.repo.write("src/gone.rs", "pub fn g() {}\n");
+    asked.repo.commit();
+    let Ok(()) = std::fs::remove_file(asked.repo.root().join("src/gone.rs")) else {
+        panic!("the file goes");
+    };
+    let Some(change) = asked.changed("HEAD") else {
+        panic!("git answers what changed");
+    };
+    assert_eq!(change.files, vec!["src/gone.rs".to_owned()], "{change:?}");
+    let within = rust_mutants::git::within(asked.repo.root(), &change, &[]);
+    assert!(
+        matches!(within, Ok(rust_mutants::git::Within::Nothing { .. })),
+        "a deleted file has nothing left to mutate, so the change touches nothing a run \
+         measures rather than naming a file no pattern can select: {within:?}"
     );
 }

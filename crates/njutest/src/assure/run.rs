@@ -1605,7 +1605,7 @@ fn narrowing(
     let Some(change) = request.changed.as_ref() else {
         return Ok(configured);
     };
-    rust_mutants::git::within(change, &configured)?.patterns()
+    rust_mutants::git::within(&request.root, change, &configured)?.patterns()
 }
 
 /// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.

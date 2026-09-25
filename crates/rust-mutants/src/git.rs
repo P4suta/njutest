@@ -316,15 +316,16 @@ fn number(text: &str) -> Option<u32> {
     }
 }
 
-/// The Rust files a change set names, keeping only what `include` already admits when it admits anything, or that it names none.
+/// The Rust files a change set names that are still under `root`, keeping only what `include` already admits when it admits anything, or that it names none.
 /// # Errors
 /// Refuses a changed path which cannot be represented by the mutation glob language.
 /// Silently omitting such a path would make a partial change set indistinguishable from the complete one the caller asked for.
-pub fn within(change: &Change, include: &[Pattern]) -> Result<Within, GlobError> {
+pub fn within(root: &Path, change: &Change, include: &[Pattern]) -> Result<Within, GlobError> {
     let sources: Vec<&String> = change
         .files
         .iter()
         .filter(|path| Path::new(path).extension() == Some(std::ffi::OsStr::new("rs")))
+        .filter(|path| present(&root.join(path)))
         .filter(|path| include.is_empty() || include.iter().any(|pattern| pattern.matches(path)))
         .collect();
     if sources.is_empty() {
@@ -337,6 +338,14 @@ pub fn within(change: &Change, include: &[Pattern]) -> Result<Within, GlobError>
         .map(|path| Pattern::compile(path))
         .collect::<Result<Vec<Pattern>, GlobError>>()
         .map(Within::Changed)
+}
+
+/// Whether a changed path is still there to mutate: a deleted one is not, and one that cannot be looked at is kept, so the run that reads it says why.
+fn present(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 /// Whether an empty answer is an answer.
