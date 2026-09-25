@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 2,
-    "run_id": "20260925t154203811z-1fd266",
+    "run_id": "20260925t161653368z-02d94c",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "ff627c7ac71867867eac24c5ebe9d235a1fb6e1c8fd6921504d8c4342b1ad21e",
+      "identity": "787064f8e464bf4b236da5eb0d624b33b0014dbc47b237b69582df0d1ca1c610",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20260925t154103950z-1f963c",
+          "run_id": "20260925t161635636z-02cb86",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20260925t154140940z-1fb647",
+          "run_id": "20260925t161645034z-02d275",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,7 +76,7 @@
         },
         "parts": [
           {
-            "run_id": "20260925t154103950z-1f963c-b0000000000",
+            "run_id": "20260925t161635636z-02cb86-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
@@ -90,9 +90,9 @@
               "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-25T15:41:03.950805126Z",
-              "finished": "2026-09-25T15:41:38.138321188Z",
-              "duration_ms": 34187
+              "started": "2026-09-25T16:16:35.636418439Z",
+              "finished": "2026-09-25T16:16:44.962438952Z",
+              "duration_ms": 9326
             },
             "accounting": {
               "targets": {
@@ -273,7 +273,7 @@
             "knobs": []
           },
           {
-            "run_id": "20260925t154140940z-1fb647-b0000000000",
+            "run_id": "20260925t161645034z-02d275-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
@@ -287,9 +287,9 @@
               "arch": "x86_64"
             },
             "timing": {
-              "started": "2026-09-25T15:41:40.940864302Z",
-              "finished": "2026-09-25T15:42:01.159869836Z",
-              "duration_ms": 20219
+              "started": "2026-09-25T16:16:45.034114748Z",
+              "finished": "2026-09-25T16:16:53.279652079Z",
+              "duration_ms": 8245
             },
             "accounting": {
               "targets": {
@@ -342,7 +342,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 25,
+                "duration_ms": 26,
                 "message": null
               },
               {

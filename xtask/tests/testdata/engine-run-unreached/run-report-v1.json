@@ -3,10 +3,10 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260925t152446338z",
-    "started_at": "2026-09-25T15:24:46.338097324Z",
-    "finished_at": "2026-09-25T15:25:10.499437933Z",
-    "duration_ms": 4500,
+    "id": "20260925t161543155z",
+    "started_at": "2026-09-25T16:15:43.155195237Z",
+    "finished_at": "2026-09-25T16:15:48.434417421Z",
+    "duration_ms": 169,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -16,9 +16,9 @@
     }
   },
   "workspace": {
-    "root_name": "tmp.l2pwRfRjKB",
+    "root_name": "tmp.zKo01YQfqg",
     "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "fb18dbf64f4114948100687e2ac36c7cab6f7f52b2f9323f4f5e49572fad438a",
+    "workspace_digest": "f7696419ee539172367d1c26049865d597ef058bb162f185cf5a8a19a0a1fbb1",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "gnu",
@@ -98,7 +98,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 39,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -145,7 +145,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 81,
+      "duration_ms": 28,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -239,7 +239,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 50,
+      "duration_ms": 25,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"

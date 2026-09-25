@@ -9,6 +9,7 @@ use std::fmt;
 pub use crate::layers::Coverage;
 
 mod arithmetic;
+pub mod carry;
 mod evidence;
 mod ledger;
 mod recording;
@@ -230,6 +231,8 @@ pub enum Layer {
     Touch,
     /// Every reached site and every kill, against the items the entry markers say each test entered.
     Entry,
+    /// Every body the run calls sealed and every body digest it kept, read again from the tree under `docs/engine/carry.md`.
+    Carry,
 }
 
 impl Layer {
@@ -251,6 +254,7 @@ impl Layer {
             Self::Work => "work",
             Self::Touch => "touch",
             Self::Entry => "entry",
+            Self::Carry => "carry",
         }
     }
 }
@@ -396,6 +400,12 @@ pub struct Evidence<'a> {
     pub probe_logs: Vec<String>,
     /// What the guards recorded, as the run kept it.
     pub touched: Option<Source<'a>>,
+    /// The carry evidence the run kept: body digests, sealing, and unit skeletons.
+    pub skeletons: Option<Source<'a>>,
+    /// Every carried record the run believed, with the plan each was held to.
+    pub carried: Option<Source<'a>>,
+    /// The tree the run measured, which the carry evidence is read again from.
+    pub root: Option<&'a std::path::Path>,
 }
 
 /// Evidence after every serialization boundary has been crossed without loss.
@@ -408,6 +418,9 @@ struct CheckedEvidence<'a> {
     catalog: Option<Value>,
     probe_logs: &'a [String],
     touched: Option<Value>,
+    skeletons: Option<Value>,
+    carried: Option<Value>,
+    root: Option<&'a std::path::Path>,
 }
 
 /// One recording whose every non-empty line is JSON.
@@ -472,6 +485,9 @@ impl<'a> Evidence<'a> {
                 .touched
                 .map(|source| parse_typed_evidence(source, wire::validate_touched))
                 .transpose()?,
+            skeletons: self.skeletons.map(parse_evidence).transpose()?,
+            carried: self.carried.map(parse_evidence).transpose()?,
+            root: self.root,
         })
     }
 }
@@ -636,6 +652,7 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
             Layer::Work => work(&report, evidence.recorded.as_ref(), &mut audit),
             Layer::Touch => touch(&report, evidence.touched.as_ref(), &mut audit),
             Layer::Entry => entry(&report, evidence.touched.as_ref(), &mut audit),
+            Layer::Carry => carry::layer(&report, &evidence, &mut audit),
         };
     }
     audit.remarks.sort();

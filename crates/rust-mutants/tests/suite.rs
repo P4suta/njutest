@@ -19,6 +19,8 @@ mod cargo;
 mod cargo_config;
 #[path = "cargo_manifest.rs"]
 mod cargo_manifest;
+#[path = "carry.rs"]
+mod carry;
 #[path = "catalog.rs"]
 mod catalog;
 #[path = "census.rs"]
