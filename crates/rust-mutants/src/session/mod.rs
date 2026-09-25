@@ -8,7 +8,7 @@ pub(crate) mod prepare;
 mod route;
 mod verify;
 
-pub use carry::Tree as CarriedTree;
+pub use carry::{Answered, Tree as CarriedTree};
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
 use verify::verify;

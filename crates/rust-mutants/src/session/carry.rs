@@ -14,6 +14,23 @@ use crate::runner::Cancel;
 use crate::touch::{ItemRef, Steadiness};
 use crate::workspace::SessionError;
 
+/// What a run established about a mutation, which a carried record keeps beside the executions it rests on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answered {
+    /// Everything the record is filed under but the locus.
+    pub keyed: crate::outcomes::Keyed,
+    /// What the executions established.
+    pub outcome: crate::outcomes::CacheOutcome,
+    /// The target that answered.
+    pub target: String,
+    /// How many tests the answering execution ran, when the harness said.
+    pub tests_run: Option<u32>,
+    /// Every test that failed with the mutant active.
+    pub failed_tests: Vec<String>,
+    /// The run that established it.
+    pub run_id: String,
+}
+
 /// A session's tree as the carry rule reads it.
 #[derive(Debug)]
 pub struct Tree {
@@ -204,6 +221,85 @@ impl Session {
                 })
             })
             .collect()
+    }
+
+    /// Whether `record`, an earlier tree's answer about `mutant`, holds here under every premise of ADR 0041, and the premise it fails where it does not.
+    ///
+    /// The route `mutant` would take with `args` is planned without running, the tree is read for every target the record or the plan names, and a survival that reaches the mutant through a target this run cannot see into is refused as uncontrolled.
+    /// A believed record is kept as this run's evidence with the plan it was believed against.
+    ///
+    /// # Errors
+    /// Planning the route, reading the tree, or keeping the evidence.
+    pub fn believing(
+        &self,
+        record: &crate::carry::Carried,
+        mutant: &Mutant,
+        (args, cancel): (&[String], &Cancel),
+    ) -> Result<Result<(), crate::carry::Refusal>, EngineError> {
+        let plan = self.plan(mutant, args, cancel)?;
+        let targets: BTreeSet<String> = record
+            .executions
+            .iter()
+            .map(|one| one.target.clone())
+            .chain(plan.iter().map(|one| one.target.clone()))
+            .collect();
+        let now = self.now(&targets, cancel)?;
+        let verdict = crate::carry::believe(record, &now, &plan).and_then(|()| {
+            if self.believable(mutant, record.outcome) {
+                Ok(())
+            } else {
+                Err(crate::carry::Refusal::Uncontrolled)
+            }
+        });
+        if verdict.is_ok() {
+            self.believed(mutant.id.as_str(), record.clone(), plan)?;
+        }
+        Ok(verdict)
+    }
+
+    /// Whether this run may believe a remembered `outcome`: a survival is a claim about every target that reaches the mutant, and one that reaches it through a process this run cannot see into is a claim this run could not make.
+    #[must_use]
+    pub fn believable(&self, mutant: &Mutant, outcome: crate::outcomes::CacheOutcome) -> bool {
+        match outcome {
+            crate::outcomes::CacheOutcome::Killed => true,
+            crate::outcomes::CacheOutcome::Survived => !self
+                .route(mutant)
+                .reaching()
+                .into_iter()
+                .any(|target| self.uncontrolled(target)),
+        }
+    }
+
+    /// The record this run leaves under `mutant`'s locus: `answered`, and every execution in `asked` it rests on, each paired with the route's plan by target.
+    /// Nothing where the mutant has no locus, where an execution does not name what it entered or ran a target the plan does not, or where the record would not validate.
+    ///
+    /// # Errors
+    /// Planning the route.
+    pub fn carrying(
+        &self,
+        mutant: &Mutant,
+        (args, cancel): (&[String], &Cancel),
+        (answered, asked): (Answered, &[MutantResult]),
+    ) -> Result<Option<crate::carry::Carried>, EngineError> {
+        let Some(locus) = self.locus(mutant) else {
+            return Ok(None);
+        };
+        let plan = self.plan(mutant, args, cancel)?;
+        let Some(executions) = self.executions(asked, &plan) else {
+            return Ok(None);
+        };
+        let record = crate::carry::Carried {
+            schema: crate::carry::SCHEMA.to_owned(),
+            locus,
+            keyed: answered.keyed,
+            outcome: answered.outcome,
+            target: answered.target,
+            tests_run: answered.tests_run,
+            failed_tests: answered.failed_tests,
+            run_id: answered.run_id,
+            executions,
+        };
+        Ok(record.validate().is_ok().then_some(record))
     }
 
     /// Keeps `record` as what this run believed about the mutant `id`, so the run's evidence can say what each carried answer rests on.
