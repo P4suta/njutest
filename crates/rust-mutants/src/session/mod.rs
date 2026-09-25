@@ -1589,6 +1589,7 @@ impl Session {
         };
         let ran = quiet.shared(|| self.execute(request, running(false), cancel))??;
         let (first, mut asked) = (ran.taken, ran.asked);
+        let executed: Vec<String> = asked.iter().map(|one| one.target.clone()).collect();
         let (timeout, timeout_source) = self.timeout_for(request, &first.target)?;
         let attempts = match InitialAttempt::classify(first, cancel.is_cancelled()) {
             InitialAttempt::Final(first) => AttemptLedger::single(first),
@@ -1602,19 +1603,14 @@ impl Session {
         let judgement = Judgement {
             attempts,
             asked,
+            executed,
             timeout,
             timeout_source,
             route,
         };
-        let result = judgement.result();
-        self.workspace.trace.route(
-            judgement.route.record(
-                mutant,
-                judgement
-                    .route
-                    .executed(&result.target, result.outcome().detected()),
-            ),
-        );
+        self.workspace
+            .trace
+            .route(judgement.route.record(mutant, judgement.executed.clone()));
         Ok(judgement)
     }
 
@@ -2597,6 +2593,8 @@ pub struct Judgement {
     /// Every target that was actually asked, in the order they were asked, with what each answered.
     /// A target that reaches a mutation and is absent from this was never given the chance: one before it detected, or the run was cancelled.
     pub asked: Vec<MutantResult>,
+    /// Every target the first attempt ran, in the order it ran them, which is the route's account of the work: a recorded killer asked first is first here, and a retry is counted apart.
+    pub executed: Vec<String>,
     /// The budget the target that answered was given.
     pub timeout: Duration,
     /// Where that budget came from.

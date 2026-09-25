@@ -1651,20 +1651,15 @@ fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
             reason: reason.name().to_owned(),
         });
     }
-    let decided = session.route(mutant);
-    let executed = if judged.source_run_id.is_some() || judged.outcome == Outcome::NotRun {
-        Vec::new()
-    } else {
-        decided.executed(&judged.target, judged.outcome.detected())
-    };
-    judged.route = Some(crate::report::run::route_document(
-        &decided,
-        executed.clone(),
-    ));
-    if !session.trace().is_enabled() || judged.measured {
+    if judged.measured {
         return;
     }
-    let mut record = decided.record(mutant, executed);
+    let decided = session.route(mutant);
+    judged.route = Some(crate::report::run::route_document(&decided, Vec::new()));
+    if !session.trace().is_enabled() {
+        return;
+    }
+    let mut record = decided.record(mutant, Vec::new());
     record.reused.clone_from(&judged.source_run_id);
     session.trace().route(record);
 }
@@ -1774,6 +1769,7 @@ fn execute(
         attempts,
         route,
         asked,
+        executed,
         ..
     } = judgement;
     let result = attempts.into_result();
@@ -1795,7 +1791,7 @@ fn execute(
         lingered: result.lingered,
         expected: false,
         not_run_reason: not_run_because(outcome, &route),
-        route: None,
+        route: Some(crate::report::run::route_document(&route, executed)),
         measured: true,
         identical: CodegenIdentity::NotMeasured,
         source_run_id: None,
