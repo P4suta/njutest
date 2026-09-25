@@ -339,6 +339,11 @@ fn fixture_forbid() {
 }
 
 #[test]
+fn fixture_guarded_or() {
+    holds("fixture-guarded-or");
+}
+
+#[test]
 fn fixture_hang() {
     holds("fixture-hang");
 }
