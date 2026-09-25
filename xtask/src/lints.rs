@@ -4625,7 +4625,7 @@ fn names_a_temporary_variable(argument: &syn::Expr) -> bool {
     matches!(
         argument,
         syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(name), .. })
-            if crate::TEMPORARY_VARIABLES.contains(&name.value().as_str())
+            if super::TEMPORARY_VARIABLES.contains(&name.value().as_str())
     )
 }
 
