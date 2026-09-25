@@ -6,15 +6,38 @@
 use serde::de::Error as _;
 use serde_json::Value;
 
-/// A line in a recording that is not JSON.
+/// A line of a recording this audit will not read, and why.
 #[derive(Debug, thiserror::Error)]
-#[error("recording line {line} is not JSON: {source}")]
+#[error("recording line {line}: {cause}")]
 pub struct ReadError {
-    /// The one-based non-empty line number in the recording.
+    /// The one-based non-empty line number in the recording, or 0 where the recording as a whole could not be held to its schema.
     pub line: usize,
-    /// What the JSON reader found there.
+    /// Why.
     #[source]
-    pub source: serde_json::Error,
+    pub cause: ReadCause,
+}
+
+/// Why a line of a recording is not read.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ReadCause {
+    /// It is not JSON, or not the current envelope.
+    #[error("not JSON this audit reads: {source}")]
+    Json {
+        /// What serde said.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// It is JSON and departs from its producer's published schema, so a reader could meet an absent required field.
+    #[error("off its producer's published schema: {source}")]
+    OffSchema {
+        /// Where and how.
+        #[source]
+        source: crate::schemas::OffSchema,
+    },
+    /// The published schema itself does not compile.
+    #[error(transparent)]
+    Schema(#[from] crate::schemas::SchemaError),
 }
 
 impl crate::error::Coded for ReadError {
@@ -211,8 +234,8 @@ impl Routing {
 /// # Errors
 /// A non-empty line that is not JSON is rejected.
 /// An audit must never turn a corrupt evidence stream into an apparently empty one.
-pub fn read(recorded: &str) -> Result<Routing, ReadError> {
-    Ok(from_events(&events(recorded)?))
+pub fn read(recorded: &str, producer: crate::schemas::Producer) -> Result<Routing, ReadError> {
+    Ok(from_events(&events(recorded, producer)?))
 }
 
 /// Reads routing records from events that have already passed the JSONL boundary.
@@ -248,22 +271,34 @@ pub(crate) fn from_events(events: &[Value]) -> Routing {
     routing
 }
 
-/// Parses every non-empty event in a recording without discarding a corrupt line.
-pub(crate) fn events(recorded: &str) -> Result<Vec<Value>, ReadError> {
+/// Parses every non-empty event in a recording without discarding a corrupt line, holding each to `producer`'s published schema first.
+///
+/// # Errors
+/// [`ReadError`] for the first line that is not JSON or not on its schema.
+pub(crate) fn events(
+    recorded: &str,
+    producer: crate::schemas::Producer,
+) -> Result<Vec<Value>, ReadError> {
+    let checker = crate::schemas::Checker::of(producer).map_err(|source| ReadError {
+        line: 0,
+        cause: ReadCause::Schema(source),
+    })?;
     recorded
         .lines()
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
         .map(|(index, line)| {
             let line_number = index.saturating_add(1);
-            let parsed = crate::strictjson::from_str(line).map_err(|source| ReadError {
+            let json = |source| ReadError {
                 line: line_number,
-                source,
+                cause: ReadCause::Json { source },
+            };
+            let parsed = crate::strictjson::from_str(line).map_err(json)?;
+            checker.check(&parsed).map_err(|source| ReadError {
+                line: line_number,
+                cause: ReadCause::OffSchema { source },
             })?;
-            nested_event(parsed).map_err(|source| ReadError {
-                line: line_number,
-                source,
-            })
+            nested_event(parsed).map_err(json)
         })
         .collect()
 }
@@ -318,10 +353,10 @@ fn exec(record: &Value) -> Exec {
         index: number(record, "index"),
         target: text(record, "target").unwrap_or_default(),
         outcome: text(record, "outcome").unwrap_or_default(),
-        step_notice: record
-            .get("step_notice")
-            .filter(|notice| !notice.is_null())
-            .cloned(),
+        step_notice: match record.get("step_notice") {
+            None | Some(Value::Null) => None,
+            Some(notice) => Some(notice.clone()),
+        },
         tests_run: number(record, "tests_run"),
         duration_ms: number(record, "duration_ms"),
         alone: Isolation::recorded(record.get("alone")),

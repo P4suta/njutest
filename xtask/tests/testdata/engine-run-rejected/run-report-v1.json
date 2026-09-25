@@ -3,23 +3,27 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260923t165251152z",
-    "started_at": "2026-09-23T16:52:51.152845Z",
-    "finished_at": "2026-09-23T16:52:52.690203Z",
-    "duration_ms": 99,
+    "id": "20260925t152351545z",
+    "started_at": "2026-09-25T15:23:51.54500545Z",
+    "finished_at": "2026-09-25T15:24:44.238617665Z",
+    "duration_ms": 8128,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null, "jobs": {"asked": "auto", "used": 1}
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
   },
   "workspace": {
-    "root_name": "fixture-rejectable",
-    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "7b3928fcc2f5fa85b8cc58adb3722833d7239fc6242f17c3d4d9bc07dca04312",
+    "root_name": "tmp.KPDMXBP7Pj",
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "workspace_digest": "7dbadc07312ba43e4a49e2baec43f7b56caf7feec1c83ba33307fc9236b01475",
     "catalog_digest": "05ce4412ca26140ff556abf263fc400e9b1fa58b1d5908a3e491bfb14ae71d4d",
     "platform": {
-      "os": "darwin",
-      "arch": "aarch64",
-      "target": "aarch64-apple-darwin"
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
     }
   },
   "selection": {
@@ -734,7 +738,7 @@
       "path": "src/lib.rs",
       "rule": "add-to-sub",
       "code": "E0369",
-      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n  --> src/lib.rs:12:171\n   |\n12 | ... Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n   |                                                             ---- ^ --- &str\n   |                                                             |\n   |                                                             String\n   |\nnote: `String` does not implement `Sub<&str>`\n  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:353:0\n   |\n   = note: `String` is defined in another crate\n\n",
+      "diagnostic": "error[E0369]: cannot subtract `&str` from `String`\n   --> src/lib.rs:12:171\n    |\n 12 | ...Default::default() } else if __rm_b1a35a68::active(1) { name - \"!\" } else { name + __rm_b1a35a68::value!(if __rm_b1a35a68::activ...\n    |                                                            ---- ^ --- &str\n    |                                                            |\n    |                                                            String\n    |\nnote: `String` does not implement `Sub<&str>`\n   --> /home/yasunobu/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/string.rs:353:1\n    |\n353 | pub struct String {\n    | ^^^^^^^^^^^^^^^^^ `String` is defined in another crate\n\n",
       "isolated": true
     },
     {

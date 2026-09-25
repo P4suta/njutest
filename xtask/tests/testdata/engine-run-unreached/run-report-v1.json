@@ -3,23 +3,27 @@
   "schema_version": 3,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260923t165252724z",
-    "started_at": "2026-09-23T16:52:52.724255Z",
-    "finished_at": "2026-09-23T16:52:53.87867Z",
-    "duration_ms": 109,
+    "id": "20260925t152446338z",
+    "started_at": "2026-09-25T15:24:46.338097324Z",
+    "finished_at": "2026-09-25T15:25:10.499437933Z",
+    "duration_ms": 4500,
     "interrupted": false,
     "exit_code": 1,
-    "shard": null, "jobs": {"asked": "auto", "used": 1}
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
   },
   "workspace": {
-    "root_name": "fixture-unreached",
-    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "aa56f4081d3e44155ddd28eb1e537c489a1270dbfb93fe2ee8d8f5bcac077e44",
+    "root_name": "tmp.l2pwRfRjKB",
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "workspace_digest": "fb18dbf64f4114948100687e2ac36c7cab6f7f52b2f9323f4f5e49572fad438a",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
-      "os": "darwin",
-      "arch": "aarch64",
-      "target": "aarch64-apple-darwin"
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
     }
   },
   "selection": {
@@ -94,7 +98,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 30,
+      "duration_ms": 39,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -141,7 +145,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 28,
+      "duration_ms": 81,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -188,7 +192,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 30,
+      "duration_ms": 26,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -235,7 +239,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": 101,
-      "duration_ms": 27,
+      "duration_ms": 50,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"

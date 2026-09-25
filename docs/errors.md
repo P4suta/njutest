@@ -160,6 +160,7 @@ The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `pro
 | `XT0003` | The roadmap declares no milestone, or one twice. | give every milestone one row in the roadmap table |
 | `XT0004` | The root manifest could not be read, or its workspace lint table is not one `fuzz-clippy` can carry to the fuzz workspace. | fix the table the message names in the root `Cargo.toml` |
 | `XT0005` | `cargo clippy` could not be started for the fuzz workspace. | check `cargo` is on the path and the pinned toolchain is installed |
+| `XT0006` | A published JSON schema under `schema/` does not compile, so nothing can be validated against it. | fix the schema the message names; `cargo xtask all` compiles every one |
 | `XT1001` | A fixture's tree could not be walked or one of its files read. | check the path the message names exists and is readable |
 | `XT1002` | A fixture tree holds a symbolic link, which the checks never follow. | replace the link with the file it points at |
 | `XT1003` | A fixture path is not UTF-8, so no protocol a fixture feeds could spell it. | rename the path |
@@ -169,13 +170,19 @@ The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `pro
 | `XT2002` | The assurance report is not JSON this audit can read. | re-run the run that wrote it; a report nothing can parse is not one to re-decide |
 | `XT2003` | The runner's recording has a line that is not JSON. | re-run with `--trace`; a recording that lost a line cannot be counted as agreement |
 | `XT2004` | The report is not one configured build measured whole, which is what this audit re-decides. | audit each part against its own recording |
-| `XT2005` | The document calls itself something other than the assurance report. | point `proofaudit` at an assurance report |
+| `XT2005` | The report departs from the published assurance-report schema, so a reader could meet an absent required field. | re-run with this release; a report off its schema is not one to re-decide |
+| `XT2006` | A document given as a merged report is not a merge of shards. | give `proofaudit` the report `njutest merge` wrote, with `--shard` for each part |
+| `XT2007` | A document given with `--shard` is not a shard of a catalog. | give each shard's own report or run directory to `--shard` |
+| `XT2008` | The same shard was given twice with `--shard`. | give each shard once; counting one part twice is an operator's mistake, not a merge |
+| `XT2009` | A shard was given that the merged report does not name among its sources. | give only the shards the merged report names in its composition |
+| `XT2010` | The document is on its published schema and is not one this audit can read into a complete report or a shard. | report it; a document on its schema that this audit cannot read is a gap in the audit |
 | `XT3001` | The run directory holds no engine run report, or it or a document beside it could not be read. | point `engine-audit` at the directory a completed engine run wrote |
 | `XT3002` | The engine run report is not JSON this audit can read. | re-run the run that wrote it |
 | `XT3003` | An evidence document beside the engine run report is not one this audit can read. | re-run the run that wrote it |
 | `XT3004` | The engine's recording is not one this audit can read, or is of another schema. | re-run with `--trace` using this release |
 | `XT3005` | The configuration named as the ledger is not one this audit can read. | fix the configuration file the message names |
 | `XT3006` | The document is not the engine run report, or is of another schema version. | point `engine-audit` at a run report this release wrote |
+| `XT3007` | The engine run report departs from the published run-report schema, so a reader could meet an absent required field or a value of another shape. | re-run with this release; a report off its schema is not one to re-decide |
 | `XT4001` | The Kani export could not be read, or is not the closed JSON schema of the pinned release. | regenerate the export with the pinned Kani |
 | `XT4002` | The Kani export's metadata, project or toolchain is not the pinned release run on this workspace. | regenerate the export here with the pinned Kani and backend |
 | `XT4003` | A harness or check ledger of the Kani export is missing, duplicated, or not the selected production one. | regenerate the export from the production harness list |
@@ -186,6 +193,7 @@ The first digit names an area: 0 the gates and their ledgers, 1 fixtures, 2 `pro
 | `XT4103` | A retained Kani export is not the pinned schema, or does not establish the answer the report gives. | read the model record the message names |
 | `XT5001` | An audit specimen could not be laid out in a temporary directory. | check the temporary directory is writable |
 | `XT5002` | An event of an audit specimen's recording is not an object, or lacks its envelope. | fix the specimen in the sentinel module the gate names |
+| `XT5003` | A flat audit specimen could not be completed into the document a run writes. | fix the specimen in the sentinel module the gate names |
 | `XT5101` | A planted text of the lint sentinels is not the header-and-files shape they are read in. | fix the planted text under `xtask/sentinels/` the message names |
 | `XT6001` | An identity field exceeds the length prefix of the recipe it is minted by. | report it; an identity this recipe cannot spell is not one to truncate |
 | `XT6002` | A line of a recording is not JSON. | re-run with `--trace` |

@@ -6,6 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub use crate::layers::Coverage;
+
 mod arithmetic;
 mod evidence;
 mod ledger;
@@ -93,6 +95,18 @@ pub enum AuditError {
         #[source]
         source: serde_json::Error,
     },
+    /// The run report is JSON and departs from the engine's published run-report schema, so a reader could meet an absent required field or a value of another shape.
+    #[error("{path}: off the published run-report schema: {source}")]
+    OffSchema {
+        /// The document.
+        path: String,
+        /// Where and how.
+        #[source]
+        source: crate::schemas::OffSchema,
+    },
+    /// The published run-report schema itself does not compile.
+    #[error(transparent)]
+    Schema(#[from] crate::schemas::SchemaError),
     /// A JSON evidence document supplied to the audit is corrupt.
     #[error("{path}: not an evidence document this audit can read: {source}")]
     MalformedEvidence {
@@ -151,6 +165,8 @@ impl crate::error::Coded for AuditError {
         match self {
             Self::Unreadable { .. } => crate::error::XtCode::EngineUnreadable,
             Self::Unparsable { .. } => crate::error::XtCode::EngineUnparsable,
+            Self::OffSchema { .. } => crate::error::XtCode::EngineOffSchema,
+            Self::Schema(_) => crate::error::XtCode::SchemaUncompilable,
             Self::MalformedEvidence { .. } => crate::error::XtCode::EngineEvidence,
             Self::MalformedRecording { .. } | Self::UnsupportedTrace { .. } => {
                 crate::error::XtCode::EngineRecording
@@ -276,6 +292,8 @@ pub struct Audit {
     pub rejections: usize,
     /// Everything it has to say, grouped by layer with the violations of each first.
     pub remarks: Vec<Remark>,
+    /// How far each layer got.
+    pub coverage: BTreeMap<Layer, Coverage>,
 }
 
 impl Audit {
@@ -334,6 +352,9 @@ impl fmt::Display for Audit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for remark in &self.remarks {
             writeln!(f, "{remark}")?;
+        }
+        for (layer, coverage) in &self.coverage {
+            writeln!(f, "layer: {}: {coverage}", layer.label())?;
         }
         write!(
             f,
@@ -400,12 +421,11 @@ impl<'a> Evidence<'a> {
         let recorded = self
             .recorded
             .map(|source| {
-                let events = crate::route::events(source.text).map_err(|error| {
-                    AuditError::MalformedRecording {
+                let events = crate::route::events(source.text, crate::schemas::Producer::Engine)
+                    .map_err(|error| AuditError::MalformedRecording {
                         path: source.path.to_owned(),
                         source: error,
-                    }
-                })?;
+                    })?;
                 if let Some(schema) = events.iter().find_map(|event| {
                     (string(event, "type").as_deref() == Some("run-start"))
                         .then(|| string(event, "schema"))
@@ -495,6 +515,11 @@ fn parse_typed_evidence(
     Ok(value)
 }
 
+/// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.
+#[must_use]
+#[derive(Debug)]
+struct Decided(());
+
 /// Where one layer's re-decisions are written down.
 #[derive(Debug)]
 struct Notes<'a> {
@@ -515,6 +540,30 @@ impl<'a> Notes<'a> {
         self.note(Standing::Unaudited, subject, detail);
     }
 
+    /// The layer looked at everything the run owes it, and its remarks say what it found.
+    fn looked(self) -> Decided {
+        let partly = self
+            .audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == self.layer && remark.standing == Standing::Unaudited);
+        let coverage = if partly {
+            Coverage::Partly
+        } else {
+            Coverage::Rederived
+        };
+        self.audit.coverage.insert(self.layer, coverage);
+        Decided(())
+    }
+
+    /// The run holds nothing this layer re-decides, for the reason `why`.
+    fn absent(self, why: &'static str) -> Decided {
+        self.audit
+            .coverage
+            .insert(self.layer, Coverage::Absent(why));
+        Decided(())
+    }
+
     fn note(&mut self, standing: Standing, subject: &str, detail: String) {
         self.audit.remarks.push(Remark {
             layer: self.layer,
@@ -528,8 +577,22 @@ impl<'a> Notes<'a> {
 /// What an independent re-decision makes of the run report in `text`.
 ///
 /// # Errors
-/// [`AuditError::Unparsable`] for a document that is not JSON, and [`AuditError::Unrecognised`] for one that is not a run report.
+/// [`AuditError::Unparsable`] for a document that is not JSON, [`AuditError::OffSchema`] for a run report off its published schema, and [`AuditError::Unrecognised`] for one that is not a run report.
 pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, AuditError> {
+    let raw = crate::strictjson::from_str(text).map_err(|source| AuditError::Unparsable {
+        path: path.to_owned(),
+        source,
+    })?;
+    if raw.get("document_type").and_then(Value::as_str) == Some(DOCUMENT_TYPE)
+        && raw.get("schema_version").and_then(Value::as_u64) == Some(SCHEMA_VERSION)
+    {
+        crate::schemas::Checker::engine_report()?
+            .check(&raw)
+            .map_err(|source| AuditError::OffSchema {
+                path: path.to_owned(),
+                source,
+            })?;
+    }
     let document = wire::decode(text).map_err(|source| AuditError::Unparsable {
         path: path.to_owned(),
         source,
@@ -555,21 +618,26 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
         mutants: report.mutants.len(),
         rejections: report.rejections.len(),
         remarks: Vec::new(),
+        coverage: BTreeMap::new(),
     };
-    identity(&report, &mut audit);
-    accounting(&report, &mut audit);
-    score(&report, &mut audit);
-    findings(&report, &mut audit);
-    expectations(&report, &mut audit);
-    exit(&report, &mut audit);
-    merge(&report, &evidence, &mut audit);
-    proofs(&report, &evidence, &mut audit);
-    sites(&evidence, &mut audit);
-    trace(&report, evidence.recorded.as_ref(), &mut audit);
-    ledger(&report, evidence.ledger.as_ref(), &mut audit);
-    work(&report, evidence.recorded.as_ref(), &mut audit);
-    touch(&report, evidence.touched.as_ref(), &mut audit);
-    entry(&report, evidence.touched.as_ref(), &mut audit);
+    for layer in Layer::ALL {
+        let Decided(()) = match layer {
+            Layer::Identity => identity(&report, &mut audit),
+            Layer::Accounting => accounting(&report, &mut audit),
+            Layer::Score => score(&report, &mut audit),
+            Layer::Findings => findings(&report, &mut audit),
+            Layer::Expectations => expectations(&report, &mut audit),
+            Layer::Exit => exit(&report, &mut audit),
+            Layer::Merge => merge(&report, &evidence, &mut audit),
+            Layer::Proofs => proofs(&report, &evidence, &mut audit),
+            Layer::Sites => sites(&evidence, &mut audit),
+            Layer::Trace => trace(&report, evidence.recorded.as_ref(), &mut audit),
+            Layer::Ledger => ledger(&report, evidence.ledger.as_ref(), &mut audit),
+            Layer::Work => work(&report, evidence.recorded.as_ref(), &mut audit),
+            Layer::Touch => touch(&report, evidence.touched.as_ref(), &mut audit),
+            Layer::Entry => entry(&report, evidence.touched.as_ref(), &mut audit),
+        };
+    }
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
