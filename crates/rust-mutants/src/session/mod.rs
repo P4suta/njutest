@@ -247,6 +247,9 @@ pub struct PrepareOptions {
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again.
     pub exclude: Vec<Pattern>,
+    /// The files a change set leaves this run to mutate, among those `include` and `exclude` select.
+    /// Empty narrows nothing.
+    pub narrowing: Vec<Pattern>,
     /// The member packages to mutate.
     /// Empty means every member.
     pub packages: Vec<String>,
@@ -290,6 +293,18 @@ pub struct PrepareOptions {
     pub validation_filter: Option<crate::run::Filter>,
 }
 
+impl PrepareOptions {
+    /// The patterns a file must match to be mutated: the change set's where there is one, the configuration's otherwise.
+    #[must_use]
+    pub fn mutable(&self) -> &[Pattern] {
+        if self.narrowing.is_empty() {
+            &self.include
+        } else {
+            &self.narrowing
+        }
+    }
+}
+
 impl Default for PrepareOptions {
     fn default() -> Self {
         Self {
@@ -298,6 +313,7 @@ impl Default for PrepareOptions {
             scratch_working_directory: false,
             include: Vec::new(),
             exclude: Vec::new(),
+            narrowing: Vec::new(),
             packages: Vec::new(),
             skips: Vec::new(),
             measurements: None,
@@ -1942,6 +1958,7 @@ pub fn preview(
             selection: selection(options)?,
             include: options.include.clone(),
             exclude: options.exclude.clone(),
+            narrowing: options.narrowing.clone(),
             packages: options.packages.clone(),
             skips: options.skips.clone(),
         },

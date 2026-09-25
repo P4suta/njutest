@@ -9,6 +9,7 @@
 )]
 
 use njutest_devkit::fixture::Fixture;
+use rust_mutants::glob::Pattern;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Recording, Request, Session};
@@ -17,6 +18,10 @@ use rust_mutants::touch::{Completeness, ItemRef};
 use rust_mutants::workspace::Workspace;
 
 fn prepare(fixture: &Fixture) -> Session {
+    prepare_narrowed(fixture, Vec::new())
+}
+
+fn prepare_narrowed(fixture: &Fixture, narrowing: Vec<Pattern>) -> Session {
     Workspace::open(
         fixture.root(),
         opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
@@ -27,6 +32,7 @@ fn prepare(fixture: &Fixture) -> Session {
         &PrepareOptions {
             tier: Tier::All,
             touch: true,
+            narrowing,
             ..PrepareOptions::default()
         },
         &Cancel::new(),
@@ -115,4 +121,39 @@ fn every_mutant_execution_names_the_items_it_entered() {
          because a process may be stopped there: {elsewhere:?}"
     );
     session.close().expect("close");
+}
+
+#[test]
+fn a_change_set_narrows_what_is_mutated_and_never_what_is_marked() {
+    let fixture = Fixture::copy("fixture-outside");
+    let whole = prepare(&fixture);
+    let narrowed = prepare_narrowed(
+        &fixture,
+        vec![Pattern::compile("src/lib.rs").expect("a pattern")],
+    );
+    assert!(
+        narrowed
+            .catalog()
+            .mutants()
+            .iter()
+            .all(|mutant| mutant.candidate.path == "src/lib.rs"),
+        "a change set still decides what is mutated"
+    );
+    assert_eq!(
+        narrowed.touched().items,
+        whole.touched().items,
+        "and every file the configuration selects carries its entry markers whatever the change \
+         set, so what an execution entered is named the same way on a pull request as on the \
+         whole run it is carried from"
+    );
+    let marked = std::fs::read_to_string(narrowed.snapshot_root().join("src/spin.rs"))
+        .expect("the instrumented file");
+    let pristine =
+        std::fs::read_to_string(fixture.root().join("src/spin.rs")).expect("the pristine file");
+    assert_ne!(
+        marked, pristine,
+        "and a file the change set left out is instrumented for entry all the same"
+    );
+    narrowed.close().expect("close");
+    whole.close().expect("close");
 }

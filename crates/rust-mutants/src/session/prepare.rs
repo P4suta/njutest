@@ -648,6 +648,7 @@ fn gated(
             selection: selection(options)?,
             include: options.include.clone(),
             exclude: options.exclude.clone(),
+            narrowing: options.narrowing.clone(),
             packages: options.packages.clone(),
             skips: options.skips.clone(),
         },
@@ -1020,7 +1021,7 @@ fn plan_tree(
     let mut sources: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut placements: BTreeMap<String, Vec<Placement>> = BTreeMap::new();
     for file in &discovery.files {
-        if file.whole_file.is_some() {
+        if file.whole_file.is_some() && !discovery.marked_only.contains(&file.path) {
             continue;
         }
         let source =

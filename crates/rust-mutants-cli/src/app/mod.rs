@@ -469,7 +469,7 @@ fn preparation_options(
     options.measurements = remembered_measurements(command, running.environment);
     harness(command, &mut options);
     if let Some(base) = base_of(running.scope) {
-        options.include = selected(running, base, cancel)?;
+        options.narrowing = selected(running, base, cancel)?;
     }
     let validation_filter = validation_filter(command, running.settings)?;
     options.validation_filter.clone_from(&validation_filter);

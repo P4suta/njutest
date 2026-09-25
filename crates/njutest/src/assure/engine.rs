@@ -14,6 +14,7 @@ pub const fn switches() -> PrepareOptions {
         scratch_working_directory: false,
         include: Vec::new(),
         exclude: Vec::new(),
+        narrowing: Vec::new(),
         packages: Vec::new(),
         skips: Vec::new(),
         measurements: None,

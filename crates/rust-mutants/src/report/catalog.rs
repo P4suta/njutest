@@ -247,7 +247,7 @@ pub fn selection_document(options: &PrepareOptions) -> SelectionDocument {
     SelectionDocument {
         tier: options.tier.name().to_owned(),
         operators: options.operators.clone(),
-        include: spelled(&options.include),
+        include: spelled(options.mutable()),
         exclude: spelled(&options.exclude),
         packages: options.packages.clone(),
         build: options.build.arguments(),
