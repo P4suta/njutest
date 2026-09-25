@@ -172,7 +172,7 @@ impl Session {
         Ok(held)
     }
 
-    /// What each execution the judgement `asked` rests on, paired in order with the route's `plan`, or nothing where one of them did not name what it entered or ran other than the plan says.
+    /// What each execution the judgement `asked` rests on, each paired with the route's `plan` entry for its target, or nothing where one of them did not name what it entered or ran a target the plan does not.
     #[must_use]
     pub fn executions(&self, asked: &[MutantResult], plan: &[Planned]) -> Option<Vec<Execution>> {
         if asked.is_empty() || asked.len() > plan.len() {
@@ -181,11 +181,8 @@ impl Session {
         let tree = self.carried_tree();
         asked
             .iter()
-            .zip(plan)
-            .map(|(result, planned)| {
-                if result.target != planned.target {
-                    return None;
-                }
+            .map(|result| {
+                let planned = plan.iter().find(|one| one.target == result.target)?;
                 let entered = result.entered.as_ref()?;
                 let items = entered
                     .items
