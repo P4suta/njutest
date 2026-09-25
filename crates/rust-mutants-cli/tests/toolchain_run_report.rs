@@ -285,7 +285,7 @@ fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
             njutest_devkit::paths::utf8(fixture.root()),
         ])
         .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
+        .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
         .env("XDG_CACHE_HOME", fixture.cache())
         .env_remove("RUST_MUTANTS_ACTIVE")
         .env_remove("RUST_MUTANTS_CATALOG")

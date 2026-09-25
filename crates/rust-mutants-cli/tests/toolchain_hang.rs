@@ -20,7 +20,7 @@ use njutest_devkit::fixture::Fixture;
 fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
+    command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
     command.env("XDG_CACHE_HOME", fixture.cache());
     for (name, value) in env {
         command.env(name, value);

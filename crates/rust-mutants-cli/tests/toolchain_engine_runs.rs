@@ -60,7 +60,7 @@ fn recorded(fixture: &Fixture) -> PathBuf {
     command.env_clear();
     command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]));
     command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
+    command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
     command.env("XDG_CACHE_HOME", fixture.cache());
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
