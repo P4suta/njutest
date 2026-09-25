@@ -78,7 +78,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
@@ -1338,6 +1338,40 @@ fn a_comparison_an_interrupted_run_made_is_not_one_the_resumed_run_made() {
         concluded_limitations.contains(&njutest::limitation::DRIFT_NOT_MEASURED.to_owned()),
         "and the run says so rather than claiming a hold it did not observe: \
          {concluded_limitations:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn another_build_of_njutest_believes_nothing_an_earlier_build_kept() {
+    let fixture = fixture("fixture-assured");
+    let engines = tempfile::tempdir().expect("a directory for two engines");
+    let (one, rebuilt) = (engines.path().join("one"), engines.path().join("rebuilt"));
+    std::fs::write(&one, b"one build of njutest").expect("write");
+    std::fs::write(&rebuilt, b"another build of njutest").expect("write");
+    let by = |engine: &Path| Environment {
+        program: engine.to_path_buf(),
+        ..of(&fixture.root, &[])
+    };
+    let args = ["verify", "--offline", "--locked"];
+    assert_eq!(asked(&by(&one), &args).status.code(), Some(0));
+    assert_eq!(asked(&by(&one), &args).status.code(), Some(0));
+    let again = document(&fixture);
+    assert_eq!(
+        again["provenance"]["cached"], true,
+        "the same build over the same tree reads its own answer back: {again}"
+    );
+    assert_eq!(asked(&by(&rebuilt), &args).status.code(), Some(0));
+    let other = document(&fixture);
+    assert_ne!(
+        other["provenance"]["identity"], again["provenance"]["identity"],
+        "a build of njutest is part of what a run is"
+    );
+    assert_eq!(other["provenance"]["cached"], false);
+    assert_eq!(
+        other["builds"][0]["parts"][0]["accounting"]["mutants"]["reused_killed"], 0,
+        "a kill the other build kept was decided by rules this build may not share, so it is \
+         asked again: {other}"
     );
 }
 

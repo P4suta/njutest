@@ -22,6 +22,7 @@ fn common() -> Common {
     Common {
         toolchain: "rustc 1.98.0".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
+        engine: "e".repeat(64),
         environment: vec![("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned())],
         contract: "standard-v1".to_owned(),
         test_args: vec!["--test-threads=1".to_owned()],
@@ -779,5 +780,17 @@ fn a_word_that_is_ordinary_english_does_not_key_a_package_on_the_whole_tree() {
         reads_directories_under(repo.root(), &scanned, ""),
         "while a package that reaches the crate does say so, and the path it is reached \
          through is what says it"
+    );
+}
+
+#[test]
+fn a_kill_another_build_of_njutest_kept_is_not_this_build_s_answer() {
+    let mut rebuilt = common();
+    rebuilt.engine = "f".repeat(64);
+    assert_ne!(
+        behaviour(&linked(), &rebuilt),
+        behaviour(&linked(), &common()),
+        "a build of njutest may decide a mutation differently from the build that kept the \
+         answer, so a record keyed by one is never believed by the other"
     );
 }

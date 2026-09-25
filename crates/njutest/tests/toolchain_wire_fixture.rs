@@ -246,7 +246,7 @@ fn environment(fixture: &Fixture) -> Environment {
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         temp_directory: fixture.temp().to_path_buf(),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[]),
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),

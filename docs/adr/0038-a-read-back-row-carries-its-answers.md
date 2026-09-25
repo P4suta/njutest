@@ -53,3 +53,6 @@ A checkpoint written before it is refused as corrupt, as any checkpoint of anoth
 
 A kill is now reused under a narrower condition than before: a target that entered the route ahead of the killer refuses it.
 That is the condition under which asking again could have given an answer the record does not have.
+
+The same class reaches past the tree: an answer one build of njutest kept was read back by another whose rules for deciding it had changed.
+So every behaviour key and the run identity also carry the digest of the njutest executable, and a rebuild or an upgrade starts from a cold store rather than from answers it may not share.

@@ -307,6 +307,7 @@ fn inputs() -> Inputs {
         dependencies: "c".repeat(64),
         toolchain: "rustc 1.98.0".to_owned(),
         platform: "x86_64-unknown-linux-gnu".to_owned(),
+        engine: "e".repeat(64),
         environment: vec![("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned())],
         contract: Contract::StandardV1,
         configuration: "d".repeat(64),

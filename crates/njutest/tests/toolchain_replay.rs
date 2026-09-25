@@ -63,7 +63,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
-        program: PathBuf::from("this test never runs it"),
+        program: PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
         terminal: njutest::presentation::Terminal::default(),
