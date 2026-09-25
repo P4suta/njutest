@@ -19,9 +19,9 @@ extern crate self as rust_mutants_cli;
 mod product;
 pub(crate) use product::Streams;
 pub(crate) use product::{
-    Composition, EXIT_USAGE, Environment, app, cli, config, diagnostics, ended, error, exit_codes,
-    filesystem, interruptible, kept, outcomes, report, run, run_from_compiled, settings, stream,
-    strictjson, text, tui, ui,
+    CiHost, Composition, EXIT_USAGE, Environment, app, cli, config, diagnostics, ended, error,
+    exit_codes, filesystem, interruptible, kept, outcomes, report, run, run_from_compiled,
+    settings, stream, strictjson, text, tui, ui,
 };
 
 #[path = "../../../crates/rust-mutants-cli/src/bin/cargo-rust-mutants/main.rs"]

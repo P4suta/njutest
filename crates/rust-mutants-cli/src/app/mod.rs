@@ -3,6 +3,7 @@
 
 //! The commands: what each one opens, what it establishes, and what it writes.
 
+pub mod ci;
 pub mod trace;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,7 +108,8 @@ pub fn dispatch(
         | cli::Command::Trace { .. }
         | cli::Command::Rules { .. }
         | cli::Command::Diagnostics { .. }
-        | cli::Command::Cache { .. } => kept_command(
+        | cli::Command::Cache { .. }
+        | cli::Command::Ci { .. } => kept_command(
             command,
             environment,
             crate::Streams {
@@ -161,6 +163,7 @@ fn kept_command(
             stdout,
         ),
         cli::Command::Trace { command } => trace::read(command, environment, stdout),
+        cli::Command::Ci { command } => ci::dispatch(command, environment, stdout),
         cli::Command::Rules { tier, json } => rules(tier.as_deref(), *json, stdout),
         cli::Command::Diagnostics { run, root, output } => bundle(
             &Gathering {
@@ -539,7 +542,8 @@ fn measured(
         | cli::Command::Report { .. }
         | cli::Command::Rules { .. }
         | cli::Command::Diagnostics { .. }
-        | cli::Command::Cache { .. } => {
+        | cli::Command::Cache { .. }
+        | cli::Command::Ci { .. } => {
             let streams = streaming(command);
             if streams {
                 crate::stream::started(
@@ -780,7 +784,8 @@ fn previewed(
         | cli::Command::Report { .. }
         | cli::Command::Rules { .. }
         | cli::Command::Diagnostics { .. }
-        | cli::Command::Cache { .. } => Ok(String::new()),
+        | cli::Command::Cache { .. }
+        | cli::Command::Ci { .. } => Ok(String::new()),
     }
 }
 
@@ -958,7 +963,8 @@ fn prepared(
         | cli::Command::Report { .. }
         | cli::Command::Rules { .. }
         | cli::Command::Diagnostics { .. }
-        | cli::Command::Cache { .. } => Ok(PreparedOutcome::complete(0)),
+        | cli::Command::Cache { .. }
+        | cli::Command::Ci { .. } => Ok(PreparedOutcome::complete(0)),
     }
 }
 
@@ -1362,7 +1368,8 @@ fn validation_filter(
         | cli::Command::Report { .. }
         | cli::Command::Rules { .. }
         | cli::Command::Diagnostics { .. }
-        | cli::Command::Cache { .. } => Ok(None),
+        | cli::Command::Cache { .. }
+        | cli::Command::Ci { .. } => Ok(None),
     }
 }
 
