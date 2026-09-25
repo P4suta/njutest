@@ -867,3 +867,351 @@ fn a_pointer_that_names_no_run_is_not_a_run() {
          would put whatever is at the guess in front of a person as what their run found"
     );
 }
+
+/// Where `src/lib.rs` in `root` is, as the client names it.
+fn library(root: &std::path::Path) -> String {
+    njutest::app::lsp::uri_of(&root.join("src/lib.rs")).expect("a UTF-8 path")
+}
+
+/// A request for what the server says about the document at `uri`, over every line of it.
+fn asking(id: u32, method: &str, uri: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": method,
+        "params": {
+            "textDocument": { "uri": uri },
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 100, "character": 0 } },
+        },
+    })
+}
+
+/// What a client holding `text` as `src/lib.rs` is told, having opened it and then sent `asked`.
+fn guarding(root: &std::path::Path, text: &str, asked: &[Value]) -> Vec<Value> {
+    let mut messages = vec![
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+        json!({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": { "textDocument": {
+                "uri": library(root), "languageId": "rust", "version": 1, "text": text,
+            } },
+        }),
+    ];
+    messages.extend(asked.iter().cloned());
+    answers(served(&messages, root).said)
+}
+
+/// The answer to the request sent under `id`.
+fn answered(said: &[Value], id: u32) -> &Value {
+    let Some(answer) = said.iter().find(|one| one["id"] == id) else {
+        panic!("an answer under id {id}: {said:?}");
+    };
+    &answer["result"]
+}
+
+/// A client's edit that leaves `text` in the buffer at `uri`.
+fn changed(uri: &str, version: u32, text: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": uri, "version": version },
+            "contentChanges": [ { "text": text } ],
+        },
+    })
+}
+
+#[test]
+fn the_server_says_it_marks_lines_and_asks_for_the_whole_buffer_as_it_changes() {
+    let root = tempfile::tempdir().expect("a directory");
+    let said = answers(
+        served(
+            &[json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} })],
+            root.path(),
+        )
+        .said,
+    );
+    let capabilities = &answered(&said, 1)["capabilities"];
+    assert_eq!(capabilities["inlayHintProvider"], Value::Bool(true));
+    assert_eq!(
+        capabilities["codeLensProvider"],
+        json!({ "resolveProvider": false })
+    );
+    assert_eq!(
+        capabilities["textDocumentSync"]["change"],
+        json!(1),
+        "a mark is only true of the bytes the run read, so the server has to hold the buffer \
+         the client holds rather than the file on disk"
+    );
+}
+
+#[test]
+fn an_open_file_the_run_measured_is_marked_where_its_changes_start_with_what_stands_behind_each_mark()
+ {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[
+            asking(2, "textDocument/inlayHint", &uri),
+            asking(3, "textDocument/codeLens", &uri),
+        ],
+    );
+    let hints = answered(&said, 2).as_array().expect("inlay hints");
+    let [hint] = hints.as_slice() else {
+        panic!("one mark for the one line a change starts on: {said:?}");
+    };
+    assert_eq!(
+        hint["position"],
+        json!({ "line": 6, "character": 8 }),
+        "the mark sits at the end of line 7, counted as the client counts: the clef is two \
+         UTF-16 units"
+    );
+    assert_eq!(hint["label"], "\u{25cb} left free");
+    let told = hint["tooltip"].as_str().expect("a tooltip in plain text");
+    assert!(
+        told.contains("deleting `>`")
+            && told.contains("nothing noticed it")
+            && told.contains("njutest explain src/lib.rs:demo:gt-to-ge@7"),
+        "hovering the mark says what was changed, what stands behind the mark, and the \
+         command that asks about it: {told}"
+    );
+    let lenses = answered(&said, 3).as_array().expect("code lenses");
+    let [lens] = lenses.as_slice() else {
+        panic!("one lens for the one item: {said:?}");
+    };
+    assert_eq!(lens["range"]["start"], json!({ "line": 6, "character": 0 }));
+    assert_eq!(lens["command"]["title"], "demo: 1 left free");
+    assert_eq!(
+        lens["command"]["arguments"],
+        json!(["src/lib.rs:demo"]),
+        "the lens names the item as `njutest spec` reads it"
+    );
+}
+
+#[test]
+fn a_buffer_holding_other_bytes_than_the_run_read_is_marked_nowhere_until_it_holds_them_again() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let unopened =
+        njutest::app::lsp::uri_of(&root.path().join("src/other.rs")).expect("a UTF-8 path");
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[
+            changed(&uri, 2, &format!("{CLEF}\n")),
+            asking(2, "textDocument/inlayHint", &uri),
+            asking(3, "textDocument/codeLens", &uri),
+            changed(&uri, 3, CLEF),
+            asking(4, "textDocument/inlayHint", &uri),
+            asking(5, "textDocument/inlayHint", &unopened),
+        ],
+    );
+    assert_eq!(
+        answered(&said, 2),
+        &json!([]),
+        "an edit the file on disk does not have yet still makes the buffer another program, \
+         and a mark on it would be about code nobody asked about"
+    );
+    assert_eq!(answered(&said, 3), &json!([]));
+    assert_eq!(
+        answered(&said, 4).as_array().map(Vec::len),
+        Some(1),
+        "undoing the edit gives back the bytes the run read, and the mark with them"
+    );
+    assert_eq!(
+        answered(&said, 5),
+        &json!([]),
+        "a document the client never opened is one the server holds no bytes of"
+    );
+}
+
+#[test]
+fn the_latest_run_is_read_once_however_often_marks_are_asked_for() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[
+            asking(2, "textDocument/inlayHint", &uri),
+            asking(3, "textDocument/inlayHint", &uri),
+            asking(4, "textDocument/codeLens", &uri),
+        ],
+    );
+    let reads = said
+        .iter()
+        .filter(|one| {
+            one["method"] == "window/logMessage"
+                && one["params"]["message"]
+                    .as_str()
+                    .is_some_and(|said| said.starts_with("reading run one"))
+        })
+        .count();
+    assert_eq!(
+        reads, 1,
+        "an editor asks for marks on every scroll, and the report is read once for as long as \
+         its run is the latest: {said:?}"
+    );
+}
+
+#[test]
+fn an_edit_with_a_range_is_not_taken_for_the_whole_document() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let incremental = json!({
+        "jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [ {
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } },
+                "text": CLEF,
+            } ],
+        },
+    });
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[incremental, asking(2, "textDocument/inlayHint", &uri)],
+    );
+    assert_eq!(
+        answered(&said, 2),
+        &json!([]),
+        "an edit with a range is a piece of the document put somewhere in it: the buffer now \
+         holds the run's bytes twice, and taking the piece for the whole would mark it"
+    );
+    assert!(
+        said.iter().any(|one| {
+            one["method"] == "window/logMessage"
+                && one["params"]["message"]
+                    .as_str()
+                    .is_some_and(|said| said.contains("sent an edit as a range"))
+        }),
+        "the client is told why its marks went away: {said:?}"
+    );
+}
+
+#[test]
+fn a_uri_is_the_file_it_names_however_the_client_spells_it_and_names_no_file_outside_the_root() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let plain = library(root.path());
+    let localhost = plain.replacen("file://", "file://localhost", 1);
+    let escaping = plain.replacen("/src/lib.rs", "/src/../../src/lib.rs", 1);
+    for (uri, marked) in [(&localhost, true), (&escaping, false)] {
+        let said = answers(
+            served(
+                &[
+                    json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+                    json!({
+                        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                        "params": { "textDocument": {
+                            "uri": uri, "languageId": "rust", "version": 1, "text": CLEF,
+                        } },
+                    }),
+                    asking(2, "textDocument/inlayHint", uri),
+                ],
+                root.path(),
+            )
+            .said,
+        );
+        assert_eq!(
+            answered(&said, 2).as_array().map(Vec::len),
+            Some(usize::from(marked)),
+            "{uri}: `file://localhost/` is the local file RFC 8089 says it is, and a path that \
+             climbs out of the root names no file the run read, whatever bytes it holds"
+        );
+    }
+}
+
+#[test]
+fn an_edit_that_says_only_how_long_a_range_it_replaced_is_not_taken_for_the_whole_document() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    let uri = library(root.path());
+    let sized = json!({
+        "jsonrpc": "2.0", "method": "textDocument/didChange",
+        "params": {
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [ { "rangeLength": 0, "text": CLEF } ],
+        },
+    });
+    let said = guarding(
+        root.path(),
+        CLEF,
+        &[sized, asking(2, "textDocument/inlayHint", &uri)],
+    );
+    assert_eq!(
+        answered(&said, 2),
+        &json!([]),
+        "`rangeLength` is the deprecated half of a ranged edit, and an edit that has it is a \
+         piece of the document rather than all of it"
+    );
+}
+
+#[test]
+fn a_path_a_uri_cannot_spell_as_it_is_is_escaped_and_read_back_as_the_same_file() {
+    let parent = tempfile::Builder::new()
+        .prefix("njutest lsp #1 ")
+        .tempdir()
+        .expect("a directory whose name a URI has to escape");
+    let root = parent.path().join("a%20b?c");
+    std::fs::create_dir_all(&root).expect("a root whose name looks like an escape");
+    ran(&root);
+    let said = answers(
+        served(
+            &[
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+                json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }),
+            ],
+            &root,
+        )
+        .said,
+    );
+    let published = said
+        .iter()
+        .find(|one| one["method"] == "textDocument/publishDiagnostics")
+        .and_then(|one| one["params"]["uri"].as_str())
+        .unwrap_or_else(|| panic!("the findings are published: {said:?}"));
+    assert!(
+        !published.contains(' ') && !published.contains('#') && !published.contains('?'),
+        "a space, a `#` and a `?` in a path are escaped, or a client reads the rest of the \
+         path as a fragment or a query and puts the findings on another document: {published}"
+    );
+    assert_eq!(
+        njutest::app::lsp::path_of(published, &root).as_deref(),
+        Some("src/lib.rs"),
+        "what the server publishes under is what it reads a client's request for as: \
+         {published}"
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn a_uri_the_server_writes_names_the_file_it_was_written_for(
+        segments in proptest::collection::vec("[a-z %#?&=+@:é\u{1D11E}.-]{1,8}", 1..4),
+    ) {
+        let segments: Vec<String> = segments
+            .into_iter()
+            .map(|segment| segment.trim_matches('.').to_owned())
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        proptest::prop_assume!(!segments.is_empty());
+        let root = std::path::Path::new("/workspace root#1");
+        let relative = segments.join("/");
+        proptest::prop_assume!(
+            rust_mutants::id::normalize_path(&relative).as_deref() == Ok(relative.as_str()),
+            "only a path a report can name is one a finding is published under"
+        );
+        let uri = njutest::app::lsp::uri_of(&root.join(&relative)).expect("a UTF-8 path");
+        proptest::prop_assert_eq!(
+            njutest::app::lsp::path_of(&uri, root),
+            Some(relative.clone()),
+            "{} came back from {}",
+            relative,
+            uri
+        );
+    }
+}
