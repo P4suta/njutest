@@ -180,34 +180,8 @@ depends = ["kani:laws"]
 run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked --workspace --all-features --lib real_kani_068 -- --test-threads=1"
 
 [tasks."kani:laws"]
-description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation"
-run = """
-set -eu
-export_file="$(mktemp "${TMPDIR:-/tmp}/njutest-kani-laws.XXXXXX")"
-cleanup() { rm -f "$export_file"; }
-trap cleanup EXIT HUP INT TERM
-env -u RUSTFLAGS cargo kani -p rust-mutants --lib --exact --no-assertion-reach-checks \
-  --harness instrument::runtime::kani_laws::a_counting_checkpoint_counts \
-  --harness instrument::runtime::kani_laws::a_counting_checkpoint_never_stops \
-  --harness instrument::runtime::kani_laws::a_dormant_checkpoint_cannot_spend \
-  --harness instrument::runtime::kani_laws::counting_is_not_reachable_from_dormant_or_active \
-  --harness instrument::runtime::kani_laws::activation_is_idempotent \
-  --harness instrument::runtime::kani_laws::an_active_checkpoint_advances_or_reaches_the_exact_boundary \
-  --harness instrument::runtime::kani_laws::stopping_is_absorbing \
-  --harness session::kani_laws::attempt_duration_is_the_checked_sum_of_every_execution \
-  --harness session::kani_laws::attempt_ledger_is_nonempty_and_its_result_is_derived \
-  --harness session::kani_laws::cancellation_before_retry_cannot_create_a_retry \
-  --harness session::kani_laws::cancelled_retry_is_structurally_not_run \
-  --harness session::kani_laws::equal_outcomes_choose_the_canonical_target_in_every_order \
-  --harness session::kani_laws::killed_is_absorbing \
-  --harness session::kani_laws::retry_reconciliation_is_closed \
-  --harness session::kani_laws::survived_means_every_nonempty_target_survived \
-  --harness session::kani_laws::target_join_is_associative \
-  --harness session::kani_laws::target_join_is_commutative \
-  --harness session::kani_laws::target_join_is_idempotent \
-  -Z unstable-options --export-json "$export_file"
-cargo xtask kani-laws-audit "$export_file"
-"""
+description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation, reading back the proof of identical inputs"
+run = 'cargo xtask kani-laws --cache "${XDG_CACHE_HOME:-$HOME/.cache}/njutest/kani-laws"'
 
 # The floors are the ones .github/workflows/ci.yml enforces, in the same order
 # and with the same scoping. Never lower one; raise one when its suite earns it,
