@@ -268,7 +268,7 @@ where
         Gate::FuzzClippy { alternate: _ } => fuzzclippy::check(&root, process.cargo)
             .map_err(|error| gates::GateFailure(error.coded())),
         Gate::Docflows { actionlint } => docflows::check(&root, actionlint.as_os_str())
-            .map_err(|error| gates::GateFailure(error.to_string())),
+            .map_err(|error| gates::GateFailure(error.coded())),
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::KaniLaws { cache } => kanilaws::laws(&root, process.cargo, &cache),
         Gate::KaniLawsAudit { export } => kaniaudit::audit(&export, &root)
@@ -316,7 +316,7 @@ where
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::Waivers => gates::waivers(&root),
         Gate::RemoteCheck { machines, worktree } => remote::check(worktree.as_deref().unwrap_or(&root), &machines)
-            .map_err(|error| gates::GateFailure(error.to_string())),
+            .map_err(|error| gates::GateFailure(error.coded())),
         Gate::All => gates::all(&root),
     };
     match outcome {
@@ -423,13 +423,19 @@ fn slot(
     let lanes = match lanes::Lanes::from_environment(process.environment) {
         Ok(lanes) => lanes,
         Err(failure) => {
-            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::FAILURE);
+            return after_output(
+                writeln!(stderr, "slot: {}", failure.coded()),
+                ExitCode::FAILURE,
+            );
         }
     };
     let stops = match work::Stops::arm() {
         Ok(stops) => stops,
         Err(failure) => {
-            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::FAILURE);
+            return after_output(
+                writeln!(stderr, "slot: {}", failure.coded()),
+                ExitCode::FAILURE,
+            );
         }
     };
     let holder = lanes::Holder {
@@ -450,7 +456,10 @@ fn slot(
         Ok(held) => held,
         Err(failure) => {
             let code = failure.signal().map_or(1, signalled_code);
-            return after_output(writeln!(stderr, "slot: {failure}"), ExitCode::from(code));
+            return after_output(
+                writeln!(stderr, "slot: {}", failure.coded()),
+                ExitCode::from(code),
+            );
         }
     };
     let mut running = Command::new(program);
@@ -464,7 +473,10 @@ fn slot(
         Ok(work::Ended::Exited(status)) => ExitCode::from(exit_status(status)),
         Ok(work::Ended::Interrupted { signal }) => ExitCode::from(signalled_code(signal)),
         Ok(work::Ended::OverBudget { .. } | work::Ended::Quiet { .. }) => ExitCode::from(124),
-        Err(failure) => after_output(writeln!(stderr, "slot: {failure}"), ExitCode::from(127)),
+        Err(failure) => after_output(
+            writeln!(stderr, "slot: {}", failure.coded()),
+            ExitCode::from(127),
+        ),
     }
 }
 
@@ -513,7 +525,10 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     let stops = match work::Stops::arm() {
         Ok(stops) => stops,
         Err(failure) => {
-            return after_output(writeln!(stderr, "tidy: {failure}"), ExitCode::FAILURE);
+            return after_output(
+                writeln!(stderr, "tidy: {}", failure.coded()),
+                ExitCode::FAILURE,
+            );
         }
     };
     let mut running = Command::new(program);
@@ -527,10 +542,18 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
         Ok(work::Ended::Interrupted { signal }) => signalled_code(signal),
         Ok(work::Ended::OverBudget { .. } | work::Ended::Quiet { .. }) => 124,
         Err(failure) => {
-            return after_output(writeln!(stderr, "tidy: {failure}"), ExitCode::from(127));
+            return after_output(
+                writeln!(stderr, "tidy: {}", failure.coded()),
+                ExitCode::from(127),
+            );
         }
     };
-    let left = match std::fs::read_dir(scratch.path()) {
+    left_behind(scratch.path(), code, stderr)
+}
+
+/// The run's own exit `code` where it left nothing in `scratch`, and a refusal naming each entry where it did.
+fn left_behind(scratch: &Path, code: u8, stderr: &mut dyn Write) -> ExitCode {
+    let left = match std::fs::read_dir(scratch) {
         Ok(entries) => entries
             .map(|entry| entry.map(|entry| entry.file_name().display().to_string()))
             .collect::<std::io::Result<Vec<String>>>(),
@@ -608,7 +631,7 @@ fn pre_push(process: &Process<'_>, input: &mut dyn BufRead, stderr: &mut dyn Wri
         Err(failure) => {
             let code = ExitCode::from(failure.exit_code());
             let written = failure
-                .to_string()
+                .coded()
                 .lines()
                 .try_for_each(|line| writeln!(stderr, "pre-push: {line}"));
             after_output(written, code)

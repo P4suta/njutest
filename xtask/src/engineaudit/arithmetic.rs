@@ -117,8 +117,16 @@ fn mint(row: &Row) -> Result<String, IdentityWidthError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// An identity field longer than the length prefix it is minted with can say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("an identity field exceeds the u32 length prefix")]
 struct IdentityWidthError;
+
+impl crate::error::Coded for IdentityWidthError {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::IdentityField
+    }
+}
 
 /// The lowercase hex SHA-256 of `bytes`.
 fn digest(bytes: &[u8]) -> String {

@@ -65,6 +65,18 @@ pub enum RecordError {
     },
 }
 
+impl crate::error::Coded for RecordError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unnamed { .. }
+            | Self::Duplicate { .. }
+            | Self::Heading { .. }
+            | Self::Summary { .. }
+            | Self::Dangling { .. } => crate::error::XtCode::AdrRecord,
+        }
+    }
+}
+
 /// The number a decision record's file name gives it, or nothing where the name is not `NNNN-slug.md`.
 #[must_use]
 pub fn numbered(file: &str) -> Option<u16> {

@@ -77,6 +77,14 @@ pub enum Contradiction {
     },
 }
 
+impl crate::error::Coded for Contradiction {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::NotRun { .. } | Self::Outcome { .. } => crate::error::XtCode::RepairContradicted,
+        }
+    }
+}
+
 /// What a repair of a mutation at `index` whose last execution came to `outcome`, with the repair touch record `touch`, decides, `was` being what it had.
 ///
 /// # Errors

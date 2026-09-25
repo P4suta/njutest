@@ -43,6 +43,16 @@ pub enum SchemaError {
     },
 }
 
+impl crate::error::Coded for SchemaError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unparsable { .. } | Self::Uncompiled { .. } => {
+                crate::error::XtCode::SchemaUncompilable
+            }
+        }
+    }
+}
+
 /// Where one value departs from its schema.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{message} at {pointer:?}")]
@@ -51,6 +61,12 @@ pub struct OffSchema {
     pub pointer: String,
     /// What the validator said of it.
     pub message: String,
+}
+
+impl crate::error::Coded for OffSchema {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::RecordingOffSchema
+    }
 }
 
 /// A compiled schema for one producer's lines.

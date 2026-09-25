@@ -63,6 +63,16 @@ pub enum WorkError {
     },
 }
 
+impl crate::error::Coded for WorkError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Start { .. } | Self::Watch { .. } | Self::Signals { .. } => {
+                crate::error::XtCode::WorkUnrun
+            }
+        }
+    }
+}
+
 /// The signals that make this process stop its work before it ends: `SIGINT`, `SIGTERM` and `SIGHUP`.
 #[derive(Debug)]
 pub struct Stops {

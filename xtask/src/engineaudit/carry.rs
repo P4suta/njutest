@@ -432,6 +432,14 @@ pub enum PageError {
     },
 }
 
+impl crate::error::Coded for PageError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::MissingBlock { .. } => crate::error::XtCode::CarryPage,
+        }
+    }
+}
+
 impl PageLists {
     /// The lists of the page `text`.
     ///

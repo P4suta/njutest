@@ -1998,13 +1998,13 @@ pub fn adrs(root: &Path) -> Result<String, GateFailure> {
             .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
         files.push((name, text));
     }
-    let records =
-        crate::adrs::records(&files).map_err(|error| GateFailure(format!("adrs: {error}")))?;
+    let records = crate::adrs::records(&files)
+        .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
     let book = root.join("docs/SUMMARY.md");
     let listed = std::fs::read_to_string(&book)
         .map_err(|error| GateFailure(format!("{}: {error}", book.display())))?;
     crate::adrs::summary(&listed, &records)
-        .map_err(|error| GateFailure(format!("adrs: {error}")))?;
+        .map_err(|error| GateFailure(format!("adrs: {}", error.coded())))?;
     let mut dangling = Vec::new();
     let mut pages = 0_usize;
     for entry in WalkDir::new(root)
@@ -2032,7 +2032,7 @@ pub fn adrs(root: &Path) -> Result<String, GateFailure> {
         dangling.extend(
             crate::adrs::dangling(&page, &text, &records)
                 .iter()
-                .map(ToString::to_string),
+                .map(crate::error::Coded::coded),
         );
     }
     if !dangling.is_empty() {

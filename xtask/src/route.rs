@@ -63,9 +63,20 @@ pub(crate) fn required<'a, T>(
         })
 }
 
+impl crate::error::Coded for ReadCause {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Json { .. } => crate::error::XtCode::RecordingLine,
+            Self::OffSchema { .. } => crate::error::XtCode::RecordingOffSchema,
+            Self::Schema(schema) => crate::error::Coded::code(schema),
+            Self::Absent { .. } => crate::error::XtCode::RecordingUnread,
+        }
+    }
+}
+
 impl crate::error::Coded for ReadError {
     fn code(&self) -> crate::error::XtCode {
-        crate::error::XtCode::RecordingLine
+        crate::error::Coded::code(&self.cause)
     }
 }
 

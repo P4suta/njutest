@@ -18,6 +18,32 @@ pub enum XtCode {
     FuzzCargo,
     /// A published schema does not compile.
     SchemaUncompilable,
+    /// A decision record is misnamed, shares a number, carries another heading, is listed wrongly, or is named by a dangling link.
+    AdrRecord,
+    /// The documented workflows could not be checked.
+    DocflowsUnchecked,
+    /// actionlint refused a documented workflow.
+    DocflowsRefused,
+    /// The pre-push gate cannot check what the push names.
+    PushUnverifiable,
+    /// The pre-push tree moved or was changed during its check.
+    PushTreeMoved,
+    /// The pre-push check failed.
+    PushCheckFailed,
+    /// The pre-push check was stopped.
+    PushCheckStopped,
+    /// The pre-push gate could not run its check.
+    PushGateUnrun,
+    /// A run's lane could not be held.
+    LaneUnavailable,
+    /// A run was stopped while it waited for its lane.
+    LaneInterrupted,
+    /// A gate's program could not be run.
+    WorkUnrun,
+    /// The other machines could not be asked.
+    RemoteUnrun,
+    /// Another machine refused the commit.
+    RemoteRefused,
     /// A fixture tree could not be walked or read.
     FixtureUnreadable,
     /// A fixture tree holds a symbolic link.
@@ -50,6 +76,18 @@ pub enum XtCode {
     ProofUnshaped,
     /// A report on its schema lacks a field a layer reads.
     ProofUnreadReport,
+    /// A thread standing contradicts the recording.
+    ThreadsContradicted,
+    /// An exploration contradicts its recorded controls.
+    ExplorationContradicted,
+    /// Recorded controls are no schedule an exploration runs.
+    ScheduleUnreplayable,
+    /// A thread standing has no record to rest on.
+    ThreadsUnwitnessed,
+    /// A fault decision contradicts its executions.
+    FaultContradicted,
+    /// A repair contradicts its recorded execution.
+    RepairContradicted,
     /// An engine run directory holds no report.
     EngineUnreadable,
     /// An engine report is not JSON.
@@ -64,6 +102,8 @@ pub enum XtCode {
     EngineUnrecognised,
     /// An engine run report departs from its published schema.
     EngineOffSchema,
+    /// The carry page lacks a block the carry audit reads.
+    CarryPage,
     /// A Kani export could not be read.
     KaniUnreadable,
     /// A Kani export is not the pinned release for this workspace.
@@ -92,6 +132,10 @@ pub enum XtCode {
     IdentityField,
     /// A recording line is not JSON.
     RecordingLine,
+    /// A recording line departs from its producer's schema.
+    RecordingOffSchema,
+    /// A recording line on its schema lacks a field a reader reads.
+    RecordingUnread,
     /// A report of `report-diff` could not be read.
     DiffUnreadable,
     /// The bill of materials could not be made.
@@ -154,6 +198,71 @@ impl XtCode {
                 "XT0006",
                 "A published JSON schema under `schema/` does not compile, so nothing can be validated against it.",
                 "fix the schema the message names; `cargo xtask all` compiles every one",
+            ),
+            Self::AdrRecord => (
+                "XT0007",
+                "A decision record under the ADR directory is misnamed, shares its number, carries another's heading, is listed wrongly in the book, or is named by a link to no record.",
+                "fix the record, the book, or the link the message names",
+            ),
+            Self::DocflowsUnchecked => (
+                "XT0008",
+                "`docflows` could not check the workflows the documentation shows: a page could not be read, or actionlint could not be run or said something other than which workflows it refused.",
+                "check `actionlint` is installed, or name it with `--actionlint`, and read what it said",
+            ),
+            Self::DocflowsRefused => (
+                "XT0009",
+                "actionlint refused a workflow the documentation shows.",
+                "fix the snippet the message names, so a reader who copies it has a workflow that runs",
+            ),
+            Self::PushUnverifiable => (
+                "XT0101",
+                "The push names something the pre-push gate cannot check: an update Git did not give whole, an object other than the checked-out commit, a remote commit that is not here, a move that is not a fast-forward, or only deletions.",
+                "fetch the remote ref and push the checked-out commit as a fast-forward of it",
+            ),
+            Self::PushTreeMoved => (
+                "XT0102",
+                "The tree the pre-push gate checks stopped being the pushed commit while it ran, or the check changed it.",
+                "leave the worktree alone while a push runs, then push again",
+            ),
+            Self::PushCheckFailed => (
+                "XT0103",
+                "The check the pre-push gate runs failed.",
+                "read the check's own output above, fix what it names, and push again",
+            ),
+            Self::PushCheckStopped => (
+                "XT0104",
+                "The check the pre-push gate runs was stopped: it outlived its budget, said nothing for longer than the gate allows, or the gate was asked to stop.",
+                "push again when the machine is less loaded, or raise the budget the message names",
+            ),
+            Self::PushGateUnrun => (
+                "XT0105",
+                "The pre-push gate could not run its check: a program, Git, one of its own files, a setting, its lane, or its progress output failed it.",
+                "fix what the message names and push again",
+            ),
+            Self::LaneUnavailable => (
+                "XT0201",
+                "The lane a whole-workspace run waits in could not be found, written, locked, or reported on.",
+                "set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one the message names",
+            ),
+            Self::LaneInterrupted => (
+                "XT0202",
+                "The run was asked to stop while it waited for its lane.",
+                "nothing is wrong with the tree; run it again",
+            ),
+            Self::WorkUnrun => (
+                "XT0301",
+                "A program a gate runs could not be started or watched, or the signals that stop it could not be armed.",
+                "check the program the message names is installed and that this process may be signalled",
+            ),
+            Self::RemoteUnrun => (
+                "XT0401",
+                "`remote-check` could not ask the other machines: its machines file could not be read or names none, or a program, Git, a log, or the thread asking a machine failed it.",
+                "fix the machines file or what the message names, and run it again",
+            ),
+            Self::RemoteRefused => (
+                "XT0402",
+                "At least one other machine refused the commit.",
+                "read each machine's answer and fix what it names",
             ),
             Self::FixtureUnreadable => (
                 "XT1001",
@@ -235,6 +344,36 @@ impl XtCode {
                 "The report passed its schema and still lacks a field a layer of this audit reads, so the schema and the reader disagree.",
                 "report it; either the schema should require the field or the reader should not demand it",
             ),
+            Self::ThreadsContradicted => (
+                "XT2101",
+                "A report's thread standing for a test binary contradicts what the engine recording witnesses, or is no standing a run gives.",
+                "the runner decided what its own recording does not support: re-run, and report it if it recurs",
+            ),
+            Self::ExplorationContradicted => (
+                "XT2102",
+                "A report's exploration of a binary's schedules comes to something other than its recorded controls do.",
+                "the runner decided what its own recording does not support: re-run, and report it if it recurs",
+            ),
+            Self::ScheduleUnreplayable => (
+                "XT2103",
+                "The recorded controls of an exploration are not a schedule the exploration could have run.",
+                "re-run with `--trace`; a recording that cannot be replayed cannot be counted as agreement",
+            ),
+            Self::ThreadsUnwitnessed => (
+                "XT2104",
+                "The recording lacks the build or baseline record a thread standing is derived from.",
+                "re-run with `--trace` using this release",
+            ),
+            Self::FaultContradicted => (
+                "XT2105",
+                "A report's decision about a fault contradicts the fault's recorded executions.",
+                "the runner decided what its own recording does not support: re-run, and report it if it recurs",
+            ),
+            Self::RepairContradicted => (
+                "XT2106",
+                "A report's repair of a disposition contradicts the recorded execution of that repair.",
+                "the runner decided what its own recording does not support: re-run, and report it if it recurs",
+            ),
             Self::EngineUnreadable => (
                 "XT3001",
                 "The run directory holds no engine run report, or it or a document beside it could not be read.",
@@ -269,6 +408,11 @@ impl XtCode {
                 "XT3007",
                 "The engine run report departs from the published run-report schema, so a reader could meet an absent required field or a value of another shape.",
                 "re-run with this release; a report off its schema is not one to re-decide",
+            ),
+            Self::CarryPage => (
+                "XT3008",
+                "The carry page, `docs/engine/carry.md`, lacks a closed block the carry audit reads its lists from.",
+                "restore the fenced block the message names on the page",
             ),
             Self::KaniUnreadable => (
                 "XT4001",
@@ -339,6 +483,16 @@ impl XtCode {
                 "XT6002",
                 "A line of a recording is not JSON.",
                 "re-run with `--trace`",
+            ),
+            Self::RecordingOffSchema => (
+                "XT6003",
+                "A line of a recording departs from its producer's published schema, so a reader could meet an absent required field.",
+                "re-run with `--trace` using this release; a recording off its schema is not one to re-decide",
+            ),
+            Self::RecordingUnread => (
+                "XT6004",
+                "A line of a recording passed its producer's schema and still lacks a field a reader of this audit reads, so the schema and the reader disagree.",
+                "report it; either the schema should require the field or the reader should not demand it",
             ),
             Self::DiffUnreadable => (
                 "XT7001",

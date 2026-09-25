@@ -172,6 +172,16 @@ pub enum CompletionError {
     },
 }
 
+impl crate::error::Coded for CompletionError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::NotAnObject | Self::Template { .. } | Self::Shape { .. } => {
+                crate::error::XtCode::SpecimenIncomplete
+            }
+        }
+    }
+}
+
 /// The complete document a run writes holding the flat specimen `flat` as its one build's one part, completed from a committed report where the specimen says nothing.
 ///
 /// # Errors
