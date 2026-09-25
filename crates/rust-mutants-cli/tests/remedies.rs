@@ -27,7 +27,11 @@ fn every_flag_a_refusal_names_is_one_this_release_parses() {
     let mut named = 0_usize;
     let mut missing = Vec::new();
     for code in rust_mutants::error::error_codes() {
-        for text in [Some(code.summary), code.remedy].into_iter().flatten() {
+        let said = match code.remedy {
+            Some(remedy) => vec![code.summary, remedy],
+            None => vec![code.summary],
+        };
+        for text in said {
             for flag in njutest_devkit::named_flags::named_flags(text, "rust-mutants") {
                 named = named.saturating_add(1);
                 if !known.contains(&flag) {
