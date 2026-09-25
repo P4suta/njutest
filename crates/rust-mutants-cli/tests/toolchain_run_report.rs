@@ -1703,9 +1703,14 @@ fn an_edit_to_a_file_the_build_read_misses_the_outcome_store() {
     );
     for (edited, text) in [
         ("src/answer.txt", "30\n"),
+        ("waive", ""),
         (
             "build.rs",
             "fn main() {\n    let out = std::env::var_os(\"OUT_DIR\").expect(\"cargo sets OUT_DIR\");\n    std::fs::write(std::path::Path::new(&out).join(\"limit.rs\"), \"1\").expect(\"write the limit\");\n    println!(\"cargo::rerun-if-changed=build.rs\");\n}\n",
+        ),
+        (
+            "build.rs",
+            "fn main() {\n    let out = std::env::var_os(\"OUT_DIR\").expect(\"cargo sets OUT_DIR\");\n    std::fs::write(std::path::Path::new(&out).join(\"limit.rs\"), \"1\").expect(\"write the limit\");\n    println!(\"cargo::rustc-check-cfg=cfg(waived)\");\n    println!(\"cargo::rustc-cfg=waived\");\n    println!(\"cargo::rerun-if-changed=build.rs\");\n}\n",
         ),
     ] {
         std::fs::write(fixture.root().join(edited), text).expect("edit the input");

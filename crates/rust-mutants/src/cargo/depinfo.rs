@@ -174,6 +174,8 @@ pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>
 
 /// Every file the compiler read for a unit whose code runs while the build does rather than in a test: a procedural macro, and a build script, compiled for the build and not tested.
 ///
+/// A build script is compiled under `build/` rather than `deps/`, so it is never taken for an uplift.
+///
 /// # Errors
 /// What [`units_of`] refuses about one such unit's dep-info.
 pub fn compile_time_inputs(
@@ -187,7 +189,7 @@ pub fn compile_time_inputs(
         };
         let runs_in_the_build = artifact.target.is_custom_build()
             || (artifact.target.is_proc_macro() && !artifact.profile.test);
-        if !runs_in_the_build || is_uplift(artifact) {
+        if !runs_in_the_build || (!artifact.target.is_custom_build() && is_uplift(artifact)) {
             continue;
         }
         inputs.extend(unit_of(artifact, workspace_root)?.inputs);
@@ -195,6 +197,59 @@ pub fn compile_time_inputs(
     inputs.sort();
     inputs.dedup();
     Ok(inputs)
+}
+
+/// What one build script told the compilation of its package's units: configurations, environment, and what to link.
+/// None of it is in a dep-info, and every part of it changes what compiles.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Emitted {
+    /// The directory it wrote into, which names the run.
+    pub out_dir: Option<PathBuf>,
+    /// `cargo::rustc-cfg`, sorted.
+    pub cfgs: Vec<String>,
+    /// `cargo::rustc-env`, sorted.
+    pub env: Vec<(String, String)>,
+    /// `cargo::rustc-link-lib`, sorted.
+    pub linked_libs: Vec<String>,
+    /// `cargo::rustc-link-search`, sorted.
+    pub linked_paths: Vec<String>,
+}
+
+impl Emitted {
+    fn of(script: &super::messages::BuildScript) -> Self {
+        let sorted = |mut values: Vec<String>| {
+            values.sort();
+            values
+        };
+        let mut env = script.env.clone();
+        env.sort();
+        Self {
+            out_dir: script.out_dir.clone(),
+            cfgs: sorted(script.cfgs.clone()),
+            env,
+            linked_libs: sorted(script.linked_libs.clone()),
+            linked_paths: sorted(script.linked_paths.clone()),
+        }
+    }
+}
+
+/// What every build script of a compilation emitted, by the id of the package whose units it was emitted for, each package's sorted.
+#[must_use]
+pub fn emitted_of(messages: &[Message]) -> std::collections::BTreeMap<String, Vec<Emitted>> {
+    let mut emitted: std::collections::BTreeMap<String, Vec<Emitted>> =
+        std::collections::BTreeMap::new();
+    for message in messages {
+        if let Message::BuildScriptExecuted(script) = message {
+            emitted
+                .entry(script.package_id.clone())
+                .or_default()
+                .push(Emitted::of(script));
+        }
+    }
+    for told in emitted.values_mut() {
+        told.sort();
+    }
+    emitted
 }
 
 /// Whether this artifact is cargo's uplifted copy of a unit rather than the unit itself.
@@ -206,7 +261,7 @@ fn is_uplift(artifact: &Artifact) -> bool {
     })
 }
 
-/// Every place this artifact's dep-info could sit: cargo puts it beside the hashed file in `deps/` and, for a binary it uplifts, beside the copy too.
+/// Every place this artifact's dep-info could sit: cargo puts it beside the hashed file in `deps/` and, for a binary it uplifts, beside the copy too, and a build script's beside its hashed program under `build/`.
 fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> {
     let mut candidates = Vec::new();
     for file in artifact.filenames.iter().chain(artifact.executable.iter()) {
@@ -220,9 +275,21 @@ fn dep_info_candidates(artifact: &Artifact) -> Result<Vec<PathBuf>, CargoError> 
             )
         })?;
         candidates.push(candidate);
+        if artifact.target.is_custom_build()
+            && let Some(hashed) = build_script_dep_info(file, &artifact.target.name)
+        {
+            candidates.push(hashed);
+        }
     }
     candidates.dedup();
     Ok(candidates)
+}
+
+/// Where rustc left a build script's dep-info: cargo names the program `build-script-build` in a directory ending in the unit's hash, and rustc wrote `build_script_build-<hash>.d` beside it.
+fn build_script_dep_info(program: &Path, target: &str) -> Option<PathBuf> {
+    let directory = program.parent()?;
+    let hash = directory.file_name()?.to_str()?.rsplit_once('-')?.1;
+    Some(directory.join(format!("{}-{hash}.d", target.replace('-', "_"))))
 }
 
 fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {

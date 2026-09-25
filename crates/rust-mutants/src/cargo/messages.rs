@@ -43,6 +43,15 @@ pub struct BuildScript {
     /// What it put in the environment with `cargo::rustc-env`, in the order it said them.
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// The configurations it set with `cargo::rustc-cfg`, in the order it said them.
+    #[serde(default)]
+    pub cfgs: Vec<String>,
+    /// The libraries it asked to link with `cargo::rustc-link-lib`.
+    #[serde(default)]
+    pub linked_libs: Vec<String>,
+    /// The directories it asked to search with `cargo::rustc-link-search`.
+    #[serde(default)]
+    pub linked_paths: Vec<String>,
     #[serde(flatten)]
     external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }

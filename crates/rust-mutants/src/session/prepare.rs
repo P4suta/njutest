@@ -4,7 +4,7 @@
 //! Preparing a workspace: the gate it stands on, what the proof layers establish before anything is instrumented, and the one build every accepted mutant lives in.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{PrepareOptions, Session, Verified, verify};
@@ -174,7 +174,7 @@ fn scripts_of(
         let said = script
             .out_dir
             .as_deref()
-            .and_then(std::path::Path::parent)
+            .and_then(Path::parent)
             .map(|build| std::fs::read_to_string(build.join("output")));
         let text = match said {
             Some(Ok(text)) => text,
@@ -216,8 +216,8 @@ fn said_by(
 /// What one build script watches: its whole package where it named no path, and otherwise each path it named, inside the tree by place and outside it by what is there.
 fn watched_of(
     changed: Vec<String>,
-    directory: Option<&std::path::Path>,
-    root: &std::path::Path,
+    directory: Option<&Path>,
+    root: &Path,
 ) -> Result<crate::select::Watched, SessionError> {
     if changed.is_empty() {
         return Ok(crate::select::Watched::Package);
@@ -295,6 +295,10 @@ fn closure_of(
         .ok_or_else(|| SessionError::EvidencePathNotUtf8 {
             path: root.to_path_buf(),
         })?;
+    let portable = |text: &str| {
+        text.replace(target_text, "$target")
+            .replace(root_text, "$root")
+    };
     let env: BTreeMap<&str, Option<&str>> = checked
         .units
         .iter()
@@ -304,14 +308,15 @@ fn closure_of(
     for (name, value) in env {
         let value = value.map_or_else(
             || "unset".to_owned(),
-            |value| {
-                let portable = value
-                    .replace(target_text, "$target")
-                    .replace(root_text, "$root");
-                format!("set:{}", crate::id::digest(portable.as_bytes()))
-            },
+            |value| format!("set:{}", crate::id::digest(portable(value).as_bytes())),
         );
         files.insert(format!("$env/{name}"), value);
+    }
+    for scripts in crate::cargo::emitted_of(&checked.messages).values() {
+        for told in scripts {
+            let (name, digest) = emitted_entry(told, portable);
+            files.insert(name, digest);
+        }
     }
     if files.is_empty() {
         return Ok(String::new());
@@ -321,6 +326,42 @@ fn closure_of(
             .iter()
             .map(|(name, digest)| (name.as_str(), digest.as_str())),
     ))
+}
+
+/// What one build script emitted, as a closure entry: named by the directory it wrote into, and digested over every configuration, variable, and link request, with the run's own directories spelled portably.
+fn emitted_entry(
+    told: &crate::cargo::Emitted,
+    portable: impl Fn(&str) -> String,
+) -> (String, String) {
+    let named = told
+        .out_dir
+        .as_deref()
+        .and_then(Path::to_str)
+        .map_or_else(|| "unnamed".to_owned(), &portable);
+    let mut said = String::new();
+    for (kind, values) in [
+        ("cfg", told.cfgs.clone()),
+        (
+            "env",
+            told.env
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect(),
+        ),
+        ("lib", told.linked_libs.clone()),
+        ("path", told.linked_paths.clone()),
+    ] {
+        for value in values {
+            said.push_str(kind);
+            said.push('\0');
+            said.push_str(&portable(&value));
+            said.push('\n');
+        }
+    }
+    (
+        format!("$emitted/{named}"),
+        crate::id::digest(said.as_bytes()),
+    )
 }
 
 /// The digest of every manifest, the lock file, and the cargo configuration the build read.
@@ -1020,10 +1061,7 @@ fn resealed(
 /// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
-fn plan_tree(
-    root: &std::path::Path,
-    discovery: &discover::Discovery,
-) -> Result<Planned, EngineError> {
+fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, EngineError> {
     let found: Vec<Found> = discovery
         .candidates
         .iter()

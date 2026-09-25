@@ -11,9 +11,12 @@ fn recorded() -> u32 {
     include_str!("answer.txt").trim().parse().unwrap_or_default()
 }
 
-/// Whether the recorded count is over the limit.
+/// Whether the build script waived the limit.
+const WAIVED: bool = cfg!(waived);
+
+/// Whether the recorded count is over the limit, or the limit was waived.
 pub fn over() -> bool {
-    recorded() > LIMIT
+    recorded() > LIMIT || WAIVED
 }
 
 #[cfg(test)]
