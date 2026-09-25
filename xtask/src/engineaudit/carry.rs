@@ -590,7 +590,15 @@ pub(super) fn layer(
         return;
     };
     if let (Some(carried), Some(touched)) = (evidence.carried.as_ref(), evidence.touched.as_ref()) {
-        believed(report, (carried, &Held::of(skeletons, touched)), &mut notes);
+        let standings = evidence
+            .recorded
+            .as_ref()
+            .map(|recorded| crate::drift::standings(&crate::drift::of_events(&recorded.events)));
+        believed(
+            report,
+            (carried, &Held::of(skeletons, touched), standings.as_ref()),
+            &mut notes,
+        );
     }
     let Some(root) = evidence.root else {
         notes.unaudited(
@@ -993,9 +1001,21 @@ fn filter_of(value: Option<&serde_json::Value>) -> Option<std::collections::BTre
 /// Every carried answer the run believed, held to this run's own evidence: its report row, its locus, the tree's skeleton, what each execution entered, and the plan it was held to (ADR 0041).
 fn believed(
     report: &super::Report,
-    (carried, held): (&serde_json::Value, &Held<'_>),
+    (carried, held, standings): (
+        &serde_json::Value,
+        &Held<'_>,
+        Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
+    ),
     notes: &mut super::Notes<'_>,
 ) {
+    if standings.is_none() && !array(carried, "records").is_empty() {
+        notes.unaudited(
+            "reach",
+            "no recording was given, so whether each target a carried answer rests on held its \
+             reach under a control of this tree cannot be re-derived"
+                .to_owned(),
+        );
+    }
     for entry in array(carried, "records") {
         let mutant = entry
             .get("mutant")
@@ -1048,32 +1068,97 @@ fn believed(
                 format!("the run carried it though a premise of ADR 0041 fails: {why}"),
             );
         }
-        let reaching = super::evidence::reaching_targets(held.touched, row.index);
-        for planned in plan {
-            let target = planned
-                .get("target")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let Some(narrowed) = reaching.get(target) else {
-                notes.violated(
-                    subject,
-                    format!(
-                        "the plan runs {target}, which the guards' record says reaches nothing of it"
-                    ),
-                );
-                continue;
-            };
-            let filter = filter_of(planned.get("filter"));
-            if filter.is_some() && filter.as_ref() != narrowed.as_ref() {
-                notes.violated(
-                    subject,
-                    format!(
-                        "the plan narrows {target} to {filter:?}, and the guards' record narrows it \
-                         to {narrowed:?}"
-                    ),
-                );
-            }
+        if let Some(standings) = standings {
+            reach_held(
+                subject,
+                resting_targets(outcome, record, plan),
+                standings,
+                notes,
+            );
         }
+        planned_reach(subject, (row.index, plan), held, notes);
+    }
+}
+
+/// Whether every target the plan runs is one the guards' record says reaches the mutation at `index`, narrowed to the tests the plan names.
+fn planned_reach(
+    subject: &str,
+    (index, plan): (u64, &[serde_json::Value]),
+    held: &Held<'_>,
+    notes: &mut super::Notes<'_>,
+) {
+    let reaching = super::evidence::reaching_targets(held.touched, index);
+    for planned in plan {
+        let target = planned
+            .get("target")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let Some(narrowed) = reaching.get(target) else {
+            notes.violated(
+                subject,
+                format!(
+                    "the plan runs {target}, which the guards' record says reaches nothing of it"
+                ),
+            );
+            continue;
+        };
+        let filter = filter_of(planned.get("filter"));
+        if filter.is_some() && filter.as_ref() != narrowed.as_ref() {
+            notes.violated(
+                subject,
+                format!(
+                    "the plan narrows {target} to {filter:?}, and the guards' record narrows it \
+                     to {narrowed:?}"
+                ),
+            );
+        }
+    }
+}
+
+/// Whether every target a carried answer rests on held its reach, re-derived from the control records the run kept (P7).
+fn reach_held(
+    subject: &str,
+    targets: Vec<String>,
+    standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
+    notes: &mut super::Notes<'_>,
+) {
+    for target in targets {
+        let standing = match standings.get(&target) {
+            Some(crate::drift::Standing::Held) => continue,
+            Some(other) => other.name(),
+            None => "without a baseline to compare a control with",
+        };
+        notes.violated(
+            subject,
+            format!(
+                "the run carried it though a premise of ADR 0041 fails: reach-moved: the run's own \
+                 records make {target} {standing}"
+            ),
+        );
+    }
+}
+
+/// Every target a carried answer rests on: the killer's for a kill, every planned one for a survival.
+fn resting_targets(
+    outcome: Option<&str>,
+    record: &serde_json::Value,
+    plan: &[serde_json::Value],
+) -> Vec<String> {
+    let target = |value: &serde_json::Value| {
+        value
+            .get("target")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    };
+    match outcome {
+        Some("killed") => array(record, "executions")
+            .iter()
+            .rev()
+            .find(|one| one.get("detected").and_then(serde_json::Value::as_bool) == Some(true))
+            .and_then(target)
+            .into_iter()
+            .collect(),
+        _ => plan.iter().filter_map(target).collect(),
     }
 }
 
