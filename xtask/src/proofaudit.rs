@@ -3992,6 +3992,47 @@ impl Relation {
     }
 }
 
+/// A verdict a runner's recording can conclude with, each of which this audit holds to its own rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum Concluded {
+    /// Every mutation of a full run was answered.
+    Assured,
+    /// Every mutation of a run over what changed was answered.
+    ChangeAssured,
+    /// Every mutation of a run over a named scope was answered.
+    ScopeAssured,
+    /// The code under test broke a contract.
+    Defect,
+    /// Execution completed and something remains unestablished.
+    Insufficient,
+    /// One part of a catalog divided between machines, which assures nothing on its own.
+    Partial,
+    /// The run established nothing.
+    Error,
+}
+
+impl Concluded {
+    /// The name the runner writes.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Assured => "ASSURED",
+            Self::ChangeAssured => "CHANGE_ASSURED",
+            Self::ScopeAssured => "SCOPE_ASSURED",
+            Self::Defect => "DEFECT",
+            Self::Insufficient => "INSUFFICIENT",
+            Self::Partial => "PARTIAL",
+            Self::Error => "ERROR",
+        }
+    }
+
+    /// The verdict the runner wrote as `name`, or nothing when it names none this audit knows.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|verdict| verdict.name() == name)
+    }
+}
+
 /// Whether the verdict is one the accounting and the findings support.
 fn verdict(recording: &Recording<'_>, audit: &mut Audit) {
     let Some(concluded) = recording.verdict.clone() else {
@@ -4003,15 +4044,125 @@ fn verdict(recording: &Recording<'_>, audit: &mut Audit) {
         );
         return;
     };
-    match concluded.as_str() {
-        "ASSURED" | "CHANGE_ASSURED" | "SCOPE_ASSURED" => assurance(recording, audit, &concluded),
-        "DEFECT" => defect(recording, audit),
-        _ => {}
+    let Some(held) = Concluded::named(&concluded) else {
+        Notes::on(audit, Layer::Accounting).violated(
+            "verdict",
+            format!("the recording concludes {concluded:?}, which is no verdict a runner says"),
+        );
+        return;
+    };
+    let shard = recording
+        .document
+        .get("scope")
+        .and_then(|scope| field(scope, "shard"));
+    match (held, shard) {
+        (Concluded::Assured | Concluded::ChangeAssured | Concluded::ScopeAssured, None) => {
+            scope(recording, audit, &concluded);
+            answered_throughout(recording, audit, &concluded);
+        }
+        (Concluded::Assured | Concluded::ChangeAssured | Concluded::ScopeAssured, Some(shard)) => {
+            Notes::on(audit, Layer::Accounting).violated(
+                "verdict",
+                format!(
+                    "the recording concludes {concluded} for part {shard} of a divided catalog, \
+                     and a part assures nothing on its own"
+                ),
+            );
+        }
+        (Concluded::Defect, _) => defect(recording, audit),
+        (Concluded::Insufficient, shard) => insufficient(recording, audit, shard.is_some()),
+        (Concluded::Partial, Some(_)) => {
+            short_of_a_defect(recording, audit, &concluded);
+            answered_throughout(recording, audit, &concluded);
+        }
+        (Concluded::Partial, None) => {
+            Notes::on(audit, Layer::Accounting).violated(
+                "verdict",
+                "the recording concludes PARTIAL and records no shard; PARTIAL is what one part \
+                 of a divided catalog concludes"
+                    .to_owned(),
+            );
+        }
+        (Concluded::Error, _) => {
+            Notes::on(audit, Layer::Accounting).violated(
+                "verdict",
+                "the recording concludes ERROR beside the report of the same run; a run says \
+                 ERROR when it came to no report"
+                    .to_owned(),
+            );
+        }
     }
 }
 
-fn assurance(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
-    scope(recording, audit, concluded);
+/// An INSUFFICIENT names no defect, and rests on something the run did not establish.
+fn insufficient(recording: &Recording<'_>, audit: &mut Audit, part: bool) {
+    if short_of_a_defect(recording, audit, Concluded::Insufficient.name()) {
+        return;
+    }
+    let established = recording.findings.is_empty()
+        && column(recording.document, "targets", PASSED).is_some_and(|passed| passed > 0)
+        && column(recording.document, "mutants", "executed").is_some_and(|executed| executed > 0)
+        && recording.mutants.iter().all(answers)
+        && !(part && unsettled(recording.document));
+    if established {
+        Notes::on(audit, Layer::Accounting).violated(
+            "verdict",
+            "the recording concludes INSUFFICIENT, and it found nothing, observed and asked \
+             something, and answered every mutation, so the run established more than it says"
+                .to_owned(),
+        );
+    }
+}
+
+/// Whether a part's reach moved or a knob shook, which only the merge settles.
+fn unsettled(document: &serde_json::Value) -> bool {
+    rows(document, "drift")
+        .iter()
+        .any(|row| field(row, "state").as_deref() == Some("moved"))
+        || rows(document, "knobs").iter().any(|row| {
+            matches!(
+                row.get("standing")
+                    .and_then(|standing| field(standing, "state"))
+                    .as_deref(),
+                Some("broke" | "moved")
+            )
+        })
+}
+
+/// Whether a mutation row is an answer: decided by a test, a model or the compiler, or accepted as it stands.
+fn answers(mutant: &MutantRow) -> bool {
+    matches!(
+        (mutant.outcome.as_str(), mutant.acceptance),
+        (
+            REJECTED | KILLED | "model-noticed" | "model-proved" | EQUIVALENT,
+            AcceptanceFact::Rejected | AcceptanceFact::Accepted
+        ) | (SURVIVED | UNREACHED, AcceptanceFact::Accepted)
+    )
+}
+
+/// A run that found a defect says DEFECT, whole or in part; whether this one named one.
+fn short_of_a_defect(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) -> bool {
+    let named: Vec<&str> = recording
+        .findings
+        .iter()
+        .map(|finding| finding.kind.as_str())
+        .filter(|kind| DEFECT_KINDS.contains(kind))
+        .collect();
+    if !named.is_empty() {
+        Notes::on(audit, Layer::Accounting).violated(
+            "verdict",
+            format!(
+                "the recording concludes {concluded} and names {}; a run that found a defect \
+                 says DEFECT, whole or in part",
+                named.join(", ")
+            ),
+        );
+    }
+    !named.is_empty()
+}
+
+/// What an assurance and a part both claim: nothing was found, something was observed and asked, and every mutation was answered.
+fn answered_throughout(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
     let mut notes = Notes::on(audit, Layer::Accounting);
     let unsupported = |notes: &mut Notes<'_>, because: &str| {
         notes.violated(
@@ -4023,7 +4174,7 @@ fn assurance(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
         unsupported(
             &mut notes,
             &format!(
-                "carries {} findings; an assurance is the claim that nothing was found",
+                "carries {} findings; it is the claim that nothing was found",
                 recording.findings.len()
             ),
         );
@@ -4061,14 +4212,7 @@ fn assurance(recording: &Recording<'_>, audit: &mut Audit, concluded: &str) {
         }
     }
     for mutant in &recording.mutants {
-        let answered = matches!(
-            (mutant.outcome.as_str(), mutant.acceptance),
-            (
-                REJECTED | KILLED | "model-noticed" | "model-proved" | EQUIVALENT,
-                AcceptanceFact::Rejected | AcceptanceFact::Accepted
-            ) | (SURVIVED | UNREACHED, AcceptanceFact::Accepted)
-        );
-        if !answered {
+        if !answers(mutant) {
             unsupported(
                 &mut notes,
                 &format!(
