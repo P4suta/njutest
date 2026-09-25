@@ -1612,3 +1612,38 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
          every such answer carries rather than running again: {ran:#?}"
     );
 }
+
+#[test]
+fn an_execution_a_silent_process_ran_inside_records_what_it_entered_as_cut() {
+    let fixture = Fixture::copy("fixture-silent-kill");
+    let ran = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        ran.status.code() == Some(0) || ran.status.code() == Some(1),
+        "{}",
+        stderr(&ran)
+    );
+    let carried = fixture.cache().join(rust_mutants::carry::LAYOUT);
+    let records: Vec<serde_json::Value> = std::fs::read_dir(&carried)
+        .expect("a run that keeps outcomes keeps carried records")
+        .map(|entry| {
+            let path = entry.expect("an entry").path();
+            njutest_devkit::strictjson::decode_str(
+                &std::fs::read_to_string(&path).expect("a record"),
+            )
+            .expect("a carried record")
+        })
+        .collect();
+    assert!(
+        !records.is_empty(),
+        "every mutant of `limit` is killed and kept"
+    );
+    for record in &records {
+        for execution in record["executions"].as_array().expect("its executions") {
+            assert_eq!(
+                execution["completeness"], "cut",
+                "a child with a cleared environment ran inside this execution and recorded \
+                 nothing it entered, so the union is not the whole of it: {record:#}"
+            );
+        }
+    }
+}

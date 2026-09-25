@@ -1386,11 +1386,15 @@ impl Session {
             let mut result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
             result.entered = self.entered_by(log.as_deref(), &result, cancel);
             let ended = std::time::SystemTime::now();
-            if result.conclusion == MutantConclusion::Survived
-                && (self.uncontrolled(&target.id)
-                    || self.orphaned(before.as_ref(), (started, ended), result.leader)?)
-            {
-                result.conclusion = MutantConclusion::Unobserved;
+            let unseen = self.uncontrolled(&target.id)
+                || self.orphaned(before.as_ref(), (started, ended), result.leader)?;
+            if unseen {
+                if result.conclusion == MutantConclusion::Survived {
+                    result.conclusion = MutantConclusion::Unobserved;
+                }
+                if let Some(entered) = result.entered.as_mut() {
+                    entered.completeness = crate::touch::Completeness::Cut;
+                }
             }
             self.record_mutant_exec(Executed {
                 mutant,
