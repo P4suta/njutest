@@ -39,8 +39,8 @@ fn fixture() -> Fixture {
 }
 
 /// The generation provider a run asks, as a program every platform can start.
-fn provider() -> PathBuf {
-    njutest_devkit::fake_cargo::example("fake_provider")
+fn provider(own: &Path) -> PathBuf {
+    njutest_devkit::fake_cargo::example_in("fake_provider", own)
 }
 
 fn declaring(fixture: &Fixture) {
@@ -49,7 +49,9 @@ fn declaring(fixture: &Fixture) {
         format!(
             "version = 1\n\n[generation]\ncommand = [{:?}, \"generation\"]\n\
              environment = [\"FAKE_GENERATOR_OFFERS\"]\n",
-            provider().to_str().expect("test protocol paths are UTF-8")
+            provider(fixture.root.parent().expect("the fixture's own directory"))
+                .to_str()
+                .expect("test protocol paths are UTF-8")
         ),
     )
     .expect("write");

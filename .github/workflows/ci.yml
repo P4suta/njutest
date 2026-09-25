@@ -62,7 +62,7 @@ jobs:
       # Building it plainly is what makes those tests able to run.
       - name: Build the scripted toolchain the suite drives
         shell: bash
-        run: cargo build --locked --examples -p rust-mutants
+        run: cargo build --locked --examples --workspace --all-features --profile test
       # `shell: bash` rather than the default, which is PowerShell on Windows:
       # a native command that fails there does not stop the script, so the suite below ran on after the first half had already failed and the step's status became the second half's.
       # A failing test took the job's forty-five minute timeout to be reported, and would have been reported as a pass had the second half succeeded.
@@ -76,7 +76,7 @@ jobs:
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Doctests
         shell: bash
-        run: cargo test --locked --workspace --doc
+        run: cargo test --locked --workspace --all-features --doc
 
   lint:
     name: lint
@@ -146,7 +146,17 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           tools: cargo-deny@0.19.7
-      - run: cargo deny --locked --all-features check
+      # The advisory database is fetched in a step of its own that tries again, and the check reads what it fetched:
+      # a fetch that failed once on a network error failed the whole job, twice on one day.
+      - name: Fetch the advisory database
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            cargo deny --locked --all-features fetch db && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
+      - run: cargo deny --locked --all-features check --disable-fetch
 
   audit:
     name: audit
@@ -159,7 +169,17 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           tools: cargo-audit@0.22.2
-      - run: cargo audit --deny warnings
+      # As for `deny`: one fetch that tries again, and an audit that reads it.
+      - name: Fetch the advisory database
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$HOME/.cargo/advisory-db"
+            git clone --depth 1 https://github.com/RustSec/advisory-db.git "$HOME/.cargo/advisory-db" && exit 0
+            sleep $((attempt * 15))
+          done
+          exit 1
+      - run: cargo audit --no-fetch --deny warnings
         env:
           CARGO_NET_OFFLINE: "false"
 
@@ -207,7 +227,7 @@ jobs:
           # `not found *.profraw files in .../target/llvm-cov-target`, with the
           # profiles sitting in `target` all along. The steps are told where.
           echo "CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR" >> "$GITHUB_ENV"
-          cargo build --locked --examples -p rust-mutants
+          cargo build --locked --examples --workspace --all-features --profile test
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast -E 'not binary(/^toolchain_/)'
           # Coverage makes every nested build heavier. Bound only the suites
           # that start those builds, preserving full parallelism everywhere else.
