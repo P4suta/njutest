@@ -91,6 +91,18 @@ pub enum AuditError {
     },
 }
 
+impl crate::error::Coded for AuditError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Unreadable { .. } => crate::error::XtCode::ProofUnreadable,
+            Self::Unparsable { .. } => crate::error::XtCode::ProofUnparsable,
+            Self::MalformedRecording { .. } => crate::error::XtCode::ProofRecording,
+            Self::Unprojected { .. } => crate::error::XtCode::ProofUnprojected,
+            Self::Unrecognised { .. } => crate::error::XtCode::ProofUnrecognised,
+        }
+    }
+}
+
 /// What a report holds instead of the one configured build measured whole this audit re-decides.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -113,6 +125,12 @@ pub enum Unprojectable {
         /// How many it holds.
         count: usize,
     },
+}
+
+impl crate::error::Coded for Unprojectable {
+    fn code(&self) -> crate::error::XtCode {
+        crate::error::XtCode::ProofUnprojected
+    }
 }
 
 /// What the re-decision was able to conclude about one thing it looked at.
